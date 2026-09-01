@@ -39,6 +39,14 @@ export interface DaiPluginOptions {
    */
   wasmEntryName?: string;
   /**
+   * Path to the Emscripten glue (`sqlite3InitModule`) that drives the engine.
+   * Defaults to the copy in `@sqlite.org/sqlite-wasm`. Only packaged when an
+   * engine is packaged too.
+   */
+  sqliteGluePath?: string;
+  /** Path inside the archive for the glue. Defaults to `runtime/sqlite3.mjs`. */
+  glueEntryName?: string;
+  /**
    * Directory prefix inside the archive for the compiled React app. Defaults to
    * `app`, matching the `/app` path the spec uses for document logic. Set to an
    * empty string to write the build output at the archive root.
@@ -73,6 +81,11 @@ const DEFAULT_WASM_ENTRY = "runtime/sqlite3.wasm";
  * document keeps the runtime semantics it was compiled with for its whole life.
  */
 const CONTAINER_ENTRY = "runtime/container.html";
+const DEFAULT_GLUE_ENTRY = "runtime/sqlite3.mjs";
+/** Where @sqlite.org/sqlite-wasm keeps the Emscripten glue. */
+const SQLITE_GLUE_LOOKUP = [
+  "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs",
+];
 /** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
 const SQLITE_WASM_LOOKUP = [
   // Layout since 3.53.
@@ -197,6 +210,21 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         .replace(RUNTIME_PLACEHOLDER, () => runtime);
       archive[CONTAINER_ENTRY] = new TextEncoder().encode(shell);
 
+      const glueEntry = options.glueEntryName ?? DEFAULT_GLUE_ENTRY;
+      const glue = wasm
+        ? findFirst(root, options.sqliteGluePath, SQLITE_GLUE_LOOKUP)
+        : undefined;
+      if (glue) {
+        archive[glueEntry] = new Uint8Array(readFileSync(glue));
+      } else if (wasm) {
+        this.warn(
+          `DAI: packaged a SQLite engine but found no Emscripten glue` +
+            `${options.sqliteGluePath ? ` at ${resolve(root, options.sqliteGluePath)}` : ""}. ` +
+            `window.dai.initSqlite() will be unavailable; the raw engine bytes ` +
+            `are still exposed as window.dai.sqliteWasm.`,
+        );
+      }
+
       const zipped = zipSync(archive, { level: options.compressionLevel ?? 9 });
       const payload = Buffer.from(zipped).toString("base64");
 
@@ -210,7 +238,7 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       config.logger.info(
         `\n[dai] ${relative(root, outFile) || outFile} — ` +
           `${Object.keys(archive).length} entries, ` +
-          `${wasm ? "sqlite3.wasm embedded" : "no sqlite engine"}, ` +
+          `${wasm ? (glue ? "sqlite3 + glue embedded" : "sqlite3.wasm only") : "no sqlite engine"}, ` +
           `${formatBytes(zipped.byteLength)} archive, ` +
           `${formatBytes(Buffer.byteLength(html))} container`,
       );
@@ -246,9 +274,18 @@ async function collectFiles(dir: string, base = dir): Promise<CollectedFile[]> {
  * exists — a container without an engine is valid, just not database-backed.
  */
 function findSqliteWasm(root: string, configured?: string): string | undefined {
+  return findFirst(root, configured, SQLITE_WASM_LOOKUP);
+}
+
+/** First existing file: the configured path if given, else the fallbacks. */
+function findFirst(
+  root: string,
+  configured: string | undefined,
+  fallbacks: string[],
+): string | undefined {
   const candidates = configured
     ? [resolve(root, configured)]
-    : SQLITE_WASM_LOOKUP.map((path) => resolve(root, path));
+    : fallbacks.map((path) => resolve(root, path));
   return candidates.find((path) => existsSync(path) && statSync(path).isFile());
 }
 

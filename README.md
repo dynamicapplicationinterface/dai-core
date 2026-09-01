@@ -80,11 +80,31 @@ Inside the app, the bootloader exposes `window.dai`:
 | `hasSqliteEngine` | `boolean` | Whether an engine was packaged |
 | `sqliteWasm` | `ArrayBuffer \| null` | The engine bytes |
 | `document` | `Uint8Array` | The seed SQLite document |
+| `hasSqliteGlue` | `boolean` | Whether the Emscripten glue was packaged |
+| `initSqlite()` | `Promise<sqlite3>` | Boots the engine from memory |
+| `openDatabase()` | `Promise<DB>` | Deserializes the packaged document |
+| `exportDatabase(db)` | `Uint8Array` | Serializes the live database |
+| `saveDatabase(db)` | `Promise<void>` | Export + rewrite the container |
 | `compileSqlite()` | `Promise<WebAssembly.Module>` | Validates the engine; needs no imports |
 | `instantiateSqlite(imports)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
 | `saveState(bytes?)` | `Promise<void>` | Rewrites the container around a new database |
 
 `window.daiSaveState(bytes)` is an alias for `saveState`.
+
+### Booting SQLite
+
+```ts
+const db = await window.dai.openDatabase()
+db.exec('CREATE TABLE IF NOT EXISTS notes(body TEXT)')
+await window.dai.saveDatabase(db)   // rewrites the container in place
+```
+
+`initSqlite()` passes Emscripten an `instantiateWasm` hook that compiles the
+embedded bytes directly, so `locateFile()` is never consulted and no fetch is
+ever attempted — the only way to boot under `connect-src 'none'`. Emscripten's
+OPFS probe rejects on an opaque origin, so those rejections are suppressed
+during startup and the in-memory VFS is used; the packaged document is mapped in
+with `sqlite3_deserialize` and read back out with `sqlite3_js_db_export`.
 
 `instantiateSqlite` requires an import object: the engine declares ~36 imports
 (`env`, `wasi_snapshot_preview1`). Satisfying them is the Emscripten glue's job,

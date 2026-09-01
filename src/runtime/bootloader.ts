@@ -19,6 +19,7 @@ const APP_PREFIX = "app/";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
 const SQLITE_ENTRY = "document.sqlite";
 const CONTAINER_ENTRY = "runtime/container.html";
+const GLUE_ENTRY = "runtime/sqlite3.mjs";
 const SAVE_REQUEST = "dai:save";
 /**
  * Must match PAYLOAD_TAG_RE in the compiler. Anchored to the payload tag
@@ -117,69 +118,6 @@ function toArrayBuffer(view: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-/**
- * The bridge the application sees as `window.dai`.
- *
- * The engine is handed over as an ArrayBuffer rather than a URL because
- * `connect-src 'none'` neutralizes fetch, and `WebAssembly.instantiateStreaming`
- * is defined in terms of a fetched Response — it cannot work here at all.
- * `WebAssembly.instantiate(buffer)` compiles from memory and touches no network
- * layer. `'wasm-unsafe-eval'` in the container CSP is what permits it.
- *
- * The frame shares this document's origin (it must, for blob URLs to be
- * reachable), so it can read the buffers straight off the parent instead of
- * being handed a structured clone.
- */
-function bridgeScript(): string {
-  return (
-    `<script>(function(){` +
-    `var host=parent.__DAI__||{};` +
-    // Re-create the buffers using the frame's own intrinsics. A buffer minted
-    // in the parent realm fails `instanceof ArrayBuffer` inside the frame, even
-    // though WebAssembly accepts it — apps that type-check would break.
-    `var adopt=function(src){if(!src)return null;` +
-    `var out=new ArrayBuffer(src.byteLength);` +
-    `new Uint8Array(out).set(new Uint8Array(src));return out};` +
-    `var wasm=adopt(host.sqliteWasm);` +
-    `var doc=host.sqlite?new Uint8Array(adopt(host.sqlite.buffer?` +
-    `host.sqlite.slice().buffer:host.sqlite)):new Uint8Array(0);` +
-    `window.dai={` +
-    `version:host.version,` +
-    `sqliteWasm:wasm,` +
-    `document:doc,` +
-    `hasSqliteEngine:!!wasm,` +
-    // Compiling needs no imports, so this validates the engine on its own.
-    `compileSqlite:function(){` +
-    `if(!wasm)return Promise.reject(` +
-    `new Error("No sqlite3.wasm was packaged in this container."));` +
-    `return WebAssembly.compile(wasm)},` +
-    `instantiateSqlite:function(imports){` +
-    `if(!wasm)return Promise.reject(` +
-    `new Error("No sqlite3.wasm was packaged in this container."));` +
-    // The engine declares ~36 imports (env, wasi_snapshot_preview1). Passing
-    // none fails on import #0, which reads like a broken buffer but is not:
-    // satisfying them is the Emscripten glue's job, not the bootloader's.
-    `if(!imports){return WebAssembly.compile(wasm).then(function(m){` +
-    `var need=WebAssembly.Module.imports(m);` +
-    `throw new Error("sqlite3.wasm needs "+need.length+" imports (first: "+` +
-    `need[0].module+"."+need[0].name+"). Pass an import object, or use " +` +
-    `"compileSqlite() to validate the engine.")})}` +
-    `return WebAssembly.instantiate(wasm,imports)},` +
-    // Saving happens in the top document: showSaveFilePicker needs a
-    // non-sandboxed context. The frame asks; the host writes.
-    `saveState:function(bytes){var id=Math.random().toString(36).slice(2);` +
-    `return new Promise(function(resolve,reject){` +
-    `var done=function(e){if(!e.data||e.data.id!==id)return;` +
-    `removeEventListener("message",done);` +
-    `e.data.ok?resolve():reject(new Error(e.data.error))};` +
-    `addEventListener("message",done);` +
-    `parent.postMessage({type:${JSON.stringify(SAVE_REQUEST)},id:id,` +
-    `sqlite:bytes?new Uint8Array(bytes):null},"*")})}` +
-    `};window.daiSaveState=function(bytes){return window.dai.saveState(bytes)};` +
-    `})()<\/script>`
-  );
-}
-
 /** btoa() over a large binary string blows the argument limit; chunk it. */
 function toBase64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -193,16 +131,16 @@ function toBase64(bytes: Uint8Array): string {
 /**
  * Rebuilds the container around a new database and hands it to the user.
  *
- * The shell is taken from `runtime/container.html` *inside the payload*, not
- * from the compiler that produced this file. A saved document therefore carries
- * the same bootloader it was compiled with: its runtime semantics are fixed at
+ * The shell comes from `runtime/container.html` *inside the payload*, not from
+ * the compiler that produced this file. A saved document therefore carries the
+ * same bootloader it was compiled with: its runtime semantics are fixed at
  * compile time and survive every save, rather than drifting toward whatever
  * dai-core happens to be installed later.
  *
- * This runs in the top document, never the sandboxed frame: `showSaveFilePicker`
+ * This runs in the top document, never the sandboxed frame: showSaveFilePicker
  * needs a non-sandboxed context and its own user activation.
  */
-async function saveState(
+async function writeContainer(
   files: Record<string, Uint8Array>,
   sqlite: Uint8Array,
 ): Promise<void> {
@@ -222,20 +160,27 @@ async function saveState(
   const name = `${document.title || "document"}.dai.html`;
   const blob = new Blob([html], { type: "text/html" });
 
-  const picker = (window as unknown as {
-    showSaveFilePicker?: (options: unknown) => Promise<{
-      createWritable: () => Promise<{
-        write: (data: Blob) => Promise<void>;
-        close: () => Promise<void>;
+  const picker = (
+    window as unknown as {
+      showSaveFilePicker?: (options: unknown) => Promise<{
+        createWritable: () => Promise<{
+          write: (data: Blob) => Promise<void>;
+          close: () => Promise<void>;
+        }>;
       }>;
-    }>;
-  }).showSaveFilePicker;
+    }
+  ).showSaveFilePicker;
 
   if (picker) {
     try {
       const handle = await picker({
         suggestedName: name,
-        types: [{ description: "DAI container", accept: { "text/html": [".dai.html"] } }],
+        types: [
+          {
+            description: "DAI container",
+            accept: { "text/html": [".dai.html"] },
+          },
+        ],
       });
       const writable = await handle.createWritable();
       await writable.write(blob);
@@ -255,6 +200,219 @@ async function saveState(
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+}
+
+/**
+ * Everything the application sees as `window.dai`, run inside the frame.
+ *
+ * This function is serialized with `Function.prototype.toString()` and injected
+ * into the frame, so it MUST be self-contained: it may not reference anything
+ * from this module's scope, because those bindings do not exist in the frame
+ * (and are renamed by the minifier). Everything it needs comes off
+ * `parent.__DAI__`.
+ */
+function bridgeMain(): void {
+  type Any = Record<string, any>;
+  const host: Any = ((parent as unknown as Any).__DAI__ as Any) || {};
+
+  /**
+   * Re-creates a buffer with this frame's intrinsics. A buffer minted in the
+   * parent realm fails `instanceof ArrayBuffer` here even though WebAssembly
+   * accepts it, which breaks any app that type-checks its input.
+   */
+  const adopt = (src: ArrayBufferLike | null): ArrayBuffer | null => {
+    if (!src) return null;
+    const out = new ArrayBuffer(src.byteLength);
+    new Uint8Array(out).set(new Uint8Array(src));
+    return out;
+  };
+
+  const wasm = adopt(host.sqliteWasm as ArrayBuffer | null);
+  const seedSource = host.sqlite as Uint8Array | undefined;
+  const seed = seedSource
+    ? new Uint8Array(adopt(seedSource.slice().buffer)!)
+    : new Uint8Array(0);
+  const glueUrl: string | null = (host.sqliteGlueUrl as string) || null;
+
+  let sqlite3: Any | null = null;
+  let booting: Promise<Any> | null = null;
+
+  /** Loads the glue via an inline module script: no dynamic import, no eval. */
+  const loadGlue = (): Promise<Any> =>
+    new Promise((resolve, reject) => {
+      if (!glueUrl) {
+        reject(new Error("No Emscripten glue was packaged in this container."));
+        return;
+      }
+      const token = "__daiGlue" + Date.now();
+      const script = document.createElement("script");
+      script.type = "module";
+      script.textContent =
+        "import init from " + JSON.stringify(glueUrl) + ";" +
+        "window[" + JSON.stringify(token) + "]={ok:init};" +
+        "window.dispatchEvent(new Event(" + JSON.stringify(token) + "));";
+      window.addEventListener(token, () => {
+        const slot = (window as unknown as Any)[token] as Any;
+        delete (window as unknown as Any)[token];
+        if (slot && slot.ok) resolve(slot.ok as Any);
+        else reject(new Error("Glue exported no initializer."));
+      });
+      script.onerror = () => reject(new Error("Glue module failed to load."));
+      document.head.appendChild(script);
+    });
+
+  /**
+   * Boots the engine entirely from memory.
+   *
+   * `instantiateWasm` is what makes this work under `connect-src 'none'`: it
+   * hands Emscripten an instance compiled from the embedded bytes, so
+   * `locateFile()` is never consulted and no fetch is ever attempted.
+   */
+  const initSqlite = (): Promise<Any> => {
+    if (booting) return booting;
+    if (!wasm) {
+      return Promise.reject(
+        new Error("No sqlite3.wasm was packaged in this container."),
+      );
+    }
+
+    // Emscripten probes OPFS at startup, which rejects on an opaque origin.
+    // Swallow those rejections so they cannot surface as an unhandled error and
+    // abort the boot; the in-memory VFS is the fallback either way.
+    const muffle = (event: PromiseRejectionEvent): void => {
+      const reason = event.reason as Any;
+      const text = String((reason && reason.message) || reason || "");
+      if (/opfs|storage|getDirectory|SharedArrayBuffer/i.test(text)) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("unhandledrejection", muffle);
+
+    booting = loadGlue()
+      .then((init) =>
+        (init as unknown as (config: Any) => Promise<Any>)({
+          instantiateWasm(
+            imports: WebAssembly.Imports,
+            receive: (i: WebAssembly.Instance, m: WebAssembly.Module) => void,
+          ) {
+            WebAssembly.instantiate(wasm as ArrayBuffer, imports).then((result) =>
+              receive(result.instance, result.module),
+            );
+            // Async path: Emscripten waits for `receive` when this returns {}.
+            return {};
+          },
+          print: () => {},
+          printErr: () => {},
+          locateFile(path: string) {
+            // Should never run: instantiateWasm satisfies the only asset.
+            throw new Error(
+              "DAI: refusing to locate " + path + "; no network is available.",
+            );
+          },
+        }),
+      )
+      .then((instance) => {
+        sqlite3 = instance;
+        window.removeEventListener("unhandledrejection", muffle);
+        return instance;
+      })
+      .catch((error: unknown) => {
+        booting = null;
+        window.removeEventListener("unhandledrejection", muffle);
+        throw error;
+      });
+
+    return booting;
+  };
+
+  /** Opens the packaged document, or a fresh database when there is no seed. */
+  const openDatabase = (): Promise<Any> =>
+    initSqlite().then((api2) => {
+      const db = new api2.oo1.DB() as Any;
+      if (seed.byteLength === 0) return db;
+
+      const pointer = api2.wasm.allocFromTypedArray(seed);
+      const rc = api2.capi.sqlite3_deserialize(
+        db.pointer,
+        "main",
+        pointer,
+        seed.byteLength,
+        seed.byteLength,
+        api2.capi.SQLITE_DESERIALIZE_FREEONCLOSE |
+          api2.capi.SQLITE_DESERIALIZE_RESIZEABLE,
+      );
+      if (rc !== 0) throw new Error("sqlite3_deserialize failed (rc=" + rc + ").");
+      return db;
+    });
+
+  /** Extracts the live database as bytes, ready to be written back. */
+  const exportDatabase = (db: Any): Uint8Array => {
+    if (!sqlite3) throw new Error("SQLite is not initialized.");
+    return sqlite3.capi.sqlite3_js_db_export(db.pointer) as Uint8Array;
+  };
+
+  /** Asks the host to rewrite the container: the frame is sandboxed and cannot. */
+  const saveState = (bytes?: Uint8Array | null): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const id = Math.random().toString(36).slice(2);
+      const done = (event: MessageEvent): void => {
+        const data = event.data as Any;
+        if (!data || data.id !== id) return;
+        window.removeEventListener("message", done);
+        if (data.ok) resolve();
+        else reject(new Error(String(data.error)));
+      };
+      window.addEventListener("message", done);
+      parent.postMessage(
+        { type: "dai:save", id: id, sqlite: bytes ? new Uint8Array(bytes) : null },
+        "*",
+      );
+    });
+
+  const api: Any = {
+    version: host.version,
+    sqliteWasm: wasm,
+    document: seed,
+    hasSqliteEngine: !!wasm,
+    hasSqliteGlue: !!glueUrl,
+    compileSqlite: () =>
+      wasm
+        ? WebAssembly.compile(wasm)
+        : Promise.reject(
+            new Error("No sqlite3.wasm was packaged in this container."),
+          ),
+    instantiateSqlite: (imports?: WebAssembly.Imports) => {
+      if (!wasm) {
+        return Promise.reject(
+          new Error("No sqlite3.wasm was packaged in this container."),
+        );
+      }
+      if (imports) return WebAssembly.instantiate(wasm, imports);
+      // The engine declares ~36 imports; satisfying them is the glue's job.
+      return WebAssembly.compile(wasm).then((module) => {
+        const needed = WebAssembly.Module.imports(module);
+        const first = needed[0];
+        throw new Error(
+          "sqlite3.wasm needs " + needed.length + " imports (first: " +
+            (first ? first.module + "." + first.name : "none") + "). Use initSqlite() to " +
+            "boot it through the Emscripten glue, or compileSqlite() to validate it.",
+        );
+      });
+    },
+    initSqlite: initSqlite,
+    openDatabase: openDatabase,
+    exportDatabase: exportDatabase,
+    saveDatabase: (db: Any) => saveState(exportDatabase(db)),
+    saveState: saveState,
+  };
+
+  (window as unknown as Any).dai = api;
+  (window as unknown as Any).daiSaveState = (bytes?: Uint8Array) => saveState(bytes);
+}
+
+/** Serializes bridgeMain() into the frame. See the note on that function. */
+function bridgeScript(): string {
+  return "<script>(" + bridgeMain.toString() + ")()<" + "/script>";
 }
 
 /** Injected into the iframe so the host can tell mounting actually succeeded. */
@@ -428,8 +586,24 @@ function boot(): void {
     assets,
     urls,
     sqlite: files[SQLITE_ENTRY] ?? new Uint8Array(0),
-    // ArrayBuffer, not a blob URL: see bridgeScript().
+    // ArrayBuffer, not a blob URL: see bridgeMain().
     sqliteWasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
+    // The glue is a module the frame imports, so it does need a URL. Its own
+    // `import.meta.url` is neutralized first, for the same reason app chunks
+    // need it: blob:null/<uuid> cannot be parsed as a base.
+    sqliteGlueUrl: files[GLUE_ENTRY]
+      ? URL.createObjectURL(
+          new Blob(
+            [
+              new TextDecoder()
+                .decode(files[GLUE_ENTRY])
+                .split("import.meta.url")
+                .join(JSON.stringify(`${SYNTHETIC_ORIGIN}sqlite3.mjs`)),
+            ],
+            { type: "text/javascript" },
+          ),
+        )
+      : null,
   };
 
   let ready = false;
@@ -448,7 +622,7 @@ function boot(): void {
     const reply = (payload: Record<string, unknown>): void =>
       (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
 
-    saveState(files, request.sqlite ?? documentBytes)
+    writeContainer(files, request.sqlite ?? documentBytes)
       .then(() => reply({ ok: true }))
       .catch((error: unknown) => reply({ ok: false, error: String(error) }));
   });
