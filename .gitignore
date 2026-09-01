@@ -1,0 +1,3 @@
+node_modules/
+dist/
+*.dai.html

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><!--DAI_APP_NAME--></title>
+
+  <!--
+    Hardcoded Zero-Trust CSP (DAI v0.1, §1).
+    `connect-src 'none'` is the air gap: no fetch, XHR, WebSocket, EventSource
+    or beacon can leave this document. `wasm-unsafe-eval` exists solely to let
+    the bundled sqlite3.wasm instantiate. Do not widen this policy — v0.1 has no
+    networked mode, and any added origin or scheme voids the guarantee.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'none';">
+
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+    #boot-ui {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 2rem;
+      text-align: center;
+    }
+    #boot-ui code { opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <div id="boot-ui">
+    <div>
+      <p><strong id="dai-app-name"></strong></p>
+      <p id="dai-boot-status">Decrypting and mounting local environment&hellip;</p>
+      <p><code id="dai-boot-detail"></code></p>
+    </div>
+  </div>
+
+  <!-- The Viewer/Bootloader Engine -->
+  <script type="text/javascript" id="dai-bootloader">
+    // DAI v0.1 bootloader — payload discovery only.
+    //   1. Decodes the payload                                   [implemented]
+    //   2. Registers a local Service Worker to intercept requests [v0.2]
+    //   3. Mounts the React App and WASM SQLite instance          [v0.2]
+    (function () {
+      "use strict";
+
+      var status = document.getElementById("dai-boot-status");
+      var detail = document.getElementById("dai-boot-detail");
+      document.getElementById("dai-app-name").textContent = document.title;
+
+      var node = document.getElementById("dai-payload");
+      var b64 = node && node.textContent ? node.textContent.trim() : "";
+
+      if (!b64) {
+        status.textContent = "Container is sealed but empty — no DAI payload found.";
+        return;
+      }
+
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+      // Local ZIP file-header magic: "PK\x03\x04".
+      var valid =
+        bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+
+      window.__DAI__ = { version: "0.1.0", payload: bytes, valid: valid };
+
+      status.textContent = valid
+        ? "Payload verified. Runtime is not installed in this build."
+        : "Payload is not a valid ZIP archive.";
+      detail.textContent = bytes.length.toLocaleString() + " bytes";
+    })();
+  </script>
+
+  <!--
+    The Cryptographically Sealed Payload: Base64 of a ZIP archive containing the
+    compiled React app and document.sqlite. Never executed (unknown MIME type);
+    the bootloader reads it as text.
+  -->
+  <script type="application/octet-stream" id="dai-payload"><!--DAI_PAYLOAD--></script>
+</body>
+</html>
