@@ -84,10 +84,15 @@ Inside the app, the bootloader exposes `window.dai`:
 | `initSqlite()` | `Promise<sqlite3>` | Boots the engine from memory |
 | `openDatabase()` | `Promise<DB>` | Deserializes the packaged document |
 | `exportDatabase(db)` | `Uint8Array` | Serializes the live database |
-| `saveDatabase(db)` | `Promise<void>` | Export + rewrite the container |
+| `saveDatabase(db, opts?)` | `Promise<SaveResult>` | Export + rewrite the container |
 | `compileSqlite()` | `Promise<WebAssembly.Module>` | Validates the engine; needs no imports |
 | `instantiateSqlite(imports)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
-| `saveState(bytes?)` | `Promise<void>` | Rewrites the container around a new database |
+| `saveState(bytes?, opts?)` | `Promise<SaveResult>` | Rewrites the container around a new database |
+
+`SaveResult` is `{saved: boolean, method: "picker" | "download" | "cancelled"}`.
+A dismissed dialog resolves as `cancelled` rather than resolving silently, so a
+caller can tell a real write from a cancel. `opts.method` is `"auto"` (default),
+`"picker"`, or `"download"`.
 
 `window.daiSaveState(bytes)` is an alias for `saveState`.
 
@@ -148,6 +153,26 @@ Blob URLs alone are not enough to run a Vite bundle from `file://`:
 Relative specifiers cannot be mapped directly: they are resolved against the
 importing module's base URL *before* the import map is consulted, so a blob
 module throws first.
+
+## Tests
+
+```bash
+npm test
+```
+
+Playwright drives headless Chromium against a real build artifact: the suite
+compiles `tests/fixture` with the plugin, opens the emitted `.dai.html` over
+`file://`, and asserts against the running container — the app mounts across the
+cyclic chunk graph with no console errors, nothing loads over the network, the
+engine arrives as this frame's ArrayBuffer, SQLite boots and runs
+create/insert/select, and a save emits a valid container whose database reopens
+and reads back.
+
+Two notes on the save boundary. Headless Chromium *does* expose
+`showSaveFilePicker`, but auto-dismisses it with `AbortError`, so the tests pass
+`{method:"download"}` to exercise the `<a download>` path deterministically —
+the same path Safari and Firefox take. The picker's own success path can only be
+verified by hand, since it requires a real user gesture.
 
 ## v0.1 scope
 

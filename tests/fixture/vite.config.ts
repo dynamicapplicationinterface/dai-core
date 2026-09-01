@@ -1,0 +1,21 @@
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { defineConfig } from "vite";
+import dai from "../../dist/index.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = resolve(here, "../..");
+
+export default defineConfig({
+  // Required: the container runs from file://, so asset URLs must be relative.
+  base: "./",
+  logLevel: "warn",
+  plugins: [
+    dai({
+      appName: "fixture",
+      // The fixture has no node_modules of its own; point at the repo's copy.
+      sqliteWasmPath: resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm"),
+      sqliteGluePath: resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"),
+    }),
+  ],
+});

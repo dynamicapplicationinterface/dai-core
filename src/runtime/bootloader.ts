@@ -21,6 +21,14 @@ const SQLITE_ENTRY = "document.sqlite";
 const CONTAINER_ENTRY = "runtime/container.html";
 const GLUE_ENTRY = "runtime/sqlite3.mjs";
 const SAVE_REQUEST = "dai:save";
+
+/** How a save should be attempted. */
+type SaveMethod = "auto" | "picker" | "download";
+/** What a save actually did. `cancelled` means the picker was dismissed. */
+interface SaveResult {
+  saved: boolean;
+  method: "picker" | "download" | "cancelled";
+}
 /**
  * Must match PAYLOAD_TAG_RE in the compiler. Anchored to the payload tag
  * because this very script carries the placeholder literal and is inlined above
@@ -143,7 +151,8 @@ function toBase64(bytes: Uint8Array): string {
 async function writeContainer(
   files: Record<string, Uint8Array>,
   sqlite: Uint8Array,
-): Promise<void> {
+  method: SaveMethod = "auto",
+): Promise<SaveResult> {
   const shellBytes = files[CONTAINER_ENTRY];
   if (!shellBytes) {
     throw new Error(
@@ -160,7 +169,7 @@ async function writeContainer(
   const name = `${document.title || "document"}.dai.html`;
   const blob = new Blob([html], { type: "text/html" });
 
-  const picker = (
+  const picker = method === "download" ? undefined : (
     window as unknown as {
       showSaveFilePicker?: (options: unknown) => Promise<{
         createWritable: () => Promise<{
@@ -185,10 +194,15 @@ async function writeContainer(
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();
-      return;
+      return { saved: true, method: "picker" };
     } catch (error) {
-      // AbortError means the user dismissed the dialog: respect that.
-      if ((error as { name?: string }).name === "AbortError") return;
+      // AbortError means the dialog was dismissed. Report it rather than
+      // resolving silently: the caller cannot otherwise tell a save from a
+      // cancel, and headless browsers auto-dismiss the picker.
+      if ((error as { name?: string }).name === "AbortError") {
+        if (method === "picker") return { saved: false, method: "cancelled" };
+        return { saved: false, method: "cancelled" };
+      }
       // Anything else (Safari, Firefox, a blocked picker) falls through.
     }
   }
@@ -200,6 +214,7 @@ async function writeContainer(
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+  return { saved: true, method: "download" };
 }
 
 /**
@@ -351,20 +366,35 @@ function bridgeMain(): void {
     return sqlite3.capi.sqlite3_js_db_export(db.pointer) as Uint8Array;
   };
 
-  /** Asks the host to rewrite the container: the frame is sandboxed and cannot. */
-  const saveState = (bytes?: Uint8Array | null): Promise<void> =>
+  /**
+   * Asks the host to rewrite the container: the frame is sandboxed and cannot.
+   *
+   * Resolves with `{saved, method}` rather than plain undefined, because a
+   * dismissed save-file dialog is otherwise indistinguishable from a successful
+   * write — and headless browsers dismiss it automatically. Pass
+   * `{method:"download"}` to skip the picker entirely.
+   */
+  const saveState = (
+    bytes?: Uint8Array | null,
+    options?: { method?: "auto" | "picker" | "download" },
+  ): Promise<Any> =>
     new Promise((resolve, reject) => {
       const id = Math.random().toString(36).slice(2);
       const done = (event: MessageEvent): void => {
         const data = event.data as Any;
         if (!data || data.id !== id) return;
         window.removeEventListener("message", done);
-        if (data.ok) resolve();
+        if (data.ok) resolve(data.result);
         else reject(new Error(String(data.error)));
       };
       window.addEventListener("message", done);
       parent.postMessage(
-        { type: "dai:save", id: id, sqlite: bytes ? new Uint8Array(bytes) : null },
+        {
+          type: "dai:save",
+          id: id,
+          sqlite: bytes ? new Uint8Array(bytes) : null,
+          method: (options && options.method) || "auto",
+        },
         "*",
       );
     });
@@ -402,12 +432,13 @@ function bridgeMain(): void {
     initSqlite: initSqlite,
     openDatabase: openDatabase,
     exportDatabase: exportDatabase,
-    saveDatabase: (db: Any) => saveState(exportDatabase(db)),
+    saveDatabase: (db: Any, options?: Any) => saveState(exportDatabase(db), options),
     saveState: saveState,
   };
 
   (window as unknown as Any).dai = api;
-  (window as unknown as Any).daiSaveState = (bytes?: Uint8Array) => saveState(bytes);
+  (window as unknown as Any).daiSaveState = (bytes?: Uint8Array, options?: Any) =>
+    saveState(bytes, options);
 }
 
 /** Serializes bridgeMain() into the frame. See the note on that function. */
@@ -616,14 +647,19 @@ function boot(): void {
       return;
     }
 
-    const request = event.data as { type?: string; id?: string; sqlite?: Uint8Array };
+    const request = event.data as {
+      type?: string;
+      id?: string;
+      sqlite?: Uint8Array;
+      method?: SaveMethod;
+    };
     if (request?.type !== SAVE_REQUEST) return;
 
     const reply = (payload: Record<string, unknown>): void =>
       (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
 
-    writeContainer(files, request.sqlite ?? documentBytes)
-      .then(() => reply({ ok: true }))
+    writeContainer(files, request.sqlite ?? documentBytes, request.method ?? "auto")
+      .then((result) => reply({ ok: true, result }))
       .catch((error: unknown) => reply({ ok: false, error: String(error) }));
   });
 

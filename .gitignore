@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.dai.html
+test-results/
+playwright-report/
+tests/fixture/dist/
