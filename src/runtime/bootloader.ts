@@ -13,11 +13,19 @@
  * Service Workers are deliberately not used: they are unavailable on `file://`,
  * which is the primary way a container is opened. See §1 of the Phase 2 spec.
  */
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 
 const APP_PREFIX = "app/";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
 const SQLITE_ENTRY = "document.sqlite";
+const CONTAINER_ENTRY = "runtime/container.html";
+const SAVE_REQUEST = "dai:save";
+/**
+ * Must match PAYLOAD_TAG_RE in the compiler. Anchored to the payload tag
+ * because this very script carries the placeholder literal and is inlined above
+ * it, so an unanchored match would rewrite the bootloader's own source.
+ */
+const PAYLOAD_TAG_RE = /(<script[^>]*id="dai-payload"[^>]*>)<!--DAI_PAYLOAD-->/;
 const HANDSHAKE = "dai:ready";
 /** How long the iframe has to report back before we surface a diagnostic. */
 const HANDSHAKE_TIMEOUT_MS = 5000;
@@ -143,9 +151,97 @@ function bridgeScript(): string {
     `instantiateSqlite:function(imports){` +
     `if(!wasm)return Promise.reject(` +
     `new Error("No sqlite3.wasm was packaged in this container."));` +
-    `return WebAssembly.instantiate(wasm,imports||{})}` +
-    `};})()<\/script>`
+    `return WebAssembly.instantiate(wasm,imports||{})},` +
+    // Saving happens in the top document: showSaveFilePicker needs a
+    // non-sandboxed context. The frame asks; the host writes.
+    `saveState:function(bytes){var id=Math.random().toString(36).slice(2);` +
+    `return new Promise(function(resolve,reject){` +
+    `var done=function(e){if(!e.data||e.data.id!==id)return;` +
+    `removeEventListener("message",done);` +
+    `e.data.ok?resolve():reject(new Error(e.data.error))};` +
+    `addEventListener("message",done);` +
+    `parent.postMessage({type:${JSON.stringify(SAVE_REQUEST)},id:id,` +
+    `sqlite:bytes?new Uint8Array(bytes):null},"*")})}` +
+    `};window.daiSaveState=function(bytes){return window.dai.saveState(bytes)};` +
+    `})()<\/script>`
   );
+}
+
+/** btoa() over a large binary string blows the argument limit; chunk it. */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * Rebuilds the container around a new database and hands it to the user.
+ *
+ * The shell is taken from `runtime/container.html` *inside the payload*, not
+ * from the compiler that produced this file. A saved document therefore carries
+ * the same bootloader it was compiled with: its runtime semantics are fixed at
+ * compile time and survive every save, rather than drifting toward whatever
+ * dai-core happens to be installed later.
+ *
+ * This runs in the top document, never the sandboxed frame: `showSaveFilePicker`
+ * needs a non-sandboxed context and its own user activation.
+ */
+async function saveState(
+  files: Record<string, Uint8Array>,
+  sqlite: Uint8Array,
+): Promise<void> {
+  const shellBytes = files[CONTAINER_ENTRY];
+  if (!shellBytes) {
+    throw new Error(
+      `This container has no ${CONTAINER_ENTRY}; it was built before ` +
+        `self-perpetuating saves and cannot rewrite itself.`,
+    );
+  }
+
+  const next: Record<string, Uint8Array> = { ...files, [SQLITE_ENTRY]: sqlite };
+  const payload = toBase64(zipSync(next, { level: 9 }));
+  const shell = new TextDecoder().decode(shellBytes);
+  const html = shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
+
+  const name = `${document.title || "document"}.dai.html`;
+  const blob = new Blob([html], { type: "text/html" });
+
+  const picker = (window as unknown as {
+    showSaveFilePicker?: (options: unknown) => Promise<{
+      createWritable: () => Promise<{
+        write: (data: Blob) => Promise<void>;
+        close: () => Promise<void>;
+      }>;
+    }>;
+  }).showSaveFilePicker;
+
+  if (picker) {
+    try {
+      const handle = await picker({
+        suggestedName: name,
+        types: [{ description: "DAI container", accept: { "text/html": [".dai.html"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    } catch (error) {
+      // AbortError means the user dismissed the dialog: respect that.
+      if ((error as { name?: string }).name === "AbortError") return;
+      // Anything else (Safari, Firefox, a blocked picker) falls through.
+    }
+  }
+
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
 }
 
 /** Injected into the iframe so the host can tell mounting actually succeeded. */
@@ -324,11 +420,24 @@ function boot(): void {
   };
 
   let ready = false;
+  const documentBytes = files[SQLITE_ENTRY] ?? new Uint8Array(0);
+
   window.addEventListener("message", (event) => {
     if (event.data === HANDSHAKE) {
       ready = true;
       document.body.classList.add("dai-mounted");
+      return;
     }
+
+    const request = event.data as { type?: string; id?: string; sqlite?: Uint8Array };
+    if (request?.type !== SAVE_REQUEST) return;
+
+    const reply = (payload: Record<string, unknown>): void =>
+      (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
+
+    saveState(files, request.sqlite ?? documentBytes)
+      .then(() => reply({ ok: true }))
+      .catch((error: unknown) => reply({ ok: false, error: String(error) }));
   });
 
   mount(srcdoc);

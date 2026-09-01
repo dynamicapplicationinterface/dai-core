@@ -81,6 +81,9 @@ Inside the app, the bootloader exposes `window.dai`:
 | `sqliteWasm` | `ArrayBuffer \| null` | The engine bytes |
 | `document` | `Uint8Array` | The seed SQLite document |
 | `instantiateSqlite(imports?)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
+| `saveState(bytes?)` | `Promise<void>` | Rewrites the container around a new database |
+
+`window.daiSaveState(bytes)` is an alias for `saveState`.
 
 The engine is handed over as an **ArrayBuffer, never a URL**.
 `WebAssembly.instantiateStreaming` is defined in terms of a fetched `Response`,
@@ -88,6 +91,20 @@ and `connect-src 'none'` neutralizes fetch entirely — so streaming
 instantiation cannot work in a container by construction.
 `WebAssembly.instantiate(buffer)` compiles from memory and touches no network
 layer; `'wasm-unsafe-eval'` in the CSP is what permits it.
+
+### Self-perpetuating saves
+
+The archive carries `runtime/container.html`: this container's own shell, with
+its bootloader already inlined and only `<!--DAI_PAYLOAD-->` left open. A save
+rebuilds the file from *that* copy, never from the installed `dai-core`, so a
+document keeps the runtime semantics it was compiled with for its whole life
+instead of drifting toward whatever version is installed later.
+
+Saving runs in the top document, not the sandboxed frame — `showSaveFilePicker`
+needs a non-sandboxed context and its own user activation. The frame posts a
+request; the host writes the file, falling back to an `<a download>` when the
+File System Access API is unavailable (Safari, Firefox) or the picker is
+dismissed.
 
 ### How the app is executed
 
