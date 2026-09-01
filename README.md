@@ -51,6 +51,8 @@ root.
 | `outDir` | project root | Where the `.dai.html` is written |
 | `sqlitePath` | – | Seed SQLite document; absent ⇒ zero-byte entry |
 | `sqliteEntryName` | `document.sqlite` | Archive path for the document |
+| `sqliteWasmPath` | auto-detected | SQLite engine to embed; falls back to `@sqlite.org/sqlite-wasm` in node_modules |
+| `wasmEntryName` | `runtime/sqlite3.wasm` | Archive path for the engine |
 | `appEntryPrefix` | `app` | Archive prefix for the compiled app (spec `/app`) |
 | `compressionLevel` | `9` | fflate deflate level, 0–9 |
 | `templatePath` | bundled `template.html` | Alternative bootloader |
@@ -60,8 +62,49 @@ root.
 ```
 app/index.html
 app/assets/*
+runtime/sqlite3.wasm   (when an engine is found)
 document.sqlite
 ```
+
+## Runtime
+
+The container mounts the app in a sandboxed iframe via `srcdoc`. Service
+Workers are not used — they do not run on `file://`, which is how a container
+is normally opened.
+
+Inside the app, the bootloader exposes `window.dai`:
+
+| Member | Type | Notes |
+| --- | --- | --- |
+| `version` | `string` | Container format version |
+| `hasSqliteEngine` | `boolean` | Whether an engine was packaged |
+| `sqliteWasm` | `ArrayBuffer \| null` | The engine bytes |
+| `document` | `Uint8Array` | The seed SQLite document |
+| `instantiateSqlite(imports?)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
+
+The engine is handed over as an **ArrayBuffer, never a URL**.
+`WebAssembly.instantiateStreaming` is defined in terms of a fetched `Response`,
+and `connect-src 'none'` neutralizes fetch entirely — so streaming
+instantiation cannot work in a container by construction.
+`WebAssembly.instantiate(buffer)` compiles from memory and touches no network
+layer; `'wasm-unsafe-eval'` in the CSP is what permits it.
+
+### How the app is executed
+
+Blob URLs alone are not enough to run a Vite bundle from `file://`:
+
+- `new URL(dep, import.meta.url)` throws before it looks at `dep`, because
+  `blob:null/<uuid>` is an opaque path and cannot be parsed as a base.
+  `import.meta.url` is rewritten to a parseable placeholder.
+- Vite's chunk graph is cyclic — a lazy chunk imports shared code back from the
+  entry chunk — and a blob's content is frozen at creation, so no ordering of
+  blob creation satisfies both directions. Chunk references are rewritten to
+  placeholder URLs known ahead of time, and an import map in the iframe
+  redirects each placeholder to its blob.
+
+Relative specifiers cannot be mapped directly: they are resolved against the
+importing module's base URL *before* the import map is consulted, so a blob
+module throws first.
 
 ## v0.1 scope
 

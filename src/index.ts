@@ -27,6 +27,18 @@ export interface DaiPluginOptions {
    */
   sqliteEntryName?: string;
   /**
+   * Path to the `sqlite3.wasm` engine to embed. Relative paths resolve against
+   * the Vite project root. When omitted the plugin looks for
+   * `@sqlite.org/sqlite-wasm` in the project's node_modules; if that is absent
+   * too, no engine is packaged.
+   */
+  sqliteWasmPath?: string;
+  /**
+   * Path inside the archive for the WASM engine. Defaults to
+   * `runtime/sqlite3.wasm`.
+   */
+  wasmEntryName?: string;
+  /**
    * Directory prefix inside the archive for the compiled React app. Defaults to
    * `app`, matching the `/app` path the spec uses for document logic. Set to an
    * empty string to write the build output at the archive root.
@@ -46,6 +58,14 @@ const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
 const DEFAULT_SQLITE_ENTRY = "document.sqlite";
 const DEFAULT_APP_PREFIX = "app";
+const DEFAULT_WASM_ENTRY = "runtime/sqlite3.wasm";
+/** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
+const SQLITE_WASM_LOOKUP = [
+  // Layout since 3.53.
+  "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm",
+  // Earlier releases shipped the upstream jswasm tree verbatim.
+  "node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/sqlite3.wasm",
+];
 
 /** Directory holding the compiled plugin; `template.html` sits beside it. */
 declare const __dirname: string;
@@ -108,6 +128,18 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       }
       archive[sqliteEntry] = sqlite;
 
+      const wasmEntry = options.wasmEntryName ?? DEFAULT_WASM_ENTRY;
+      const wasm = findSqliteWasm(root, options.sqliteWasmPath);
+      if (wasm) {
+        archive[wasmEntry] = new Uint8Array(readFileSync(wasm));
+      } else if (options.sqliteWasmPath) {
+        this.warn(
+          `DAI: sqliteWasmPath "${options.sqliteWasmPath}" did not resolve to a ` +
+            `file (looked in ${resolve(root, options.sqliteWasmPath)}). ` +
+            `The container will ship without a SQLite engine.`,
+        );
+      }
+
       const zipped = zipSync(archive, { level: options.compressionLevel ?? 9 });
       const payload = Buffer.from(zipped).toString("base64");
 
@@ -158,7 +190,8 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
 
       config.logger.info(
         `\n[dai] ${relative(root, outFile) || outFile} — ` +
-          `${files.length + 1} entries, ` +
+          `${Object.keys(archive).length} entries, ` +
+          `${wasm ? "sqlite3.wasm embedded" : "no sqlite engine"}, ` +
           `${formatBytes(zipped.byteLength)} archive, ` +
           `${formatBytes(Buffer.byteLength(html))} container`,
       );
@@ -186,6 +219,18 @@ async function collectFiles(dir: string, base = dir): Promise<CollectedFile[]> {
   }
 
   return out;
+}
+
+/**
+ * Locates the SQLite engine binary: the configured path if given, otherwise the
+ * copy installed by @sqlite.org/sqlite-wasm. Returns undefined when neither
+ * exists — a container without an engine is valid, just not database-backed.
+ */
+function findSqliteWasm(root: string, configured?: string): string | undefined {
+  const candidates = configured
+    ? [resolve(root, configured)]
+    : SQLITE_WASM_LOOKUP.map((path) => resolve(root, path));
+  return candidates.find((path) => existsSync(path) && statSync(path).isFile());
 }
 
 function normalizePrefix(prefix: string): string {

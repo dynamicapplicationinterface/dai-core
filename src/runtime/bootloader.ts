@@ -16,6 +16,8 @@
 import { unzipSync } from "fflate";
 
 const APP_PREFIX = "app/";
+const WASM_ENTRY = "runtime/sqlite3.wasm";
+const SQLITE_ENTRY = "document.sqlite";
 const HANDSHAKE = "dai:ready";
 /** How long the iframe has to report back before we surface a diagnostic. */
 const HANDSHAKE_TIMEOUT_MS = 5000;
@@ -92,6 +94,57 @@ function rewriteHtml(html: string, urls: Map<string, string>): string {
       const url = urls.get(normalizePath(value));
       return url ? `${attr}="${url}"` : whole;
     },
+  );
+}
+
+/**
+ * Copies a view's bytes into a standalone ArrayBuffer.
+ *
+ * fflate hands back views onto a shared buffer, and `WebAssembly.instantiate`
+ * must be given the module bytes alone.
+ */
+function toArrayBuffer(view: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(view.byteLength);
+  copy.set(view);
+  return copy.buffer;
+}
+
+/**
+ * The bridge the application sees as `window.dai`.
+ *
+ * The engine is handed over as an ArrayBuffer rather than a URL because
+ * `connect-src 'none'` neutralizes fetch, and `WebAssembly.instantiateStreaming`
+ * is defined in terms of a fetched Response — it cannot work here at all.
+ * `WebAssembly.instantiate(buffer)` compiles from memory and touches no network
+ * layer. `'wasm-unsafe-eval'` in the container CSP is what permits it.
+ *
+ * The frame shares this document's origin (it must, for blob URLs to be
+ * reachable), so it can read the buffers straight off the parent instead of
+ * being handed a structured clone.
+ */
+function bridgeScript(): string {
+  return (
+    `<script>(function(){` +
+    `var host=parent.__DAI__||{};` +
+    // Re-create the buffers using the frame's own intrinsics. A buffer minted
+    // in the parent realm fails `instanceof ArrayBuffer` inside the frame, even
+    // though WebAssembly accepts it — apps that type-check would break.
+    `var adopt=function(src){if(!src)return null;` +
+    `var out=new ArrayBuffer(src.byteLength);` +
+    `new Uint8Array(out).set(new Uint8Array(src));return out};` +
+    `var wasm=adopt(host.sqliteWasm);` +
+    `var doc=host.sqlite?new Uint8Array(adopt(host.sqlite.buffer?` +
+    `host.sqlite.slice().buffer:host.sqlite)):new Uint8Array(0);` +
+    `window.dai={` +
+    `version:host.version,` +
+    `sqliteWasm:wasm,` +
+    `document:doc,` +
+    `hasSqliteEngine:!!wasm,` +
+    `instantiateSqlite:function(imports){` +
+    `if(!wasm)return Promise.reject(` +
+    `new Error("No sqlite3.wasm was packaged in this container."));` +
+    `return WebAssembly.instantiate(wasm,imports||{})}` +
+    `};})()<\/script>`
   );
 }
 
@@ -256,7 +309,7 @@ function boot(): void {
     `<script type="importmap">${JSON.stringify({ imports })}<\/script>`;
   const srcdoc = rewriteHtml(html, urls).replace(
     /<head(\s[^>]*)?>/i,
-    (head) => head + importMap + handshakeScript(),
+    (head) => head + importMap + bridgeScript() + handshakeScript(),
   );
 
   // Expose the decoded archive for the persistence layer (Phase 2 §3).
@@ -265,7 +318,9 @@ function boot(): void {
     files,
     assets,
     urls,
-    sqlite: files["document.sqlite"] ?? new Uint8Array(0),
+    sqlite: files[SQLITE_ENTRY] ?? new Uint8Array(0),
+    // ArrayBuffer, not a blob URL: see bridgeScript().
+    sqliteWasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
   };
 
   let ready = false;
