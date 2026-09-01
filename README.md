@@ -91,8 +91,15 @@ mismatched digest, otherwise content could be added freely.
 
 The bootloader verifies before it blobs, frames or executes anything: a
 verification that races the mount is worthless. On failure it reports what
-changed and stops, leaving no iframe at all. Set `verifyIntegrity: false` to
-record digests without enforcing them.
+changed and stops, leaving no iframe at all.
+
+Enforcement is decided by the **shell**, not the payload — the compiler writes
+`<meta name="dai-integrity" content="required">` into the container itself. A
+policy stored inside the archive it governs could be switched off by the same
+edit that alters the archive, so the manifest has no say: editing it to
+`verifyIntegrity: false` changes nothing, and a container whose manifest has
+been *removed* is refused rather than treated as unsealed. `verifyIntegrity:
+false` at compile time emits `content="advisory"` instead.
 
 A save reseals the manifest over the new payload and **keeps the document
 UUID** — a save is a new revision of the same document. Pass `documentUuid` to

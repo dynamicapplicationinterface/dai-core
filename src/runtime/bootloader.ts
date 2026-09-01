@@ -134,8 +134,19 @@ interface Manifest {
   manifestVersion: number;
   documentUuid: string;
   algorithm: string;
-  verifyIntegrity?: boolean;
   hashes: Record<string, string>;
+}
+
+/**
+ * Whether integrity is enforced, read from the shell rather than the payload.
+ *
+ * The manifest deliberately has no say here. A policy stored inside the archive
+ * it governs could be switched off by the same edit that alters the archive,
+ * which would make the whole check theatre.
+ */
+function integrityPolicy(): "required" | "advisory" {
+  const meta = document.querySelector('meta[name="dai-integrity"]');
+  return meta?.getAttribute("content") === "advisory" ? "advisory" : "required";
 }
 
 /** Lowercase hex SHA-256, matching the digests the compiler wrote. */
@@ -675,8 +686,10 @@ async function boot(): Promise<void> {
 
   // Integrity gate. Nothing is blobbed, framed or executed until the payload
   // matches its manifest: verification is worthless if it races the mount.
+  const policy = integrityPolicy();
   const manifestBytes = files[MANIFEST_ENTRY];
   let manifest: Manifest | null = null;
+
   if (manifestBytes) {
     try {
       manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as Manifest;
@@ -686,7 +699,16 @@ async function boot(): Promise<void> {
     }
   }
 
-  if (manifest && manifest.verifyIntegrity !== false) {
+  if (policy === "required") {
+    // A required policy with no manifest is a stripped seal, not an unsealed
+    // container: refuse rather than fall back to trusting the payload.
+    if (!manifest) {
+      setStatus(
+        "Integrity check failed — this container has been modified.",
+        `${MANIFEST_ENTRY} is missing, but this container requires it`,
+      );
+      return;
+    }
     if (manifest.algorithm !== "SHA-256") {
       setStatus(`Unsupported manifest algorithm: ${manifest.algorithm}.`);
       return;
@@ -727,7 +749,7 @@ async function boot(): Promise<void> {
   (window as unknown as Record<string, unknown>).__DAI__ = {
     version: "0.1.0",
     documentUuid: manifest?.documentUuid ?? null,
-    verified: !!manifest && manifest.verifyIntegrity !== false,
+    verified: policy === "required",
     files,
     assets,
     urls,

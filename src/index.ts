@@ -83,6 +83,7 @@ const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
  */
 const PAYLOAD_TAG_RE = /(<script[^>]*id="dai-payload"[^>]*>)<!--DAI_PAYLOAD-->/;
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
+const INTEGRITY_PLACEHOLDER = "<!--DAI_INTEGRITY-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
 const DEFAULT_SQLITE_ENTRY = "document.sqlite";
 const DEFAULT_APP_PREFIX = "app";
@@ -243,9 +244,13 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       // The shell is the finished container minus its payload: template, app
       // name and runtime resolved, `<!--DAI_PAYLOAD-->` still open. It goes into
       // the archive it will later carry, so saves regenerate the same shell.
+      // The policy lives in the shell, never in the payload it governs.
+      const integrityPolicy = options.verifyIntegrity === false ? "advisory" : "required";
       const shell = template
         .split(APP_NAME_PLACEHOLDER)
         .join(escapeHtml(appName))
+        .split(INTEGRITY_PLACEHOLDER)
+        .join(integrityPolicy)
         .replace(RUNTIME_PLACEHOLDER, () => runtime);
       const shellBytes = new TextEncoder().encode(shell);
       archive[CONTAINER_ENTRY] = shellBytes;
@@ -257,7 +262,8 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         appName,
         createdAt: new Date().toISOString(),
         algorithm: "SHA-256",
-        verifyIntegrity: options.verifyIntegrity !== false,
+        // Informational only: the shell decides whether this is enforced.
+        integrityPolicy,
         hashes,
       };
       archive[MANIFEST_ENTRY] = new TextEncoder().encode(

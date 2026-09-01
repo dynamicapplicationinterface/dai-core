@@ -439,3 +439,56 @@ test.describe("manifest and integrity", () => {
     expect(readBack.value).toBe("resealed");
   });
 });
+
+test.describe("integrity policy cannot be disabled from inside the payload", () => {
+  /** Rebuilds a container around a mutated archive. */
+  function repack(archive: Record<string, Uint8Array>): string {
+    const original = readFileSync(CONTAINER, "utf8");
+    return original.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+  }
+
+  function archiveOf(html: string): Record<string, Uint8Array> {
+    return unzipSync(
+      Buffer.from(html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+  }
+
+  test("the shell, not the manifest, decides", async ({ page }) => {
+    const html = readFileSync(CONTAINER, "utf8");
+    expect(html).toContain('<meta name="dai-integrity" content="required">');
+
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
+
+    // The old escape hatch: flip the flag, then swap an entry.
+    manifest.verifyIntegrity = false;
+    manifest.integrityPolicy = "advisory";
+    archive["runtime/manifest.json"] = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>swapped");
+
+    const path = test.info().outputPath("policy-flipped.dai.html");
+    writeFileSync(path, repack(archive), "utf8");
+    await page.goto(`file:///${path.replace(/\\/g, "/")}`);
+
+    await expect(page.locator("#dai-boot-status")).toContainText("Integrity check failed");
+    expect(await page.locator("#dai-app").count()).toBe(0);
+  });
+
+  test("a stripped manifest is refused, not treated as unsealed", async ({ page }) => {
+    const archive = archiveOf(readFileSync(CONTAINER, "utf8"));
+    delete archive["runtime/manifest.json"];
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>unsealed");
+
+    const path = test.info().outputPath("no-manifest.dai.html");
+    writeFileSync(path, repack(archive), "utf8");
+    await page.goto(`file:///${path.replace(/\\/g, "/")}`);
+
+    await expect(page.locator("#dai-boot-status")).toContainText("Integrity check failed");
+    await expect(page.locator("#dai-boot-detail")).toContainText("missing");
+    expect(await page.locator("#dai-app").count()).toBe(0);
+  });
+});

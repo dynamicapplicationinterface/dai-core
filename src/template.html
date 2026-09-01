@@ -6,6 +6,13 @@
   <title><!--DAI_APP_NAME--></title>
 
   <!--
+    Integrity policy, fixed at compile time and stored in the shell rather than
+    in the payload. runtime/manifest.json cannot switch verification off: a
+    manifest that could disable its own enforcement is not an integrity control.
+  -->
+  <meta name="dai-integrity" content="<!--DAI_INTEGRITY-->">
+
+  <!--
     Zero-Trust CSP (DAI v0.1, spec §1) as widened for the Phase 2 iframe runtime.
 
     `connect-src 'none'` is the air gap and is untouched: no fetch, XHR,
