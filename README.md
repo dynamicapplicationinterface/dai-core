@@ -1,4 +1,4 @@
-# vite-plugin-dai
+# dai-core
 
 Compiles a finished React/Vite build into a single air-gapped **DAI v0.1 Polyglot
 Container** (`[app-name].dai.html`).
@@ -9,7 +9,7 @@ Container** (`[app-name].dai.html`).
 // vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import dai from "vite-plugin-dai";
+import dai from "dai-core";
 
 export default defineConfig({
   plugins: [react(), dai({ appName: "my-doc", sqlitePath: "document.sqlite" })],

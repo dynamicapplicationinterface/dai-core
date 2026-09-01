@@ -1,8 +1,16 @@
 {
-  "name": "vite-plugin-dai",
+  "name": "dai-core",
   "version": "0.1.0",
   "description": "Vite plugin that compiles a built React/Vite app into a single air-gapped .dai.html polyglot container.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dynamicapplicationinterface/dai-core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dynamicapplicationinterface/dai-core/issues"
+  },
+  "homepage": "https://github.com/dynamicapplicationinterface/dai-core#readme",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
