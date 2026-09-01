@@ -97,7 +97,15 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       }
 
       const sqliteEntry = options.sqliteEntryName ?? DEFAULT_SQLITE_ENTRY;
-      archive[sqliteEntry] = readSqlite(root, options.sqlitePath);
+      const sqlite = readSqlite(root, options.sqlitePath);
+      if (options.sqlitePath && sqlite.byteLength === 0) {
+        this.warn(
+          `DAI: sqlitePath "${options.sqlitePath}" did not resolve to a file ` +
+            `(looked in ${resolve(root, options.sqlitePath)}). ` +
+            `Shipping an empty ${sqliteEntry} — check the path for a typo.`,
+        );
+      }
+      archive[sqliteEntry] = sqlite;
 
       const zipped = zipSync(archive, { level: options.compressionLevel ?? 9 });
       const payload = Buffer.from(zipped).toString("base64");
@@ -167,6 +175,11 @@ function normalizePrefix(prefix: string): string {
   return trimmed ? `${trimmed}/` : "";
 }
 
+/**
+ * Reads the seed SQLite document. Returns an empty array when no path was given
+ * (the correct silent default) or when the given path does not resolve — the
+ * caller warns in the latter case so a typo cannot ship a dead database.
+ */
 function readSqlite(root: string, sqlitePath?: string): Uint8Array {
   if (!sqlitePath) return new Uint8Array(0);
   const absolute = resolve(root, sqlitePath);
