@@ -24,10 +24,13 @@ const SAVE_REQUEST = "dai:save";
 
 /** How a save should be attempted. */
 type SaveMethod = "auto" | "picker" | "download";
-/** What a save actually did. `cancelled` means the picker was dismissed. */
+/**
+ * What a save actually did. `cancelled` means the dialog was dismissed;
+ * `unsupported` means the picker was demanded but this engine has none.
+ */
 interface SaveResult {
   saved: boolean;
-  method: "picker" | "download" | "cancelled";
+  method: "picker" | "download" | "cancelled" | "unsupported";
 }
 /**
  * Must match PAYLOAD_TAG_RE in the compiler. Anchored to the payload tag
@@ -180,6 +183,13 @@ async function writeContainer(
     }
   ).showSaveFilePicker;
 
+  // An explicit "picker" request must not silently become a download: Safari
+  // and Firefox have no picker at all, and the caller needs to know that rather
+  // than believe it overwrote the original file.
+  if (!picker && method === "picker") {
+    return { saved: false, method: "unsupported" };
+  }
+
   if (picker) {
     try {
       const handle = await picker({
@@ -200,7 +210,6 @@ async function writeContainer(
       // resolving silently: the caller cannot otherwise tell a save from a
       // cancel, and headless browsers auto-dismiss the picker.
       if ((error as { name?: string }).name === "AbortError") {
-        if (method === "picker") return { saved: false, method: "cancelled" };
         return { saved: false, method: "cancelled" };
       }
       // Anything else (Safari, Firefox, a blocked picker) falls through.

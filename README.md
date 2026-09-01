@@ -89,10 +89,13 @@ Inside the app, the bootloader exposes `window.dai`:
 | `instantiateSqlite(imports)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
 | `saveState(bytes?, opts?)` | `Promise<SaveResult>` | Rewrites the container around a new database |
 
-`SaveResult` is `{saved: boolean, method: "picker" | "download" | "cancelled"}`.
+`SaveResult` is
+`{saved: boolean, method: "picker" | "download" | "cancelled" | "unsupported"}`.
 A dismissed dialog resolves as `cancelled` rather than resolving silently, so a
 caller can tell a real write from a cancel. `opts.method` is `"auto"` (default),
-`"picker"`, or `"download"`.
+`"picker"`, or `"download"`; an explicit `"picker"` on an engine without the
+File System Access API reports `unsupported` instead of quietly downloading a
+copy the user may believe overwrote the original.
 
 `window.daiSaveState(bytes)` is an alias for `saveState`.
 
@@ -168,11 +171,12 @@ engine arrives as this frame's ArrayBuffer, SQLite boots and runs
 create/insert/select, and a save emits a valid container whose database reopens
 and reads back.
 
-Two notes on the save boundary. Headless Chromium *does* expose
-`showSaveFilePicker`, but auto-dismisses it with `AbortError`, so the tests pass
-`{method:"download"}` to exercise the `<a download>` path deterministically —
-the same path Safari and Firefox take. The picker's own success path can only be
-verified by hand, since it requires a real user gesture.
+The suite runs on Chromium, Firefox and WebKit. Save-boundary behaviour differs
+per engine — Chromium exposes `showSaveFilePicker` but auto-dismisses it
+headlessly, while WebKit and Firefox have no picker at all — so the picker's
+success, cancellation and unsupported paths are driven by stand-ins injected
+with `page.addInitScript()`, making them deterministic everywhere. The
+`<a download>` path is exercised for real on every engine.
 
 ## v0.1 scope
 

@@ -171,18 +171,108 @@ test.describe("DAI container", () => {
     );
   });
 
-  test("reports a dismissed save dialog instead of resolving silently", async ({ page }) => {
+  test("writes through showSaveFilePicker when the picker succeeds", async ({ page }) => {
+    // The real picker needs a user gesture no automation can supply, so the
+    // success path is only reachable with a stand-in. This asserts the host
+    // actually drives createWritable/write/close and reports method:"picker".
+    await page.addInitScript(() => {
+      const win = window as unknown as Record<string, unknown>;
+      win.__pickerCalls = [];
+      win.showSaveFilePicker = async (options: unknown) => {
+        (win.__pickerCalls as unknown[]).push(options);
+        return {
+          createWritable: async () => ({
+            write: async (data: Blob) => {
+              win.__savedText = await data.text();
+              win.__savedType = data.type;
+            },
+            close: async () => {
+              win.__closed = true;
+            },
+          }),
+        };
+      };
+    });
+
     await page.goto(CONTAINER_URL);
     const frame = await appFrame(page);
 
-    // Headless Chromium exposes showSaveFilePicker but auto-dismisses it with
-    // AbortError. The caller must be able to tell that apart from a real save.
+    const result = await frame.evaluate(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      const db = await dai.openDatabase();
+      db.exec("CREATE TABLE picked(note TEXT)");
+      db.exec({ sql: "INSERT INTO picked(note) VALUES(?)", bind: ["via-picker"] });
+      return dai.saveDatabase(db, { method: "picker" });
+    });
+
+    expect(result).toEqual({ saved: true, method: "picker" });
+
+    const host = await page.evaluate(() => {
+      const win = window as unknown as Record<string, unknown>;
+      return {
+        calls: (win.__pickerCalls as unknown[]).length,
+        suggested: ((win.__pickerCalls as { suggestedName: string }[])[0] ?? {}).suggestedName,
+        closed: win.__closed === true,
+        type: win.__savedType,
+        text: win.__savedText as string,
+      };
+    });
+
+    expect(host.calls).toBe(1);
+    expect(host.suggested).toBe("fixture.dai.html");
+    expect(host.closed).toBe(true);
+    expect(host.type).toBe("text/html");
+
+    // The bytes handed to the writable must be a working container.
+    const payload = host.text.match(/id="dai-payload">([\s\S]*?)<\/script>/)?.[1]?.trim();
+    expect(payload).toBeTruthy();
+    const archive = unzipSync(Buffer.from(payload!, "base64"));
+    const database = Buffer.from(archive["document.sqlite"]!);
+    expect(database.subarray(0, 15).toString("latin1")).toBe("SQLite format 3");
+    expect(database.includes(Buffer.from("picked"))).toBe(true);
+    expect(archive["runtime/container.html"]).toBeTruthy();
+  });
+
+  test("reports a dismissed save dialog instead of resolving silently", async ({ page }) => {
+    // Injected rather than relying on the engine: Chromium auto-dismisses its
+    // picker while WebKit and Firefox have none, so only a stand-in makes the
+    // cancellation path deterministic everywhere.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).showSaveFilePicker = async () => {
+        const error = new Error("The user aborted a request.");
+        error.name = "AbortError";
+        throw error;
+      };
+    });
+
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
     const result = await frame.evaluate(() =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).dai.saveState(new Uint8Array([1, 2, 3]), { method: "picker" }),
     );
 
     expect(result).toEqual({ saved: false, method: "cancelled" });
+  });
+
+  test("reports an unsupported picker rather than silently downloading", async ({ page }) => {
+    // Safari and Firefox have no File System Access API. Demanding the picker
+    // must say so, not quietly emit a copy the user thinks overwrote the file.
+    await page.addInitScript(() => {
+      delete (window as unknown as Record<string, unknown>).showSaveFilePicker;
+    });
+
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const result = await frame.evaluate(() =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).dai.saveState(new Uint8Array([1, 2, 3]), { method: "picker" }),
+    );
+
+    expect(result).toEqual({ saved: false, method: "unsupported" });
   });
 
   test("a saved container reopens and reads back its own data", async ({ page }, testInfo) => {
