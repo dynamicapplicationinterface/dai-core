@@ -3,6 +3,28 @@
 Compiles a finished React/Vite build into a single air-gapped **DAI v0.1 Polyglot
 Container** (`[app-name].dai.html`).
 
+## Installation
+
+> **Pre-release.** `dai-core` is not published to npm. `npm install dai-core`
+> will not resolve — install it from Git or from a local checkout.
+
+From Git:
+
+```bash
+npm install -D github:dynamicapplicationinterface/dai-core
+```
+
+From a local checkout (useful while developing the plugin itself):
+
+```bash
+git clone https://github.com/dynamicapplicationinterface/dai-core.git
+cd dai-core && npm install && npm run build
+cd ../your-app && npm install -D ../dai-core
+```
+
+The package ships no prebuilt `dist/`, so a Git or local install must be built
+once (`npm run build`) before a consuming app can resolve it.
+
 ## Usage
 
 ```ts
@@ -12,6 +34,8 @@ import react from "@vitejs/plugin-react";
 import dai from "dai-core";
 
 export default defineConfig({
+  // Required: the container runs from file://, so asset URLs must be relative.
+  base: "./",
   plugins: [react(), dai({ appName: "my-doc", sqlitePath: "document.sqlite" })],
 });
 ```
