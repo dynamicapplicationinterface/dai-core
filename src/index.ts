@@ -42,6 +42,7 @@ export interface DaiPluginOptions {
 }
 
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
+const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
 const DEFAULT_SQLITE_ENTRY = "document.sqlite";
 const DEFAULT_APP_PREFIX = "app";
@@ -119,7 +120,23 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         return;
       }
 
+      const runtimePath = resolve(__dirname, "dai-runtime.js");
+      if (!existsSync(runtimePath)) {
+        this.error(
+          `DAI: bootloader runtime not found at ${runtimePath}. Run \`npm run build\` in dai-core.`,
+        );
+        return;
+      }
+      const runtime = readFileSync(runtimePath, "utf8");
+
       let html = readFileSync(templatePath, "utf8");
+
+      if (!html.includes(RUNTIME_PLACEHOLDER)) {
+        this.error(
+          `DAI: template ${templatePath} has no ${RUNTIME_PLACEHOLDER} placeholder.`,
+        );
+        return;
+      }
 
       if (!html.includes(PAYLOAD_PLACEHOLDER)) {
         this.error(
@@ -132,7 +149,8 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       html = html
         .split(APP_NAME_PLACEHOLDER)
         .join(escapeHtml(appName))
-        .replace(PAYLOAD_PLACEHOLDER, payload);
+        .replace(RUNTIME_PLACEHOLDER, () => runtime)
+        .replace(PAYLOAD_PLACEHOLDER, () => payload);
 
       const outDir = options.outDir ? resolve(root, options.outDir) : root;
       const outFile = join(outDir, `${sanitizeFileName(appName)}.dai.html`);

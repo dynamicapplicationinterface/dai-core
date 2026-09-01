@@ -6,17 +6,24 @@
   <title><!--DAI_APP_NAME--></title>
 
   <!--
-    Hardcoded Zero-Trust CSP (DAI v0.1, §1).
-    `connect-src 'none'` is the air gap: no fetch, XHR, WebSocket, EventSource
-    or beacon can leave this document. `wasm-unsafe-eval` exists solely to let
-    the bundled sqlite3.wasm instantiate. Do not widen this policy — v0.1 has no
-    networked mode, and any added origin or scheme voids the guarantee.
+    Zero-Trust CSP (DAI v0.1, spec §1) as widened for the Phase 2 iframe runtime.
+
+    `connect-src 'none'` is the air gap and is untouched: no fetch, XHR,
+    WebSocket, EventSource or beacon can leave this document. Every other
+    directive names only `blob:` — origin-local object URLs minted from the
+    embedded payload, which cannot reach the network — plus the inline/wasm
+    allowances the React bundle and sqlite3.wasm require.
+
+    `blob:` on script-src/style-src and `frame-src 'self' blob:` are additions
+    over the v0.1 spec text: with `default-src 'none'` the bootloader could
+    neither frame the app nor load a single packaged asset. Do not add any
+    scheme that can reach a remote host.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
 
   <style>
     :root { color-scheme: light dark; }
-    html, body { margin: 0; height: 100%; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
     body {
       font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       background: Canvas;
@@ -30,7 +37,18 @@
       padding: 2rem;
       text-align: center;
     }
-    #boot-ui code { opacity: 0.7; }
+    #boot-ui code { opacity: 0.7; word-break: break-word; }
+    #dai-app {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: Canvas;
+    }
+    /* The mounted application covers the boot UI only once it has reported in. */
+    body:not(.dai-mounted) #dai-app { visibility: hidden; }
+    body.dai-mounted #boot-ui { display: none; }
   </style>
 </head>
 <body>
@@ -42,48 +60,13 @@
     </div>
   </div>
 
-  <!-- The Viewer/Bootloader Engine -->
-  <script type="text/javascript" id="dai-bootloader">
-    // DAI v0.1 bootloader — payload discovery only.
-    //   1. Decodes the payload                                   [implemented]
-    //   2. Registers a local Service Worker to intercept requests [v0.2]
-    //   3. Mounts the React App and WASM SQLite instance          [v0.2]
-    (function () {
-      "use strict";
-
-      var status = document.getElementById("dai-boot-status");
-      var detail = document.getElementById("dai-boot-detail");
-      document.getElementById("dai-app-name").textContent = document.title;
-
-      var node = document.getElementById("dai-payload");
-      var b64 = node && node.textContent ? node.textContent.trim() : "";
-
-      if (!b64) {
-        status.textContent = "Container is sealed but empty — no DAI payload found.";
-        return;
-      }
-
-      var bin = atob(b64);
-      var bytes = new Uint8Array(bin.length);
-      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-
-      // Local ZIP file-header magic: "PK\x03\x04".
-      var valid =
-        bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
-
-      window.__DAI__ = { version: "0.1.0", payload: bytes, valid: valid };
-
-      status.textContent = valid
-        ? "Payload verified. Runtime is not installed in this build."
-        : "Payload is not a valid ZIP archive.";
-      detail.textContent = bytes.length.toLocaleString() + " bytes";
-    })();
-  </script>
+  <!-- The Viewer/Bootloader Engine (bundled from src/runtime/bootloader.ts). -->
+  <script type="text/javascript" id="dai-bootloader"><!--DAI_RUNTIME--></script>
 
   <!--
     The Cryptographically Sealed Payload: Base64 of a ZIP archive containing the
-    compiled React app and document.sqlite. Never executed (unknown MIME type);
-    the bootloader reads it as text.
+    compiled React app under app/ and document.sqlite. Never executed (unknown
+    MIME type); the bootloader reads it as text.
   -->
   <script type="application/octet-stream" id="dai-payload"><!--DAI_PAYLOAD--></script>
 </body>
