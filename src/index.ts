@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
@@ -59,6 +60,17 @@ export interface DaiPluginOptions {
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   /** Path to an alternative bootloader template. Defaults to the bundled one. */
   templatePath?: string;
+  /**
+   * Document identity. Minted fresh on every compile unless given. Pass the
+   * existing UUID to recompile a document in place; per spec §1 a changed
+   * application is a new document and should get a new one.
+   */
+  documentUuid?: string;
+  /**
+   * Whether the bootloader verifies entry digests before mounting. Defaults to
+   * true. Turning this off ships a manifest that is recorded but not enforced.
+   */
+  verifyIntegrity?: boolean;
 }
 
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
@@ -81,6 +93,9 @@ const DEFAULT_WASM_ENTRY = "runtime/sqlite3.wasm";
  * document keeps the runtime semantics it was compiled with for its whole life.
  */
 const CONTAINER_ENTRY = "runtime/container.html";
+const MANIFEST_ENTRY = "runtime/manifest.json";
+/** Bumped when the manifest's shape changes. */
+const MANIFEST_VERSION = 1;
 const DEFAULT_GLUE_ENTRY = "runtime/sqlite3.mjs";
 /** Where @sqlite.org/sqlite-wasm keeps the Emscripten glue. */
 const SQLITE_GLUE_LOOKUP = [
@@ -201,15 +216,6 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         );
       }
 
-      // The shell is the finished container minus its payload: template, app
-      // name and runtime resolved, `<!--DAI_PAYLOAD-->` still open. It goes into
-      // the archive it will later carry, so saves regenerate the same shell.
-      const shell = template
-        .split(APP_NAME_PLACEHOLDER)
-        .join(escapeHtml(appName))
-        .replace(RUNTIME_PLACEHOLDER, () => runtime);
-      archive[CONTAINER_ENTRY] = new TextEncoder().encode(shell);
-
       const glueEntry = options.glueEntryName ?? DEFAULT_GLUE_ENTRY;
       const glue = wasm
         ? findFirst(root, options.sqliteGluePath, SQLITE_GLUE_LOOKUP)
@@ -225,6 +231,39 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         );
       }
 
+      // The manifest seals every other entry. It is written before the shell so
+      // the shell's own digest can cover it, and excludes itself by
+      // construction — a digest cannot cover the field that holds it.
+      const documentUuid = options.documentUuid ?? randomUUID();
+      const hashes: Record<string, string> = {};
+      for (const [name, bytes] of Object.entries(archive)) {
+        hashes[name] = sha256(bytes as Uint8Array);
+      }
+
+      // The shell is the finished container minus its payload: template, app
+      // name and runtime resolved, `<!--DAI_PAYLOAD-->` still open. It goes into
+      // the archive it will later carry, so saves regenerate the same shell.
+      const shell = template
+        .split(APP_NAME_PLACEHOLDER)
+        .join(escapeHtml(appName))
+        .replace(RUNTIME_PLACEHOLDER, () => runtime);
+      const shellBytes = new TextEncoder().encode(shell);
+      archive[CONTAINER_ENTRY] = shellBytes;
+      hashes[CONTAINER_ENTRY] = sha256(shellBytes);
+
+      const manifest = {
+        manifestVersion: MANIFEST_VERSION,
+        documentUuid,
+        appName,
+        createdAt: new Date().toISOString(),
+        algorithm: "SHA-256",
+        verifyIntegrity: options.verifyIntegrity !== false,
+        hashes,
+      };
+      archive[MANIFEST_ENTRY] = new TextEncoder().encode(
+        JSON.stringify(manifest, null, 2) + "\n",
+      );
+
       const zipped = zipSync(archive, { level: options.compressionLevel ?? 9 });
       const payload = Buffer.from(zipped).toString("base64");
 
@@ -239,6 +278,7 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         `\n[dai] ${relative(root, outFile) || outFile} — ` +
           `${Object.keys(archive).length} entries, ` +
           `${wasm ? (glue ? "sqlite3 + glue embedded" : "sqlite3.wasm only") : "no sqlite engine"}, ` +
+          `uuid ${documentUuid.slice(0, 8)}, ` +
           `${formatBytes(zipped.byteLength)} archive, ` +
           `${formatBytes(Buffer.byteLength(html))} container`,
       );
@@ -287,6 +327,11 @@ function findFirst(
     ? [resolve(root, configured)]
     : fallbacks.map((path) => resolve(root, path));
   return candidates.find((path) => existsSync(path) && statSync(path).isFile());
+}
+
+/** Lowercase hex SHA-256 of the uncompressed entry bytes. */
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function normalizePrefix(prefix: string): string {

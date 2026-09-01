@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type ConsoleMessage, type Frame, type Page } from "@playwright/test";
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTAINER = resolve(here, "fixture/fixture.dai.html");
@@ -310,5 +311,131 @@ test.describe("DAI container", () => {
 
     expect(readBack.seeded).toBeGreaterThan(0);
     expect(readBack.value).toBe("survived");
+  });
+});
+
+test.describe("manifest and integrity", () => {
+  test("seals every entry and mints a document UUID", async () => {
+    const archive = unzipSync(
+      Buffer.from(
+        readFileSync(CONTAINER, "utf8").match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(),
+        "base64",
+      ),
+    );
+
+    const manifest = JSON.parse(
+      Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"),
+    );
+
+    expect(manifest.manifestVersion).toBe(1);
+    expect(manifest.algorithm).toBe("SHA-256");
+    expect(manifest.documentUuid).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+
+    // Every entry but the manifest is covered, and each digest is correct.
+    const covered = Object.keys(archive).filter((n) => n !== "runtime/manifest.json").sort();
+    expect(Object.keys(manifest.hashes).sort()).toEqual(covered);
+    expect(manifest.hashes["runtime/manifest.json"]).toBeUndefined();
+
+    for (const name of covered) {
+      const digest = createHash("sha256").update(Buffer.from(archive[name]!)).digest("hex");
+      expect(manifest.hashes[name], `digest for ${name}`).toBe(digest);
+    }
+  });
+
+  test("exposes the UUID to the application", async ({ page }) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const identity = await frame.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      return { uuid: dai.documentUuid as string, verified: dai.verified as boolean };
+    });
+
+    expect(identity.uuid).toMatch(/^[0-9a-f]{8}-/);
+    expect(identity.verified).toBe(true);
+  });
+
+  test("refuses to mount a tampered payload", async ({ page }, testInfo) => {
+    const original = readFileSync(CONTAINER, "utf8");
+    const payload = original.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim();
+    const archive = unzipSync(Buffer.from(payload, "base64"));
+
+    // Swap the entry HTML for something the manifest never saw.
+    archive["app/index.html"] = new TextEncoder().encode(
+      "<!doctype html><body><script>window.__pwned = true</script>",
+    );
+    const tampered = original.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+
+    const path = testInfo.outputPath("tampered.dai.html");
+    writeFileSync(path, tampered, "utf8");
+    await page.goto(`file:///${path.replace(/\\/g, "/")}`);
+
+    await expect(page.locator("#dai-boot-status")).toContainText("Integrity check failed");
+    await expect(page.locator("#dai-boot-detail")).toContainText("app/index.html");
+
+    // Fail fast means fail before mounting: no frame, no execution.
+    expect(await page.locator("#dai-app").count()).toBe(0);
+    await expect(page.locator("body")).not.toHaveClass(/dai-mounted/);
+  });
+
+  test("a save reseals the manifest and keeps the document UUID", async ({ page }, testInfo) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const before = await frame.evaluate(() => (window as any).dai.documentUuid as string);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      frame.evaluate(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const dai = (window as any).dai;
+        const db = await dai.openDatabase();
+        db.exec("CREATE TABLE sealed(v TEXT)");
+        db.exec({ sql: "INSERT INTO sealed(v) VALUES(?)", bind: ["resealed"] });
+        return dai.saveDatabase(db, { method: "download" });
+      }),
+    ]);
+
+    const savedPath = testInfo.outputPath("resealed.dai.html");
+    await download.saveAs(savedPath);
+
+    // The saved manifest must describe the saved payload, digest for digest.
+    const saved = readFileSync(savedPath, "utf8");
+    const archive = unzipSync(
+      Buffer.from(saved.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+    const manifest = JSON.parse(
+      Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"),
+    );
+
+    expect(manifest.documentUuid).toBe(before);
+    expect(manifest.savedAt).toBeTruthy();
+    for (const name of Object.keys(archive).filter((n) => n !== "runtime/manifest.json")) {
+      const digest = createHash("sha256").update(Buffer.from(archive[name]!)).digest("hex");
+      expect(manifest.hashes[name], `digest for ${name}`).toBe(digest);
+    }
+
+    // And it must still open: a stale seal would refuse to mount.
+    await page.goto(`file:///${savedPath.replace(/\\/g, "/")}`);
+    const reopened = await appFrame(page);
+    const readBack = await reopened.evaluate(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      const db = await dai.openDatabase();
+      return {
+        uuid: dai.documentUuid as string,
+        value: db.selectValue("SELECT v FROM sealed") as string,
+      };
+    });
+
+    expect(readBack.uuid).toBe(before);
+    expect(readBack.value).toBe("resealed");
   });
 });

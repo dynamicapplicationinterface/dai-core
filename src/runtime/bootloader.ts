@@ -20,6 +20,7 @@ const WASM_ENTRY = "runtime/sqlite3.wasm";
 const SQLITE_ENTRY = "document.sqlite";
 const CONTAINER_ENTRY = "runtime/container.html";
 const GLUE_ENTRY = "runtime/sqlite3.mjs";
+const MANIFEST_ENTRY = "runtime/manifest.json";
 const SAVE_REQUEST = "dai:save";
 
 /** How a save should be attempted. */
@@ -129,6 +130,58 @@ function toArrayBuffer(view: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
+interface Manifest {
+  manifestVersion: number;
+  documentUuid: string;
+  algorithm: string;
+  verifyIntegrity?: boolean;
+  hashes: Record<string, string>;
+}
+
+/** Lowercase hex SHA-256, matching the digests the compiler wrote. */
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const view = new Uint8Array(bytes.byteLength);
+  view.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", view);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Verifies every payload entry against the manifest.
+ *
+ * The manifest cannot cover itself — a digest cannot include the field holding
+ * it — so it is excluded and every other entry is checked. An entry present in
+ * the payload but absent from the manifest counts as tampering just as much as
+ * a mismatched digest: otherwise anything could be added freely.
+ */
+async function verifyPayload(
+  files: Record<string, Uint8Array>,
+  manifest: Manifest,
+): Promise<string[]> {
+  const problems: string[] = [];
+
+  for (const [name, bytes] of Object.entries(files)) {
+    if (name === MANIFEST_ENTRY) continue;
+    const expected = manifest.hashes[name];
+    if (!expected) {
+      problems.push(`${name} is not listed in the manifest`);
+      continue;
+    }
+    const actual = await sha256(bytes);
+    if (actual !== expected) {
+      problems.push(`${name} does not match its digest`);
+    }
+  }
+
+  for (const name of Object.keys(manifest.hashes)) {
+    if (!(name in files)) problems.push(`${name} is missing from the payload`);
+  }
+
+  return problems;
+}
+
 /** btoa() over a large binary string blows the argument limit; chunk it. */
 function toBase64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -165,6 +218,26 @@ async function writeContainer(
   }
 
   const next: Record<string, Uint8Array> = { ...files, [SQLITE_ENTRY]: sqlite };
+
+  // Reseal. The database just changed, so the manifest's digest for it is now
+  // stale — leaving it would produce a file that refuses to open. The document
+  // UUID is deliberately carried over: a save is a new revision of the same
+  // document, not a new document.
+  const previous = files[MANIFEST_ENTRY];
+  if (previous) {
+    const manifest = JSON.parse(new TextDecoder().decode(previous)) as Manifest &
+      Record<string, unknown>;
+    const hashes: Record<string, string> = {};
+    for (const [name, bytes] of Object.entries(next)) {
+      if (name === MANIFEST_ENTRY) continue;
+      hashes[name] = await sha256(bytes);
+    }
+    next[MANIFEST_ENTRY] = new TextEncoder().encode(
+      JSON.stringify({ ...manifest, savedAt: new Date().toISOString(), hashes }, null, 2) +
+        "\n",
+    );
+  }
+
   const payload = toBase64(zipSync(next, { level: 9 }));
   const shell = new TextDecoder().decode(shellBytes);
   const html = shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
@@ -410,6 +483,9 @@ function bridgeMain(): void {
 
   const api: Any = {
     version: host.version,
+    // Document identity, from the sealed manifest.
+    documentUuid: host.documentUuid,
+    verified: host.verified,
     sqliteWasm: wasm,
     document: seed,
     hasSqliteEngine: !!wasm,
@@ -573,7 +649,7 @@ function resolveAssets(assets: Map<string, Uint8Array>): ResolvedAssets {
   return { urls, imports };
 }
 
-function boot(): void {
+async function boot(): Promise<void> {
   const nameEl = document.getElementById("dai-app-name");
   if (nameEl) nameEl.textContent = document.title;
 
@@ -595,6 +671,34 @@ function boot(): void {
   } catch (error) {
     setStatus("Payload could not be decoded.", String(error));
     return;
+  }
+
+  // Integrity gate. Nothing is blobbed, framed or executed until the payload
+  // matches its manifest: verification is worthless if it races the mount.
+  const manifestBytes = files[MANIFEST_ENTRY];
+  let manifest: Manifest | null = null;
+  if (manifestBytes) {
+    try {
+      manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as Manifest;
+    } catch (error) {
+      setStatus("Container manifest is unreadable.", String(error));
+      return;
+    }
+  }
+
+  if (manifest && manifest.verifyIntegrity !== false) {
+    if (manifest.algorithm !== "SHA-256") {
+      setStatus(`Unsupported manifest algorithm: ${manifest.algorithm}.`);
+      return;
+    }
+    const problems = await verifyPayload(files, manifest);
+    if (problems.length > 0) {
+      setStatus(
+        "Integrity check failed — this container has been modified.",
+        problems.slice(0, 4).join("; "),
+      );
+      return;
+    }
   }
 
   const assets = new Map<string, Uint8Array>();
@@ -622,6 +726,8 @@ function boot(): void {
   // Expose the decoded archive for the persistence layer (Phase 2 §3).
   (window as unknown as Record<string, unknown>).__DAI__ = {
     version: "0.1.0",
+    documentUuid: manifest?.documentUuid ?? null,
+    verified: !!manifest && manifest.verifyIntegrity !== false,
     files,
     assets,
     urls,
@@ -686,8 +792,14 @@ function boot(): void {
   }, HANDSHAKE_TIMEOUT_MS);
 }
 
+const start = (): void => {
+  void boot().catch((error: unknown) => {
+    setStatus("The container failed to start.", String(error));
+  });
+};
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", boot);
+  document.addEventListener("DOMContentLoaded", start);
 } else {
-  boot();
+  start();
 }

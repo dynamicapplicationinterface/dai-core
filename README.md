@@ -62,9 +62,42 @@ root.
 ```
 app/index.html
 app/assets/*
-runtime/sqlite3.wasm   (when an engine is found)
+runtime/sqlite3.wasm     (when an engine is found)
+runtime/sqlite3.mjs      (the Emscripten glue)
+runtime/container.html   (this container's own shell)
+runtime/manifest.json    (identity + digests)
 document.sqlite
 ```
+
+## Integrity and identity
+
+`runtime/manifest.json` carries a v4 `documentUuid` minted at compile time and a
+SHA-256 digest of every other entry:
+
+```json
+{
+  "manifestVersion": 1,
+  "documentUuid": "ff251284-e266-4a8f-802c-65ba3aa28337",
+  "algorithm": "SHA-256",
+  "verifyIntegrity": true,
+  "hashes": { "app/index.html": "…", "runtime/sqlite3.wasm": "…" }
+}
+```
+
+The manifest cannot cover itself — a digest cannot include the field holding it
+— so it is excluded and everything else is checked. An entry present in the
+payload but absent from the manifest counts as tampering just as much as a
+mismatched digest, otherwise content could be added freely.
+
+The bootloader verifies before it blobs, frames or executes anything: a
+verification that races the mount is worthless. On failure it reports what
+changed and stops, leaving no iframe at all. Set `verifyIntegrity: false` to
+record digests without enforcing them.
+
+A save reseals the manifest over the new payload and **keeps the document
+UUID** — a save is a new revision of the same document. Pass `documentUuid` to
+recompile in place; per spec §1 a changed application is a new document and
+should get a new UUID.
 
 ## Runtime
 
