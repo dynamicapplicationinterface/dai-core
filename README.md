@@ -80,10 +80,16 @@ Inside the app, the bootloader exposes `window.dai`:
 | `hasSqliteEngine` | `boolean` | Whether an engine was packaged |
 | `sqliteWasm` | `ArrayBuffer \| null` | The engine bytes |
 | `document` | `Uint8Array` | The seed SQLite document |
-| `instantiateSqlite(imports?)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
+| `compileSqlite()` | `Promise<WebAssembly.Module>` | Validates the engine; needs no imports |
+| `instantiateSqlite(imports)` | `Promise<WebAssemblyInstantiatedSource>` | Compiles from memory |
 | `saveState(bytes?)` | `Promise<void>` | Rewrites the container around a new database |
 
 `window.daiSaveState(bytes)` is an alias for `saveState`.
+
+`instantiateSqlite` requires an import object: the engine declares ~36 imports
+(`env`, `wasi_snapshot_preview1`). Satisfying them is the Emscripten glue's job,
+not the bootloader's — call `compileSqlite()` if you only want to verify the
+engine is intact.
 
 The engine is handed over as an **ArrayBuffer, never a URL**.
 `WebAssembly.instantiateStreaming` is defined in terms of a fetched `Response`,

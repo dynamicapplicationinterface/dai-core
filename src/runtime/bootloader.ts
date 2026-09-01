@@ -148,10 +148,23 @@ function bridgeScript(): string {
     `sqliteWasm:wasm,` +
     `document:doc,` +
     `hasSqliteEngine:!!wasm,` +
+    // Compiling needs no imports, so this validates the engine on its own.
+    `compileSqlite:function(){` +
+    `if(!wasm)return Promise.reject(` +
+    `new Error("No sqlite3.wasm was packaged in this container."));` +
+    `return WebAssembly.compile(wasm)},` +
     `instantiateSqlite:function(imports){` +
     `if(!wasm)return Promise.reject(` +
     `new Error("No sqlite3.wasm was packaged in this container."));` +
-    `return WebAssembly.instantiate(wasm,imports||{})},` +
+    // The engine declares ~36 imports (env, wasi_snapshot_preview1). Passing
+    // none fails on import #0, which reads like a broken buffer but is not:
+    // satisfying them is the Emscripten glue's job, not the bootloader's.
+    `if(!imports){return WebAssembly.compile(wasm).then(function(m){` +
+    `var need=WebAssembly.Module.imports(m);` +
+    `throw new Error("sqlite3.wasm needs "+need.length+" imports (first: "+` +
+    `need[0].module+"."+need[0].name+"). Pass an import object, or use " +` +
+    `"compileSqlite() to validate the engine.")})}` +
+    `return WebAssembly.instantiate(wasm,imports)},` +
     // Saving happens in the top document: showSaveFilePicker needs a
     // non-sandboxed context. The frame asks; the host writes.
     `saveState:function(bytes){var id=Math.random().toString(36).slice(2);` +
