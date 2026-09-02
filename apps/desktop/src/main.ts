@@ -151,12 +151,12 @@ const htmlSourceInput = document.getElementById("html-source-input") as HTMLText
 const mintStatus = document.getElementById("mint-status") as HTMLElement;
 
 function showModal(): void {
-  createModal.style.display = "block";
+  createModal.classList.add("open");
   mintStatus.textContent = "";
 }
 
 function hideModal(): void {
-  createModal.style.display = "none";
+  createModal.classList.remove("open");
 }
 
 createBtn.addEventListener("click", showModal);
