@@ -13,6 +13,13 @@
   <meta name="dai-integrity" content="<!--DAI_INTEGRITY-->">
 
   <!--
+    Publisher's public key (base64 SPKI), empty when the container is unsigned.
+    It sits in the shell because the signature covers the shell's own digest: a
+    key inside the signed set could not be written before signing.
+  -->
+  <meta name="dai-public-key" content="<!--DAI_PUBLIC_KEY-->">
+
+  <!--
     Zero-Trust CSP (DAI v0.1, spec §1) as widened for the Phase 2 iframe runtime.
 
     `connect-src 'none'` is the air gap and is untouched: no fetch, XHR,

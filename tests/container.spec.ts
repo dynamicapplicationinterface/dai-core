@@ -492,3 +492,138 @@ test.describe("integrity policy cannot be disabled from inside the payload", () 
     expect(await page.locator("#dai-app").count()).toBe(0);
   });
 });
+
+test.describe("publisher signature", () => {
+  function archiveOf(html: string): Record<string, Uint8Array> {
+    return unzipSync(
+      Buffer.from(html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+  }
+
+  function repack(html: string, archive: Record<string, Uint8Array>): string {
+    return html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+  }
+
+  test("signs the app and runtime but not the database", async () => {
+    const archive = archiveOf(readFileSync(CONTAINER, "utf8"));
+    const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
+
+    expect(manifest.signatureAlgorithm).toBe("ECDSA-P256-SHA256");
+    expect(manifest.signature).toMatch(/^[A-Za-z0-9+/=]+$/);
+    expect(manifest.publicKeyFingerprint).toMatch(/^[0-9a-f]{16}$/);
+
+    // The mutable database must stay outside the signed set, or no save could
+    // ever produce a container that still verifies.
+    expect(manifest.signedEntries["document.sqlite"]).toBeUndefined();
+    expect(manifest.signedEntries["app/index.html"]).toBe(manifest.hashes["app/index.html"]);
+    expect(manifest.signedEntries["runtime/sqlite3.wasm"]).toBe(
+      manifest.hashes["runtime/sqlite3.wasm"],
+    );
+    expect(manifest.signedEntries["runtime/container.html"]).toBeTruthy();
+  });
+
+  test("reports a valid signature to the application", async ({ page }) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const identity = await frame.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      return {
+        signature: dai.signature as string,
+        fingerprint: dai.publicKeyFingerprint as string,
+      };
+    });
+
+    expect(identity.signature).toBe("valid");
+    expect(identity.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test("refuses a payload re-sealed by someone without the private key", async ({ page }, testInfo) => {
+    const html = readFileSync(CONTAINER, "utf8");
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
+
+    // The attacker swaps the app and recomputes every digest correctly — which
+    // defeats the integrity check on its own. Only the signature catches this.
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>forged");
+    const forged = createHash("sha256")
+      .update(Buffer.from(archive["app/index.html"]))
+      .digest("hex");
+    manifest.hashes["app/index.html"] = forged;
+    manifest.signedEntries["app/index.html"] = forged;
+    archive["runtime/manifest.json"] = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+
+    const path = testInfo.outputPath("forged.dai.html");
+    writeFileSync(path, repack(html, archive), "utf8");
+    await page.goto(`file:///${path.replace(/\\/g, "/")}`);
+
+    await expect(page.locator("#dai-boot-status")).toContainText("not authentic");
+    expect(await page.locator("#dai-app").count()).toBe(0);
+  });
+
+  test("refuses a signature that covers digests the payload does not have", async ({ page }, testInfo) => {
+    const html = readFileSync(CONTAINER, "utf8");
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
+
+    // Leave signedEntries (and the signature) untouched, but swap the entry and
+    // its integrity digest. Integrity now passes legitimately — the payload
+    // matches its own hashes — so only the signature's cross-check can catch
+    // that the signed digest and the real one disagree.
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>mismatch");
+    manifest.hashes["app/index.html"] = createHash("sha256")
+      .update(Buffer.from(archive["app/index.html"]))
+      .digest("hex");
+    archive["runtime/manifest.json"] = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+
+    const path = testInfo.outputPath("mismatched.dai.html");
+    writeFileSync(path, repack(html, archive), "utf8");
+    await page.goto(`file:///${path.replace(/\\/g, "/")}`);
+
+    await expect(page.locator("#dai-boot-status")).toContainText("not authentic");
+    await expect(page.locator("#dai-boot-detail")).toContainText("different digest");
+    expect(await page.locator("#dai-app").count()).toBe(0);
+  });
+
+  test("a save keeps the signature valid", async ({ page }, testInfo) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      frame.evaluate(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const dai = (window as any).dai;
+        const db = await dai.openDatabase();
+        db.exec("CREATE TABLE signed_save(v TEXT)");
+        db.exec({ sql: "INSERT INTO signed_save(v) VALUES(?)", bind: ["kept"] });
+        return dai.saveDatabase(db, { method: "download" });
+      }),
+    ]);
+
+    const savedPath = testInfo.outputPath("signed-save.dai.html");
+    await download.saveAs(savedPath);
+
+    // Reopening exercises the real verifier: a broken signature refuses to mount.
+    await page.goto(`file:///${savedPath.replace(/\\/g, "/")}`);
+    const reopened = await appFrame(page);
+
+    const state = await reopened.evaluate(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      const db = await dai.openDatabase();
+      return {
+        signature: dai.signature as string,
+        value: db.selectValue("SELECT v FROM signed_save") as string,
+      };
+    });
+
+    expect(state.signature).toBe("valid");
+    expect(state.value).toBe("kept");
+  });
+});

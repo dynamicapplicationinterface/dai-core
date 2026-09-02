@@ -101,6 +101,42 @@ edit that alters the archive, so the manifest has no say: editing it to
 been *removed* is refused rather than treated as unsealed. `verifyIntegrity:
 false` at compile time emits `content="advisory"` instead.
 
+## Publisher signatures
+
+```bash
+node scripts/generate-key.mjs        # ECDSA P-256 key pair
+```
+
+```ts
+dai({ signingKey: "dai-signing-key.pem" })
+```
+
+The private key signs at compile time and never enters a container; the matching
+public key is written into the shell as `<meta name="dai-public-key">`. It lives
+in the shell because the signature covers the shell's own digest — a key inside
+the signed set could not be written before signing.
+
+**The signature covers the app and runtime, not `document.sqlite`.** Per spec §1
+the application is immutable while its database is not, and a container carries
+no private key to re-sign with after a save. Signing the immutable half keeps the
+publisher's claim verifiable for the document's whole life; the database stays
+covered by `hashes`. `signedEntries` is re-checked against `hashes` at verify
+time, so a signature can never be validated over digests that differ from the
+ones just integrity-checked.
+
+The app sees `window.dai.signature` (`"valid"` or `"unsigned"`) and
+`window.dai.publicKeyFingerprint`.
+
+### What this does and does not prove
+
+It proves the app and runtime were signed by whoever holds the private key, and
+detects any later modification by anyone who does not. It does **not** by itself
+prove who that is: a container is self-contained, so an attacker can replace the
+public key in the shell and re-sign with their own. Establishing that a
+fingerprint belongs to a particular publisher requires comparing it against a
+value obtained out of band — publish your fingerprint somewhere users can check
+it. Integrity is self-contained; authenticity is not.
+
 A save reseals the manifest over the new payload and **keeps the document
 UUID** — a save is a new revision of the same document. Pass `documentUuid` to
 recompile in place; per spec §1 a changed application is a new document and

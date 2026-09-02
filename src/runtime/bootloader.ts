@@ -135,6 +135,10 @@ interface Manifest {
   documentUuid: string;
   algorithm: string;
   hashes: Record<string, string>;
+  signatureAlgorithm?: string;
+  publicKeyFingerprint?: string;
+  signedEntries?: Record<string, string>;
+  signature?: string;
 }
 
 /**
@@ -191,6 +195,87 @@ async function verifyPayload(
   }
 
   return problems;
+}
+
+/** Base64 to bytes, for keys and signatures carried as text. */
+function fromBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** The publisher's key, read from the shell. Empty when unsigned. */
+function publicKeyFromShell(): string {
+  const meta = document.querySelector('meta[name="dai-public-key"]');
+  return meta?.getAttribute("content")?.trim() ?? "";
+}
+
+/**
+ * Rebuilds the exact bytes the compiler signed.
+ *
+ * Sorted by entry name so the string depends only on content, never on archive
+ * order. Must stay byte-identical to canonicalPayload() in the compiler.
+ */
+function canonicalPayload(uuid: string, entries: Record<string, string>): string {
+  const sorted = Object.keys(entries)
+    .sort()
+    .map((name) => name + ":" + entries[name])
+    .join("\n");
+  return "dai-v1\n" + uuid + "\n" + sorted + "\n";
+}
+
+/**
+ * Checks the publisher's signature over the application and runtime.
+ *
+ * `document.sqlite` is deliberately outside the signed set: the application is
+ * immutable but its database is not, and a container carries no private key to
+ * re-sign with after a save. Integrity of the database is covered by `hashes`.
+ *
+ * Every signed entry is re-checked against the manifest here rather than
+ * trusted from the integrity pass, so a signature can never be verified over
+ * digests that differ from the ones just validated.
+ */
+async function verifySignature(
+  manifest: Manifest,
+  spki: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!manifest.signature || !manifest.signedEntries) {
+    return { ok: false, reason: "the container carries a public key but no signature" };
+  }
+  if (manifest.signatureAlgorithm !== "ECDSA-P256-SHA256") {
+    return { ok: false, reason: `unsupported signature algorithm ${manifest.signatureAlgorithm}` };
+  }
+
+  for (const [name, digest] of Object.entries(manifest.signedEntries)) {
+    if (manifest.hashes[name] !== digest) {
+      return { ok: false, reason: `${name} is signed with a different digest` };
+    }
+  }
+
+  let key: CryptoKey;
+  try {
+    key = await crypto.subtle.importKey(
+      "spki",
+      fromBase64(spki) as unknown as BufferSource,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+  } catch (error) {
+    return { ok: false, reason: `public key is unreadable (${String(error)})` };
+  }
+
+  const ok = await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    fromBase64(manifest.signature) as unknown as BufferSource,
+    new TextEncoder().encode(
+      canonicalPayload(manifest.documentUuid, manifest.signedEntries),
+    ) as unknown as BufferSource,
+  );
+
+  return ok ? { ok: true } : { ok: false, reason: "signature does not match the publisher key" };
 }
 
 /** btoa() over a large binary string blows the argument limit; chunk it. */
@@ -497,6 +582,8 @@ function bridgeMain(): void {
     // Document identity, from the sealed manifest.
     documentUuid: host.documentUuid,
     verified: host.verified,
+    signature: host.signature,
+    publicKeyFingerprint: host.publicKeyFingerprint,
     sqliteWasm: wasm,
     document: seed,
     hasSqliteEngine: !!wasm,
@@ -723,6 +810,23 @@ async function boot(): Promise<void> {
     }
   }
 
+  // Authenticity. A container that ships a public key must satisfy it: silently
+  // running an unsigned or badly signed payload would make the key decorative.
+  const spki = publicKeyFromShell();
+  let signatureState: "valid" | "unsigned" = "unsigned";
+  if (spki) {
+    if (!manifest) {
+      setStatus("Signature check failed — this container has no manifest to verify.");
+      return;
+    }
+    const outcome = await verifySignature(manifest, spki);
+    if (!outcome.ok) {
+      setStatus("Signature check failed — this container is not authentic.", outcome.reason ?? "");
+      return;
+    }
+    signatureState = "valid";
+  }
+
   const assets = new Map<string, Uint8Array>();
   for (const [name, bytes] of Object.entries(files)) {
     if (name.startsWith(APP_PREFIX)) assets.set(name.slice(APP_PREFIX.length), bytes);
@@ -750,6 +854,8 @@ async function boot(): Promise<void> {
     version: "0.1.0",
     documentUuid: manifest?.documentUuid ?? null,
     verified: policy === "required",
+    signature: signatureState,
+    publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
     files,
     assets,
     urls,

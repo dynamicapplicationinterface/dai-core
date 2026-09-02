@@ -13,6 +13,13 @@ const fixture = resolve(here, "fixture");
  * consumer would actually ship.
  */
 export default function globalSetup(): void {
+  // A signing key per run: the fixture is signed so the authenticity path is
+  // exercised, and no private key is ever committed.
+  execSync(`node ${JSON.stringify(resolve(repo, "scripts/generate-key.mjs"))} ${JSON.stringify(fixture)}`, {
+    cwd: repo,
+    stdio: "inherit",
+  });
+
   execSync("npm run build", { cwd: repo, stdio: "inherit" });
 
   rmSync(resolve(fixture, "dist"), { recursive: true, force: true });

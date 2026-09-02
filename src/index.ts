@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createPublicKey, createSign, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
@@ -67,6 +67,12 @@ export interface DaiPluginOptions {
    */
   documentUuid?: string;
   /**
+   * PEM-encoded PKCS#8 ECDSA P-256 private key, or a path to one, used to sign
+   * the container. The key never enters the container — only the matching
+   * public key does. Generate a pair with `node scripts/generate-key.mjs`.
+   */
+  signingKey?: string;
+  /**
    * Whether the bootloader verifies entry digests before mounting. Defaults to
    * true. Turning this off ships a manifest that is recorded but not enforced.
    */
@@ -84,6 +90,7 @@ const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 const PAYLOAD_TAG_RE = /(<script[^>]*id="dai-payload"[^>]*>)<!--DAI_PAYLOAD-->/;
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
 const INTEGRITY_PLACEHOLDER = "<!--DAI_INTEGRITY-->";
+const PUBLIC_KEY_PLACEHOLDER = "<!--DAI_PUBLIC_KEY-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
 const DEFAULT_SQLITE_ENTRY = "document.sqlite";
 const DEFAULT_APP_PREFIX = "app";
@@ -244,6 +251,11 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       // The shell is the finished container minus its payload: template, app
       // name and runtime resolved, `<!--DAI_PAYLOAD-->` still open. It goes into
       // the archive it will later carry, so saves regenerate the same shell.
+      // The public key lives in the shell, never in the payload it attests to:
+      // the signature covers the shell's own digest, so a key inside the signed
+      // set could not be written before signing.
+      const signing = readSigningKey(root, options.signingKey);
+
       // The policy lives in the shell, never in the payload it governs.
       const integrityPolicy = options.verifyIntegrity === false ? "advisory" : "required";
       const shell = template
@@ -251,10 +263,26 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         .join(escapeHtml(appName))
         .split(INTEGRITY_PLACEHOLDER)
         .join(integrityPolicy)
+        .split(PUBLIC_KEY_PLACEHOLDER)
+        .join(signing ? signing.spki : "")
         .replace(RUNTIME_PLACEHOLDER, () => runtime);
       const shellBytes = new TextEncoder().encode(shell);
       archive[CONTAINER_ENTRY] = shellBytes;
       hashes[CONTAINER_ENTRY] = sha256(shellBytes);
+
+      // Signed entries deliberately exclude document.sqlite: per spec §1 the
+      // application is immutable but its database is not, and a container has
+      // no private key to re-sign with after a save. Signing the app and
+      // runtime keeps the publisher's claim verifiable for the document's whole
+      // life, while the database stays covered by `hashes` alone.
+      const signedEntries: Record<string, string> = {};
+      for (const [name, digest] of Object.entries(hashes)) {
+        if (name !== sqliteEntry) signedEntries[name] = digest;
+      }
+
+      const signed = signing
+        ? sign(signing.privateKey, canonicalPayload(documentUuid, signedEntries))
+        : undefined;
 
       const manifest = {
         manifestVersion: MANIFEST_VERSION,
@@ -265,6 +293,14 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         // Informational only: the shell decides whether this is enforced.
         integrityPolicy,
         hashes,
+        ...(signed
+          ? {
+              signatureAlgorithm: "ECDSA-P256-SHA256",
+              publicKeyFingerprint: signing!.fingerprint,
+              signedEntries,
+              signature: signed,
+            }
+          : {}),
       };
       archive[MANIFEST_ENTRY] = new TextEncoder().encode(
         JSON.stringify(manifest, null, 2) + "\n",
@@ -285,6 +321,7 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
           `${Object.keys(archive).length} entries, ` +
           `${wasm ? (glue ? "sqlite3 + glue embedded" : "sqlite3.wasm only") : "no sqlite engine"}, ` +
           `uuid ${documentUuid.slice(0, 8)}, ` +
+          `${signing ? `signed ${signing.fingerprint.slice(0, 8)}` : "unsigned"}, ` +
           `${formatBytes(zipped.byteLength)} archive, ` +
           `${formatBytes(Buffer.byteLength(html))} container`,
       );
@@ -333,6 +370,48 @@ function findFirst(
     ? [resolve(root, configured)]
     : fallbacks.map((path) => resolve(root, path));
   return candidates.find((path) => existsSync(path) && statSync(path).isFile());
+}
+
+interface SigningMaterial {
+  privateKey: string;
+  /** Base64 SPKI DER of the matching public key, embedded in the shell. */
+  spki: string;
+  fingerprint: string;
+}
+
+/** Loads the signing key from a PEM string or a path to one. */
+function readSigningKey(root: string, key?: string): SigningMaterial | undefined {
+  if (!key) return undefined;
+  const pem = key.includes("BEGIN") ? key : readFileSync(resolve(root, key), "utf8");
+  const spkiDer = createPublicKey(pem).export({ type: "spki", format: "der" });
+  return {
+    privateKey: pem,
+    spki: Buffer.from(spkiDer).toString("base64"),
+    fingerprint: createHash("sha256").update(spkiDer).digest("hex").slice(0, 16),
+  };
+}
+
+/**
+ * The exact bytes that get signed.
+ *
+ * Entry names are sorted so the string depends only on content, never on the
+ * order the archive happened to be assembled in — the verifier rebuilds this
+ * from the manifest and must land on identical bytes.
+ */
+function canonicalPayload(uuid: string, entries: Record<string, string>): string {
+  const sorted = Object.keys(entries)
+    .sort()
+    .map((name) => name + ":" + entries[name])
+    .join("\n");
+  return "dai-v1\n" + uuid + "\n" + sorted + "\n";
+}
+
+/** ECDSA P-256 / SHA-256 in IEEE P1363 form, which is what WebCrypto verifies. */
+function sign(privateKey: string, payload: string): string {
+  const signer = createSign("SHA256");
+  signer.update(payload);
+  signer.end();
+  return signer.sign({ key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64");
 }
 
 /** Lowercase hex SHA-256 of the uncompressed entry bytes. */
