@@ -57,8 +57,10 @@ would let a host verify authenticity before mounting anything at all.
 
 ## 2. Publisher identity has no trust model
 
-**Status:** open, and partly a product decision rather than a bug.
-**Affects:** the protocol.
+**Status:** partly addressed. The desktop host now pins a document's key on
+first use and refuses a later copy signed by a different one — see "What TOFU
+does and does not close" below. The runner has no equivalent yet, and first
+sightings remain unprotected. **Affects:** the protocol.
 
 Signature verification works: a container signed with an ECDSA P-256 key is
 checked on boot, and a payload altered by anyone lacking that key is refused.
@@ -91,6 +93,37 @@ identity and costs the property the project is built on: a host that consults a
 network to decide whether a document may open is no longer offline software. If
 it is ever built it belongs in the host, never in the container, and it must
 degrade to one of the options above when there is no network.
+
+### What TOFU does and does not close
+
+Implemented in `apps/desktop/src/trust.ts` with the registry in Rust at
+`app_config_dir()/trusted-keys.json`.
+
+Keyed on `documentUuid`, and it pins the **full SPKI** rather than the
+fingerprint — a 64-bit truncation is a weaker thing to compare, for no saving.
+The unsigned state is pinned too: the application in a container is immutable,
+so the only legitimate change to a document is its database, never who signed
+it. Signature stripped, signature added, and key substituted are all refused.
+
+**Closed:** someone takes a known document, tampers with it, re-signs with their
+own key, and passes it off as the same document.
+
+**Still open:** a malicious *new* document with a new UUID. That is a first use
+with nothing to compare against. Per spec §1 a changed application is a new
+document with a new UUID, so a legitimate update also arrives as a first
+sighting — which means TOFU cannot distinguish "publisher shipped v2" from
+"attacker shipped a lookalike". Closing that needs a publisher identity separate
+from the key, and the manifest has none: `publicKeyFingerprint` *is* the key.
+`appName` is attacker-controlled, so keying on it would produce a check that
+reads as protection and is trivially evaded.
+
+**Also still open:** the runner. It has the same exposure and no registry.
+IndexedDB is the obvious store, and `checkTrust` already takes its `invoke` as a
+parameter so the decision logic can be reused against a different backend.
+
+**Escape hatch:** `forget_pinned_key` exists because a publisher may rotate keys
+legitimately, and a permanently unopenable document would push users toward
+something worse than an explicit reset.
 
 ### What must not happen
 

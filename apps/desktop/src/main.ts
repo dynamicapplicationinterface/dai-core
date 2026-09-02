@@ -6,6 +6,7 @@
  */
 
 import { ContainerError, verifyContainer } from "../../../src/container.js";
+import { checkTrust, type TrustVerdict } from "./trust.js";
 
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
 const openBtn = document.getElementById("open-btn") as HTMLButtonElement;
@@ -117,6 +118,7 @@ async function openFile(file: File): Promise<void> {
     // Full verification, not a shape check: digests both ways, the shell
     // against its sealed copy, and the publisher signature when one is carried.
     const container = await verifyContainer(text);
+    const trust = await gateOnTrust(container);
 
     // A browser File has no filesystem path, so a cartridge chosen here cannot
     // be saved back in place — there is nothing to overwrite. Passing the bare
@@ -124,8 +126,8 @@ async function openFile(file: File): Promise<void> {
     const nativePath = (file as File & { path?: string }).path;
     mountHtml(container.html, nativePath);
     statusEl.textContent = nativePath
-      ? `Loaded ${file.name}`
-      : `Loaded ${file.name} — read-only. Open it by double-clicking the file to save changes in place.`;
+      ? `Loaded ${file.name} — ${trust}`
+      : `Loaded ${file.name} — ${trust}. Read-only: open it by double-clicking to save in place.`;
   } catch (err) {
     // A refusal names what is wrong with the file; anything else is a fault
     // in the host and should say so rather than blaming the cartridge.
@@ -212,6 +214,54 @@ window.addEventListener("message", (event) => {
  * back, and in-place saving is the whole point of the desktop host. The native
  * dialog returns a canonical absolute path, which is what save_cartridge needs.
  */
+/**
+ * Applies the trust registry after core verification.
+ *
+ * Returns a line to show the user, or throws to refuse the mount. Refusing is
+ * the point: a mismatch means the file is validly signed by somebody other than
+ * whoever signed it last time, which is exactly what a warning-only path would
+ * let a user click through.
+ */
+async function gateOnTrust(container: Awaited<ReturnType<typeof verifyContainer>>): Promise<string> {
+  // Only meaningful in the host; the registry lives in Rust.
+  if (!isTauri()) {
+    return container.signature === "valid" ? "signature verified" : "unsigned";
+  }
+
+  let verdict: TrustVerdict;
+  try {
+    verdict = await checkTrust(invokeTauri, container);
+  } catch (error) {
+    // A registry that cannot be read must not silently downgrade to trusting
+    // everything, so this refuses rather than continuing.
+    throw new ContainerError(
+      `The publisher registry could not be consulted, so this cartridge was not ` +
+        `opened: ${String(error)}`,
+    );
+  }
+
+  if (verdict.status === "mismatch") {
+    throw new ContainerError(
+      `Publisher mismatch — refusing to open.
+${verdict.message}` +
+        (verdict.expected ? `
+Expected key: ${verdict.expected}` : "") +
+        (verdict.received ? `
+This copy: ${verdict.received}` : ""),
+    );
+  }
+
+  if (verdict.status === "pinned") {
+    return verdict.fingerprint
+      ? `publisher ${verdict.fingerprint.slice(0, 8)} trusted on first use`
+      : "unsigned, recorded on first use";
+  }
+
+  return verdict.fingerprint
+    ? `publisher ${verdict.fingerprint.slice(0, 8)} matches the pinned key`
+    : "unsigned, as first seen";
+}
+
 async function openViaNativeDialog(): Promise<void> {
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -236,12 +286,10 @@ async function openViaNativeDialog(): Promise<void> {
     // The same gate the runner uses. A cartridge refused there must not open
     // here: one reader, one verdict.
     const container = await verifyContainer(content);
+    const trust = await gateOnTrust(container);
 
     mountHtml(container.html, selected);
-    statusEl.textContent =
-      container.signature === "valid"
-        ? `Loaded ${selected} — signature verified (${container.publicKeyFingerprint?.slice(0, 8)})`
-        : `Loaded ${selected} — unsigned`;
+    statusEl.textContent = `Loaded ${selected} — ${trust}`;
   } catch (error) {
     statusEl.textContent =
       error instanceof ContainerError
