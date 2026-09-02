@@ -13,7 +13,12 @@ import {
   toBase64,
 } from "../src/core.js";
 import { CONTAINER_TEMPLATE, RUNTIME_SOURCE } from "../dist/templates.js";
-import { resealContainer, verifyContainer } from "../src/container.js";
+import {
+  auditContainer,
+  parseContainer,
+  resealContainer,
+  verifyContainer,
+} from "../src/container.js";
 import {
   buildLaunchers,
   escapeForBatch,
@@ -666,5 +671,198 @@ test.describe("expiry", () => {
     expect(canonicalPayload(built.documentUuid, built.manifest.signedEntries!)).toBe(
       canonicalPayload(built.documentUuid, built.manifest.signedEntries!, undefined),
     );
+  });
+});
+
+test.describe("auditContainer", () => {
+  const FIXTURE = resolve(here, "fixture/fixture.dai.html");
+
+  function repack(html: string, archive: Record<string, Uint8Array>): string {
+    return html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+  }
+
+  function archiveOf(html: string): Record<string, Uint8Array> {
+    return unzipSync(
+      Buffer.from(html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+  }
+
+  test("reports every entry, not just the first failure", async () => {
+    // The reason this exists: a first-failure exception cannot tell a tool
+    // which entries are fine, and a playground needs to show all of them.
+    const html = readFileSync(FIXTURE, "utf8");
+    const archive = archiveOf(html);
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>changed");
+    archive["app/smuggled.js"] = new TextEncoder().encode("console.log('extra')");
+
+    const report = await auditContainer(parseContainer(repack(html, archive)));
+
+    expect(report.ok).toBe(false);
+    const byName = Object.fromEntries(report.entries.map((e) => [e.name, e.status]));
+    expect(byName["app/index.html"]).toBe("mismatch");
+    expect(byName["app/smuggled.js"]).toBe("unlisted");
+    // The untouched entries are still reported as passing.
+    expect(byName["runtime/sqlite3.wasm"]).toBe("ok");
+    expect(report.entries.filter((e) => e.status === "ok").length).toBeGreaterThan(1);
+  });
+
+  test("reports a missing entry the manifest still lists", async () => {
+    const html = readFileSync(FIXTURE, "utf8");
+    const archive = archiveOf(html);
+    delete archive["app/index.html"];
+
+    const report = await auditContainer(parseContainer(repack(html, archive)));
+    expect(report.entries.find((e) => e.name === "app/index.html")?.status).toBe("missing");
+    expect(report.ok).toBe(false);
+  });
+
+  test("passes a sound container and names the publisher", async () => {
+    const report = await auditContainer(parseContainer(readFileSync(FIXTURE, "utf8")));
+
+    expect(report.ok).toBe(true);
+    expect(report.shell.status).toBe("ok");
+    expect(report.signature.status).toBe("valid");
+    expect(report.signature.fingerprint).toMatch(/^[0-9a-f]{16}$/);
+    expect(report.expiry.status).toBe("none");
+    expect(report.entries.every((e) => e.status === "ok")).toBe(true);
+  });
+
+  test("separates a rewritten shell from a broken payload", async () => {
+    // Every digest matches; only the outer document changed. A tool should be
+    // able to say which of the two happened.
+    const html = readFileSync(FIXTURE, "utf8").replace(
+      'content="required"',
+      'content="advisory"',
+    );
+    const report = await auditContainer(parseContainer(html));
+
+    expect(report.entries.every((e) => e.status === "ok")).toBe(true);
+    expect(report.shell.status).toBe("mismatch");
+    expect(report.ok).toBe(false);
+  });
+
+  test("never throws where verifyContainer would", async () => {
+    const html = readFileSync(FIXTURE, "utf8");
+    const archive = archiveOf(html);
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>broken");
+    const tampered = repack(html, archive);
+
+    await expect(verifyContainer(tampered)).rejects.toThrow();
+    await expect(auditContainer(parseContainer(tampered))).resolves.toBeTruthy();
+  });
+});
+
+test.describe("parsing bytes and malformed input", () => {
+  const FIXTURE = resolve(here, "fixture/fixture.dai.html");
+
+  test("accepts a container as bytes as well as text", async () => {
+    // A host reading from disk or from a native bridge has bytes, not a string.
+    const bytes = new Uint8Array(readFileSync(FIXTURE));
+    const fromBytes = await verifyContainer(bytes);
+    const fromText = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+
+    expect(fromBytes.manifest.documentUuid).toBe(fromText.manifest.documentUuid);
+    expect(fromBytes.signature).toBe("valid");
+  });
+
+  test("rejects a corrupted payload rather than guessing", async () => {
+    // The PAYLOAD_UNREADABLE case: base64 that is not a zip.
+    const html = readFileSync(FIXTURE, "utf8").replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) => open + "bm90IGEgemlwIGF0IGFsbA==" + close,
+    );
+
+    await expect(async () => parseContainer(html)).rejects.toThrow(/could not be read/i);
+  });
+
+  test("rejects a manifest missing the fields verification depends on", async () => {
+    const html = readFileSync(FIXTURE, "utf8");
+    const archive = unzipSync(
+      Buffer.from(html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+    // No algorithm, no hashes: structurally a manifest, semantically useless.
+    archive["runtime/manifest.json"] = new TextEncoder().encode(
+      JSON.stringify({ manifestVersion: 1, documentUuid: "x" }),
+    );
+    const stripped = html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+
+    const report = await auditContainer(parseContainer(stripped));
+    // Reported as unsupported rather than crashing on the absent hashes table.
+    expect(report.unavailable).toMatch(/algorithm/i);
+    expect(report.ok).toBe(false);
+    await expect(verifyContainer(stripped)).rejects.toThrow(/algorithm/i);
+  });
+});
+
+test.describe("expiry boundaries", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+
+  async function signedInput() {
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString(
+      "base64",
+    );
+    return {
+      ...minimalInput(),
+      signingKey: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----`,
+    };
+  }
+
+  test("a second before expiry still runs", async () => {
+    const built = await buildContainer({ ...(await signedInput()), validUntil: now() + 1 });
+    const report = await auditContainer(parseContainer(built.html));
+    expect(report.expiry.status).toBe("current");
+    expect(report.ok).toBe(true);
+  });
+
+  test("a second after expiry does not", async () => {
+    const built = await buildContainer({ ...(await signedInput()), validUntil: now() - 1 });
+    const report = await auditContainer(parseContainer(built.html));
+    expect(report.expiry.status).toBe("expired");
+    expect(report.ok).toBe(false);
+    // Everything else about the container is still sound, and says so — the
+    // failure is a policy one, not evidence of tampering.
+    expect(report.entries.every((e) => e.status === "ok")).toBe(true);
+    expect(report.signature.status).toBe("valid");
+  });
+
+  test("validUntil is an instant, not the whole second it names", async () => {
+    // "Expires at T" is ambiguous, so the semantics are pinned here: the check
+    // is Date.now() > validUntil * 1000, which makes T an instant. A container
+    // stamped with the current second is already past it by however many
+    // milliseconds have elapsed within that second — it does not stay live
+    // until the second ends.
+    const nextSecond = Math.ceil(Date.now() / 1000);
+    const live = await buildContainer({ ...(await signedInput()), validUntil: nextSecond });
+    expect((await auditContainer(parseContainer(live.html))).expiry.status).toBe("current");
+
+    const past = await buildContainer({
+      ...(await signedInput()),
+      validUntil: Math.floor(Date.now() / 1000) - 1,
+    });
+    expect((await auditContainer(parseContainer(past.html))).expiry.status).toBe("expired");
+  });
+
+  test("a far-future expiry is not treated as an error", async () => {
+    // Beyond 2038, which is where a 32-bit seconds field would wrap.
+    const built = await buildContainer({
+      ...(await signedInput()),
+      validUntil: 2_600_000_000,
+    });
+    const report = await auditContainer(parseContainer(built.html));
+    expect(report.expiry.status).toBe("current");
+    expect(report.expiry.validUntil).toBe(2_600_000_000);
+    expect(report.ok).toBe(true);
   });
 });

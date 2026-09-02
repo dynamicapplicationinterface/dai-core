@@ -147,7 +147,11 @@ extended, shortened or deleted with a text editor. It is appended to the signed
 canonical payload only when present, so containers without one produce exactly
 the bytes they always did and existing signatures keep verifying.
 
-Two properties worth being clear about before anyone relies on it:
+`validUntil` is an **instant**, not the whole second it names: the check is
+`Date.now() > validUntil * 1000`. A container stamped with the current second is
+already past it by however many milliseconds have elapsed within that second.
+
+Two further properties worth being clear about before anyone relies on it:
 
 - **The clock belongs to whoever opens the file.** This stops an honest host
   running a stale container. It does not stop someone determined to run one, who
@@ -156,6 +160,28 @@ Two properties worth being clear about before anyone relies on it:
 - **An expiry cannot be renewed without the signing key.** A container that
   outlives its publisher stops working permanently. That is a real cost, and it
   is why perpetual is the default rather than a fallback.
+
+### Reading a container
+
+Three entry points, with different jobs:
+
+| Function | Answers | On a bad container |
+|---|---|---|
+| `parseContainer(string \| Uint8Array)` | "what does this claim?" | Throws only if it cannot be read at all |
+| `auditContainer(parsed)` | "what is true of it?" | Returns a report. Never throws |
+| `verifyContainer(string \| Uint8Array)` | "may it run?" | Throws on the first reason it may not |
+
+`verifyContainer` runs `auditContainer` and throws on what it finds, so there is
+one implementation of what checking means and two ways of presenting it. A
+second verifier written for a tool would drift, and the drift would surface as a
+playground passing a container that a host refuses.
+
+Bytes are accepted as well as text because a container is an HTML document
+however it was read. There is deliberately **no bare-archive form**: the shell
+carries the publisher key and the integrity policy and is itself sealed inside
+the payload, so an archive alone has no key to check a signature against and
+nothing to compare a seal to. It could be parsed but never verified, and a
+parsed-only result is exactly the thing that gets mistaken for a verified one.
 
 ### Versioning
 

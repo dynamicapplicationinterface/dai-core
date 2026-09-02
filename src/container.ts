@@ -76,7 +76,17 @@ function metaContent(html: string, name: string): string | undefined {
  * Never use it to decide whether to mount: it proves only that the bytes are
  * shaped like a container.
  */
-export function parseContainer(html: string): ParsedContainer {
+export function parseContainer(source: string | Uint8Array): ParsedContainer {
+  // Bytes are decoded as UTF-8, because a container is an HTML document however
+  // it was read — from a file handle, an ArrayBuffer, or a native host. Every
+  // caller was writing this line itself.
+  //
+  // There is deliberately no bare-archive form. A container's shell carries the
+  // publisher key and the integrity policy, and is itself sealed inside the
+  // payload; an archive on its own has no key to check a signature against and
+  // nothing to compare a seal to, so it could be parsed but never verified.
+  const html = typeof source === "string" ? source : new TextDecoder().decode(source);
+
   const payload = PAYLOAD_RE.exec(html)?.[1]?.trim();
   if (!payload) {
     throw new ContainerError(
@@ -251,6 +261,145 @@ async function checkSignature(
   }
 }
 
+/** How one entry fared against the manifest. */
+export interface EntryAudit {
+  name: string;
+  /** The digest the manifest claims. Absent when the entry is unlisted. */
+  expected?: string;
+  /** What the bytes actually hash to. Absent when the entry is missing. */
+  actual?: string;
+  status: "ok" | "mismatch" | "unlisted" | "missing" | "unchecked";
+}
+
+export interface AuditReport {
+  documentUuid: string;
+  integrityPolicy: string;
+  /** True only when every check that could be run, passed. */
+  ok: boolean;
+  entries: EntryAudit[];
+  shell: { status: "ok" | "mismatch" | "absent" };
+  signature: {
+    status: "valid" | "invalid" | "unsigned" | "unverifiable";
+    fingerprint?: string;
+    reason?: string;
+  };
+  expiry: { status: "none" | "current" | "expired"; validUntil?: number };
+  /** Set when the environment prevented checking rather than a container failing. */
+  unavailable?: string;
+}
+
+/**
+ * Checks a container and reports everything it found, without throwing.
+ *
+ * `verifyContainer` answers "may this run", and stops at the first reason it
+ * may not. That is right for a host and useless for a tool: a playground or a
+ * linter wants to show *which* entry failed, and how the rest fared, which a
+ * first-failure exception cannot express.
+ *
+ * This is the single implementation of what checking means. `verifyContainer`
+ * runs this and throws on what it finds, so the two cannot disagree about
+ * whether a container is sound — a second verifier written for the UI would
+ * drift, and the drift would show up as a playground that passes a container a
+ * host rejects.
+ */
+export async function auditContainer(parsed: ParsedContainer): Promise<AuditReport> {
+  const { manifest, archive, html } = parsed;
+
+  const report: AuditReport = {
+    documentUuid: manifest.documentUuid,
+    integrityPolicy: parsed.integrityPolicy,
+    ok: false,
+    entries: [],
+    shell: { status: "absent" },
+    signature: { status: "unsigned" },
+    expiry: { status: "none" },
+  };
+
+  // Reported rather than thrown: a tool should be able to show what a container
+  // claims even where it cannot check the claims.
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    report.unavailable =
+      "WebCrypto is unavailable, so nothing could be checked. Containers must be " +
+      "opened from a file, from localhost, or over HTTPS.";
+    report.entries = Object.keys(archive)
+      .filter((name) => name !== MANIFEST_ENTRY)
+      .sort()
+      .map((name) => ({ name, expected: manifest.hashes?.[name], status: "unchecked" as const }));
+    return report;
+  }
+
+  if (manifest.algorithm !== "SHA-256") {
+    report.unavailable = `Unsupported digest algorithm: ${manifest.algorithm}.`;
+    return report;
+  }
+
+  // Both directions, as the verifier does. An entry the manifest never listed
+  // is as much a failure as one that mismatches, or content could be appended.
+  const seen = new Set<string>();
+  for (const [name, bytes] of Object.entries(archive)) {
+    if (name === MANIFEST_ENTRY) continue;
+    seen.add(name);
+
+    const expected = manifest.hashes?.[name];
+    const actual = await sha256Hex(bytes);
+    if (!expected) {
+      report.entries.push({ name, actual, status: "unlisted" });
+    } else {
+      report.entries.push({ name, expected, actual, status: expected === actual ? "ok" : "mismatch" });
+    }
+  }
+
+  for (const name of Object.keys(manifest.hashes ?? {})) {
+    if (!seen.has(name)) {
+      report.entries.push({ name, expected: manifest.hashes[name], status: "missing" });
+    }
+  }
+  report.entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  const sealed = archive[CONTAINER_ENTRY];
+  if (sealed) {
+    const stripped = html.replace(
+      PAYLOAD_TAG_RE,
+      (_match, open: string, close: string) => open + PAYLOAD_PLACEHOLDER + close,
+    );
+    report.shell.status =
+      stripped === new TextDecoder().decode(sealed) ? "ok" : "mismatch";
+  }
+
+  if (manifest.validUntil !== undefined) {
+    report.expiry = {
+      validUntil: manifest.validUntil,
+      status: Date.now() > manifest.validUntil * 1000 ? "expired" : "current",
+    };
+  }
+
+  if (parsed.publicKey) {
+    report.signature.fingerprint = manifest.publicKeyFingerprint;
+    try {
+      await checkSignature(manifest, parsed.publicKey, manifest.documentUuid);
+      report.signature.status = "valid";
+    } catch (error) {
+      // A key that cannot be checked at all is reported apart from one that was
+      // checked and did not match: the first is a malformed container, the
+      // second is a container signed by somebody else.
+      const message = error instanceof Error ? error.message : String(error);
+      report.signature.status = /no signature|unsupported signature/i.test(message)
+        ? "unverifiable"
+        : "invalid";
+      report.signature.reason = message;
+    }
+  }
+
+  report.ok =
+    report.entries.every((entry) => entry.status === "ok") &&
+    report.shell.status === "ok" &&
+    report.expiry.status !== "expired" &&
+    (report.signature.status === "valid" || report.signature.status === "unsigned");
+
+  return report;
+}
+
 /**
  * The gate every host runs before mounting a container.
  *
@@ -258,56 +407,56 @@ async function checkSignature(
  * show it rather than replacing it with "failed to load", which leaves a user
  * unable to tell a corrupted download from a file that was never a container.
  */
-export async function verifyContainer(html: string): Promise<VerifiedContainer> {
-  const parsed = parseContainer(html);
+export async function verifyContainer(source: string | Uint8Array): Promise<VerifiedContainer> {
+  const parsed = parseContainer(source);
+  const report = await auditContainer(parsed);
 
-  // WebCrypto exists only in a secure context. Saying so beats failing inside
-  // the digest call with "Cannot read properties of undefined".
-  if (!globalThis.crypto?.subtle) {
+  // One implementation of what checking means, presented two ways: a report for
+  // tools, an exception for hosts. A second verifier written for either would
+  // drift, and the drift would surface as a playground passing what a host
+  // refuses.
+  if (report.unavailable) throw new ContainerError(report.unavailable);
+
+  const broken = report.entries.filter((entry) => entry.status !== "ok");
+  if (broken.length > 0) {
+    const detail = broken
+      .slice(0, 4)
+      .map((entry) =>
+        entry.status === "unlisted"
+          ? `${entry.name} is not listed in the manifest`
+          : entry.status === "missing"
+            ? `${entry.name} is missing from the payload`
+            : `${entry.name} does not match its digest`,
+      )
+      .join("\n");
+    throw new ContainerError(`This container has been modified and will not be run.\n${detail}`);
+  }
+
+  if (report.shell.status === "absent") {
     throw new ContainerError(
-      "This container cannot be verified here: WebCrypto is unavailable. " +
-        "Containers must be opened from a file, from localhost, or over HTTPS.",
+      `This container has no ${CONTAINER_ENTRY}, so its bootloader cannot be checked.`,
+    );
+  }
+  if (report.shell.status === "mismatch") {
+    throw new ContainerError(
+      "This container's bootloader does not match the sealed copy inside it. " +
+        "The file has been modified outside its own payload and will not be run.",
     );
   }
 
-  if (parsed.manifest.algorithm !== "SHA-256") {
-    throw new ContainerError(`Unsupported digest algorithm: ${parsed.manifest.algorithm}.`);
-  }
-
-  const problems = await checkDigests(parsed.archive, parsed.manifest);
-  if (problems.length > 0) {
+  if (report.expiry.status === "expired") {
+    const expiry = new Date(report.expiry.validUntil! * 1000).toISOString();
     throw new ContainerError(
-      `This container has been modified and will not be run.\n${problems.slice(0, 4).join("\n")}`,
+      `This container expired on ${expiry} and will not be run. Only its publisher ` +
+        `can issue a replacement; an expiry cannot be extended without the signing key.`,
     );
   }
 
-  checkShellSeal(parsed.html, parsed.archive);
-
-  // Checked after the digests and before the signature is trusted, because an
-  // expiry only means anything once the manifest carrying it has been verified.
-  //
-  // The clock belongs to whoever opens the file, so this stops an honest host
-  // running a stale container. It is not a control against someone determined
-  // to run one anyway: they can set the clock back, and no offline format can
-  // prevent that. Treat it as policy, not enforcement.
-  if (parsed.manifest.validUntil !== undefined) {
-    const expiry = parsed.manifest.validUntil * 1000;
-    if (Date.now() > expiry) {
-      throw new ContainerError(
-        `This container expired on ${new Date(expiry).toISOString()} and will not be run. ` +
-          `Only its publisher can issue a replacement; an expiry cannot be extended ` +
-          `without the signing key.`,
-      );
-    }
+  if (report.signature.status === "invalid" || report.signature.status === "unverifiable") {
+    throw new ContainerError(report.signature.reason ?? "This container is not authentic.");
   }
 
-  // A container that ships a key must satisfy it, or the key is decorative.
-  if (parsed.publicKey) {
-    await checkSignature(parsed.manifest, parsed.publicKey, parsed.manifest.documentUuid);
-    return { ...parsed, signature: "valid" };
-  }
-
-  return { ...parsed, signature: "unsigned" };
+  return { ...parsed, signature: report.signature.status === "valid" ? "valid" : "unsigned" };
 }
 
 /**
