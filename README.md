@@ -60,6 +60,7 @@ root.
 | `appEntryPrefix` | `app` | Archive prefix for the compiled app (spec `/app`) |
 | `compressionLevel` | `9` | fflate deflate level, 0–9 |
 | `templatePath` | bundled `template.html` | Alternative bootloader |
+| `favicon` | default DAI SVG icon | Custom Base64 PNG or SVG Data URL for title bar / tab icon |
 | `emitLaunchers` | `false` | Also write `.bat` and `.command` App Mode launchers |
 
 ## Archive layout
@@ -221,6 +222,19 @@ will end up in.
 
 A `.command` file needs the executable bit. The plugin sets it; a browser
 download cannot, so the Studio tells the user to run `chmod +x` once.
+
+### Native Desktop Shell (`apps/desktop` - Tauri v2)
+
+Phase 4 introduces `apps/desktop`, a standalone native shell built with **Tauri v2** that transitions containers from legacy shell scripts (`.bat` / `.command`) to true OS-native executables (`.exe` / `.dmg`):
+
+- **OS File Associations**: Registers `.dai` and `.dai.html` extensions in `tauri.conf.json` so double-clicking any cartridge opens it directly inside the native shell.
+- **Custom Branding Icons**: Bundles high-resolution icon assets (`icon.ico`, `icon.png`, `icon.icns`) so Explorer, Finder, and Taskbars display DAI branding instead of generic browser icons.
+- **Silent In-Place Saves**: Implements Rust IPC commands (`read_cartridge`, `save_cartridge`) over the Host-Bridge protocol, allowing containers to rewrite themselves directly to disk without browser download prompts.
+
+```bash
+# Build the native desktop app
+npx vite build apps/desktop
+```
 
 ### Mobile
 
@@ -391,6 +405,19 @@ compares the outer document against it, with the payload region masked. A
 container whose bootloader was rewritten is refused. **This is a check only a
 separate player can make**; it is not available to a file opened directly from
 disk.
+
+## Task Manager Example (`examples/tasks`)
+
+`examples/tasks/build-tasks-cartridge.js` demonstrates an end-to-end relational SQLite task and project management application built targeting the DAI platform:
+
+- **Relational Schema**: Models `projects`, `tasks`, `tags`, and `task_tags` join tables with foreign key cascades and seed data.
+- **Cryptographic Signing**: Mints a WebCrypto ECDSA P-256 key pair, signs immutable code assets, and embeds custom task clipboard SVG favicon branding.
+- **Artifact Generation**: Emits `tasks.dai.html` alongside `tasks-launcher.bat`.
+
+```bash
+# Mint the task app cartridge
+node examples/tasks/build-tasks-cartridge.js
+```
 
 ## Tests
 
