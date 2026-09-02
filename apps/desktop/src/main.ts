@@ -122,8 +122,14 @@ async function openFile(file: File): Promise<void> {
       return;
     }
 
-    mountHtml(text, (file as File & { path?: string }).path || file.name);
-    statusEl.textContent = `Loaded ${file.name}`;
+    // A browser File has no filesystem path, so a cartridge chosen here cannot
+    // be saved back in place — there is nothing to overwrite. Passing the bare
+    // name on would make the host write into its working directory instead.
+    const nativePath = (file as File & { path?: string }).path;
+    mountHtml(text, nativePath);
+    statusEl.textContent = nativePath
+      ? `Loaded ${file.name}`
+      : `Loaded ${file.name} — read-only. Open it by double-clicking the file to save changes in place.`;
   } catch (err) {
     statusEl.textContent = `Failed to open file: ${(err as Error).message}`;
   }
@@ -154,32 +160,38 @@ window.addEventListener("message", (event) => {
     clearBootWatchdog();
     (event.source as Window | null)?.postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
   } else if (data.type === "DAI_HOST_SAVE") {
-    const { databaseBytes } = data.payload || {};
-    if (databaseBytes && currentFilePath && isTauri()) {
-      // Save in-place natively via Tauri IPC command
-      const bytes = new Uint8Array(databaseBytes);
-      const base64Bytes = btoa(String.fromCharCode(...bytes));
-
-      invokeTauri("save_cartridge", { path: currentFilePath, databaseBytes: base64Bytes })
-        .then(() => {
-          (event.source as Window | null)?.postMessage(
-            { type: "DAI_HOST_SAVE_ACK", status: "ok" },
-            "*",
-          );
-        })
-        .catch((error: unknown) => {
-          (event.source as Window | null)?.postMessage(
-            { type: "DAI_HOST_SAVE_ACK", status: "error", error: String(error) },
-            "*",
-          );
-        });
-    } else {
-      // Fallback ACK
+    const reply = (status: "ok" | "error", error?: string): void => {
       (event.source as Window | null)?.postMessage(
-        { type: "DAI_HOST_SAVE_ACK", status: "ok" },
+        { type: "DAI_HOST_SAVE_ACK", status, error },
         "*",
       );
+      statusEl.textContent =
+        status === "ok" ? `Saved ${currentFilePath ?? "cartridge"}` : `Save failed: ${error}`;
+    };
+
+    // The container sends a finished document. Resealing it here would be a
+    // second implementation of the runtime's own logic.
+    const { html } = (data.payload || {}) as { html?: string };
+
+    if (!html) {
+      reply("error", "The container sent no document to save.");
+      return;
     }
+    if (!isTauri()) {
+      reply("error", "Native saving is only available in the desktop host.");
+      return;
+    }
+    if (!currentFilePath) {
+      reply("error", "This cartridge has no file on disk to overwrite.");
+      return;
+    }
+
+    // Never acknowledge a save that did not happen. Reporting "ok" when
+    // nothing was written is worse than reporting nothing: the application
+    // believes the user's work is on disk and stops offering to save it.
+    invokeTauri("save_cartridge", { path: currentFilePath, html })
+      .then(() => reply("ok"))
+      .catch((error: unknown) => reply("error", String(error)));
   }
 });
 

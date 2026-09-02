@@ -823,3 +823,94 @@ test.describe("app mode", () => {
     expect(Number(fits.controlOpacity)).toBeGreaterThan(0);
   });
 });
+
+test.describe("host bridge", () => {
+  /** Frames the container the way a native host or the runner does. */
+  async function frameContainer(page: import("@playwright/test").Page, hostReplies: boolean) {
+    // A secure origin, not about:blank. A blob document inherits its creator's
+    // origin, and an opaque one has no crypto.subtle — the container would
+    // refuse to verify itself and never mount. localhost qualifies; the runner's
+    // preview server is already running for the other suites.
+    await page.goto("http://localhost:5175/");
+    await page.setContent(
+      `<iframe id="host-frame" style="width:100%;height:400px"
+         sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"></iframe>`,
+    );
+
+    await page.evaluate((replies) => {
+      const win = window as unknown as Record<string, unknown>;
+      win.__saves = [];
+      window.addEventListener("message", (event) => {
+        const data = event.data as { type?: string; payload?: { html?: string } };
+        if (data?.type === "DAI_HOST_HANDSHAKE" && replies) {
+          (event.source as Window).postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
+        }
+        if (data?.type === "DAI_HOST_SAVE") {
+          (win.__saves as unknown[]).push(data.payload?.html ?? "");
+          if (replies) {
+            (event.source as Window).postMessage(
+              { type: "DAI_HOST_SAVE_ACK", status: "ok" },
+              "*",
+            );
+          }
+        }
+      });
+    }, hostReplies);
+
+    const html = readFileSync(CONTAINER, "utf8");
+    await page.evaluate((source) => {
+      const frame = document.getElementById("host-frame") as HTMLIFrameElement;
+      frame.src = URL.createObjectURL(new Blob([source], { type: "text/html" }));
+    }, html);
+
+    const frame = page.frameLocator("#host-frame");
+    await expect(frame.locator("#dai-app")).toBeAttached({ timeout: 20_000 });
+    return page.frames().find((f) => f.url().startsWith("blob:"))!;
+  }
+
+  test("routes saves to a host that answered the handshake", async ({ page }) => {
+    const container = await frameContainer(page, true);
+
+    const result = await container.evaluate(async () => {
+      const win = window as unknown as { __DAI__: { files: Record<string, Uint8Array> } };
+      const frame = document.getElementById("dai-app") as HTMLIFrameElement;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (frame.contentWindow as any).dai.saveState(new Uint8Array([1, 2, 3]));
+    });
+
+    expect(result).toEqual({ saved: true, method: "host" });
+
+    // The host must receive a finished container, not raw database bytes:
+    // resealing in the host would duplicate the runtime's logic.
+    const saved = await page.evaluate(
+      () => (window as unknown as { __saves: string[] }).__saves,
+    );
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toContain('id="dai-payload"');
+    expect(saved[0]).toContain("dai-integrity");
+  });
+
+  test("falls back to the browser when nothing answers the handshake", async ({ page }) => {
+    // The PWA runner and any ordinary embedder frame containers without
+    // implementing the host protocol. Being framed is not evidence of a host.
+    const container = await frameContainer(page, false);
+
+    const result = await container.evaluate(async () => {
+      const frame = document.getElementById("dai-app") as HTMLIFrameElement;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (frame.contentWindow as any).dai.saveState(new Uint8Array([1, 2, 3]), {
+        method: "picker",
+      });
+    });
+
+    // Which browser path runs is engine-specific — Chromium auto-dismisses its
+    // picker, Firefox and WebKit have none — so assert what actually matters:
+    // the save stayed in the browser and never went to a host.
+    expect((result as { saved: boolean }).saved).toBe(false);
+    expect((result as { method: string }).method).not.toBe("host");
+    const saved = await page.evaluate(
+      () => (window as unknown as { __saves: string[] }).__saves,
+    );
+    expect(saved).toHaveLength(0);
+  });
+});

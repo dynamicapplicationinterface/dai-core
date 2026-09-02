@@ -307,11 +307,19 @@ function toBase64(bytes: Uint8Array): string {
  * This runs in the top document, never the sandboxed frame: showSaveFilePicker
  * needs a non-sandboxed context and its own user activation.
  */
-async function writeContainer(
+/**
+ * Rebuilds the container document around a new database.
+ *
+ * Split out so the host bridge can send a finished document rather than raw
+ * database bytes. A native host that spliced the payload itself would have to
+ * re-zip, re-digest every entry and rewrite the manifest — reimplementing this
+ * function in another language, where the two could drift apart and produce a
+ * file that refuses to open.
+ */
+async function resealContainer(
   files: Record<string, Uint8Array>,
   sqlite: Uint8Array,
-  method: SaveMethod = "auto",
-): Promise<SaveResult> {
+): Promise<string> {
   const shellBytes = files[CONTAINER_ENTRY];
   if (!shellBytes) {
     throw new Error(
@@ -343,7 +351,15 @@ async function writeContainer(
 
   const payload = toBase64(zipSync(next, { level: 9 }));
   const shell = new TextDecoder().decode(shellBytes);
-  const html = shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
+  return shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
+}
+
+async function writeContainer(
+  files: Record<string, Uint8Array>,
+  sqlite: Uint8Array,
+  method: SaveMethod = "auto",
+): Promise<SaveResult> {
+  const html = await resealContainer(files, sqlite);
 
   const name = `${document.title || "document"}.dai.html`;
   const blob = new Blob([html], { type: "text/html" });
@@ -1010,10 +1026,21 @@ async function boot(): Promise<void> {
   let ready = false;
   const documentBytes = files[SQLITE_ENTRY] ?? new Uint8Array(0);
 
+  // Host mode is only entered once a host has answered the handshake. Being
+  // framed is not evidence of one: the PWA runner and any ordinary embedder
+  // also frame containers, and assuming a host there would post a save into
+  // silence and hang the application waiting for an acknowledgement.
+  let hostAvailable = false;
+
   window.addEventListener("message", (event) => {
     if (event.data === HANDSHAKE) {
       ready = true;
       document.body.classList.add("dai-mounted");
+      return;
+    }
+
+    if ((event.data as { type?: string })?.type === "DAI_HOST_HANDSHAKE_ACK") {
+      hostAvailable = true;
       return;
     }
 
@@ -1028,33 +1055,49 @@ async function boot(): Promise<void> {
     const reply = (payload: Record<string, unknown>): void =>
       (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
 
-    if (window.parent !== window) {
-      const dbBytes = request.sqlite ?? documentBytes;
-      const docUuid = manifest?.documentUuid ?? "";
+    if (hostAvailable && request.method !== "download" && request.method !== "picker") {
+      // The host is given a finished document, not a database. Splicing a new
+      // payload means re-zipping and resealing the manifest, and a host doing
+      // that itself would be a second implementation of resealContainer.
+      const databaseBytes = request.sqlite ?? documentBytes;
+      resealContainer(files, databaseBytes)
+        .then((html) => {
+          const onHostAck = (evt: MessageEvent) => {
+            const data = evt.data as { type?: string; status?: string; error?: string };
+            if (data?.type !== "DAI_HOST_SAVE_ACK") return;
+            window.removeEventListener("message", onHostAck);
+            window.clearTimeout(hostTimer);
+            if (data.status === "ok") {
+              reply({ ok: true, result: { saved: true, method: "host" } });
+            } else {
+              reply({ ok: false, error: data.error || "The host could not save this container." });
+            }
+          };
 
-      const onHostAck = (evt: MessageEvent) => {
-        const data = evt.data as { type?: string; status?: string; error?: string };
-        if (data?.type === "DAI_HOST_SAVE_ACK") {
-          window.removeEventListener("message", onHostAck);
-          if (data.status === "ok") {
-            reply({ ok: true, result: { saved: true, method: "host" } });
-          } else {
-            reply({ ok: false, error: data.error || "Host save failed" });
-          }
-        }
-      };
-      window.addEventListener("message", onHostAck);
+          // A host that never answers must not leave the app waiting forever.
+          const hostTimer = window.setTimeout(() => {
+            window.removeEventListener("message", onHostAck);
+            reply({ ok: false, error: "The host did not respond to the save request." });
+          }, 15000);
 
-      window.parent.postMessage(
-        {
-          type: "DAI_HOST_SAVE",
-          payload: {
-            databaseBytes: dbBytes,
-            documentUuid: docUuid,
-          },
-        },
-        "*",
-      );
+          window.addEventListener("message", onHostAck);
+          window.parent.postMessage(
+            {
+              type: "DAI_HOST_SAVE",
+              // Both, because hosts need different things: a native host
+              // writes the document verbatim, while a browser host stores the
+              // database on its own and would otherwise have to unzip the
+              // payload just to reach it.
+              payload: {
+                html,
+                databaseBytes,
+                documentUuid: manifest?.documentUuid ?? "",
+              },
+            },
+            "*",
+          );
+        })
+        .catch((error: unknown) => reply({ ok: false, error: String(error) }));
       return;
     }
 
