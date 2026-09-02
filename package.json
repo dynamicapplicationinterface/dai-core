@@ -37,6 +37,9 @@
   ],
   "scripts": {
     "build": "tsup",
+    "build:runner": "vite build apps/runner",
+    "build:studio": "vite build examples/web-studio",
+    "build:all": "tsup && node scripts/build-demo-cartridge.js && vite build apps/runner && vite build examples/web-studio",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json",
     "prepublishOnly": "npm run build",
