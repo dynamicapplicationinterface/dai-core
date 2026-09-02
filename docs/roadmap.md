@@ -22,6 +22,40 @@ layers separable at all: the format stays inert and portable, hosts differ in
 what they observe and enforce, and a cartridge behaves identically whether it is
 opened by a bare browser or by something far more opinionated.
 
+## Two tenets
+
+Both were learned by getting them wrong first, and both are easy to undo by
+accident, so they are stated plainly rather than left implicit in the code.
+
+### A cartridge reports claims; a host records findings
+
+A cartridge may report only what it can compute from itself — `DIGEST_MISMATCH`,
+`UNVERIFIED_SIGNATURE`, `KEY_EXPIRED`. Those are **claims**, and a host logs them
+as such: a hostile cartridge can say anything, so a host that records
+`verified: true` because a cartridge said so has recorded nothing.
+
+Anything a cartridge cannot know about itself is a **host finding**, recorded in
+the host's own vocabulary — `SHELL_TAMPERED`, `KEY_REVOKED`, and any policy
+outcome. A host must not push that knowledge inward so the cartridge can echo it
+back: the echo would add a channel, add a way to be wrong, and credit the
+detection to the party unable to make it.
+
+The test is simple. If the cartridge would need something outside itself to know
+it, the cartridge must not be the one saying it.
+
+### The clock is a guard, not a control
+
+`validUntil` stops an honest host running stale code on a synchronised clock.
+It cannot stop someone who sets their clock back, and no offline format can — so
+it is an integrity guard, not enforcement.
+
+Perpetual remains the default. A container with no expiry runs forever, which is
+what the format promises about an archived document, and an expiry cannot be
+renewed without the signing key.
+
+Offline grace periods and revocation lists are **host governance**, external to
+the format, and must never become something a cartridge consults or depends on.
+
 ## The host bridge
 
 A cartridge speaks to exactly one party: the window that framed it, over
