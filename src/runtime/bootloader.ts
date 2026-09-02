@@ -25,14 +25,15 @@ const SAVE_REQUEST = "dai:save";
 const APP_MODE_EVENT = "dai:appmode";
 
 /** How a save should be attempted. */
-type SaveMethod = "auto" | "picker" | "download";
+type SaveMethod = "auto" | "picker" | "download" | "host";
 /**
  * What a save actually did. `cancelled` means the dialog was dismissed;
- * `unsupported` means the picker was demanded but this engine has none.
+ * `unsupported` means the picker was demanded but this engine has none;
+ * `host` means the save was handled by a parent host player.
  */
 interface SaveResult {
   saved: boolean;
-  method: "picker" | "download" | "cancelled" | "unsupported";
+  method: "picker" | "download" | "cancelled" | "unsupported" | "host";
 }
 /**
  * Must match PAYLOAD_TAG_RE in the compiler. Anchored to the payload tag
@@ -1009,10 +1010,50 @@ async function boot(): Promise<void> {
     const reply = (payload: Record<string, unknown>): void =>
       (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
 
+    if (window.parent !== window) {
+      const dbBytes = request.sqlite ?? documentBytes;
+      const docUuid = manifest?.documentUuid ?? "";
+
+      const onHostAck = (evt: MessageEvent) => {
+        const data = evt.data as { type?: string; status?: string; error?: string };
+        if (data?.type === "DAI_HOST_SAVE_ACK") {
+          window.removeEventListener("message", onHostAck);
+          if (data.status === "ok") {
+            reply({ ok: true, result: { saved: true, method: "host" } });
+          } else {
+            reply({ ok: false, error: data.error || "Host save failed" });
+          }
+        }
+      };
+      window.addEventListener("message", onHostAck);
+
+      window.parent.postMessage(
+        {
+          type: "DAI_HOST_SAVE",
+          payload: {
+            databaseBytes: dbBytes,
+            documentUuid: docUuid,
+          },
+        },
+        "*",
+      );
+      return;
+    }
+
     writeContainer(files, request.sqlite ?? documentBytes, request.method ?? "auto")
       .then((result) => reply({ ok: true, result }))
       .catch((error: unknown) => reply({ ok: false, error: String(error) }));
   });
+
+  if (window.parent !== window) {
+    window.parent.postMessage(
+      {
+        type: "DAI_HOST_HANDSHAKE",
+        payload: { documentUuid: manifest?.documentUuid ?? null },
+      },
+      "*",
+    );
+  }
 
   const frame = mount(srcdoc);
   installAppMode(frame);

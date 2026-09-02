@@ -201,3 +201,150 @@ test.describe("cartridge ingestion", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/);
   });
 });
+
+test.describe("Host Bridge Protocol & OPFS Persistence", () => {
+  async function getInnerAppFrame(page: import("@playwright/test").Page): Promise<import("@playwright/test").Frame> {
+    const runnerFrameEl = page.locator("#cartridge");
+    await runnerFrameEl.waitFor({ state: "attached" });
+    const runnerFrame = await runnerFrameEl.elementHandle().then((h) => h!.contentFrame());
+    if (!runnerFrame) throw new Error("No runner frame");
+    const appEl = runnerFrame.locator("#dai-app");
+    await appEl.waitFor({ state: "attached" });
+    const appFrame = await appEl.elementHandle().then((h) => h!.contentFrame());
+    if (!appFrame) throw new Error("No app frame");
+    await appFrame.waitForFunction(() => Boolean((window as never as { dai?: unknown }).dai));
+    return appFrame;
+  }
+
+  test("establishes DAI_HOST_HANDSHAKE on container boot", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const container = page.frameLocator("#cartridge");
+    await expect(container.locator("#dai-app")).toBeAttached();
+
+    const isHandshakeOk = await page.evaluate(async () => {
+      const runner = (window as unknown as { __runner: { handshakeEstablished: boolean } }).__runner;
+      return runner.handshakeEstablished;
+    });
+
+    expect(isHandshakeOk).toBe(true);
+  });
+
+  test("saves database to OPFS without triggering download fallbacks", async ({ page }) => {
+    let downloadTriggered = false;
+    page.on("download", () => {
+      downloadTriggered = true;
+    });
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const appFrame = await getInnerAppFrame(page);
+    await expect(appFrame.locator("#app")).toHaveText("ready dai-shared dai-shared:lazy");
+
+    const saveResult = await appFrame.evaluate(async () => {
+      const dai = (window as unknown as { dai: { saveState: (bytes: Uint8Array) => Promise<unknown> } }).dai;
+      return dai.saveState(new Uint8Array([0x44, 0x41, 0x49, 0x5f, 0x54, 0x45, 0x53, 0x54]));
+    });
+
+    expect(saveResult).toEqual({ saved: true, method: "host" });
+    expect(downloadTriggered).toBe(false);
+  });
+
+  test("persists state reload across cartridge eject and remount", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const appFrame = await getInnerAppFrame(page);
+    await expect(appFrame.locator("#app")).toHaveText("ready dai-shared dai-shared:lazy");
+
+    // Save custom database bytes into OPFS via host save
+    const testBytes = [0x53, 0x51, 0x4c, 0x49, 0x54, 0x45, 0x33];
+    const saveResult = await appFrame.evaluate(async (bytes) => {
+      const dai = (window as unknown as { dai: { saveState: (bytes: Uint8Array) => Promise<unknown> } }).dai;
+      return dai.saveState(new Uint8Array(bytes));
+    }, testBytes);
+
+    expect(saveResult).toEqual({ saved: true, method: "host" });
+
+    // Eject cartridge
+    await page.click("#eject");
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+    // Re-ingest same container
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    // Verify reloaded container mounts the OPFS database
+    const reloadedAppFrame = await getInnerAppFrame(page);
+    await expect(reloadedAppFrame.locator("#app")).toHaveText("ready dai-shared dai-shared:lazy");
+
+    const reloadedDocBytes = await reloadedAppFrame.evaluate(() => {
+      const dai = (window as unknown as { dai: { document: Uint8Array } }).dai;
+      return Array.from(dai.document);
+    });
+
+    expect(reloadedDocBytes).toEqual(testBytes);
+  });
+
+  test("export action reseals container with OPFS database while preserving publisher signature integrity", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const appFrame = await getInnerAppFrame(page);
+    const updatedBytes = [0x52, 0x45, 0x53, 0x45, 0x41, 0x4c, 0x45, 0x44];
+
+    // Save updated database via host bridge
+    await appFrame.evaluate(async (bytes) => {
+      const dai = (window as unknown as { dai: { saveState: (bytes: Uint8Array) => Promise<unknown> } }).dai;
+      return dai.saveState(new Uint8Array(bytes));
+    }, updatedBytes);
+
+    await expect(page.locator("#export")).toBeVisible();
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.click("#export");
+    const download = await downloadPromise;
+
+    expect(download.suggestedFilename()).toContain(".dai.html");
+    const path = await download.path();
+    expect(path).toBeTruthy();
+
+    const exportedContent = readFileSync(path!, "utf8");
+
+    // Eject existing cartridge
+    await page.click("#eject");
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+    // Re-ingest exported container file into runner
+    await page.setInputFiles("#file", {
+      name: "exported.dai.html",
+      mimeType: "text/html",
+      buffer: Buffer.from(exportedContent, "utf8"),
+    });
+
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    await expect(page.locator("#badge")).toContainText("signed");
+
+    // Verify exported container mounts, passes signature check, and loads updated database
+    const exportedAppFrame = await getInnerAppFrame(page);
+    await expect(exportedAppFrame.locator("#app")).toHaveText("ready dai-shared dai-shared:lazy");
+
+    const exportedDocBytes = await exportedAppFrame.evaluate(() => {
+      const dai = (window as unknown as { dai: { document: Uint8Array; signature: string } }).dai;
+      return {
+        bytes: Array.from(dai.document),
+        signature: dai.signature,
+      };
+    });
+
+    expect(exportedDocBytes.bytes).toEqual(updatedBytes);
+    expect(exportedDocBytes.signature).toBe("valid");
+  });
+});
+

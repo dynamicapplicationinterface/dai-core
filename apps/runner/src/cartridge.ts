@@ -7,7 +7,7 @@
  * broken file with a useful message instead of mounting a document that will
  * fail silently behind an iframe.
  */
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import { sha256Hex } from "../../../src/core.js";
 
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -167,3 +167,82 @@ function base64ToBytes(value: string): Uint8Array {
   }
   return Uint8Array.from(out);
 }
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  const limit = bytes.length - (bytes.length % 3);
+
+  for (let i = 0; i < limit; i += 3) {
+    const chunk = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
+    out +=
+      alphabet[(chunk >> 18) & 63]! +
+      alphabet[(chunk >> 12) & 63]! +
+      alphabet[(chunk >> 6) & 63]! +
+      alphabet[chunk & 63]!;
+  }
+
+  const remaining = bytes.length - limit;
+  if (remaining === 1) {
+    const chunk = bytes[limit]! << 16;
+    out += alphabet[(chunk >> 18) & 63]! + alphabet[(chunk >> 12) & 63]! + "==";
+  } else if (remaining === 2) {
+    const chunk = (bytes[limit]! << 16) | (bytes[limit + 1]! << 8);
+    out +=
+      alphabet[(chunk >> 18) & 63]! +
+      alphabet[(chunk >> 12) & 63]! +
+      alphabet[(chunk >> 6) & 63]! +
+      "=";
+  }
+
+  return out;
+}
+
+/**
+ * Reseals a cartridge with updated database bytes.
+ */
+export async function resealCartridge(
+  cartridge: Cartridge,
+  newSqliteBytes: Uint8Array,
+): Promise<Cartridge> {
+  const next: Record<string, Uint8Array> = {
+    ...cartridge.archive,
+    ["document.sqlite"]: newSqliteBytes,
+  };
+
+  const hashes: Record<string, string> = {};
+  for (const [name, bytes] of Object.entries(next)) {
+    if (name === MANIFEST_ENTRY) continue;
+    hashes[name] = await sha256Hex(bytes);
+  }
+
+  const updatedManifestBytes = new TextEncoder().encode(
+    JSON.stringify(
+      { ...cartridge.manifest, savedAt: new Date().toISOString(), hashes },
+      null,
+      2,
+    ) + "\n",
+  );
+  next[MANIFEST_ENTRY] = updatedManifestBytes;
+
+  const zipped = zipSync(next, { level: 9 });
+  const payloadB64 = bytesToBase64(zipped);
+
+  const newHtml = cartridge.html.replace(
+    PAYLOAD_TAG_RE,
+    (_match, open: string, close: string) => open + payloadB64 + close,
+  );
+
+  const updatedManifest = JSON.parse(
+    new TextDecoder().decode(updatedManifestBytes),
+  ) as CartridgeManifest;
+
+  return {
+    ...cartridge,
+    html: newHtml,
+    archive: next,
+    manifest: updatedManifest,
+    database: newSqliteBytes,
+  };
+}
+
