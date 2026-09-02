@@ -220,3 +220,40 @@ test.describe("web studio signing", () => {
     expect(await page.textContent("#key-state")).toContain(original);
   });
 });
+
+test.describe("web studio launchers", () => {
+  test.skip(({ browserName }) => browserName !== "chromium", "compiler seam, not engine coverage");
+
+  test("offers desktop launchers alongside the container", async ({ page }) => {
+    await page.goto(STUDIO_URL);
+    await expect(page.locator("#launchers")).toBeHidden();
+
+    await page.click("#compile");
+    await expect(page.locator("body")).toHaveAttribute("data-compiled", "true", {
+      timeout: 60_000,
+    });
+    await expect(page.locator("#launchers")).toBeVisible();
+
+    const [bat] = await Promise.all([
+      page.waitForEvent("download"),
+      page.click("#download-bat"),
+    ]);
+    expect(bat.suggestedFilename()).toBe("studio-doc.bat");
+    const batText = readFileSync(await bat.path(), "utf8");
+    expect(batText).toContain('set "DAI_FILE=%~dp0studio-doc.dai.html"');
+    expect(batText).toContain("--app=");
+
+    const [command] = await Promise.all([
+      page.waitForEvent("download"),
+      page.click("#download-command"),
+    ]);
+    expect(command.suggestedFilename()).toBe("studio-doc.command");
+    const commandText = readFileSync(await command.path(), "utf8");
+    expect(commandText.startsWith("#!/bin/sh")).toBe(true);
+    expect(commandText).toContain('file="$dir/studio-doc.dai.html"');
+
+    // A browser download cannot set the executable bit, so the UI has to say so
+    // rather than leaving the user with a file that does nothing when clicked.
+    expect(await page.textContent("#launchers")).toContain("chmod +x");
+  });
+});

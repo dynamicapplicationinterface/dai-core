@@ -15,6 +15,7 @@
 import * as esbuild from "esbuild-wasm/esm/browser.js";
 import esbuildWasmUrl from "esbuild-wasm/esbuild.wasm?url";
 import { buildContainer } from "../../../src/core.js";
+import { buildLaunchers } from "../../../src/launchers.js";
 import { CONTAINER_TEMPLATE, RUNTIME_SOURCE } from "../../../dist/templates.js";
 
 // Deep paths rather than package specifiers: the glue is not in the package's
@@ -38,6 +39,9 @@ const compileButton = document.getElementById("compile") as HTMLButtonElement;
 const sourceInput = document.getElementById("source") as HTMLTextAreaElement;
 const schemaInput = document.getElementById("schema") as HTMLTextAreaElement;
 
+const launchers = document.getElementById("launchers") as HTMLElement;
+const downloadBat = document.getElementById("download-bat") as HTMLAnchorElement;
+const downloadCommand = document.getElementById("download-command") as HTMLAnchorElement;
 const keyState = document.getElementById("key-state") as HTMLElement;
 const importPem = document.getElementById("import-pem") as HTMLTextAreaElement;
 
@@ -99,6 +103,7 @@ async function compile(): Promise<void> {
   compileButton.disabled = true;
   status.textContent = "";
   download.hidden = true;
+  launchers.hidden = true;
 
   try {
     log("initializing esbuild…");
@@ -139,6 +144,20 @@ async function compile(): Promise<void> {
     download.download = "studio-doc.dai.html";
     download.hidden = false;
     download.textContent = `Download studio-doc.dai.html (${(blob.size / 1024).toFixed(0)} KB)`;
+
+    // Launchers are plain text and depend only on the filename, so they can be
+    // generated here rather than by whoever writes the container to disk.
+    const filename = "studio-doc.dai.html";
+    const scripts = buildLaunchers(filename);
+    downloadBat.href = URL.createObjectURL(
+      new Blob([scripts.bat], { type: "application/bat" }),
+    );
+    downloadBat.download = "studio-doc.bat";
+    downloadCommand.href = URL.createObjectURL(
+      new Blob([scripts.command], { type: "application/x-sh" }),
+    );
+    downloadCommand.download = "studio-doc.command";
+    launchers.hidden = false;
 
     log(`sealed ${Object.keys(built.archive).length} entries`);
     log(`uuid ${built.documentUuid}`);

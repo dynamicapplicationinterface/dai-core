@@ -2,7 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--
+    viewport-fit=cover lets the app paint under the notch and home indicator;
+    without it a standalone iOS launch is letterboxed by safe-area insets.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  <!--
+    iOS standalone support, so a container served over HTTPS is Add to Home
+    Screen ready with no extra work. These are inert when opened from file://
+    and cost nothing there.
+
+    apple-mobile-web-app-capable is the legacy spelling iOS still requires;
+    mobile-web-app-capable is the standard one other engines read.
+  -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="<!--DAI_APP_NAME-->">
+  <meta name="application-name" content="<!--DAI_APP_NAME-->">
   <title><!--DAI_APP_NAME--></title>
 
   <!--
@@ -38,6 +56,8 @@
   <style>
     :root { color-scheme: light dark; }
     html, body { margin: 0; height: 100%; overflow: hidden; }
+    /* Keep the shell's own chrome clear of the notch and home indicator. */
+    #dai-app-mode { top: max(10px, env(safe-area-inset-top)); }
     body {
       font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       background: Canvas;
@@ -60,7 +80,7 @@
     #dai-app-mode {
       position: fixed;
       top: 10px;
-      right: 10px;
+      right: max(10px, env(safe-area-inset-right));
       z-index: 2147483647;
       padding: 6px 12px;
       font: inherit;

@@ -169,6 +169,26 @@ identical to a successful write and drop the user's data without a word.
 
 ---
 
+## 5a. App Mode and desktop launchers
+
+The shell renders an **Enter App Mode** control that takes the container
+fullscreen. The control belongs to the shell, and the frame is served
+`allow="fullscreen 'none'"`: a same-origin frame inherits the permission by
+default, which would let the application seize the viewport on any gesture it
+happened to receive. The app observes state through `dai.appMode` and
+`dai.onAppModeChange()` but cannot request it. The control stays visible while
+fullscreen, because Escape is not a discoverable exit.
+
+Optional `.bat` and `.command` launchers open a container in a chromeless
+Chromium app window, locating it relative to themselves so the pair stays
+portable. Both fall back to a plain windowed open when no Chromium browser is
+present.
+
+The shell also carries the iOS standalone tags, so a container served over
+HTTPS is Add to Home Screen ready. They are inert over `file://`.
+
+---
+
 ## 6. Cryptographic trust model
 
 Two separate properties, with genuinely different strengths. Conflating them

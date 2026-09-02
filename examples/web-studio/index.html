@@ -21,6 +21,8 @@
       #identity details { margin-top: 12px; }
       #import-pem { min-height: 90px; margin-top: 8px; }
       .note { color: #666; font-size: 12px; margin: 12px 0 0; }
+      #launchers { margin-top: 6px; }
+      #launchers a { display: inline-block; margin-right: 12px; }
     </style>
   </head>
   <body>
@@ -84,6 +86,17 @@ CREATE TABLE IF NOT EXISTS items (
     <button id="compile">Compile container</button>
     <div id="status">idle</div>
     <a id="download" hidden download>Download container</a>
+    <div id="launchers" hidden>
+      <p class="note">
+        Desktop launchers open the container in a chromeless app window. Keep
+        them in the same folder as the <code>.dai.html</code> file.
+        <br />On macOS, run <code>chmod +x</code> on the
+        <code>.command</code> file once — a browser download cannot set the
+        executable bit.
+      </p>
+      <a id="download-bat" download>Windows .bat</a>
+      <a id="download-command" download>macOS .command</a>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

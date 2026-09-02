@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import type { Plugin, ResolvedConfig } from "vite";
@@ -9,6 +9,7 @@ import {
   DEFAULT_SQLITE_ENTRY,
   DEFAULT_WASM_ENTRY,
 } from "./core.js";
+import { buildLaunchers } from "./launchers.js";
 
 export {
   buildContainer,
@@ -22,6 +23,14 @@ export {
   DEFAULT_SQLITE_ENTRY,
   DEFAULT_WASM_ENTRY,
 } from "./core.js";
+export {
+  buildLaunchers,
+  windowsLauncher,
+  macLauncher,
+  escapeForBatch,
+  escapeForShell,
+} from "./launchers.js";
+export type { Launchers } from "./launchers.js";
 export type {
   BuildContainerInput,
   BuildContainerResult,
@@ -97,6 +106,12 @@ export interface DaiPluginOptions {
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   /** Path to an alternative bootloader template. */
   templatePath?: string;
+  /**
+   * Also emit `.bat` and `.command` launchers that open the container in a
+   * chromeless app window. Defaults to false: they are only useful for
+   * documents that are distributed as desktop applications.
+   */
+  emitLaunchers?: boolean;
 }
 
 /**
@@ -225,6 +240,20 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
       const outDir = options.outDir ? resolve(root, options.outDir) : root;
       const outFile = join(outDir, `${sanitizeFileName(appName)}.dai.html`);
       writeFileSync(outFile, built.html, "utf8");
+
+      if (options.emitLaunchers) {
+        const launchers = buildLaunchers(`${sanitizeFileName(appName)}.dai.html`);
+        const base = join(outDir, sanitizeFileName(appName));
+        writeFileSync(`${base}.bat`, launchers.bat, "utf8");
+        writeFileSync(`${base}.command`, launchers.command, "utf8");
+        // A .command file is only double-clickable when it is executable.
+        try {
+          chmodSync(`${base}.command`, 0o755);
+        } catch {
+          // Windows has no execute bit; the file is still correct on macOS
+          // once chmod +x is applied there.
+        }
+      }
 
       const engine = wasmPath
         ? gluePath

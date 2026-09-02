@@ -60,6 +60,7 @@ root.
 | `appEntryPrefix` | `app` | Archive prefix for the compiled app (spec `/app`) |
 | `compressionLevel` | `9` | fflate deflate level, 0–9 |
 | `templatePath` | bundled `template.html` | Alternative bootloader |
+| `emitLaunchers` | `false` | Also write `.bat` and `.command` App Mode launchers |
 
 ## Archive layout
 
@@ -190,6 +191,45 @@ document seize the whole viewport on any gesture it happened to receive.
 The app observes but cannot request: `window.dai.appMode` and
 `window.dai.onAppModeChange(listener)`. The control stays visible (fainter) while
 fullscreen, because Escape is not a discoverable exit.
+
+### Desktop launchers
+
+Double-clicking a container opens it in a normal tab. The launchers open it in a
+chromeless Chromium app window instead:
+
+```ts
+dai({ emitLaunchers: true })   // writes name.bat and name.command
+```
+
+```ts
+import { buildLaunchers } from "dai-core";
+const { bat, command } = buildLaunchers("notes.dai.html");
+```
+
+Both locate the container relative to themselves (`%~dp0`, `$(dirname "$0")`),
+so the pair stays portable. Both check the container exists and fall back to a
+plain windowed open when no Chromium browser is installed, rather than failing
+silently.
+
+Escaping is context-specific and not interchangeable. In batch, `%` must be
+doubled or a name like `100% notes` expands to nothing. In the `.command` file
+the name is interpolated into a *double*-quoted string, so `$`, `` ` ``, `"` and
+`\` are escaped while apostrophes are left alone — the close-escape-reopen form
+that single-quoted strings need would corrupt the name here. The `file://` URL is
+percent-encoded at run time, because the launcher cannot know what directory it
+will end up in.
+
+A `.command` file needs the executable bit. The plugin sets it; a browser
+download cannot, so the Studio tells the user to run `chmod +x` once.
+
+### Mobile
+
+The shell carries the tags an iOS home-screen launch needs —
+`apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`,
+`viewport-fit=cover`, and a title taken from the document — so a container
+**served over HTTPS** is Add to Home Screen ready with no extra work. They are
+inert over `file://` and cost nothing there. The App Mode control is inset with
+`env(safe-area-inset-*)` so it clears the notch.
 
 ### Page size
 

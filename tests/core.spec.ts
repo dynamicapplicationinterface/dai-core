@@ -11,6 +11,13 @@ import {
   toBase64,
 } from "../src/core.js";
 import { CONTAINER_TEMPLATE, RUNTIME_SOURCE } from "../dist/templates.js";
+import {
+  buildLaunchers,
+  escapeForBatch,
+  escapeForShell,
+  macLauncher,
+  windowsLauncher,
+} from "../src/launchers.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(here, "../dist");
@@ -266,5 +273,95 @@ test.describe("generated template module", () => {
     // Studio would emit containers that differ from terminal builds.
     expect(CONTAINER_TEMPLATE).toBe(TEMPLATE);
     expect(RUNTIME_SOURCE).toBe(RUNTIME);
+  });
+});
+
+test.describe("desktop launchers", () => {
+  test("targets the container beside the launcher, not an absolute path", async () => {
+    const { bat, command } = buildLaunchers("notes.dai.html");
+
+    // %~dp0 and $(dirname $0) keep the pair portable: moving the folder, or
+    // handing it to someone else, must not break the link.
+    expect(bat).toContain('set "DAI_FILE=%~dp0notes.dai.html"');
+    expect(command).toContain('dir="$(cd "$(dirname "$0")" && pwd)"');
+    expect(command).toContain('file="$dir/notes.dai.html"');
+
+    // Both open a chromeless window rather than a tab.
+    expect(bat).toContain('--app="file:///%DAI_FILE%"');
+    expect(command).toContain('--app="$url"');
+  });
+
+  test("uses CRLF in the batch file", async () => {
+    const { bat } = buildLaunchers("notes.dai.html");
+    // cmd.exe mis-parses batch files with bare LF endings.
+    expect(bat).not.toMatch(/[^\r]\n/);
+    expect(bat.startsWith("@echo off\r\n")).toBe(true);
+  });
+
+  test("escapes names that would otherwise be interpreted", async () => {
+    // A percent starts a variable expansion in batch; undoubled, "100%" would
+    // expand to nothing and the launcher would look for the wrong file.
+    expect(escapeForBatch("my 100% notes.dai.html")).toBe("my 100%% notes.dai.html");
+    expect(windowsLauncher("a%PATH%b.dai.html")).toContain("a%%PATH%%b.dai.html");
+
+    // The name is interpolated into a double-quoted string, so an apostrophe is
+    // already literal and must be left alone — escaping it the way a
+    // single-quoted context requires would put the escape into the filename.
+    expect(escapeForShell("it's mine.dai.html")).toBe("it's mine.dai.html");
+    expect(macLauncher("it's mine.dai.html")).toContain(`file="$dir/it's mine.dai.html"`);
+
+    // What does need escaping there: expansion, quoting and the escape itself.
+    expect(escapeForShell("a$HOME.dai.html")).toBe("a\\$HOME.dai.html");
+    expect(escapeForShell('a"b.dai.html')).toBe('a\\"b.dai.html');
+    expect(escapeForShell("a`b.dai.html")).toBe("a\\`b.dai.html");
+    expect(escapeForShell("a\\b.dai.html")).toBe("a\\\\b.dai.html");
+    expect(macLauncher("$HOME.dai.html")).toContain(`file="$dir/\\$HOME.dai.html"`);
+
+    // Spaces need no escaping in either form, but must survive intact.
+    expect(windowsLauncher("my notes.dai.html")).toContain('%~dp0my notes.dai.html"');
+    expect(macLauncher("my notes.dai.html")).toContain(`file="$dir/my notes.dai.html"`);
+  });
+
+  test("encodes the URL at run time, since the directory is unknown", async () => {
+    const { command } = buildLaunchers("notes.dai.html");
+    // The launcher cannot know where it will live, so a directory containing a
+    // space or a '#' has to be encoded on the machine that runs it.
+    expect(command).toContain("s/%/%25/g");
+    expect(command).toContain("s/ /%20/g");
+    expect(command).toContain("s/#/%23/g");
+    // The '%' rule must come first or it re-encodes its own output.
+    expect(command.indexOf("s/%/%25/g")).toBeLessThan(command.indexOf("s/ /%20/g"));
+  });
+
+  test("checks the container exists and falls back to a plain open", async () => {
+    const { bat, command } = buildLaunchers("notes.dai.html");
+
+    expect(bat).toContain('if not exist "%DAI_FILE%"');
+    expect(command).toContain('if [ ! -f "$file" ]; then');
+
+    // Missing Chromium means a windowed open, never a silent failure.
+    expect(bat.trimEnd().endsWith('start "" "%DAI_FILE%"')).toBe(true);
+    expect(command.trimEnd().endsWith('open "$file"')).toBe(true);
+  });
+});
+
+test.describe("mobile shell", () => {
+  test("ships the tags an iOS home-screen launch needs", async () => {
+    const built = await buildContainer({ ...minimalInput(), appName: "Field Notes" });
+
+    expect(built.html).toContain('name="apple-mobile-web-app-capable" content="yes"');
+    expect(built.html).toContain(
+      'name="apple-mobile-web-app-status-bar-style" content="black-translucent"',
+    );
+    expect(built.html).toContain("viewport-fit=cover");
+    // The home-screen title follows the document, not a hardcoded string.
+    expect(built.html).toContain('name="apple-mobile-web-app-title" content="Field Notes"');
+  });
+
+  test("keeps the shell control clear of the safe area", async () => {
+    const built = await buildContainer(minimalInput());
+    // Without insets the App Mode button sits under the notch on a phone.
+    expect(built.html).toContain("env(safe-area-inset-top)");
+    expect(built.html).toContain("env(safe-area-inset-right)");
   });
 });
