@@ -22,26 +22,78 @@ layers separable at all: the format stays inert and portable, hosts differ in
 what they observe and enforce, and a cartridge behaves identically whether it is
 opened by a bare browser or by something far more opinionated.
 
-## Extension points a host may build on
+## The host bridge
 
-The protocol deliberately exposes what a sophisticated host needs, without
-requiring any of it:
+A cartridge speaks to exactly one party: the window that framed it, over
+`postMessage`. That is not a network connection — it is same-machine, in-process,
+initiated by the cartridge, and reaches only a host that already had the file.
+It is how a cartridge can be observed without being able to observe anything
+back.
 
-- **`documentUuid`** — stable across saves, distinct per application version.
-  The identifier for anything that tracks documents over time.
-- **`payloadFingerprint`** — one value standing for the whole verified payload.
-  Comparable between parties without exchanging a digest table.
-- **Publisher key and signature** — proof the application and runtime were signed
-  by whoever holds a given key.
-- **The host bridge** (`DAI_HOST_HANDSHAKE`, `DAI_HOST_SAVE`) — a host learns
-  when a cartridge mounts and when it wants to persist, and can refuse either.
-- **Trust pinning** — the desktop host records the key a document was first seen
-  with, and refuses a later copy signed by another. See `backlog.md` §2.
+### What exists today
 
-A host that adds directory-backed key distribution, richer logging, or policy
-enforcement does so entirely on its own side of that boundary. Cartridges do not
-change, and a cartridge built today keeps working under a host built later —
-which is the point of sealing the runtime into the document.
+Cartridge to host:
+
+| Message | Payload | When |
+|---|---|---|
+| `DAI_HOST_HANDSHAKE` | `documentUuid`, `verified`, `payloadFingerprint` | After the cartridge has verified itself and mounted its application |
+| `DAI_HOST_SAVE` | `html`, `databaseBytes`, `documentUuid` | When the application asks to persist |
+
+Host to cartridge:
+
+| Message | Payload | Meaning |
+|---|---|---|
+| `DAI_HOST_HANDSHAKE_ACK` | — | A host is present. Until this arrives the cartridge assumes none, and saves through the browser instead |
+| `DAI_HOST_SAVE_ACK` | `status`, `error` | Whether the write happened. `status: "ok"` on a save that did not occur is the worst available lie: the application stops offering to save |
+
+The handshake is deliberately an acknowledgement rather than an announcement. A
+cartridge that assumed a host merely because it was framed would post into
+silence inside an ordinary web page, and hang waiting for a reply.
+
+### What a host may treat as evidence
+
+Everything in these messages is a **claim by the cartridge**, and a hostile
+cartridge can say anything. A host that logs `verified: true` because a cartridge
+said so has logged nothing.
+
+The host verifies the same file independently, with a separate implementation, so
+its own verdict is the one worth recording. The cartridge's `payloadFingerprint`
+is useful precisely because it can be *compared* against the host's — agreement
+means two independent verifiers saw the same bytes; disagreement means drift and
+stops execution. Neither value is evidence alone.
+
+### Hooks needed for observation
+
+Three gaps, none of which require the cartridge to reach anything:
+
+1. **Refusal reporting.** The bootloader has thirteen paths that stop before
+   mounting — failed digests, a rewritten shell, an unverifiable signature, no
+   WebCrypto — and none tells the host. It writes into its own DOM and stops,
+   leaving the host to guess from silence. Refusals are the entries an audit
+   trail most needs, so the cartridge should post `DAI_HOST_REFUSED` with a
+   reason code before it gives up. A host still records its own verdict; this
+   turns "nothing happened" into "it stopped, and here is what it objected to".
+
+2. **Lifecycle.** There is no message for a cartridge being closed or replaced,
+   so a host can log an open with no matching close. `DAI_HOST_CLOSING` on
+   unload, best-effort, makes session duration reportable.
+
+3. **Protocol version.** The handshake carries no version, so a host cannot tell
+   which bridge a cartridge speaks. This has already caused a live failure: an
+   older cartridge sent `databaseBytes` with no `html`, and the host could only
+   report the symptom. A `bridgeVersion` in the handshake turns that into a
+   precise message, and lets a host support several vintages deliberately.
+
+### What must not flow the other way
+
+A host must not push organisational identity — user, tenant, licence — into a
+cartridge. The cartridge cannot transmit, but it can write to its own database,
+and that file is portable by design: identity handed in becomes identity carried
+out, in a document the user may forward anywhere.
+
+The reason is the same one that keeps the air gap sacred. A cartridge is safe to
+open because of what it *cannot* do, and every capability added to the inbound
+direction is a capability an attacker inherits along with everyone else.
 
 ---
 
