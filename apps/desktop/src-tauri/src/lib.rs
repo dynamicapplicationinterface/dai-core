@@ -7,7 +7,7 @@ fn read_cartridge(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn save_cartridge(path: String, database_bytes: String) -> Result<(), String> {
+fn save_cartridge(path: String, _database_bytes: String) -> Result<(), String> {
     // Read existing container HTML
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read existing container {}: {}", path, e))?;

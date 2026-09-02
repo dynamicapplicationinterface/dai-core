@@ -140,4 +140,65 @@ fileInput.addEventListener("change", () => {
   if (file) void openFile(file);
 });
 
+// Cartridge Studio UI Elements & Modal Handler
+const createBtn = document.getElementById("create-btn") as HTMLButtonElement;
+const heroCreateBtn = document.getElementById("hero-create-btn") as HTMLButtonElement;
+const createModal = document.getElementById("create-modal") as HTMLElement;
+const closeModalBtn = document.getElementById("close-modal-btn") as HTMLButtonElement;
+const mintBtn = document.getElementById("mint-btn") as HTMLButtonElement;
+const appNameInput = document.getElementById("app-name-input") as HTMLInputElement;
+const htmlSourceInput = document.getElementById("html-source-input") as HTMLTextAreaElement;
+const mintStatus = document.getElementById("mint-status") as HTMLElement;
+
+function showModal(): void {
+  createModal.style.display = "block";
+  mintStatus.textContent = "";
+}
+
+function hideModal(): void {
+  createModal.style.display = "none";
+}
+
+createBtn.addEventListener("click", showModal);
+heroCreateBtn.addEventListener("click", showModal);
+closeModalBtn.addEventListener("click", hideModal);
+
+mintBtn.addEventListener("click", async () => {
+  mintBtn.disabled = true;
+  mintStatus.textContent = "Packaging, compiling, and signing cartridge...";
+
+  try {
+    const { buildContainer } = await import("../../../src/core.js");
+    const { CONTAINER_TEMPLATE, RUNTIME_SOURCE } = await import("../../../dist/templates.js");
+
+    const appName = appNameInput.value.trim() || "Untitled Cartridge";
+    const htmlSource = htmlSourceInput.value;
+
+    // Mint a fresh WebCrypto ECDSA P-256 key pair for signing
+    const keyPair = await window.crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      true,
+      ["sign", "verify"]
+    );
+
+    const built = await buildContainer({
+      files: {
+        "index.html": new TextEncoder().encode(htmlSource),
+      },
+      template: CONTAINER_TEMPLATE,
+      runtime: RUNTIME_SOURCE,
+      appName,
+      signingKey: keyPair,
+    });
+
+    hideModal();
+    mountHtml(built.html, `${appName.toLowerCase().replace(/\s+/g, "-")}.dai.html`);
+    badge.textContent = `Signed (${built.publicKeyFingerprint?.slice(0, 8)}) · ${appName}`;
+  } catch (err) {
+    mintStatus.textContent = `Failed to mint cartridge: ${(err as Error).message}`;
+  } finally {
+    mintBtn.disabled = false;
+  }
+});
+
 void checkOpenedFile();

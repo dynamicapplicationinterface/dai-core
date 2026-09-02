@@ -36,8 +36,8 @@
     "fileAssociations": [
       {
         "ext": ["dai", "dai.html"],
-        "name": "DAI Container",
-        "description": "DAI Air-gapped Container Document",
+        "name": "DAI Cartridge",
+        "description": "DAI Air-gapped Cartridge Document",
         "role": "Editor",
         "mimeType": "text/html"
       }
