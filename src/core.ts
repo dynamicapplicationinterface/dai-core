@@ -23,7 +23,7 @@ export const CONTAINER_ENTRY = "runtime/container.html";
 export const MANIFEST_ENTRY = "runtime/manifest.json";
 
 export const DEFAULT_FAVICON =
-  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" rx="20" fill="%230f172a"/%3E%3Cpath d="M30 25 L70 25 L70 40 L45 40 L45 60 L70 60 L70 75 L30 75 Z" fill="%233b82f6"/%3E%3Ccircle cx="75" cy="70" r="8" fill="%2310b981"/%3E%3C/svg%3E';
+  'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%230f172a%22/%3E%3Cpath d=%22M30 25 L70 25 L70 40 L45 40 L45 60 L70 60 L70 75 L30 75 Z%22 fill=%22%233b82f6%22/%3E%3Ccircle cx=%2275%22 cy=%2270%22 r=%228%22 fill=%22%2310b981%22/%3E%3C/svg%3E';
 
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
@@ -187,7 +187,11 @@ export async function buildContainer(
     .split(APP_NAME_PLACEHOLDER)
     .join(escapeHtml(appName))
     .split(FAVICON_PLACEHOLDER)
-    .join(favicon)
+    // Attribute-escaped: a raw SVG data URI carries double quotes, which would
+    // terminate the href early. The markup after it then parses as elements,
+    // and an element in <head> closes it — putting the CSP meta in <body>,
+    // where it is ignored entirely and the air gap silently disappears.
+    .join(escapeHtml(favicon))
     .split(INTEGRITY_PLACEHOLDER)
     .join(integrityPolicy)
     .split(PUBLIC_KEY_PLACEHOLDER)

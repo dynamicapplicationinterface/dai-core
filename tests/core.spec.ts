@@ -380,3 +380,57 @@ test.describe("mobile shell", () => {
     expect(built.html).toContain("env(safe-area-inset-right)");
   });
 });
+
+test.describe("head integrity", () => {
+  /**
+   * These assert the *parsed* DOM, not the source text. The favicon bug that
+   * motivated them left the markup looking correct in source order while the
+   * parser closed <head> early, moving the CSP into <body> where a meta policy
+   * is ignored outright. A string search for the meta tag passed throughout.
+   */
+  async function parsedHead(page: import("@playwright/test").Page, html: string) {
+    return page.evaluate((source) => {
+      const doc = new DOMParser().parseFromString(source, "text/html");
+      const csp = doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
+      const integrity = doc.querySelector('meta[name="dai-integrity"]');
+      const icon = doc.querySelector('link[rel="icon"]');
+      return {
+        cspInHead: !!csp && doc.head.contains(csp),
+        integrityInHead: !!integrity && doc.head.contains(integrity),
+        iconInHead: !!icon && doc.head.contains(icon),
+        // Anything the parser had to relocate lands here.
+        strayInBody: [...doc.body.children].some((el) =>
+          ["META", "LINK", "TITLE"].includes(el.tagName),
+        ),
+        cspText: csp?.getAttribute("content") ?? "",
+      };
+    }, html);
+  }
+
+  test("the default favicon does not break out of its attribute", async ({ page }) => {
+    await page.goto("about:blank");
+    const built = await buildContainer(minimalInput());
+    const head = await parsedHead(page, built.html);
+
+    expect(head.iconInHead).toBe(true);
+    expect(head.cspInHead).toBe(true);
+    expect(head.integrityInHead).toBe(true);
+    expect(head.strayInBody).toBe(false);
+    // The air gap is only real if the policy is actually parsed.
+    expect(head.cspText).toContain("connect-src 'none'");
+  });
+
+  test("a caller-supplied favicon cannot relocate the CSP either", async ({ page }) => {
+    await page.goto("about:blank");
+
+    // Raw quotes and a closing tag: the shape that broke the parser before.
+    const hostile =
+      'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#000"/></svg>';
+    const built = await buildContainer({ ...minimalInput(), favicon: hostile });
+    const head = await parsedHead(page, built.html);
+
+    expect(head.cspInHead).toBe(true);
+    expect(head.strayInBody).toBe(false);
+    expect(head.cspText).toContain("connect-src 'none'");
+  });
+});
