@@ -8,3 +8,5 @@ tests/fixture/dist/
 tests/fixture/*.pem
 examples/web-studio/dist/
 apps/runner/dist/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/

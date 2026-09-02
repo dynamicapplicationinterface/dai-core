@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>DAI Desktop</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #0f172a; color: #f8fafc; overflow: hidden; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        background: #1e293b;
+        border-bottom: 1px solid #334155;
+        flex: 0 0 auto;
+        -webkit-app-region: drag;
+      }
+      header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #60a5fa; }
+      header .spacer { flex: 1; }
+      button {
+        -webkit-app-region: no-drag;
+        font: inherit;
+        font-size: 12px;
+        padding: 6px 12px;
+        color: #f8fafc;
+        background: #334155;
+        border: 1px solid #475569;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:hover { background: #475569; }
+      main { flex: 1 1 auto; position: relative; }
+      #slot {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 24px;
+        text-align: center;
+      }
+      #cartridge {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #fff;
+      }
+      body:not(.loaded) #cartridge { display: none; }
+      body.loaded #slot { display: none; }
+      .badge {
+        font-size: 11px;
+        padding: 3px 8px;
+        background: #1e3a8a;
+        color: #93c5fd;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>DAI Desktop</h1>
+      <span class="spacer"></span>
+      <span id="badge" class="badge" hidden></span>
+      <button id="open-btn" type="button">Open Container</button>
+      <button id="eject-btn" type="button" hidden>Eject</button>
+    </header>
+
+    <main>
+      <div id="slot">
+        <h2>DAI Native Desktop Shell</h2>
+        <p style="color: #94a3b8; max-width: 40ch;">
+          Double-click any <code>.dai.html</code> cartridge to run in a standalone desktop window with silent in-place persistence.
+        </p>
+        <button id="choose-btn" type="button" style="font-size:14px; padding:8px 16px;">Choose Cartridge File</button>
+        <div id="status" style="font-size:12px; color:#94a3b8;"></div>
+      </div>
+      <iframe
+        id="cartridge"
+        title="Running container"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
+        allow="fullscreen"
+      ></iframe>
+    </main>
+
+    <input id="file-input" type="file" accept=".html,text/html,.dai" hidden />
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
