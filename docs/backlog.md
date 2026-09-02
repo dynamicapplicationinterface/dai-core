@@ -57,20 +57,16 @@ would let a host verify authenticity before mounting anything at all.
 
 ## 3. One app instance per cartridge
 
-**Status:** open, and currently acceptable. **Affects:** `apps/desktop`.
+**Status:** done. `tauri-plugin-single-instance` forwards a second launch's
+arguments to the running process, which raises its window and opens the
+cartridge through the same verification and trust path as any other route. The
+registry race is closed because there is only ever one writer.
 
-Double-clicking a second cartridge launches a second process rather than
-handing the path to the running one. For a document-based application that is
-arguably correct — two documents, two windows — and it is what ships.
-
-It has one real consequence. The trust registry is a JSON file read, modified
-and written without a lock, so two instances pinning different documents at the
-same moment can lose one of the pins. Losing a pin fails open: the next open of
-that document is treated as a first use and pins whatever key it presents.
-
-`tauri-plugin-single-instance` would forward the argument to the running process
-and remove the race along with the duplicate windows. It is a new crate and a
-new capability, so it wants a session where the Rust can actually be compiled.
+The trade it makes: one window, showing one cartridge at a time. A second
+double-click replaces what is mounted rather than opening beside it. For a
+document application, windows per document would be the better shape, and it is
+what a future version should offer — but not at the cost of concurrent writers
+to an unlocked registry.
 
 ---
 

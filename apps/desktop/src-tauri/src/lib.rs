@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// What the host remembers about a document it has opened before.
 ///
@@ -246,9 +246,12 @@ fn save_cartridge(path: String, html: String) -> Result<(), String> {
 /// script or the OS may insert flags ahead of the path, and indexing blindly
 /// would read a flag, find no cartridge, and leave a double-click looking like
 /// it did nothing at all.
-#[tauri::command]
-fn get_opened_file() -> Option<String> {
-    for arg in env::args().skip(1) {
+/// Picks the cartridge out of a set of command-line arguments.
+///
+/// Shared by the startup path and by a forwarded second launch, so both agree
+/// on what counts as a cartridge argument.
+fn cartridge_argument<I: Iterator<Item = String>>(args: I) -> Option<String> {
+    for arg in args {
         if arg.starts_with('-') {
             continue;
         }
@@ -277,9 +280,33 @@ fn get_opened_file() -> Option<String> {
     None
 }
 
+#[tauri::command]
+fn get_opened_file() -> Option<String> {
+    cartridge_argument(env::args().skip(1))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Registered first, as the plugin requires: a later registration would
+        // let the second process get further into startup before being told to
+        // stop, and it is the early work — touching the trust registry — that
+        // must not happen twice.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A second launch hands its arguments here and then exits. Bring the
+            // existing window forward, or the file appears to open into nothing.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+
+            if let Some(path) = cartridge_argument(argv.into_iter().skip(1)) {
+                // The frontend owns opening: it runs verification and the trust
+                // check, and duplicating that here would be a second gate free
+                // to disagree with the first.
+                let _ = app.emit("dai://open-cartridge", path);
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
             // A cartridge that fails inside the webview is invisible without
@@ -303,4 +330,85 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cartridge_argument;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// Creates a real file, since the scanner deliberately requires one: an
+    /// argument that names nothing is not a cartridge, however it is spelled.
+    fn touch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(name);
+        fs::write(&path, "<script id=\"dai-payload\"></script>").unwrap();
+        path
+    }
+
+    fn args(values: &[&str]) -> impl Iterator<Item = String> {
+        values.iter().map(|v| v.to_string()).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test]
+    fn finds_a_cartridge_argument() {
+        let file = touch("dai-test-plain.dai");
+        let found = cartridge_argument(args(&[file.to_str().unwrap()]));
+        assert!(found.unwrap().ends_with("dai-test-plain.dai"));
+    }
+
+    #[test]
+    fn skips_flags_before_the_path() {
+        // tauri dev passes its own arguments ahead of the file, and a launcher
+        // script may add more. Indexing blindly would read a flag and give up.
+        let file = touch("dai-test-flagged.dai");
+        let found = cartridge_argument(args(&[
+            "--no-sandbox",
+            "-v",
+            "--flag=value",
+            file.to_str().unwrap(),
+        ]));
+        assert!(found.unwrap().ends_with("dai-test-flagged.dai"));
+    }
+
+    #[test]
+    fn accepts_the_double_extension_form() {
+        let file = touch("dai-test-double.dai.html");
+        assert!(cartridge_argument(args(&[file.to_str().unwrap()])).is_some());
+    }
+
+    #[test]
+    fn ignores_an_argument_naming_no_file() {
+        // A path that does not exist is not a cartridge. Returning it would push
+        // the failure into read_cartridge, where the message is less useful.
+        assert!(cartridge_argument(args(&["C:/nowhere/absent.dai"])).is_none());
+    }
+
+    #[test]
+    fn ignores_unrelated_extensions() {
+        let file = touch("dai-test-notes.txt");
+        assert!(cartridge_argument(args(&[file.to_str().unwrap()])).is_none());
+    }
+
+    #[test]
+    fn returns_an_absolute_path() {
+        // A later save needs somewhere definite to write, and the working
+        // directory may have changed by then.
+        let file = touch("dai-test-absolute.dai");
+        let found = cartridge_argument(args(&[file.to_str().unwrap()])).unwrap();
+        assert!(PathBuf::from(&found).is_absolute());
+        // The verbatim prefix breaks other APIs and reads badly to a user.
+        assert!(!found.starts_with(r"\?\"));
+    }
+
+    #[test]
+    fn takes_the_first_cartridge_when_several_are_given() {
+        let first = touch("dai-test-first.dai");
+        let second = touch("dai-test-second.dai");
+        let found = cartridge_argument(args(&[
+            first.to_str().unwrap(),
+            second.to_str().unwrap(),
+        ]));
+        assert!(found.unwrap().ends_with("dai-test-first.dai"));
+    }
 }

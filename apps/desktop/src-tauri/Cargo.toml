@@ -22,3 +22,7 @@ base64 = "0.22"
 # Native file chooser. A browser File gives no filesystem path, so a cartridge
 # opened through the webview cannot be saved back in place.
 tauri-plugin-dialog = "2"
+# Forwards a second launch's arguments into the running process. Without it a
+# second cartridge starts a second host, and two hosts share one trust registry
+# that is read-modify-written without a lock.
+tauri-plugin-single-instance = "2"

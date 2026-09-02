@@ -203,6 +203,41 @@ async function openFile(file: File): Promise<void> {
  * verifying would mean the checks apply to the route users rarely take and not
  * the one they do.
  */
+/**
+ * Opens a cartridge from a filesystem path.
+ *
+ * The single place the host mounts anything it was handed a path to: startup
+ * arguments, and a second launch forwarded by the single-instance plugin. Both
+ * run verification and the trust check, because a route that skipped them would
+ * be the route an attacker picks.
+ */
+async function openCartridgeByPath(path: string): Promise<void> {
+  try {
+    statusEl.textContent = `Loading ${path}...`;
+    const content = await invokeTauri<string>("read_cartridge", { path });
+
+    const container = await verifyContainer(content);
+    const trust = await gateOnTrust(container);
+
+    mountHtml(container.html, path);
+    statusEl.textContent = `Loaded ${path} — ${trust}`;
+  } catch (error) {
+    // A cartridge that fails on launch leaves an empty window, so the reason
+    // has to be on screen: there is nothing else for the user to look at.
+    fail(
+      error instanceof ContainerError
+        ? error.message
+        : `Could not open ${path}: ${String(error)}`,
+    );
+  }
+}
+
+/**
+ * Opens the cartridge this process was launched with, if any.
+ *
+ * This is the path a file association uses, which makes it the way most
+ * cartridges will actually be opened.
+ */
 async function checkOpenedFile(): Promise<void> {
   if (!isTauri()) return;
 
@@ -216,27 +251,32 @@ async function checkOpenedFile(): Promise<void> {
     return;
   }
 
-  if (!openedPath) return;
+  if (openedPath) await openCartridgeByPath(openedPath);
+}
+
+/**
+ * Accepts a cartridge from a second launch.
+ *
+ * Double-clicking another cartridge starts a process that hands its arguments
+ * to this one and exits, so the path arrives as an event rather than as argv.
+ * Two hosts would otherwise share one trust registry, which is read, modified
+ * and written with no lock — and a lost pin fails open.
+ */
+async function listenForForwardedCartridges(): Promise<void> {
+  if (!isTauri()) return;
 
   try {
-    statusEl.textContent = `Loading ${openedPath}...`;
-    const content = await invokeTauri<string>("read_cartridge", { path: openedPath });
-
-    const container = await verifyContainer(content);
-    const trust = await gateOnTrust(container);
-
-    mountHtml(container.html, openedPath);
-    statusEl.textContent = `Loaded ${openedPath} — ${trust}`;
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen<string>("dai://open-cartridge", (event) => {
+      // Replaces whatever is mounted. A host that ignored the request would
+      // leave the user looking at the wrong document with no explanation.
+      void openCartridgeByPath(event.payload);
+    });
   } catch (error) {
-    // A cartridge that fails on launch leaves an empty window, so the reason
-    // has to be on screen: there is nothing else for the user to look at.
-    fail(
-      error instanceof ContainerError
-        ? error.message
-        : `Could not open ${openedPath}: ${String(error)}`,
-    );
+    console.warn("DAI: could not listen for forwarded cartridges.", error);
   }
 }
+
 
 // Listen for container Host-Bridge postMessages (DAI_HOST_HANDSHAKE, DAI_HOST_SAVE)
 window.addEventListener("message", (event) => {
@@ -481,3 +521,4 @@ mintBtn.addEventListener("click", async () => {
 });
 
 void checkOpenedFile();
+void listenForForwardedCartridges();
