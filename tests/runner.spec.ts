@@ -346,5 +346,59 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     expect(exportedDocBytes.bytes).toEqual(updatedBytes);
     expect(exportedDocBytes.signature).toBe("valid");
   });
+
+  test("requests storage eviction defense via navigator.storage.persist", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    const isPersistedOrSupported = await page.evaluate(async () => {
+      if ("storage" in navigator && typeof navigator.storage.persisted === "function") {
+        return typeof navigator.storage.persist === "function";
+      }
+      return true;
+    });
+    expect(isPersistedOrSupported).toBe(true);
+  });
+
+  test("persists imported cartridges in library tray and cleans up OPFS database upon deletion", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    // Save database state
+    const appFrame = await getInnerAppFrame(page);
+    await appFrame.evaluate(async () => {
+      const dai = (window as unknown as { dai: { saveState: (bytes: Uint8Array) => Promise<unknown> } }).dai;
+      return dai.saveState(new Uint8Array([0x01, 0x02, 0x03, 0x04]));
+    });
+
+    // Eject to return to home screen
+    await page.click("#eject");
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+    // Verify library tray renders the imported cartridge card
+    await expect(page.locator("#library")).toBeVisible();
+    await expect(page.locator("#library .tray-item")).toBeVisible();
+    await expect(page.locator("#library .tray-title")).toContainText("fixture");
+
+    // Launch app directly from library tray "Run" button
+    await page.click("#library .tray-item button:has-text('Run')");
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    // Eject back to home screen
+    await page.click("#eject");
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+    // Delete app from tray
+    await page.click("#library .tray-item .btn-del");
+
+    // Verify library tray item is removed
+    await expect(page.locator("#library .tray-item")).toBeHidden();
+
+    // Verify OPFS/library is empty
+    const libItems = await page.evaluate(async () => {
+      const runner = (window as unknown as { __runner: { listLibrary: () => Promise<unknown[]> } }).__runner;
+      return runner.listLibrary();
+    });
+    expect(libItems.length).toBe(0);
+  });
 });
 

@@ -1,21 +1,31 @@
 /**
  * Origin Private File System (OPFS) & Storage layer for DAI Runner.
  *
- * Saves and retrieves cartridge SQLite databases keyed by documentUuid.
- * Uses OPFS File System Access API when available, falling back to IndexedDB
- * for environments (such as WebKit builds) where OPFS createWritable is absent on main thread.
+ * Saves and retrieves cartridge SQLite databases and manages the IndexedDB Cartridge Library.
  */
 
 const IDB_NAME = "dai_runner_storage";
-const IDB_STORE = "sqlite_databases";
+const DB_STORE = "sqlite_databases";
+const LIB_STORE = "cartridges";
+
+export interface LibraryItem {
+  documentUuid: string;
+  appName: string;
+  lastOpened: string;
+  html: string;
+  publicKeyFingerprint?: string;
+}
 
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 1);
-    request.onupgradeneeded = () => {
+    const request = indexedDB.open(IDB_NAME, 2);
+    request.onupgradeneeded = (event) => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE);
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE);
+      }
+      if (!db.objectStoreNames.contains(LIB_STORE)) {
+        db.createObjectStore(LIB_STORE, { keyPath: "documentUuid" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -26,8 +36,8 @@ function openIdb(): Promise<IDBDatabase> {
 async function saveToIdb(documentUuid: string, bytes: Uint8Array): Promise<void> {
   const db = await openIdb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, "readwrite");
-    const store = tx.objectStore(IDB_STORE);
+    const tx = db.transaction(DB_STORE, "readwrite");
+    const store = tx.objectStore(DB_STORE);
     const req = store.put(bytes, documentUuid);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
@@ -38,8 +48,8 @@ async function loadFromIdb(documentUuid: string): Promise<Uint8Array | null> {
   try {
     const db = await openIdb();
     return new Promise((resolve) => {
-      const tx = db.transaction(IDB_STORE, "readonly");
-      const store = tx.objectStore(IDB_STORE);
+      const tx = db.transaction(DB_STORE, "readonly");
+      const store = tx.objectStore(DB_STORE);
       const req = store.get(documentUuid);
       req.onsuccess = () => {
         const val = req.result;
@@ -54,6 +64,21 @@ async function loadFromIdb(documentUuid: string): Promise<Uint8Array | null> {
   }
 }
 
+async function deleteFromIdb(documentUuid: string): Promise<void> {
+  try {
+    const db = await openIdb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      const store = tx.objectStore(DB_STORE);
+      const req = store.delete(documentUuid);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    // Ignore error if missing
+  }
+}
+
 export async function saveDatabaseToOpfs(
   documentUuid: string,
   databaseBytes: Uint8Array,
@@ -65,8 +90,18 @@ export async function saveDatabaseToOpfs(
         create: true,
       });
 
-      if ("createWritable" in fileHandle && typeof (fileHandle as { createWritable?: unknown }).createWritable === "function") {
-        const writable = await (fileHandle as unknown as { createWritable: () => Promise<{ write: (b: Uint8Array) => Promise<void>; close: () => Promise<void> }> }).createWritable();
+      if (
+        "createWritable" in fileHandle &&
+        typeof (fileHandle as { createWritable?: unknown }).createWritable === "function"
+      ) {
+        const writable = await (
+          fileHandle as unknown as {
+            createWritable: () => Promise<{
+              write: (b: Uint8Array) => Promise<void>;
+              close: () => Promise<void>;
+            }>;
+          }
+        ).createWritable();
         await writable.write(databaseBytes);
         await writable.close();
         return;
@@ -97,4 +132,66 @@ export async function loadDatabaseFromOpfs(
   }
 
   return loadFromIdb(documentUuid);
+}
+
+export async function deleteDatabaseFromOpfs(documentUuid: string): Promise<void> {
+  if (navigator.storage?.getDirectory) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry(`${documentUuid}.sqlite`);
+    } catch {
+      // Ignore if file doesn't exist
+    }
+  }
+  await deleteFromIdb(documentUuid);
+}
+
+export async function saveCartridgeToLibrary(item: LibraryItem): Promise<void> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(LIB_STORE, "readwrite");
+    const store = tx.objectStore(LIB_STORE);
+    const req = store.put(item);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
+  try {
+    const db = await openIdb();
+    return new Promise((resolve) => {
+      const tx = db.transaction(LIB_STORE, "readonly");
+      const store = tx.objectStore(LIB_STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const items = (req.result as LibraryItem[]) || [];
+        items.sort(
+          (a, b) =>
+            new Date(b.lastOpened).getTime() - new Date(a.lastOpened).getTime(),
+        );
+        resolve(items);
+      };
+      req.onerror = () => resolve([]);
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function deleteCartridgeFromLibrary(
+  documentUuid: string,
+): Promise<void> {
+  try {
+    const db = await openIdb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(LIB_STORE, "readwrite");
+      const store = tx.objectStore(LIB_STORE);
+      const req = store.delete(documentUuid);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    // Ignore error
+  }
 }

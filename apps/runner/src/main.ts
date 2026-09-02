@@ -7,7 +7,15 @@
  * are opened from the user's own files. The console, not the cartridge.
  */
 import { CartridgeError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
-import { loadDatabaseFromOpfs, saveDatabaseToOpfs } from "./opfs.js";
+import {
+  deleteCartridgeFromLibrary,
+  deleteDatabaseFromOpfs,
+  listCartridgesFromLibrary,
+  loadDatabaseFromOpfs,
+  saveCartridgeToLibrary,
+  saveDatabaseToOpfs,
+  type LibraryItem,
+} from "./opfs.js";
 
 const openButton = document.getElementById("open") as HTMLButtonElement;
 const ejectButton = document.getElementById("eject") as HTMLButtonElement;
@@ -17,10 +25,18 @@ const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement
 const report = document.getElementById("report") as HTMLElement;
 const slot = document.getElementById("slot") as HTMLElement;
 const badge = document.getElementById("badge") as HTMLElement;
+const libraryEl = document.getElementById("library") as HTMLElement;
 
 let mountedUrl: string | undefined;
 let loaded: Cartridge | undefined;
 let handshakeEstablished = false;
+
+// Storage Eviction Defense: call navigator.storage.persist() on boot
+if ("storage" in navigator && typeof navigator.storage?.persist === "function") {
+  void navigator.storage.persist().catch(() => {
+    // Permission denied or non-fatal failure
+  });
+}
 
 function say(message: string, isError = false): void {
   report.textContent = message;
@@ -43,16 +59,119 @@ function eject(): void {
   badge.hidden = true;
   say("");
   fileInput.value = "";
+  void refreshLibrary();
+}
+
+async function refreshLibrary(): Promise<void> {
+  if (!libraryEl) return;
+  const items = await listCartridgesFromLibrary();
+  if (items.length === 0) {
+    libraryEl.innerHTML = "";
+    return;
+  }
+
+  libraryEl.innerHTML = "";
+  const header = document.createElement("div");
+  header.style.fontSize = "13px";
+  header.style.fontWeight = "600";
+  header.style.color = "#9ca3af";
+  header.style.textAlign = "left";
+  header.style.marginBottom = "4px";
+  header.textContent = "Recent Cartridges";
+  libraryEl.appendChild(header);
+
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "tray-item";
+
+    const info = document.createElement("div");
+    info.className = "tray-info";
+
+    const title = document.createElement("div");
+    title.className = "tray-title";
+    title.textContent = item.appName;
+
+    const sub = document.createElement("div");
+    sub.className = "tray-sub";
+    const sigText = item.publicKeyFingerprint
+      ? `signed ${item.publicKeyFingerprint.slice(0, 8)}`
+      : "unsigned";
+    sub.textContent = `${sigText} · ${item.documentUuid.slice(0, 8)}…`;
+
+    info.appendChild(title);
+    info.appendChild(sub);
+
+    const actions = document.createElement("div");
+    actions.className = "tray-actions";
+
+    const runBtn = document.createElement("button");
+    runBtn.type = "button";
+    runBtn.textContent = "Run";
+    runBtn.addEventListener("click", () => void launchFromLibrary(item));
+
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn-del";
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void deleteApp(item.documentUuid);
+    });
+
+    actions.appendChild(runBtn);
+    actions.appendChild(delBtn);
+
+    card.appendChild(info);
+    card.appendChild(actions);
+
+    libraryEl.appendChild(card);
+  }
+}
+
+async function launchFromLibrary(item: LibraryItem): Promise<void> {
+  slot.classList.add("busy");
+  say(`Loading ${item.appName}…`);
+
+  try {
+    const file = new File([item.html], `${item.appName}.dai.html`, { type: "text/html" });
+    const cartridge = await readCartridge(file);
+
+    const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    if (opfsDb && opfsDb.byteLength > 0) {
+      loaded = await resealCartridge(cartridge, opfsDb);
+    } else {
+      loaded = cartridge;
+    }
+
+    // Update last opened time in library
+    await saveCartridgeToLibrary({
+      documentUuid: loaded.manifest.documentUuid,
+      appName: loaded.manifest.appName ?? "container",
+      lastOpened: new Date().toISOString(),
+      html: loaded.html,
+      publicKeyFingerprint: loaded.publicKeyFingerprint,
+    });
+
+    mount(loaded);
+  } catch (error) {
+    say(`Failed to load ${item.appName} (${(error as Error).message})`, true);
+  } finally {
+    slot.classList.remove("busy");
+  }
+}
+
+async function deleteApp(documentUuid: string): Promise<void> {
+  await deleteCartridgeFromLibrary(documentUuid);
+  await deleteDatabaseFromOpfs(documentUuid);
+  if (loaded?.manifest.documentUuid === documentUuid) {
+    eject();
+  } else {
+    await refreshLibrary();
+  }
 }
 
 /**
  * Mounts a verified container.
- *
- * A blob URL rather than `srcdoc`, deliberately. The container gets a real
- * document URL on this origin, which means `import.meta.url` inside its own
- * blob modules resolves against a parseable base — the exact failure that makes
- * `blob:null/<uuid>` unusable. It also lets the container's `<meta>` CSP apply
- * to a document of its own rather than an inherited one.
  */
 function mount(cartridge: Cartridge): void {
   const blob = new Blob([cartridge.html], { type: "text/html" });
@@ -86,11 +205,17 @@ async function ingest(file: File): Promise<void> {
       loaded = cartridge;
     }
 
+    // Save/update cartridge in IndexedDB Library
+    await saveCartridgeToLibrary({
+      documentUuid: loaded.manifest.documentUuid,
+      appName: loaded.manifest.appName ?? "container",
+      lastOpened: new Date().toISOString(),
+      html: loaded.html,
+      publicKeyFingerprint: loaded.publicKeyFingerprint,
+    });
+
     mount(loaded);
   } catch (error) {
-    // A rejected cartridge must say why. "Failed to load" would leave the user
-    // unable to tell a corrupted download from a file that was never a
-    // container in the first place.
     const message =
       error instanceof CartridgeError
         ? error.message
@@ -98,6 +223,7 @@ async function ingest(file: File): Promise<void> {
     say(message, true);
   } finally {
     slot.classList.remove("busy");
+    void refreshLibrary();
   }
 }
 
@@ -146,6 +272,13 @@ window.addEventListener("message", (event) => {
         .then(async () => {
           if (loaded && loaded.manifest.documentUuid === documentUuid) {
             loaded = await resealCartridge(loaded, bytes);
+            await saveCartridgeToLibrary({
+              documentUuid: loaded.manifest.documentUuid,
+              appName: loaded.manifest.appName ?? "container",
+              lastOpened: new Date().toISOString(),
+              html: loaded.html,
+              publicKeyFingerprint: loaded.publicKeyFingerprint,
+            });
           }
           (event.source as Window | null)?.postMessage(
             { type: "DAI_HOST_SAVE_ACK", status: "ok" },
@@ -171,6 +304,9 @@ fileInput.addEventListener("change", () => {
   if (file) void ingest(file);
 });
 
+// Render library on page boot
+void refreshLibrary();
+
 // Exposed for tests and for the storage layer.
 Object.defineProperty(window, "__runner", {
   value: {
@@ -182,19 +318,18 @@ Object.defineProperty(window, "__runner", {
     },
     eject,
     exportContainer,
+    deleteApp,
+    refreshLibrary,
+    listLibrary: listCartridgesFromLibrary,
   },
 });
 
 /**
  * Registers the service worker that makes the runner itself work offline.
- *
- * Only in a built app: a dev server hands out unbundled modules, and a
- * cache-first worker would freeze them and make every later edit invisible.
  */
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch((error: unknown) => {
-      // Registration failing is not fatal — the runner still works online.
       console.warn("DAI Runner: offline support unavailable.", error);
     });
   });
