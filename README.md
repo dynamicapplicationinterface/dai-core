@@ -361,6 +361,37 @@ The 14 MB esbuild binary and the SQLite engine are content-hashed and served
 `max-age=31536000, immutable` in dev and preview. **A deployment must set the
 same policy at its own CDN or origin** — Vite's config cannot do that for you.
 
+## Runner (mobile PWA)
+
+`apps/runner` is an installable player for containers. A `.dai.html` cannot make
+itself installable on a phone — `file://` forbids service workers and manifest
+registration, so there is nothing for the OS to install. The runner inverts
+that: the **player** is the PWA, and containers are opened from the user's own
+files. A console, and cartridges.
+
+```bash
+npx vite build --config apps/runner/vite.config.ts apps/runner
+npx vite preview --config apps/runner/vite.config.ts apps/runner
+```
+
+It precaches its own shell with a cache-first service worker, so it starts with
+no network. It never caches a container: those come from the user's filesystem
+and are never fetched.
+
+### What the runner checks that a container cannot
+
+A container verifies itself when it boots — but that check runs *inside the
+container's own bootloader*. Anyone who rewrites the shell also rewrites the
+code that would have caught them: flipping `dai-integrity` to `advisory`, or
+deleting the check outright, leaves a file that is internally consistent and
+mounts happily.
+
+The runner holds the sealed copy of the shell (`runtime/container.html`) and
+compares the outer document against it, with the payload region masked. A
+container whose bootloader was rewritten is refused. **This is a check only a
+separate player can make**; it is not available to a file opened directly from
+disk.
+
 ## Tests
 
 ```bash

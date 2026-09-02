@@ -238,6 +238,18 @@ integrity-checked. A container that ships a public key must satisfy it: an
 unsigned or unverifiable payload refuses to mount rather than running with a
 decorative key.
 
+#### The outer shell is not self-verifiable
+
+A container's integrity check runs inside its own bootloader. An attacker who
+edits the outer shell — to set `dai-integrity` to `advisory`, or to remove the
+check — is audited by the code they just rewrote, so the file mounts and reports
+itself as fine.
+
+The payload does contain a sealed copy of the shell at `runtime/container.html`,
+which makes the tampering *detectable* — but only by something outside the
+container. `apps/runner` performs that comparison before mounting. A container
+opened directly from disk cannot.
+
 #### What this does not prove
 
 A container is self-contained, so **an attacker can replace the public key in

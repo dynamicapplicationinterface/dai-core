@@ -6,3 +6,4 @@ playwright-report/
 tests/fixture/dist/
 tests/fixture/*.pem
 examples/web-studio/dist/
+apps/runner/dist/
