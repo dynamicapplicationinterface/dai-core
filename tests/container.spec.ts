@@ -914,3 +914,99 @@ test.describe("host bridge", () => {
     expect(saved).toHaveLength(0);
   });
 });
+
+test.describe("host bridge hooks", () => {
+  /** A host that records what it is told, without acting on any of it. */
+  async function observe(page: import("@playwright/test").Page, html: string) {
+    await page.goto("http://localhost:5175/");
+    await page.setContent(
+      `<iframe id="obs" style="width:100%;height:300px"
+         sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"></iframe>`,
+    );
+
+    await page.evaluate(() => {
+      const win = window as unknown as Record<string, unknown>;
+      win.__seen = [];
+      window.addEventListener("message", (event) => {
+        const data = event.data as { type?: string; payload?: unknown };
+        if (typeof data?.type === "string" && data.type.startsWith("DAI_HOST_")) {
+          (win.__seen as unknown[]).push({ type: data.type, payload: data.payload });
+        }
+      });
+    });
+
+    await page.evaluate((source) => {
+      const frame = document.getElementById("obs") as HTMLIFrameElement;
+      frame.src = URL.createObjectURL(new Blob([source], { type: "text/html" }));
+    }, html);
+
+    return async () =>
+      page.evaluate(() => (window as unknown as { __seen: { type: string; payload: never }[] }).__seen);
+  }
+
+  test("reports a refusal instead of leaving the host to guess", async ({ page }) => {
+    // Digests recomputed would defeat integrity, so this leaves them stale:
+    // the container must refuse itself and say which check failed.
+    const original = readFileSync(CONTAINER, "utf8");
+    const archive = unzipSync(
+      Buffer.from(original.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>tampered");
+    const tampered = original.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+
+    const seen = await observe(page, tampered);
+    await expect.poll(async () => (await seen()).length).toBeGreaterThan(0);
+
+    const messages = await seen();
+    const refusal = messages.find((m) => m.type === "DAI_HOST_REFUSED")!;
+    expect(refusal).toBeTruthy();
+    expect((refusal.payload as { reason: string }).reason).toBe("DIGEST_MISMATCH");
+    // Named, so a host can log the document rather than an anonymous failure.
+    expect((refusal.payload as { documentUuid: string }).documentUuid).toMatch(/^[0-9a-f]{8}-/);
+    expect((refusal.payload as { bridgeVersion: number }).bridgeVersion).toBe(1);
+
+    // A refusal must not be followed by a handshake: the cartridge stopped.
+    expect(messages.some((m) => m.type === "DAI_HOST_HANDSHAKE")).toBe(false);
+  });
+
+  test("a healthy cartridge handshakes with a bridge version", async ({ page }) => {
+    const seen = await observe(page, readFileSync(CONTAINER, "utf8"));
+    await expect
+      .poll(async () => (await seen()).some((m) => m.type === "DAI_HOST_HANDSHAKE"))
+      .toBe(true);
+
+    const handshake = (await seen()).find((m) => m.type === "DAI_HOST_HANDSHAKE")!;
+    const payload = handshake.payload as {
+      bridgeVersion: number;
+      verified: boolean;
+      payloadFingerprint: string;
+    };
+
+    expect(payload.bridgeVersion).toBe(1);
+    expect(payload.verified).toBe(true);
+    expect(payload.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/);
+
+    // No refusal from a cartridge that is fine.
+    expect((await seen()).some((m) => m.type === "DAI_HOST_REFUSED")).toBe(false);
+  });
+
+  test("signals closing when the document goes away", async ({ page }) => {
+    const seen = await observe(page, readFileSync(CONTAINER, "utf8"));
+    await expect
+      .poll(async () => (await seen()).some((m) => m.type === "DAI_HOST_HANDSHAKE"))
+      .toBe(true);
+
+    // Navigating the frame away is what a host does when it swaps cartridges.
+    await page.evaluate(() => {
+      (document.getElementById("obs") as HTMLIFrameElement).src = "about:blank";
+    });
+
+    await expect
+      .poll(async () => (await seen()).some((m) => m.type === "DAI_HOST_CLOSING"))
+      .toBe(true);
+  });
+});

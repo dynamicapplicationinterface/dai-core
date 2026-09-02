@@ -132,6 +132,9 @@ let bootWatchdog: number | undefined;
  */
 let expectedFingerprint: string | undefined;
 
+/** The newest host-bridge schema this host understands. */
+const HOST_BRIDGE_VERSION = 1;
+
 function armBootWatchdog(): void {
   clearBootWatchdog();
   bootWatchdog = window.setTimeout(() => {
@@ -319,14 +322,55 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
 
+  if (data.type === "DAI_HOST_REFUSED") {
+    // The cartridge stopped and said why. Without this the host sees only
+    // silence and its watchdog guesses — and a refusal is the entry an audit
+    // trail most wants, so guessing is the worst outcome available.
+    clearBootWatchdog();
+    const refusal = (data.payload ?? {}) as {
+      reason?: string;
+      message?: string;
+      detail?: string;
+      documentUuid?: string | null;
+    };
+
+    console.error("DAI: cartridge refused to run", refusal);
+    abortMount(
+      `the cartridge refused to run (${refusal.reason ?? "UNKNOWN"}).` +
+        `
+${refusal.message ?? ""}` +
+        (refusal.detail ? `
+${refusal.detail}` : ""),
+    );
+    return;
+  }
+
+  if (data.type === "DAI_HOST_CLOSING") {
+    // Best-effort by nature: a process killed outright sends nothing, so a
+    // missing close is normal rather than an error.
+    console.info("DAI: cartridge closing", data.payload);
+    return;
+  }
+
   if (data.type === "DAI_HOST_HANDSHAKE") {
     // The container is alive; it can report its own problems from here.
     clearBootWatchdog();
 
     const reported = (data.payload ?? {}) as {
+      bridgeVersion?: number;
       verified?: boolean;
       payloadFingerprint?: string | null;
     };
+
+    // A cartridge carries the runtime it was compiled with, so a host meets
+    // several vintages. An unknown one is reported rather than guessed at.
+    if (reported.bridgeVersion !== undefined && reported.bridgeVersion > HOST_BRIDGE_VERSION) {
+      abortMount(
+        `this cartridge speaks host-bridge version ${reported.bridgeVersion}, ` +
+          `and this host understands ${HOST_BRIDGE_VERSION}. Update the host.`,
+      );
+      return;
+    }
 
     // Abort before acknowledging. An acknowledged container is one the host has
     // accepted, and a disagreement is exactly the case where it should not.
@@ -347,7 +391,10 @@ window.addEventListener("message", (event) => {
       return;
     }
 
-    (event.source as Window | null)?.postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
+    (event.source as Window | null)?.postMessage(
+      { type: "DAI_HOST_HANDSHAKE_ACK", payload: { bridgeVersion: HOST_BRIDGE_VERSION } },
+      "*",
+    );
   } else if (data.type === "DAI_HOST_SAVE") {
     const reply = (status: "ok" | "error", error?: string): void => {
       (event.source as Window | null)?.postMessage(

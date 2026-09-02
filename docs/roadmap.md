@@ -36,14 +36,16 @@ Cartridge to host:
 
 | Message | Payload | When |
 |---|---|---|
-| `DAI_HOST_HANDSHAKE` | `documentUuid`, `verified`, `payloadFingerprint` | After the cartridge has verified itself and mounted its application |
+| `DAI_HOST_HANDSHAKE` | `bridgeVersion`, `documentUuid`, `verified`, `payloadFingerprint` | After the cartridge has verified itself and mounted its application |
 | `DAI_HOST_SAVE` | `html`, `databaseBytes`, `documentUuid` | When the application asks to persist |
+| `DAI_HOST_REFUSED` | `bridgeVersion`, `reason`, `message`, `detail`, `documentUuid` | The cartridge stopped before mounting. Sent without waiting for a handshake, because a refusal happens before one |
+| `DAI_HOST_CLOSING` | `bridgeVersion`, `documentUuid` | The document is going away. Best-effort |
 
 Host to cartridge:
 
 | Message | Payload | Meaning |
 |---|---|---|
-| `DAI_HOST_HANDSHAKE_ACK` | — | A host is present. Until this arrives the cartridge assumes none, and saves through the browser instead |
+| `DAI_HOST_HANDSHAKE_ACK` | `bridgeVersion` | A host is present. Until this arrives the cartridge assumes none, and saves through the browser instead |
 | `DAI_HOST_SAVE_ACK` | `status`, `error` | Whether the write happened. `status: "ok"` on a save that did not occur is the worst available lie: the application stops offering to save |
 
 The handshake is deliberately an acknowledgement rather than an announcement. A
@@ -62,27 +64,41 @@ is useful precisely because it can be *compared* against the host's — agreemen
 means two independent verifiers saw the same bytes; disagreement means drift and
 stops execution. Neither value is evidence alone.
 
-### Hooks needed for observation
+### Refusal reasons
 
-Three gaps, none of which require the cartridge to reach anything:
+Every path that stops a cartridge before it mounts reports one of these. They are
+codes rather than prose so a host can record and count them without parsing
+sentences that may be reworded later.
 
-1. **Refusal reporting.** The bootloader has thirteen paths that stop before
-   mounting — failed digests, a rewritten shell, an unverifiable signature, no
-   WebCrypto — and none tells the host. It writes into its own DOM and stops,
-   leaving the host to guess from silence. Refusals are the entries an audit
-   trail most needs, so the cartridge should post `DAI_HOST_REFUSED` with a
-   reason code before it gives up. A host still records its own verdict; this
-   turns "nothing happened" into "it stopped, and here is what it objected to".
+| Reason | Meaning |
+|---|---|
+| `NO_PAYLOAD` | No payload element. Probably not a cartridge |
+| `PAYLOAD_UNREADABLE` | The payload did not decode or unzip |
+| `MANIFEST_UNREADABLE` | The manifest is not valid JSON |
+| `MANIFEST_MISSING` | Verification is required and there is no manifest |
+| `UNSUPPORTED_ALGORITHM` | The manifest names a digest algorithm this runtime does not implement |
+| `UNSUPPORTED_CRYPTO` | No WebCrypto. Not a secure context |
+| `DIGEST_MISMATCH` | An entry does not match the manifest, or is absent from it |
+| `SIGNATURE_UNVERIFIABLE` | A publisher key is present but there is nothing to check it against |
+| `UNVERIFIED_SIGNATURE` | The signature does not match the key the cartridge carries |
+| `NO_APPLICATION` | Verified, but there is no application entry point |
+| `MOUNT_TIMEOUT` | The application never reported that it started |
+| `BOOT_FAILED` | The bootloader threw |
 
-2. **Lifecycle.** There is no message for a cartridge being closed or replaced,
-   so a host can log an open with no matching close. `DAI_HOST_CLOSING` on
-   unload, best-effort, makes session duration reportable.
+There is deliberately no `SHELL_TAMPERED`. A cartridge cannot detect its own
+bootloader being rewritten — that check would run inside the code an attacker
+replaced — so it is a host finding, raised by comparing the outer document with
+the sealed copy in the payload. A host should record it as its own observation
+rather than as something the cartridge reported.
 
-3. **Protocol version.** The handshake carries no version, so a host cannot tell
-   which bridge a cartridge speaks. This has already caused a live failure: an
-   older cartridge sent `databaseBytes` with no `html`, and the host could only
-   report the symptom. A `bridgeVersion` in the handshake turns that into a
-   precise message, and lets a host support several vintages deliberately.
+### Versioning
+
+Every message carries `bridgeVersion`, and the acknowledgement carries the
+host's. A cartridge keeps the runtime it was compiled with, so a host meets
+several vintages at once; a host that finds a version it does not understand
+says so rather than guessing. This is not hypothetical — an older cartridge once
+sent a database with no document, and without a version the host could report
+only the symptom.
 
 ### What must not flow the other way
 

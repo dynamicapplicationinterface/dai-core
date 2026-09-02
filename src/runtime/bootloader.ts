@@ -25,6 +25,38 @@ const CONTAINER_ENTRY = "runtime/container.html";
 const GLUE_ENTRY = "runtime/sqlite3.mjs";
 const MANIFEST_ENTRY = "runtime/manifest.json";
 const SAVE_REQUEST = "dai:save";
+
+/**
+ * The host bridge's schema version, sent in every message a host might read.
+ *
+ * A cartridge carries the runtime it was compiled with, so a host meets several
+ * vintages at once. Without a version it can only report symptoms — as happened
+ * when an older cartridge sent a database with no document and the host could
+ * say nothing better than "no document to save".
+ */
+const BRIDGE_VERSION = 1;
+
+/**
+ * Why a cartridge stopped, in a form a host can record without parsing prose.
+ *
+ * There is deliberately no SHELL_TAMPERED: a cartridge cannot detect its own
+ * bootloader being rewritten, because that check would run inside the code an
+ * attacker replaced. Only a separate reader holding the sealed copy can find it,
+ * and that finding belongs to the host.
+ */
+type RefusalReason =
+  | "NO_PAYLOAD"
+  | "PAYLOAD_UNREADABLE"
+  | "MANIFEST_UNREADABLE"
+  | "MANIFEST_MISSING"
+  | "UNSUPPORTED_ALGORITHM"
+  | "UNSUPPORTED_CRYPTO"
+  | "DIGEST_MISMATCH"
+  | "SIGNATURE_UNVERIFIABLE"
+  | "UNVERIFIED_SIGNATURE"
+  | "NO_APPLICATION"
+  | "MOUNT_TIMEOUT"
+  | "BOOT_FAILED";
 const APP_MODE_EVENT = "dai:appmode";
 
 /** How a save should be attempted. */
@@ -80,6 +112,46 @@ function mimeFor(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   return MIME_TYPES[ext] ?? "application/octet-stream";
 }
+
+/**
+ * Stops, says why on screen, and tells the host.
+ *
+ * The screen alone is not enough. A cartridge that refuses inside a frame shows
+ * its reason to whoever is looking at that frame and to nobody else, so a host
+ * sees only silence — indistinguishable from a cartridge that never started.
+ * Refusals are the entries an audit trail most needs, which makes silence the
+ * worst available outcome.
+ *
+ * Sent unconditionally when framed, without waiting for a handshake: a refusal
+ * happens before any handshake, and a parent that is not a host simply ignores
+ * an unfamiliar message.
+ */
+function refuse(reason: RefusalReason, message: string, detail = ""): void {
+  setStatus(message, detail);
+
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage(
+      {
+        type: "DAI_HOST_REFUSED",
+        payload: {
+          bridgeVersion: BRIDGE_VERSION,
+          reason,
+          message,
+          detail,
+          // Absent for failures that occur before the manifest is readable.
+          documentUuid: refusalUuid,
+        },
+      },
+      "*",
+    );
+  } catch {
+    // A parent that cannot be posted to is not a reason to fail differently.
+  }
+}
+
+/** Set once the manifest is parsed, so a later refusal can name the document. */
+let refusalUuid: string | null = null;
 
 function setStatus(message: string, detail = ""): void {
   const status = document.getElementById("dai-boot-status");
@@ -893,7 +965,7 @@ async function boot(): Promise<void> {
   const node = document.getElementById("dai-payload");
   const b64 = node?.textContent?.trim() ?? "";
   if (!b64) {
-    setStatus("Container is sealed but empty — no DAI payload found.");
+    refuse("NO_PAYLOAD", "Container is sealed but empty — no DAI payload found.");
     return;
   }
 
@@ -901,7 +973,7 @@ async function boot(): Promise<void> {
   try {
     files = unzipSync(decodeBase64(b64));
   } catch (error) {
-    setStatus("Payload could not be decoded.", String(error));
+    refuse("PAYLOAD_UNREADABLE", "Payload could not be decoded.", String(error));
     return;
   }
 
@@ -911,7 +983,7 @@ async function boot(): Promise<void> {
   // http, or from a host whose origin is not treated as trustworthy, would
   // otherwise die inside the digest call with an opaque TypeError.
   if (policyRequiresCrypto() && !globalThis.crypto?.subtle) {
-    setStatus(
+    refuse("UNSUPPORTED_CRYPTO", 
       "This container cannot verify itself here.",
       `WebCrypto is unavailable at ${location.protocol}//${location.host || "(opaque)"}. ` +
         `Containers must be opened from a file, from localhost, or over HTTPS.`,
@@ -927,28 +999,31 @@ async function boot(): Promise<void> {
     try {
       manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as Manifest;
     } catch (error) {
-      setStatus("Container manifest is unreadable.", String(error));
+      refuse("MANIFEST_UNREADABLE", "Container manifest is unreadable.", String(error));
       return;
     }
   }
+
+  // From here on a refusal can name the document it refused.
+  refusalUuid = manifest?.documentUuid ?? null;
 
   if (policy === "required") {
     // A required policy with no manifest is a stripped seal, not an unsealed
     // container: refuse rather than fall back to trusting the payload.
     if (!manifest) {
-      setStatus(
+      refuse("MANIFEST_MISSING", 
         "Integrity check failed — this container has been modified.",
         `${MANIFEST_ENTRY} is missing, but this container requires it`,
       );
       return;
     }
     if (manifest.algorithm !== "SHA-256") {
-      setStatus(`Unsupported manifest algorithm: ${manifest.algorithm}.`);
+      refuse("UNSUPPORTED_ALGORITHM", `Unsupported manifest algorithm: ${manifest.algorithm}.`);
       return;
     }
     const problems = await verifyPayload(files, manifest);
     if (problems.length > 0) {
-      setStatus(
+      refuse("DIGEST_MISMATCH", 
         "Integrity check failed — this container has been modified.",
         problems.slice(0, 4).join("; "),
       );
@@ -962,12 +1037,12 @@ async function boot(): Promise<void> {
   let signatureState: "valid" | "unsigned" = "unsigned";
   if (spki) {
     if (!manifest) {
-      setStatus("Signature check failed — this container has no manifest to verify.");
+      refuse("SIGNATURE_UNVERIFIABLE", "Signature check failed — this container has no manifest to verify.");
       return;
     }
     const outcome = await verifySignature(manifest, spki);
     if (!outcome.ok) {
-      setStatus("Signature check failed — this container is not authentic.", outcome.reason ?? "");
+      refuse("UNVERIFIED_SIGNATURE", "Signature check failed — this container is not authentic.", outcome.reason ?? "");
       return;
     }
     signatureState = "valid";
@@ -980,7 +1055,7 @@ async function boot(): Promise<void> {
 
   const entry = assets.get("index.html");
   if (!entry) {
-    setStatus(`No ${APP_PREFIX}index.html in the payload.`);
+    refuse("NO_APPLICATION", `No ${APP_PREFIX}index.html in the payload.`);
     return;
   }
 
@@ -1121,6 +1196,7 @@ async function boot(): Promise<void> {
         {
           type: "DAI_HOST_HANDSHAKE",
           payload: {
+            bridgeVersion: BRIDGE_VERSION,
             documentUuid: manifest?.documentUuid ?? null,
             verified: policy === "required",
             payloadFingerprint: fingerprint,
@@ -1134,9 +1210,32 @@ async function boot(): Promise<void> {
   const frame = mount(srcdoc);
   installAppMode(frame);
 
+  if (window.parent !== window) {
+    // pagehide rather than unload: it fires for a page entering the back/forward
+    // cache as well as one being destroyed, and unload does not fire reliably at
+    // all on mobile. Best-effort by nature — a process killed outright sends
+    // nothing, so a host must treat a missing close as normal, not as an error.
+    window.addEventListener("pagehide", () => {
+      try {
+        window.parent.postMessage(
+          {
+            type: "DAI_HOST_CLOSING",
+            payload: {
+              bridgeVersion: BRIDGE_VERSION,
+              documentUuid: manifest?.documentUuid ?? null,
+            },
+          },
+          "*",
+        );
+      } catch {
+        // Nothing useful to do while the document is going away.
+      }
+    });
+  }
+
   window.setTimeout(() => {
     if (ready) return;
-    setStatus(
+    refuse("MOUNT_TIMEOUT", 
       "The application did not finish mounting.",
       violations.length
         ? `CSP: ${violations.join("; ")}`
@@ -1148,7 +1247,7 @@ async function boot(): Promise<void> {
 
 const start = (): void => {
   void boot().catch((error: unknown) => {
-    setStatus("The container failed to start.", String(error));
+    refuse("BOOT_FAILED", "The container failed to start.", String(error));
   });
 };
 
