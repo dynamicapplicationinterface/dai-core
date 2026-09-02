@@ -3,6 +3,10 @@
 Compiles a finished React/Vite build into a single air-gapped **DAI v0.1 Polyglot
 Container** (`[app-name].dai.html`).
 
+The protocol is specified in [docs/spec-v0.1.md](docs/spec-v0.1.md), which
+documents the container as it actually behaves — including where the original
+draft was wrong.
+
 ## Installation
 
 > **Pre-release.** `dai-core` is not published to npm. `npm install dai-core`
@@ -174,6 +178,13 @@ File System Access API reports `unsupported` instead of quietly downloading a
 copy the user may believe overwrote the original.
 
 `window.daiSaveState(bytes)` is an alias for `saveState`.
+
+### Page size
+
+New databases are pinned to 4096-byte pages; this engine would otherwise default
+to 8192, making a document's geometry an accident of whichever engine first
+wrote it. A seeded database keeps the page size its own bytes declare.
+`dai.pageSizeOf(bytes)` reads the declared size from a serialized database.
 
 ### Booting SQLite
 

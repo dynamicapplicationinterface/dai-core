@@ -627,3 +627,108 @@ test.describe("publisher signature", () => {
     expect(state.value).toBe("kept");
   });
 });
+
+test.describe("page size stability", () => {
+  test("pins a new database to 4096 and holds it across save and reopen", async ({ page }, testInfo) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const [download, before] = await Promise.all([
+      page.waitForEvent("download"),
+      frame.evaluate(async () => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const dai = (window as any).dai;
+        const db = await dai.openDatabase();
+        db.exec("CREATE TABLE geometry(v TEXT)");
+        db.exec({ sql: "INSERT INTO geometry(v) VALUES(?)", bind: ["aligned"] });
+
+        const bytes = dai.exportDatabase(db);
+        const result = {
+          pragma: db.selectValue("PRAGMA page_size") as number,
+          header: dai.pageSizeOf(bytes) as number,
+          length: bytes.length as number,
+        };
+        await dai.saveDatabase(db, { method: "download" });
+        return result;
+      }),
+    ]);
+
+    // The engine's own default is 8192; an unpinned database would report that.
+    expect(before.pragma).toBe(4096);
+    expect(before.header).toBe(4096);
+    expect(before.length % 4096).toBe(0);
+
+    const savedPath = testInfo.outputPath("paged.dai.html");
+    await download.saveAs(savedPath);
+
+    // The bytes written into the container must declare the same geometry.
+    const archive = unzipSync(
+      Buffer.from(
+        readFileSync(savedPath, "utf8").match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(),
+        "base64",
+      ),
+    );
+    const stored = Buffer.from(archive["document.sqlite"]!);
+    expect(stored.readUInt16BE(16)).toBe(4096);
+    expect(stored.length % 4096).toBe(0);
+
+    // And a reopened document must keep it rather than adopting the engine
+    // default again, which is exactly the drift that breaks deserialize.
+    await page.goto(`file:///${savedPath.replace(/\\/g, "/")}`);
+    const reopened = await appFrame(page);
+
+    const after = await reopened.evaluate(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      const db = await dai.openDatabase();
+      return {
+        seedHeader: dai.pageSizeOf(dai.document) as number,
+        pragma: db.selectValue("PRAGMA page_size") as number,
+        header: dai.pageSizeOf(dai.exportDatabase(db)) as number,
+        value: db.selectValue("SELECT v FROM geometry") as string,
+      };
+    });
+
+    expect(after.seedHeader).toBe(4096);
+    expect(after.pragma).toBe(4096);
+    expect(after.header).toBe(4096);
+    expect(after.value).toBe("aligned");
+  });
+
+  test("honours a seeded database's own page size instead of rewriting it", async ({ page }) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    // A document carrying 8192-page bytes must open as 8192: the pragma cannot
+    // change an existing file, so claiming otherwise would be a silent lie.
+    const observed = await frame.evaluate(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      const api = await dai.initSqlite();
+
+      const source = new api.oo1.DB();
+      source.exec("PRAGMA page_size=8192");
+      source.exec("CREATE TABLE wide(v TEXT)");
+      const bytes = api.capi.sqlite3_js_db_export(source.pointer);
+
+      const target = new api.oo1.DB();
+      const pointer = api.wasm.allocFromTypedArray(bytes);
+      api.capi.sqlite3_deserialize(
+        target.pointer,
+        "main",
+        pointer,
+        bytes.length,
+        bytes.length,
+        api.capi.SQLITE_DESERIALIZE_FREEONCLOSE | api.capi.SQLITE_DESERIALIZE_RESIZEABLE,
+      );
+
+      return {
+        sourceHeader: dai.pageSizeOf(bytes) as number,
+        reopened: target.selectValue("PRAGMA page_size") as number,
+      };
+    });
+
+    expect(observed.sourceHeader).toBe(8192);
+    expect(observed.reopened).toBe(8192);
+  });
+});

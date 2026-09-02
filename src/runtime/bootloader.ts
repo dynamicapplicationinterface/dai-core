@@ -427,6 +427,12 @@ function bridgeMain(): void {
     : new Uint8Array(0);
   const glueUrl: string | null = (host.sqliteGlueUrl as string) || null;
 
+  /**
+   * Page size for newly created databases. 4096 is SQLite's own documented
+   * default and the most widely interoperable value.
+   */
+  const DEFAULT_PAGE_SIZE = 4096;
+
   let sqlite3: Any | null = null;
   let booting: Promise<Any> | null = null;
 
@@ -518,11 +524,28 @@ function bridgeMain(): void {
     return booting;
   };
 
-  /** Opens the packaged document, or a fresh database when there is no seed. */
-  const openDatabase = (): Promise<Any> =>
+  /**
+   * Opens the packaged document, or a fresh database when there is no seed.
+   *
+   * A fresh database gets an explicitly pinned page size. SQLite's default
+   * varies by build — this engine defaults to 8192 — so leaving it implicit
+   * makes a document's on-disk geometry an accident of whichever engine version
+   * first wrote it. Pinning it keeps files openable as engines change.
+   * `PRAGMA page_size` only takes effect while the database is still empty, so
+   * it must run before anything creates a table.
+   *
+   * A seeded database keeps whatever page size its bytes already declare: the
+   * pragma cannot change an existing file, and silently rewriting someone's
+   * document geometry would be worse than honouring it.
+   */
+  const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
     initSqlite().then((api2) => {
       const db = new api2.oo1.DB() as Any;
-      if (seed.byteLength === 0) return db;
+      if (seed.byteLength === 0) {
+        const pageSize = (options && options.pageSize) || DEFAULT_PAGE_SIZE;
+        db.exec("PRAGMA page_size=" + pageSize);
+        return db;
+      }
 
       const pointer = api2.wasm.allocFromTypedArray(seed);
       const rc = api2.capi.sqlite3_deserialize(
@@ -535,6 +558,12 @@ function bridgeMain(): void {
           api2.capi.SQLITE_DESERIALIZE_RESIZEABLE,
       );
       if (rc !== 0) throw new Error("sqlite3_deserialize failed (rc=" + rc + ").");
+
+      // Touch the schema so the connection actually reads the deserialized
+      // header. Until something does, PRAGMA page_size still reports the
+      // connection's default rather than the file's real geometry — which makes
+      // a 4096-page document look like an 8192-page one to the application.
+      db.exec("SELECT count(*) FROM sqlite_schema");
       return db;
     });
 
@@ -614,6 +643,15 @@ function bridgeMain(): void {
     },
     initSqlite: initSqlite,
     openDatabase: openDatabase,
+    /** Page size declared by a serialized database, read from its header. */
+    pageSizeOf: (bytes: Uint8Array) => {
+      if (bytes.byteLength < 20) return 0;
+      const high = bytes[16] as number;
+      const low = bytes[17] as number;
+      const raw = (high << 8) | low;
+      // The header stores 65536 as 1, since the field is only 16 bits wide.
+      return raw === 1 ? 65536 : raw;
+    },
     exportDatabase: exportDatabase,
     saveDatabase: (db: Any, options?: Any) => saveState(exportDatabase(db), options),
     saveState: saveState,
