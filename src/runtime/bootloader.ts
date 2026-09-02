@@ -759,7 +759,8 @@ function mount(srcdoc: string): HTMLIFrameElement {
   // by default, which would let the application seize the whole viewport on any
   // gesture it happens to receive. App Mode is the shell's to grant.
   frame.setAttribute("allow", "fullscreen 'none'");
-  frame.setAttribute("srcdoc", srcdoc);
+  // Direct property assignment prevents HTML attribute string escaping issues with unescaped double quotes inside app payloads
+  frame.srcdoc = srcdoc;
   document.body.appendChild(frame);
   return frame;
 }

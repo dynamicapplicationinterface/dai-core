@@ -23,7 +23,7 @@ export const CONTAINER_ENTRY = "runtime/container.html";
 export const MANIFEST_ENTRY = "runtime/manifest.json";
 
 export const DEFAULT_FAVICON =
-  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%230f172a"/><path d="M30 25 L70 25 L70 40 L45 40 L45 60 L70 60 L70 75 L30 75 Z" fill="%233b82f6"/><circle cx="75" cy="70" r="8" fill="%2310b981"/></svg>';
+  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" rx="20" fill="%230f172a"/%3E%3Cpath d="M30 25 L70 25 L70 40 L45 40 L45 60 L70 60 L70 75 L30 75 Z" fill="%233b82f6"/%3E%3Ccircle cx="75" cy="70" r="8" fill="%2310b981"/%3E%3C/svg%3E';
 
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";

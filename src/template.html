@@ -2,6 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+
+  <!--
+    Zero-Trust CSP (DAI v0.1, spec §1) as widened for the Phase 2 iframe runtime.
+
+    `connect-src 'none'` is the air gap and is untouched: no fetch, XHR,
+    WebSocket, EventSource or beacon can leave this document. Every other
+    directive names only `blob:` — origin-local object URLs minted from the
+    embedded payload, which cannot reach the network — plus the inline/wasm
+    allowances the React bundle and sqlite3.wasm require.
+
+    `blob:` on script-src/style-src and `frame-src 'self' blob:` are additions
+    over the v0.1 spec text: with `default-src 'none'` the bootloader could
+    neither frame the app nor load a single packaged asset. Do not add any
+    scheme that can reach a remote host.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
+
   <!--
     viewport-fit=cover lets the app paint under the notch and home indicator;
     without it a standalone iOS launch is letterboxed by safe-area insets.
@@ -40,22 +57,6 @@
     key inside the signed set could not be written before signing.
   -->
   <meta name="dai-public-key" content="<!--DAI_PUBLIC_KEY-->">
-
-  <!--
-    Zero-Trust CSP (DAI v0.1, spec §1) as widened for the Phase 2 iframe runtime.
-
-    `connect-src 'none'` is the air gap and is untouched: no fetch, XHR,
-    WebSocket, EventSource or beacon can leave this document. Every other
-    directive names only `blob:` — origin-local object URLs minted from the
-    embedded payload, which cannot reach the network — plus the inline/wasm
-    allowances the React bundle and sqlite3.wasm require.
-
-    `blob:` on script-src/style-src and `frame-src 'self' blob:` are additions
-    over the v0.1 spec text: with `default-src 'none'` the bootloader could
-    neither frame the app nor load a single packaged asset. Do not add any
-    scheme that can reach a remote host.
-  -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
 
   <style>
     :root { color-scheme: light dark; }
