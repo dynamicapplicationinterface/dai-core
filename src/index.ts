@@ -1,9 +1,46 @@
-import { createHash, createPublicKey, createSign, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { zipSync, type Zippable } from "fflate";
 import type { Plugin, ResolvedConfig } from "vite";
+import {
+  buildContainer,
+  DEFAULT_APP_PREFIX,
+  DEFAULT_GLUE_ENTRY,
+  DEFAULT_SQLITE_ENTRY,
+  DEFAULT_WASM_ENTRY,
+} from "./core.js";
+
+export {
+  buildContainer,
+  canonicalPayload,
+  sha256Hex,
+  CONTAINER_ENTRY,
+  MANIFEST_ENTRY,
+  MANIFEST_VERSION,
+  DEFAULT_APP_PREFIX,
+  DEFAULT_GLUE_ENTRY,
+  DEFAULT_SQLITE_ENTRY,
+  DEFAULT_WASM_ENTRY,
+} from "./core.js";
+export type {
+  BuildContainerInput,
+  BuildContainerResult,
+  ContainerManifest,
+} from "./core.js";
+
+/** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
+const SQLITE_WASM_LOOKUP = [
+  // Layout since 3.53.
+  "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm",
+  // Earlier releases shipped the upstream jswasm tree verbatim.
+  "node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/sqlite3.wasm",
+];
+
+/** Where @sqlite.org/sqlite-wasm keeps the Emscripten glue. */
+const SQLITE_GLUE_LOOKUP = ["node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"];
+
+/** Directory holding the compiled plugin; the template and runtime sit beside it. */
+declare const __dirname: string;
 
 export interface DaiPluginOptions {
   /**
@@ -23,107 +60,54 @@ export interface DaiPluginOptions {
    * Relative paths resolve against the Vite project root.
    */
   sqlitePath?: string;
-  /**
-   * Path inside the archive for the SQLite document. Defaults to `document.sqlite`.
-   */
+  /** Path inside the archive for the SQLite document. */
   sqliteEntryName?: string;
   /**
-   * Path to the `sqlite3.wasm` engine to embed. Relative paths resolve against
-   * the Vite project root. When omitted the plugin looks for
-   * `@sqlite.org/sqlite-wasm` in the project's node_modules; if that is absent
-   * too, no engine is packaged.
+   * Path to the `sqlite3.wasm` engine to embed. When omitted the plugin looks
+   * for `@sqlite.org/sqlite-wasm` in the project's node_modules.
    */
   sqliteWasmPath?: string;
-  /**
-   * Path inside the archive for the WASM engine. Defaults to
-   * `runtime/sqlite3.wasm`.
-   */
+  /** Path inside the archive for the WASM engine. */
   wasmEntryName?: string;
   /**
    * Path to the Emscripten glue (`sqlite3InitModule`) that drives the engine.
-   * Defaults to the copy in `@sqlite.org/sqlite-wasm`. Only packaged when an
-   * engine is packaged too.
+   * Only packaged when an engine is packaged too.
    */
   sqliteGluePath?: string;
-  /** Path inside the archive for the glue. Defaults to `runtime/sqlite3.mjs`. */
+  /** Path inside the archive for the glue. */
   glueEntryName?: string;
   /**
-   * Directory prefix inside the archive for the compiled React app. Defaults to
-   * `app`, matching the `/app` path the spec uses for document logic. Set to an
-   * empty string to write the build output at the archive root.
+   * Directory prefix inside the archive for the compiled app. Defaults to
+   * `app`, matching the `/app` path the spec uses for document logic.
    */
   appEntryPrefix?: string;
   /**
-   * fflate deflate level, 0 (store) to 9 (max). Defaults to 9 — the container is
-   * written once and read many times, so size beats compression time.
-   */
-  compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-  /** Path to an alternative bootloader template. Defaults to the bundled one. */
-  templatePath?: string;
-  /**
-   * Document identity. Minted fresh on every compile unless given. Pass the
-   * existing UUID to recompile a document in place; per spec §1 a changed
-   * application is a new document and should get a new one.
-   */
-  documentUuid?: string;
-  /**
-   * PEM-encoded PKCS#8 ECDSA P-256 private key, or a path to one, used to sign
-   * the container. The key never enters the container — only the matching
-   * public key does. Generate a pair with `node scripts/generate-key.mjs`.
+   * PEM-encoded PKCS#8 ECDSA P-256 private key, or a path to one. The key never
+   * enters the container. Generate a pair with `node scripts/generate-key.mjs`.
    */
   signingKey?: string;
   /**
-   * Whether the bootloader verifies entry digests before mounting. Defaults to
-   * true. Turning this off ships a manifest that is recorded but not enforced.
+   * Document identity. Minted fresh on every compile unless given. Per spec §1
+   * a changed application is a new document and should get a new one.
    */
+  documentUuid?: string;
+  /** Whether the shell demands integrity verification. Defaults to true. */
   verifyIntegrity?: boolean;
+  /** fflate deflate level, 0 (store) to 9 (max). */
+  compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  /** Path to an alternative bootloader template. */
+  templatePath?: string;
 }
 
-const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 /**
- * Anchors the payload substitution to the payload tag itself.
+ * Compiles the finished Vite build into a single air-gapped `.dai.html`
+ * container. Runs on `closeBundle` so the application is fully written to
+ * `dist` before the archive is assembled.
  *
- * A bare replace would hit the wrong occurrence: the bootloader carries the
- * placeholder literal too (it rebuilds the container on save) and is inlined
- * above the tag, so the first match is inside the runtime's own source.
- */
-const PAYLOAD_TAG_RE = /(<script[^>]*id="dai-payload"[^>]*>)<!--DAI_PAYLOAD-->/;
-const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
-const INTEGRITY_PLACEHOLDER = "<!--DAI_INTEGRITY-->";
-const PUBLIC_KEY_PLACEHOLDER = "<!--DAI_PUBLIC_KEY-->";
-const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
-const DEFAULT_SQLITE_ENTRY = "document.sqlite";
-const DEFAULT_APP_PREFIX = "app";
-const DEFAULT_WASM_ENTRY = "runtime/sqlite3.wasm";
-/**
- * The container's own shell, stored inside its payload. A save rebuilds the
- * file from this copy rather than from whatever dai-core is installed, so a
- * document keeps the runtime semantics it was compiled with for its whole life.
- */
-const CONTAINER_ENTRY = "runtime/container.html";
-const MANIFEST_ENTRY = "runtime/manifest.json";
-/** Bumped when the manifest's shape changes. */
-const MANIFEST_VERSION = 1;
-const DEFAULT_GLUE_ENTRY = "runtime/sqlite3.mjs";
-/** Where @sqlite.org/sqlite-wasm keeps the Emscripten glue. */
-const SQLITE_GLUE_LOOKUP = [
-  "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs",
-];
-/** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
-const SQLITE_WASM_LOOKUP = [
-  // Layout since 3.53.
-  "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm",
-  // Earlier releases shipped the upstream jswasm tree verbatim.
-  "node_modules/@sqlite.org/sqlite-wasm/sqlite-wasm/jswasm/sqlite3.wasm",
-];
-
-/** Directory holding the compiled plugin; `template.html` sits beside it. */
-declare const __dirname: string;
-
-/**
- * Compiles the finished Vite build into a single air-gapped `.dai.html` polyglot
- * container. Runs on `closeBundle` so the React app is fully written to `dist`
- * before the archive is assembled.
+ * This is a filesystem wrapper only: it resolves paths, reads bytes and reports
+ * problems, then hands everything to `buildContainer`, which does the actual
+ * compilation in memory. Any other host — a CLI, a browser-based bundler — can
+ * call that directly.
  */
 export default function dai(options: DaiPluginOptions = {}): Plugin {
   let config: ResolvedConfig;
@@ -153,18 +137,9 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         return;
       }
 
-      const appName = options.appName ?? inferAppName(root);
-      const files = await collectFiles(buildDir);
-
-      if (files.length === 0) {
-        this.error(`DAI: build output at ${buildDir} is empty.`);
-        return;
-      }
-
       const templatePath = options.templatePath
         ? resolve(root, options.templatePath)
         : resolve(__dirname, "template.html");
-
       if (!existsSync(templatePath)) {
         this.error(`DAI: bootloader template not found at ${templatePath}.`);
         return;
@@ -177,46 +152,31 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         );
         return;
       }
-      const runtime = readFileSync(runtimePath, "utf8");
 
-      const template = readFileSync(templatePath, "utf8");
-
-      if (!template.includes(RUNTIME_PLACEHOLDER)) {
-        this.error(
-          `DAI: template ${templatePath} has no ${RUNTIME_PLACEHOLDER} placeholder.`,
-        );
+      const appName = options.appName ?? inferAppName(root);
+      const collected = await collectFiles(buildDir);
+      if (collected.length === 0) {
+        this.error(`DAI: build output at ${buildDir} is empty.`);
         return;
       }
 
-      if (!PAYLOAD_TAG_RE.test(template)) {
-        this.error(
-          `DAI: template ${templatePath} has no ${PAYLOAD_PLACEHOLDER} placeholder.`,
-        );
-        return;
+      const files: Record<string, Uint8Array> = {};
+      for (const file of collected) {
+        files[file.entry] = new Uint8Array(await readFile(file.absolute));
       }
 
-      const prefix = normalizePrefix(options.appEntryPrefix ?? DEFAULT_APP_PREFIX);
-      const archive: Zippable = {};
-      for (const file of files) {
-        archive[prefix + file.entry] = await readFile(file.absolute);
-      }
-
-      const sqliteEntry = options.sqliteEntryName ?? DEFAULT_SQLITE_ENTRY;
-      const sqlite = readSqlite(root, options.sqlitePath);
-      if (options.sqlitePath && sqlite.byteLength === 0) {
+      const sqlite = readOptional(root, options.sqlitePath);
+      if (options.sqlitePath && !sqlite) {
         this.warn(
           `DAI: sqlitePath "${options.sqlitePath}" did not resolve to a file ` +
             `(looked in ${resolve(root, options.sqlitePath)}). ` +
-            `Shipping an empty ${sqliteEntry} — check the path for a typo.`,
+            `Shipping an empty ${options.sqliteEntryName ?? DEFAULT_SQLITE_ENTRY} — ` +
+            `check the path for a typo.`,
         );
       }
-      archive[sqliteEntry] = sqlite;
 
-      const wasmEntry = options.wasmEntryName ?? DEFAULT_WASM_ENTRY;
-      const wasm = findSqliteWasm(root, options.sqliteWasmPath);
-      if (wasm) {
-        archive[wasmEntry] = new Uint8Array(readFileSync(wasm));
-      } else if (options.sqliteWasmPath) {
+      const wasmPath = findFirst(root, options.sqliteWasmPath, SQLITE_WASM_LOOKUP);
+      if (!wasmPath && options.sqliteWasmPath) {
         this.warn(
           `DAI: sqliteWasmPath "${options.sqliteWasmPath}" did not resolve to a ` +
             `file (looked in ${resolve(root, options.sqliteWasmPath)}). ` +
@@ -224,13 +184,10 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         );
       }
 
-      const glueEntry = options.glueEntryName ?? DEFAULT_GLUE_ENTRY;
-      const glue = wasm
+      const gluePath = wasmPath
         ? findFirst(root, options.sqliteGluePath, SQLITE_GLUE_LOOKUP)
         : undefined;
-      if (glue) {
-        archive[glueEntry] = new Uint8Array(readFileSync(glue));
-      } else if (wasm) {
+      if (wasmPath && !gluePath) {
         this.warn(
           `DAI: packaged a SQLite engine but found no Emscripten glue` +
             `${options.sqliteGluePath ? ` at ${resolve(root, options.sqliteGluePath)}` : ""}. ` +
@@ -239,91 +196,54 @@ export default function dai(options: DaiPluginOptions = {}): Plugin {
         );
       }
 
-      // The manifest seals every other entry. It is written before the shell so
-      // the shell's own digest can cover it, and excludes itself by
-      // construction — a digest cannot cover the field that holds it.
-      const documentUuid = options.documentUuid ?? randomUUID();
-      const hashes: Record<string, string> = {};
-      for (const [name, bytes] of Object.entries(archive)) {
-        hashes[name] = sha256(bytes as Uint8Array);
+      let built;
+      try {
+        built = await buildContainer({
+          files,
+          template: readFileSync(templatePath, "utf8"),
+          runtime: readFileSync(runtimePath, "utf8"),
+          appName,
+          sqlite,
+          wasm: wasmPath ? new Uint8Array(readFileSync(wasmPath)) : undefined,
+          glue: gluePath ? new Uint8Array(readFileSync(gluePath)) : undefined,
+          signingKey: options.signingKey
+            ? readSigningKey(root, options.signingKey)
+            : undefined,
+          documentUuid: options.documentUuid,
+          verifyIntegrity: options.verifyIntegrity,
+          compressionLevel: options.compressionLevel,
+          appEntryPrefix: options.appEntryPrefix ?? DEFAULT_APP_PREFIX,
+          sqliteEntryName: options.sqliteEntryName,
+          wasmEntryName: options.wasmEntryName ?? DEFAULT_WASM_ENTRY,
+          glueEntryName: options.glueEntryName ?? DEFAULT_GLUE_ENTRY,
+        });
+      } catch (error) {
+        this.error(`DAI: ${(error as Error).message}`);
+        return;
       }
-
-      // The shell is the finished container minus its payload: template, app
-      // name and runtime resolved, `<!--DAI_PAYLOAD-->` still open. It goes into
-      // the archive it will later carry, so saves regenerate the same shell.
-      // The public key lives in the shell, never in the payload it attests to:
-      // the signature covers the shell's own digest, so a key inside the signed
-      // set could not be written before signing.
-      const signing = readSigningKey(root, options.signingKey);
-
-      // The policy lives in the shell, never in the payload it governs.
-      const integrityPolicy = options.verifyIntegrity === false ? "advisory" : "required";
-      const shell = template
-        .split(APP_NAME_PLACEHOLDER)
-        .join(escapeHtml(appName))
-        .split(INTEGRITY_PLACEHOLDER)
-        .join(integrityPolicy)
-        .split(PUBLIC_KEY_PLACEHOLDER)
-        .join(signing ? signing.spki : "")
-        .replace(RUNTIME_PLACEHOLDER, () => runtime);
-      const shellBytes = new TextEncoder().encode(shell);
-      archive[CONTAINER_ENTRY] = shellBytes;
-      hashes[CONTAINER_ENTRY] = sha256(shellBytes);
-
-      // Signed entries deliberately exclude document.sqlite: per spec §1 the
-      // application is immutable but its database is not, and a container has
-      // no private key to re-sign with after a save. Signing the app and
-      // runtime keeps the publisher's claim verifiable for the document's whole
-      // life, while the database stays covered by `hashes` alone.
-      const signedEntries: Record<string, string> = {};
-      for (const [name, digest] of Object.entries(hashes)) {
-        if (name !== sqliteEntry) signedEntries[name] = digest;
-      }
-
-      const signed = signing
-        ? sign(signing.privateKey, canonicalPayload(documentUuid, signedEntries))
-        : undefined;
-
-      const manifest = {
-        manifestVersion: MANIFEST_VERSION,
-        documentUuid,
-        appName,
-        createdAt: new Date().toISOString(),
-        algorithm: "SHA-256",
-        // Informational only: the shell decides whether this is enforced.
-        integrityPolicy,
-        hashes,
-        ...(signed
-          ? {
-              signatureAlgorithm: "ECDSA-P256-SHA256",
-              publicKeyFingerprint: signing!.fingerprint,
-              signedEntries,
-              signature: signed,
-            }
-          : {}),
-      };
-      archive[MANIFEST_ENTRY] = new TextEncoder().encode(
-        JSON.stringify(manifest, null, 2) + "\n",
-      );
-
-      const zipped = zipSync(archive, { level: options.compressionLevel ?? 9 });
-      const payload = Buffer.from(zipped).toString("base64");
-
-      // Base64 contains no `<`, so it cannot terminate the payload script tag.
-      const html = shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
 
       const outDir = options.outDir ? resolve(root, options.outDir) : root;
       const outFile = join(outDir, `${sanitizeFileName(appName)}.dai.html`);
-      writeFileSync(outFile, html, "utf8");
+      writeFileSync(outFile, built.html, "utf8");
+
+      const engine = wasmPath
+        ? gluePath
+          ? "sqlite3 + glue embedded"
+          : "sqlite3.wasm only"
+        : "no sqlite engine";
 
       config.logger.info(
         `\n[dai] ${relative(root, outFile) || outFile} — ` +
-          `${Object.keys(archive).length} entries, ` +
-          `${wasm ? (glue ? "sqlite3 + glue embedded" : "sqlite3.wasm only") : "no sqlite engine"}, ` +
-          `uuid ${documentUuid.slice(0, 8)}, ` +
-          `${signing ? `signed ${signing.fingerprint.slice(0, 8)}` : "unsigned"}, ` +
-          `${formatBytes(zipped.byteLength)} archive, ` +
-          `${formatBytes(Buffer.byteLength(html))} container`,
+          `${Object.keys(built.archive).length} entries, ` +
+          `${engine}, ` +
+          `uuid ${built.documentUuid.slice(0, 8)}, ` +
+          `${
+            built.publicKeyFingerprint
+              ? `signed ${built.publicKeyFingerprint.slice(0, 8)}`
+              : "unsigned"
+          }, ` +
+          `${formatBytes(built.zipped.byteLength)} archive, ` +
+          `${formatBytes(Buffer.byteLength(built.html))} container`,
       );
     },
   };
@@ -351,13 +271,17 @@ async function collectFiles(dir: string, base = dir): Promise<CollectedFile[]> {
   return out;
 }
 
-/**
- * Locates the SQLite engine binary: the configured path if given, otherwise the
- * copy installed by @sqlite.org/sqlite-wasm. Returns undefined when neither
- * exists — a container without an engine is valid, just not database-backed.
- */
-function findSqliteWasm(root: string, configured?: string): string | undefined {
-  return findFirst(root, configured, SQLITE_WASM_LOOKUP);
+/** Reads a file if the path resolves to one, otherwise undefined. */
+function readOptional(root: string, path?: string): Uint8Array | undefined {
+  if (!path) return undefined;
+  const absolute = resolve(root, path);
+  if (!existsSync(absolute) || !statSync(absolute).isFile()) return undefined;
+  return new Uint8Array(readFileSync(absolute));
+}
+
+/** Accepts either PEM text or a path to a PEM file. */
+function readSigningKey(root: string, key: string): string {
+  return key.includes("BEGIN") ? key : readFileSync(resolve(root, key), "utf8");
 }
 
 /** First existing file: the configured path if given, else the fallbacks. */
@@ -370,70 +294,6 @@ function findFirst(
     ? [resolve(root, configured)]
     : fallbacks.map((path) => resolve(root, path));
   return candidates.find((path) => existsSync(path) && statSync(path).isFile());
-}
-
-interface SigningMaterial {
-  privateKey: string;
-  /** Base64 SPKI DER of the matching public key, embedded in the shell. */
-  spki: string;
-  fingerprint: string;
-}
-
-/** Loads the signing key from a PEM string or a path to one. */
-function readSigningKey(root: string, key?: string): SigningMaterial | undefined {
-  if (!key) return undefined;
-  const pem = key.includes("BEGIN") ? key : readFileSync(resolve(root, key), "utf8");
-  const spkiDer = createPublicKey(pem).export({ type: "spki", format: "der" });
-  return {
-    privateKey: pem,
-    spki: Buffer.from(spkiDer).toString("base64"),
-    fingerprint: createHash("sha256").update(spkiDer).digest("hex").slice(0, 16),
-  };
-}
-
-/**
- * The exact bytes that get signed.
- *
- * Entry names are sorted so the string depends only on content, never on the
- * order the archive happened to be assembled in — the verifier rebuilds this
- * from the manifest and must land on identical bytes.
- */
-function canonicalPayload(uuid: string, entries: Record<string, string>): string {
-  const sorted = Object.keys(entries)
-    .sort()
-    .map((name) => name + ":" + entries[name])
-    .join("\n");
-  return "dai-v1\n" + uuid + "\n" + sorted + "\n";
-}
-
-/** ECDSA P-256 / SHA-256 in IEEE P1363 form, which is what WebCrypto verifies. */
-function sign(privateKey: string, payload: string): string {
-  const signer = createSign("SHA256");
-  signer.update(payload);
-  signer.end();
-  return signer.sign({ key: privateKey, dsaEncoding: "ieee-p1363" }).toString("base64");
-}
-
-/** Lowercase hex SHA-256 of the uncompressed entry bytes. */
-function sha256(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-function normalizePrefix(prefix: string): string {
-  const trimmed = prefix.replace(/^\/+|\/+$/g, "");
-  return trimmed ? `${trimmed}/` : "";
-}
-
-/**
- * Reads the seed SQLite document. Returns an empty array when no path was given
- * (the correct silent default) or when the given path does not resolve — the
- * caller warns in the latter case so a typo cannot ship a dead database.
- */
-function readSqlite(root: string, sqlitePath?: string): Uint8Array {
-  if (!sqlitePath) return new Uint8Array(0);
-  const absolute = resolve(root, sqlitePath);
-  if (!existsSync(absolute) || !statSync(absolute).isFile()) return new Uint8Array(0);
-  return new Uint8Array(readFileSync(absolute));
 }
 
 function inferAppName(root: string): string {
@@ -455,14 +315,6 @@ function sanitizeFileName(name: string): string {
     .replace(/-+/g, "-")
     .replace(/^[-.]+|[-.]+$/g, "");
   return cleaned || "app";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function formatBytes(bytes: number): string {

@@ -244,6 +244,32 @@ Relative specifiers cannot be mapped directly: they are resolved against the
 importing module's base URL *before* the import map is consulted, so a blob
 module throws first.
 
+## Using the compiler directly
+
+The plugin is a filesystem wrapper around a pure core. `buildContainer` takes
+bytes and strings, returns bytes and strings, and imports nothing from Node — so
+the same compiler runs in a CLI, a build server, or a browser.
+
+```ts
+import { buildContainer } from "dai-core/core";
+
+const { html, manifest, documentUuid } = await buildContainer({
+  files: { "index.html": bytes, "assets/app.js": bytes },
+  template,          // the shell, as a string
+  runtime,           // the bootloader bundle, as a string
+  appName: "my-doc",
+  sqlite, wasm, glue, // optional Uint8Arrays
+  signingKey: pem,    // optional PKCS#8 PEM text, never a path
+  documentUuid,       // optional: reuse an identity
+  now: () => date,    // optional: build reproducibly
+});
+```
+
+Crypto goes through WebCrypto rather than `node:crypto`, which is what keeps the
+core usable in a browser; its ECDSA output is already the IEEE P1363 form the
+bootloader verifies. Passing a fixed `documentUuid` and `now` makes a build
+byte-for-byte reproducible.
+
 ## Tests
 
 ```bash
