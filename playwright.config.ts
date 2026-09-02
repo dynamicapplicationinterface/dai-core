@@ -13,6 +13,14 @@ export default defineConfig({
     acceptDownloads: true,
     trace: "retain-on-failure",
   },
+  // The Studio is a normal web app and must be served; the container tests
+  // still open their artifacts straight from disk over file://.
+  webServer: {
+    command: "npx vite --config examples/web-studio/vite.config.ts examples/web-studio",
+    url: "http://localhost:5174/",
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "firefox", use: { ...devices["Desktop Firefox"] } },

@@ -27,6 +27,7 @@ export default defineConfig([
     target: "es2018",
     platform: "browser",
     // template.html ships beside the compiled JS; it is read at runtime.
-    onSuccess: "node scripts/copy-template.mjs",
+    // The template must be copied before the assets module embeds it.
+    onSuccess: "node scripts/copy-template.mjs && node scripts/embed-assets.mjs",
   },
 ]);

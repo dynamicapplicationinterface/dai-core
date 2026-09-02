@@ -313,21 +313,73 @@ function fromPem(pem: string, label: string): Uint8Array {
   return fromBase64(body);
 }
 
-function fromBase64(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/** Reverse lookup, built once. -1 marks a character that is not base64. */
+const BASE64_LOOKUP = /* @__PURE__ */ (() => {
+  const table = new Int16Array(256).fill(-1);
+  for (let i = 0; i < BASE64_ALPHABET.length; i++) {
+    table[BASE64_ALPHABET.charCodeAt(i)] = i;
+  }
+  return table;
+})();
+
+/**
+ * Base64-encodes bytes.
+ *
+ * Implemented here rather than through `btoa` so the core carries no
+ * environmental assumptions at all: `btoa`/`atob` are absent from some
+ * runtimes, and `btoa` additionally throws on a string built from bytes above
+ * 0xFF if a caller ever hands us one.
+ */
+export function toBase64(bytes: Uint8Array): string {
+  let out = "";
+  const limit = bytes.length - (bytes.length % 3);
+
+  for (let i = 0; i < limit; i += 3) {
+    const chunk = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
+    out +=
+      BASE64_ALPHABET[(chunk >> 18) & 63]! +
+      BASE64_ALPHABET[(chunk >> 12) & 63]! +
+      BASE64_ALPHABET[(chunk >> 6) & 63]! +
+      BASE64_ALPHABET[chunk & 63]!;
+  }
+
+  const remaining = bytes.length - limit;
+  if (remaining === 1) {
+    const chunk = bytes[limit]! << 16;
+    out += BASE64_ALPHABET[(chunk >> 18) & 63]! + BASE64_ALPHABET[(chunk >> 12) & 63]! + "==";
+  } else if (remaining === 2) {
+    const chunk = (bytes[limit]! << 16) | (bytes[limit + 1]! << 8);
+    out +=
+      BASE64_ALPHABET[(chunk >> 18) & 63]! +
+      BASE64_ALPHABET[(chunk >> 12) & 63]! +
+      BASE64_ALPHABET[(chunk >> 6) & 63]! +
+      "=";
+  }
+
+  return out;
 }
 
-/** btoa() over a large binary string blows the argument limit; chunk it. */
-function toBase64(bytes: Uint8Array): string {
-  const CHUNK = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+/** Decodes base64, ignoring whitespace and padding. */
+export function fromBase64(value: string): Uint8Array {
+  let bits = 0;
+  let accumulator = 0;
+  const out: number[] = [];
+
+  for (let i = 0; i < value.length; i++) {
+    const code = BASE64_LOOKUP[value.charCodeAt(i)]!;
+    if (code < 0) continue; // whitespace, padding, or a stray character
+    accumulator = (accumulator << 6) | code;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((accumulator >> bits) & 0xff);
+    }
   }
-  return btoa(binary);
+
+  return Uint8Array.from(out);
 }
 
 function normalizePrefix(prefix: string): string {

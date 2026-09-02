@@ -265,10 +265,35 @@ const { html, manifest, documentUuid } = await buildContainer({
 });
 ```
 
-Crypto goes through WebCrypto rather than `node:crypto`, which is what keeps the
+The shell template and bootloader are published as string constants, so a
+browser-hosted compiler needs neither disk access nor `fetch()`:
+
+```ts
+import { CONTAINER_TEMPLATE, RUNTIME_SOURCE } from "dai-core/templates";
+```
+
+Base64 is implemented inside the core rather than through `btoa`/`atob`, so
+there are no remaining platform globals to depend on. Crypto goes through
+WebCrypto rather than `node:crypto`, which is what keeps the
 core usable in a browser; its ECDSA output is already the IEEE P1363 form the
 bootloader verifies. Passing a fixed `documentUuid` and `now` makes a build
 byte-for-byte reproducible.
+
+## Web Studio
+
+`examples/web-studio` is a working in-browser compiler: TSX and a SQL schema go
+in, `esbuild-wasm` transpiles, `buildContainer` seals, and a `.dai.html` Blob
+comes out — with no server compiling anything.
+
+```bash
+npx vite --config examples/web-studio/vite.config.ts examples/web-studio
+```
+
+The Studio is an ordinary online web app; the air-gap rules govern the artifacts
+it produces, not the tool producing them, so it fetches the SQLite engine and
+the esbuild binary from its own origin at startup. It emits **unsigned**
+containers: it holds no private key, and shipping one to a browser would hand
+every visitor the publisher's identity.
 
 ## Tests
 

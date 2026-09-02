@@ -3,7 +3,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { unzipSync } from "fflate";
-import { buildContainer, canonicalPayload, sha256Hex } from "../src/core.js";
+import {
+  buildContainer,
+  canonicalPayload,
+  fromBase64,
+  sha256Hex,
+  toBase64,
+} from "../src/core.js";
+import { CONTAINER_TEMPLATE, RUNTIME_SOURCE } from "../dist/templates.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(here, "../dist");
@@ -180,5 +187,84 @@ test.describe("buildContainer", () => {
     await expect(
       buildContainer({ ...minimalInput(), template: TEMPLATE.replace("<!--DAI_PAYLOAD-->", "") }),
     ).rejects.toThrow(/DAI_PAYLOAD/);
+  });
+});
+
+test.describe("base64 helper", () => {
+  test("round-trips every byte value and every padding case", async () => {
+    // All 256 byte values, so no sign-extension or high-bit bug can hide.
+    const all = new Uint8Array(256).map((_, i) => i);
+    expect(Array.from(fromBase64(toBase64(all)))).toEqual(Array.from(all));
+
+    // Lengths 0..8 cover both padding remainders repeatedly.
+    for (let length = 0; length <= 8; length++) {
+      const sample = all.slice(0, length);
+      expect(Array.from(fromBase64(toBase64(sample))), `length ${length}`).toEqual(
+        Array.from(sample),
+      );
+    }
+  });
+
+  test("agrees with the platform implementation", async () => {
+    const cases = [
+      new Uint8Array(0),
+      new Uint8Array([0]),
+      new Uint8Array([0, 255]),
+      new Uint8Array([1, 2, 3]),
+      new Uint8Array([251, 255, 191, 254]),
+      new TextEncoder().encode("the quick brown fox — ünïcödé"),
+      new Uint8Array(5000).map((_, i) => (i * 31) % 256),
+    ];
+
+    for (const bytes of cases) {
+      const ours = toBase64(bytes);
+      expect(ours).toBe(Buffer.from(bytes).toString("base64"));
+      expect(Buffer.from(fromBase64(ours))).toEqual(Buffer.from(bytes));
+    }
+  });
+
+  test("tolerates whitespace and missing padding when decoding", async () => {
+    const encoded = toBase64(new TextEncoder().encode("hello world"));
+    const mangled = encoded.replace(/=+$/, "").replace(/(.{4})/g, "$1\n  ");
+    expect(new TextDecoder().decode(fromBase64(mangled))).toBe("hello world");
+  });
+
+  test("does not depend on atob or btoa", async () => {
+    // Prove it rather than assert it in prose: hide the globals and rebuild a
+    // real container through the core.
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const savedAtob = globals.atob;
+    const savedBtoa = globals.btoa;
+    globals.atob = undefined;
+    globals.btoa = undefined;
+
+    try {
+      const built = await buildContainer(minimalInput());
+      expect(built.html).toMatch(/id="dai-payload">[A-Za-z0-9+/=]{100,}/);
+    } finally {
+      globals.atob = savedAtob;
+      globals.btoa = savedBtoa;
+    }
+  });
+});
+
+test.describe("generated template module", () => {
+  test("compiles a container from the published constants alone", async () => {
+    // The path a browser-hosted compiler takes: no disk, no fetch.
+    const built = await buildContainer({
+      files: { "index.html": bytes("<!doctype html><body>studio") },
+      template: CONTAINER_TEMPLATE,
+      runtime: RUNTIME_SOURCE,
+      appName: "from-constants",
+    });
+
+    expect(built.html).toContain("<title>from-constants</title>");
+    expect(built.html).toContain('content="required"');
+    expect(payloadOf(built.html)["app/index.html"]).toBeTruthy();
+
+    // The constants must match what the plugin writes beside itself, or the
+    // Studio would emit containers that differ from terminal builds.
+    expect(CONTAINER_TEMPLATE).toBe(TEMPLATE);
+    expect(RUNTIME_SOURCE).toBe(RUNTIME);
   });
 });

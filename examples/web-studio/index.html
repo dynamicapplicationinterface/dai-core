@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DAI Web Studio</title>
+    <style>
+      body { font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 24px; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.lede { margin: 0 0 20px; color: #555; }
+      .panes { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+      label { display: block; font-weight: 600; margin-bottom: 6px; }
+      textarea { width: 100%; min-height: 220px; font-family: ui-monospace, monospace; font-size: 12px; }
+      button { margin-top: 16px; padding: 8px 18px; font-size: 14px; }
+      #status { margin-top: 16px; font-family: ui-monospace, monospace; white-space: pre-wrap; }
+      #download { display: inline-block; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>DAI Web Studio</h1>
+    <p class="lede">
+      Compiles TSX and a SQLite schema into a sealed <code>.dai.html</code>
+      container, entirely in this tab.
+    </p>
+
+    <div class="panes">
+      <div>
+        <label for="source">Application (TSX)</label>
+        <textarea id="source" spellcheck="false">
+const rows: string[] = ["alpha", "beta", "gamma"];
+
+async function main() {
+  const dai = (window as any).dai;
+  const db = await dai.openDatabase();
+  db.exec((window as any).__schema);
+  for (const row of rows) {
+    db.exec({ sql: "INSERT INTO items(name) VALUES(?)", bind: [row] });
+  }
+  const count = db.selectValue("SELECT count(*) FROM items");
+  document.body.innerHTML =
+    `<pre id="out">items=${count} uuid=${dai.documentUuid}</pre>`;
+}
+
+main();
+</textarea>
+      </div>
+      <div>
+        <label for="schema">Schema (SQL)</label>
+        <textarea id="schema" spellcheck="false">
+CREATE TABLE IF NOT EXISTS items (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL
+);
+</textarea>
+      </div>
+    </div>
+
+    <button id="compile">Compile container</button>
+    <div id="status">idle</div>
+    <a id="download" hidden download>Download container</a>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

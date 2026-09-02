@@ -25,6 +25,11 @@
       "types": "./dist/core.d.ts",
       "import": "./dist/core.js",
       "require": "./dist/core.cjs"
+    },
+    "./templates": {
+      "types": "./dist/templates.d.ts",
+      "import": "./dist/templates.js",
+      "require": "./dist/templates.cjs"
     }
   },
   "files": [
@@ -58,6 +63,7 @@
     "@playwright/test": "^1.62.1",
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "@types/node": "^22.20.1",
+    "esbuild-wasm": "^0.28.2",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vite": "^6.4.3"
