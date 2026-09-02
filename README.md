@@ -419,6 +419,34 @@ disk.
 node examples/tasks/build-tasks-cartridge.js
 ```
 
+## Reading a container
+
+`buildContainer` seals; `verifyContainer` checks the seal. Both are in the core,
+so every host reaches the same verdict on the same file — a cartridge refused by
+the mobile runner must not open in the desktop shell.
+
+```ts
+import { verifyContainer, ContainerError } from "dai-core/container";
+
+try {
+  const container = await verifyContainer(html);   // text, never a File
+  mount(container.html);                            // verbatim, never a rebuild
+} catch (error) {
+  if (error instanceof ContainerError) show(error.message);
+}
+```
+
+It performs four checks, in order: every payload entry matches its digest;
+every manifest entry exists in the payload (without which content could simply
+be appended); the outer shell matches the sealed copy at
+`runtime/container.html`; and the publisher signature verifies when a key is
+carried. A `ContainerError` names what is wrong with the file and is meant to be
+shown to the person holding it.
+
+`resealContainer(container, database)` rebuilds around a new database, carrying
+the document UUID forward. The signature survives, because `document.sqlite` was
+never in the signed set.
+
 ## Tests
 
 ```bash

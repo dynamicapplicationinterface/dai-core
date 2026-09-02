@@ -5,6 +5,8 @@
  * for silent, in-place disk persistence without browser download prompts.
  */
 
+import { ContainerError, verifyContainer } from "../../../src/container.js";
+
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
 const openBtn = document.getElementById("open-btn") as HTMLButtonElement;
 const chooseBtn = document.getElementById("choose-btn") as HTMLButtonElement;
@@ -112,26 +114,25 @@ async function openFile(file: File): Promise<void> {
   try {
     const text = await file.text();
 
-    // Refuse anything that is not a container rather than mounting it. Without
-    // this the shell frames arbitrary bytes and the user gets a blank panel
-    // with nothing said about why.
-    if (!/<script[^>]*id="dai-payload"[^>]*>\s*[A-Za-z0-9+/=]/.test(text)) {
-      statusEl.textContent =
-        `${file.name} is not a DAI container: it has no payload. ` +
-        `It may be an ordinary web page, or a truncated download.`;
-      return;
-    }
+    // Full verification, not a shape check: digests both ways, the shell
+    // against its sealed copy, and the publisher signature when one is carried.
+    const container = await verifyContainer(text);
 
     // A browser File has no filesystem path, so a cartridge chosen here cannot
     // be saved back in place — there is nothing to overwrite. Passing the bare
     // name on would make the host write into its working directory instead.
     const nativePath = (file as File & { path?: string }).path;
-    mountHtml(text, nativePath);
+    mountHtml(container.html, nativePath);
     statusEl.textContent = nativePath
       ? `Loaded ${file.name}`
       : `Loaded ${file.name} — read-only. Open it by double-clicking the file to save changes in place.`;
   } catch (err) {
-    statusEl.textContent = `Failed to open file: ${(err as Error).message}`;
+    // A refusal names what is wrong with the file; anything else is a fault
+    // in the host and should say so rather than blaming the cartridge.
+    statusEl.textContent =
+      err instanceof ContainerError
+        ? err.message
+        : `Failed to open file: ${(err as Error).message}`;
   }
 }
 
@@ -231,10 +232,21 @@ async function openViaNativeDialog(): Promise<void> {
 
     statusEl.textContent = `Loading ${selected}...`;
     const content = await invokeTauri<string>("read_cartridge", { path: selected });
-    mountHtml(content, selected);
-    statusEl.textContent = `Loaded ${selected}`;
+
+    // The same gate the runner uses. A cartridge refused there must not open
+    // here: one reader, one verdict.
+    const container = await verifyContainer(content);
+
+    mountHtml(container.html, selected);
+    statusEl.textContent =
+      container.signature === "valid"
+        ? `Loaded ${selected} — signature verified (${container.publicKeyFingerprint?.slice(0, 8)})`
+        : `Loaded ${selected} — unsigned`;
   } catch (error) {
-    statusEl.textContent = `Failed to open cartridge: ${String(error)}`;
+    statusEl.textContent =
+      error instanceof ContainerError
+        ? error.message
+        : `Failed to open cartridge: ${String(error)}`;
   }
 }
 

@@ -30,6 +30,11 @@
       "types": "./dist/templates.d.ts",
       "import": "./dist/templates.js",
       "require": "./dist/templates.cjs"
+    },
+    "./container": {
+      "types": "./dist/container.d.ts",
+      "import": "./dist/container.js",
+      "require": "./dist/container.cjs"
     }
   },
   "files": [

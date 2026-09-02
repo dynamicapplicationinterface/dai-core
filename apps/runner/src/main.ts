@@ -6,7 +6,7 @@
  * The runner inverts that: the *player* is the installable PWA, and containers
  * are opened from the user's own files. The console, not the cartridge.
  */
-import { CartridgeError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
+import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import {
   deleteCartridgeFromLibrary,
   deleteDatabaseFromOpfs,
@@ -217,7 +217,7 @@ async function ingest(file: File): Promise<void> {
     mount(loaded);
   } catch (error) {
     const message =
-      error instanceof CartridgeError
+      error instanceof ContainerError
         ? error.message
         : `This file could not be opened (${(error as Error).message}).`;
     say(message, true);

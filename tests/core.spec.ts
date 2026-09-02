@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { unzipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import {
   buildContainer,
   canonicalPayload,
@@ -11,6 +12,7 @@ import {
   toBase64,
 } from "../src/core.js";
 import { CONTAINER_TEMPLATE, RUNTIME_SOURCE } from "../dist/templates.js";
+import { resealContainer, verifyContainer } from "../src/container.js";
 import {
   buildLaunchers,
   escapeForBatch,
@@ -432,5 +434,101 @@ test.describe("head integrity", () => {
     expect(head.cspInHead).toBe(true);
     expect(head.strayInBody).toBe(false);
     expect(head.cspText).toContain("connect-src 'none'");
+  });
+});
+
+test.describe("verifyContainer", () => {
+  const CONTAINER = resolve(here, "fixture/fixture.dai.html");
+
+  function repack(html: string, archive: Record<string, Uint8Array>): string {
+    return html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+  }
+
+  function archiveOf(html: string): Record<string, Uint8Array> {
+    return unzipSync(
+      Buffer.from(html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+  }
+
+  test("accepts an intact, signed container", async () => {
+    const verified = await verifyContainer(readFileSync(CONTAINER, "utf8"));
+
+    expect(verified.signature).toBe("valid");
+    expect(verified.integrityPolicy).toBe("required");
+    expect(verified.manifest.documentUuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4/);
+    // The document is returned verbatim; hosts mount this, never a rebuild.
+    expect(verified.html).toBe(readFileSync(CONTAINER, "utf8"));
+  });
+
+  test("rejects a mismatched digest", async () => {
+    const html = readFileSync(CONTAINER, "utf8");
+    const archive = archiveOf(html);
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>swapped");
+
+    await expect(verifyContainer(repack(html, archive))).rejects.toThrow(/has been modified/);
+  });
+
+  test("rejects an entry the manifest never listed", async () => {
+    // The reverse direction. Without it, content could simply be appended.
+    const html = readFileSync(CONTAINER, "utf8");
+    const archive = archiveOf(html);
+    archive["app/smuggled.js"] = new TextEncoder().encode("console.log('extra')");
+
+    await expect(verifyContainer(repack(html, archive))).rejects.toThrow(
+      /not listed in the manifest/,
+    );
+  });
+
+  test("rejects a rewritten bootloader even when every digest matches", async () => {
+    // The check a container cannot make about itself: its own verification runs
+    // inside the shell that was rewritten.
+    const html = readFileSync(CONTAINER, "utf8").replace(
+      'content="required"',
+      'content="advisory"',
+    );
+
+    await expect(verifyContainer(html)).rejects.toThrow(/does not match the sealed copy/);
+  });
+
+  test("rejects a payload re-sealed by someone without the private key", async () => {
+    // The attacker recomputes every digest correctly, defeating integrity
+    // entirely. Only the signature catches this.
+    const html = readFileSync(CONTAINER, "utf8");
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(
+      Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"),
+    );
+
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><body>forged");
+    const digest = createHash("sha256")
+      .update(Buffer.from(archive["app/index.html"]))
+      .digest("hex");
+    manifest.hashes["app/index.html"] = digest;
+    manifest.signedEntries["app/index.html"] = digest;
+    archive["runtime/manifest.json"] = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+
+    await expect(verifyContainer(repack(html, archive))).rejects.toThrow(/not authentic/);
+  });
+
+  test("rejects a file that is not a container", async () => {
+    await expect(verifyContainer("<!doctype html><body>just a page")).rejects.toThrow(
+      /no DAI payload/,
+    );
+  });
+
+  test("resealing keeps the container verifiable and the signature valid", async () => {
+    const verified = await verifyContainer(readFileSync(CONTAINER, "utf8"));
+    const resealed = await resealContainer(verified, new TextEncoder().encode("new database"));
+
+    // The database is outside the signed set, so a save must not invalidate the
+    // publisher's claim — otherwise the first save would destroy it forever.
+    const reverified = await verifyContainer(resealed.html);
+    expect(reverified.signature).toBe("valid");
+    expect(new TextDecoder().decode(reverified.database)).toBe("new database");
+    expect(reverified.manifest.documentUuid).toBe(verified.manifest.documentUuid);
   });
 });

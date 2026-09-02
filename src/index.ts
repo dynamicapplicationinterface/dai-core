@@ -31,6 +31,13 @@ export {
   escapeForShell,
 } from "./launchers.js";
 export type { Launchers } from "./launchers.js";
+export {
+  ContainerError,
+  parseContainer,
+  verifyContainer,
+  resealContainer,
+} from "./container.js";
+export type { ParsedContainer, VerifiedContainer } from "./container.js";
 export type {
   BuildContainerInput,
   BuildContainerResult,

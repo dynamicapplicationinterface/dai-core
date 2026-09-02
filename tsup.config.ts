@@ -3,7 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig([
   // The Vite plugin itself (Node).
   {
-    entry: ["src/index.ts", "src/core.ts"],
+    entry: ["src/index.ts", "src/core.ts", "src/container.ts"],
     format: ["esm", "cjs"],
     outExtension: ({ format }) => ({ js: format === "cjs" ? ".cjs" : ".js" }),
     dts: true,

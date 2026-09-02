@@ -7,7 +7,11 @@ wrong, why it matters, and what a fix has to account for — not just a title.
 
 ## 1. The desktop shell verifies less than the runner
 
-**Status:** open. **Affects:** `apps/desktop`.
+**Status:** done. The reader moved to `src/container.ts`, exported at
+`dai-core/container`, and both hosts call `verifyContainer` before mounting.
+Signature verification moved with it, so a container that carries a publisher
+key must now satisfy it rather than merely advertise one. Kept below as the
+record of why it was built this way. **Affects:** `apps/desktop`.
 
 `apps/runner/src/cartridge.ts` performs three checks before it will mount a
 container:
