@@ -16,6 +16,9 @@ const keyPair = await webcrypto.subtle.generateKey(
   ["sign", "verify"]
 );
 
+const taskFavicon =
+  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%230f172a"/><rect x="25" y="20" width="50" height="65" rx="8" fill="%231e293b" stroke="%233b82f6" stroke-width="4"/><rect x="38" y="14" width="24" height="10" rx="3" fill="%233b82f6"/><path d="M35 40 L45 50 L65 30" fill="none" stroke="%2310b981" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><line x1="35" y1="62" x2="65" y2="62" stroke="%2394a3b8" stroke-width="4" stroke-linecap="round"/></svg>';
+
 const indexHtml = `<!doctype html>
 <html lang="en">
   <head>
@@ -50,7 +53,7 @@ const indexHtml = `<!doctype html>
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 12px 20px;
+        padding: 12px 140px 12px 20px;
         background: #1e293b;
         border-bottom: 1px solid var(--border-color);
         flex: 0 0 auto;
@@ -556,6 +559,7 @@ const built = await buildContainer({
   template,
   runtime,
   appName: "Task & Project Console",
+  favicon: taskFavicon,
   signingKey: keyPair,
 });
 
