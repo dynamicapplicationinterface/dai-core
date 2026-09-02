@@ -14,6 +14,13 @@
       button { margin-top: 16px; padding: 8px 18px; font-size: 14px; }
       #status { margin-top: 16px; font-family: ui-monospace, monospace; white-space: pre-wrap; }
       #download { display: inline-block; margin-top: 12px; }
+      fieldset { margin-top: 20px; border: 1px solid #ddd; border-radius: 6px; }
+      legend { font-weight: 600; padding: 0 6px; }
+      #key-state { margin: 0 0 10px; font-family: ui-monospace, monospace; font-size: 12px; }
+      #identity button { margin: 0 6px 0 0; padding: 5px 10px; font-size: 12px; }
+      #identity details { margin-top: 12px; }
+      #import-pem { min-height: 90px; margin-top: 8px; }
+      .note { color: #666; font-size: 12px; margin: 12px 0 0; }
     </style>
   </head>
   <body>
@@ -54,6 +61,25 @@ CREATE TABLE IF NOT EXISTS items (
 </textarea>
       </div>
     </div>
+
+    <fieldset id="identity">
+      <legend>Signing identity</legend>
+      <p id="key-state">no key — containers will be unsigned</p>
+      <button id="generate" type="button">Generate key</button>
+      <button id="export-private" type="button">Export private PEM</button>
+      <button id="export-public" type="button">Export public PEM</button>
+      <button id="forget" type="button">Forget key</button>
+      <details>
+        <summary>Import an existing private key</summary>
+        <textarea id="import-pem" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+        <button id="import" type="button">Import PEM</button>
+      </details>
+      <p class="note">
+        The key is generated in this tab and stored in this origin's IndexedDB.
+        It is never uploaded — there is no signing server. Anyone verifying a
+        container needs your fingerprint from somewhere other than the file.
+      </p>
+    </fieldset>
 
     <button id="compile">Compile container</button>
     <div id="status">idle</div>

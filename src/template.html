@@ -52,6 +52,39 @@
       text-align: center;
     }
     #boot-ui code { opacity: 0.7; word-break: break-word; }
+    /*
+      App Mode control. It lives in the top document because only the top
+      document can request fullscreen — a sandboxed frame cannot, and the app
+      should not have to ask for the capability to be forwarded.
+    */
+    #dai-app-mode {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 2147483647;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1;
+      color: CanvasText;
+      background: Canvas;
+      border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+      border-radius: 6px;
+      opacity: 0.35;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    #dai-app-mode:hover,
+    #dai-app-mode:focus-visible { opacity: 1; }
+    /* Hidden until the app reports in. */
+    body:not(.dai-mounted) #dai-app-mode { display: none; }
+    /*
+      Deliberately still shown in App Mode, just fainter. Escape is not a
+      discoverable exit, and hiding the only control would strand anyone who
+      does not know it.
+    */
+    body.dai-app-mode #dai-app-mode { opacity: 0.12; }
+
     #dai-app {
       position: fixed;
       inset: 0;
@@ -73,6 +106,8 @@
       <p><code id="dai-boot-detail"></code></p>
     </div>
   </div>
+
+  <button id="dai-app-mode" type="button" hidden>Enter App Mode</button>
 
   <!-- The Viewer/Bootloader Engine (bundled from src/runtime/bootloader.ts). -->
   <script type="text/javascript" id="dai-bootloader"><!--DAI_RUNTIME--></script>

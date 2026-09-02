@@ -43,6 +43,12 @@ const PAYLOAD_TAG_RE = /(<script[^>]*id="dai-payload"[^>]*>)<!--DAI_PAYLOAD-->/;
  */
 type WebCryptoKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
 
+/** A WebCrypto ECDSA P-256 pair. The private half is used but never exported. */
+export interface SigningKeyPair {
+  privateKey: WebCryptoKey;
+  publicKey: WebCryptoKey;
+}
+
 export interface ContainerManifest {
   manifestVersion: number;
   documentUuid: string;
@@ -72,8 +78,15 @@ export interface BuildContainerInput {
   wasm?: Uint8Array;
   /** Emscripten glue source. Only meaningful alongside `wasm`. */
   glue?: Uint8Array;
-  /** PEM-encoded PKCS#8 ECDSA P-256 private key. Never enters the container. */
-  signingKey?: string;
+  /**
+   * The signing identity. Never enters the container.
+   *
+   * Either PKCS#8 PEM text, or a WebCrypto key pair. The pair form exists for
+   * hosts that hold a key they cannot or should not serialize — a browser
+   * keeping a non-extractable key in IndexedDB, or a KMS-backed handle — since
+   * only the public half needs exporting.
+   */
+  signingKey?: string | SigningKeyPair;
   /** Reuse an existing identity instead of minting one. */
   documentUuid?: string;
   /** Whether the shell demands verification. Defaults to true. */
@@ -232,30 +245,42 @@ interface SigningMaterial {
   fingerprint: string;
 }
 
-/**
- * Imports a PKCS#8 PEM private key and derives the public SPKI to embed.
- *
- * WebCrypto cannot export a public key from a private one, so the public point
- * is taken from the key's JWK coordinates and re-imported.
- */
-async function readSigningKey(pem: string): Promise<SigningMaterial> {
-  const algorithm = { name: "ECDSA", namedCurve: "P-256" } as const;
-  const key = await crypto.subtle.importKey(
-    "pkcs8",
-    fromPem(pem, "PRIVATE KEY"),
-    algorithm,
-    true,
-    ["sign"],
-  );
+const ECDSA_P256 = { name: "ECDSA", namedCurve: "P-256" } as const;
 
-  const jwk = await crypto.subtle.exportKey("jwk", key);
-  const publicKey = await crypto.subtle.importKey(
-    "jwk",
-    { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true },
-    algorithm,
-    true,
-    ["verify"],
-  );
+/**
+ * Resolves the signing identity to a usable key plus the public SPKI to embed.
+ *
+ * Given a pair, the private half is used as-is and never exported — so it may
+ * be non-extractable. Given PEM, the private key must be imported as extractable
+ * because WebCrypto cannot derive a public key from a private one: the public
+ * point has to be read back out of the JWK coordinates and re-imported.
+ */
+async function readSigningKey(
+  input: string | SigningKeyPair,
+): Promise<SigningMaterial> {
+  let key: WebCryptoKey;
+  let publicKey: WebCryptoKey;
+
+  if (typeof input === "string") {
+    key = await crypto.subtle.importKey(
+      "pkcs8",
+      fromPem(input, "PRIVATE KEY"),
+      ECDSA_P256,
+      true,
+      ["sign"],
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", key);
+    publicKey = await crypto.subtle.importKey(
+      "jwk",
+      { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true },
+      ECDSA_P256,
+      true,
+      ["verify"],
+    );
+  } else {
+    key = input.privateKey;
+    publicKey = input.publicKey;
+  }
 
   const spki = new Uint8Array(await crypto.subtle.exportKey("spki", publicKey));
   return {

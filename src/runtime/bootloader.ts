@@ -22,6 +22,7 @@ const CONTAINER_ENTRY = "runtime/container.html";
 const GLUE_ENTRY = "runtime/sqlite3.mjs";
 const MANIFEST_ENTRY = "runtime/manifest.json";
 const SAVE_REQUEST = "dai:save";
+const APP_MODE_EVENT = "dai:appmode";
 
 /** How a save should be attempted. */
 type SaveMethod = "auto" | "picker" | "download";
@@ -606,8 +607,27 @@ function bridgeMain(): void {
       );
     });
 
+  // App Mode state, pushed from the shell. The app can observe it but cannot
+  // request it: only the top document may go fullscreen, and only on a gesture.
+  let appMode = false;
+  const appModeListeners = new Set<(active: boolean) => void>();
+
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data = event.data as Any;
+    if (!data || data.type !== "dai:appmode") return;
+    appMode = !!data.active;
+    appModeListeners.forEach((listener) => listener(appMode));
+  });
+
   const api: Any = {
     version: host.version,
+    get appMode() {
+      return appMode;
+    },
+    onAppModeChange: (listener: (active: boolean) => void) => {
+      appModeListeners.add(listener);
+      return () => appModeListeners.delete(listener);
+    },
     // Document identity, from the sealed manifest.
     documentUuid: host.documentUuid,
     verified: host.verified,
@@ -662,6 +682,52 @@ function bridgeMain(): void {
     saveState(bytes, options);
 }
 
+/**
+ * Wires the App Mode control.
+ *
+ * Fullscreen can only be requested by the top document, and only from a user
+ * gesture — a sandboxed frame cannot ask for it, and forwarding the capability
+ * would mean granting the app the right to seize the viewport unprompted. So
+ * the shell owns the control and the app merely observes the state.
+ */
+function installAppMode(frame: HTMLIFrameElement): void {
+  const button = document.getElementById("dai-app-mode") as HTMLButtonElement | null;
+  if (!button) return;
+
+  const supported =
+    typeof document.documentElement.requestFullscreen === "function" &&
+    document.fullscreenEnabled !== false;
+  if (!supported) return;
+
+  button.hidden = false;
+
+  const active = (): boolean => document.fullscreenElement !== null;
+
+  const notify = (): void => {
+    document.body.classList.toggle("dai-app-mode", active());
+    button.textContent = active() ? "Exit App Mode" : "Enter App Mode";
+    // Apps that want to lay out differently in App Mode can listen for this.
+    frame.contentWindow?.postMessage({ type: APP_MODE_EVENT, active: active() }, "*");
+  };
+
+  button.addEventListener("click", () => {
+    // Failures are reported rather than thrown: a blocked request must not take
+    // the document down with it, and the app keeps running windowed.
+    const request = active()
+      ? document.exitFullscreen()
+      : document.documentElement.requestFullscreen({ navigationUI: "hide" });
+    void Promise.resolve(request).catch((error: unknown) => {
+      button.textContent = "App Mode unavailable";
+      window.setTimeout(notify, 2000);
+      console.warn("DAI: App Mode was refused.", error);
+    });
+  });
+
+  // Covers Escape and any other route out of fullscreen, not just the button.
+  document.addEventListener("fullscreenchange", notify);
+  notify();
+}
+
 /** Serializes bridgeMain() into the frame. See the note on that function. */
 function bridgeScript(): string {
   return "<script>(" + bridgeMain.toString() + ")()<" + "/script>";
@@ -688,6 +754,10 @@ function mount(srcdoc: string): HTMLIFrameElement {
     "sandbox",
     "allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads",
   );
+  // Deny fullscreen to the frame. A same-origin frame inherits the permission
+  // by default, which would let the application seize the whole viewport on any
+  // gesture it happens to receive. App Mode is the shell's to grant.
+  frame.setAttribute("allow", "fullscreen 'none'");
   frame.setAttribute("srcdoc", srcdoc);
   document.body.appendChild(frame);
   return frame;
@@ -944,7 +1014,8 @@ async function boot(): Promise<void> {
       .catch((error: unknown) => reply({ ok: false, error: String(error) }));
   });
 
-  mount(srcdoc);
+  const frame = mount(srcdoc);
+  installAppMode(frame);
 
   window.setTimeout(() => {
     if (ready) return;

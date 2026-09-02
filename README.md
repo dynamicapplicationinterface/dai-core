@@ -179,6 +179,18 @@ copy the user may believe overwrote the original.
 
 `window.daiSaveState(bytes)` is an alias for `saveState`.
 
+### App Mode
+
+The shell renders an **Enter App Mode** control that puts the container
+fullscreen via `requestFullscreen()`, hiding browser chrome. The control lives in
+the shell rather than the app, and the frame is served `allow="fullscreen 'none'"`
+— a same-origin frame inherits the permission by default, which would let a
+document seize the whole viewport on any gesture it happened to receive.
+
+The app observes but cannot request: `window.dai.appMode` and
+`window.dai.onAppModeChange(listener)`. The control stays visible (fainter) while
+fullscreen, because Escape is not a discoverable exit.
+
 ### Page size
 
 New databases are pinned to 4096-byte pages; this engine would otherwise default
@@ -291,9 +303,23 @@ npx vite --config examples/web-studio/vite.config.ts examples/web-studio
 
 The Studio is an ordinary online web app; the air-gap rules govern the artifacts
 it produces, not the tool producing them, so it fetches the SQLite engine and
-the esbuild binary from its own origin at startup. It emits **unsigned**
-containers: it holds no private key, and shipping one to a browser would hand
-every visitor the publisher's identity.
+the esbuild binary from its own origin at startup.
+
+**Signing happens in the browser, with no server.** The Studio mints an ECDSA
+P-256 pair with `crypto.subtle.generateKey()` and stores the `CryptoKey` objects
+in this origin's IndexedDB. Nothing is uploaded; there is no signing endpoint.
+Private keys can be exported and imported as PEM so an identity can be backed up
+or moved, and `buildContainer` accepts the key pair directly, so the private key
+never has to exist as a string for ordinary use.
+
+The key is generated **extractable** so it can be backed up. That is a
+deliberate trade: a non-extractable key resists script access, but an identity
+that cannot be exported is one the developer loses with their browser profile —
+and with it the ability to publish under the same fingerprint.
+
+The 14 MB esbuild binary and the SQLite engine are content-hashed and served
+`max-age=31536000, immutable` in dev and preview. **A deployment must set the
+same policy at its own CDN or origin** — Vite's config cannot do that for you.
 
 ## Tests
 

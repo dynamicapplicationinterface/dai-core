@@ -732,3 +732,94 @@ test.describe("page size stability", () => {
     expect(observed.reopened).toBe(8192);
   });
 });
+
+test.describe("app mode", () => {
+  test("the shell owns the fullscreen control, not the app", async ({ page }) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    const button = page.locator("#dai-app-mode");
+    await expect(button).toBeVisible();
+    await expect(button).toHaveText("Enter App Mode");
+
+    // The frame must not be able to seize the viewport on its own.
+    const frameCanFullscreen = await frame.evaluate(
+      () => document.fullscreenEnabled === true,
+    );
+    expect(frameCanFullscreen).toBe(false);
+
+    // The app observes App Mode; it cannot request it.
+    const api = await frame.evaluate(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dai = (window as any).dai;
+      return {
+        appMode: dai.appMode as boolean,
+        canObserve: typeof dai.onAppModeChange === "function",
+        cannotRequest: dai.enterAppMode === undefined,
+      };
+    });
+    expect(api).toEqual({ appMode: false, canObserve: true, cannotRequest: true });
+  });
+
+  test("entering and leaving fullscreen updates shell and app state", async ({ page }) => {
+    await page.goto(CONTAINER_URL);
+    const frame = await appFrame(page);
+
+    // Record transitions the app is told about, before any click happens.
+    await frame.evaluate(() => {
+      const seen: boolean[] = [];
+      (window as unknown as { __appMode: boolean[] }).__appMode = seen;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).dai.onAppModeChange((active: boolean) => seen.push(active));
+    });
+
+    await page.click("#dai-app-mode");
+
+    await expect(page.locator("body")).toHaveClass(/dai-app-mode/);
+    expect(await page.evaluate(() => document.fullscreenElement !== null)).toBe(true);
+    await expect
+      .poll(() => frame.evaluate(() => (window as unknown as { dai: { appMode: boolean } }).dai.appMode))
+      .toBe(true);
+
+    // Leaving by any route must be handled: the listener is on
+    // fullscreenchange, not on the click. Headless Chromium does not exit on
+    // Escape, so this drives the underlying API a browser's Escape would.
+    await page.evaluate(() => document.exitFullscreen());
+
+    await expect(page.locator("body")).not.toHaveClass(/dai-app-mode/);
+    await expect(page.locator("#dai-app-mode")).toHaveText("Enter App Mode");
+    await expect
+      .poll(() => frame.evaluate(() => (window as unknown as { dai: { appMode: boolean } }).dai.appMode))
+      .toBe(false);
+
+    expect(await frame.evaluate(() => (window as unknown as { __appMode: boolean[] }).__appMode)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  test("the app still fills the viewport in app mode", async ({ page }) => {
+    await page.goto(CONTAINER_URL);
+    await appFrame(page);
+    await page.click("#dai-app-mode");
+    await expect(page.locator("body")).toHaveClass(/dai-app-mode/);
+
+    // The frame is fixed to the viewport, so fullscreen must not leave letterboxing.
+    const fits = await page.evaluate(() => {
+      const rect = document.getElementById("dai-app")!.getBoundingClientRect();
+      return {
+        width: Math.round(rect.width) === window.innerWidth,
+        height: Math.round(rect.height) === window.innerHeight,
+        controlDisplay: getComputedStyle(document.getElementById("dai-app-mode")!).display,
+        controlOpacity: getComputedStyle(document.getElementById("dai-app-mode")!).opacity,
+      };
+    });
+
+    expect(fits.width).toBe(true);
+    expect(fits.height).toBe(true);
+    // The exit control stays reachable rather than hiding: Escape is not
+    // discoverable, and it is the only other way out.
+    expect(fits.controlDisplay).not.toBe("none");
+    expect(Number(fits.controlOpacity)).toBeGreaterThan(0);
+  });
+});
