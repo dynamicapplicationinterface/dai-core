@@ -279,7 +279,7 @@ async function readSigningKey(
   if (typeof input === "string") {
     key = await crypto.subtle.importKey(
       "pkcs8",
-      fromPem(input, "PRIVATE KEY"),
+      bufferOf(fromPem(input, "PRIVATE KEY")),
       ECDSA_P256,
       true,
       ["sign"],
@@ -333,6 +333,23 @@ async function sign(key: WebCryptoKey, payload: string): Promise<string> {
   return toBase64(new Uint8Array(signature));
 }
 
+/**
+ * A single value standing for everything a container carries.
+ *
+ * Derived from the entry digests a party actually verified, so two parties can
+ * compare one string instead of a table. Different payloads produce different
+ * values, because a different payload verifies against a different manifest.
+ *
+ * It is a comparison between two verifiers, not evidence on its own: a party
+ * that computes it from bytes it never checked is only restating them.
+ */
+export async function payloadFingerprint(
+  documentUuid: string,
+  hashes: Record<string, string>,
+): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(canonicalPayload(documentUuid, hashes)));
+}
+
 /** Lowercase hex SHA-256 of the uncompressed entry bytes. */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const copy = new Uint8Array(bytes.byteLength);
@@ -341,6 +358,20 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * Copies bytes into a fresh ArrayBuffer for WebCrypto.
+ *
+ * A Uint8Array may be backed by a SharedArrayBuffer, which the crypto calls do
+ * not accept — and under the runtime's DOM types that is a compile error rather
+ * than a runtime surprise. Copying is cheap at these sizes and removes the
+ * question.
+ */
+function bufferOf(bytes: Uint8Array): ArrayBuffer {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return copy;
 }
 
 /** Strips the PEM armour and decodes the DER body. */

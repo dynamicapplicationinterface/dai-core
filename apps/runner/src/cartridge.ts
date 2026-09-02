@@ -50,7 +50,11 @@ export async function resealCartridge(
   database: Uint8Array,
 ): Promise<Cartridge> {
   const resealed = await resealContainer(cartridge, database);
-  // Resealing changes only the database and the digests covering it; the
-  // signature stays valid because document.sqlite was never in the signed set.
-  return { ...resealed, signature: cartridge.signature };
+
+  // Re-verified rather than trusted. The bytes about to be mounted are not the
+  // bytes that were checked on the way in: a database recovered from OPFS has
+  // been through storage this app does not control, and resealing rewrites the
+  // manifest around it. Verifying the result costs one pass and removes the
+  // only route by which unverified bytes reach the frame.
+  return verifyContainer(resealed.html);
 }

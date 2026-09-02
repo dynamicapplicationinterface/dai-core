@@ -6,6 +6,7 @@
  */
 
 import { ContainerError, verifyContainer } from "../../../src/container.js";
+import { payloadFingerprint } from "../../../src/core.js";
 import { checkTrust, type TrustVerdict } from "./trust.js";
 
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
@@ -63,6 +64,18 @@ function clearTrust(): void {
   trustEl.textContent = "";
 }
 
+/**
+ * Stops a cartridge that has already been mounted.
+ *
+ * Unmounts first and reports second: leaving it running while showing a warning
+ * would let the very execution being objected to continue while the user reads
+ * about it.
+ */
+function abortMount(message: string): void {
+  eject();
+  fail(`Execution stopped — ${message}`);
+}
+
 function clearAlert(): void {
   alertEl.hidden = true;
   alertEl.textContent = "";
@@ -105,6 +118,20 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
  */
 let bootWatchdog: number | undefined;
 
+/**
+ * What the host concluded about the cartridge it mounted.
+ *
+ * The container verifies the same file again with a separate implementation and
+ * reports what it found. Comparing the two catches drift between what was
+ * checked and what is executing — a stale mount, a bug in either verifier, a
+ * refactor that mounts bytes nobody looked at.
+ *
+ * It is a check between two verifiers, not a defence against a compromised
+ * host: code that could tamper with the payload here could equally choose what
+ * to compare against.
+ */
+let expectedFingerprint: string | undefined;
+
 function armBootWatchdog(): void {
   clearBootWatchdog();
   bootWatchdog = window.setTimeout(() => {
@@ -131,8 +158,9 @@ function clearBootWatchdog(): void {
   }
 }
 
-function mountHtml(html: string, filePath?: string): void {
+function mountHtml(html: string, filePath?: string, fingerprint?: string): void {
   clearAlert();
+  expectedFingerprint = fingerprint;
   if (mountedUrl) {
     URL.revokeObjectURL(mountedUrl);
   }
@@ -178,7 +206,11 @@ async function openFile(file: File): Promise<void> {
     // be saved back in place — there is nothing to overwrite. Passing the bare
     // name on would make the host write into its working directory instead.
     const nativePath = (file as File & { path?: string }).path;
-    mountHtml(container.html, nativePath);
+    mountHtml(
+      container.html,
+      nativePath,
+      await payloadFingerprint(container.manifest.documentUuid, container.manifest.hashes),
+    );
     statusEl.textContent = nativePath
       ? `Loaded ${file.name} — ${trust}`
       : `Loaded ${file.name} — ${trust}. Read-only: open it by double-clicking to save in place.`;
@@ -219,7 +251,11 @@ async function openCartridgeByPath(path: string): Promise<void> {
     const container = await verifyContainer(content);
     const trust = await gateOnTrust(container);
 
-    mountHtml(container.html, path);
+    mountHtml(
+      container.html,
+      path,
+      await payloadFingerprint(container.manifest.documentUuid, container.manifest.hashes),
+    );
     statusEl.textContent = `Loaded ${path} — ${trust}`;
   } catch (error) {
     // A cartridge that fails on launch leaves an empty window, so the reason
@@ -286,6 +322,31 @@ window.addEventListener("message", (event) => {
   if (data.type === "DAI_HOST_HANDSHAKE") {
     // The container is alive; it can report its own problems from here.
     clearBootWatchdog();
+
+    const reported = (data.payload ?? {}) as {
+      verified?: boolean;
+      payloadFingerprint?: string | null;
+    };
+
+    // Abort before acknowledging. An acknowledged container is one the host has
+    // accepted, and a disagreement is exactly the case where it should not.
+    if (expectedFingerprint && reported.payloadFingerprint !== expectedFingerprint) {
+      abortMount(
+        "The running cartridge does not match the file that was verified." +
+          `\nVerified: ${expectedFingerprint.slice(0, 16)}` +
+          `\nRunning:  ${(reported.payloadFingerprint ?? "none reported").slice(0, 16)}`,
+      );
+      return;
+    }
+
+    if (expectedFingerprint && reported.verified === false) {
+      abortMount(
+        "The cartridge reported that it did not verify itself, although the host " +
+          "accepted it. The two disagree, so it has been stopped.",
+      );
+      return;
+    }
+
     (event.source as Window | null)?.postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
   } else if (data.type === "DAI_HOST_SAVE") {
     const reply = (status: "ok" | "error", error?: string): void => {
@@ -429,7 +490,11 @@ async function openViaNativeDialog(): Promise<void> {
     const container = await verifyContainer(content);
     const trust = await gateOnTrust(container);
 
-    mountHtml(container.html, selected);
+    mountHtml(
+      container.html,
+      selected,
+      await payloadFingerprint(container.manifest.documentUuid, container.manifest.hashes),
+    );
     statusEl.textContent = `Loaded ${selected} — ${trust}`;
   } catch (error) {
     fail(

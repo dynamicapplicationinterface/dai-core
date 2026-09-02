@@ -238,6 +238,22 @@ integrity-checked. A container that ships a public key must satisfy it: an
 unsigned or unverifiable payload refuses to mount rather than running with a
 decorative key.
 
+#### Host and container cross-check
+
+The host verifies a container before mounting it, and the container verifies
+itself again on boot with a separate implementation. Each derives a
+`payloadFingerprint` — SHA-256 over the document UUID and its sorted entry
+digests — from what it actually verified, and the container reports its value in
+the handshake. A disagreement stops execution before the host acknowledges the
+container.
+
+This detects drift: a stale mount, a bug in either verifier, a refactor that
+mounts bytes nobody checked. It is **not** a defence against a compromised host.
+Code able to tamper with a payload in the host is equally able to choose the
+value it compares against, and a check performed by the party under suspicion
+proves nothing. The two verifiers being independent implementations is what
+gives the comparison any content at all.
+
 #### The outer shell is not self-verifiable
 
 A container's integrity check runs inside its own bootloader. An attacker who

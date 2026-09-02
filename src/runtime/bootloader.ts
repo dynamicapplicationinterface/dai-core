@@ -14,6 +14,9 @@
  * which is the primary way a container is opened. See §1 of the Phase 2 spec.
  */
 import { unzipSync, zipSync } from "fflate";
+// Imported rather than reimplemented: the host derives the same value from the
+// same helper, and two spellings of "canonical" would disagree eventually.
+import { payloadFingerprint } from "../core.js";
 
 const APP_PREFIX = "app/";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
@@ -1107,13 +1110,25 @@ async function boot(): Promise<void> {
   });
 
   if (window.parent !== window) {
-    window.parent.postMessage(
-      {
-        type: "DAI_HOST_HANDSHAKE",
-        payload: { documentUuid: manifest?.documentUuid ?? null },
-      },
-      "*",
-    );
+    // What this container verified, for a host that verified the same file
+    // independently to compare against. Sent only once the checks above have
+    // passed, so it reports a conclusion rather than an intention.
+    void (manifest
+      ? payloadFingerprint(manifest.documentUuid, manifest.hashes)
+      : Promise.resolve(null)
+    ).then((fingerprint) => {
+      window.parent.postMessage(
+        {
+          type: "DAI_HOST_HANDSHAKE",
+          payload: {
+            documentUuid: manifest?.documentUuid ?? null,
+            verified: policy === "required",
+            payloadFingerprint: fingerprint,
+          },
+        },
+        "*",
+      );
+    });
   }
 
   const frame = mount(srcdoc);

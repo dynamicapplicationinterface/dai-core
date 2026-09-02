@@ -14,6 +14,7 @@ import { buildLaunchers } from "./launchers.js";
 export {
   buildContainer,
   canonicalPayload,
+  payloadFingerprint,
   sha256Hex,
   CONTAINER_ENTRY,
   MANIFEST_ENTRY,

@@ -8,6 +8,7 @@ import {
   buildContainer,
   canonicalPayload,
   fromBase64,
+  payloadFingerprint,
   sha256Hex,
   toBase64,
 } from "../src/core.js";
@@ -530,5 +531,50 @@ test.describe("verifyContainer", () => {
     expect(reverified.signature).toBe("valid");
     expect(new TextDecoder().decode(reverified.database)).toBe("new database");
     expect(reverified.manifest.documentUuid).toBe(verified.manifest.documentUuid);
+  });
+});
+
+test.describe("payload fingerprint", () => {
+  const FIXTURE = resolve(here, "fixture/fixture.dai.html");
+
+  test("two verifiers of the same file agree", async () => {
+    // The point of the value: a host and a container each derive it from what
+    // they verified, and compare one string instead of a table of digests.
+    const a = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+    const b = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+
+    expect(await payloadFingerprint(a.manifest.documentUuid, a.manifest.hashes)).toBe(
+      await payloadFingerprint(b.manifest.documentUuid, b.manifest.hashes),
+    );
+  });
+
+  test("a different payload produces a different value", async () => {
+    const original = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+    const changed = await resealContainer(original, new TextEncoder().encode("other db"));
+
+    expect(await payloadFingerprint(changed.manifest.documentUuid, changed.manifest.hashes)).not.toBe(
+      await payloadFingerprint(original.manifest.documentUuid, original.manifest.hashes),
+    );
+  });
+
+  test("it does not depend on entry order", async () => {
+    // Two hosts may hold the same archive in different insertion orders. A
+    // value that changed with order would report drift where there is none.
+    const { manifest } = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+    const reversed = Object.fromEntries(Object.entries(manifest.hashes).reverse());
+
+    expect(await payloadFingerprint(manifest.documentUuid, reversed)).toBe(
+      await payloadFingerprint(manifest.documentUuid, manifest.hashes),
+    );
+  });
+
+  test("it is bound to the document, not only its contents", async () => {
+    // Two documents could in principle carry identical entries; they are still
+    // different documents, and a shared fingerprint would hide a swap.
+    const { manifest } = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+
+    expect(await payloadFingerprint("11111111-2222-4333-8444-555555555555", manifest.hashes)).not.toBe(
+      await payloadFingerprint(manifest.documentUuid, manifest.hashes),
+    );
   });
 });
