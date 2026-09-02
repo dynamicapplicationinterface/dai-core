@@ -59,6 +59,12 @@
       }
       body:not(.loaded) #cartridge { display: none; }
       body.loaded #slot { display: none; }
+      .badge.trust { background: #064e3b; border-color: #047857; color: #a7f3d0; }
+      .badge.trust[data-state="first-use"] {
+        background: #422006;
+        border-color: #a16207;
+        color: #fde68a;
+      }
       .alert {
         position: absolute;
         top: 0;
@@ -192,6 +198,12 @@
       <h1>DAI Desktop</h1>
       <span class="spacer"></span>
       <span id="badge" class="badge" hidden></span>
+      <!--
+        In the header, not in #slot: the slot is hidden once a cartridge mounts,
+        so trust state reported there is invisible exactly when a cartridge is
+        running and the user most wants to know who signed it.
+      -->
+      <span id="trust" class="badge trust" hidden></span>
       <button id="create-btn" type="button" style="background:#059669; border-color:#10b981;">+ Create Cartridge</button>
       <button id="open-btn" type="button">Open Container</button>
       <button id="eject-btn" type="button" hidden>Eject</button>

@@ -16,6 +16,7 @@ const fileInput = document.getElementById("file-input") as HTMLInputElement;
 const badge = document.getElementById("badge") as HTMLElement;
 const statusEl = document.getElementById("status") as HTMLElement;
 const alertEl = document.getElementById("alert") as HTMLElement;
+const trustEl = document.getElementById("trust") as HTMLElement;
 
 /**
  * Reports a refusal where it can actually be seen.
@@ -40,6 +41,26 @@ function fail(message: string): void {
   alertEl.hidden = false;
   // Also in the slot, for the cold-start case where the slot is what is on screen.
   statusEl.textContent = message;
+}
+
+/**
+ * Shows who signed the running cartridge, and whether that is who signed it
+ * last time.
+ *
+ * A first use is styled differently from a match on purpose: pinning is the
+ * moment the host decides what it will trust from then on, and it is the one
+ * open where nothing has been checked against memory yet.
+ */
+function showTrust(text: string, firstUse: boolean): void {
+  console.info(`DAI: ${text}`);
+  trustEl.textContent = text;
+  trustEl.dataset.state = firstUse ? "first-use" : "matched";
+  trustEl.hidden = false;
+}
+
+function clearTrust(): void {
+  trustEl.hidden = true;
+  trustEl.textContent = "";
 }
 
 function clearAlert(): void {
@@ -134,6 +155,7 @@ function eject(): void {
     mountedUrl = undefined;
   }
   clearBootWatchdog();
+  clearTrust();
   cartridgeFrame.src = "about:blank";
   currentFilePath = undefined;
   document.body.classList.remove("loaded");
@@ -258,7 +280,9 @@ window.addEventListener("message", (event) => {
 async function gateOnTrust(container: Awaited<ReturnType<typeof verifyContainer>>): Promise<string> {
   // Only meaningful in the host; the registry lives in Rust.
   if (!isTauri()) {
-    return container.signature === "valid" ? "signature verified" : "unsigned";
+    const text = container.signature === "valid" ? "signature verified" : "unsigned";
+    showTrust(text, false);
+    return text;
   }
 
   let verdict: TrustVerdict;
@@ -295,14 +319,18 @@ This copy: ${verdict.received}` : ""),
   }
 
   if (verdict.status === "pinned") {
-    return verdict.fingerprint
-      ? `publisher ${verdict.fingerprint.slice(0, 8)} trusted on first use`
-      : "unsigned, recorded on first use";
+    const text = verdict.fingerprint
+      ? `publisher ${verdict.fingerprint.slice(0, 8)} · trusted on first use`
+      : "unsigned · recorded on first use";
+    showTrust(text, true);
+    return text;
   }
 
-  return verdict.fingerprint
-    ? `publisher ${verdict.fingerprint.slice(0, 8)} matches the pinned key`
-    : "unsigned, as first seen";
+  const text = verdict.fingerprint
+    ? `publisher ${verdict.fingerprint.slice(0, 8)} · matches pinned key`
+    : "unsigned · as first seen";
+  showTrust(text, false);
+  return text;
 }
 
 async function openViaNativeDialog(): Promise<void> {
