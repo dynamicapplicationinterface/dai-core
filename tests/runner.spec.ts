@@ -54,14 +54,35 @@ test.describe("runner shell", () => {
     }
   });
 
-  test("registers a service worker and serves the shell offline", async ({ page, context }) => {
+  test("registers a service worker that takes control", async ({ page }) => {
     await page.goto(RUNNER_URL);
 
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, {
       timeout: 20_000,
     });
 
-    // The real test of an offline player: cut the network entirely.
+    // Registration alone is not enough: the shell has to actually be in the
+    // cache, or the first offline start finds nothing to serve.
+    const cached = await page.evaluate(async () => {
+      const names = await caches.keys();
+      const cache = await caches.open(names[0]!);
+      return (await cache.keys()).map((request) => new URL(request.url).pathname);
+    });
+    expect(cached.some((path) => path.endsWith("/") || path.endsWith("index.html"))).toBe(true);
+  });
+
+  test("serves the shell with the network cut", async ({ page, context, browserName }) => {
+    // Playwright's WebKit registers and controls, but does not serve
+    // navigations from the service worker cache, so an offline reload fails
+    // there regardless of what the worker does. This leaves real Safari's
+    // offline behaviour unverified — it needs a device, not this harness.
+    test.skip(browserName === "webkit", "Playwright WebKit does not serve SW navigations");
+
+    await page.goto(RUNNER_URL);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, {
+      timeout: 20_000,
+    });
+
     await context.setOffline(true);
     await page.reload();
 
