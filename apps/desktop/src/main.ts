@@ -111,8 +111,19 @@ async function openFile(file: File): Promise<void> {
   statusEl.textContent = `Loading ${file.name}...`;
   try {
     const text = await file.text();
+
+    // Refuse anything that is not a container rather than mounting it. Without
+    // this the shell frames arbitrary bytes and the user gets a blank panel
+    // with nothing said about why.
+    if (!/<script[^>]*id="dai-payload"[^>]*>\s*[A-Za-z0-9+/=]/.test(text)) {
+      statusEl.textContent =
+        `${file.name} is not a DAI container: it has no payload. ` +
+        `It may be an ordinary web page, or a truncated download.`;
+      return;
+    }
+
     mountHtml(text, (file as File & { path?: string }).path || file.name);
-    statusEl.textContent = "";
+    statusEl.textContent = `Loaded ${file.name}`;
   } catch (err) {
     statusEl.textContent = `Failed to open file: ${(err as Error).message}`;
   }
@@ -177,8 +188,13 @@ chooseBtn.addEventListener("click", () => fileInput.click());
 ejectBtn.addEventListener("click", eject);
 
 fileInput.addEventListener("change", () => {
+  // Cleared below so that re-picking the same file fires "change" again.
+  // Without this, choosing the already-open cartridge does nothing at all and
+  // the shell gives no sign that the click was received.
   const file = fileInput.files?.[0];
-  if (file) void openFile(file);
+  if (file) void openFile(file).finally(() => {
+    fileInput.value = "";
+  });
 });
 
 // Cartridge Studio UI Elements & Modal Handler
