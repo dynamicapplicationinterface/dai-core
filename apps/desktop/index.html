@@ -59,6 +59,33 @@
       }
       body:not(.loaded) #cartridge { display: none; }
       body.loaded #slot { display: none; }
+      .alert {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 50;
+        margin: 12px;
+        padding: 12px 16px;
+        white-space: pre-wrap;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #fecaca;
+        background: #450a0a;
+        border: 1px solid #b91c1c;
+        border-radius: 8px;
+      }
+      .alert .alert-dismiss {
+        float: right;
+        margin-left: 12px;
+        padding: 2px 8px;
+        font-size: 12px;
+        color: #fecaca;
+        background: transparent;
+        border: 1px solid #b91c1c;
+        border-radius: 5px;
+        cursor: pointer;
+      }
       .badge {
         font-size: 11px;
         padding: 3px 8px;
@@ -171,6 +198,13 @@
     </header>
 
     <main>
+      <!--
+        Outside #slot deliberately. #slot is hidden once a cartridge mounts, so
+        anything reported there is invisible from the second open onward — and a
+        refusal nobody sees is worse than no check at all.
+      -->
+      <div id="alert" class="alert" hidden></div>
+
       <div id="slot">
         <h2>DAI Native Desktop Shell</h2>
         <p style="color: #94a3b8; max-width: 40ch;">

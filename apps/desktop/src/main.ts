@@ -15,6 +15,37 @@ const ejectBtn = document.getElementById("eject-btn") as HTMLButtonElement;
 const fileInput = document.getElementById("file-input") as HTMLInputElement;
 const badge = document.getElementById("badge") as HTMLElement;
 const statusEl = document.getElementById("status") as HTMLElement;
+const alertEl = document.getElementById("alert") as HTMLElement;
+
+/**
+ * Reports a refusal where it can actually be seen.
+ *
+ * statusEl lives inside #slot, which is hidden once a cartridge mounts, so
+ * anything written there is invisible from the second open onward. A refused
+ * cartridge would then look like nothing happening at all — the failure mode
+ * this exists to prevent. Console too, so DevTools shows a trace rather than
+ * silence.
+ */
+function fail(message: string): void {
+  console.error("DAI:", message);
+  alertEl.textContent = message;
+
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "alert-dismiss";
+  dismiss.textContent = "Dismiss";
+  dismiss.addEventListener("click", () => clearAlert());
+  alertEl.prepend(dismiss);
+
+  alertEl.hidden = false;
+  // Also in the slot, for the cold-start case where the slot is what is on screen.
+  statusEl.textContent = message;
+}
+
+function clearAlert(): void {
+  alertEl.hidden = true;
+  alertEl.textContent = "";
+}
 
 let currentFilePath: string | undefined;
 let mountedUrl: string | undefined;
@@ -80,6 +111,7 @@ function clearBootWatchdog(): void {
 }
 
 function mountHtml(html: string, filePath?: string): void {
+  clearAlert();
   if (mountedUrl) {
     URL.revokeObjectURL(mountedUrl);
   }
@@ -131,10 +163,11 @@ async function openFile(file: File): Promise<void> {
   } catch (err) {
     // A refusal names what is wrong with the file; anything else is a fault
     // in the host and should say so rather than blaming the cartridge.
-    statusEl.textContent =
+    fail(
       err instanceof ContainerError
         ? err.message
-        : `Failed to open file: ${(err as Error).message}`;
+        : `Failed to open file: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -232,11 +265,21 @@ async function gateOnTrust(container: Awaited<ReturnType<typeof verifyContainer>
   try {
     verdict = await checkTrust(invokeTauri, container);
   } catch (error) {
-    // A registry that cannot be read must not silently downgrade to trusting
-    // everything, so this refuses rather than continuing.
+    // A registry that cannot be consulted must not silently downgrade to
+    // trusting everything, so this refuses rather than continuing. The common
+    // cause is not a security condition at all: the frontend hot-reloads on
+    // save while the Rust binary does not, so a newly added command is missing
+    // until tauri dev is restarted. Say that, rather than leaving someone
+    // hunting a phantom attack.
+    const detail = String(error);
+    const looksMissing = /not found|not allowed|unknown command|not registered/i.test(detail);
     throw new ContainerError(
-      `The publisher registry could not be consulted, so this cartridge was not ` +
-        `opened: ${String(error)}`,
+      looksMissing
+        ? "The publisher registry is unavailable, so this cartridge was not opened. " +
+          "The host binary appears to predate the registry commands — restart " +
+          "tauri dev so the Rust side rebuilds.\n" + detail
+        : "The publisher registry could not be consulted, so this cartridge was " +
+          "not opened.\n" + detail,
     );
   }
 
@@ -291,10 +334,11 @@ async function openViaNativeDialog(): Promise<void> {
     mountHtml(container.html, selected);
     statusEl.textContent = `Loaded ${selected} — ${trust}`;
   } catch (error) {
-    statusEl.textContent =
+    fail(
       error instanceof ContainerError
         ? error.message
-        : `Failed to open cartridge: ${String(error)}`;
+        : `Failed to open cartridge: ${String(error)}`,
+    );
   }
 }
 
