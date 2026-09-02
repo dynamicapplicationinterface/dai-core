@@ -16,11 +16,15 @@
         "width": 1100,
         "height": 750,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "devtools": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:;"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src 'self' blob:;",
+      "dangerousDisableAssetCspModification": [
+        "script-src"
+      ]
     }
   },
   "bundle": {
@@ -35,7 +39,10 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["dai", "dai.html"],
+        "ext": [
+          "dai",
+          "dai.html"
+        ],
         "name": "DAI Cartridge",
         "description": "DAI Air-gapped Cartridge Document",
         "role": "Editor",

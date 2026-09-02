@@ -150,6 +150,11 @@ interface Manifest {
  * it governs could be switched off by the same edit that alters the archive,
  * which would make the whole check theatre.
  */
+/** Verification needs WebCrypto; an advisory container can run without it. */
+function policyRequiresCrypto(): boolean {
+  return integrityPolicy() === "required";
+}
+
 function integrityPolicy(): "required" | "advisory" {
   const meta = document.querySelector('meta[name="dai-integrity"]');
   return meta?.getAttribute("content") === "advisory" ? "advisory" : "required";
@@ -883,6 +888,18 @@ async function boot(): Promise<void> {
 
   // Integrity gate. Nothing is blobbed, framed or executed until the payload
   // matches its manifest: verification is worthless if it races the mount.
+  // WebCrypto exists only in a secure context. A container opened over plain
+  // http, or from a host whose origin is not treated as trustworthy, would
+  // otherwise die inside the digest call with an opaque TypeError.
+  if (policyRequiresCrypto() && !globalThis.crypto?.subtle) {
+    setStatus(
+      "This container cannot verify itself here.",
+      `WebCrypto is unavailable at ${location.protocol}//${location.host || "(opaque)"}. ` +
+        `Containers must be opened from a file, from localhost, or over HTTPS.`,
+    );
+    return;
+  }
+
   const policy = integrityPolicy();
   const manifestBytes = files[MANIFEST_ENTRY];
   let manifest: Manifest | null = null;

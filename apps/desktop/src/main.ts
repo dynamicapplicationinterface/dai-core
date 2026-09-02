@@ -40,6 +40,42 @@ async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Prom
   }
 }
 
+/**
+ * Fires if a mounted container never signals the host.
+ *
+ * A container reports failures into its own DOM — but if its bootloader is
+ * blocked outright (a CSP nonce disabling 'unsafe-inline', a missing
+ * WebCrypto), there is no code left to report anything, and the boot screen
+ * simply sits there. The host has to notice on the container's behalf.
+ */
+let bootWatchdog: number | undefined;
+
+function armBootWatchdog(): void {
+  clearBootWatchdog();
+  bootWatchdog = window.setTimeout(() => {
+    const doc = cartridgeFrame.contentDocument;
+    const bootloaderRan = Boolean(
+      (cartridgeFrame.contentWindow as unknown as { __DAI__?: unknown })?.__DAI__,
+    );
+    const shownStatus = doc?.getElementById("dai-boot-status")?.textContent?.trim();
+
+    if (bootloaderRan) return; // It started; whatever happens next it can report.
+
+    statusEl.textContent = shownStatus
+      ? `The cartridge stopped at "${shownStatus}" and its bootloader never ran. ` +
+        `This usually means inline scripts were blocked — check the CSP for a ` +
+        `script-src nonce, which makes 'unsafe-inline' be ignored. Open DevTools for the exact refusal.`
+      : "The cartridge did not start and produced no boot screen. Open DevTools for details.";
+  }, 8000);
+}
+
+function clearBootWatchdog(): void {
+  if (bootWatchdog !== undefined) {
+    window.clearTimeout(bootWatchdog);
+    bootWatchdog = undefined;
+  }
+}
+
 function mountHtml(html: string, filePath?: string): void {
   if (mountedUrl) {
     URL.revokeObjectURL(mountedUrl);
@@ -48,6 +84,8 @@ function mountHtml(html: string, filePath?: string): void {
   const blob = new Blob([html], { type: "text/html" });
   mountedUrl = URL.createObjectURL(blob);
   cartridgeFrame.src = mountedUrl;
+
+  armBootWatchdog();
 
   document.body.classList.add("loaded");
   ejectBtn.hidden = false;
@@ -60,6 +98,7 @@ function eject(): void {
     URL.revokeObjectURL(mountedUrl);
     mountedUrl = undefined;
   }
+  clearBootWatchdog();
   cartridgeFrame.src = "about:blank";
   currentFilePath = undefined;
   document.body.classList.remove("loaded");
@@ -100,6 +139,8 @@ window.addEventListener("message", (event) => {
   if (!data || typeof data !== "object") return;
 
   if (data.type === "DAI_HOST_HANDSHAKE") {
+    // The container is alive; it can report its own problems from here.
+    clearBootWatchdog();
     (event.source as Window | null)?.postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
   } else if (data.type === "DAI_HOST_SAVE") {
     const { databaseBytes } = data.payload || {};

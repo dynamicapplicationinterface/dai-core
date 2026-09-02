@@ -35,6 +35,19 @@ fn get_opened_file() -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|_app| {
+            // A cartridge that fails inside the webview is invisible without
+            // this: the container reports into its own DOM, and a blocked
+            // bootloader cannot report at all.
+            #[cfg(debug_assertions)]
+            {
+                use tauri::Manager;
+                if let Some(window) = _app.get_webview_window("main") {
+                    window.open_devtools();
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             read_cartridge,
             save_cartridge,
