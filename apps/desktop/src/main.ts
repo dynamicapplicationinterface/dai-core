@@ -174,7 +174,15 @@ window.addEventListener("message", (event) => {
     const { html } = (data.payload || {}) as { html?: string };
 
     if (!html) {
-      reply("error", "The container sent no document to save.");
+      // A container carries the runtime it was compiled with, by design, so an
+      // older cartridge still speaks the older protocol and sends only database
+      // bytes. The host cannot reseal those itself without reimplementing the
+      // runtime's zipping, digesting and manifest rewriting.
+      reply(
+        "error",
+        "This cartridge was built before in-place saving and cannot be saved here. " +
+          "Rebuild it with the current compiler.",
+      );
       return;
     }
     if (!isTauri()) {
