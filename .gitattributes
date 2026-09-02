@@ -1,0 +1,6 @@
+# Cartridges are build artifacts: one file, mostly a base64 payload carrying a
+# compiled application and a WebAssembly build of SQLite. Counting them as
+# source misreports what this repository is, and diffing them is meaningless
+# because the payload changes wholesale on every build.
+*.dai        linguist-generated=true
+*.dai.html   linguist-generated=true
