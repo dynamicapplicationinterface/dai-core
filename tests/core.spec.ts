@@ -79,6 +79,21 @@ test.describe("buildContainer", () => {
     expect(built.manifest.integrityPolicy).toBe("required");
   });
 
+  test("embeds default DAI SVG favicon when no custom favicon is provided", async () => {
+    const built = await buildContainer(minimalInput());
+    expect(built.html).toContain('<link rel="icon" href="data:image/svg+xml,');
+    expect(built.html).toContain('<link rel="apple-touch-icon" href="data:image/svg+xml,');
+    expect(built.manifest.favicon).toContain("data:image/svg+xml,");
+  });
+
+  test("embeds custom Base64 or SVG favicon when supplied in manifest metadata", async () => {
+    const customIcon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const input = { ...minimalInput(), favicon: customIcon };
+    const built = await buildContainer(input);
+    expect(built.html).toContain(`<link rel="icon" href="${customIcon}">`);
+    expect(built.manifest.favicon).toBe(customIcon);
+  });
+
   test("seals every entry except the manifest itself", async () => {
     const built = await buildContainer(minimalInput());
     const archive = payloadOf(built.html);

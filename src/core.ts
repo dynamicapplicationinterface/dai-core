@@ -22,9 +22,13 @@ export const DEFAULT_GLUE_ENTRY = "runtime/sqlite3.mjs";
 export const CONTAINER_ENTRY = "runtime/container.html";
 export const MANIFEST_ENTRY = "runtime/manifest.json";
 
+export const DEFAULT_FAVICON =
+  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%230f172a"/><path d="M30 25 L70 25 L70 40 L45 40 L45 60 L70 60 L70 75 L30 75 Z" fill="%233b82f6"/><circle cx="75" cy="70" r="8" fill="%2310b981"/></svg>';
+
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
+const FAVICON_PLACEHOLDER = "<!--DAI_FAVICON-->";
 const INTEGRITY_PLACEHOLDER = "<!--DAI_INTEGRITY-->";
 const PUBLIC_KEY_PLACEHOLDER = "<!--DAI_PUBLIC_KEY-->";
 
@@ -53,6 +57,7 @@ export interface ContainerManifest {
   manifestVersion: number;
   documentUuid: string;
   appName: string;
+  favicon?: string;
   createdAt: string;
   algorithm: "SHA-256";
   integrityPolicy: "required" | "advisory";
@@ -72,6 +77,8 @@ export interface BuildContainerInput {
   runtime: string;
   /** Names the container and its `<title>`. */
   appName: string;
+  /** Custom favicon Data URL or SVG text. Defaults to clean DAI SVG icon. */
+  favicon?: string;
   /** Seed database. Absent means an empty document. */
   sqlite?: Uint8Array;
   /** SQLite engine bytes. */
@@ -175,9 +182,12 @@ export async function buildContainer(
 
   // The policy lives in the shell, never in the payload it governs.
   const integrityPolicy = verifyIntegrity === false ? "advisory" : "required";
+  const favicon = input.favicon ?? DEFAULT_FAVICON;
   const shell = template
     .split(APP_NAME_PLACEHOLDER)
     .join(escapeHtml(appName))
+    .split(FAVICON_PLACEHOLDER)
+    .join(favicon)
     .split(INTEGRITY_PLACEHOLDER)
     .join(integrityPolicy)
     .split(PUBLIC_KEY_PLACEHOLDER)
@@ -204,6 +214,7 @@ export async function buildContainer(
     manifestVersion: MANIFEST_VERSION,
     documentUuid,
     appName,
+    favicon,
     createdAt: now().toISOString(),
     algorithm: "SHA-256",
     // Informational only: the shell decides whether this is enforced.
