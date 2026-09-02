@@ -55,6 +55,25 @@ would let a host verify authenticity before mounting anything at all.
 
 ---
 
+## 3. One app instance per cartridge
+
+**Status:** open, and currently acceptable. **Affects:** `apps/desktop`.
+
+Double-clicking a second cartridge launches a second process rather than
+handing the path to the running one. For a document-based application that is
+arguably correct — two documents, two windows — and it is what ships.
+
+It has one real consequence. The trust registry is a JSON file read, modified
+and written without a lock, so two instances pinning different documents at the
+same moment can lose one of the pins. Losing a pin fails open: the next open of
+that document is treated as a first use and pins whatever key it presents.
+
+`tauri-plugin-single-instance` would forward the argument to the running process
+and remove the race along with the duplicate windows. It is a new crate and a
+new capability, so it wants a session where the Rust can actually be compiled.
+
+---
+
 ## 2. Publisher identity has no trust model
 
 **Status:** partly addressed. The desktop host now pins a document's key on

@@ -194,17 +194,47 @@ async function openFile(file: File): Promise<void> {
 }
 
 // Check if launched via double-click CLI argument in Tauri
+/**
+ * Opens the cartridge the app was launched with, if any.
+ *
+ * This is the path a file association uses, which makes it the way most
+ * cartridges will actually be opened — so it runs the same gate as every other
+ * entry point rather than a shortened version of it. Mounting here without
+ * verifying would mean the checks apply to the route users rarely take and not
+ * the one they do.
+ */
 async function checkOpenedFile(): Promise<void> {
-  if (isTauri()) {
-    try {
-      const openedPath = await invokeTauri<string | null>("get_opened_file");
-      if (openedPath) {
-        const content = await invokeTauri<string>("read_cartridge", { path: openedPath });
-        mountHtml(content, openedPath);
-      }
-    } catch {
-      // Ignore if no CLI path
-    }
+  if (!isTauri()) return;
+
+  let openedPath: string | null = null;
+  try {
+    openedPath = await invokeTauri<string | null>("get_opened_file");
+  } catch (error) {
+    // No argument is the normal case and not worth reporting; a failure to ask
+    // is not, so it is logged rather than swallowed.
+    console.warn("DAI: could not read the launch argument.", error);
+    return;
+  }
+
+  if (!openedPath) return;
+
+  try {
+    statusEl.textContent = `Loading ${openedPath}...`;
+    const content = await invokeTauri<string>("read_cartridge", { path: openedPath });
+
+    const container = await verifyContainer(content);
+    const trust = await gateOnTrust(container);
+
+    mountHtml(container.html, openedPath);
+    statusEl.textContent = `Loaded ${openedPath} — ${trust}`;
+  } catch (error) {
+    // A cartridge that fails on launch leaves an empty window, so the reason
+    // has to be on screen: there is nothing else for the user to look at.
+    fail(
+      error instanceof ContainerError
+        ? error.message
+        : `Could not open ${openedPath}: ${String(error)}`,
+    );
   }
 }
 

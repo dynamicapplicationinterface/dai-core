@@ -240,20 +240,39 @@ fn save_cartridge(path: String, html: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The cartridge this process was launched with, if any.
+///
+/// Every argument is scanned rather than just the first. A shell, a launcher
+/// script or the OS may insert flags ahead of the path, and indexing blindly
+/// would read a flag, find no cartridge, and leave a double-click looking like
+/// it did nothing at all.
 #[tauri::command]
 fn get_opened_file() -> Option<String> {
-    let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
-        let arg = &args[1];
-        if arg.ends_with(".dai.html") || arg.ends_with(".dai") || arg.ends_with(".html") {
-            // Absolute, so a later save knows where to write. A relative
-            // argument is resolved now, while the working directory is still
-            // the one the launch happened in.
-            return fs::canonicalize(arg)
-                .map(|p| p.to_string_lossy().replace(r"\\?\", ""))
-                .ok()
-                .or_else(|| Some(arg.clone()));
+    for arg in env::args().skip(1) {
+        if arg.starts_with('-') {
+            continue;
         }
+        let lower = arg.to_lowercase();
+        if !(lower.ends_with(".dai") || lower.ends_with(".html")) {
+            continue;
+        }
+        if !Path::new(&arg).is_file() {
+            continue;
+        }
+
+        // Absolute, so a later save knows where to write. Resolved now, while
+        // the working directory is still the one the launch happened in.
+        return Some(
+            fs::canonicalize(&arg)
+                .map(|p| {
+                    // Windows canonicalization adds a verbatim prefix that
+                    // other APIs, and anything shown to a user, handle badly.
+                    p.to_string_lossy()
+                        .trim_start_matches(r"\\?\")
+                        .to_string()
+                })
+                .unwrap_or(arg),
+        );
     }
     None
 }

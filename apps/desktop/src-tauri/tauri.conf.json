@@ -40,11 +40,10 @@
     "fileAssociations": [
       {
         "ext": [
-          "dai",
-          "dai.html"
+          "dai"
         ],
         "name": "DAI Cartridge",
-        "description": "DAI Air-gapped Cartridge Document",
+        "description": "DAI air-gapped application container",
         "role": "Editor",
         "mimeType": "text/html"
       }

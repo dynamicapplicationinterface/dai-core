@@ -563,10 +563,17 @@ const built = await buildContainer({
   signingKey: keyPair,
 });
 
+// Two names for the same bytes, because the two hosts want different ones.
+// Windows takes the extension from the last dot, so a file called
+// tasks.dai.html is an .html file: associating it would mean claiming every
+// HTML file on the machine. The desktop host registers .dai instead, while
+// .dai.html stays double-clickable in a browser.
 const containerPath = resolve(root, "tasks.dai.html");
+const desktopPath = resolve(root, "tasks.dai");
 const runnerPublicPath = resolve(root, "apps/runner/public/tasks.dai.html");
 
 writeFileSync(containerPath, built.html, "utf8");
+writeFileSync(desktopPath, built.html, "utf8");
 writeFileSync(runnerPublicPath, built.html, "utf8");
 
 // Generate companion Windows launcher
@@ -579,6 +586,7 @@ const sizeBytes = Buffer.byteLength(built.html, "utf8");
 console.log("\n✅ Cartridge Minting Complete!");
 console.log("----------------------------------------");
 console.log(`Cartridge File : ${containerPath}`);
+console.log(`Desktop File   : ${desktopPath}  (double-click target)`);
 console.log(`Launcher File  : ${batPath}`);
 console.log(`File Size      : ${sizeBytes} bytes (${(sizeBytes / 1024).toFixed(2)} KB)`);
 console.log(`Document UUID  : ${built.documentUuid}`);
