@@ -16,7 +16,7 @@
 import { unzipSync, zipSync } from "fflate";
 // Imported rather than reimplemented: the host derives the same value from the
 // same helper, and two spellings of "canonical" would disagree eventually.
-import { payloadFingerprint } from "../core.js";
+import { canonicalPayload, payloadFingerprint } from "../core.js";
 
 const APP_PREFIX = "app/";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
@@ -55,6 +55,7 @@ type RefusalReason =
   | "SIGNATURE_UNVERIFIABLE"
   | "UNVERIFIED_SIGNATURE"
   | "NO_APPLICATION"
+  | "KEY_EXPIRED"
   | "MOUNT_TIMEOUT"
   | "BOOT_FAILED";
 const APP_MODE_EVENT = "dai:appmode";
@@ -216,6 +217,8 @@ interface Manifest {
   publicKeyFingerprint?: string;
   signedEntries?: Record<string, string>;
   signature?: string;
+  /** Unix seconds after which this container must not run. Optional. */
+  validUntil?: number;
 }
 
 /**
@@ -294,20 +297,6 @@ function publicKeyFromShell(): string {
 }
 
 /**
- * Rebuilds the exact bytes the compiler signed.
- *
- * Sorted by entry name so the string depends only on content, never on archive
- * order. Must stay byte-identical to canonicalPayload() in the compiler.
- */
-function canonicalPayload(uuid: string, entries: Record<string, string>): string {
-  const sorted = Object.keys(entries)
-    .sort()
-    .map((name) => name + ":" + entries[name])
-    .join("\n");
-  return "dai-v1\n" + uuid + "\n" + sorted + "\n";
-}
-
-/**
  * Checks the publisher's signature over the application and runtime.
  *
  * `document.sqlite` is deliberately outside the signed set: the application is
@@ -353,7 +342,7 @@ async function verifySignature(
     key,
     fromBase64(manifest.signature) as unknown as BufferSource,
     new TextEncoder().encode(
-      canonicalPayload(manifest.documentUuid, manifest.signedEntries),
+      canonicalPayload(manifest.documentUuid, manifest.signedEntries, manifest.validUntil),
     ) as unknown as BufferSource,
   );
 

@@ -239,7 +239,9 @@ async function checkSignature(
     { name: "ECDSA", hash: "SHA-256" },
     key,
     fromBase64(manifest.signature),
-    new TextEncoder().encode(canonicalPayload(documentUuid, manifest.signedEntries)),
+    new TextEncoder().encode(
+      canonicalPayload(documentUuid, manifest.signedEntries, manifest.validUntil),
+    ),
   );
 
   if (!ok) {
@@ -280,6 +282,24 @@ export async function verifyContainer(html: string): Promise<VerifiedContainer> 
   }
 
   checkShellSeal(parsed.html, parsed.archive);
+
+  // Checked after the digests and before the signature is trusted, because an
+  // expiry only means anything once the manifest carrying it has been verified.
+  //
+  // The clock belongs to whoever opens the file, so this stops an honest host
+  // running a stale container. It is not a control against someone determined
+  // to run one anyway: they can set the clock back, and no offline format can
+  // prevent that. Treat it as policy, not enforcement.
+  if (parsed.manifest.validUntil !== undefined) {
+    const expiry = parsed.manifest.validUntil * 1000;
+    if (Date.now() > expiry) {
+      throw new ContainerError(
+        `This container expired on ${new Date(expiry).toISOString()} and will not be run. ` +
+          `Only its publisher can issue a replacement; an expiry cannot be extended ` +
+          `without the signing key.`,
+      );
+    }
+  }
 
   // A container that ships a key must satisfy it, or the key is decorative.
   if (parsed.publicKey) {

@@ -82,14 +82,46 @@ sentences that may be reworded later.
 | `SIGNATURE_UNVERIFIABLE` | A publisher key is present but there is nothing to check it against |
 | `UNVERIFIED_SIGNATURE` | The signature does not match the key the cartridge carries |
 | `NO_APPLICATION` | Verified, but there is no application entry point |
+| `KEY_EXPIRED` | The manifest carries a `validUntil` that has passed |
 | `MOUNT_TIMEOUT` | The application never reported that it started |
 | `BOOT_FAILED` | The bootloader threw |
 
-There is deliberately no `SHELL_TAMPERED`. A cartridge cannot detect its own
-bootloader being rewritten — that check would run inside the code an attacker
-replaced — so it is a host finding, raised by comparing the outer document with
-the sealed copy in the payload. A host should record it as its own observation
-rather than as something the cartridge reported.
+Two codes are deliberately absent from this list, for the same reason.
+
+`SHELL_TAMPERED` — a cartridge cannot detect its own bootloader being rewritten,
+because that check would run inside the code an attacker replaced.
+
+`KEY_REVOKED` — revocation is knowledge from outside the file. A cartridge
+carries no revocation list and cannot fetch one, and a host that told a cartridge
+it had been revoked would be pushing outside knowledge inward for no benefit,
+when it could simply decline to mount it.
+
+Both are **host findings**, recorded as the host's own observation with its own
+vocabulary. A host that logged either as something the cartridge reported would
+be crediting a detection to the party unable to make it.
+
+### Expiry
+
+A manifest may carry `validUntil`, a Unix timestamp after which hosts refuse to
+run the container. It is optional and omitted by default: a cartridge with no
+expiry runs forever, which is what the format promises about an archived
+document.
+
+**It is covered by the signature.** No other manifest field is — the manifest is
+excluded from its own digests — so an expiry left as a plain field could be
+extended, shortened or deleted with a text editor. It is appended to the signed
+canonical payload only when present, so containers without one produce exactly
+the bytes they always did and existing signatures keep verifying.
+
+Two properties worth being clear about before anyone relies on it:
+
+- **The clock belongs to whoever opens the file.** This stops an honest host
+  running a stale container. It does not stop someone determined to run one, who
+  can set the clock back — and no offline format can prevent that. It is policy,
+  not enforcement.
+- **An expiry cannot be renewed without the signing key.** A container that
+  outlives its publisher stops working permanently. That is a real cost, and it
+  is why perpetual is the default rather than a fallback.
 
 ### Versioning
 

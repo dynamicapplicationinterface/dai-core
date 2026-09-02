@@ -578,3 +578,93 @@ test.describe("payload fingerprint", () => {
     );
   });
 });
+
+test.describe("expiry", () => {
+  const HOUR = 3600;
+  const now = () => Math.floor(Date.now() / 1000);
+
+  async function signedInput() {
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString(
+      "base64",
+    );
+    return { ...minimalInput(), signingKey: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----` };
+  }
+
+  test("a container with no expiry runs forever", async () => {
+    // The default, and the promise the format makes about archived documents.
+    const built = await buildContainer(minimalInput());
+    expect(built.manifest.validUntil).toBeUndefined();
+    await expect(verifyContainer(built.html)).resolves.toBeTruthy();
+  });
+
+  test("an unexpired container runs", async () => {
+    const built = await buildContainer({ ...(await signedInput()), validUntil: now() + HOUR });
+    const verified = await verifyContainer(built.html);
+    expect(verified.signature).toBe("valid");
+    expect(verified.manifest.validUntil).toBeGreaterThan(now());
+  });
+
+  test("an expired container is refused", async () => {
+    const built = await buildContainer({ ...(await signedInput()), validUntil: now() - HOUR });
+    await expect(verifyContainer(built.html)).rejects.toThrow(/expired/i);
+  });
+
+  test("the expiry cannot be extended without the signing key", async () => {
+    // The point of signing it. No other manifest field is covered by the
+    // signature, so an expiry left as a plain field could be edited away.
+    const built = await buildContainer({ ...(await signedInput()), validUntil: now() - HOUR });
+
+    const archive = unzipSync(
+      Buffer.from(built.html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+    const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
+    manifest.validUntil = now() + HOUR * 24;
+    archive["runtime/manifest.json"] = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+
+    const tampered = built.html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+
+    // Not "expired" — the signature no longer matches, which is the stronger
+    // complaint and the one that survives an attacker who moves the date.
+    await expect(verifyContainer(tampered)).rejects.toThrow(/not authentic/i);
+  });
+
+  test("deleting the expiry breaks the signature too", async () => {
+    const built = await buildContainer({ ...(await signedInput()), validUntil: now() - HOUR });
+
+    const archive = unzipSync(
+      Buffer.from(built.html.match(/id="dai-payload">([\s\S]*?)<\/script>/)![1]!.trim(), "base64"),
+    );
+    const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
+    delete manifest.validUntil;
+    archive["runtime/manifest.json"] = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+
+    const tampered = built.html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_m, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+
+    await expect(verifyContainer(tampered)).rejects.toThrow(/not authentic/i);
+  });
+
+  test("existing signatures are unaffected by the field being added", async () => {
+    // A container built without an expiry must produce the same signed bytes it
+    // always did, or every cartridge already in the world stops verifying.
+    const input = await signedInput();
+    const built = await buildContainer(input);
+    const verified = await verifyContainer(built.html);
+
+    expect(verified.signature).toBe("valid");
+    expect(canonicalPayload(built.documentUuid, built.manifest.signedEntries!)).toBe(
+      canonicalPayload(built.documentUuid, built.manifest.signedEntries!, undefined),
+    );
+  });
+});

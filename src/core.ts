@@ -66,6 +66,16 @@ export interface ContainerManifest {
   publicKeyFingerprint?: string;
   signedEntries?: Record<string, string>;
   signature?: string;
+  /**
+   * Unix seconds after which this container should not be run. Optional, and
+   * omitted by default: a cartridge with no expiry works forever, which is the
+   * behaviour the format promises for an archived document.
+   *
+   * Covered by the signature, so it cannot be extended, shortened or deleted
+   * without invalidating it. An unsigned container's expiry is editable and
+   * therefore advisory only.
+   */
+  validUntil?: number;
 }
 
 export interface BuildContainerInput {
@@ -96,6 +106,15 @@ export interface BuildContainerInput {
   signingKey?: string | SigningKeyPair;
   /** Reuse an existing identity instead of minting one. */
   documentUuid?: string;
+  /**
+   * Unix seconds after which hosts should refuse to run the container.
+   *
+   * Omit for a perpetual document, which is the default and the right choice
+   * for anything meant to be readable years from now. An expiry cannot be
+   * renewed without the signing key, so a container that outlives its publisher
+   * outlives its usefulness.
+   */
+  validUntil?: number;
   /** Whether the shell demands verification. Defaults to true. */
   verifyIntegrity?: boolean;
   /** Deflate level, 0-9. Defaults to 9. */
@@ -210,8 +229,9 @@ export async function buildContainer(
     if (name !== sqliteEntry) signedEntries[name] = digest;
   }
 
+  const validUntil = input.validUntil;
   const signature = signing
-    ? await sign(signing.key, canonicalPayload(documentUuid, signedEntries))
+    ? await sign(signing.key, canonicalPayload(documentUuid, signedEntries, validUntil))
     : undefined;
 
   const manifest: ContainerManifest = {
@@ -224,6 +244,7 @@ export async function buildContainer(
     // Informational only: the shell decides whether this is enforced.
     integrityPolicy,
     hashes,
+    ...(validUntil === undefined ? {} : { validUntil }),
     ...(signature
       ? {
           signatureAlgorithm: "ECDSA-P256-SHA256",
@@ -315,12 +336,23 @@ async function readSigningKey(
 export function canonicalPayload(
   uuid: string,
   entries: Record<string, string>,
+  validUntil?: number,
 ): string {
   const sorted = Object.keys(entries)
     .sort()
     .map((name) => name + ":" + entries[name])
     .join("\n");
-  return "dai-v1\n" + uuid + "\n" + sorted + "\n";
+  const base = "dai-v1\n" + uuid + "\n" + sorted + "\n";
+
+  // Appended only when present, so a container with no expiry produces exactly
+  // the bytes it always did and existing signatures keep verifying. The "!"
+  // prefix cannot collide with an entry name, which is always a path.
+  //
+  // Signing it is the whole point. No other manifest field is covered by the
+  // signature — the manifest is excluded from its own digests — so an expiry
+  // left as a plain field could be extended, shortened or deleted with a text
+  // editor, which is not an expiry at all.
+  return validUntil === undefined ? base : base + "!validUntil:" + validUntil + "\n";
 }
 
 /** ECDSA P-256 / SHA-256. WebCrypto emits IEEE P1363, which the verifier expects. */
