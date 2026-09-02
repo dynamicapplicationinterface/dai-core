@@ -1,5 +1,6 @@
 use std::env;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[tauri::command]
@@ -40,9 +41,14 @@ fn resolve_target(path: &str) -> Result<PathBuf, String> {
 /// resealing, in another language, free to drift out of agreement with it and
 /// produce a file that refuses to open.
 ///
-/// The write is staged through a temporary file in the same directory and then
-/// renamed. A crash midway through a direct write would leave a truncated
-/// cartridge, and a cartridge is the user's only copy of their data.
+/// The write is staged through a temporary file in the same directory, flushed
+/// to the disk itself, and then renamed. A crash midway through a direct write
+/// would leave a truncated cartridge, and a cartridge is the user's only copy of
+/// their data.
+///
+/// The `sync_all` is what makes this durable rather than merely atomic. Without
+/// it the rename can reach the disk before the contents do, so a power loss
+/// between the two leaves a cartridge that looks intact and is empty.
 #[tauri::command]
 fn save_cartridge(path: String, html: String) -> Result<(), String> {
     if html.trim().is_empty() {
@@ -72,8 +78,15 @@ fn save_cartridge(path: String, html: String) -> Result<(), String> {
             .unwrap_or("cartridge")
     ));
 
-    fs::write(&staging, html.as_bytes())
-        .map_err(|e| format!("Failed to stage the save at {}: {}", staging.display(), e))?;
+    {
+        let mut file = File::create(&staging)
+            .map_err(|e| format!("Failed to stage the save at {}: {}", staging.display(), e))?;
+        file.write_all(html.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", staging.display(), e))?;
+        // Before the rename, not after: ordering is the whole point.
+        file.sync_all()
+            .map_err(|e| format!("Failed to flush {} to disk: {}", staging.display(), e))?;
+    }
 
     if let Err(e) = fs::rename(&staging, &target) {
         // Leaving the staging file behind would litter the user's folder with

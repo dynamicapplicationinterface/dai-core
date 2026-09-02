@@ -280,6 +280,8 @@ detection; the shell-policy bypass attempts; and a forgery in which the attacker
 swaps the application and recomputes every digest correctly — defeating
 integrity entirely, and caught only by the signature.
 
+Planned work on both of these is recorded in [backlog.md](backlog.md).
+
 ### Known limits
 
 - In-place overwrite is Chromium-only. Firefox and Safari take the download
