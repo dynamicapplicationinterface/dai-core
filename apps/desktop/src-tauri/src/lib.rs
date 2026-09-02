@@ -110,6 +110,7 @@ fn get_opened_file() -> Option<String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
             // A cartridge that fails inside the webview is invisible without
             // this: the container reports into its own DOM, and a blocked

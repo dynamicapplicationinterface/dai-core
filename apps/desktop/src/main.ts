@@ -203,7 +203,47 @@ window.addEventListener("message", (event) => {
   }
 });
 
-openBtn.addEventListener("click", () => fileInput.click());
+/**
+ * Opens a cartridge through the native chooser.
+ *
+ * The webview's own file input cannot be used here: a browser `File` exposes no
+ * filesystem path, so a cartridge opened that way can be read but never written
+ * back, and in-place saving is the whole point of the desktop host. The native
+ * dialog returns a canonical absolute path, which is what save_cartridge needs.
+ */
+async function openViaNativeDialog(): Promise<void> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: "Open DAI cartridge",
+      filters: [
+        // .dai.html is a double extension; the filter matches on the last one,
+        // so both are listed or such files would be hidden from the dialog.
+        { name: "DAI cartridge", extensions: ["dai", "html"] },
+      ],
+    });
+
+    // Null means the user dismissed the dialog: not an error, and not
+    // something to report as one.
+    if (typeof selected !== "string") return;
+
+    statusEl.textContent = `Loading ${selected}...`;
+    const content = await invokeTauri<string>("read_cartridge", { path: selected });
+    mountHtml(content, selected);
+    statusEl.textContent = `Loaded ${selected}`;
+  } catch (error) {
+    statusEl.textContent = `Failed to open cartridge: ${String(error)}`;
+  }
+}
+
+openBtn.addEventListener("click", () => {
+  // Outside the host there is no native dialog, so the webview input remains
+  // the way in — read-only, as openFile explains.
+  if (isTauri()) void openViaNativeDialog();
+  else fileInput.click();
+});
 chooseBtn.addEventListener("click", () => fileInput.click());
 ejectBtn.addEventListener("click", eject);
 
