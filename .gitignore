@@ -1,6 +1,12 @@
 node_modules/
 dist/
+*.dai
 *.dai.html
+# The documentation site ships sample cartridges as deliberate distribution
+# assets, so they are tracked. Without these the patterns above would silently
+# untrack them and the site would build without its samples.
+!website/public/*.dai
+!website/public/*.dai.html
 *.bat
 test-results/
 playwright-report/
