@@ -11,6 +11,7 @@
  * within an hour of each other. That is how one engine quietly becomes several,
  * so it lives here now and `tests/one-engine.spec.ts` keeps it that way.
  */
+import { unzipSync } from "fflate";
 import { buildContainer, type BuildContainerResult } from "./core.js";
 
 export interface RuntimeAssets {
@@ -75,6 +76,65 @@ export async function mintSigningKey(): Promise<string> {
   for (const byte of pkcs8) binary += String.fromCharCode(byte);
 
   return `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`;
+}
+
+/**
+ * Reads an archive a person dropped in.
+ *
+ * Assistants hand multi-file applications over as a zip, because a folder is
+ * not something you can paste into a chat window. Unpacking it here rather than
+ * in the page keeps the single place that knows about zip files single —
+ * `tests/one-engine.spec.ts` refuses a front end that reaches for fflate.
+ *
+ * Directory entries are dropped: they carry no bytes and would be sealed as
+ * empty files.
+ */
+export function unpackZip(bytes: Uint8Array): Record<string, Uint8Array> {
+  const files: Record<string, Uint8Array> = {};
+  for (const [name, content] of Object.entries(unzipSync(bytes))) {
+    if (!name.endsWith("/") && content.byteLength >= 0) files[name] = content;
+  }
+  return stripCommonPrefix(files);
+}
+
+/**
+ * Removes a single wrapping directory, if every file shares one.
+ *
+ * An archive almost always unpacks to `my-app/index.html` rather than
+ * `index.html`, and a container whose entry point is one level down opens
+ * blank. Only a prefix shared by everything is removed, so an application with
+ * genuine top-level folders is left alone.
+ */
+export function stripCommonPrefix(
+  files: Record<string, Uint8Array>,
+): Record<string, Uint8Array> {
+  const names = Object.keys(files);
+  if (names.length === 0) return files;
+
+  const first = names[0]!.split("/");
+  if (first.length < 2) return files;
+
+  const prefix = first[0] + "/";
+  if (!names.every((name) => name.startsWith(prefix))) return files;
+
+  return Object.fromEntries(
+    names.map((name) => [name.slice(prefix.length), files[name]!]),
+  );
+}
+
+/** Junk the operating system and editors leave in a folder or archive. */
+export function isNoise(name: string): boolean {
+  const base = name.split("/").pop() ?? "";
+  return (
+    base === ".DS_Store" ||
+    base === "Thumbs.db" ||
+    base.startsWith("._") ||
+    name.startsWith("__MACOSX/") ||
+    name.includes("/.git/") ||
+    name.startsWith(".git/") ||
+    name.includes("/node_modules/") ||
+    name.startsWith("node_modules/")
+  );
 }
 
 export interface BrowserBuildInput {
