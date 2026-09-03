@@ -67,7 +67,7 @@ export async function handOff(
     if ((error as Error)?.name === "AbortError") return { shared: false };
     return {
       shared: false,
-      error: "This device would not accept the file. Try the download link instead.",
+      error: "This device would not accept the file. Use the download link below instead.",
     };
   }
 }

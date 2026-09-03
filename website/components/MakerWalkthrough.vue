@@ -174,10 +174,18 @@ async function build(): Promise<void> {
       <p v-if="errorText" class="bad">{{ errorText }}</p>
 
       <div v-if="buildState === 'done'" class="done">
+        <!--
+          One control, not two. Where the device can take the file directly the
+          download link is the route we know does nothing there, and offering
+          both asks somebody to guess which of two identical-looking buttons is
+          the one that works. It appears only if the share sheet actually
+          fails — which is the moment the sentence about it becomes true.
+        -->
         <button v-if="canShareFile" class="download" type="button" @click="shareBuilt">
           Save {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </button>
         <a
+          v-if="!canShareFile || shareError"
           :href="downloadUrl"
           :download="downloadName"
           class="download"

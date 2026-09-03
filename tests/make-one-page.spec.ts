@@ -47,4 +47,61 @@ test.describe("make-one", () => {
     // an empty blob offered with a confident label.
     await expect(download).toContainText(/\d{3,} KB/);
   });
+
+  test("offers one way to take the file, not two", async ({ page }) => {
+    test.slow();
+
+    /*
+     * A device that can be handed a file directly, which is what a phone is.
+     * Stubbed rather than emulated: Playwright has no share sheet, and the
+     * question here is what the page offers, not what the sheet does.
+     */
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "canShare", { value: () => true, configurable: true });
+      Object.defineProperty(navigator, "share", {
+        value: () => Promise.resolve(),
+        configurable: true,
+      });
+    });
+
+    await page.goto(PAGE);
+    await page.getByRole("button", { name: /^Play$/ }).click();
+    const build = page.getByRole("button", { name: /Build|Building/ });
+    await expect(build).toBeVisible({ timeout: 30_000 });
+    await build.click();
+
+    const save = page.getByRole("button", { name: /^Save my-tasks/ });
+    await expect(save).toBeVisible({ timeout: 120_000 });
+
+    // The download link is the route that does nothing on such a device.
+    // Offering both asks somebody to guess which of two identical-looking
+    // buttons works, and the wrong guess is the one that fails silently.
+    await expect(page.locator("a.download")).toHaveCount(0);
+  });
+
+  test("falls back to the download link when the share sheet fails", async ({ page }) => {
+    test.slow();
+
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "canShare", { value: () => true, configurable: true });
+      Object.defineProperty(navigator, "share", {
+        value: () => Promise.reject(new Error("not allowed")),
+        configurable: true,
+      });
+    });
+
+    await page.goto(PAGE);
+    await page.getByRole("button", { name: /^Play$/ }).click();
+    const build = page.getByRole("button", { name: /Build|Building/ });
+    await expect(build).toBeVisible({ timeout: 30_000 });
+    await build.click();
+
+    const save = page.getByRole("button", { name: /^Save my-tasks/ });
+    await expect(save).toBeVisible({ timeout: 120_000 });
+    await save.click();
+
+    // Only now, when the sentence about it is true.
+    await expect(page.locator("a.download")).toBeVisible();
+    await expect(page.getByText(/would not accept the file/)).toBeVisible();
+  });
 });

@@ -306,10 +306,14 @@ async function build(): Promise<void> {
       <p v-if="errorText" class="bad">{{ errorText }}</p>
 
       <div v-if="state === 'done'" class="result">
+        <!-- One control. See MakerWalkthrough: the second appears only if the
+             share sheet fails, because until then it is a button we know does
+             nothing on this device. -->
         <button v-if="canShareFile" class="download" type="button" @click="share">
           Save {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </button>
         <a
+          v-if="!canShareFile || shareError"
           :href="downloadUrl"
           :download="downloadName"
           class="download"
