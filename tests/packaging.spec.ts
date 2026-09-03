@@ -31,9 +31,19 @@ test.describe("the published package", () => {
     expect(manifest.devDependencies?.["@sqlite.org/sqlite-wasm"]).toBeUndefined();
   });
 
-  test("declares both executables", () => {
+  test("declares both executables, by a path npm will keep", () => {
     expect(manifest.bin?.dai).toBeDefined();
     expect(manifest.bin?.["dai-mcp"]).toBeDefined();
+
+    // A leading "./" is accepted everywhere except where it matters. Installing
+    // a packed tarball works, so local verification says the command line is
+    // fine — but `npm publish` calls the path invalid and drops the entry, and
+    // the published package has no executables at all. The failure appears only
+    // after publishing, to somebody else, as "command not found".
+    for (const [name, path] of Object.entries(manifest.bin ?? {})) {
+      expect(path.startsWith("./"), `bin.${name} must not begin with "./"`).toBe(false);
+      expect(path.startsWith("/"), `bin.${name} must be relative`).toBe(false);
+    }
   });
 
   test("ships the shell and the bootloader", () => {

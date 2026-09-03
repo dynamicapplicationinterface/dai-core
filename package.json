@@ -31,8 +31,8 @@
     "node": ">=18"
   },
   "bin": {
-    "dai": "./dist/bin.js",
-    "dai-mcp": "./dist/mcp-bin.js"
+    "dai": "dist/bin.js",
+    "dai-mcp": "dist/mcp-bin.js"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
