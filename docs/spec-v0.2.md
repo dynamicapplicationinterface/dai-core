@@ -316,6 +316,16 @@ A host MUST report a refusal with a reason a person can act on, and SHOULD
 report it to whatever is hosting it, not only to the screen. A container that
 refuses inside a frame shows its reason to nobody.
 
+### 7.1 Conformance
+
+[`conformance/`](../conformance/README.md) carries containers whose verdicts are
+stated in advance — one for each failure this section describes, and several
+that must be accepted. An implementation claiming to read this format SHOULD
+run them and reach the stated verdict for each, including the reason and not
+only the accept-or-refuse.
+
+The suite is where this document stops being a description of one program.
+
 ---
 
 ## 8. What this format does not address

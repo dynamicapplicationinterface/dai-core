@@ -17,6 +17,7 @@ export type { CompileOptions, CompileResult } from "./compile.js";
 
 export {
   buildContainer,
+  toSectionedContainer,
   canonicalPayload,
   payloadFingerprint,
   sha256Hex,
@@ -36,6 +37,18 @@ export {
   escapeForShell,
 } from "./launchers.js";
 export type { Launchers } from "./launchers.js";
+// The sectioned binary is the canonical form, so the library has to be able to
+// write and check one. Without these a caller can only produce the viewer form,
+// whatever the specification calls canonical.
+export {
+  FormatError,
+  SECTION,
+  readContainerFile,
+  verifyContainerFile,
+  replaceData,
+  sectionBytes,
+} from "./format.js";
+export type { ContainerFile, FileAudit, Section } from "./format.js";
 export {
   ContainerError,
   parseContainer,

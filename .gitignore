@@ -20,3 +20,10 @@ apps/desktop/src-tauri/gen/
 
 # Staged by apps/desktop/scripts/stage-runtime.mjs
 apps/desktop/public/runtime/
+
+# The conformance suite is committed on purpose. Its cases are built containers,
+# which the rules above would otherwise sweep out — and a suite that cannot be
+# checked out is not a suite anybody else can run against.
+!conformance/cases/*.dai
+!conformance/cases/*.dai.html
+!conformance/cases/*.html

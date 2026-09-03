@@ -474,6 +474,19 @@ success, cancellation and unsupported paths are driven by stand-ins injected
 with `page.addInitScript()`, making them deterministic everywhere. The
 `<a download>` path is exercised for real on every engine.
 
+## Conformance
+
+```bash
+npm run conformance   # rebuild the suite
+```
+
+[`conformance/`](conformance/README.md) is fifteen containers with their verdicts
+written down: what any reader must conclude about each, and why. It exists so a
+second implementation can be checked against the format instead of against this
+one — and so this one can be checked too. The generator refuses to publish the
+suite when this reader disagrees with an expectation, which is the only thing
+that stops a suite from quietly becoming a recording of whatever we already do.
+
 ## v0.1 scope
 
 Implemented: build packaging, ZIP + Base64 payload, template injection.

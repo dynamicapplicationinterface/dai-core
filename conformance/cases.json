@@ -1,0 +1,285 @@
+{
+  "suiteVersion": 1,
+  "formatVersion": 2,
+  "specification": "docs/spec-v0.2.md",
+  "generatedBy": "scripts/build-conformance.mjs",
+  "cases": [
+    {
+      "name": "valid-unsigned",
+      "file": "cases/valid-unsigned.dai.html",
+      "form": "viewer",
+      "summary": "A container as the compiler emits it, carrying no publisher key.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "valid-signed",
+      "file": "cases/valid-signed.dai.html",
+      "form": "viewer",
+      "summary": "Signed with the suite's key. The signature covers the manifest, not the database.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "valid",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "valid-expiry-current",
+      "file": "cases/valid-expiry-current.dai.html",
+      "form": "viewer",
+      "summary": "Carries an expiry that has not passed. Accepted, and the expiry is reported.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "current"
+      }
+    },
+    {
+      "name": "expired",
+      "file": "cases/expired.dai.html",
+      "form": "viewer",
+      "summary": "The expiry has passed. A host must refuse rather than warn.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "expired"
+      }
+    },
+    {
+      "name": "entry-modified",
+      "file": "cases/entry-modified.dai.html",
+      "form": "viewer",
+      "summary": "One application file has been edited. Its digest no longer matches the manifest.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [
+            "app/app.js"
+          ],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "entry-added",
+      "file": "cases/entry-added.dai.html",
+      "form": "viewer",
+      "summary": "A file the manifest does not list. Refused: otherwise content can simply be appended.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": [
+            "app/extra.js"
+          ]
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "entry-removed",
+      "file": "cases/entry-removed.dai.html",
+      "form": "viewer",
+      "summary": "The manifest lists a file the archive no longer carries.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [
+            "app/app.js"
+          ],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "shell-modified",
+      "file": "cases/shell-modified.dai.html",
+      "form": "viewer",
+      "summary": "The outer document differs from the sealed copy inside the payload.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "mismatch",
+        "signature": "unsigned",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "signature-invalid",
+      "file": "cases/signature-invalid.dai.html",
+      "form": "viewer",
+      "summary": "Signed, then the signature bytes were altered. The manifest is otherwise intact.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "invalid",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "signed-entries-disagree",
+      "file": "cases/signed-entries-disagree.dai.html",
+      "form": "viewer",
+      "summary": "The signed digest list disagrees with the digest list that was checked.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "invalid",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "sectioned-valid",
+      "file": "cases/sectioned-valid.dai",
+      "form": "sectioned",
+      "summary": "The sectioned binary form, unmodified.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none",
+        "sections": {
+          "mismatched": [],
+          "missing": [],
+          "staleFooter": false
+        }
+      }
+    },
+    {
+      "name": "sectioned-payload-modified",
+      "file": "cases/sectioned-payload-modified.dai",
+      "form": "sectioned",
+      "summary": "A byte inside the payload section no longer matches the section table.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none",
+        "sections": {
+          "mismatched": [
+            2
+          ],
+          "missing": [],
+          "staleFooter": false
+        }
+      }
+    },
+    {
+      "name": "sectioned-stale-footer",
+      "file": "cases/sectioned-stale-footer.dai",
+      "form": "sectioned",
+      "summary": "The footer records a database other than the one the file carries.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none",
+        "sections": {
+          "mismatched": [],
+          "missing": [],
+          "staleFooter": true
+        }
+      }
+    },
+    {
+      "name": "sectioned-missing-data",
+      "file": "cases/sectioned-missing-data.dai",
+      "form": "sectioned",
+      "summary": "The section table declares no database. Not an empty document: an incomplete file.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none",
+        "sections": {
+          "mismatched": [],
+          "missing": [
+            3
+          ],
+          "staleFooter": false
+        }
+      }
+    },
+    {
+      "name": "not-a-container",
+      "file": "cases/not-a-container.html",
+      "form": "viewer",
+      "summary": "An HTML document that is not a container at all. Refused before any check runs.",
+      "expect": {
+        "mount": false,
+        "parses": false
+      }
+    }
+  ]
+}
