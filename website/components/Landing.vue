@@ -61,7 +61,7 @@ const routes = [
   },
   {
     name: "Command line",
-    detail: "One command, and it is a file. Node required.",
+    detail: "npx dai build ./dist",
     href: "/docs/making-files#from-the-command-line",
   },
   {

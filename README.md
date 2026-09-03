@@ -1,7 +1,9 @@
 # dai-core
 
-Compiles a finished React/Vite build into a single air-gapped **DAI v0.1 Polyglot
-Container** (`[app-name].dai.html`).
+Compiles a web application into a single air-gapped file (`my-app.dai.html`)
+that holds the app, a SQLite engine and its data. It opens by double-clicking
+in any browser with nothing installed, works offline, cannot reach the network,
+and refuses to run if it has been altered.
 
 The protocol is specified in [docs/spec-v0.1.md](docs/spec-v0.1.md), which
 documents the container as it actually behaves — including where the original
@@ -9,25 +11,29 @@ draft was wrong.
 
 ## Installation
 
-> **Pre-release.** `dai-core` is not published to npm. `npm install dai-core`
-> will not resolve — install it from Git or from a local checkout.
-
-From Git:
-
 ```bash
-npm install -D github:dynamicapplicationinterface/dai-core
+npm install dai-core
 ```
 
-From a local checkout (useful while developing the plugin itself):
+Two commands come with it:
 
 ```bash
-git clone https://github.com/dynamicapplicationinterface/dai-core.git
+npx dai build ./dist -n "My App"    # compile a folder into one file
+npx dai verify my-app.dai.html      # check one that already exists
+```
+
+
+Or from a checkout, while working on the compiler itself:
+
+```bash
+git clone https://github.com/dynamicapplicationinterface/dai-core
 cd dai-core && npm install && npm run build
-cd ../your-app && npm install -D ../dai-core
 ```
 
-The package ships no prebuilt `dist/`, so a Git or local install must be built
-once (`npm run build`) before a consuming app can resolve it.
+There is also an MCP server, so an assistant can produce a container directly,
+and a [desktop app](apps/desktop) and [website](https://dynamicapplicationinterface.io/make-your-own)
+for people who would rather not use a terminal at all. See
+[docs/making-files](website/docs/making-files.md) for all of them.
 
 ## Usage
 

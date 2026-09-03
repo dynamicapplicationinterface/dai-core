@@ -4,31 +4,17 @@ title: Making files
 
 # Five ways to make one
 
-::: warning Not on npm yet
-`dai-core` has not been published, so the `npx` commands below do not resolve.
-Until it is, clone the repository and build it:
-
-```bash
-git clone https://github.com/dynamicapplicationinterface/dai-core
-cd dai-core && npm install && npm run build
-node dist/bin.js build ./your-app -n "Your App"
-```
-
-The [desktop app](/desktop) and the [in-browser builder](/make-your-own) need
-none of this and work today.
-:::
-
 Every one of them runs the same compiler. A container built by an assistant,
 by the command line or by the website is byte-for-byte the same kind of
 file — there is no "lite" version.
 
-| | Who it suits | Needs installing | Works today |
-|---|---|---|---|
-| [Desktop app](/desktop) | Anyone who never opens a terminal | The app, once | Yes |
-| [Website](/make-your-own) | Trying it out, no setup at all | Nothing | Yes |
-| [Assistant (MCP)](#with-an-assistant) | Anyone who can describe what they want | Node, once | After publication |
-| [Command line](#from-the-command-line) | Scripts, CI, repeatable builds | Node | After publication |
-| [Vite plugin](#from-a-vite-project) | React, Vue, Svelte — anything with a build | Already have it | After publication |
+| | Who it suits | Needs installing |
+|---|---|---|
+| [Desktop app](/desktop) | Anyone who never opens a terminal | The app, once |
+| [Website](/make-your-own) | Trying it out, no setup at all | Nothing |
+| [Assistant (MCP)](#with-an-assistant) | Anyone who can describe what they want | Node, once |
+| [Command line](#from-the-command-line) | Scripts, CI, repeatable builds | Node |
+| [Vite plugin](#from-a-vite-project) | React, Vue, Svelte — anything with a build | Already have it |
 
 ## With an assistant
 
