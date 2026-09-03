@@ -1,8 +1,27 @@
+import { execSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The commit this build came from.
+ *
+ * Vercel sets it; falls back to git for a local build. Written to
+ * /version.json at the end of the build so anybody can ask a deployment what
+ * it is running instead of grepping its bundles for a string they hope changed
+ * — which is how an evening went, once.
+ */
+function commit(): string {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA;
+  try {
+    return execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
 
 export default defineConfig({
   title: 'DAI Protocol',
@@ -12,6 +31,23 @@ export default defineConfig({
     ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
     ['meta', { name: 'theme-color', content: '#3b82f6' }]
   ],
+  buildEnd(config) {
+    writeFileSync(
+      path.join(config.outDir, 'version.json'),
+      JSON.stringify(
+        {
+          commit: commit(),
+          builtAt: new Date().toISOString(),
+          // Vercel says which kind of deployment this is, so a preview that
+          // never reached production can be told apart from production.
+          environment: process.env.VERCEL_ENV ?? 'local',
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  },
+
   vite: {
     resolve: {
       alias: {

@@ -50,3 +50,23 @@ test.describe("what the website serves", () => {
     });
   }
 });
+
+/**
+ * A deployment can say what it is running.
+ *
+ * Written after an evening spent grepping deployed bundles for strings, hoping
+ * the one I picked had changed, and drawing two wrong conclusions from it. The
+ * question "which commit is production serving" should cost one request, and
+ * the answer should include whether it is production at all — a preview
+ * deployment that never got promoted looks exactly like a deployment that
+ * did, from the outside.
+ */
+test("the site's build records the commit it came from", () => {
+  const stamp = JSON.parse(
+    readFileSync(join(repo, "website", ".vitepress", "dist", "version.json"), "utf8"),
+  ) as { commit: string; builtAt: string; environment: string };
+
+  expect(stamp.commit).toMatch(/^[0-9a-f]{7,40}$|^unknown$/);
+  expect(stamp.environment).toBeTruthy();
+  expect(Date.parse(stamp.builtAt)).not.toBeNaN();
+});
