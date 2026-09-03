@@ -131,10 +131,14 @@ test.describe("create_dai_app", () => {
 
     await page.goto(pathToFileURL(file).href);
     const app = page.frameLocator("iframe");
+    // The heading is static HTML and appears even when the application never
+    // ran, so waiting on it proves nothing. The row cannot exist until SQLite
+    // has booted — which on a cold runner takes longer than the default five
+    // seconds, and showed up as a flake on Firefox.
     await expect(app.locator("h1")).toHaveText("Notes", { timeout: 20_000 });
     await app.locator("#b").fill("Ring the dentist");
     await app.locator("#b").press("Enter");
-    await expect(app.locator("li")).toHaveText("Ring the dentist");
+    await expect(app.locator("li")).toHaveText("Ring the dentist", { timeout: 20_000 });
   });
 
   test("tells the model what to say to the person who asked", async () => {
@@ -158,7 +162,12 @@ test.describe("create_dai_app", () => {
     expect(result.text).toMatch(/type="module"/);
     // Nothing written: the model can fix it and try again, and no half-working
     // file is left behind for somebody to find.
-    expect(existsSync(resolve(root, "broken.dai.html"))).toBe(false);
+    //
+    // The name is capitalised because that is what the compiler produces from
+    // an appName of "Broken". Asserting the lower-case spelling made this pass
+    // on a case-insensitive filesystem and pass *vacuously* on a case-sensitive
+    // one, where it could not have failed however wrong the code was.
+    expect(existsSync(resolve(root, "Broken.dai.html"))).toBe(false);
   });
 
   test("refuses a CDN script, which would never arrive", async () => {
@@ -181,7 +190,9 @@ test.describe("create_dai_app", () => {
 
     expect(result.isError).toBe(false);
     expect(result.text).toMatch(/Worth fixing/);
-    expect(existsSync(resolve(root, "notes.dai.html"))).toBe(true);
+    // No outputPath was given, so the name comes from the appName as the
+    // compiler sanitises it — "Notes", with its capital intact.
+    expect(existsSync(resolve(root, "Notes.dai.html"))).toBe(true);
   });
 
   test("needs an entry point", async () => {

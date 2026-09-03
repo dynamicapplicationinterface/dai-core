@@ -98,10 +98,13 @@ test.describe("dai build", () => {
     await page.goto(pathToFileURL(file).href);
     const app = page.frameLocator("iframe");
 
+    // The heading is static HTML and renders even when the application never
+    // ran. The row cannot appear until SQLite has booted, and a cold runner
+    // takes longer than the default five seconds.
     await expect(app.locator("h1")).toHaveText("Notes", { timeout: 20_000 });
     await app.locator("#b").fill("Ring the dentist");
     await app.locator("#b").press("Enter");
-    await expect(app.locator("li")).toHaveText("Ring the dentist");
+    await expect(app.locator("li")).toHaveText("Ring the dentist", { timeout: 20_000 });
   });
 
   test("--quiet prints only the path, for scripting", () => {
@@ -110,7 +113,10 @@ test.describe("dai build", () => {
 
     expect(result.code).toBe(0);
     expect(result.out.trim().split("\n")).toHaveLength(1);
-    expect(result.out.trim()).toMatch(/notes\.dai\.html$/i);
+    // Asserted with the capital the compiler actually produces. A
+    // case-insensitive match here would accept the wrong name on the only
+    // platform where the name matters.
+    expect(result.out.trim()).toMatch(/Notes\.dai\.html$/);
   });
 
   test("says so when there is nothing to package", () => {
