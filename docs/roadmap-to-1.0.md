@@ -329,3 +329,58 @@ moving, and the format cannot stop moving until item 5 lands.
 
 Approaching a standards body earlier spends the one first impression available
 on a format that still has a breaking change queued.
+
+
+---
+
+## Runner strategy
+
+A second round of review argues that the outcome is decided by runners rather
+than by the format: one file and a family of runners — a phone app that owns
+the `.dai` type, a desktop app that saves in place, a web opener at an HTTPS
+origin, one engine underneath, and the trust and fleet layer as the thing you
+charge for.
+
+As a destination that is right, and it matches where the commercial thinking
+had already landed. Three points of sequencing are worth arguing, because the
+difference between them is months of work by one person.
+
+**The web opener already exists, and is unshipped.** `apps/runner` is a PWA
+with OPFS persistence and a service worker, carrying its own deployment
+config, described in its own manifest as being for "a device that cannot
+execute them from the filesystem". It was built for phones and never deployed.
+It now also declares `file_handlers` and a `share_target`, which is what
+offers it when a container is tapped and what puts it in an Android share
+sheet.
+
+That makes it the cheapest way to find out whether anybody wants this on a
+phone: days, no review queue, and it works on iOS today through the file
+picker. Writing two native applications first is the expensive way to learn
+the same thing.
+
+**The App Store risk is asserted away.** "Apple will never let a `.dai.html`
+execute from Files; it will happily let your app register the `.dai` type" is
+confident in both directions. Running JavaScript in a WebView is ordinary and
+permitted; an application whose stated purpose is executing arbitrary code a
+user received in a message is a review conversation, not a formality. One
+TestFlight build settles it. Discovering it after building for two platforms
+does not.
+
+**A Rust core is the right engine at the wrong moment.** There is one
+implementation today, in TypeScript, driving five front ends and covered by
+the suite. A second implementation is genuinely valuable — writing one from
+the specification is how you find out the specification is wrong — but the
+format still has a breaking change queued in container v2. Writing it before
+the format freezes means writing it twice.
+
+**`.dai` as canonical is right, and follows the container work rather than
+leading it.** The binary form is what mail gateways pass and what a phone app
+claims. Demoting `.dai.html` before a runner exists on the platforms where
+`.dai` needs a handler would cost the zero-install demonstration and buy
+nothing.
+
+So the order I would take it: deploy the opener that already exists, let it
+declare the type, and find out whether files actually get opened on phones. If
+they do, that is the evidence that justifies a native runner and the traffic
+that justifies the Rust core. If they do not, two app-store applications would
+not have changed it.
