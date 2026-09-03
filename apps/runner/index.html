@@ -139,7 +139,14 @@
     </main>
 
     <!-- Kept out of the layout; the header button drives it. -->
-    <input id="file" type="file" accept=".html,text/html" hidden />
+    <!--
+      No accept filter, deliberately. iOS greys out anything the filter does not
+      name, and the Files app has no type for `.dai` — so a filter that looked
+      tidy on a desktop made the file unselectable on the device this app exists
+      for. Whatever is chosen is verified before it runs, which is the check that
+      was ever doing the work.
+    -->
+    <input id="file" type="file" hidden />
 
     <script type="module" src="/src/main.ts"></script>
   </body>

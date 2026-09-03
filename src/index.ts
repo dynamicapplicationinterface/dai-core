@@ -49,6 +49,11 @@ export {
   sectionBytes,
 } from "./format.js";
 export type { ContainerFile, FileAudit, Section } from "./format.js";
+// Handing a finished container to the device somebody is reading on. A host
+// that gets this wrong hands over nothing and says nothing, which is how the
+// site failed on iOS.
+export { canHandOff, handOff } from "./handoff.js";
+export type { HandOffResult, ShareCapableNavigator } from "./handoff.js";
 export {
   ContainerError,
   parseContainer,

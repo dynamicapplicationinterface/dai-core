@@ -11,7 +11,8 @@
  * signed with a key minted in this tab, and the file that downloads is a working
  * application. A visitor who inspects it will find exactly what they were shown.
  */
-import { computed, ref } from 'vue';
+import { ref } from 'vue';
+import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
 
 /*
@@ -67,8 +68,8 @@ const downloadName = 'my-tasks.dai.html';
 const fingerprint = ref('');
 const fileSize = ref(0);
 const errorText = ref('');
-
-const finished = computed(() => revealed.value >= TRANSCRIPT.length);
+const builtFile = ref<File | null>(null);
+const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(builtFile, downloadName);
 
 async function play(): Promise<void> {
   playing.value = true;
@@ -103,6 +104,7 @@ async function build(): Promise<void> {
     });
 
     const blob = new Blob([built.html], { type: 'text/html' });
+    builtFile.value = new File([blob], downloadName, { type: 'text/html' });
     downloadUrl.value = URL.createObjectURL(blob);
     fileSize.value = blob.size;
     fingerprint.value = built.publicKeyFingerprint ?? '';
@@ -169,10 +171,30 @@ async function build(): Promise<void> {
       <p v-if="errorText" class="bad">{{ errorText }}</p>
 
       <div v-if="buildState === 'done'" class="done">
-        <a :href="downloadUrl" :download="downloadName" class="download">
+        <button v-if="canShareFile" class="download" type="button" @click="shareBuilt">
+          Save {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
+        </button>
+        <a
+          :href="downloadUrl"
+          :download="downloadName"
+          class="download"
+          :class="{ secondary: canShareFile }"
+        >
           Download {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </a>
-        <ol>
+
+        <p v-if="shareError" class="bad">{{ shareError }}</p>
+
+        <ol v-if="canShareFile">
+          <li>Choose <strong>Save to Files</strong>, and pick somewhere you will find it.</li>
+          <li>
+            Open <a href="https://run.dynamicapplicationinterface.io">the runner</a>, tap
+            <strong>Open a file</strong> and choose it. A phone cannot run a file straight
+            from storage, so the runner is what opens it.
+          </li>
+          <li>Add a task. It is saved onto this device, and nowhere else.</li>
+        </ol>
+        <ol v-else>
           <li>Open your downloads folder and double-click it. It opens in your browser.</li>
           <li>Add a task, then press <strong>Save into this file</strong>.</li>
           <li>Turn off your wifi and open it again. Everything is still there.</li>
@@ -232,7 +254,20 @@ button:disabled { opacity: 0.6; cursor: default; }
   display: inline-block; padding: 12px 20px; margin-bottom: 16px;
   font-size: 16px; font-weight: 600; border-radius: 8px;
   color: var(--vp-c-white) !important; background: var(--vp-c-green-1);
-  text-decoration: none;
+  text-decoration: none; border: 0; cursor: pointer; font-family: inherit;
+}
+/*
+ * The fallback, where a device can take the file directly. Kept visible rather
+ * than hidden: a download that silently does nothing is how this page failed on
+ * a phone, and removing the other route would repeat that in the other
+ * direction on a device we guessed wrong about.
+ */
+.download.secondary {
+  margin-left: 12px;
+  color: var(--vp-c-text-1) !important;
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-border);
+  font-weight: 500;
 }
 .done ol { margin: 0 0 12px; padding-left: 20px; }
 .done li { margin: 6px 0; }

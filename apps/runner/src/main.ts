@@ -7,6 +7,7 @@
  * are opened from the user's own files. The console, not the cartridge.
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
+import { handOff } from "../../../src/handoff.js";
 import {
   deleteCartridgeFromLibrary,
   deleteDatabaseFromOpfs,
@@ -238,14 +239,14 @@ async function exportContainer(): Promise<void> {
   const fileName = `${name}.dai.html`;
   const file = new File([activeCartridge.html], fileName, { type: "text/html" });
 
-  if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-    try {
-      await navigator.share({ files: [file], title: name });
-      return;
-    } catch (error) {
-      if ((error as Error).name === "AbortError") return;
-    }
-  }
+  // The same decision the website makes, from the same place. A device that
+  // will not take a file directly is why the download link below exists, and
+  // two implementations of "can this device take a file" would eventually
+  // disagree about the device somebody is holding.
+  const handed = await handOff(navigator, file, name);
+  // Dismissed rather than failed: offering a download after somebody declined
+  // to save would be the app arguing with them.
+  if (handed.shared || !handed.error) return;
 
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([activeCartridge.html], { type: "text/html" }));

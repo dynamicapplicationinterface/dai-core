@@ -14,6 +14,7 @@
  * difference between a tool a beginner can use and one that wastes their time.
  */
 import { computed, ref } from 'vue';
+import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, isNoise, stripCommonPrefix, unpackZip } from '../../src/browser.js';
 import { lintFiles, storesDataInFile, type Finding } from '../../src/lint.js';
 import { RECIPE_AS_PROMPT as PROMPT } from '../../src/recipe.js';
@@ -37,6 +38,7 @@ const promptCopied = ref(false);
 const state = ref<'idle' | 'working' | 'done' | 'error'>('idle');
 const errorText = ref('');
 const downloadUrl = ref('');
+const builtFile = ref<File | null>(null);
 const fileSize = ref(0);
 const appName = ref('My App');
 
@@ -47,6 +49,7 @@ const downloadName = computed(() => {
   const slug = appName.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `${slug || 'my-app'}.dai.html`;
 });
+const { canShareFile, share, shareError } = useFileHandoff(builtFile, downloadName);
 
 /** What the checks can read. Binary files are not worth decoding. */
 const readable = computed<Record<string, string>>(() => {
@@ -159,6 +162,7 @@ async function build(): Promise<void> {
     });
 
     const blob = new Blob([built.html], { type: 'text/html' });
+    builtFile.value = new File([blob], downloadName.value, { type: 'text/html' });
     downloadUrl.value = URL.createObjectURL(blob);
     fileSize.value = blob.size;
     state.value = 'done';
@@ -302,10 +306,25 @@ async function build(): Promise<void> {
       <p v-if="errorText" class="bad">{{ errorText }}</p>
 
       <div v-if="state === 'done'" class="result">
-        <a :href="downloadUrl" :download="downloadName" class="download">
+        <button v-if="canShareFile" class="download" type="button" @click="share">
+          Save {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
+        </button>
+        <a
+          :href="downloadUrl"
+          :download="downloadName"
+          class="download"
+          :class="{ secondary: canShareFile }"
+        >
           Download {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </a>
-        <p>
+        <p v-if="shareError" class="bad">{{ shareError }}</p>
+        <p v-if="canShareFile">
+          Choose <strong>Save to Files</strong>, then open
+          <a href="https://run.dynamicapplicationinterface.io">the runner</a> and pick it
+          there. A phone cannot run a file straight from storage, so the runner is what
+          opens it.
+        </p>
+        <p v-else>
           Double-click it. It opens in your browser, works with the wifi off, and
           you can send it to anyone.
         </p>

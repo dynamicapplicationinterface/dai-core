@@ -9,6 +9,7 @@
  */
 import {
   ContainerError,
+  looksSectioned,
   resealContainer,
   verifyContainer,
   type VerifiedContainer,
@@ -34,9 +35,13 @@ export type CartridgeManifest = VerifiedContainer["manifest"];
  * a key is carried.
  */
 export async function readCartridge(file: File): Promise<Cartridge> {
-  const buffer = await file.arrayBuffer();
-  const html = new TextDecoder().decode(new Uint8Array(buffer));
-  return verifyContainer(html);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  // The form comes from the leading bytes, never the name. Decoding a sectioned
+  // container as text does not fail loudly — it replaces every byte that is not
+  // valid UTF-8, which is most of a database, and hands the verifier a file
+  // that this function damaged on the way in.
+  return verifyContainer(looksSectioned(bytes) ? bytes : new TextDecoder().decode(bytes));
 }
 
 /**

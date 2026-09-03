@@ -117,6 +117,34 @@ test.describe("cartridge ingestion", () => {
     expect(errors).toEqual([]);
   });
 
+  test("runs a sectioned .dai, which is the form a phone is handed", async ({ page }) => {
+    /*
+     * The binary form, through the same picker.
+     *
+     * This is the file a mail attachment or a Files app hands over, and the
+     * runner used to decode every chosen file as UTF-8 text — which does not
+     * fail loudly on a binary. It replaces most of the bytes with U+FFFD and
+     * then reports the container as damaged, so the file the format calls
+     * canonical could not be opened on the device the runner exists for.
+     */
+    const sectioned = resolve(here, "..", "conformance", "cases", "sectioned-valid.dai");
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", sectioned);
+
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    await expect(page.locator("#cartridge")).toBeVisible();
+  });
+
+  test("puts no type filter on the picker, so a .dai is selectable", async ({ page }) => {
+    // iOS greys out anything an accept filter does not name, and the Files app
+    // has no type for `.dai`: a filter that looked tidy on a desktop made the
+    // file unselectable on a phone. Whatever is chosen is verified before it
+    // runs, which is the check that was doing the work.
+    await page.goto(RUNNER_URL);
+    expect(await page.locator("#file").getAttribute("accept")).toBeNull();
+  });
+
   test("reports the publisher fingerprint it verified", async ({ page }) => {
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", CONTAINER);
