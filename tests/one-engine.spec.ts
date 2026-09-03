@@ -53,6 +53,10 @@ test.describe("one engine", () => {
     const wrappers = [
       ...(await sourceFiles("src", [".ts"])),
       ...(await sourceFiles("website/components", [".vue"])),
+      // The desktop app is a front end like any other, and was the one place
+      // this guard did not look. It had grown its own compile call, which built
+      // containers with no SQLite engine at all.
+      ...(await sourceFiles("apps/desktop/src", [".ts"])),
     ].filter((file) => {
       const rel = relative(repo, file).split("\\").join("/");
       // The bootloader is not a wrapper: it is the verifier, and it runs inside
@@ -78,7 +82,11 @@ test.describe("one engine", () => {
     // will not work once a file is sealed. Three copies of that list would
     // disagree within a month, and a model would be told its code was fine by
     // one tool and unusable by another.
-    const callers = ["website/components/MakeYourOwn.vue", "src/mcp.ts"];
+    const callers = [
+      "website/components/MakeYourOwn.vue",
+      "src/mcp.ts",
+      "apps/desktop/src/main.ts",
+    ];
     for (const file of callers) {
       const source = readFileSync(resolve(repo, file), "utf8");
       expect(/lintSource|lintFiles/.test(source), `${file} does not use the shared lint`).toBe(
@@ -134,6 +142,7 @@ test.describe("one engine", () => {
       "website/components/MakeYourOwn.vue": /from '\.\.\/\.\.\/src\/browser\.js'/,
       "website/components/MakerWalkthrough.vue": /from '\.\.\/\.\.\/src\/browser\.js'/,
       "website/components/TamperProof.vue": /from '\.\.\/\.\.\/src\/container\.js'/,
+      "apps/desktop/src/main.ts": /from "\.\.\/\.\.\/\.\.\/src\/browser\.js"/,
     };
 
     for (const [file, expected] of Object.entries(frontEnds)) {

@@ -7,7 +7,10 @@
 
 import { ContainerError, verifyContainer } from "../../../src/container.js";
 import { payloadFingerprint } from "../../../src/core.js";
+import { compileInBrowser, loadRuntimeAssets, type RuntimeAssets } from "../../../src/browser.js";
+import { lintSource } from "../../../src/lint.js";
 import { checkTrust, type TrustVerdict } from "./trust.js";
+
 
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
 const openBtn = document.getElementById("open-btn") as HTMLButtonElement;
@@ -625,39 +628,62 @@ createBtn.addEventListener("click", showModal);
 heroCreateBtn.addEventListener("click", showModal);
 closeModalBtn.addEventListener("click", hideModal);
 
+/**
+ * The runtime pieces a container is built from, loaded once.
+ *
+ * The engine is the part that used to be missing. Cartridges minted here were
+ * compiled without it, so every one of them opened with no database — silently,
+ * because a container without an engine is still a valid container. Anything
+ * built by this window claimed to hold a data layer and did not.
+ *
+ * The assets are staged into public/runtime by scripts/stage-runtime.mjs and
+ * read by the same loader the website uses, so this window and that page cannot
+ * disagree about what a container is made of.
+ */
+let runtimeAssets: RuntimeAssets | undefined;
+
 mintBtn.addEventListener("click", async () => {
   mintBtn.disabled = true;
-  mintStatus.textContent = "Packaging, compiling, and signing cartridge...";
+  mintStatus.style.color = "#94a3b8";
+  mintStatus.textContent = "Loading the engine...";
 
   try {
-    const { buildContainer } = await import("../../../src/core.js");
-    const { CONTAINER_TEMPLATE, RUNTIME_SOURCE } = await import("../../../dist/templates.js");
-
     const appName = appNameInput.value.trim() || "Untitled Cartridge";
     const htmlSource = htmlSourceInput.value;
 
-    // Mint a fresh WebCrypto ECDSA P-256 key pair for signing
-    const keyPair = await window.crypto.subtle.generateKey(
-      { name: "ECDSA", namedCurve: "P-256" },
-      true,
-      ["sign", "verify"]
+    // The same checks the website and the MCP server run. Without them somebody
+    // pastes what an assistant wrote, mints it, and opens a blank page with
+    // nothing to explain why.
+    const findings = lintSource(htmlSource);
+    const fatal = findings.filter(
+      (finding) => finding.id === "await-in-classic-script" || finding.id === "cdn-script",
     );
+    if (fatal.length > 0) {
+      mintStatus.style.color = "#f87171";
+      mintStatus.textContent = fatal[0].what + " " + fatal[0].fix;
+      return;
+    }
 
-    const built = await buildContainer({
-      files: {
-        "index.html": new TextEncoder().encode(htmlSource),
-      },
-      template: CONTAINER_TEMPLATE,
-      runtime: RUNTIME_SOURCE,
+    mintStatus.textContent = "Packaging, compiling and signing...";
+    runtimeAssets ??= await loadRuntimeAssets();
+
+    const built = await compileInBrowser({
+      files: { "index.html": htmlSource },
       appName,
-      signingKey: keyPair,
+      assets: runtimeAssets,
     });
 
     hideModal();
-    mountHtml(built.html, `${appName.toLowerCase().replace(/\s+/g, "-")}.dai.html`);
-    badge.textContent = `Signed (${built.publicKeyFingerprint?.slice(0, 8)}) · ${appName}`;
+    mountHtml(built.html, appName.toLowerCase().replace(/\s+/g, "-") + ".dai.html");
+    badge.textContent =
+      "Signed (" + (built.publicKeyFingerprint ?? "").slice(0, 8) + ") · " + appName;
+
+    if (findings.length > 0) {
+      fail("Built, but worth fixing: " + findings.map((finding) => finding.what).join(" "));
+    }
   } catch (err) {
-    mintStatus.textContent = `Failed to mint cartridge: ${(err as Error).message}`;
+    mintStatus.style.color = "#f87171";
+    mintStatus.textContent = "Failed to mint cartridge: " + (err as Error).message;
   } finally {
     mintBtn.disabled = false;
   }
