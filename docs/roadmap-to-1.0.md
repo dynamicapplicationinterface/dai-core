@@ -165,10 +165,9 @@ Submission for the container format.
 ### 1.0
 
 Two interoperable implementations, conformance suite passed by both, published
-security review, registered media types, and the spec and trademark moved to a
-foundation. The certification mark stays with the foundation; the commercial
-product competes on service rather than on control of the format, which is the
-only arrangement enterprises accept.
+security review, registered media types, and the specification and trademark
+moved to a foundation — so that no single party controls the format, which is
+the condition under which anyone else can safely build on it.
 
 ---
 
@@ -338,12 +337,10 @@ on a format that still has a breaking change queued.
 A second round of review argues that the outcome is decided by runners rather
 than by the format: one file and a family of runners — a phone app that owns
 the `.dai` type, a desktop app that saves in place, a web opener at an HTTPS
-origin, one engine underneath, and the trust and fleet layer as the thing you
-charge for.
+origin, and one engine underneath all three.
 
-As a destination that is right, and it matches where the commercial thinking
-had already landed. Three points of sequencing are worth arguing, because the
-difference between them is months of work by one person.
+As a destination that is right. Three points of sequencing are worth arguing,
+because the difference between them is months of work by one person.
 
 **The web opener already exists, and is unshipped.** `apps/runner` is a PWA
 with OPFS persistence and a service worker, carrying its own deployment
