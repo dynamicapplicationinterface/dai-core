@@ -1,5 +1,11 @@
 # Roadmap
 
+
+> The phased plan from 0.1 to 1.0, written after an external
+> architectural review, is in [roadmap-to-1.0.md](roadmap-to-1.0.md).
+> This document remains the reference for the invariant, the tenets and
+> the host bridge.
+
 The open-source protocol, its runtime, and the developer tooling around them.
 
 ---
