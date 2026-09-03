@@ -280,7 +280,7 @@ origin, so the frame installs an in-memory stand-in; and Firefox does not fire
 `load` for a document produced by `document.write`, which left the shell
 reporting "mounting" over an application that had already started.
 
-### 3. Remove `'unsafe-inline'` from the shell's CSP
+### 3. Remove `'unsafe-inline'` from the shell's CSP — **done, unmerged**
 
 The compiler knows every byte it packages, which is exactly the condition under
 which a nonce is straightforward: rewrite inline script in the application's
@@ -292,9 +292,26 @@ This closes injected-script attacks through content stored in the database,
 which is a live path today: an application that renders a task title as HTML
 executes whatever the title contains.
 
-**Done when:** the policy is `script-src 'nonce-…' 'strict-dynamic'
-'wasm-unsafe-eval'`, and a container whose database contains a `<script>` tag
-cannot execute it.
+**Done when:** the policy is `script-src 'nonce-…'`, and a container whose
+database contains a `<script>` tag cannot execute it.
+
+Landed on `feat/opaque-origin-frame`. The policy is now `script-src
+'nonce-…' 'wasm-unsafe-eval' blob:` — `'unsafe-inline'` and `'self'` are both
+gone, the latter being ill-defined at an opaque origin anyway.
+
+One thing the design had to face honestly: a container is a static file, so
+there is no response to vary and the nonce is fixed at compile time and legible
+to anyone who opens it. That costs nothing, because unguessability is not what
+does the work here. **A nonce never authorises an inline event handler or a
+`javascript:` URL, whatever its value**, and those are the sinks a value stored
+in the database can reach — a task title rendered into the DOM carrying
+`onerror=` executed until now. The nonce is derived from the document identity
+so builds stay reproducible.
+
+Scripts the compiler sealed are stamped and still run; anything introduced
+afterwards is not and does not. `'strict-dynamic'` was left out deliberately:
+it makes `blob:` ignored, and the module graph is loaded through blob URLs, so
+it is a tightening to attempt separately rather than alongside this one.
 
 ### 4. Sign the whole manifest, using an envelope somebody else wrote
 

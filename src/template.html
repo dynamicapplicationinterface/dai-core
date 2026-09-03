@@ -17,7 +17,7 @@
     neither frame the app nor load a single packaged asset. Do not add any
     scheme that can reach a remote host.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-<!--DAI_NONCE-->' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
 
   <!--
     viewport-fit=cover lets the app paint under the notch and home indicator;
@@ -135,7 +135,7 @@
   <button id="dai-app-mode" type="button" hidden>Enter App Mode</button>
 
   <!-- The Viewer/Bootloader Engine (bundled from src/runtime/bootloader.ts). -->
-  <script type="text/javascript" id="dai-bootloader"><!--DAI_RUNTIME--></script>
+  <script type="text/javascript" id="dai-bootloader" nonce="<!--DAI_NONCE-->"><!--DAI_RUNTIME--></script>
 
   <!--
     The Cryptographically Sealed Payload: Base64 of a ZIP archive containing the

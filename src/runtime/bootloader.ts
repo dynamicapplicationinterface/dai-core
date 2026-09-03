@@ -94,6 +94,31 @@ const HANDSHAKE_TIMEOUT_MS = 5000;
 const SYNTHETIC_ORIGIN = "file:///dai/app/";
 
 /**
+ * The nonce the compiler stamped on this script, read back so everything the
+ * runtime writes can carry it.
+ *
+ * The content attribute is hidden from `getAttribute` by every current engine,
+ * to stop a script exfiltrating it through the DOM; the IDL property is the
+ * supported way to read your own. Falling back to the policy text keeps a
+ * container built by an older compiler working, where there is no nonce and the
+ * policy still allows inline script.
+ */
+function shellNonce(): string {
+  const tag = document.getElementById("dai-bootloader") as HTMLScriptElement | null;
+  if (tag?.nonce) return tag.nonce;
+
+  const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  const found = /'nonce-([^']+)'/.exec(meta?.getAttribute("content") ?? "");
+  return found?.[1] ?? "";
+}
+
+/** Attribute text for a script the runtime emits, empty when unnonced. */
+function nonceAttr(): string {
+  const value = shellNonce();
+  return value ? ` nonce="${value}"` : "";
+}
+
+/**
  * Stops, says why on screen, and tells the host.
  *
  * The screen alone is not enough. A cartridge that refuses inside a frame shows
@@ -490,6 +515,10 @@ function bridgeMain(): void {
       const token = "__daiGlue" + Date.now();
       const script = document.createElement("script");
       script.type = "module";
+      // Stamped, because this is an inline script created at runtime and the
+      // policy no longer allows unnonced inline script. A nonce set through the
+      // property is honoured; the attribute is hidden from the DOM by design.
+      if (host.nonce) script.nonce = String(host.nonce);
       script.textContent =
         "import init from " + JSON.stringify(glueUrl) + ";" +
         "window[" + JSON.stringify(token) + "]={ok:init};" +
@@ -925,6 +954,10 @@ function frameLoader(): void {
       },
     );
 
+    // Read before anything below uses it: the object handed to the bridge
+    // carries it too, so the glue's dynamically created script can be stamped.
+    const nonce = String(data.nonce || "");
+
     // Set before the document is written. `document.open()` clears the document
     // and keeps the global, so the bridge finds this already waiting.
     (window as unknown as Any).__DAI__ = {
@@ -933,6 +966,7 @@ function frameLoader(): void {
       verified: data.facts.verified,
       signature: data.facts.signature,
       publicKeyFingerprint: data.facts.publicKeyFingerprint,
+      nonce: nonce,
       sqlite: new Uint8Array(data.sqlite as ArrayBuffer),
       sqliteWasm: (data.wasm as ArrayBuffer) || null,
       sqliteGlueUrl: data.glueSource
@@ -940,14 +974,33 @@ function frameLoader(): void {
         : null,
     };
 
+    /*
+     * The application's own inline scripts are stamped with the same nonce.
+     *
+     * The frame inherits the shell's policy, which no longer allows inline
+     * script, so without this every sealed application carrying a `<script>`
+     * block would stop running. Stamping only what arrived in the payload is
+     * the whole point: author code was present when the container was sealed
+     * and is covered by its digest, while anything introduced afterwards —
+     * a task title rendered into the DOM, a row read back out of the database
+     * — has no nonce and does not execute.
+     */
+    const stamp = nonce ? ' nonce="' + nonce + '"' : "";
+    const stamped = nonce
+      ? rewritten.replace(/<script(?![^>]*\snonce=)([^>]*)>/gi, (whole: string, attrs: string) =>
+          /\ssrc\s*=/i.test(attrs) ? whole : "<script" + attrs + stamp + ">",
+        )
+      : rewritten;
+
     const head =
-      "<" + 'script type="importmap">' + JSON.stringify({ imports }) + "<" + "/script>" +
+      "<" + "script" + stamp + ' type="importmap">' + JSON.stringify({ imports }) +
+      "<" + "/script>" +
       String(data.bridgeSource) +
       String(data.handshakeSource);
 
-    const html = /<head(\s[^>]*)?>/i.test(rewritten)
-      ? rewritten.replace(/<head(\s[^>]*)?>/i, (tag: string) => tag + head)
-      : "<head>" + head + "</head>" + rewritten;
+    const html = /<head(\s[^>]*)?>/i.test(stamped)
+      ? stamped.replace(/<head(\s[^>]*)?>/i, (tag: string) => tag + head)
+      : "<head>" + head + "</head>" + stamped;
 
     document.open();
     document.write(html);
@@ -959,18 +1012,18 @@ function frameLoader(): void {
 
 /** Serializes frameLoader() into the frame's initial document. */
 function loaderScript(): string {
-  return "<script>(" + frameLoader.toString() + ")()<" + "/script>";
+  return "<script" + nonceAttr() + ">(" + frameLoader.toString() + ")()<" + "/script>";
 }
 
 /** Serializes bridgeMain() into the frame. See the note on that function. */
 function bridgeScript(): string {
-  return "<script>(" + bridgeMain.toString() + ")()<" + "/script>";
+  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")()<" + "/script>";
 }
 
 /** Injected into the iframe so the host can tell mounting actually succeeded. */
 function handshakeScript(): string {
   return (
-    `<script>(function(){` +
+    `<script${nonceAttr()}>(function(){` +
     `var ok=function(){try{parent.postMessage(${JSON.stringify(HANDSHAKE)},"*")}catch(e){}};` +
     `window.addEventListener("error",function(e){try{parent.postMessage(` +
     `{type:"dai:error",message:String(e.message)},"*")}catch(_){}}, true);` +
@@ -1146,6 +1199,9 @@ async function boot(): Promise<void> {
     wasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
     sqlite: toArrayBuffer(files[SQLITE_ENTRY] ?? new Uint8Array(0)),
     syntheticOrigin: SYNTHETIC_ORIGIN,
+    // So the loader can stamp the import map and the application's own inline
+    // scripts; the frame inherits this document's policy.
+    nonce: shellNonce(),
     bridgeSource: bridgeScript(),
     handshakeSource: handshakeScript(),
     facts: {

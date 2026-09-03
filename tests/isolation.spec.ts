@@ -123,6 +123,63 @@ test.describe("the application cannot reach its own shell", () => {
     expect(behaviour.isRealStorage).toBe(false);
   });
 
+  test("script the author did not seal does not execute", async ({ page }) => {
+    await page.goto(container);
+    const app = page.frameLocator("iframe");
+    await app.locator("body").waitFor({ timeout: 20_000 });
+
+    /*
+     * The live path this closes. An application that renders a value into the
+     * DOM — a task title, a note, any row read back out of its own database —
+     * used to be rendering it under a policy that allowed inline script, so a
+     * title reading `<img onerror=…>` executed.
+     *
+     * A nonce cannot rescue an event handler whatever its value, which is why
+     * removing 'unsafe-inline' is the whole of the fix and why the nonce being
+     * fixed at compile time costs nothing here.
+     */
+    const ran = await app.locator("body").evaluate(async () => {
+      const win = window as unknown as Record<string, unknown>;
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+
+      host.innerHTML =
+        '<img src="data:," onerror="window.__EVENT_HANDLER_RAN__ = true">' +
+        '<script>window.__INLINE_SCRIPT_RAN__ = true;<' + "/script>";
+
+      const link = document.createElement("a");
+      link.href = "javascript:window.__JS_URL_RAN__ = true";
+      document.body.appendChild(link);
+      link.click();
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return {
+        eventHandler: win.__EVENT_HANDLER_RAN__ === true,
+        inlineScript: win.__INLINE_SCRIPT_RAN__ === true,
+        javascriptUrl: win.__JS_URL_RAN__ === true,
+      };
+    });
+
+    expect(ran.eventHandler, "an onerror attribute must not run").toBe(false);
+    expect(ran.inlineScript, "an injected script element must not run").toBe(false);
+    expect(ran.javascriptUrl, "a javascript: URL must not run").toBe(false);
+  });
+
+  test("the sealed application's own inline script still runs", async ({ page }) => {
+    await page.goto(container);
+    const app = page.frameLocator("iframe");
+    await app.locator("body").waitFor({ timeout: 20_000 });
+
+    // The other half of the same rule. Author code was present when the
+    // container was sealed and is covered by its digest, so the loader stamps
+    // it; if this stopped working, every application carrying a script block
+    // would be broken by the policy that protects it.
+    const bridge = await app.locator("body").evaluate(
+      () => typeof (window as unknown as Record<string, unknown>).dai,
+    );
+    expect(bridge).toBe("object");
+  });
+
   test("the shell grants no capability the application could abuse", async ({ page }) => {
     await page.goto(container);
 

@@ -31,6 +31,7 @@ const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
 const FAVICON_PLACEHOLDER = "<!--DAI_FAVICON-->";
 const INTEGRITY_PLACEHOLDER = "<!--DAI_INTEGRITY-->";
 const PUBLIC_KEY_PLACEHOLDER = "<!--DAI_PUBLIC_KEY-->";
+const NONCE_PLACEHOLDER = "<!--DAI_NONCE-->";
 
 /**
  * Anchors the payload substitution to the payload tag itself.
@@ -202,7 +203,26 @@ export async function buildContainer(
   // The policy lives in the shell, never in the payload it governs.
   const integrityPolicy = verifyIntegrity === false ? "advisory" : "required";
   const favicon = input.favicon ?? DEFAULT_FAVICON;
+  /*
+   * The nonce that replaces `'unsafe-inline'` in the shell's script policy.
+   *
+   * Derived from the document identity rather than drawn at random, because a
+   * container is a static file: there is no response to vary, so the value is
+   * fixed at compile time and legible to anyone who opens it. Deriving it keeps
+   * builds reproducible, and costs nothing — an attacker reads it either way.
+   *
+   * Its unguessability is not what does the work. A nonce never authorises an
+   * inline event handler or a `javascript:` URL, whatever its value, and those
+   * are the sinks that content stored in the database can reach: a task title
+   * rendered into the DOM can carry `onerror=`, and until now the policy
+   * permitted it. Scripts the compiler sealed are stamped and still run;
+   * anything introduced afterwards is not and does not.
+   */
+  const nonce = (await sha256Hex(new TextEncoder().encode("dai-nonce:" + documentUuid))).slice(0, 32);
+
   const shell = template
+    .split(NONCE_PLACEHOLDER)
+    .join(nonce)
     .split(APP_NAME_PLACEHOLDER)
     .join(escapeHtml(appName))
     .split(FAVICON_PLACEHOLDER)
