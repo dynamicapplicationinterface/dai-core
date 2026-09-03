@@ -4,36 +4,20 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildContainer } from "../src/core.js";
+import { lintSource } from "../src/lint.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * The air-gap checks the paste page runs, lifted out of the component.
+ * The checks the paste page runs, called directly.
  *
- * Read from the source rather than restated, for the same reason the
- * walkthrough's app is: a copy would keep passing while the page shipped
- * something else. Sharing the patterns properly would mean a module the site
- * and the tests both import, which is the right shape once a second caller
- * wants them.
+ * These used to be scraped out of the component, because that was where they
+ * lived and a second copy would have drifted from it. They now live in
+ * src/lint.ts and are shared with the command line and the MCP server, so the
+ * tests can simply call them — and `one-engine.spec.ts` is what keeps the
+ * component from growing its own set again.
  */
-function checksOnPage(): RegExp[] {
-  const component = readFileSync(
-    resolve(repo, "website/components/MakeYourOwn.vue"),
-    "utf8",
-  );
-  const block = component.slice(
-    component.indexOf("const CHECKS"),
-    component.indexOf("const findings"),
-  );
-  const patterns = [...block.matchAll(/pattern: \/(.+?)\/([gimsuy]*),\n/g)].map(
-    (match) => new RegExp(match[1] as string, match[2] as string),
-  );
-  if (patterns.length < 5) throw new Error(`Only found ${patterns.length} checks`);
-  return patterns;
-}
-
-const flags = (source: string): boolean =>
-  checksOnPage().some((pattern) => pattern.test(source));
+const flags = (source: string): boolean => lintSource(source).length > 0;
 
 test.describe("what the paste page warns about", () => {
   // Each of these works on an ordinary web page and fails silently inside a

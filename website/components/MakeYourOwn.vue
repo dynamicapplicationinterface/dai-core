@@ -15,6 +15,7 @@
  */
 import { computed, ref } from 'vue';
 import { compileInBrowser } from '../../src/browser.js';
+import { lintSource, storesDataInFile, type Finding } from '../../src/lint.js';
 
 const PROMPT = `Build me a small self-contained app. Follow these rules exactly:
 
@@ -37,13 +38,6 @@ const PROMPT = `Build me a small self-contained app. Follow these rules exactly:
 
 The app I want is: `;
 
-/** A problem found in pasted code, phrased for somebody who did not write it. */
-interface Finding {
-  what: string;
-  why: string;
-  fix: string;
-}
-
 const source = ref('');
 const promptCopied = ref(false);
 const state = ref<'idle' | 'working' | 'done' | 'error'>('idle');
@@ -57,74 +51,18 @@ const downloadName = computed(() => {
   return `${slug || 'my-app'}.dai.html`;
 });
 
-/**
- * Every check is a network reference of some kind. None is a style judgement:
- * each one works on a web page and silently does not work inside a container,
- * which is the only kind of problem worth stopping a beginner for.
- */
-const CHECKS: { pattern: RegExp; finding: Finding }[] = [
-  {
-    pattern: /<script[^>]+src\s*=\s*["']https?:/i,
-    finding: {
-      what: 'It loads a script from the internet.',
-      why: 'A container has no network access, so that script never arrives and the app does nothing.',
-      fix: 'Ask your assistant to inline that library instead of loading it from a CDN, or to rewrite it without the library.',
-    },
-  },
-  {
-    pattern: /<link[^>]+href\s*=\s*["']https?:/i,
-    finding: {
-      what: 'It loads a stylesheet or font from the internet.',
-      why: 'That request cannot be made from inside a container, so the app opens unstyled.',
-      fix: 'Ask for the CSS written inline, and system fonts instead of Google Fonts.',
-    },
-  },
-  {
-    pattern: /\bfetch\s*\(|XMLHttpRequest|navigator\.sendBeacon|new\s+WebSocket|EventSource/,
-    finding: {
-      what: 'It tries to talk to a server.',
-      why: 'Containers cannot open connections at all, so the call fails and may stop everything after it.',
-      fix: 'Ask your assistant to store the data in the SQLite database with window.dai instead of calling an API.',
-    },
-  },
-  {
-    pattern: /<img[^>]+src\s*=\s*["']https?:/i,
-    finding: {
-      what: 'It shows an image hosted somewhere else.',
-      why: 'The image will not load, leaving a broken picture.',
-      fix: 'Ask for an inline SVG or an emoji instead of a hosted image.',
-    },
-  },
-  {
-    pattern: /localStorage|sessionStorage|indexedDB/i,
-    finding: {
-      what: 'It saves data in browser storage.',
-      why: 'That storage belongs to the browser, not to the file, so the data does not travel with it — email the file to somebody and it arrives empty.',
-      fix: 'Ask for the data stored in the SQLite database with window.dai.openDatabase() so it lives inside the file.',
-    },
-  },
-];
+const findings = computed<Finding[]>(() => lintSource(source.value));
 
-const findings = computed<Finding[]>(() => {
-  if (!source.value.trim()) return [];
-  return CHECKS.filter((check) => check.pattern.test(source.value)).map((check) => check.finding);
-});
+// Kept separate in the template: the await mistake opens a blank app, so it is
+// worth naming before the network problems that merely degrade one.
+const needsModule = computed(() =>
+  findings.value.some((finding) => finding.id === 'await-in-classic-script'),
+);
+const networkFindings = computed(() =>
+  findings.value.filter((finding) => finding.id !== 'await-in-classic-script'),
+);
 
-/**
- * A top-level `await` in a classic script is a syntax error, and the app dies
- * before it draws anything. Checked separately because it is the one mistake
- * this project has already shipped once.
- */
-const needsModule = computed(() => {
-  const classic = /<script(?![^>]*type\s*=\s*["']module["'])[^>]*>([\s\S]*?)<\/script>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = classic.exec(source.value)) !== null) {
-    if (/^[^\n]*\bawait\b/m.test(match[1] ?? '')) return true;
-  }
-  return false;
-});
-
-const usesDatabase = computed(() => /window\.dai|dai\.openDatabase/.test(source.value));
+const usesDatabase = computed(() => storesDataInFile(source.value));
 const ready = computed(() => source.value.trim().length > 0 && state.value !== 'working');
 
 async function copyPrompt(): Promise<void> {
@@ -209,7 +147,7 @@ async function build(): Promise<void> {
             </p>
           </div>
 
-          <div v-for="(finding, index) in findings" :key="index" class="finding">
+          <div v-for="(finding, index) in networkFindings" :key="index" class="finding">
             <p class="what">{{ finding.what }}</p>
             <p class="why">{{ finding.why }}</p>
             <p class="fix">{{ finding.fix }}</p>

@@ -80,14 +80,22 @@ export class CompileError extends Error {
 }
 
 /**
- * Where the shell and bootloader live relative to this module.
+ * Finds the shell or the bootloader.
  *
- * Both are emitted next to the compiled output by the package build, so this
- * resolves inside node_modules for a consumer and inside dist/ in development.
+ * Both are emitted beside the compiled output, so for anything running from the
+ * published package they sit next to this module. Running from source — a test,
+ * or a consumer whose bundler inlined src/ — they are one directory over in
+ * dist/, and a lookup that only checked the first place failed with "run npm
+ * run build" for someone who had.
  */
 function packagedAsset(name: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, name);
+  const candidates = [
+    resolve(here, name),
+    resolve(here, "../dist", name),
+    resolve(here, "..", name),
+  ];
+  return candidates.find((path) => existsSync(path)) ?? candidates[0]!;
 }
 
 export async function compileDirectory(options: CompileOptions): Promise<CompileResult> {

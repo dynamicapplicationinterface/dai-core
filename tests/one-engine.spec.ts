@@ -73,12 +73,36 @@ test.describe("one engine", () => {
     expect(offences, offences.join("\n")).toEqual([]);
   });
 
+  test("one definition of what breaks inside a container", async () => {
+    // The paste page, the command line and the MCP server all tell people what
+    // will not work once a file is sealed. Three copies of that list would
+    // disagree within a month, and a model would be told its code was fine by
+    // one tool and unusable by another.
+    const callers = ["website/components/MakeYourOwn.vue", "src/mcp.ts"];
+    for (const file of callers) {
+      const source = readFileSync(resolve(repo, file), "utf8");
+      expect(/lintSource|lintFiles/.test(source), `${file} does not use the shared lint`).toBe(
+        true,
+      );
+      // Looks for the shape of a check list — a `pattern:` holding a regex —
+      // rather than for the words themselves. Both files legitimately mention
+      // localStorage and CDNs in prose: one in a comment, one in the guidance
+      // it gives a model. Matching on vocabulary flagged the documentation and
+      // would have pushed someone to make it vaguer to appease a test.
+      expect(
+        /pattern:\s*\//.test(source),
+        `${file} looks like it has grown its own copy of the checks`,
+      ).toBe(false);
+    }
+  });
+
   test("every front end reaches the compiler through one of two doors", async () => {
     // Node-side callers go through compile.ts, browser-side ones through
     // browser.ts. Two doors, both opening onto the same room.
     const frontEnds: Record<string, RegExp> = {
       "src/index.ts": /from "\.\/compile\.js"/,
       "src/cli.ts": /from "\.\/compile\.js"/,
+      "src/mcp.ts": /from "\.\/compile\.js"/,
       "website/components/MakeYourOwn.vue": /from '\.\.\/\.\.\/src\/browser\.js'/,
       "website/components/MakerWalkthrough.vue": /from '\.\.\/\.\.\/src\/browser\.js'/,
       "website/components/TamperProof.vue": /from '\.\.\/\.\.\/src\/container\.js'/,

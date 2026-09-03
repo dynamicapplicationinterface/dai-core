@@ -88,6 +88,7 @@
     "vite": "^6.4.3"
   },
   "bin": {
-    "dai": "./dist/bin.js"
+    "dai": "./dist/bin.js",
+    "dai-mcp": "./dist/mcp-bin.js"
   }
 }
