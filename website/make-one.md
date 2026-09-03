@@ -37,15 +37,16 @@ nothing else to download because there is nothing else.
 
 ## What it cannot do
 
-It cannot reach the internet. Not "does not" — *cannot*. The file declares
-its own network permissions as none, and the browser enforces that, so it
-cannot send your tasks anywhere, load anything, or report that you opened
-it. This is the property your IT department cares about, and it is the same
-property that makes the file work on a plane.
+It cannot make a request. Not "does not" — *cannot*. The file declares its
+own network permissions as none, and the browser enforces that: no fetch, no
+socket, no popup, no form that posts anywhere. Your tasks have no route out.
+This is the property your IT department cares about, and the same one that
+makes the file work on a plane.
 
-It also cannot pretend to be something it is not. Every part of it is
-fingerprinted, and changing so much as one character makes the file refuse
-to open. You can [try to break one yourself](/tamper-proof).
+Changing it is detectable. Every part is fingerprinted, so an altered file
+fails its own check and a host that runs that check refuses to open it — which
+every host here does, before anything inside it runs. You can
+[try to break one yourself](/tamper-proof).
 
 ## The optional bit
 

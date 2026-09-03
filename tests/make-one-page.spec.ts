@@ -129,3 +129,40 @@ test.describe("the landing page", () => {
     );
   });
 });
+
+test.describe("what the site claims", () => {
+  /*
+   * Three sentences that said more than the code does. They were first on the
+   * roadmap — "hours, removes the only dishonesty on the site" — and stayed up
+   * while every harder item shipped, which is how copy goes stale: nothing
+   * fails when it is wrong.
+   */
+  const overstated = [
+    "cannot phone home",
+    "altered file refuses to open",
+    "writes and seals it",
+    "makes the file refuse\nto open",
+  ];
+
+  for (const page_ of ["/", "/make-one"]) {
+    test(`${page_} does not claim more than the format does`, async ({ page }) => {
+      await page.goto(`http://localhost:5176${page_}`);
+      const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      for (const claim of overstated) {
+        expect(text, `"${claim}" is not a property this format has`).not.toContain(
+          claim.replace(/\s+/g, " "),
+        );
+      }
+    });
+  }
+
+  test("the security page names the channels it cannot close", async ({ page }) => {
+    // A page that lists only strengths is not one a security team can use.
+    await page.goto("http://localhost:5176/tamper-proof");
+    const text = await page.locator("body").innerText();
+    expect(text).toContain("WebRTC");
+    expect(text).toContain("DNS prefetch");
+    // And the limit of what a signature proves.
+    expect(text).toMatch(/not.*who signed it/i);
+  });
+});

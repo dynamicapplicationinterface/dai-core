@@ -24,10 +24,11 @@ const uses = [
   },
   {
     kicker: "Safe to hand over",
-    title: "It cannot phone home",
+    title: "It has nothing to call out with",
     body:
-      "A container declares its permitted connections as none and the browser enforces it. " +
-      "Every byte is fingerprinted, so an altered file refuses to open.",
+      "A container declares its permitted connections as none, and the browser enforces that: " +
+      "no requests, no sockets, no popups. Every byte is fingerprinted too, so a file that has " +
+      "been altered is detectable and a host that checks will refuse to run it.",
     shot: "/shots/app-dark.png",
     alt: "The same application in dark mode",
     link: { text: "Break one yourself", href: "/tamper-proof" },
@@ -56,7 +57,7 @@ const routes = [
   },
   {
     name: "With an assistant",
-    detail: "Describe it. The model writes and seals it.",
+    detail: "Describe it. The model writes it; the compiler seals it.",
     href: "/docs/making-files#with-an-assistant",
   },
   {
