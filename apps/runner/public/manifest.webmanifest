@@ -9,13 +9,52 @@
   "background_color": "#111827",
   "theme_color": "#111827",
   "icons": [
-    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
     {
       "src": "./icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "application/octet-stream": [
+          ".dai"
+        ],
+        "text/html": [
+          ".dai.html"
+        ]
+      },
+      "launch_type": "single-client"
+    }
+  ],
+  "share_target": {
+    "action": "./",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "container",
+          "accept": [
+            "text/html",
+            ".dai",
+            ".dai.html"
+          ]
+        }
+      ]
+    }
+  }
 }
