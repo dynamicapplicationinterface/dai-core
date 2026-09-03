@@ -47,6 +47,7 @@ export default defineConfig({
           { text: 'Introduction', link: '/docs/introduction' },
           { text: '5-Minute Quickstart', link: '/docs/quickstart' },
           { text: 'Making Files', link: '/docs/making-files' },
+          { text: 'The Recipe (for AI)', link: '/docs/the-recipe' },
           { text: 'Architecture & Boundaries', link: '/docs/architecture' }
         ]
       },

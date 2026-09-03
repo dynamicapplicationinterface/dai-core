@@ -96,6 +96,34 @@ test.describe("one engine", () => {
     }
   });
 
+  test("one recipe, wherever it is read", async () => {
+    // A person pastes it into a chat, the MCP server hands it to a model, and
+    // the website publishes it. Separate copies would end with a model told one
+    // thing by the tool and another by the page, and no way to tell which it
+    // was following.
+    const readers = [
+      "src/mcp.ts",
+      "website/components/MakeYourOwn.vue",
+      "website/components/Recipe.vue",
+    ];
+    for (const file of readers) {
+      const source = readFileSync(resolve(repo, file), "utf8");
+      expect(/recipe\.js/.test(source), `${file} does not import the shared recipe`).toBe(true);
+    }
+  });
+
+  test("the recipe still teaches what a model must know", async () => {
+    const { RECIPE } = await import("../src/recipe.js");
+    // Losing any of these turns the server into something that produces blank
+    // apps, and nobody finds out until a person opens one.
+    expect(RECIPE).toMatch(/no network|NO NETWORK/i);
+    expect(RECIPE).toMatch(/window\.dai\.openDatabase/);
+    expect(RECIPE).toMatch(/saveDatabase/);
+    expect(RECIPE).toMatch(/type="module"/);
+    expect(RECIPE).toMatch(/localStorage/);
+    expect(RECIPE).toMatch(/index\.html/);
+  });
+
   test("every front end reaches the compiler through one of two doors", async () => {
     // Node-side callers go through compile.ts, browser-side ones through
     // browser.ts. Two doors, both opening onto the same room.

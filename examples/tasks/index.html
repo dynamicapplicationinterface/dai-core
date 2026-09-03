@@ -116,7 +116,22 @@
 
         <footer class="statusbar">
           <span id="count"></span>
-          <button class="quiet" id="clear" type="button" hidden>Clear completed</button>
+          <div class="statusbar-right">
+            <button class="quiet" id="clear" type="button" hidden>Clear completed</button>
+            <!--
+              Proof rather than decoration. Without it this looks like any list
+              kept in a variable, and the one thing worth knowing about it — that
+              a real database is living inside this file — is invisible.
+            -->
+            <span class="engine" id="engine" title="This file contains a SQLite database">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <ellipse cx="10" cy="5" rx="6" ry="2.5" />
+                <path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5" />
+                <path d="M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" />
+              </svg>
+              <span id="engine-label"></span>
+            </span>
+          </div>
         </footer>
       </main>
     </div>

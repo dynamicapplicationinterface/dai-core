@@ -23,6 +23,7 @@ import { dirname, relative, resolve } from "node:path";
 import { compileDirectory, CompileError, formatBytes, sanitizeFileName } from "./compile.js";
 import { auditContainer, parseContainer } from "./container.js";
 import { lintFiles } from "./lint.js";
+import { RECIPE } from "./recipe.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -46,24 +47,6 @@ export interface JsonRpcResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
-const GUIDANCE = `Write a single self-contained application. A DAI container has NO network access at all, enforced by the browser, so:
-
-- Do not reference anything by URL: no CDN scripts, no hosted stylesheets or fonts, no remote images. Inline the CSS and JavaScript. Use system fonts, inline SVG, emoji or data: URIs.
-- Do not call fetch, XMLHttpRequest, WebSocket or EventSource. There is nothing to reach.
-- Do not use localStorage, sessionStorage or IndexedDB. Those belong to the browser, so the data would not travel with the file — send it to somebody and it would arrive empty.
-
-To store data that survives closing the app, and travels inside the file, use the SQLite database the container provides:
-
-  const db = await window.dai.openDatabase();
-  db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)");
-  db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: ["hello"] });
-  const rows = db.selectObjects("SELECT * FROM notes ORDER BY id");
-  await window.dai.saveDatabase(db);   // writes the database back into the file
-
-Any script tag using top-level await must be type="module", or the app will open blank.
-
-Multiple files are fine: index.html is the entry point, and other files are referenced by relative path.`;
-
 const TOOLS = [
   {
     name: "create_dai_app",
@@ -71,7 +54,7 @@ const TOOLS = [
       "Compile application files into a single .dai.html container: one file holding the app, " +
       "a SQLite engine and its data, which opens by double-clicking in any browser with nothing " +
       "installed, works offline, and cannot send data anywhere.\n\n" +
-      GUIDANCE,
+      RECIPE,
     inputSchema: {
       type: "object",
       properties: {
@@ -107,7 +90,7 @@ const TOOLS = [
     description:
       "Check application source for things that work on a web page but fail silently inside a " +
       "container. Use this before create_dai_app when adapting existing code.\n\n" +
-      GUIDANCE,
+      RECIPE,
     inputSchema: {
       type: "object",
       properties: {

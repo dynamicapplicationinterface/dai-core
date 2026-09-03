@@ -73,6 +73,11 @@ test("the app the walkthrough hands out actually runs", async ({ page }) => {
   await app.locator('button[data-filter="done"]').click();
   await expect(app.locator('.task:has-text("Buy milk")')).toHaveCount(1);
 
+  // The site's claim is that a real database lives inside the file. This is
+  // where that stops being a claim: the version comes from sqlite_version() and
+  // the size from the serialised database, so neither can be true unless it is.
+  await expect(app.locator("#engine-label")).toHaveText(/SQLite \d+\.\d+.* rows .* KB in this file/);
+
   // The "this is the source, not the app" notice must stay out of the way here:
   // it exists for somebody opening the folder directly, and showing it inside a
   // working container would be worse than the blank page it replaced.

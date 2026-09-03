@@ -16,27 +16,7 @@
 import { computed, ref } from 'vue';
 import { compileInBrowser } from '../../src/browser.js';
 import { lintSource, storesDataInFile, type Finding } from '../../src/lint.js';
-
-const PROMPT = `Build me a small self-contained app. Follow these rules exactly:
-
-- Put everything in ONE HTML file. No separate files, no build step.
-- Do NOT load anything from the internet: no CDN script or link tags, no
-  fetch(), no XMLHttpRequest, no external fonts or images. Write the CSS and
-  JavaScript inline. It must work with the wifi turned off.
-- Any script tag that uses "await" at the top level must be type="module".
-- To store data that survives closing the app, use the SQLite database that is
-  already available, like this:
-
-    const db = await window.dai.openDatabase();
-    db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)");
-    db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: ["hello"] });
-    const rows = db.selectObjects("SELECT * FROM notes ORDER BY id");
-    await window.dai.saveDatabase(db);   // writes changes back into the file
-
-  Do not use localStorage: it stays in the browser instead of travelling with
-  the file.
-
-The app I want is: `;
+import { RECIPE_AS_PROMPT as PROMPT } from '../../src/recipe.js';
 
 const source = ref('');
 const promptCopied = ref(false);

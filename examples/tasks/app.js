@@ -57,6 +57,7 @@ const ui = {
   meterFill: el("meter-fill"),
   meterLabel: el("meter-label"),
   sort: el("sort"),
+  engineLabel: el("engine-label"),
 };
 
 const view = { project: null, filter: "all", sort: "priority" };
@@ -306,10 +307,23 @@ function drawSummary() {
   ui.meterLabel.textContent = total === 0 ? "Nothing to do" : `${percent}% complete`;
 }
 
+/** Says what is actually holding the data, and how much of the file it takes. */
+function drawEngine() {
+  const version = query("SELECT sqlite_version() AS v")[0].v;
+  const rows =
+    query("SELECT COUNT(*) AS n FROM tasks")[0].n + query("SELECT COUNT(*) AS n FROM projects")[0].n;
+  const bytes = dai.exportDatabase(db).byteLength;
+
+  ui.engineLabel.textContent =
+    `SQLite ${version} · ${rows} ${rows === 1 ? "row" : "rows"} · ` +
+    `${Math.max(1, Math.round(bytes / 1024))} KB in this file`;
+}
+
 function draw() {
   drawProjects();
   drawTasks();
   drawSummary();
+  drawEngine();
 }
 
 /* --------------------------------------------------------------- saving */

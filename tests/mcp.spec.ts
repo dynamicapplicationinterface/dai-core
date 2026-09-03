@@ -107,7 +107,7 @@ test.describe("protocol", () => {
     // will not work here. If they stop saying so, the server starts producing
     // blank apps and nobody finds out until a person opens one.
     const create = TOOLS.find((tool) => tool.name === "create_dai_app");
-    expect(create?.description).toMatch(/no network access/i);
+    expect(create?.description).toMatch(/no network/i);
     expect(create?.description).toMatch(/window\.dai\.openDatabase/);
     expect(create?.description).toMatch(/type="module"/);
     expect(create?.description).toMatch(/localStorage/);
