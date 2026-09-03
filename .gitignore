@@ -17,7 +17,6 @@ apps/runner/dist/
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
-apps/desktop/package-lock.json
 
 # Staged by apps/desktop/scripts/stage-runtime.mjs
 apps/desktop/public/runtime/
