@@ -64,6 +64,9 @@ export default defineConfig({
     nav: [
       { text: 'Make one', link: '/make-one' },
       { text: 'Desktop app', link: '/desktop' },
+      // The runner is the only way into a container on a phone, so it belongs
+      // in the nav rather than a paragraph somebody has to reach.
+      { text: 'On a phone', link: 'https://run.dynamicapplicationinterface.io' },
       { text: 'Security', link: '/tamper-proof' },
       {
         text: 'Documentation',

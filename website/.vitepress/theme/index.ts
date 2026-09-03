@@ -6,6 +6,7 @@ import MakerWalkthrough from '../../components/MakerWalkthrough.vue';
 import MakeYourOwn from '../../components/MakeYourOwn.vue';
 import Recipe from '../../components/Recipe.vue';
 import Landing from '../../components/Landing.vue';
+import PhoneFlow from '../../components/PhoneFlow.vue';
 import './style.css';
 
 export default {
@@ -18,5 +19,6 @@ export default {
     app.component('MakeYourOwn', MakeYourOwn);
     app.component('Recipe', Recipe);
     app.component('Landing', Landing);
+    app.component('PhoneFlow', PhoneFlow);
   }
 };

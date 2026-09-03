@@ -144,6 +144,8 @@ const routes = [
       </figure>
     </section>
 
+    <PhoneFlow class="section-gap" />
+
     <section class="routes">
       <h2>Five ways to make one</h2>
       <p class="routes-note">All of them run the same compiler. There is no lite version.</p>
@@ -237,6 +239,10 @@ h1 {
 .button.primary:hover {
   background: var(--vp-c-brand-2);
   border-color: var(--vp-c-brand-2);
+}
+
+.section-gap {
+  margin: 96px 0 0;
 }
 
 .stage {

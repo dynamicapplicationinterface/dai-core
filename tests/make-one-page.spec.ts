@@ -104,4 +104,28 @@ test.describe("make-one", () => {
     await expect(page.locator("a.download")).toBeVisible();
     await expect(page.getByText(/would not accept the file/)).toBeVisible();
   });
+
+});
+
+test.describe("the landing page", () => {
+  test("explains the phone route and says where the runner is", async ({ page }) => {
+    /*
+     * A section can vanish from a page without a build failing — that happened
+     * to the download button on this same site — and this one carries the only
+     * answer to "how do I use this on my phone".
+     */
+    await page.goto("http://localhost:5176/");
+
+    const phones = page.locator(".phones");
+    await expect(phones).toBeVisible();
+    await expect(phones.locator(".step")).toHaveCount(3);
+    // Drawn, not screenshotted, so this also fails if the artwork is dropped.
+    await expect(phones.locator("svg")).toHaveCount(3);
+
+    await expect(phones.getByText("run.dynamicapplicationinterface.io")).toBeVisible();
+    await expect(phones.getByRole("link", { name: /Open the runner/ })).toHaveAttribute(
+      "href",
+      "https://run.dynamicapplicationinterface.io",
+    );
+  });
 });
