@@ -70,6 +70,37 @@ section flipped a byte at a guessed offset which landed in the manifest instead
 claimed something else. The expectation was written first, so the generator
 caught it.
 
+## The reference reader
+
+`reference/dai_read.py` is a second implementation: a reader in another
+language, sharing no code with the one that wrote these cases, written from
+[the specification](../docs/spec-v0.2.md) rather than from the TypeScript.
+
+```
+python conformance/reference/run.py
+```
+
+It exists to test the document. Everything else here shares one reader, so
+"the format is portable" rested on the claim that the specification describes
+what the code does — a claim nobody had tried to act on. Writing this is the
+experiment that could falsify it, and did: on its first run it refused all ten
+viewer-form containers. It was right to. §7 said an unlisted entry is as much a
+failure as a modified one and named no exceptions, and there are two — the
+database and the manifest itself. Every valid container has them.
+
+Three more followed: the payload element was never named, the placeholder
+substitution the shell comparison depends on was never described, and the
+payload's field list never said that an absent optional field is signed as an
+empty string. All four are now in the document, and marked in the Python where
+they bit, so a future rewrite has a list of what it must not drop again.
+
+It is deliberately stdlib-only, including the P-256 arithmetic. A reader that
+needs a package installed proves the format is portable to environments that
+have that package.
+
+It reads. It does not run a container, save one, or write one — a second host
+is a larger claim than a second reader, and this does not make it.
+
 ## The isolation probe
 
 `isolation-probe.dai.html` is a different kind of artifact, for a different kind

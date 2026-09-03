@@ -24,9 +24,16 @@ document handler registers, what mail systems pass without quarantining, and
 what supports saving without rewriting the whole file.
 
 **`.dai.html` — the viewer form.** A polyglot HTML document carrying the same
-content base64-encoded inside a `<script>` tag. It opens in any browser with
-nothing installed, which is the property that makes the format demonstrable. A
-save from this form rewrites the entire file.
+payload archive, base64-encoded, inside a single element:
+
+```html
+<script type="application/octet-stream" id="dai-payload">…</script>
+```
+
+A reader MUST locate it by the `id`, MUST NOT assume an attribute order, and
+MUST treat the decoded bytes as the payload archive of §2. It opens in any
+browser with nothing installed, which is the property that makes the format
+demonstrable. A save from this form rewrites the entire file.
 
 An implementation MUST determine the form from the leading bytes (§2.1), and
 MUST NOT determine it from a file extension.
@@ -71,12 +78,27 @@ Sections MUST begin on a 4096-byte boundary. SQLite's page size is pinned at
 4096 (§6), so a section boundary and a page boundary coincide, which is what
 permits a positioned write.
 
-### 2.1 Identifying the form
+### 2.1 Entry names
+
+Three names in the payload archive are fixed, because a reader has to find them
+before it has anything to read:
+
+| Entry | What it is |
+|---|---|
+| `runtime/container.html` | The sealed copy of the shell (§7 step 4) |
+| `runtime/manifest.json` | The manifest (§3), in the viewer form |
+| `document.sqlite` | The database, in the viewer form |
+
+In the sectioned form the manifest is §1 and the database is §3; neither appears
+in the archive. Everything else in the archive is the application, and its names
+are the publisher's business.
+
+### 2.2 Identifying the form
 
 A reader MUST treat bytes beginning with the four magic bytes as the sectioned
 form. Anything else is parsed as the viewer form.
 
-### 2.2 What a reader can establish cheaply
+### 2.3 What a reader can establish cheaply
 
 The footer sits at a fixed distance from the end. A reader MAY establish that a
 file is structurally intact and current by reading the header, the section table
@@ -103,7 +125,7 @@ viewer form's payload.
   "signatureAlgorithm": "COSE-ES256",
   "publicKeyFingerprint": "…",
   "signedEntries": { "<entry>": "<hex digest>" },
-  "signature": "…",             // base64, IEEE P1363
+  "signature": "…",             // base64 COSE_Sign1 (§3.1)
   "validUntil": 1234567890      // optional, Unix seconds
 }
 ```
@@ -112,6 +134,18 @@ viewer form's payload.
 is enforced, and a reader MUST take the policy from the shell rather than from
 the manifest — a policy stored inside the archive it governs could be switched
 off by the same edit that alters the archive.
+
+The shell carries both in meta elements:
+
+```html
+<meta name="dai-integrity" content="required">
+<meta name="dai-public-key" content="…">   <!-- base64 SPKI, P-256 -->
+```
+
+`dai-public-key` is the key §7 step 6 verifies against. Absent or empty means
+the container carries no publisher key, and a signature that cannot be checked
+MUST NOT be reported as an absent one: `unverifiable` and `unsigned` are
+different answers, and collapsing them launders a claim nobody checked.
 
 In the sectioned form the manifest MUST NOT carry a digest for the database. The
 footer records it, and the footer is rewritten by the same act that changes the
@@ -146,6 +180,12 @@ that fits, and indefinite lengths MUST NOT be used. Two encoders that agree on
 the values and disagree on the bytes produce signatures that do not verify.
 
 `validUntil` MUST be omitted entirely when unset, not encoded as null or zero.
+
+Every other field in that list is always present in the payload. Where the
+manifest omits an optional one — `favicon`, `signatureAlgorithm`,
+`publicKeyFingerprint` — the payload MUST carry the empty string in its place,
+not omit it and not encode null. A verifier that guesses differently rebuilds
+different bytes and rejects every signature ever made, with nothing to say why.
 
 The signature is computed over `Sig_structure` as RFC 9052 §4.4 defines it:
 
@@ -319,7 +359,21 @@ until all of them pass.
 3. **Entries.** Every entry matches its manifest digest, and every manifest
    entry is present. Both directions: an unlisted entry is as much a failure as
    a modified one, or content could simply be appended.
-4. **Shell.** The shell matches the sealed copy inside the payload.
+
+   Two entries are exempt from the unlisted check, and only these two:
+   `document.sqlite`, which is not signed and changes on every save, and
+   `runtime/manifest.json`, which cannot appear in its own list of digests. A
+   reader that treats them as unlisted refuses every valid container.
+4. **Shell.** The shell matches the sealed copy at `runtime/container.html`.
+   The live document carries the payload and the sealed copy carries
+   `<!--DAI_PAYLOAD-->` in its place, so a reader MUST substitute the
+   placeholder for the payload element's content before comparing — the two are
+   otherwise never equal, and a reader that compares them as they stand refuses
+   every valid container.
+
+   In the sectioned form there is no live shell to compare against, and a
+   comparison of the sealed copy with itself cannot fail. Its status there is
+   the status of its own entry digest.
 5. **Expiry.** `validUntil`, when present, has not passed.
 6. **Signature.** When the shell carries a publisher key, the signature verifies
    over §3.1.

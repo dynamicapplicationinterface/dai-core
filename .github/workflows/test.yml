@@ -22,6 +22,12 @@ jobs:
 
       - run: npm run typecheck
 
+      # A second reader, sharing no code with the one that wrote the cases.
+      # This is what tests the specification rather than the implementation: it
+      # was written from the document, and the four places the document did not
+      # say enough are the four things it could not do until they were fixed.
+      - run: python3 conformance/reference/run.py
+
       # The host's in-place writer, and its own unit tests. Run before the
       # Playwright suite because one of those tests drives this crate's example
       # binary: compiling it here means a build failure is reported as a build
