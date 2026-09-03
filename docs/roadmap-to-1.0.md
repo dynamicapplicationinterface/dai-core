@@ -258,7 +258,7 @@ matters" without authentication — the jobs endpoint names the failing step and
 the check-run annotations name the failing assertion — so there is no excuse
 for reporting local results as if they settled the question.
 
-### 2. Rewrite the loader so the frame can lose `allow-same-origin`
+### 2. Rewrite the loader so the frame can lose `allow-same-origin` — **done, unmerged**
 
 The isolation boundary is the central claim and it is not currently enforced.
 The obstacle is concrete: the import map, the chunk graph, the SQLite engine
@@ -271,6 +271,14 @@ an exfiltration channel that no CSP directive governs.
 
 **Done when:** the frame runs at an opaque origin, cannot reach
 `parent.document`, and a test asserts both.
+
+Landed on `feat/opaque-origin-frame`. The frame starts with a loader, asks for
+the payload, and mints its own URLs; the sandbox is now `allow-scripts
+allow-forms`. Two things only the browsers could report: sqlite3ApiBootstrap
+reads `localStorage`, which throws rather than returning null at an opaque
+origin, so the frame installs an in-memory stand-in; and Firefox does not fire
+`load` for a document produced by `document.write`, which left the shell
+reporting "mounting" over an application that had already started.
 
 ### 3. Remove `'unsafe-inline'` from the shell's CSP
 
