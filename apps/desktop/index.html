@@ -3,41 +3,182 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>DAI Desktop</title>
+    <title>DAI</title>
     <style>
-      :root { color-scheme: dark; }
+      /*
+       * The same design language as the website and the example application:
+       * system type, one blue accent, generous space, and a light theme that
+       * follows the operating system. The previous version was a dark console
+       * with emoji headings, which made the shell look more technical than the
+       * documents it opens — and it is the documents that matter.
+       */
+      :root {
+        color-scheme: light dark;
+
+        --paper: #ffffff;
+        --sunken: #f6f7f9;
+        --raised: #ffffff;
+        --line: #e6e8ec;
+        --line-soft: #eef0f4;
+
+        --ink: #10151f;
+        --ink-2: #5b6472;
+        --ink-3: #8b95a4;
+
+        --accent: #3b82f6;
+        --accent-ink: #ffffff;
+        --accent-soft: #eff5ff;
+        --accent-line: #cfe0fd;
+
+        --ok: #10b981;
+        --ok-soft: #ecfdf5;
+        --warn: #b45309;
+        --warn-soft: #fffbeb;
+        --bad: #dc2626;
+        --bad-soft: #fef2f2;
+
+        --radius: 12px;
+        --radius-sm: 8px;
+        --shadow: 0 1px 2px rgba(16, 21, 31, 0.05), 0 10px 30px rgba(16, 21, 31, 0.08);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #0e1117;
+          --sunken: #0b0e14;
+          --raised: #151a23;
+          --line: #232a36;
+          --line-soft: #1c222c;
+
+          --ink: #e9edf3;
+          --ink-2: #9aa5b5;
+          --ink-3: #6b7686;
+
+          --accent: #5b9dff;
+          --accent-ink: #06101f;
+          --accent-soft: #16233a;
+          --accent-line: #27405f;
+
+          --ok: #34d399;
+          --ok-soft: #0f2a22;
+          --warn: #fbbf24;
+          --warn-soft: #2a2113;
+          --bad: #f87171;
+          --bad-soft: #2b1416;
+
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+      }
+
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: #0f172a; color: #f8fafc; overflow: hidden; }
+
+      /*
+       * `display` on a class beats the user agent's rule for [hidden], so the
+       * badges rendered as two empty pills whenever there was nothing to say.
+       */
+      [hidden] { display: none !important; }
+
+      html,
       body {
-        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--sunken);
+        color: var(--ink);
+      }
+
+      body {
         display: flex;
         flex-direction: column;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
       }
+
+      svg { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+      /* ------------------------------------------------------------ header */
+
       header {
         display: flex;
         align-items: center;
-        gap: 12px;
-        padding: 10px 16px;
-        background: #1e293b;
-        border-bottom: 1px solid #334155;
+        gap: 10px;
         flex: 0 0 auto;
+        padding: 9px 14px;
+        background: var(--paper);
+        border-bottom: 1px solid var(--line);
         -webkit-app-region: drag;
       }
-      header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #60a5fa; }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+
+      .brand svg { width: 20px; height: 20px; color: var(--accent); }
+      .brand svg rect { fill: var(--accent-soft); stroke: var(--accent-line); }
+
+      header h1 { margin: 0; font-size: 13px; font-weight: 650; }
       header .spacer { flex: 1; }
+
       button {
         -webkit-app-region: no-drag;
         font: inherit;
-        font-size: 12px;
-        padding: 6px 12px;
-        color: #f8fafc;
-        background: #334155;
-        border: 1px solid #475569;
-        border-radius: 6px;
+        font-size: 13px;
+        padding: 6px 13px;
+        color: var(--ink-2);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 999px;
         cursor: pointer;
+        transition: color 0.15s, border-color 0.15s, background 0.15s;
       }
-      button:hover { background: #475569; }
-      main { flex: 1 1 auto; position: relative; }
+
+      button:hover { color: var(--ink); border-color: var(--ink-3); }
+
+      button.primary {
+        color: var(--accent-ink);
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+
+      button.primary:hover { filter: brightness(1.05); }
+      button:disabled { opacity: 0.55; cursor: default; }
+
+      .badge {
+        -webkit-app-region: no-drag;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 9px;
+        font-size: 11.5px;
+        border-radius: 999px;
+        color: var(--ink-2);
+        background: var(--line-soft);
+      }
+
+      /* Trust is the one thing worth colouring: it is a claim about who made
+         the document you are about to run. */
+      .badge.trust {
+        color: var(--ok);
+        background: var(--ok-soft);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 30%, transparent);
+      }
+
+      .badge.trust[data-state="first-use"] {
+        color: var(--warn);
+        background: var(--warn-soft);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 35%, transparent);
+      }
+
+      /* -------------------------------------------------------------- main */
+
+      main { position: relative; flex: 1 1 auto; }
+
       #slot {
         position: absolute;
         inset: 0;
@@ -45,26 +186,47 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 16px;
-        padding: 24px;
+        gap: 8px;
+        padding: 32px;
         text-align: center;
       }
+
+      .slot-art { width: 132px; height: 104px; margin-bottom: 6px; }
+      .slot-art .sheet { fill: var(--raised); stroke: var(--line); }
+      .slot-art .sheet-back { fill: var(--sunken); stroke: var(--line-soft); }
+      .slot-art .rule { stroke: var(--line); }
+      .slot-art .seal { fill: var(--accent-soft); stroke: var(--accent-line); }
+      .slot-art .seal-tick { stroke: var(--accent); stroke-width: 2.4; }
+
+      #slot h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+
+      .slot-note {
+        max-width: 34rem;
+        margin: 0 0 18px;
+        color: var(--ink-2);
+      }
+
+      .slot-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+      #status { margin-top: 14px; font-size: 12px; color: var(--ink-3); }
+
       #cartridge {
         position: absolute;
         inset: 0;
         width: 100%;
         height: 100%;
         border: 0;
-        background: #fff;
+        background: var(--paper);
       }
+
       body:not(.loaded) #cartridge { display: none; }
       body.loaded #slot { display: none; }
-      .badge.trust { background: #064e3b; border-color: #047857; color: #a7f3d0; }
-      .badge.trust[data-state="first-use"] {
-        background: #422006;
-        border-color: #a16207;
-        color: #fde68a;
-      }
+
       .alert {
         position: absolute;
         top: 0;
@@ -75,128 +237,167 @@
         padding: 12px 16px;
         white-space: pre-wrap;
         font-size: 13px;
-        line-height: 1.5;
-        color: #fecaca;
-        background: #450a0a;
-        border: 1px solid #b91c1c;
-        border-radius: 8px;
+        line-height: 1.55;
+        color: var(--bad);
+        background: var(--bad-soft);
+        border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+        border-radius: var(--radius-sm);
       }
+
       .alert .alert-dismiss {
         float: right;
         margin-left: 12px;
-        padding: 2px 8px;
+        padding: 2px 10px;
         font-size: 12px;
-        color: #fecaca;
+        color: var(--bad);
         background: transparent;
-        border: 1px solid #b91c1c;
-        border-radius: 5px;
+        border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+        border-radius: 999px;
         cursor: pointer;
       }
-      .badge {
-        font-size: 11px;
-        padding: 3px 8px;
-        background: #1e3a8a;
-        color: #93c5fd;
-        border-radius: 4px;
-      }
+
+      /* ------------------------------------------------------------- modal */
 
       .modal-overlay {
         position: fixed;
         inset: 0;
-        background: rgba(10, 15, 29, 0.85);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
+        z-index: 100;
         display: flex;
         align-items: center;
         justify-content: center;
-        z-index: 100;
+        padding: 24px;
+        background: color-mix(in srgb, var(--sunken) 72%, transparent);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.2s ease;
+        transition: opacity 0.18s ease;
       }
-      .modal-overlay.open {
-        opacity: 1;
-        pointer-events: auto;
-      }
+
+      .modal-overlay.open { opacity: 1; pointer-events: auto; }
+
       .modal-card {
-        background: #161f38;
-        border: 1px solid #2a3756;
-        border-radius: 12px;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-        width: 90%;
-        max-width: 700px;
-        max-height: 90vh;
-        padding: 2rem;
         display: flex;
         flex-direction: column;
-        gap: 1.25rem;
-        overflow-y: auto;
-      }
-      .modal-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .modal-title {
-        font-size: 1.125rem;
-        font-weight: 600;
-        color: #60a5fa;
-        margin: 0;
-      }
-      .close-btn {
-        background: transparent;
-        border: none;
-        color: #94a3b8;
-        font-size: 1.25rem;
-        cursor: pointer;
-        padding: 4px 8px;
-        line-height: 1;
-        border-radius: 4px;
-      }
-      .close-btn:hover { color: #f8fafc; background: #2a3756; }
-      .field-group {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-      .field-label {
-        font-size: 0.8125rem;
-        font-weight: 500;
-        color: #94a3b8;
-      }
-      .input-text {
+        gap: 18px;
         width: 100%;
-        padding: 0.625rem 0.875rem;
-        font-family: inherit;
-        font-size: 0.875rem;
-        background: #0b1120;
-        border: 1px solid #2a3756;
-        border-radius: 6px;
-        color: #f8fafc;
+        max-width: 640px;
+        max-height: 88vh;
+        padding: 26px;
+        overflow-y: auto;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
       }
+
+      .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+
+      .modal-title { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
+      .modal-sub { margin: 4px 0 0; font-size: 13px; color: var(--ink-2); }
+
+      .close-btn {
+        flex: none;
+        padding: 4px 10px;
+        font-size: 15px;
+        line-height: 1;
+        border: 0;
+        border-radius: 999px;
+        color: var(--ink-3);
+      }
+
+      .close-btn:hover { color: var(--ink); background: var(--line-soft); }
+
+      .field-group { display: flex; flex-direction: column; gap: 6px; }
+
+      .field-label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+
+      .input-text,
       .input-textarea {
         width: 100%;
-        min-height: 240px;
-        padding: 0.75rem 0.875rem;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 0.8125rem;
-        line-height: 1.5;
-        background: #0b1120;
-        border: 1px solid #2a3756;
-        border-radius: 6px;
-        color: #38bdf8;
+        padding: 9px 12px;
+        font-family: inherit;
+        font-size: 14px;
+        color: var(--ink);
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        outline: none;
+      }
+
+      .input-textarea {
+        min-height: 190px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12.5px;
+        line-height: 1.55;
         resize: vertical;
       }
-      .input-text:focus, .input-textarea:focus {
-        outline: 2px solid #3b82f6;
-        border-color: transparent;
+
+      .input-text:focus,
+      .input-textarea:focus { border-color: var(--accent-line); }
+
+      /* A folder or a zip is how an assistant hands over a real application:
+         several files, which is not something anyone should have to flatten by
+         hand before they can use them. */
+      .drop {
+        padding: 24px 20px;
+        text-align: center;
+        border: 1.5px dashed var(--line);
+        border-radius: var(--radius-sm);
+        transition: border-color 0.15s, background 0.15s;
       }
+
+      .drop.dragging { border-color: var(--accent); background: var(--accent-soft); }
+      .drop.filled { padding: 12px 14px; text-align: left; border-style: solid; }
+
+      .drop-title { margin: 0 0 14px; font-weight: 600; }
+      .drop-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+      .loaded-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+      .loaded-head strong { font-size: 13px; }
+
+      .loaded-list { margin: 0; padding: 0; list-style: none; max-height: 168px; overflow-y: auto; }
+      .loaded-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 3px 0;
+        font-size: 12.5px;
+        color: var(--ink-2);
+      }
+
+      .loaded-list code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+
+      .loaded-list li.entry code { color: var(--accent); font-weight: 600; }
+
+      details summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+      details[open] summary { margin-bottom: 8px; }
+
+      .modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+      #mint-status { flex: 1; font-size: 12.5px; color: var(--ink-3); }
     </style>
   </head>
   <body>
     <header>
-      <h1>DAI Desktop</h1>
+      <span class="brand">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="2" y="2" width="20" height="20" rx="6" />
+          <path d="M7 12.5l3.2 3.2L17 9" />
+        </svg>
+        <h1>DAI</h1>
+      </span>
+
       <span class="spacer"></span>
+
       <span id="badge" class="badge" hidden></span>
       <!--
         In the header, not in #slot: the slot is hidden once a cartridge mounts,
@@ -204,8 +405,9 @@
         running and the user most wants to know who signed it.
       -->
       <span id="trust" class="badge trust" hidden></span>
-      <button id="create-btn" type="button" style="background:#059669; border-color:#10b981;">+ Create Cartridge</button>
-      <button id="open-btn" type="button">Open Container</button>
+
+      <button id="create-btn" type="button" class="primary">Create</button>
+      <button id="open-btn" type="button">Open</button>
       <button id="eject-btn" type="button" hidden>Eject</button>
     </header>
 
@@ -218,69 +420,81 @@
       <div id="alert" class="alert" hidden></div>
 
       <div id="slot">
-        <h2>DAI Native Desktop Shell</h2>
-        <p style="color: #94a3b8; max-width: 40ch;">
-          Double-click any <code>.dai.html</code> cartridge to run in a standalone desktop window with silent in-place persistence.
+        <svg class="slot-art" viewBox="0 0 140 108" aria-hidden="true">
+          <rect class="sheet sheet-back" x="36" y="12" width="70" height="82" rx="10" />
+          <rect class="sheet" x="26" y="20" width="70" height="82" rx="10" />
+          <path class="rule" d="M40 44h42M40 58h42M40 72h24" />
+          <circle class="seal" cx="102" cy="76" r="18" />
+          <path class="seal-tick" d="M94 76l6 6 12-13" />
+        </svg>
+
+        <h2>Open a document</h2>
+        <p class="slot-note">
+          A DAI file holds an application, its database and its data. Open one
+          here and it runs in its own window, saving back into the same file.
         </p>
-        <div style="display:flex; gap:10px;">
-          <button id="choose-btn" type="button" style="font-size:14px; padding:8px 16px;">Choose Cartridge File</button>
-          <button id="hero-create-btn" type="button" style="font-size:14px; padding:8px 16px; background:#059669; border-color:#10b981;">+ Create New Cartridge</button>
+
+        <div class="slot-actions">
+          <button id="choose-btn" type="button">Choose a file</button>
+          <button id="hero-create-btn" type="button" class="primary">Create one</button>
         </div>
-        <div id="status" style="font-size:12px; color:#94a3b8;"></div>
+
+        <div id="status"></div>
       </div>
 
       <div id="create-modal" class="modal-overlay">
         <div class="modal-card">
           <div class="modal-header">
-            <h2 class="modal-title">🎨 Cartridge Studio — Package & Sign</h2>
-            <button id="close-modal-btn" type="button" class="close-btn">✕</button>
+            <div>
+              <h2 class="modal-title">Create a document</h2>
+              <p class="modal-sub">
+                Bring what an assistant wrote. It is compiled and signed on this
+                machine — nothing is uploaded.
+              </p>
+            </div>
+            <button id="close-modal-btn" type="button" class="close-btn">&times;</button>
           </div>
 
           <div class="field-group">
-            <label class="field-label" for="app-name-input">Cartridge App Name</label>
-            <input id="app-name-input" type="text" class="input-text" value="Quick Note Cartridge" />
+            <label class="field-label" for="app-name-input">Name</label>
+            <input id="app-name-input" type="text" class="input-text" value="My App" />
           </div>
 
           <div class="field-group">
-            <label class="field-label" for="html-source-input">Application Payload (HTML / JS)</label>
-            <textarea id="html-source-input" class="input-textarea"><!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Quick Note App</title>
-    <style>
-      body { font-family: system-ui; background: #0f172a; color: #f8fafc; padding: 24px; }
-      textarea { width: 100%; height: 160px; background: #1e293b; color: #fff; border: 1px solid #334155; border-radius: 8px; padding: 12px; }
-      button { background: #10b981; color: #fff; border: 0; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
-    </style>
-  </head>
-  <body>
-    <h2>📝 Quick Note Cartridge</h2>
-    <textarea id="note" placeholder="Write your note here..."></textarea>
-    <br><br>
-    <button id="save">💾 Save State</button>
+            <span class="field-label">Files</span>
+            <div id="drop" class="drop">
+              <div id="drop-empty">
+                <p class="drop-title">Drop a folder or a zip here</p>
+                <div class="drop-actions">
+                  <button id="pick-files-btn" type="button">Choose files</button>
+                  <button id="pick-folder-btn" type="button">Choose a folder</button>
+                </div>
+              </div>
 
-    <script>
-      const note = document.getElementById("note");
-      if (window.dai && window.dai.document && window.dai.document.byteLength > 0) {
-        note.value = new TextDecoder().decode(window.dai.document);
-      }
-      document.getElementById("save").onclick = async () => {
-        const bytes = new TextEncoder().encode(note.value);
-        if (window.dai && window.dai.saveState) {
-          const res = await window.dai.saveState(bytes);
-          alert("Saved via " + (res.method || "default"));
-        }
-      };
-    </script>
-  </body>
-</html></textarea>
+              <div id="drop-filled" hidden>
+                <div class="loaded-head">
+                  <strong id="loaded-summary"></strong>
+                  <button id="clear-files-btn" type="button" class="close-btn">Clear</button>
+                </div>
+                <ul id="loaded-list" class="loaded-list"></ul>
+              </div>
+            </div>
           </div>
 
-          <div style="display:flex; gap:12px; justify-content:flex-end;">
-            <button id="mint-btn" type="button" style="background:#2563eb; border-color:#3b82f6; font-size:14px; padding:8px 20px;">⚡ Mint & Sign Cartridge</button>
+          <details>
+            <summary>Or paste a single HTML file</summary>
+            <textarea
+              id="html-source-input"
+              class="input-textarea"
+              spellcheck="false"
+              placeholder="Paste the code here..."
+            ></textarea>
+          </details>
+
+          <div class="modal-foot">
+            <div id="mint-status"></div>
+            <button id="mint-btn" type="button" class="primary">Create the file</button>
           </div>
-          <div id="mint-status" style="font-size:12px; color:#10b981;"></div>
         </div>
       </div>
 
@@ -293,6 +507,9 @@
     </main>
 
     <input id="file-input" type="file" accept=".html,text/html,.dai" hidden />
+    <input id="source-files" type="file" multiple hidden />
+    <input id="source-folder" type="file" webkitdirectory multiple hidden />
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

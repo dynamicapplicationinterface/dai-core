@@ -7,8 +7,15 @@
 
 import { ContainerError, verifyContainer } from "../../../src/container.js";
 import { payloadFingerprint } from "../../../src/core.js";
-import { compileInBrowser, loadRuntimeAssets, type RuntimeAssets } from "../../../src/browser.js";
-import { lintSource } from "../../../src/lint.js";
+import {
+  compileInBrowser,
+  isNoise,
+  loadRuntimeAssets,
+  stripCommonPrefix,
+  unpackZip,
+  type RuntimeAssets,
+} from "../../../src/browser.js";
+import { lintFiles } from "../../../src/lint.js";
 import { checkTrust, type TrustVerdict } from "./trust.js";
 
 
@@ -614,6 +621,120 @@ const mintBtn = document.getElementById("mint-btn") as HTMLButtonElement;
 const appNameInput = document.getElementById("app-name-input") as HTMLInputElement;
 const htmlSourceInput = document.getElementById("html-source-input") as HTMLTextAreaElement;
 const mintStatus = document.getElementById("mint-status") as HTMLElement;
+const dropZone = document.getElementById("drop") as HTMLElement;
+const dropEmpty = document.getElementById("drop-empty") as HTMLElement;
+const dropFilled = document.getElementById("drop-filled") as HTMLElement;
+const loadedSummary = document.getElementById("loaded-summary") as HTMLElement;
+const loadedList = document.getElementById("loaded-list") as HTMLUListElement;
+const pickFilesBtn = document.getElementById("pick-files-btn") as HTMLButtonElement;
+const pickFolderBtn = document.getElementById("pick-folder-btn") as HTMLButtonElement;
+const clearFilesBtn = document.getElementById("clear-files-btn") as HTMLButtonElement;
+const sourceFiles = document.getElementById("source-files") as HTMLInputElement;
+const sourceFolder = document.getElementById("source-folder") as HTMLInputElement;
+
+/**
+ * The application being packaged, keyed by path.
+ *
+ * A real application is several files, and an assistant hands one over as a
+ * folder or a zip. Accepting only pasted text meant asking somebody to flatten
+ * their app by hand before this window would take it.
+ */
+let sourceTree: Record<string, Uint8Array> = {};
+
+function describeSize(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${Math.round(bytes / 1024)} KB`;
+}
+
+function renderFiles(): void {
+  const names = Object.keys(sourceTree).sort();
+  dropEmpty.hidden = names.length > 0;
+  dropFilled.hidden = names.length === 0;
+  dropZone.classList.toggle("filled", names.length > 0);
+
+  const total = names.reduce((sum, name) => sum + sourceTree[name]!.byteLength, 0);
+  loadedSummary.textContent = `${names.length} files · ${describeSize(total)}`;
+
+  loadedList.replaceChildren(
+    ...names.map((name) => {
+      const item = document.createElement("li");
+      if (name === "index.html") item.className = "entry";
+
+      const path = document.createElement("code");
+      path.textContent = name;
+
+      const size = document.createElement("span");
+      size.textContent = describeSize(sourceTree[name]!.byteLength);
+
+      item.append(path, size);
+      return item;
+    }),
+  );
+}
+
+async function acceptFiles(list: FileList | null): Promise<void> {
+  if (!list || list.length === 0) return;
+  const picked = [...list];
+  mintStatus.textContent = "";
+
+  // A single archive is the common case: it is what a model produces when asked
+  // for more than one file.
+  if (picked.length === 1 && /\.zip$/i.test(picked[0]!.name)) {
+    try {
+      const unpacked = unpackZip(new Uint8Array(await picked[0]!.arrayBuffer()));
+      sourceTree = Object.fromEntries(
+        Object.entries(unpacked).filter(([name]) => !isNoise(name)),
+      );
+      if (appNameInput.value === "My App") {
+        appNameInput.value = picked[0]!.name.replace(/\.zip$/i, "");
+      }
+    } catch (error) {
+      mintStatus.style.color = "var(--bad)";
+      mintStatus.textContent = `That zip could not be read: ${String(error)}`;
+      return;
+    }
+    renderFiles();
+    return;
+  }
+
+  const loaded: Record<string, Uint8Array> = {};
+  for (const file of picked) {
+    const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+    if (isNoise(path)) continue;
+    loaded[path] = new Uint8Array(await file.arrayBuffer());
+  }
+
+  sourceTree = stripCommonPrefix(loaded);
+
+  const folder = (picked[0] as File & { webkitRelativePath?: string }).webkitRelativePath;
+  if (appNameInput.value === "My App" && folder && folder.includes("/")) {
+    appNameInput.value = folder.split("/")[0]!;
+  }
+
+  renderFiles();
+}
+
+pickFilesBtn.addEventListener("click", () => sourceFiles.click());
+pickFolderBtn.addEventListener("click", () => sourceFolder.click());
+sourceFiles.addEventListener("change", () => void acceptFiles(sourceFiles.files));
+sourceFolder.addEventListener("change", () => void acceptFiles(sourceFolder.files));
+
+clearFilesBtn.addEventListener("click", () => {
+  sourceTree = {};
+  sourceFiles.value = "";
+  sourceFolder.value = "";
+  renderFiles();
+});
+
+dropZone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  dropZone.classList.add("dragging");
+});
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragging"));
+dropZone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dropZone.classList.remove("dragging");
+  void acceptFiles(event.dataTransfer?.files ?? null);
+});
 
 function showModal(): void {
   createModal.classList.add("open");
@@ -623,6 +744,8 @@ function showModal(): void {
 function hideModal(): void {
   createModal.classList.remove("open");
 }
+
+renderFiles();
 
 createBtn.addEventListener("click", showModal);
 heroCreateBtn.addEventListener("click", showModal);
@@ -648,13 +771,36 @@ mintBtn.addEventListener("click", async () => {
   mintStatus.textContent = "Loading the engine...";
 
   try {
-    const appName = appNameInput.value.trim() || "Untitled Cartridge";
-    const htmlSource = htmlSourceInput.value;
+    const appName = appNameInput.value.trim() || "My App";
+    const pasted = htmlSourceInput.value;
+    const usingFiles = Object.keys(sourceTree).length > 0;
+
+    if (!usingFiles && !pasted.trim()) {
+      mintStatus.style.color = "var(--bad)";
+      mintStatus.textContent = "Bring a folder, a zip, or paste a single file.";
+      return;
+    }
+
+    if (usingFiles && !("index.html" in sourceTree)) {
+      mintStatus.style.color = "var(--bad)";
+      mintStatus.textContent =
+        "There is no index.html. A container opens that first, so this would show nothing.";
+      return;
+    }
 
     // The same checks the website and the MCP server run. Without them somebody
-    // pastes what an assistant wrote, mints it, and opens a blank page with
+    // brings what an assistant wrote, mints it, and opens a blank page with
     // nothing to explain why.
-    const findings = lintSource(htmlSource);
+    const decoder = new TextDecoder();
+    const readable: Record<string, string> = usingFiles
+      ? Object.fromEntries(
+          Object.entries(sourceTree)
+            .filter(([name]) => /\.(?:html?|m?js|ts|css)$/i.test(name))
+            .map(([name, bytes]) => [name, decoder.decode(bytes)]),
+        )
+      : { "index.html": pasted };
+
+    const findings = lintFiles(readable);
     const fatal = findings.filter(
       (finding) => finding.id === "await-in-classic-script" || finding.id === "cdn-script",
     );
@@ -668,7 +814,7 @@ mintBtn.addEventListener("click", async () => {
     runtimeAssets ??= await loadRuntimeAssets();
 
     const built = await compileInBrowser({
-      files: { "index.html": htmlSource },
+      files: usingFiles ? sourceTree : { "index.html": pasted },
       appName,
       assets: runtimeAssets,
     });

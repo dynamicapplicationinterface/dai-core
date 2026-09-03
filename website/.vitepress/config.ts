@@ -26,11 +26,13 @@ export default defineConfig({
     siteTitle: 'DAI Protocol',
     nav: [
       { text: 'Make one', link: '/make-one' },
+      { text: 'Desktop app', link: '/desktop' },
       { text: 'Security', link: '/tamper-proof' },
       {
         text: 'Documentation',
         items: [
           { text: 'Making files', link: '/docs/making-files' },
+          { text: 'Desktop app', link: '/desktop' },
           { text: 'The recipe (for AI)', link: '/docs/the-recipe' },
           { text: 'Quickstart', link: '/docs/quickstart' },
           { text: 'Specification', link: '/docs/specification' },

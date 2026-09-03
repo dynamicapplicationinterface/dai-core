@@ -44,10 +44,31 @@ const uses = [
 ];
 
 const routes = [
-  { name: "With an assistant", detail: "Describe it. The model writes and seals it.", href: "/docs/making-files#with-an-assistant" },
-  { name: "Command line", detail: "npx dai build ./dist", href: "/docs/making-files#from-the-command-line" },
-  { name: "Vite plugin", detail: "React, Vue, Svelte — anything with a build.", href: "/docs/making-files#from-a-vite-project" },
-  { name: "In your browser", detail: "Paste code, get a file. Nothing to install.", href: "/make-your-own" },
+  {
+    name: "The desktop app",
+    detail: "Drop in a folder, get a file. No terminal, ever.",
+    href: "/desktop",
+  },
+  {
+    name: "In your browser",
+    detail: "Nothing to install at all.",
+    href: "/make-your-own",
+  },
+  {
+    name: "With an assistant",
+    detail: "Describe it. The model writes and seals it.",
+    href: "/docs/making-files#with-an-assistant",
+  },
+  {
+    name: "Command line",
+    detail: "npx dai build ./dist",
+    href: "/docs/making-files#from-the-command-line",
+  },
+  {
+    name: "Vite plugin",
+    detail: "React, Vue, Svelte — anything with a build.",
+    href: "/docs/making-files#from-a-vite-project",
+  },
 ];
 </script>
 
@@ -89,8 +110,33 @@ const routes = [
       </figure>
     </section>
 
+    <section class="desktop">
+      <div class="desktop-text">
+        <p class="kicker">The desktop app</p>
+        <h2>For people who never open a terminal</h2>
+        <p>
+          Install it once and DAI files become documents: they get their own
+          icon, open on double-click, and run in a clean window instead of a
+          browser tab. Saving writes straight back into the file, with no
+          download prompt.
+        </p>
+        <p>
+          It builds them too. Drop in a folder or a zip from your assistant and
+          it compiles and signs on your machine — the same compiler as
+          everything else, no command line anywhere.
+        </p>
+        <div class="desktop-actions">
+          <a class="button primary" href="/desktop">What it does</a>
+          <a class="button" href="https://github.com/dynamicapplicationinterface/dai-core/releases">Download</a>
+        </div>
+      </div>
+      <figure class="use-shot">
+        <img src="/shots/desktop-create.png" alt="The desktop app's create dialog" loading="lazy" />
+      </figure>
+    </section>
+
     <section class="routes">
-      <h2>Four ways to make one</h2>
+      <h2>Five ways to make one</h2>
       <p class="routes-note">All of them run the same compiler. There is no lite version.</p>
       <div class="route-grid">
         <a v-for="route in routes" :key="route.name" class="route" :href="route.href">
@@ -272,6 +318,35 @@ figcaption {
   width: 100%;
 }
 
+/* --------------------------------------------------------------- desktop */
+
+.desktop {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: 56px;
+  padding: 40px 0 88px;
+}
+
+.desktop h2 {
+  margin: 0 0 14px;
+  font-size: 2rem;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  border: 0;
+  padding: 0;
+}
+
+.desktop p {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--vp-c-text-2);
+}
+
+.desktop-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+
 /* ---------------------------------------------------------------- routes */
 
 .routes {
@@ -359,6 +434,12 @@ figcaption {
 
   .use.flipped .use-text {
     order: 0;
+  }
+
+  .desktop {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 24px 0 56px;
   }
 
   .hero {
