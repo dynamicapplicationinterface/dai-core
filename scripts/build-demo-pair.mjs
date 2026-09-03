@@ -13,7 +13,7 @@
  * recomputes the digests too — is caught only by the signature, which is why
  * both files are signed.
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
@@ -26,18 +26,40 @@ const out = resolve(root, "website/public");
 const template = readFileSync(resolve(root, "dist/template.html"), "utf8");
 const runtime = readFileSync(resolve(root, "dist/dai-runtime.js"), "utf8");
 
-// A fixed identity and clock, so rebuilding produces byte-identical files and
-// the site's samples do not churn in git on every build.
+// A fixed identity and clock, so everything except the signature is stable
+// between builds.
 const DOCUMENT_UUID = "5a1e0b7c-9d2f-4a13-8e6b-71c4d90fa2e3";
 const BUILT_AT = new Date("2026-01-01T00:00:00.000Z");
 
-const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
-  "sign",
-  "verify",
-]);
-const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString(
-  "base64",
+/**
+ * A throwaway key, published on purpose.
+ *
+ * It exists so the publisher fingerprint stays stable in the documentation. A
+ * freshly generated key would change it on every build.
+ *
+ * The files still differ byte for byte between runs, and cannot be made not to:
+ * ECDSA draws a fresh nonce for every signature, so signing the same bytes twice
+ * produces two different signatures. Only unsigned containers are reproducible.
+ *
+ * Anyone can sign anything with it, which is the point of a demonstration key
+ * and the reason it must never sign anything real. It attests to nothing.
+ */
+const DEMO_KEY = {
+  kty: "EC",
+  crv: "P-256",
+  d: "E9F7dQoKmsOYMSpGdnVsZE8LGcc5H4jkwhXaR7PhpT0",
+  x: "SJwk5VtJ34cDa7wTIAWmPYDq8HDin7Jzntwkzczsv4s",
+  y: "1puN-lDXyW3ZFWUA5jHiLqAWWRQmGc9cBgzOj7nTMhA",
+};
+
+const privateKey = await crypto.subtle.importKey(
+  "jwk",
+  { ...DEMO_KEY, ext: true },
+  { name: "ECDSA", namedCurve: "P-256" },
+  true,
+  ["sign"],
 );
+const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64");
 
 const indexHtml = `<!doctype html>
 <html lang="en">
@@ -108,8 +130,26 @@ const tampered = built.html.replace(
 
 writeFileSync(resolve(out, "sample-tampered.dai"), tampered, "utf8");
 
+// The site compiles a cartridge live on the walkthrough page, so it needs the
+// shell, the bootloader and the SQLite engine as static assets. Copied here
+// rather than imported from dist/, which would make the site's build depend on
+// the core's having run first — the coupling the standalone layout avoids.
+const runtimeDir = resolve(out, "runtime");
+mkdirSync(runtimeDir, { recursive: true });
+
+const assets = {
+  "template.html": resolve(root, "dist/template.html"),
+  "dai-runtime.js": resolve(root, "dist/dai-runtime.js"),
+  "sqlite3.wasm": resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm"),
+  "sqlite3.mjs": resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"),
+};
+for (const [name, from] of Object.entries(assets)) {
+  writeFileSync(resolve(runtimeDir, name), readFileSync(from));
+}
+
 console.log("Wrote the demonstration pair to website/public:");
 console.log("  sample-intact.dai    verifies");
 console.log("  sample-tampered.dai  one entry replaced, every other byte identical");
 console.log(`  document ${DOCUMENT_UUID}`);
 console.log(`  publisher ${built.publicKeyFingerprint}`);
+console.log("Copied the shell, bootloader and SQLite engine to website/public/runtime.");

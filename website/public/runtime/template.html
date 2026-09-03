@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+
+  <!--
+    Zero-Trust CSP (DAI v0.1, spec §1) as widened for the Phase 2 iframe runtime.
+
+    `connect-src 'none'` is the air gap and is untouched: no fetch, XHR,
+    WebSocket, EventSource or beacon can leave this document. Every other
+    directive names only `blob:` — origin-local object URLs minted from the
+    embedded payload, which cannot reach the network — plus the inline/wasm
+    allowances the React bundle and sqlite3.wasm require.
+
+    `blob:` on script-src/style-src and `frame-src 'self' blob:` are additions
+    over the v0.1 spec text: with `default-src 'none'` the bootloader could
+    neither frame the app nor load a single packaged asset. Do not add any
+    scheme that can reach a remote host.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
+
+  <!--
+    viewport-fit=cover lets the app paint under the notch and home indicator;
+    without it a standalone iOS launch is letterboxed by safe-area insets.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  <!--
+    iOS standalone support, so a container served over HTTPS is Add to Home
+    Screen ready with no extra work. These are inert when opened from file://
+    and cost nothing there.
+
+    apple-mobile-web-app-capable is the legacy spelling iOS still requires;
+    mobile-web-app-capable is the standard one other engines read.
+  -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="<!--DAI_APP_NAME-->">
+  <meta name="application-name" content="<!--DAI_APP_NAME-->">
+  <title><!--DAI_APP_NAME--></title>
+
+  <!-- Favicon and Apple Touch Icon (supports custom data URL or SVG default) -->
+  <link rel="icon" href="<!--DAI_FAVICON-->">
+  <link rel="apple-touch-icon" href="<!--DAI_FAVICON-->">
+
+  <!--
+    Integrity policy, fixed at compile time and stored in the shell rather than
+    in the payload. runtime/manifest.json cannot switch verification off: a
+    manifest that could disable its own enforcement is not an integrity control.
+  -->
+  <meta name="dai-integrity" content="<!--DAI_INTEGRITY-->">
+
+  <!--
+    Publisher's public key (base64 SPKI), empty when the container is unsigned.
+    It sits in the shell because the signature covers the shell's own digest: a
+    key inside the signed set could not be written before signing.
+  -->
+  <meta name="dai-public-key" content="<!--DAI_PUBLIC_KEY-->">
+
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    /* Keep the shell's own chrome clear of the notch and home indicator. */
+    #dai-app-mode { top: max(10px, env(safe-area-inset-top)); }
+    body {
+      font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+    #boot-ui {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 2rem;
+      text-align: center;
+    }
+    #boot-ui code { opacity: 0.7; word-break: break-word; }
+    /*
+      App Mode control. It lives in the top document because only the top
+      document can request fullscreen — a sandboxed frame cannot, and the app
+      should not have to ask for the capability to be forwarded.
+    */
+    #dai-app-mode {
+      position: fixed;
+      top: 10px;
+      right: max(10px, env(safe-area-inset-right));
+      z-index: 2147483647;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1;
+      color: CanvasText;
+      background: Canvas;
+      border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+      border-radius: 6px;
+      opacity: 0.35;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    #dai-app-mode:hover,
+    #dai-app-mode:focus-visible { opacity: 1; }
+    /* Hidden until the app reports in. */
+    body:not(.dai-mounted) #dai-app-mode { display: none; }
+    /*
+      Deliberately still shown in App Mode, just fainter. Escape is not a
+      discoverable exit, and hiding the only control would strand anyone who
+      does not know it.
+    */
+    body.dai-app-mode #dai-app-mode { opacity: 0.12; }
+
+    #dai-app {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: Canvas;
+    }
+    /* The mounted application covers the boot UI only once it has reported in. */
+    body:not(.dai-mounted) #dai-app { visibility: hidden; }
+    body.dai-mounted #boot-ui { display: none; }
+  </style>
+</head>
+<body>
+  <div id="boot-ui">
+    <div>
+      <p><strong id="dai-app-name"></strong></p>
+      <p id="dai-boot-status">Decrypting and mounting local environment&hellip;</p>
+      <p><code id="dai-boot-detail"></code></p>
+    </div>
+  </div>
+
+  <button id="dai-app-mode" type="button" hidden>Enter App Mode</button>
+
+  <!-- The Viewer/Bootloader Engine (bundled from src/runtime/bootloader.ts). -->
+  <script type="text/javascript" id="dai-bootloader"><!--DAI_RUNTIME--></script>
+
+  <!--
+    The Cryptographically Sealed Payload: Base64 of a ZIP archive containing the
+    compiled React app under app/ and document.sqlite. Never executed (unknown
+    MIME type); the bootloader reads it as text.
+  -->
+  <script type="application/octet-stream" id="dai-payload"><!--DAI_PAYLOAD--></script>
+</body>
+</html>

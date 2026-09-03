@@ -235,9 +235,17 @@ Ordered by how much they hurt today.
    that takes a directory and emits a cartridge removes the framework from the
    critical path and makes the format usable from any toolchain.
 7. **Reproducible builds by default.** `documentUuid` and `now` are already
-   injectable. Surfacing them through the CLI lets a third party rebuild a
-   cartridge and compare it byte for byte against a published one — the strongest
-   answer available to "is this really built from that source".
+   injectable, and an unsigned container built twice from identical inputs is
+   byte-identical.
+
+   A **signed** container is not, and cannot be made so: ECDSA draws a fresh
+   nonce for every signature, so signing the same bytes twice yields two
+   different signatures, which changes the manifest, which changes the payload,
+   which changes the file. Byte comparison is therefore the wrong test for a
+   signed cartridge. The right one compares the *payload fingerprint* — the
+   document UUID and the entry digests — which is stable across builds and is
+   already computed by `payloadFingerprint`. A CLI should surface that rather
+   than inviting a comparison that will always fail.
 8. **Publish the runner.** The player is the answer for platforms that cannot
    execute a cartridge from the filesystem. It is written and tested and has no
    home.

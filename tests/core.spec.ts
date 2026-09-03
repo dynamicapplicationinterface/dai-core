@@ -866,3 +866,46 @@ test.describe("expiry boundaries", () => {
     expect(report.ok).toBe(true);
   });
 });
+
+test.describe("reproducibility limits", () => {
+  test("an unsigned container is byte-identical across builds", async () => {
+    const fixed = {
+      ...minimalInput(),
+      documentUuid: "22222222-3333-4444-8555-666666666666",
+      now: () => new Date("2026-01-01T00:00:00.000Z"),
+    };
+    expect((await buildContainer(fixed)).html).toBe((await buildContainer(fixed)).html);
+  });
+
+  test("a signed container is not, and its payload fingerprint still is", async () => {
+    // ECDSA draws a fresh nonce per signature, so identical inputs produce
+    // different signatures — which changes the manifest, the payload and the
+    // file. Byte comparison is the wrong test for a signed cartridge; this
+    // records that so nobody builds a verification tool around it.
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString(
+      "base64",
+    );
+    const fixed = {
+      ...minimalInput(),
+      documentUuid: "33333333-4444-4555-8666-777777777777",
+      now: () => new Date("2026-01-01T00:00:00.000Z"),
+      signingKey: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----`,
+    };
+
+    const first = await buildContainer(fixed);
+    const second = await buildContainer(fixed);
+
+    expect(second.html).not.toBe(first.html);
+    expect(second.manifest.signature).not.toBe(first.manifest.signature);
+
+    // What a third party should compare instead: stable, and covers everything
+    // the signature attests to.
+    expect(await payloadFingerprint(second.documentUuid, second.manifest.hashes)).toBe(
+      await payloadFingerprint(first.documentUuid, first.manifest.hashes),
+    );
+  });
+});
