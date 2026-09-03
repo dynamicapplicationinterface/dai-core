@@ -2,63 +2,75 @@
 layout: home
 
 hero:
-  name: "DAI Protocol"
-  text: "The Open Container Standard for AI-Generated Software"
-  tagline: "The PDF for interactive, client-side applications. Air-gapped, tamper-evident, signed, and self-contained with embedded SQLite."
+  name: "DAI"
+  text: "An app that is just a file"
+  tagline: "Build something with AI, and get back one file that opens by double-clicking. It holds the app, its database and your data — and it cannot send any of it anywhere."
   actions:
     - theme: brand
-      text: 5-Minute Quickstart
-      link: /docs/quickstart
+      text: I made something with AI
+      link: /make-one
     - theme: alt
-      text: Read the Specification
+      text: My team wants to use these
+      link: /tamper-proof
+    - theme: alt
+      text: Read the specification
       link: /docs/specification
-    - theme: alt
-      text: In-Browser Playground
-      link: /playground
-
-features:
-  - icon: 🛡️
-    title: Air-Gapped Execution
-    details: Hardened Content Security Policy with connect-src 'none'. A cartridge cannot phone home, log telemetry, or exfiltrate enterprise data.
-  - icon: ✍️
-    title: Cryptographic Authenticity
-    details: Bidirectional SHA-256 entry hashing and ECDSA P-256 publisher signatures ensure code integrity from build to execution.
-  - icon: 💾
-    title: Embedded SQLite Engine
-    details: Ships with WebAssembly SQLite compiled inside every container. Pinned 4096-byte pages and self-perpetuating in-place document saves.
-  - icon: 📦
-    title: Zero External Dependencies
-    details: A single .dai or .dai.html file contains its runtime, glue, libraries, and state. Double-click to run on desktop or in any web browser.
 ---
 
 <div class="content-container" style="max-width: 1152px; margin: 0 auto; padding: 0 24px;">
 
+## Three reasons people use it
+
+### 1. Nothing to set up
+
+No servers, no hosting, no accounts, no database to configure. The database
+is *inside the file* — real SQLite, compiled in — so an app you make in the
+morning is a document you can use in the afternoon. If you can save a
+spreadsheet, you can ship one of these.
+
+### 2. Safe to hand to anyone
+
+A DAI file cannot reach the network. Not by policy — by construction: it
+declares its permitted connections as none and the browser enforces it. It
+also carries a fingerprint of every byte it contains, so tampering with one
+makes it refuse to open. That is what makes it something an IT department
+can allow rather than block.
+
+<a href="/tamper-proof">Break one yourself →</a>
+
+### 3. It goes where you go
+
+Email it, put it on a USB stick, drop it in a shared folder, keep it for ten
+years. It opens on a laptop with no wifi, on a machine with nothing
+installed, on any operating system with a browser. Your data travels inside
+the same file, so there is no account to lose access to and no service that
+can shut down and take it with them.
+
+---
+
+## Try it without reading anything else
+
 <DownloadCard />
 
-## The Problem: AI Code Has No Distribution Standard
+## For the people who have to approve this
 
-Today, AI models generate thousands of lines of sophisticated interactive software—calculators, simulations, internal enterprise tools, data dashboards, and games. Yet their distribution is broken:
+If staff are going to build their own tools with AI, the question is not
+whether they will — it is what they will be running. DAI answers the four
+things that usually come up:
 
-- **Chat Walled Gardens:** Software remains trapped inside ephemeral chat windows.
-- **Hosting Friction:** Sharing a tool requires provisioning cloud servers, configuring DNS, and managing database connections.
-- **Enterprise Exfiltration Risks:** Running generated code inside corporate environments poses severe data security risks without verifiable network isolation.
+| Concern | What the format does |
+| :--- | :--- |
+| Can it exfiltrate our data? | `connect-src 'none'`, enforced by the browser. It has no way to open a connection. |
+| Can someone tamper with one? | Every entry is SHA-256 fingerprinted in both directions. A modified file will not run. [Demonstrated here](/tamper-proof). |
+| Do we know who built it? | ECDSA P-256 publisher signatures, with keys pinned on first use. |
+| Can we see what is being run? | The [host bridge](/docs/host-bridge) reports mounts, refusals and saves to software you control. |
 
-## The Mental Model: "The PDF for Software"
+The [security model](/docs/security) is written to be argued with, including
+the parts the format deliberately does not solve.
 
-Before PDF, distributing formatted text required recipients to have identical operating systems, fonts, and word processors. The PDF standardized documents into an immutable, self-contained container.
-
-**The DAI Protocol (`.dai`) brings this paradigm to interactive client-side applications:**
-
-| Property | Traditional Web App | Desktop Executable (.exe) | DAI Container (.dai) |
-| :--- | :--- | :--- | :--- |
-| **Network Access** | Always connected | Unrestricted socket access | **Strictly Air-Gapped (`connect-src 'none'`)** |
-| **Persistence** | Remote cloud DB | Local OS filesystem | **Embedded SQLite Database** |
-| **Tamper Detection**| Server-controlled | Code signing certificates | **Bidirectional SHA-256 + ECDSA P-256** |
-| **Portability** | Requires active hosting | Platform-dependent | **Universal Browser & Desktop Runtime** |
-| **Lifespan** | Fragile (server shutdown)| OS deprecation risks | **Archival-grade (works offline decades later)** |
+## What is actually in the file
 
 ```html
-<!-- Anatomy of a self-executing .dai.html polyglot container -->
 <!doctype html>
 <html>
   <head>
@@ -66,12 +78,16 @@ Before PDF, distributing formatted text required recipients to have identical op
     <meta name="dai-public-key" content="MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...">
   </head>
   <body>
-    <script id="dai-bootloader">/* Inlined zero-dependency bootloader */</script>
+    <script id="dai-bootloader">/* zero-dependency bootloader */</script>
     <script id="dai-payload">
-      /* Base64-encoded ZIP containing app/**, sqlite3.wasm, and manifest.json */
+      /* base64 ZIP: app/**, sqlite3.wasm, manifest.json */
     </script>
   </body>
 </html>
 ```
+
+A single HTML document that happens to contain a compressed archive. Which
+is why it opens anywhere, and why it will still open in twenty years.
+[The full specification](/docs/specification) is short.
 
 </div>

@@ -25,11 +25,12 @@ export default defineConfig({
     logo: '/favicon.svg',
     siteTitle: 'DAI Protocol',
     nav: [
+      { text: 'Make One', link: '/make-one' },
       { text: 'Documentation', link: '/docs/introduction' },
       { text: 'Specification', link: '/docs/specification' },
       { text: 'Host Bridge', link: '/docs/host-bridge' },
       { text: 'Playground', link: '/playground' },
-      { text: 'See It Break', link: '/tamper-proof' },
+      { text: 'For IT', link: '/tamper-proof' },
       {
         text: 'v0.1',
         items: [
@@ -58,6 +59,7 @@ export default defineConfig({
       {
         text: 'Interactive Tools',
         items: [
+          { text: 'Make One With AI', link: '/make-one' },
           { text: 'In-Browser Playground', link: '/playground' },
           { text: 'See It Break', link: '/tamper-proof' }
         ]
