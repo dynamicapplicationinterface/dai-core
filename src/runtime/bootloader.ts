@@ -23,7 +23,7 @@
 import { unzipSync, zipSync } from "fflate";
 // Imported rather than reimplemented: the host derives the same value from the
 // same helper, and two spellings of "canonical" would disagree eventually.
-import { canonicalPayload, payloadFingerprint } from "../core.js";
+import { canonicalPayload, payloadFingerprint, signedViewOf } from "../core.js";
 
 const APP_PREFIX = "app/";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
@@ -318,7 +318,7 @@ async function verifySignature(
     key,
     fromBase64(manifest.signature) as unknown as BufferSource,
     new TextEncoder().encode(
-      canonicalPayload(manifest.documentUuid, manifest.signedEntries, manifest.validUntil),
+      canonicalPayload(signedViewOf(manifest)),
     ) as unknown as BufferSource,
   );
 

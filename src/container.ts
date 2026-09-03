@@ -15,6 +15,7 @@ import {
   CONTAINER_ENTRY,
   MANIFEST_ENTRY,
   canonicalPayload,
+  signedViewOf,
   fromBase64,
   sha256Hex,
   toBase64,
@@ -250,7 +251,7 @@ async function checkSignature(
     key,
     fromBase64(manifest.signature),
     new TextEncoder().encode(
-      canonicalPayload(documentUuid, manifest.signedEntries, manifest.validUntil),
+      canonicalPayload(signedViewOf({ ...manifest, documentUuid })),
     ),
   );
 

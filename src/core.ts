@@ -250,8 +250,27 @@ export async function buildContainer(
   }
 
   const validUntil = input.validUntil;
+  const createdAt = now().toISOString();
+
+  // Built before the manifest, because the manifest carries the signature and
+  // cannot therefore be an input to it. Every field here ends up in the
+  // manifest unchanged, and a verifier rebuilds this same view from it.
+  const signedView: SignedView = {
+    manifestVersion: MANIFEST_VERSION,
+    documentUuid,
+    appName,
+    favicon,
+    createdAt,
+    algorithm: "SHA-256",
+    integrityPolicy,
+    signatureAlgorithm: signing ? "ECDSA-P256-SHA256" : "",
+    publicKeyFingerprint: signing ? signing.fingerprint : "",
+    validUntil,
+    entries: signedEntries,
+  };
+
   const signature = signing
-    ? await sign(signing.key, canonicalPayload(documentUuid, signedEntries, validUntil))
+    ? await sign(signing.key, canonicalPayload(signedView))
     : undefined;
 
   const manifest: ContainerManifest = {
@@ -259,7 +278,7 @@ export async function buildContainer(
     documentUuid,
     appName,
     favicon,
-    createdAt: now().toISOString(),
+    createdAt,
     algorithm: "SHA-256",
     // Informational only: the shell decides whether this is enforced.
     integrityPolicy,
@@ -353,26 +372,104 @@ async function readSigningKey(
  * order the archive happened to be assembled in — the verifier rebuilds this
  * from the manifest and must land on identical bytes.
  */
-export function canonicalPayload(
-  uuid: string,
-  entries: Record<string, string>,
-  validUntil?: number,
-): string {
-  const sorted = Object.keys(entries)
-    .sort()
-    .map((name) => name + ":" + entries[name])
-    .join("\n");
-  const base = "dai-v1\n" + uuid + "\n" + sorted + "\n";
+export interface SignedView {
+  manifestVersion: number;
+  documentUuid: string;
+  appName: string;
+  favicon: string;
+  createdAt: string;
+  algorithm: string;
+  integrityPolicy: string;
+  signatureAlgorithm: string;
+  publicKeyFingerprint: string;
+  validUntil?: number;
+  /** Entry digests, excluding the database. */
+  entries: Record<string, string>;
+}
 
-  // Appended only when present, so a container with no expiry produces exactly
-  // the bytes it always did and existing signatures keep verifying. The "!"
-  // prefix cannot collide with an entry name, which is always a path.
-  //
-  // Signing it is the whole point. No other manifest field is covered by the
-  // signature — the manifest is excluded from its own digests — so an expiry
-  // left as a plain field could be extended, shortened or deleted with a text
-  // editor, which is not an expiry at all.
-  return validUntil === undefined ? base : base + "!validUntil:" + validUntil + "\n";
+/**
+ * Everything the signature covers, in one place.
+ *
+ * The compiler and both verifiers derive the signed bytes from here, so what is
+ * protected is decided once rather than agreed three times.
+ *
+ * The previous version covered the identity, the entry digests and the expiry,
+ * and nothing else — which left every descriptive field editable under a
+ * signature that still verified. A container could be renamed "Payroll Portal",
+ * given a bank's icon and handed on, and the only claim it made about itself
+ * that an attacker could not touch was a UUID nobody reads.
+ *
+ * `savedAt` is deliberately outside. It changes on every save, and a container
+ * carries no private key to re-sign with afterwards; signing it would make the
+ * first save invalidate the signature.
+ */
+export function canonicalPayload(view: SignedView): string {
+  // Values are JSON-encoded rather than concatenated raw. An application named
+  // `a\nfavicon:evil` would otherwise serialize to bytes indistinguishable from
+  // a different manifest, which is the classic way a canonical form stops being
+  // canonical.
+  const line = (key: string, value: string | number): string =>
+    key + ":" + JSON.stringify(value) + "\n";
+
+  // A fixed order, not a sorted one: the field set is part of the format and is
+  // meant to be read from the specification rather than inferred from an
+  // implementation's key ordering.
+  let payload =
+    "dai-v2\n" +
+    line("manifestVersion", view.manifestVersion) +
+    line("documentUuid", view.documentUuid) +
+    line("appName", view.appName) +
+    line("favicon", view.favicon) +
+    line("createdAt", view.createdAt) +
+    line("algorithm", view.algorithm) +
+    line("integrityPolicy", view.integrityPolicy) +
+    line("signatureAlgorithm", view.signatureAlgorithm) +
+    line("publicKeyFingerprint", view.publicKeyFingerprint);
+
+  // Present only when set, so a perpetual container does not carry a field
+  // describing an expiry it does not have.
+  if (view.validUntil !== undefined) payload += line("validUntil", view.validUntil);
+
+  payload += "entries\n";
+  for (const name of Object.keys(view.entries).sort()) {
+    payload += line(name, view.entries[name] as string);
+  }
+  return payload;
+}
+
+/**
+ * The signed view of a manifest that already exists.
+ *
+ * Verifiers reconstruct the signed bytes through this rather than assembling
+ * them by hand, so a field added to the signed set reaches every verifier at
+ * once instead of only the one that was remembered.
+ */
+export function signedViewOf(manifest: {
+  manifestVersion: number;
+  documentUuid: string;
+  appName: string;
+  favicon?: string;
+  createdAt: string;
+  algorithm: string;
+  integrityPolicy: string;
+  signatureAlgorithm?: string;
+  publicKeyFingerprint?: string;
+  validUntil?: number;
+  signedEntries?: Record<string, string>;
+}): SignedView {
+  return {
+    manifestVersion: manifest.manifestVersion,
+    documentUuid: manifest.documentUuid,
+    appName: manifest.appName,
+    favicon: manifest.favicon ?? "",
+    createdAt: manifest.createdAt,
+    algorithm: manifest.algorithm,
+    integrityPolicy: manifest.integrityPolicy,
+    signatureAlgorithm: manifest.signatureAlgorithm ?? "",
+    publicKeyFingerprint: manifest.publicKeyFingerprint ?? "",
+    validUntil: manifest.validUntil,
+    entries: manifest.signedEntries ?? {},
+  };
 }
 
 /** ECDSA P-256 / SHA-256. WebCrypto emits IEEE P1363, which the verifier expects. */
@@ -399,7 +496,15 @@ export async function payloadFingerprint(
   documentUuid: string,
   hashes: Record<string, string>,
 ): Promise<string> {
-  return sha256Hex(new TextEncoder().encode(canonicalPayload(documentUuid, hashes)));
+  // Its own canonical form rather than the signature's. The two answer
+  // different questions — "are two parties holding the same payload" against
+  // "did the publisher attest to this" — and sharing a string would have meant
+  // every change to what is signed silently changing every fingerprint.
+  const sorted = Object.keys(hashes)
+    .sort()
+    .map((name) => `${name}:${hashes[name]}`)
+    .join("\n");
+  return sha256Hex(new TextEncoder().encode(`dai-fingerprint-v1\n${documentUuid}\n${sorted}`));
 }
 
 /** Lowercase hex SHA-256 of the uncompressed entry bytes. */

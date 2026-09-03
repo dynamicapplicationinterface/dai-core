@@ -7,6 +7,7 @@ import { unzipSync, zipSync } from "fflate";
 import {
   buildContainer,
   canonicalPayload,
+  signedViewOf,
   fromBase64,
   payloadFingerprint,
   sha256Hex,
@@ -174,9 +175,7 @@ test.describe("buildContainer", () => {
       { name: "ECDSA", hash: "SHA-256" },
       publicKey,
       Buffer.from(manifest.signature!, "base64"),
-      new TextEncoder().encode(
-        canonicalPayload(built.documentUuid, manifest.signedEntries!),
-      ),
+      new TextEncoder().encode(canonicalPayload(signedViewOf(manifest))),
     );
     expect(ok).toBe(true);
 
@@ -660,17 +659,15 @@ test.describe("expiry", () => {
     await expect(verifyContainer(tampered)).rejects.toThrow(/not authentic/i);
   });
 
-  test("existing signatures are unaffected by the field being added", async () => {
-    // A container built without an expiry must produce the same signed bytes it
-    // always did, or every cartridge already in the world stops verifying.
-    const input = await signedInput();
-    const built = await buildContainer(input);
+  test("a container with no expiry carries no expiry in its signed bytes", async () => {
+    // Absent rather than null or zero: a perpetual document should not be
+    // describing an expiry it does not have, and a reader should not have to
+    // know which falsy value means "forever".
+    const built = await buildContainer(await signedInput());
     const verified = await verifyContainer(built.html);
 
     expect(verified.signature).toBe("valid");
-    expect(canonicalPayload(built.documentUuid, built.manifest.signedEntries!)).toBe(
-      canonicalPayload(built.documentUuid, built.manifest.signedEntries!, undefined),
-    );
+    expect(canonicalPayload(signedViewOf(built.manifest))).not.toContain("validUntil");
   });
 });
 
@@ -908,4 +905,69 @@ test.describe("reproducibility limits", () => {
       await payloadFingerprint(first.documentUuid, first.manifest.hashes),
     );
   });
+});
+
+
+test.describe("what the signature covers", () => {
+  /**
+   * The signature used to cover the identity, the entry digests and the expiry,
+   * and nothing else — so every descriptive field could be edited while it went
+   * on verifying. A container could be renamed, given somebody else's icon, and
+   * passed on still claiming to be signed.
+   *
+   * Each field below is re-checked by editing the manifest inside a built
+   * container and confirming the signature no longer holds.
+   */
+  async function signedBuild() {
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ]);
+    const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString(
+      "base64",
+    );
+    return buildContainer({
+      ...minimalInput(),
+      signingKey: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----`,
+    });
+  }
+
+  async function tamperedManifest(
+    edit: (manifest: Record<string, unknown>) => void,
+  ): Promise<string> {
+    const built = await signedBuild();
+    const archive = unzipSync(built.zipped);
+
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]!));
+    edit(manifest);
+    archive["runtime/manifest.json"] = new TextEncoder().encode(
+      JSON.stringify(manifest, null, 2) + "\n",
+    );
+
+    return built.html.replace(
+      /(<script[^>]*id="dai-payload"[^>]*>)[\s\S]*?(<\/script>)/,
+      (_whole, open: string, close: string) =>
+        open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+    );
+  }
+
+  const fields: Record<string, (manifest: Record<string, unknown>) => void> = {
+    // The name a host shows in its title bar and its window list.
+    appName: (manifest) => (manifest.appName = "Payroll Portal"),
+    // The icon beside it, which is most of what anybody actually recognises.
+    favicon: (manifest) => (manifest.favicon = "data:image/svg+xml,%3Csvg/%3E"),
+    // When it claims to have been made.
+    createdAt: (manifest) => (manifest.createdAt = "2001-01-01T00:00:00.000Z"),
+    // The fingerprint a host pins on first use and shows on every later open.
+    publicKeyFingerprint: (manifest) => (manifest.publicKeyFingerprint = "0".repeat(16)),
+    manifestVersion: (manifest) => (manifest.manifestVersion = 99),
+    integrityPolicy: (manifest) => (manifest.integrityPolicy = "advisory"),
+  };
+
+  for (const [field, edit] of Object.entries(fields)) {
+    test(`editing ${field} invalidates the signature`, async () => {
+      const tampered = await tamperedManifest(edit);
+      await expect(verifyContainer(tampered)).rejects.toThrow(/not authentic|modified/i);
+    });
+  }
 });

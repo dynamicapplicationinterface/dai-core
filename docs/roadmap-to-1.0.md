@@ -313,7 +313,7 @@ afterwards is not and does not. `'strict-dynamic'` was left out deliberately:
 it makes `blob:` ignored, and the module graph is loaded through blob URLs, so
 it is a tightening to attempt separately rather than alongside this one.
 
-### 4. Sign the whole manifest, using an envelope somebody else wrote
+### 4. Sign the whole manifest — **done, unmerged**; the envelope follows
 
 Only the UUID, the entry digests and the expiry are covered today. `appName`,
 `favicon` and `integrityPolicy` are not, so a container can be renamed and
@@ -325,8 +325,26 @@ piece of work, and the second half has an engineering payoff rather than a
 diplomatic one: correctness becomes checkable against an implementation we did
 not write.
 
-**Done when:** a container verifies with an off-the-shelf COSE library, and
-altering any manifest field breaks it.
+**Done when:** altering any manifest field breaks the signature, and a
+container verifies with an off-the-shelf COSE library.
+
+The first half landed on `feat/opaque-origin-frame`. The signed bytes are now
+built from a named view of the manifest — identity, name, icon, creation time,
+algorithm, policy, key fingerprint, expiry and entry digests — assembled in one
+place that the compiler and both verifiers share, so a field added to the set
+reaches every verifier at once. `savedAt` stays outside deliberately: it
+changes on every save, and a container holds no private key to re-sign with
+afterwards.
+
+The second half moves to container v2. COSE means CBOR, and CBOR means either
+a dependency in a package that deliberately has two, or a hand-written encoder
+whose deterministic-encoding rules would need their own tests. Both are
+reasonable; neither is worth doing twice, and the container layout is about to
+change underneath it.
+
+One thing checked on the way and found already sound: `signedEntries` is
+reconciled against `hashes` before the signature is verified, so a container
+cannot be verified against digests other than the ones just checked.
 
 ### 5. Make a save stop rewriting the entire file
 
