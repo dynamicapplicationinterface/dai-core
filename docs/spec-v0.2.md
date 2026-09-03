@@ -100,7 +100,7 @@ viewer form's payload.
   "algorithm": "SHA-256",
   "integrityPolicy": "required" | "advisory",
   "hashes": { "<entry>": "<hex digest>" },
-  "signatureAlgorithm": "ECDSA-P256-SHA256",
+  "signatureAlgorithm": "COSE-ES256",
   "publicKeyFingerprint": "…",
   "signedEntries": { "<entry>": "<hex digest>" },
   "signature": "…",             // base64, IEEE P1363
@@ -119,29 +119,42 @@ database. This is what allows a save to leave the manifest untouched (§5).
 
 ### 3.1 What the signature covers
 
-The signature is computed over this exact serialization, in this order:
+The signature is a `COSE_Sign1` envelope (RFC 9052), base64-encoded into
+`signature`. `signatureAlgorithm` MUST be `COSE-ES256`.
+
+The protected header MUST carry `alg` (label 1) as `-7`, ES256. It SHOULD carry
+`kid` (label 4) as the publisher key fingerprint. `alg` is in the *protected*
+header because it is covered by the signature: an attacker able to rewrite it
+could otherwise talk a verifier down to something weaker.
+
+The payload MUST be detached — encoded as `nil` in the envelope. A verifier
+rebuilds it from the manifest it already holds, so there is exactly one copy of
+what was signed. Carrying a second inside the envelope would mean two that can
+disagree, and the one inside the signature would win unnoticed.
+
+The payload is a deterministic CBOR map (RFC 8949 §4.2.1) with these keys:
 
 ```
-dai-v2\n
-manifestVersion:<json>\n
-documentUuid:<json>\n
-appName:<json>\n
-favicon:<json>\n
-createdAt:<json>\n
-algorithm:<json>\n
-integrityPolicy:<json>\n
-signatureAlgorithm:<json>\n
-publicKeyFingerprint:<json>\n
-validUntil:<json>\n        // present only when set
-entries\n
-<name>:<json digest>\n     // every signedEntries key, sorted
+manifestVersion, documentUuid, appName, favicon, createdAt,
+algorithm, integrityPolicy, signatureAlgorithm, publicKeyFingerprint,
+entries            — a map of signed entry name to hex digest
+validUntil         — present only when set
 ```
 
-`<json>` means the value encoded as a JSON literal. Values MUST be encoded
-rather than concatenated raw: an application named `a\nfavicon:evil` would
-otherwise serialize to bytes indistinguishable from a different manifest.
+Keys MUST be sorted by their encoded bytes, lengths MUST use the shortest form
+that fits, and indefinite lengths MUST NOT be used. Two encoders that agree on
+the values and disagree on the bytes produce signatures that do not verify.
 
-`validUntil` MUST be omitted entirely when unset, not written as null or zero.
+`validUntil` MUST be omitted entirely when unset, not encoded as null or zero.
+
+The signature is computed over `Sig_structure` as RFC 9052 §4.4 defines it:
+
+```
+[ "Signature1", protected: bstr, external_aad: bstr, payload: bstr ]
+```
+
+`external_aad` MUST be empty. The context string is what stops a signature made
+for one purpose being replayed as another.
 
 `signedEntries` MUST exclude the database. A container carries no private key
 and cannot re-sign after a save, so a signature covering the database would be

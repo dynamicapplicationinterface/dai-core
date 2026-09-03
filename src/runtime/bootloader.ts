@@ -23,7 +23,8 @@
 import { unzipSync, zipSync } from "fflate";
 // Imported rather than reimplemented: the host derives the same value from the
 // same helper, and two spellings of "canonical" would disagree eventually.
-import { canonicalPayload, payloadFingerprint, signedViewOf } from "../core.js";
+import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
+import { verifySign1 } from "../cose.js";
 
 const APP_PREFIX = "app/";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
@@ -302,7 +303,7 @@ async function verifySignature(
   if (!manifest.signature || !manifest.signedEntries) {
     return { ok: false, reason: "the container carries a public key but no signature" };
   }
-  if (manifest.signatureAlgorithm !== "ECDSA-P256-SHA256") {
+  if (manifest.signatureAlgorithm !== "COSE-ES256") {
     return { ok: false, reason: `unsupported signature algorithm ${manifest.signatureAlgorithm}` };
   }
 
@@ -325,14 +326,20 @@ async function verifySignature(
     return { ok: false, reason: `public key is unreadable (${String(error)})` };
   }
 
-  const ok = await crypto.subtle.verify(
-    { name: "ECDSA", hash: "SHA-256" },
-    key,
-    fromBase64(manifest.signature) as unknown as BufferSource,
-    new TextEncoder().encode(
-      canonicalPayload(signedViewOf(manifest)),
-    ) as unknown as BufferSource,
-  );
+  // The payload is rebuilt from the manifest rather than read out of the
+  // envelope, which carries none: the signature is detached, so there is only
+  // one copy of what was signed and no second one to disagree with it.
+  const ok = await verifySign1(
+    fromBase64(manifest.signature),
+    signedBytes(signedViewOf(manifest)),
+    (signature, bytes) =>
+      crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        key,
+        signature as unknown as BufferSource,
+        bytes as unknown as BufferSource,
+      ),
+  ).catch(() => false);
 
   return ok ? { ok: true } : { ok: false, reason: "signature does not match the publisher key" };
 }

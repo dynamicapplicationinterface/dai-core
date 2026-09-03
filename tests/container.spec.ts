@@ -512,7 +512,7 @@ test.describe("publisher signature", () => {
     const archive = archiveOf(readFileSync(CONTAINER, "utf8"));
     const manifest = JSON.parse(Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"));
 
-    expect(manifest.signatureAlgorithm).toBe("ECDSA-P256-SHA256");
+    expect(manifest.signatureAlgorithm).toBe("COSE-ES256");
     expect(manifest.signature).toMatch(/^[A-Za-z0-9+/=]+$/);
     expect(manifest.publicKeyFingerprint).toMatch(/^[0-9a-f]{16}$/);
 

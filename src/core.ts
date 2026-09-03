@@ -11,6 +11,8 @@
  * verifies. Using the Node API here would have kept the core off the web.
  */
 import { zipSync, type Zippable } from "fflate";
+import { encode as cborEncode, type CborValue } from "./cbor.js";
+import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 
 /** Bumped when the manifest's shape changes. */
@@ -264,14 +266,14 @@ export async function buildContainer(
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy,
-    signatureAlgorithm: signing ? "ECDSA-P256-SHA256" : "",
+    signatureAlgorithm: signing ? "COSE-ES256" : "",
     publicKeyFingerprint: signing ? signing.fingerprint : "",
     validUntil,
     entries: signedEntries,
   };
 
   const signature = signing
-    ? await sign(signing.key, canonicalPayload(signedView))
+    ? await sign(signing.key, signedView, signing.fingerprint)
     : undefined;
 
   const manifest: ContainerManifest = {
@@ -287,7 +289,7 @@ export async function buildContainer(
     ...(validUntil === undefined ? {} : { validUntil }),
     ...(signature
       ? {
-          signatureAlgorithm: "ECDSA-P256-SHA256",
+          signatureAlgorithm: "COSE-ES256",
           publicKeyFingerprint: signing!.fingerprint,
           signedEntries,
           signature,
@@ -513,14 +515,64 @@ export function signedViewOf(manifest: {
   };
 }
 
-/** ECDSA P-256 / SHA-256. WebCrypto emits IEEE P1363, which the verifier expects. */
-async function sign(key: WebCryptoKey, payload: string): Promise<string> {
-  const signature = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    key,
-    new TextEncoder().encode(payload),
+/**
+ * The signed bytes: the same named view, encoded as a deterministic CBOR map.
+ *
+ * A map rather than the concatenated lines it replaces. The lines needed their
+ * values JSON-encoded to stop one field's content impersonating another, which
+ * is a rule CBOR gets for free — every string carries its own length, so there
+ * is no delimiter to smuggle.
+ */
+export function signedBytes(view: SignedView): Uint8Array {
+  const fields = new Map<CborValue, CborValue>([
+    ["manifestVersion", view.manifestVersion],
+    ["documentUuid", view.documentUuid],
+    ["appName", view.appName],
+    ["favicon", view.favicon],
+    ["createdAt", view.createdAt],
+    ["algorithm", view.algorithm],
+    ["integrityPolicy", view.integrityPolicy],
+    ["signatureAlgorithm", view.signatureAlgorithm],
+    ["publicKeyFingerprint", view.publicKeyFingerprint],
+    ["entries", new Map<CborValue, CborValue>(Object.entries(view.entries))],
+  ]);
+
+  // Absent rather than null, so a perpetual document does not describe an
+  // expiry it does not have.
+  if (view.validUntil !== undefined) fields.set("validUntil", view.validUntil);
+
+  return cborEncode(fields);
+}
+
+/**
+ * ECDSA P-256 / SHA-256 inside a COSE_Sign1 envelope.
+ *
+ * WebCrypto emits IEEE P1363, which is exactly what COSE specifies for ES256 —
+ * no re-encoding, which is one fewer place to be subtly wrong.
+ *
+ * The payload is detached. A verifier rebuilds it from the manifest it is
+ * already holding, so carrying a second copy inside the envelope would mean two
+ * versions that can disagree — and the one inside the signature would win
+ * without anybody noticing.
+ */
+async function sign(key: WebCryptoKey, view: SignedView, kid: string): Promise<string> {
+  const envelope = await buildSign1(
+    signedBytes(view),
+    async (bytes) =>
+      new Uint8Array(
+        // Cast because a Uint8Array over ArrayBufferLike is not assignable to
+        // BufferSource under the DOM lib set, SharedArrayBuffer being in that
+        // union. The bytes are an ordinary ArrayBuffer; the type is wider than
+        // the value. Same treatment as the verifiers.
+        await crypto.subtle.sign(
+          { name: "ECDSA", hash: "SHA-256" },
+          key,
+          bytes as unknown as ArrayBuffer,
+        ),
+      ),
+    { kid, detached: true },
   );
-  return toBase64(new Uint8Array(signature));
+  return toBase64(envelope);
 }
 
 /**

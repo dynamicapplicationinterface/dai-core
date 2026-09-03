@@ -11,6 +11,7 @@
  * imports, no DOM types. A host that has a `File` reads the text itself.
  */
 import { unzipSync, zipSync } from "fflate";
+import { verifySign1 } from "./cose.js";
 import {
   MAGIC,
   SECTION,
@@ -21,7 +22,7 @@ import {
 import {
   CONTAINER_ENTRY,
   MANIFEST_ENTRY,
-  canonicalPayload,
+  signedBytes,
   signedViewOf,
   fromBase64,
   sha256Hex,
@@ -307,7 +308,7 @@ async function checkSignature(
       "This container carries a publisher key but no signature, so the key cannot be checked.",
     );
   }
-  if (manifest.signatureAlgorithm !== "ECDSA-P256-SHA256") {
+  if (manifest.signatureAlgorithm !== "COSE-ES256") {
     throw new ContainerError(
       `Unsupported signature algorithm: ${manifest.signatureAlgorithm}.`,
     );
@@ -334,14 +335,25 @@ async function checkSignature(
     throw new ContainerError(`The container's publisher key is unreadable (${String(cause)}).`);
   }
 
-  const ok = await crypto.subtle.verify(
-    { name: "ECDSA", hash: "SHA-256" },
-    key,
+  // The payload is rebuilt from the manifest rather than taken from the
+  // envelope. The envelope carries none — the signature is detached — and a
+  // verifier should be checking the bytes it decided to trust, not the ones it
+  // was handed alongside the signature over them.
+  const ok = await verifySign1(
     fromBase64(manifest.signature),
-    new TextEncoder().encode(
-      canonicalPayload(signedViewOf({ ...manifest, documentUuid })),
-    ),
-  );
+    signedBytes(signedViewOf({ ...manifest, documentUuid })),
+    (signature, bytes) =>
+      crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        key,
+        signature as unknown as ArrayBuffer,
+        bytes as unknown as ArrayBuffer,
+      ),
+  ).catch((cause: unknown) => {
+    // A malformed envelope is a refusal with a reason, not a stack trace: a
+    // host shows this to somebody.
+    throw new ContainerError(`The container's signature is unreadable (${String(cause)}).`);
+  });
 
   if (!ok) {
     throw new ContainerError(

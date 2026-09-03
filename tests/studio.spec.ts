@@ -149,7 +149,7 @@ test.describe("web studio signing", () => {
       Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"),
     );
 
-    expect(manifest.signatureAlgorithm).toBe("ECDSA-P256-SHA256");
+    expect(manifest.signatureAlgorithm).toBe("COSE-ES256");
     expect(manifest.publicKeyFingerprint).toBe(fingerprint);
     // The private key must not have travelled into the artifact.
     expect(html).not.toContain("PRIVATE KEY");

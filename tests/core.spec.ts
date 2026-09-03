@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { Encoder } from "cbor-x";
 import { unzipSync, zipSync } from "fflate";
 import {
   buildContainer,
-  canonicalPayload,
+  signedBytes,
   signedViewOf,
   fromBase64,
   payloadFingerprint,
@@ -155,14 +156,24 @@ test.describe("buildContainer", () => {
     const built = await buildContainer({ ...minimalInput(), signingKey: pem });
     const manifest = built.manifest;
 
-    expect(manifest.signatureAlgorithm).toBe("ECDSA-P256-SHA256");
+    expect(manifest.signatureAlgorithm).toBe("COSE-ES256");
     expect(built.publicKeyFingerprint).toMatch(/^[0-9a-f]{16}$/);
     // The private key must not appear anywhere in the artifact.
     expect(built.html).not.toContain(pkcs8.slice(0, 40));
     expect(built.html).not.toContain("PRIVATE KEY");
 
-    // The signature must verify against the public half, over the same bytes
-    // the bootloader will reconstruct.
+    /*
+     * Verified the way a stranger would: from the RFC and a CBOR library,
+     * without calling anything in this repository except to rebuild the
+     * payload the signature is detached from.
+     *
+     * This is the whole reason for adopting COSE. The canonical string it
+     * replaced was not broken, but it had one implementation and one reader,
+     * so "the signature is correct" meant reading our own code back to
+     * ourselves. Here the envelope is taken apart by somebody else's decoder,
+     * Sig_structure is rebuilt from RFC 9052 §4.4, and the check is plain
+     * WebCrypto.
+     */
     const spki = built.html.match(/name="dai-public-key" content="([^"]*)"/)![1]!;
     const publicKey = await crypto.subtle.importKey(
       "spki",
@@ -171,11 +182,36 @@ test.describe("buildContainer", () => {
       false,
       ["verify"],
     );
+
+    const cbor = new Encoder({ tagUint8Array: false, useRecords: false, mapsAsObjects: false });
+    const envelope = cbor.decode(Buffer.from(manifest.signature!, "base64")) as [
+      Uint8Array,
+      Map<unknown, unknown>,
+      unknown,
+      Uint8Array,
+    ];
+
+    const [protectedBytes, , payload, signature] = envelope;
+    // Detached: the envelope carries no payload of its own.
+    expect(payload).toBeNull();
+
+    // alg = ES256 lives in the protected header, so it is covered by the
+    // signature and cannot be downgraded by editing the file.
+    const header = cbor.decode(Buffer.from(protectedBytes)) as Map<number, number>;
+    expect(header.get(1)).toBe(-7);
+
+    const sigStructure = cbor.encode([
+      "Signature1",
+      Buffer.from(protectedBytes),
+      Buffer.alloc(0),
+      Buffer.from(signedBytes(signedViewOf(manifest))),
+    ]);
+
     const ok = await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       publicKey,
-      Buffer.from(manifest.signature!, "base64"),
-      new TextEncoder().encode(canonicalPayload(signedViewOf(manifest))),
+      signature,
+      sigStructure,
     );
     expect(ok).toBe(true);
 
@@ -667,7 +703,12 @@ test.describe("expiry", () => {
     const verified = await verifyContainer(built.html);
 
     expect(verified.signature).toBe("valid");
-    expect(canonicalPayload(signedViewOf(built.manifest))).not.toContain("validUntil");
+    // Absent from the signed bytes entirely, not present and empty: a reader
+    // should not have to know which falsy value means "forever".
+    const fields = new Encoder({ mapsAsObjects: false }).decode(
+      Buffer.from(signedBytes(signedViewOf(built.manifest))),
+    ) as Map<string, unknown>;
+    expect(fields.has("validUntil")).toBe(false);
   });
 });
 
