@@ -132,6 +132,15 @@ let bootWatchdog: number | undefined;
  */
 let expectedFingerprint: string | undefined;
 
+/**
+ * Whether the running cartridge confirmed what the host verified.
+ *
+ * False for a cartridge whose runtime predates the cross-check. Worth surfacing
+ * rather than hiding: the container is no less verified, but one of the two
+ * independent opinions is missing, and an audit trail should record which.
+ */
+let crossChecked = true;
+
 /** The newest host-bridge schema this host understands. */
 const HOST_BRIDGE_VERSION = 1;
 
@@ -164,6 +173,7 @@ function clearBootWatchdog(): void {
 function mountHtml(html: string, filePath?: string, fingerprint?: string): void {
   clearAlert();
   expectedFingerprint = fingerprint;
+  crossChecked = true;
   if (mountedUrl) {
     URL.revokeObjectURL(mountedUrl);
   }
@@ -374,11 +384,32 @@ ${refusal.detail}` : ""),
 
     // Abort before acknowledging. An acknowledged container is one the host has
     // accepted, and a disagreement is exactly the case where it should not.
-    if (expectedFingerprint && reported.payloadFingerprint !== expectedFingerprint) {
+    // Silence and disagreement are different findings, and conflating them
+    // breaks every cartridge built before the cross-check existed. A container
+    // carries the runtime it was compiled with, so older bridges are permanent
+    // residents rather than a transitional problem: one that reports nothing is
+    // not claiming anything false, it simply cannot answer.
+    //
+    // The host has already verified this file itself, and that verdict is what
+    // gates mounting. The cross-check only adds a second opinion, so its absence
+    // costs the second opinion and nothing more.
+    if (reported.payloadFingerprint === undefined || reported.payloadFingerprint === null) {
+      crossChecked = false;
+      // Said out loud. The container is no less verified, but one of the two
+      // independent opinions is missing, and a chip identical to a fully
+      // cross-checked mount would overstate what was confirmed.
+      if (trustEl && !trustEl.hidden) {
+        trustEl.textContent = `${trustEl.textContent} · cross-check unavailable`;
+      }
+      console.info(
+        "DAI: this cartridge predates the payload cross-check, so only the host’s " +
+          "own verification applies.",
+      );
+    } else if (expectedFingerprint && reported.payloadFingerprint !== expectedFingerprint) {
       abortMount(
         "The running cartridge does not match the file that was verified." +
           `\nVerified: ${expectedFingerprint.slice(0, 16)}` +
-          `\nRunning:  ${(reported.payloadFingerprint ?? "none reported").slice(0, 16)}`,
+          `\nRunning:  ${reported.payloadFingerprint.slice(0, 16)}`,
       );
       return;
     }
