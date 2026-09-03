@@ -1,0 +1,128 @@
+import { expect, test } from "@playwright/test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildContainer } from "../src/core.js";
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * The air-gap checks the paste page runs, lifted out of the component.
+ *
+ * Read from the source rather than restated, for the same reason the
+ * walkthrough's app is: a copy would keep passing while the page shipped
+ * something else. Sharing the patterns properly would mean a module the site
+ * and the tests both import, which is the right shape once a second caller
+ * wants them.
+ */
+function checksOnPage(): RegExp[] {
+  const component = readFileSync(
+    resolve(repo, "website/components/MakeYourOwn.vue"),
+    "utf8",
+  );
+  const block = component.slice(
+    component.indexOf("const CHECKS"),
+    component.indexOf("const findings"),
+  );
+  const patterns = [...block.matchAll(/pattern: \/(.+?)\/([gimsuy]*),\n/g)].map(
+    (match) => new RegExp(match[1] as string, match[2] as string),
+  );
+  if (patterns.length < 5) throw new Error(`Only found ${patterns.length} checks`);
+  return patterns;
+}
+
+const flags = (source: string): boolean =>
+  checksOnPage().some((pattern) => pattern.test(source));
+
+test.describe("what the paste page warns about", () => {
+  // Each of these works on an ordinary web page and fails silently inside a
+  // container, which is the only reason to interrupt somebody with a warning.
+  const rejected: Record<string, string> = {
+    "a CDN script": '<script src="https://cdn.tailwindcss.com"></script>',
+    "a hosted stylesheet": '<link rel="stylesheet" href="https://fonts.googleapis.com/css2">',
+    "a hosted font": '<link href="https://fonts.gstatic.com/x.woff2" rel="preload">',
+    "an API call": "const r = await fetch('/api/notes');",
+    "a websocket": "const s = new WebSocket('wss://example.com');",
+    "a beacon": "navigator.sendBeacon('/t', data);",
+    "browser storage": "localStorage.setItem('notes', JSON.stringify(notes));",
+    "a hosted image": '<img src="https://example.com/logo.png">',
+  };
+
+  for (const [what, source] of Object.entries(rejected)) {
+    test(`warns about ${what}`, () => {
+      expect(flags(source)).toBe(true);
+    });
+  }
+
+  // False positives are expensive here: the audience cannot tell a spurious
+  // warning from a real one, so anything flagged has to actually be broken.
+  const accepted: Record<string, string> = {
+    "inline styles": "<style>body { font-family: system-ui; }</style>",
+    "a relative script": '<script type="module" src="./app.js"></script>',
+    "an inline SVG": '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>',
+    "a data URI image": '<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E">',
+    "the database API": "const db = await window.dai.openDatabase();",
+    "the word fetching in prose": "<p>Fetching is not allowed here.</p>",
+  };
+
+  for (const [what, source] of Object.entries(accepted)) {
+    test(`stays quiet about ${what}`, () => {
+      expect(flags(source)).toBe(false);
+    });
+  }
+});
+
+/**
+ * The page tells visitors a single pasted HTML file becomes a working app.
+ * This builds one the way the page does and opens it, so that claim cannot
+ * quietly stop being true.
+ */
+test("a single pasted file becomes an app that runs", async ({ page }) => {
+  const pasted = [
+    "<!doctype html>",
+    '<html><head><meta charset="UTF-8"><title>Notes</title></head>',
+    '<body><h1>Notes</h1><form id="f"><input id="b" required></form><ul id="l"></ul>',
+    '<script type="module">',
+    "const db = await window.dai.openDatabase();",
+    'db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)");',
+    "function draw() {",
+    "  l.innerHTML = '';",
+    '  for (const row of db.selectObjects("SELECT * FROM notes ORDER BY id")) {',
+    "    const li = document.createElement('li');",
+    "    li.textContent = row.body;",
+    "    l.appendChild(li);",
+    "  }",
+    "}",
+    "f.onsubmit = (e) => {",
+    "  e.preventDefault();",
+    '  db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: [b.value] });',
+    "  b.value = '';",
+    "  draw();",
+    "};",
+    "draw();",
+    "</script></body></html>",
+  ].join("\n");
+
+  expect(flags(pasted)).toBe(false);
+
+  const built = await buildContainer({
+    files: { "index.html": new TextEncoder().encode(pasted) },
+    template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+    runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+    appName: "Notes",
+    wasm: readFileSync(resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm")),
+    glue: readFileSync(resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs")),
+  });
+
+  const file = resolve(mkdtempSync(resolve(tmpdir(), "dai-paste-")), "notes.dai.html");
+  writeFileSync(file, built.html);
+
+  await page.goto(pathToFileURL(file).href);
+  const app = page.frameLocator("iframe");
+
+  await expect(app.locator("h1")).toHaveText("Notes", { timeout: 20_000 });
+  await app.locator("#b").fill("Ring the dentist");
+  await app.locator("#b").press("Enter");
+  await expect(app.locator("li")).toHaveText("Ring the dentist");
+});

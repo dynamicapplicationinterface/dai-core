@@ -26,6 +26,7 @@ export default defineConfig({
     siteTitle: 'DAI Protocol',
     nav: [
       { text: 'Make One', link: '/make-one' },
+      { text: 'Make Your Own', link: '/make-your-own' },
       { text: 'Documentation', link: '/docs/introduction' },
       { text: 'Specification', link: '/docs/specification' },
       { text: 'Host Bridge', link: '/docs/host-bridge' },
@@ -60,6 +61,7 @@ export default defineConfig({
         text: 'Interactive Tools',
         items: [
           { text: 'Make One With AI', link: '/make-one' },
+          { text: 'Make Your Own', link: '/make-your-own' },
           { text: 'In-Browser Playground', link: '/playground' },
           { text: 'See It Break', link: '/tamper-proof' }
         ]
