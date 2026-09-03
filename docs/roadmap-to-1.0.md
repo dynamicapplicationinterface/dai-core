@@ -17,6 +17,7 @@ the work in given that this is a very small team.
 | `connect-src 'none'` does not close navigation, `window.open`, DNS prefetch or WebRTC | **Confirmed** by reading the policy; none of those are governed by it |
 | Meta-CSP must precede `<title>` | **Already true.** Only `<meta charset>` precedes it |
 | The model seals the file | **Copy is wrong, architecture is right.** The MCP server compiles and seals; the model only emits source. The landing card says "the model writes and seals it", which is the sentence to fix, not the design |
+| `documentUuid` is unsigned | **Not true.** It is the second line of `canonicalPayload` and has been signed since signing existed. The real gap is narrower and worth stating exactly: *nothing else* in the manifest is. `appName`, `favicon`, `createdAt`, `algorithm` and `integrityPolicy` can all be edited without invalidating a signature |
 
 ### The finding that matters most
 
@@ -112,8 +113,10 @@ residuals.
   whole file, and a runner can validate a large file by reading a footer.
 - COSE_Sign1 over a CBOR manifest, replacing our hand-rolled canonical string.
   Standard canonical form, algorithm agility, existing verifiers everywhere.
-- `documentUuid` moves inside the signed set. It is currently unsigned and used
-  as an identity key, which is a spoofing vector.
+- The whole manifest comes under the signature. `documentUuid` already is, but
+  `appName`, `favicon` and `integrityPolicy` are not, so a container can be
+  renamed or re-iconed without breaking its signature — which is most of what
+  an impersonation attempt needs.
 - Capabilities as unforgeable `MessagePort` handles rather than permission
   strings: declared in the signed manifest, granted by the host, exercised only
   over a transferred port. `net.fetch` never exists.
@@ -201,10 +204,103 @@ In order, stopping whenever time runs out:
    boundary and a decorative one.
 3. **The schema-diff gate** (0.4, partial). Cheap to build, and it prevents the
    failure that would cost a real user real data.
-4. **Sign the manifest over `documentUuid`** (0.3, partial). A small change that
-   closes a spoofing vector without the full container rewrite.
+4. **Bring the whole manifest under the signature** (0.3, partial). Today only
+   the UUID, the entry digests and the expiry are covered, so a container can
+   be renamed and re-iconed without breaking its signature. Closing that does
+   not require the full container rewrite.
 
 Everything else — the sectioned container, COSE, capabilities, the second
 implementation, the standards track — is what you do once something is being
 used enough that breaking it is expensive. None of it is wrong. All of it is
 premature until the first four are done.
+
+
+---
+
+## The five things that have to be true before approaching the industry
+
+Asked directly: what stands between here and being taken seriously as a
+standard rather than as one company's file format. These are ordered, and the
+order is load-bearing — each one is a precondition for the next being
+believable.
+
+### 1. The isolation boundary has to be real, and reviewed by someone else
+
+Everything else is moot. The first competent reviewer opens the bootloader,
+reads the sandbox attribute, and stops. `allow-same-origin` means the
+application shares an origin with the shell that is meant to contain it; a
+format whose central claim is containment cannot ship that.
+
+The work is the loader rewrite described under 0.2 — the frame minting its own
+blob URLs from transferred bytes — followed by dropping the flags. Then an
+external red-team engagement, and the report published whatever it says.
+
+**Done when:** a paid external review finds no exfiltration path from a
+conforming runner beyond residuals that are documented in the spec.
+
+### 2. Standard crypto framing, and a manifest that is signed in full
+
+`"dai-v1
+" + uuid + digests` is the kind of construction standards reviewers
+reject on sight, not because it is broken but because it is unnecessary — COSE
+(RFC 9052) exists, is canonical, carries algorithm and key identifiers, and has
+verifiers in every language. Ours has one implementation and no reviewers.
+
+The substantive half is that only the UUID, entry digests and expiry are signed
+today. A CBOR manifest signed whole closes that, and it is a precondition for
+capabilities: a capability declared in an unsigned field is not a declaration,
+it is a suggestion.
+
+**Done when:** a container verifies with an off-the-shelf COSE library nobody
+here wrote.
+
+### 3. The container layout is frozen — after the change that makes it last
+
+You cannot standardize a format you intend to break, and the current one has a
+break coming: every save rewrites the entire file, base64 and all, which has no
+future past a few tens of megabytes and no story for two windows on one
+document.
+
+Do the sectioned layout, then freeze. Doing it in the other order means asking
+early adopters to migrate, which is exactly how a format loses the people who
+took a chance on it.
+
+**Done when:** a save touches only the data section, and a runner can validate
+a two-gigabyte file by reading its footer.
+
+### 4. A specification that prescribes rather than describes
+
+Ours documents how the implementation behaves. A standard states what an
+implementation MUST do, in the vocabulary reviewers expect: RFC 2119 keywords,
+CDDL for the CBOR structures, the exact sandbox flag set, the exact CSP, and a
+registry of refusal codes with their meanings.
+
+The test of whether a spec is finished is not whether it reads well. It is
+whether somebody can implement from it **without reading our code** — which is
+what the next item measures.
+
+**Done when:** every normative requirement has a MUST/SHOULD/MAY, and every
+structure has a formal grammar.
+
+### 5. A conformance suite, and a second implementation written only from the spec
+
+This is the bar every standards body applies, and it is the one that cannot be
+faked. A suite of a few hundred cases across packaging, crypto, sandbox,
+persistence and the bridge — as data, not as our test framework, so anybody can
+run it against anything.
+
+Then a second implementation. The value is not the second implementation; it is
+that writing one from the spec alone is the only reliable way to discover the
+spec is wrong. Every ambiguity surfaces as a disagreement between the two.
+
+**Done when:** two implementations that share no code pass the same suite, and
+a file written by either opens in the other.
+
+---
+
+### What not to do first
+
+Not approach a standards body before these exist. A W3C Community Group or an
+IETF submission will ask for precisely these artifacts, and arriving without
+them spends the only first impression available. The sequence is: make it true,
+write it down, prove it twice, then go.
