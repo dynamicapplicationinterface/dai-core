@@ -346,7 +346,7 @@ One thing checked on the way and found already sound: `signedEntries` is
 reconciled against `hashes` before the signature is verified, so a container
 cannot be verified against digests other than the ones just checked.
 
-### 5. Make a save stop rewriting the entire file — **layout landed, wiring next**
+### 5. Make a save stop rewriting the entire file — **landed, unmerged**
 
 Today every save exports the database, deflates it, base64-encodes it, splices
 it into a string of HTML and structured-clones the result: five copies and time
@@ -368,10 +368,22 @@ end. A save replaces the data section and advances a generation counter; the
 manifest and payload are copied through byte-identical, so a publisher's
 signature survives a save made by somebody holding no key.
 
-Still to do, and each is its own piece of work: the compiler emitting it, the
-readers accepting either form, a host writing the data section in place rather
-than rebuilding the file in memory, locking, and the COSE manifest that now
-belongs in this release rather than ahead of it.
+The compiler emits it behind `dai build --dai`, and the readers accept either
+form — recognised by the leading magic rather than by a file extension, since a
+container that arrived as bytes could be either. Both forms carry the same
+signature, because they are two encodings of one build rather than two builds.
+
+One decision worth recording. In the sectioned form the manifest does not
+describe the database: the footer does. That is not a loss of coverage.
+`signedEntries` never included the database, because a container holds no
+private key and cannot re-sign after a save, so the digest in `hashes` was only
+ever a note that whoever saved last was free to write. Moving it to the footer
+is what allows a save to leave the manifest — and therefore the publisher's
+signature — untouched, which the tests now assert directly.
+
+Still to do: a host writing the data section in place rather than rebuilding
+the file in memory, locking for two windows on one document, and the COSE
+manifest, which belongs in this release rather than ahead of it.
 
 ---
 

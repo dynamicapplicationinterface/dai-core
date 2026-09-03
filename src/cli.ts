@@ -26,6 +26,10 @@ Build options:
       --seed <path>       Start from this SQLite database
       --uuid <uuid>       Reuse a document identity instead of minting one
       --valid-until <s>   Unix seconds after which hosts should refuse it
+      --dai               Write the sectioned binary container instead of the
+                          polyglot HTML. Passed by mail gateways that
+                          quarantine .html, and saved without rewriting the
+                          whole file.
       --no-verify         Build a container that does not demand verification
       --quiet             Print only the output path
 
@@ -119,14 +123,18 @@ async function build(parsed: Parsed): Promise<number> {
     documentUuid: typeof flags.uuid === "string" ? flags.uuid : undefined,
     validUntil,
     verifyIntegrity: flags.verify === false ? false : undefined,
+    sectioned: flags.dai === true,
   });
 
+  const sectioned = flags.dai === true;
+  const extension = sectioned ? ".dai" : ".dai.html";
   const out =
     typeof flags.out === "string"
       ? resolve(process.cwd(), flags.out)
-      : resolve(process.cwd(), `${sanitizeFileName(result.manifest.appName)}.dai.html`);
+      : resolve(process.cwd(), `${sanitizeFileName(result.manifest.appName)}${extension}`);
 
-  writeFileSync(out, result.html, "utf8");
+  if (sectioned) writeFileSync(out, result.dai as Uint8Array);
+  else writeFileSync(out, result.html, "utf8");
 
   if (quiet) {
     process.stdout.write(`${out}\n`);
@@ -160,7 +168,9 @@ async function verify(parsed: Parsed): Promise<number> {
   }
 
   const path = resolve(process.cwd(), target);
-  const report = await auditContainer(parseContainer(readFileSync(path, "utf8")));
+  // Read as bytes, not text: the sectioned form is a binary and decoding it as
+  // UTF-8 would corrupt it before the reader ever saw the magic.
+  const report = await auditContainer(parseContainer(new Uint8Array(readFileSync(path))));
 
   if (report.unavailable) {
     process.stderr.write(`${report.unavailable}\n`);

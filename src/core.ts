@@ -11,6 +11,7 @@
  * verifies. Using the Node API here would have kept the core off the web.
  */
 import { zipSync, type Zippable } from "fflate";
+import { writeContainerFile } from "./format.js";
 
 /** Bumped when the manifest's shape changes. */
 export const MANIFEST_VERSION = 1;
@@ -435,6 +436,46 @@ export function canonicalPayload(view: SignedView): string {
     payload += line(name, view.entries[name] as string);
   }
   return payload;
+}
+
+/**
+ * The same container, in the sectioned binary form.
+ *
+ * Built from a finished result rather than by a second compile, so both forms
+ * describe the identical application and carry the identical signature.
+ *
+ * The manifest written here drops the database's digest. That is not a loss:
+ * `signedEntries` never included it, because a container holds no key to
+ * re-sign with after a save, so the digest in `hashes` was only ever a
+ * consistency note that whoever saved last was free to set. In this form the
+ * footer records it instead, and the footer is rewritten by the same act that
+ * changes the database — which is what allows a save to leave the manifest,
+ * and therefore the signature, untouched.
+ */
+export async function toSectionedContainer(
+  built: BuildContainerResult,
+  options: { sqliteEntryName?: string } = {},
+): Promise<Uint8Array> {
+  const sqliteEntry = options.sqliteEntryName ?? DEFAULT_SQLITE_ENTRY;
+
+  const hashes: Record<string, string> = {};
+  for (const [name, digest] of Object.entries(built.manifest.hashes)) {
+    if (name !== sqliteEntry) hashes[name] = digest;
+  }
+
+  const payload: Zippable = {};
+  for (const [name, bytes] of Object.entries(built.archive)) {
+    if (name === MANIFEST_ENTRY || name === sqliteEntry) continue;
+    payload[name] = bytes;
+  }
+
+  return writeContainerFile({
+    manifest: new TextEncoder().encode(
+      JSON.stringify({ ...built.manifest, hashes }, null, 2) + "\n",
+    ),
+    payload: zipSync(payload, { level: 9 }),
+    data: built.archive[sqliteEntry] ?? new Uint8Array(0),
+  });
 }
 
 /**

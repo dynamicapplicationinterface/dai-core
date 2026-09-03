@@ -12,6 +12,13 @@
  */
 import { unzipSync, zipSync } from "fflate";
 import {
+  MAGIC,
+  SECTION,
+  readContainerFile,
+  sectionBytes,
+  verifyContainerFile,
+} from "./format.js";
+import {
   CONTAINER_ENTRY,
   MANIFEST_ENTRY,
   canonicalPayload,
@@ -54,6 +61,15 @@ export interface ParsedContainer {
   publicKeyFingerprint?: string;
   /** The current database, for hosts that keep their own copy. */
   database: Uint8Array;
+  /**
+   * Present only for the sectioned form, so the audit can check the table and
+   * the footer as well as the entries.
+   *
+   * Carried rather than checked here because parsing is synchronous and a
+   * digest is not. Reading what a file claims and deciding whether the claim
+   * holds are separate acts in this module, and this keeps them so.
+   */
+  sectioned?: { bytes: Uint8Array };
 }
 
 export interface VerifiedContainer extends ParsedContainer {
@@ -86,6 +102,11 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
   // publisher key and the integrity policy, and is itself sealed inside the
   // payload; an archive on its own has no key to check a signature against and
   // nothing to compare a seal to, so it could be parsed but never verified.
+  // The sectioned form is recognised by its leading magic, which is why the
+  // magic is there. A container that arrived as bytes could be either, and
+  // guessing from a file extension would be guessing.
+  if (typeof source !== "string" && looksSectioned(source)) return parseSectioned(source);
+
   const html = typeof source === "string" ? source : new TextDecoder().decode(source);
 
   const payload = PAYLOAD_RE.exec(html)?.[1]?.trim();
@@ -126,6 +147,73 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
     publicKey,
     publicKeyFingerprint: manifest.publicKeyFingerprint,
     database: archive[SQLITE_ENTRY] ?? new Uint8Array(0),
+  };
+}
+
+/** True when these bytes begin with the sectioned container's magic. */
+function looksSectioned(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength >= MAGIC.byteLength &&
+    MAGIC.every((byte, index) => bytes[index] === byte)
+  );
+}
+
+/**
+ * The sectioned form, presented as the same shape the rest of this module reads.
+ *
+ * The shell is recovered from the payload rather than being the file itself:
+ * in this form the file is a binary, and the shell it carries is what holds the
+ * publisher key and the integrity policy. Everything downstream — the digest
+ * check, the signature check, the audit — then works unchanged on either form.
+ *
+ * The database is placed back under its entry name so a host can read it, but
+ * it is deliberately absent from the manifest's digests here. A save rewrites
+ * the data section and the footer and touches nothing else, which is what lets
+ * a container be saved by somebody holding no key; a digest in the manifest
+ * would go stale on the first save and could not be corrected.
+ */
+function parseSectioned(bytes: Uint8Array): ParsedContainer {
+  const file = readContainerFile(bytes);
+
+  const manifestBytes = sectionBytes(bytes, file, SECTION.MANIFEST);
+  const payloadBytes = sectionBytes(bytes, file, SECTION.PAYLOAD);
+  if (!manifestBytes || !payloadBytes) {
+    throw new ContainerError("This container is missing a manifest or a payload section.");
+  }
+
+  let archive: Record<string, Uint8Array>;
+  try {
+    archive = unzipSync(payloadBytes);
+  } catch (cause) {
+    throw new ContainerError(`The container's payload could not be read (${String(cause)}).`);
+  }
+
+  let manifest: ContainerManifest;
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as ContainerManifest;
+  } catch (cause) {
+    throw new ContainerError(`The container's manifest is unreadable (${String(cause)}).`);
+  }
+
+  const shell = archive[CONTAINER_ENTRY];
+  if (!shell) {
+    throw new ContainerError(
+      `This container has no ${CONTAINER_ENTRY}, so its publisher key cannot be read.`,
+    );
+  }
+  const html = new TextDecoder().decode(shell);
+
+  archive[MANIFEST_ENTRY] = manifestBytes;
+
+  return {
+    html,
+    archive,
+    manifest,
+    integrityPolicy: metaContent(html, "dai-integrity") ?? "unknown",
+    publicKey: metaContent(html, "dai-public-key") || undefined,
+    publicKeyFingerprint: manifest.publicKeyFingerprint,
+    database: sectionBytes(bytes, file, SECTION.DATA) ?? new Uint8Array(0),
+    sectioned: { bytes },
   };
 }
 
@@ -285,6 +373,14 @@ export interface AuditReport {
     reason?: string;
   };
   expiry: { status: "none" | "current" | "expired"; validUntil?: number };
+  /** Present only for the sectioned form. */
+  sections?: {
+    mismatched: number[];
+    /** The footer disagrees with the database it describes. */
+    staleFooter: boolean;
+    /** How many times this document has been saved. */
+    generation: number;
+  };
   /** Set when the environment prevented checking rather than a container failing. */
   unavailable?: string;
 }
@@ -375,6 +471,23 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
     };
   }
 
+  /*
+   * The table and the footer, for a sectioned container.
+   *
+   * Without this the entry digests are the only check, and they are computed
+   * after the payload has been unzipped — so a byte altered in the archive's
+   * own framing, rather than in an entry, would survive unnoticed. The section
+   * digest covers every byte of the section, framing included.
+   */
+  if (parsed.sectioned) {
+    const audit = await verifyContainerFile(parsed.sectioned.bytes);
+    report.sections = {
+      mismatched: audit.mismatched,
+      staleFooter: audit.staleFooter,
+      generation: audit.file.generation,
+    };
+  }
+
   if (parsed.publicKey) {
     report.signature.fingerprint = manifest.publicKeyFingerprint;
     try {
@@ -393,6 +506,8 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
   }
 
   report.ok =
+    (!report.sections ||
+      (report.sections.mismatched.length === 0 && !report.sections.staleFooter)) &&
     report.entries.every((entry) => entry.status === "ok") &&
     report.shell.status === "ok" &&
     report.expiry.status !== "expired" &&
@@ -417,6 +532,24 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
   // drift, and the drift would surface as a playground passing what a host
   // refuses.
   if (report.unavailable) throw new ContainerError(report.unavailable);
+
+  // Reported before the entries, because a section digest covers every byte of
+  // a section and an entry digest covers only what unzipped out of one. When
+  // both fail, the section is the more precise account of what changed.
+  if (report.sections) {
+    if (report.sections.mismatched.length > 0) {
+      throw new ContainerError(
+        "This container has been modified and will not be run.\n" +
+          `section ${report.sections.mismatched.join(", ")} does not match its digest`,
+      );
+    }
+    if (report.sections.staleFooter) {
+      throw new ContainerError(
+        "This container's database does not match the record of it kept at the end of " +
+          "the file. It has been modified outside its own save path and will not be run.",
+      );
+    }
+  }
 
   const broken = report.entries.filter((entry) => entry.status !== "ok");
   if (broken.length > 0) {

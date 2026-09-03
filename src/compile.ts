@@ -22,6 +22,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildContainer,
+  toSectionedContainer,
   DEFAULT_APP_PREFIX,
   DEFAULT_GLUE_ENTRY,
   DEFAULT_WASM_ENTRY,
@@ -56,6 +57,13 @@ export interface CompileOptions {
   validUntil?: number;
   verifyIntegrity?: boolean;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  /**
+   * Also produce the sectioned binary container.
+   *
+   * Both forms describe the same application and carry the same signature, so
+   * this is a second encoding of one build rather than a second build.
+   */
+  sectioned?: boolean;
   appEntryPrefix?: string;
   sqliteEntryName?: string;
   wasmEntryName?: string;
@@ -64,6 +72,8 @@ export interface CompileOptions {
 }
 
 export interface CompileResult extends BuildContainerResult {
+  /** The sectioned binary form, present only when it was asked for. */
+  dai?: Uint8Array;
   /** What was packaged, for a caller that wants to say so. */
   engine: "sqlite3 + glue embedded" | "sqlite3.wasm only" | "no sqlite engine";
   entryCount: number;
@@ -190,6 +200,9 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
 
   return {
     ...built,
+    dai: options.sectioned
+      ? await toSectionedContainer(built, { sqliteEntryName: options.sqliteEntryName })
+      : undefined,
     engine: wasmPath
       ? gluePath
         ? "sqlite3 + glue embedded"
