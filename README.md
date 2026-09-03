@@ -474,6 +474,16 @@ success, cancellation and unsupported paths are driven by stand-ins injected
 with `page.addInitScript()`, making them deterministic everywhere. The
 `<a download>` path is exercised for real on every engine.
 
+## Deploying
+
+```bash
+npm run deploys   # which commit each site is actually serving
+```
+
+Production is promoted by hand, so a push is not a release. [The deploy
+notes](docs/deploying.md) cover that and the one file staging trap that has
+caught us before.
+
 ## Conformance
 
 ```bash

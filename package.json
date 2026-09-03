@@ -80,6 +80,7 @@
     "build:desktop": "vite build apps/desktop",
     "build:all": "tsup && node scripts/build-demo-cartridge.js && vite build apps/runner && vite build examples/web-studio && vite build apps/desktop",
     "conformance": "node scripts/build-conformance.mjs",
+    "deploys": "node scripts/check-deploys.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json",
     "prepublishOnly": "npm run build",
