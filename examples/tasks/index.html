@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tasks</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="2" y="2" width="20" height="20" rx="6" />
+            <path d="M7 12.5l3.2 3.2L17 9" />
+          </svg>
+          <span>Tasks</span>
+        </div>
+
+        <nav class="projects" aria-label="Projects">
+          <p class="rail-label">Projects</p>
+          <ul id="projects"></ul>
+        </nav>
+
+        <form class="new-project" id="new-project" autocomplete="off">
+          <button class="swatch" type="button" id="swatch" aria-label="Choose a colour"></button>
+          <input id="project-name" type="text" placeholder="New project" maxlength="40" />
+          <button class="icon-button" type="submit" aria-label="Add project">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" /></svg>
+          </button>
+        </form>
+
+        <div class="rail-foot">
+          <div class="meter" id="meter">
+            <div class="meter-fill" id="meter-fill"></div>
+          </div>
+          <p class="meter-label" id="meter-label">Nothing to do</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="masthead">
+          <div class="masthead-text">
+            <h1 id="heading">All tasks</h1>
+            <p class="subhead" id="subhead"></p>
+          </div>
+          <button class="save" id="save" type="button">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M4.5 4.5h8.7L16 7.3v8.2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5.5a1 1 0 0 1 .5-1z" />
+              <path d="M7.5 4.5v3.7h5M7.5 16.5v-4.7h5v4.7" />
+            </svg>
+            <span id="save-label">Save</span>
+          </button>
+        </header>
+
+        <form class="compose" id="compose" autocomplete="off">
+          <div class="compose-row">
+            <span class="compose-plus" aria-hidden="true">
+              <svg viewBox="0 0 20 20"><path d="M10 4.5v11M4.5 10h11" /></svg>
+            </span>
+            <input id="what" type="text" placeholder="Add a task" maxlength="200" required />
+            <button class="primary" type="submit">Add</button>
+          </div>
+
+          <div class="compose-detail" id="compose-detail">
+            <label class="field">
+              <span>Project</span>
+              <select id="compose-project"></select>
+            </label>
+            <label class="field">
+              <span>Priority</span>
+              <select id="compose-priority">
+                <option value="3">Urgent</option>
+                <option value="2">High</option>
+                <option value="1" selected>Normal</option>
+                <option value="0">Low</option>
+              </select>
+            </label>
+            <label class="field field-grow">
+              <span>Tags</span>
+              <input id="compose-tags" type="text" placeholder="design, monday" maxlength="120" />
+            </label>
+          </div>
+        </form>
+
+        <div class="toolbar">
+          <div class="segmented" id="filters" role="tablist" aria-label="Filter">
+            <button role="tab" type="button" data-filter="all" class="is-active">All</button>
+            <button role="tab" type="button" data-filter="active">Active</button>
+            <button role="tab" type="button" data-filter="done">Done</button>
+          </div>
+
+          <label class="sort">
+            Sort
+            <select id="sort">
+              <option value="priority">Priority</option>
+              <option value="added">Recently added</option>
+              <option value="alpha">Alphabetical</option>
+            </select>
+          </label>
+        </div>
+
+        <ul class="list" id="list"></ul>
+
+        <div class="empty" id="empty" hidden>
+          <svg viewBox="0 0 140 108" aria-hidden="true">
+            <rect class="sheet sheet-back" x="34" y="14" width="72" height="82" rx="10" />
+            <rect class="sheet" x="24" y="22" width="72" height="82" rx="10" />
+            <path class="rule" d="M38 46h44M38 60h44M38 74h26" />
+            <circle class="badge" cx="102" cy="78" r="18" />
+            <path class="badge-tick" d="M94 78l6 6 12-13" />
+          </svg>
+          <p class="empty-title" id="empty-title">Nothing here yet</p>
+          <p class="empty-note" id="empty-note">Add your first task above.</p>
+        </div>
+
+        <footer class="statusbar">
+          <span id="count"></span>
+          <button class="quiet" id="clear" type="button" hidden>Clear completed</button>
+        </footer>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

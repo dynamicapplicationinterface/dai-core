@@ -61,48 +61,27 @@ const privateKey = await crypto.subtle.importKey(
 );
 const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64");
 
-const indexHtml = `<!doctype html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Signed Sample</title>
-<style>
-  body { font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 40px;
-         background: #0f172a; color: #e2e8f0; text-align: center; }
-  .card { max-width: 30rem; margin: 0 auto; padding: 32px; background: #1e293b;
-          border: 1px solid #334155; border-radius: 12px; }
-  h1 { margin: 0 0 8px; font-size: 20px; }
-  p { margin: 8px 0; color: #94a3b8; }
-  strong { color: #4ade80; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <h1>This cartridge is intact</h1>
-    <p>Every entry matched the digest recorded when it was sealed, and the
-       signature matched the publisher key it carries.</p>
-    <p id="proof">checking…</p>
-  </div>
-  <script src="./app.js"></script>
-</body>
-</html>`;
-
-const appJs = `// Reports what the container knows about itself, so the page is evidence
-// rather than a claim printed in HTML.
-const proof = document.getElementById("proof");
-const dai = window.dai;
-proof.innerHTML = dai
-  ? "Document <strong>" + dai.documentUuid.slice(0, 8) + "</strong>, signature <strong>" +
-    dai.signature + "</strong>."
-  : "Opened without a DAI runtime.";
-`;
+// The demonstration pair packages the real example, so the file a visitor
+// inspects on the tamper page is the same application the walkthrough builds.
+const exampleDir = resolve(root, "examples/tasks");
+const files = Object.fromEntries(
+  ["index.html", "app.css", "app.js"].map((name) => [
+    name,
+    new Uint8Array(readFileSync(resolve(exampleDir, name))),
+  ]),
+);
 
 const built = await buildContainer({
-  files: {
-    "index.html": new TextEncoder().encode(indexHtml),
-    "app.js": new TextEncoder().encode(appJs),
-  },
+  files,
   template,
   runtime,
-  appName: "Signed Sample",
+  appName: "Tasks",
+  wasm: new Uint8Array(
+    readFileSync(resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm")),
+  ),
+  glue: new Uint8Array(
+    readFileSync(resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs")),
+  ),
   signingKey: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----`,
   documentUuid: DOCUMENT_UUID,
   now: () => BUILT_AT,
@@ -114,13 +93,13 @@ writeFileSync(resolve(out, "sample-intact.dai"), built.html, "utf8");
 const payload = built.html.match(/id="dai-payload">([\s\S]*?)<\/script>/)[1].trim();
 const archive = unzipSync(Buffer.from(payload, "base64"));
 
+// The edit is deliberately trivial and invisible: a changed title, nothing
+// else touched. A tamper demonstration that relies on obviously broken content
+// proves only that broken content looks broken.
 archive["app/index.html"] = new TextEncoder().encode(
-  indexHtml
-    .replace("This cartridge is intact", "This cartridge was altered")
-    .replace(
-      "Every entry matched the digest recorded when it was sealed, and the\n       signature matched the publisher key it carries.",
-      "One entry was replaced after sealing. Nothing else was touched.",
-    ),
+  new TextDecoder()
+    .decode(files["index.html"])
+    .replace("<title>Tasks</title>", "<title>Tasks (altered)</title>"),
 );
 
 const tampered = built.html.replace(

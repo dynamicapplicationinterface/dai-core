@@ -8,29 +8,21 @@ import { buildContainer } from "../src/core.js";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
- * Pulls the application the walkthrough shows out of the component itself.
+ * The example the walkthrough shows and the command line compiles.
  *
- * Reading it from the source rather than restating it here is the whole point:
- * the site promises that the code on screen is the code that gets compiled, so
- * a test that kept its own copy would keep passing while the site shipped
- * something else.
+ * Read from the repository, because that is where it lives now: the component
+ * imports these same files with ?raw, so a test that kept its own copy could
+ * pass while the site handed out something else.
  */
-function applicationOnScreen(): { html: string; script: string } {
-  const component = readFileSync(
-    resolve(repo, "website/components/MakerWalkthrough.vue"),
-    "utf8",
+function applicationOnScreen(): Record<string, Uint8Array> {
+  const dir = resolve(repo, "examples/tasks");
+  const encoder = new TextEncoder();
+  return Object.fromEntries(
+    ["index.html", "app.css", "app.js"].map((name) => [
+      name,
+      encoder.encode(readFileSync(resolve(dir, name), "utf8")),
+    ]),
   );
-  const literal = (name: string): string => {
-    const marker = "const " + name + " = ";
-    const at = component.indexOf(marker);
-    if (at < 0) throw new Error("MakerWalkthrough.vue no longer defines " + name);
-    const from = component.indexOf("`", at) + 1;
-    const to = component.indexOf("`", from);
-    // The component escapes the closing script tag so it can sit in a template
-    // literal inside a `<script setup>` block.
-    return component.slice(from, to).split("<" + String.fromCharCode(92) + "/script>").join("</script>");
-  };
-  return { html: literal("APP_SOURCE"), script: literal("APP_SCRIPT") };
 }
 
 /**
@@ -42,21 +34,16 @@ function applicationOnScreen(): { html: string; script: string } {
  * an app that mounted and then did nothing.
  */
 test("the app the walkthrough hands out actually runs", async ({ page }) => {
-  const source = applicationOnScreen();
-
   const built = await buildContainer({
-    files: {
-      "index.html": new TextEncoder().encode(source.html),
-      "app.js": new TextEncoder().encode(source.script),
-    },
+    files: applicationOnScreen(),
     template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
     runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
-    appName: "My Tasks",
+    appName: "Tasks",
     wasm: readFileSync(resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm")),
     glue: readFileSync(resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs")),
   });
 
-  const file = resolve(mkdtempSync(resolve(tmpdir(), "dai-maker-")), "my-tasks.dai.html");
+  const file = resolve(mkdtempSync(resolve(tmpdir(), "dai-maker-")), "tasks.dai.html");
   writeFileSync(file, built.html);
 
   const failures: string[] = [];
@@ -66,15 +53,25 @@ test("the app the walkthrough hands out actually runs", async ({ page }) => {
   await page.goto(pathToFileURL(file).href);
   const app = page.frameLocator("iframe");
 
-  await expect(app.locator("h1")).toHaveText("My Tasks", { timeout: 20_000 });
+  // The seeded rows, which also prove SQLite booted and the schema ran. The
+  // heading is not evidence: it is in the static HTML and renders even when the
+  // application has died, which is how an earlier version of this test passed
+  // against an app that did nothing at all.
+  await expect(app.locator(".task")).toHaveCount(4, { timeout: 20_000 });
 
   await app.locator("#what").fill("Buy milk");
   await app.locator("#what").press("Enter");
-  await expect(app.locator("li span")).toHaveText("Buy milk");
+  await expect(app.locator(".task")).toHaveCount(5);
 
-  // SQLite is doing the work; a checkbox that sticks proves the write landed.
-  await app.locator('li input[type="checkbox"]').check();
-  await expect(app.locator("li")).toHaveClass(/done/);
+  await app.locator('.task:has-text("Buy milk") .check').check();
+  await expect(app.locator('.task:has-text("Buy milk")')).toHaveClass(/is-done/);
+
+  // Filtering is a query, so this exercises the database rather than the DOM.
+  await app.locator('button[data-filter="active"]').click();
+  await expect(app.locator('.task:has-text("Buy milk")')).toHaveCount(0);
+
+  await app.locator('button[data-filter="done"]').click();
+  await expect(app.locator('.task:has-text("Buy milk")')).toHaveCount(1);
 
   expect(failures.filter((text) => !/favicon/i.test(text))).toEqual([]);
 });

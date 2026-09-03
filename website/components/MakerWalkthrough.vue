@@ -14,68 +14,27 @@
 import { computed, ref } from 'vue';
 import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
 
-const APP_SOURCE = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>My Tasks</title>
-  <style>
-    body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem;
-           margin: 40px auto; padding: 0 20px; }
-    li { display: flex; gap: 10px; padding: 8px 0;
-         border-bottom: 1px solid #e5e7eb; }
-    li.done span { text-decoration: line-through; color: #9ca3af; }
-    input[type=text] { flex: 1; padding: 8px; font: inherit; }
-  </style>
-</head>
-<body>
-  <h1>My Tasks</h1>
-  <form id="add"><input type="text" id="what" placeholder="Add a task…" required /></form>
-  <ul id="list"></ul>
-  <p><button id="save">Save into this file</button> <em id="note"></em></p>
-  <script type="module" src="./app.js"><\/script>
-</body>
-</html>`;
+/*
+ * The example, imported from the repository rather than copied into this file.
+ * It is the same source the command line compiles and the tests drive, so the
+ * code shown on this page cannot drift from the file the visitor downloads.
+ */
+import APP_HTML from '../../examples/tasks/index.html?raw';
+import APP_CSS from '../../examples/tasks/app.css?raw';
+import APP_JS from '../../examples/tasks/app.js?raw';
 
-const APP_SCRIPT = `// The database lives inside this file. Nothing is sent anywhere.
-const dai = window.dai;
-const db = await dai.openDatabase();
-db.exec("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, what TEXT, done INT DEFAULT 0)");
-
-function render() {
-  const rows = db.selectObjects("SELECT * FROM tasks ORDER BY id");
-  list.innerHTML = "";
-  for (const row of rows) {
-    const li = document.createElement("li");
-    li.className = row.done ? "done" : "";
-    li.innerHTML = '<input type="checkbox" ' + (row.done ? "checked" : "") + '>' +
-                   "<span>" + row.what + "</span>";
-    li.querySelector("input").onchange = (e) => {
-      db.exec({ sql: "UPDATE tasks SET done=? WHERE id=?", bind: [e.target.checked ? 1 : 0, row.id] });
-      render();
-    };
-    list.appendChild(li);
-  }
-}
-
-add.onsubmit = (e) => {
-  e.preventDefault();
-  db.exec({ sql: "INSERT INTO tasks (what) VALUES (?)", bind: [what.value] });
-  what.value = "";
-  render();
-};
-
-save.onclick = async () => {
-  const result = await dai.saveDatabase(db);
-  note.textContent = result.saved ? "Saved." : "Save cancelled.";
-};
-
-render();`;
+const FILES: { name: string; source: string }[] = [
+  { name: 'index.html', source: APP_HTML },
+  { name: 'app.css', source: APP_CSS },
+  { name: 'app.js', source: APP_JS },
+];
+const openFile = ref(0);
 
 interface Turn {
   who: 'you' | 'assistant';
   text: string;
-  code?: string;
+  /** Whether this turn shows the application source. */
+  files?: boolean;
 }
 
 const TRANSCRIPT: Turn[] = [
@@ -86,9 +45,9 @@ const TRANSCRIPT: Turn[] = [
   {
     who: 'assistant',
     text:
-      'Here is a small task list. It stores everything in a SQLite database that lives ' +
-      'inside the file itself, so there is no server and no account.',
-    code: APP_SOURCE,
+      'Here is a task list with projects, priorities and tags. It keeps everything in a ' +
+      'SQLite database that lives inside the file itself, so there is no server and no account.',
+    files: true,
   },
   { who: 'you', text: 'Great — how do I actually use it? I do not know how to put it online.' },
   {
@@ -138,7 +97,7 @@ async function build(): Promise<void> {
     log('Minting a signing key in this browser…');
     log('Sealing everything into one file…');
     const built = await compileInBrowser({
-      files: { 'index.html': APP_SOURCE, 'app.js': APP_SCRIPT },
+      files: Object.fromEntries(FILES.map((file) => [file.name, file.source])),
       appName: 'My Tasks',
       assets,
     });
@@ -174,7 +133,19 @@ async function build(): Promise<void> {
         <div class="who">{{ turn.who === 'you' ? 'You' : 'Assistant' }}</div>
         <div class="body">
           <p>{{ turn.text }}</p>
-          <pre v-if="turn.code"><code>{{ turn.code }}</code></pre>
+          <div v-if="turn.files" class="files">
+            <div class="tabs">
+              <button
+                v-for="(file, at) in FILES"
+                :key="file.name"
+                :class="{ 'is-open': openFile === at }"
+                @click="openFile = at"
+              >
+                {{ file.name }}
+              </button>
+            </div>
+            <pre><code>{{ FILES[openFile].source }}</code></pre>
+          </div>
         </div>
       </div>
     </div>
@@ -237,10 +208,17 @@ async function build(): Promise<void> {
 .turn.assistant { background: var(--vp-c-bg-alt); }
 .who { font-size: 12px; color: var(--vp-c-text-2); padding-top: 2px; }
 .body p { margin: 0 0 8px; }
+.files { border: 1px solid var(--vp-c-divider); border-radius: 8px; overflow: hidden; }
+.tabs { display: flex; background: var(--vp-c-bg); border-bottom: 1px solid var(--vp-c-divider); }
+.tabs button {
+  padding: 7px 14px; border: 0; background: none; cursor: pointer;
+  font-family: var(--vp-font-family-mono); font-size: 12px; color: var(--vp-c-text-2);
+  border-bottom: 2px solid transparent;
+}
+.tabs button.is-open { color: var(--vp-c-text-1); border-bottom-color: var(--vp-c-brand-1); }
 .body pre {
   margin: 0; padding: 12px; max-height: 260px; overflow: auto;
-  font-size: 12px; background: var(--vp-c-bg); border: 1px solid var(--vp-c-divider);
-  border-radius: 8px;
+  font-size: 12px; background: var(--vp-c-bg); border: 0;
 }
 .step { margin-top: 32px; }
 button {
