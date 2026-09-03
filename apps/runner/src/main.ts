@@ -304,6 +304,28 @@ fileInput.addEventListener("change", () => {
   if (file) void ingest(file);
 });
 
+/*
+ * Files the operating system hands us.
+ *
+ * The manifest registers this app as a handler for .dai, which is what puts it
+ * in the "open with" list and makes a tap on an attachment reach us. Declaring
+ * that without consuming the launch is worse than not declaring it: the app
+ * opens, shows an empty library, and the person is left thinking the file
+ * failed to open.
+ */
+const launch = (window as unknown as { launchQueue?: { setConsumer(fn: (p: LaunchParams) => void): void } })
+  .launchQueue;
+
+interface LaunchParams {
+  files?: FileSystemFileHandle[];
+}
+
+launch?.setConsumer((params: LaunchParams) => {
+  const handle = params.files?.[0];
+  if (!handle) return;
+  void handle.getFile().then((file) => ingest(file));
+});
+
 // Render library on page boot
 void refreshLibrary();
 
