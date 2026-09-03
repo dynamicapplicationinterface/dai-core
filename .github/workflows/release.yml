@@ -1,0 +1,78 @@
+name: release
+
+# Tag a version and the installers build themselves:
+#
+#   npm version 0.1.1 && git push --follow-tags
+#
+# Built on the platforms they target, because a Windows installer cannot be
+# produced on a Mac or the other way round. Doing it here rather than by hand
+# also means every release is built from a known commit by a machine nobody has
+# been developing on.
+on:
+  push:
+    tags: ["v*"]
+  # So the workflow can be proven before a tag is ever pushed.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      # One platform failing should not throw away an installer the other
+      # already produced.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            # Both architectures in one bundle: Apple silicon and Intel.
+            args: --target universal-apple-darwin
+          - os: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # The desktop app stages the container runtime out of the root package's
+      # build, so the root has to be installed and built first.
+      - run: npm ci
+      - run: npm run build
+
+      - run: npm ci
+        working-directory: apps/desktop
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-dev' }}
+          releaseName: DAI Desktop ${{ github.ref_type == 'tag' && github.ref_name || 'dev build' }}
+          releaseBody: |
+            Installers for the DAI desktop app.
+
+            These are **not code-signed yet**, so the first launch needs a
+            detour: on Windows choose *More info → Run anyway*, and on macOS
+            right-click the app and choose *Open*.
+
+            A file built with this app is the same file the command line
+            builds, and opens on a machine that has never seen this installer.
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          args: ${{ matrix.args }}

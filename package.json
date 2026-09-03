@@ -52,6 +52,7 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "npm run build",
     "build:runner": "vite build apps/runner",
     "build:studio": "vite build examples/web-studio",
     "build:desktop": "vite build apps/desktop",
