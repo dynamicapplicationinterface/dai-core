@@ -187,6 +187,18 @@ function toArrayBuffer(view: Uint8Array): ArrayBuffer {
 interface Manifest {
   manifestVersion: number;
   documentUuid: string;
+  /*
+   * Descriptive fields, listed because the signature covers them.
+   *
+   * They were absent while only the identity and the digests were signed, and
+   * the runtime had no reason to read them. Now that the signed view includes
+   * them, a verifier that did not know they existed would rebuild the wrong
+   * bytes and reject every signed container.
+   */
+  appName: string;
+  favicon?: string;
+  createdAt: string;
+  integrityPolicy: string;
   algorithm: string;
   hashes: Record<string, string>;
   signatureAlgorithm?: string;
