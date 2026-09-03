@@ -63,6 +63,21 @@ const CHECKS: Check[] = [
     fix: "Use an inline SVG, a data: URI, or an emoji instead of a hosted image.",
   },
   {
+    // Deliberately precise about which attribute names count, so that `a < b`
+    // followed by an assignment somewhere in a script block cannot be mistaken
+    // for markup.
+    id: "inline-event-handler",
+    pattern:
+      /<[a-z][a-z0-9-]*[^>]*\son(?:click|dblclick|change|input|submit|reset|focus|blur|keydown|keyup|keypress|mouseover|mouseout|mouseenter|mouseleave|mousedown|mouseup|load|error|scroll|touchstart|touchend|drop|dragover)\s*=/i,
+    what: "It handles events with an attribute, like onclick.",
+    why:
+      "A container does not allow inline script, so the attribute never runs and the " +
+      "control does nothing at all when it is used — with no error to explain why.",
+    fix:
+      "Give the element an id and attach the handler in script instead: " +
+      "document.getElementById(\"save\").addEventListener(\"click\", …).",
+  },
+  {
     id: "browser-storage",
     pattern: /localStorage|sessionStorage|indexedDB/i,
     what: "It saves data in browser storage.",

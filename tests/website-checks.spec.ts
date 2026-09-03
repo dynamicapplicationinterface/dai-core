@@ -31,6 +31,12 @@ test.describe("what the paste page warns about", () => {
     "a beacon": "navigator.sendBeacon('/t', data);",
     "browser storage": "localStorage.setItem('notes', JSON.stringify(notes));",
     "a hosted image": '<img src="https://example.com/logo.png">',
+    // Removing 'unsafe-inline' made these stop working, and they fail in the
+    // worst way available: the control is there, it is pressed, and nothing
+    // happens. Models emit them constantly.
+    "an onclick attribute": '<button onclick="save()">Save</button>',
+    "an onsubmit attribute": '<form onsubmit="return false"><input></form>',
+    "an onerror attribute": '<img src="x" onerror="boom()">',
   };
 
   for (const [what, source] of Object.entries(rejected)) {
@@ -48,6 +54,12 @@ test.describe("what the paste page warns about", () => {
     "a data URI image": '<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E">',
     "the database API": "const db = await window.dai.openDatabase();",
     "the word fetching in prose": "<p>Fetching is not allowed here.</p>",
+    // The same word in places that are not an attribute, which must not be
+    // mistaken for one.
+    "a handler attached in script": '<script>b.addEventListener("click", go);</script>',
+    "a handler assigned as a property": "<script>el.onclick = go;</script>",
+    "a comparison before an assignment": "<script>if (a<b) { el.onclick = x; }</script>",
+    "the word onclick in prose": "<p>Avoid onclick = handlers.</p>",
   };
 
   for (const [what, source] of Object.entries(accepted)) {

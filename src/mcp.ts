@@ -177,8 +177,21 @@ async function createApp(
   // written, and a container that silently does nothing is the worst outcome
   // for a person who cannot read the code to find out why.
   const findings = lintFiles(files);
+  /*
+   * What is refused rather than warned about.
+   *
+   * Each of these leaves the person holding a file that looks finished and is
+   * not: a blank page, a page with no styling it was written to have, or
+   * buttons that do nothing when pressed. A model can fix any of them and call
+   * again in seconds, which is why this path refuses where the website and the
+   * desktop app only warn — there, a person is present to judge, and it is
+   * their code.
+   */
   const fatal = findings.filter(
-    (finding) => finding.id === "await-in-classic-script" || finding.id === "cdn-script",
+    (finding) =>
+      finding.id === "await-in-classic-script" ||
+      finding.id === "cdn-script" ||
+      finding.id === "inline-event-handler",
   );
   if (fatal.length > 0) {
     return text(
