@@ -44,7 +44,38 @@ function say(message: string, isError = false): void {
   report.classList.toggle("error", isError);
 }
 
+/**
+ * The document to reopen when the app is next launched.
+ *
+ * An installed app that opens on an empty console has not remembered anything,
+ * whatever it has stored: somebody who added tasks yesterday expects to see
+ * them, not a file picker. This is the smallest thing that has to be
+ * remembered — which document was open — and the library already holds the
+ * rest.
+ *
+ * Cleared by ejecting, because ejecting is how somebody says they are done
+ * with it.
+ */
+const RESUME_KEY = "dai:resume";
+
+function rememberOpen(documentUuid: string): void {
+  try {
+    localStorage.setItem(RESUME_KEY, documentUuid);
+  } catch {
+    // A browser refusing storage costs the resume, not the session.
+  }
+}
+
+function forgetOpen(): void {
+  try {
+    localStorage.removeItem(RESUME_KEY);
+  } catch {
+    /* As above. */
+  }
+}
+
 function eject(): void {
+  forgetOpen();
   if (mountedUrl) {
     URL.revokeObjectURL(mountedUrl);
     mountedUrl = undefined;
@@ -153,6 +184,7 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
       publicKeyFingerprint: loaded.publicKeyFingerprint,
     });
 
+    rememberOpen(loaded.manifest.documentUuid);
     mount(loaded);
   } catch (error) {
     say(`Failed to load ${item.appName} (${(error as Error).message})`, true);
@@ -215,6 +247,7 @@ async function ingest(file: File): Promise<void> {
       publicKeyFingerprint: loaded.publicKeyFingerprint,
     });
 
+    rememberOpen(loaded.manifest.documentUuid);
     mount(loaded);
   } catch (error) {
     const message =
@@ -327,8 +360,41 @@ launch?.setConsumer((params: LaunchParams) => {
   void handle.getFile().then((file) => ingest(file));
 });
 
-// Render library on page boot
-void refreshLibrary();
+/**
+ * Reopens what was open, or shows the library.
+ *
+ * The verification is the same one a chosen file gets — `launchFromLibrary`
+ * reads and verifies the stored container before mounting it. Resuming must
+ * not be a route that skips the gate, or the gate applies to the way people
+ * open a container once and not to the way they open it every day after.
+ *
+ * A container that no longer verifies, or is no longer in the library, leaves
+ * the library on screen with the reason, rather than an app that silently
+ * stopped being the one they had.
+ */
+async function start(): Promise<void> {
+  await refreshLibrary();
+
+  let resume: string | null = null;
+  try {
+    resume = localStorage.getItem(RESUME_KEY);
+  } catch {
+    /* Storage refused; the library is already on screen. */
+  }
+  if (!resume) return;
+
+  const item = (await listCartridgesFromLibrary()).find(
+    (candidate) => candidate.documentUuid === resume,
+  );
+  if (!item) {
+    forgetOpen();
+    return;
+  }
+
+  await launchFromLibrary(item);
+}
+
+void start();
 
 // Exposed for tests and for the storage layer.
 Object.defineProperty(window, "__runner", {

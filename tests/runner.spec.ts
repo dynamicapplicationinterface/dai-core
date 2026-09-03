@@ -236,6 +236,74 @@ test.describe("cartridge ingestion", () => {
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
   });
 
+  test("reopens what was open when the app is launched again", async ({ page }) => {
+    /*
+     * The installed app, opened a second time.
+     *
+     * Somebody who added tasks yesterday expects to see them, not a file
+     * picker — and on a phone the runner is the only way back into a
+     * container, so an empty console is the app having forgotten. It has the
+     * cartridge and the database; all it lacked was which one was open.
+     */
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    await page.reload();
+
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect(page.locator("#cartridge")).toBeVisible();
+  });
+
+  test("shows the library again after ejecting, and does not reopen", async ({ page }) => {
+    // Ejecting is how somebody says they are done with it. Reopening what they
+    // just closed would make the button useless.
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    await page.locator("#eject").click();
+    await page.reload();
+
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+  });
+
+  test("resuming runs the same verification as choosing the file", async ({ page }) => {
+    /*
+     * A resumed container is read and verified again on the way in, so the
+     * gate applies to the way people open a container every day and not only
+     * to the first time. This drives that by corrupting the stored copy
+     * between visits.
+     */
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    await page.evaluate(async () => {
+      const open = indexedDB.open("dai_runner_storage", 2);
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        open.onsuccess = () => resolve(open.result);
+        open.onerror = () => reject(open.error);
+      });
+      const store = db.transaction("cartridges", "readwrite").objectStore("cartridges");
+      const all = await new Promise<{ documentUuid: string; html: string }[]>((resolve) => {
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result as { documentUuid: string; html: string }[]);
+      });
+      const item = all[0]!;
+      item.html = item.html.replace("<head>", "<head><!-- tampered -->");
+      db.transaction("cartridges", "readwrite").objectStore("cartridges").put(item);
+    });
+
+    await page.reload();
+
+    // Refused, and said so, rather than mounted.
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+    await expect(page.locator("#report")).toContainText(/Failed to load|does not match/i, {
+      timeout: 30_000,
+    });
+  });
+
   test("ejects cleanly and can load another container", async ({ page }) => {
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", CONTAINER);
