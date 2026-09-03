@@ -376,6 +376,8 @@ export interface AuditReport {
   /** Present only for the sectioned form. */
   sections?: {
     mismatched: number[];
+    /** Sections the format requires that this file does not have. */
+    missing: number[];
     /** The footer disagrees with the database it describes. */
     staleFooter: boolean;
     /** How many times this document has been saved. */
@@ -456,12 +458,29 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
 
   const sealed = archive[CONTAINER_ENTRY];
   if (sealed) {
-    const stripped = html.replace(
-      PAYLOAD_TAG_RE,
-      (_match, open: string, close: string) => open + PAYLOAD_PLACEHOLDER + close,
-    );
-    report.shell.status =
-      stripped === new TextDecoder().decode(sealed) ? "ok" : "mismatch";
+    if (parsed.sectioned) {
+      /*
+       * The sectioned form has no live shell to compare the sealed one against:
+       * the file is a binary, and the only shell it holds is the sealed copy
+       * itself. Comparing it to itself would always agree, and reporting "ok"
+       * from a comparison that cannot fail is the kind of check this project
+       * exists to avoid.
+       *
+       * The shell is verified here, by a different route: it is an ordinary
+       * entry in the payload, so it is covered by its manifest digest and by
+       * the section digest over every byte of the payload. That entry's status
+       * is the honest answer.
+       */
+      const entry = report.entries.find((candidate) => candidate.name === CONTAINER_ENTRY);
+      report.shell.status = entry?.status === "ok" ? "ok" : "mismatch";
+    } else {
+      const stripped = html.replace(
+        PAYLOAD_TAG_RE,
+        (_match, open: string, close: string) => open + PAYLOAD_PLACEHOLDER + close,
+      );
+      report.shell.status =
+        stripped === new TextDecoder().decode(sealed) ? "ok" : "mismatch";
+    }
   }
 
   if (manifest.validUntil !== undefined) {
@@ -484,6 +503,7 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
     report.sections = {
       mismatched: audit.mismatched,
       staleFooter: audit.staleFooter,
+      missing: audit.missing,
       generation: audit.file.generation,
     };
   }
@@ -507,7 +527,9 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
 
   report.ok =
     (!report.sections ||
-      (report.sections.mismatched.length === 0 && !report.sections.staleFooter)) &&
+      (report.sections.mismatched.length === 0 &&
+        report.sections.missing.length === 0 &&
+        !report.sections.staleFooter)) &&
     report.entries.every((entry) => entry.status === "ok") &&
     report.shell.status === "ok" &&
     report.expiry.status !== "expired" &&
@@ -541,6 +563,12 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
       throw new ContainerError(
         "This container has been modified and will not be run.\n" +
           `section ${report.sections.mismatched.join(", ")} does not match its digest`,
+      );
+    }
+    if (report.sections.missing.length > 0) {
+      throw new ContainerError(
+        "This container is incomplete and will not be run.\n" +
+          `section ${report.sections.missing.join(", ")} is missing`,
       );
     }
     if (report.sections.staleFooter) {

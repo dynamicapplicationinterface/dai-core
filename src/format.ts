@@ -260,7 +260,19 @@ export interface FileAudit {
   mismatched: SectionId[];
   /** True when the footer disagrees with the data section it describes. */
   staleFooter: boolean;
+  /** Sections the format requires that this file does not have. */
+  missing: SectionId[];
 }
+
+/**
+ * Every section a container must carry.
+ *
+ * A writer always emits all three, so a file lacking one has been altered or
+ * damaged. Saying so matters most for the database: without this, a file whose
+ * table simply omits it verifies cleanly and mounts an application whose data
+ * has silently become empty.
+ */
+const REQUIRED_SECTIONS: SectionId[] = [SECTION.MANIFEST, SECTION.PAYLOAD, SECTION.DATA];
 
 /**
  * Checks every section against the table, and the footer against the data.
@@ -278,10 +290,22 @@ export async function verifyContainerFile(bytes: Uint8Array): Promise<FileAudit>
     if ((await sha256Hex(body)) !== section.digest) mismatched.push(section.id);
   }
 
+  const missing = REQUIRED_SECTIONS.filter(
+    (id) => !file.sections.some((section) => section.id === id),
+  );
+
   const data = sectionBytes(bytes, file, SECTION.DATA);
+  // A file with no data section is not a container with an empty database; it
+  // is a container missing a section, and the two must not report the same.
   const staleFooter = data ? (await sha256Hex(data)) !== file.dataDigest : false;
 
-  return { ok: mismatched.length === 0 && !staleFooter, file, mismatched, staleFooter };
+  return {
+    ok: mismatched.length === 0 && !staleFooter && missing.length === 0,
+    file,
+    mismatched,
+    staleFooter,
+    missing,
+  };
 }
 
 /**

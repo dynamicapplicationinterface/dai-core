@@ -899,9 +899,26 @@ function frameLoader(): void {
     return out.join("/");
   };
 
-  window.addEventListener("message", (event: MessageEvent) => {
+  /*
+   * The payload is accepted from the shell, once, and never again.
+   *
+   * Both halves matter. `postMessage` is reachable across origins by anyone
+   * holding a `WindowProxy`, and a page that frames a container can reach the
+   * application's frame through `contentWindow.frames[0]` — so without the
+   * source check any embedder could hand this loader a document of its own to
+   * write. The nonce would not stop it: it is derived from the document's UUID,
+   * which is public, and the message carries its own.
+   *
+   * And without the second check the listener stays live for the lifetime of a
+   * running application, so the same message would rewrite a document that had
+   * been on screen for an hour.
+   */
+  const onPayload = (event: MessageEvent): void => {
     const data = event.data as Any;
     if (!data || data.type !== "dai:payload") return;
+    if (event.source !== parent) return;
+
+    window.removeEventListener("message", onPayload);
 
     const decoder = new TextDecoder();
     const urls = new Map<string, string>();
@@ -1005,8 +1022,9 @@ function frameLoader(): void {
     document.open();
     document.write(html);
     document.close();
-  });
+  };
 
+  window.addEventListener("message", onPayload);
   parent.postMessage({ type: "dai:frame-hello" }, "*");
 }
 
@@ -1348,11 +1366,23 @@ async function boot(): Promise<void> {
    */
   const frame = mount(loaderScript());
 
-  window.addEventListener("message", (event) => {
+  /*
+   * Answered once. The buffers are transferred rather than copied, so they are
+   * detached the moment they are sent — and the application that ends up
+   * running in the frame satisfies the source check as readily as the loader
+   * did, so a second `dai:frame-hello` from anywhere inside it would re-post a
+   * transfer list of detached buffers and throw DataCloneError out of this
+   * listener.
+   */
+  const onHello = (event: MessageEvent): void => {
     if ((event.data as { type?: string })?.type !== "dai:frame-hello") return;
     if (event.source !== frame.contentWindow) return;
+
+    window.removeEventListener("message", onHello);
     frame.contentWindow?.postMessage(framePayload, "*", transfer);
-  });
+  };
+
+  window.addEventListener("message", onHello);
 
   installAppMode(frame);
 

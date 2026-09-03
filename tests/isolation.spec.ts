@@ -197,3 +197,67 @@ test.describe("the application cannot reach its own shell", () => {
     expect(granted).toContain("allow-scripts");
   });
 });
+
+/**
+ * The frame handshake, from the side that would abuse it.
+ *
+ * Both of these were found by review rather than by the tests above, which
+ * asserted what the boundary prevents and not what its own protocol accepts.
+ */
+test.describe("the loader's handshake", () => {
+  test("a payload from anywhere but the shell is ignored", async ({ page }) => {
+    await page.goto(container);
+    const app = page.frameLocator("iframe");
+    await app.locator("body").waitFor({ timeout: 20_000 });
+
+    // postMessage is reachable across origins by anyone holding a WindowProxy,
+    // and an embedder can reach this frame through contentWindow.frames[0]. A
+    // loader that accepted the message would write an attacker's document into
+    // a frame the shell had already vouched for — and the nonce is no defence,
+    // being derived from a public UUID and carried in the message besides.
+    const before = await app.locator("body").innerHTML();
+
+    await app.locator("body").evaluate(() => {
+      window.postMessage(
+        {
+          type: "dai:payload",
+          entryHtml: "<h1 id='injected'>replaced</h1>",
+          assets: [],
+          sqlite: new ArrayBuffer(0),
+          wasm: null,
+          glueSource: null,
+          syntheticOrigin: "file:///dai/app/",
+          nonce: "",
+          bridgeSource: "",
+          handshakeSource: "",
+          facts: {},
+        },
+        "*",
+      );
+    });
+
+    await page.waitForTimeout(400);
+    expect(await app.locator("#injected").count()).toBe(0);
+    expect(await app.locator("body").innerHTML()).toBe(before);
+  });
+
+  test("a second hello does not disturb a running application", async ({ page }) => {
+    await page.goto(container);
+    const app = page.frameLocator("iframe");
+    await app.locator("body").waitFor({ timeout: 20_000 });
+
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+
+    // The buffers are transferred, so they are detached once sent. Answering a
+    // second hello would re-post a transfer list of detached buffers and throw
+    // DataCloneError out of the shell's own listener.
+    await app.locator("body").evaluate(() => {
+      parent.postMessage({ type: "dai:frame-hello" }, "*");
+    });
+    await page.waitForTimeout(400);
+
+    expect(errors.filter((message) => /detached|DataClone/i.test(message))).toEqual([]);
+    expect(await app.locator("body").innerHTML()).not.toBe("");
+  });
+});
