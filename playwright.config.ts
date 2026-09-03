@@ -7,7 +7,11 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
+  // "github" annotates each failure on the run's summary page, so a red build
+  // says what broke without anybody downloading an artifact to find out.
+  reporter: process.env.CI
+    ? [["github"], ["list"], ["html", { open: "never" }]]
+    : [["list"]],
   use: {
     // Containers are opened from disk, never served.
     acceptDownloads: true,
@@ -20,7 +24,7 @@ export default defineConfig({
       command: "npx vite --config examples/web-studio/vite.config.ts examples/web-studio",
       url: "http://localhost:5174/",
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: process.env.CI ? 300_000 : 120_000,
     },
     {
       // Built and previewed rather than dev-served: a cache-first service
@@ -31,7 +35,7 @@ export default defineConfig({
         "npx vite preview --config apps/runner/vite.config.ts apps/runner",
       url: "http://localhost:5175/",
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: process.env.CI ? 300_000 : 120_000,
     },
   ],
   projects: [
