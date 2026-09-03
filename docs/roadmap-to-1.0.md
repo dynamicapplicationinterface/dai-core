@@ -229,16 +229,35 @@ are not yet enforced by the implementation.
 So these are jobs, in dependency order, each with a condition that a machine
 can check.
 
-### 1. Get the test suite passing where it runs, not just here
+### 1. Get the test suite passing where it runs — **done**
 
-Every workflow run in the repository's history is red. The suite passes
-locally, and passed from a clean clone at 173 cases, so this is environmental
-and probably has been since the beginning. It is unglamorous and it is first,
-for two reasons: an evaluator looks at the repository before they look at the
-format, and nothing in items 2 to 5 can be verified while the only mechanism
-for verifying it is broken.
+I described this as "every run in this repository's history is red", which was
+wrong: 36 of 60 had passed, and the suite had recovered from two earlier breaks
+on its own. Querying the Actions API instead of reading a screenshot of recent
+runs gives the real story, and it is less flattering.
 
-**Done when:** `test` is green on every supported engine, and stays green.
+It broke at `86a2cd6` — the commit that added the MCP server's tests — and
+stayed broken for thirteen commits, during which "506 passing" was reported
+each time from a local run. Three tests asserted a lower-case filename the
+compiler never produces: with no `outputPath`, the name comes from the appName
+as `sanitizeFileName` leaves it, so `"Notes"` yields `Notes.dai.html`.
+`existsSync` is case-insensitive on Windows and case-sensitive on Linux.
+
+One of the three could not fail on Linux at all — it asserted the *absence* of
+a file under a name the compiler would never write, so it would have passed
+however wrong the code became. A test that cannot fail is worse than no test,
+because it is counted.
+
+Underneath sat a flake: two specs waited on an `<h1>` and then asserted on a
+row with the default five-second timeout. The heading is static markup and
+renders even when the application never ran, while the row cannot exist until
+SQLite has booted, which takes longer than five seconds on a cold runner.
+
+**The lesson worth keeping** is not about case sensitivity. A green local run
+is evidence about one machine. The Actions API answers "did it pass where it
+matters" without authentication — the jobs endpoint names the failing step and
+the check-run annotations name the failing assertion — so there is no excuse
+for reporting local results as if they settled the question.
 
 ### 2. Rewrite the loader so the frame can lose `allow-same-origin`
 
