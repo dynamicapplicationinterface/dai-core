@@ -218,6 +218,11 @@ premature until the first four are done.
 
 ## The five engineering jobs before we approach anyone
 
+> All five are done and merged. The specification was rewritten to match in
+> [spec-v0.2.md](spec-v0.2.md), which supersedes v0.1 — that document described
+> the design before this work and is the one an external review read, which is
+> why several of its findings did not survive contact with the code.
+
 The review read the published specification and the site, not the source —
 which is why three of its claims did not survive contact with the code. Taken
 as a reading of our documents it is sharp and largely right. Taken as a list of

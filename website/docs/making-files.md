@@ -81,6 +81,7 @@ dai verify tasks.dai.html
 | Option | |
 |---|---|
 | `-o, --out` | Where to write it |
+| `--dai` | Write the binary form instead of the HTML one |
 | `-n, --name` | Window title, and the default file name |
 | `-k, --key` | Sign with a PKCS#8 PEM private key |
 | `--seed` | Start from an existing SQLite database |
@@ -89,7 +90,35 @@ dai verify tasks.dai.html
 | `--quiet` | Print only the path, for scripting |
 
 `verify` exits `0` when a container is intact and `1` when it is not, so a
-pipeline can branch on it.
+pipeline can branch on it. It takes either form.
+
+## Two forms of the same file
+
+`dai build` writes `.dai.html` by default: a single HTML document that opens in
+any browser with nothing installed. That is what makes this demonstrable, and
+it is what the pages here hand you.
+
+`--dai` writes the binary form instead. Same application, same signature — it
+is a second encoding of one build, not a second build. Two reasons to prefer
+it:
+
+**Mail systems pass it.** Many gateways quarantine `.html` attachments
+outright, which is awkward for a file whose point is that you can send it to
+somebody.
+
+**Saving does not rewrite it.** The HTML form rebuilds the whole document on
+every save, which starts to stall around twenty megabytes. In the binary form
+the database is its own section, so a save replaces that and leaves everything
+else untouched — including the manifest, which means **a signed document stays
+signed after somebody saves it, without anyone holding the key**.
+
+```bash
+dai build ./dist --dai -o my-app.dai
+dai verify my-app.dai
+```
+
+The trade is that a `.dai` needs something that knows how to open it — the
+[desktop app](/desktop), or the runner. A `.dai.html` needs nothing at all.
 
 ## From a Vite project
 
