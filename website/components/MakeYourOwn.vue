@@ -14,7 +14,7 @@
  * difference between a tool a beginner can use and one that wastes their time.
  */
 import { computed, ref } from 'vue';
-import { buildContainer } from '../../src/core.js';
+import { compileInBrowser } from '../../src/browser.js';
 
 const PROMPT = `Build me a small self-contained app. Follow these rules exactly:
 
@@ -133,39 +133,13 @@ async function copyPrompt(): Promise<void> {
   setTimeout(() => (promptCopied.value = false), 2000);
 }
 
-async function fetchBytes(url: string): Promise<Uint8Array> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`${url} → HTTP ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
-}
-
 async function build(): Promise<void> {
   state.value = 'working';
   errorText.value = '';
   try {
-    const [template, runtime, wasm, glue] = await Promise.all([
-      fetch('/runtime/template.html').then((r) => r.text()),
-      fetch('/runtime/dai-runtime.js').then((r) => r.text()),
-      fetchBytes('/runtime/sqlite3.wasm'),
-      fetchBytes('/runtime/sqlite3.mjs'),
-    ]);
-
-    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
-      'sign',
-      'verify',
-    ]);
-    const pkcs8 = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
-    let binary = '';
-    for (const byte of new Uint8Array(pkcs8)) binary += String.fromCharCode(byte);
-
-    const built = await buildContainer({
-      files: { 'index.html': new TextEncoder().encode(source.value) },
-      template,
-      runtime,
+    const built = await compileInBrowser({
+      files: { 'index.html': source.value },
       appName: appName.value.trim() || 'My App',
-      wasm,
-      glue,
-      signingKey: `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`,
     });
 
     const blob = new Blob([built.html], { type: 'text/html' });

@@ -9,11 +9,14 @@
  * the file themselves and watches the check catch it.
  */
 import { computed, onMounted, ref } from 'vue';
-import { unzipSync, zipSync } from 'fflate';
-import { auditContainer, parseContainer, type AuditReport } from '../../src/container.js';
+import {
+  auditContainer,
+  parseContainer,
+  replacePayload,
+  type AuditReport,
+} from '../../src/container.js';
 import { sha256Hex } from '../../src/core.js';
 
-const PAYLOAD_TAG = /(<script[^>]*id="dai-payload"[^>]*>)([\s\S]*?)(<\/script>)/;
 const EDITABLE = 'app/index.html';
 
 const loading = ref(true);
@@ -36,27 +39,6 @@ const digestMatches = computed(
   () => liveDigest.value !== '' && liveDigest.value === expectedDigest.value,
 );
 
-function decodePayload(html: string): Record<string, Uint8Array> {
-  const match = PAYLOAD_TAG.exec(html);
-  if (!match) throw new Error('That file has no DAI payload.');
-  return unzipSync(base64ToBytes(match[2].trim()));
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(binary);
-}
-
 async function refreshLiveDigest(): Promise<void> {
   liveDigest.value = await sha256Hex(new TextEncoder().encode(source.value));
 }
@@ -66,11 +48,9 @@ async function reaudit(): Promise<void> {
   busy.value = true;
   try {
     const next = { ...archive.value, [EDITABLE]: new TextEncoder().encode(source.value) };
-    const rebuilt = originalHtml.value.replace(
-      PAYLOAD_TAG,
-      (_m, open: string, _payload: string, close: string) =>
-        open + bytesToBase64(zipSync(next, { level: 9 })) + close,
-    );
+    // Repacked without touching the manifest, so the digests go stale exactly
+    // as they would for somebody editing the file with a text editor.
+    const rebuilt = replacePayload(parseContainer(originalHtml.value), next);
     report.value = await auditContainer(parseContainer(rebuilt));
   } finally {
     busy.value = false;
@@ -88,7 +68,7 @@ onMounted(async () => {
     const response = await fetch('/sample-intact.dai');
     if (!response.ok) throw new Error(`sample-intact.dai → HTTP ${response.status}`);
     originalHtml.value = await response.text();
-    archive.value = decodePayload(originalHtml.value);
+    archive.value = parseContainer(originalHtml.value).archive;
 
     pristineSource.value = new TextDecoder().decode(archive.value[EDITABLE]);
     source.value = pristineSource.value;

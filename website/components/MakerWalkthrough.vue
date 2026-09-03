@@ -12,7 +12,7 @@
  * application. A visitor who inspects it will find exactly what they were shown.
  */
 import { computed, ref } from 'vue';
-import { buildContainer } from '../../src/core.js';
+import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
 
 const APP_SOURCE = `<!doctype html>
 <html lang="en">
@@ -125,12 +125,6 @@ function log(line: string): void {
   buildLog.value = [...buildLog.value, line];
 }
 
-async function fetchBytes(url: string): Promise<Uint8Array> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`${url} → HTTP ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
-}
-
 /** Compiles the source above into a real, signed, downloadable application. */
 async function build(): Promise<void> {
   buildState.value = 'working';
@@ -138,39 +132,15 @@ async function build(): Promise<void> {
   errorText.value = '';
 
   try {
-    log('Fetching the container shell and bootloader…');
-    const [template, runtime] = await Promise.all([
-      fetch('/runtime/template.html').then((r) => r.text()),
-      fetch('/runtime/dai-runtime.js').then((r) => r.text()),
-    ]);
-
-    log('Fetching the SQLite engine (about 1.4 MB, once)…');
-    const [wasm, glue] = await Promise.all([
-      fetchBytes('/runtime/sqlite3.wasm'),
-      fetchBytes('/runtime/sqlite3.mjs'),
-    ]);
+    log('Fetching the container shell, bootloader and SQLite engine…');
+    const assets = await loadRuntimeAssets();
 
     log('Minting a signing key in this browser…');
-    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
-      'sign',
-      'verify',
-    ]);
-    const pkcs8 = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
-    let binary = '';
-    for (const byte of new Uint8Array(pkcs8)) binary += String.fromCharCode(byte);
-
     log('Sealing everything into one file…');
-    const built = await buildContainer({
-      files: {
-        'index.html': new TextEncoder().encode(APP_SOURCE),
-        'app.js': new TextEncoder().encode(APP_SCRIPT),
-      },
-      template,
-      runtime,
+    const built = await compileInBrowser({
+      files: { 'index.html': APP_SOURCE, 'app.js': APP_SCRIPT },
       appName: 'My Tasks',
-      wasm,
-      glue,
-      signingKey: `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`,
+      assets,
     });
 
     const blob = new Blob([built.html], { type: 'text/html' });

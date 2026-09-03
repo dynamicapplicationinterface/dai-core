@@ -35,6 +35,16 @@
       "types": "./dist/container.d.ts",
       "import": "./dist/container.js",
       "require": "./dist/container.cjs"
+    },
+    "./compile": {
+      "import": {
+        "types": "./dist/compile.d.ts",
+        "default": "./dist/compile.js"
+      },
+      "require": {
+        "types": "./dist/compile.d.cts",
+        "default": "./dist/compile.cjs"
+      }
     }
   },
   "files": [
@@ -76,5 +86,8 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vite": "^6.4.3"
+  },
+  "bin": {
+    "dai": "./dist/bin.js"
   }
 }

@@ -468,6 +468,30 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
  * new document — and the signature stays valid because `document.sqlite` was
  * never in the signed set.
  */
+/**
+ * Rebuilds a container around a modified archive, leaving the manifest alone.
+ *
+ * The deliberate opposite of `resealContainer`, which recomputes the digests so
+ * a saved document stays valid. Here the digests are left stale on purpose, so
+ * the result is a container that no longer matches its own manifest — which is
+ * what a tool demonstrating tamper detection needs, and what an attacker who
+ * edits a file produces.
+ *
+ * It lives here rather than in the caller because repacking the payload means
+ * knowing the archive layout and the payload tag, and every copy of that
+ * knowledge is a copy that can fall out of step with the compiler.
+ */
+export function replacePayload(
+  container: ParsedContainer,
+  archive: Record<string, Uint8Array>,
+): string {
+  const payload = toBase64(zipSync(archive, { level: 9 }));
+  return container.html.replace(
+    PAYLOAD_TAG_RE,
+    (_match, open: string, close: string) => open + payload + close,
+  );
+}
+
 export async function resealContainer(
   container: ParsedContainer,
   database: Uint8Array,
