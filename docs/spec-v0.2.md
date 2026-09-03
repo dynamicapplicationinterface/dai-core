@@ -230,7 +230,19 @@ prefetch, speculation rules, or WebRTC. The sandbox flags above close navigation
 and popups. A native host SHOULD disable WebRTC and DNS prefetch at the webview
 layer; a browser-based runner cannot, and MUST document them as residual.
 
-### 4.3 Mounting
+### 4.3 Checking a host
+
+The requirements in §4 are properties of a host, not of a file, so no container
+can carry a verdict about them. [`conformance/isolation-probe.dai.html`](../conformance/README.md)
+is a container that tests them from the inside and reports what got through. An
+implementation claiming to host this format SHOULD mount it and reach
+"blocked" on every check.
+
+A host MUST NOT treat a failed request as evidence of a boundary. A request
+fails identically when the policy blocked it and when there was no network; only
+a violation report distinguishes them.
+
+### 4.4 Mounting
 
 Because the frame has no shared origin, the payload is handed to it as bytes.
 

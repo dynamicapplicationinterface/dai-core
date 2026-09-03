@@ -1,0 +1,123 @@
+:root {
+  color-scheme: light dark;
+  --ink: #10151f;
+  --muted: #5b6472;
+  --line: #e3e7ee;
+  --ground: #ffffff;
+  --pass: #0f7b4f;
+  --pass-ground: #e8f6ef;
+  --fail: #b3261e;
+  --fail-ground: #fdecea;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #eef2f8;
+    --muted: #9aa4b2;
+    --line: #262d39;
+    --ground: #10151f;
+    --pass: #6ee7b7;
+    --pass-ground: #10281f;
+    --fail: #fca5a5;
+    --fail-ground: #2a1412;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 40px 24px 64px;
+  background: var(--ground);
+  color: var(--ink);
+  font:
+    15px/1.55 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+main {
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  margin: 0 0 20px;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+.verdict {
+  margin: 0 0 24px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.verdict.pending {
+  background: var(--line);
+  color: var(--muted);
+}
+
+.verdict.pass {
+  background: var(--pass-ground);
+  color: var(--pass);
+}
+
+.verdict.fail {
+  background: var(--fail-ground);
+  color: var(--fail);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+td:first-child {
+  white-space: nowrap;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+tr.blocked td:last-child {
+  color: var(--pass);
+}
+
+tr.allowed td:last-child {
+  color: var(--fail);
+  font-weight: 600;
+}
+
+tr.empty td {
+  color: var(--muted);
+}
+
+footer {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 13px;
+}

@@ -487,6 +487,11 @@ one — and so this one can be checked too. The generator refuses to publish the
 suite when this reader disagrees with an expectation, which is the only thing
 that stops a suite from quietly becoming a recording of whatever we already do.
 
+`conformance/isolation-probe.dai.html` is the other half. §4 describes a host
+rather than a file, so the probe is a container that attacks the host running it
+and reports what got through — nine boundaries, each of which must read
+*blocked*. Open it in yours.
+
 ## v0.1 scope
 
 Implemented: build packaging, ZIP + Base64 payload, template injection.

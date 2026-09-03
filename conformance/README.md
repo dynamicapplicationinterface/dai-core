@@ -70,14 +70,42 @@ section flipped a byte at a guessed offset which landed in the manifest instead
 claimed something else. The expectation was written first, so the generator
 caught it.
 
+## The isolation probe
+
+`isolation-probe.dai.html` is a different kind of artifact, for a different kind
+of requirement. §7 can be checked from a file — a container carries its defect
+and its verdict. §4 cannot. Whether the application runs at an opaque origin,
+whether it can open a socket, whether an inline script it injects executes: none
+of that is a property of the file. It is a property of the host, and the only
+way to find out is to be inside one and try.
+
+So the probe attacks the host running it and reports what got through. Open it
+in your host. Every row must read **blocked**; a row reading **allowed** names a
+boundary that is not there. It also posts the same results to the shell as
+`dai:isolation-report`, for a harness running it without a person watching.
+
+Nine checks: the opaque origin and the unreachable shell (§4.1), popups,
+`connect-src`, sockets, `eval`, an injected inline script, an inline event
+handler (§4.2), and the storage stand-in (§6).
+
+**Violations, not failures.** "The fetch failed" proves nothing — a fetch fails
+on an aircraft, with the network off, and against a host that blocks nothing, in
+exactly the same way. The probe requires a `securitypolicyviolation` event
+naming the directive, which fires only when the policy is what stopped it. A
+check that could not tell a real boundary from a missing network would pass
+everywhere and mean nothing.
+
+The probe is run against this project's shell on three engines, and — because a
+probe that reports "blocked" everywhere is worthless until it has been shown to
+report otherwise — against a deliberately permissive host that grants
+`allow-same-origin` and carries no policy. It must fail that one.
+
 ## What it does not cover
 
-Isolation. Every case here is about what a reader concludes from a file, and
-none of it is about what happens once an application runs — the sandbox flags,
-the policy, the loader. Those are properties of a host, they need a browser to
-observe, and a file cannot carry a verdict about them. §4 of the specification
-states the requirements; checking them is a separate suite that does not exist
-yet.
+Saving. `generation` advancing and the manifest surviving a save are host
+behaviours, tested in this repository against the Rust writer.
 
-Saving, likewise. `generation` advancing and the manifest surviving a save are
-host behaviours, tested in this repository against the Rust writer.
+Residual channels named in §4.2 — DNS prefetch, speculation rules, WebRTC.
+`connect-src` does not govern them, a page cannot reliably observe them, and a
+browser-based host cannot close them. They are documented as residual rather
+than checked, which is the honest position and not a comfortable one.

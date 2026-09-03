@@ -484,3 +484,30 @@ writeFileSync(
 );
 
 console.log(`${written.length} cases written to conformance/cases.json`);
+
+/*
+ * The isolation probe.
+ *
+ * Not a case: §4 describes a host, and no file can carry a verdict about one.
+ * This is a container that runs the checks itself, from inside, and reports
+ * what got through — so a host implementation has something to be measured by
+ * rather than a paragraph to agree with.
+ *
+ * Built without the engine for the same reason the cases are: it tests the
+ * boundary, not SQLite, and half a megabyte of WebAssembly would buy nothing.
+ */
+const probe = await buildContainer(
+  base({
+    files: Object.fromEntries(
+      ["index.html", "probe.js", "probe.css"].map((name) => [
+        name,
+        readFileSync(join(suite, "isolation", name)),
+      ]),
+    ),
+    appName: "Isolation probe",
+    documentUuid: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  }),
+);
+
+writeFileSync(join(suite, "isolation-probe.dai.html"), probe.html);
+console.log("isolation probe written to conformance/isolation-probe.dai.html");

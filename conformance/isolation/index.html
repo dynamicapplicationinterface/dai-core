@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Isolation probe</title>
+    <link rel="stylesheet" href="./probe.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Isolation probe</h1>
+        <p class="lede">
+          This container tries, from the inside, everything §4 of the specification says a
+          host must prevent. Every row below is an attack that must fail.
+        </p>
+        <p id="verdict" class="verdict pending" data-state="pending">Running…</p>
+      </header>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Clause</th>
+            <th>What was attempted</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody id="results">
+          <tr class="empty">
+            <td colspan="3">
+              Nothing has reported yet. If this row is still here, the probe's own script did
+              not run — which is itself a finding, and not one about isolation.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <footer>
+        <p>
+          A host passes when every row reads <strong>blocked</strong>. A row reading
+          <strong>allowed</strong> names a boundary that is not there.
+        </p>
+      </footer>
+    </main>
+
+    <script type="module" src="./probe.js"></script>
+  </body>
+</html>

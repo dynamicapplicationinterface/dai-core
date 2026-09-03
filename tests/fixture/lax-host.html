@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>A host that holds nothing</title>
+<!--
+  Deliberately permissive: allow-same-origin, popups, and no policy at all.
+
+  This exists so the isolation probe can be shown to discriminate. A probe that
+  reports "blocked" everywhere is worthless unless it also reports "allowed"
+  against a host that allows things, and until it has been pointed at one there
+  is no evidence it is measuring anything.
+-->
+<iframe
+  id="app"
+  src="/index.html"
+  sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+  style="width: 100%; height: 90vh; border: 0"
+></iframe>
+<script>
+  window.reports = [];
+  window.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "dai:isolation-report") window.reports.push(event.data);
+  });
+</script>
