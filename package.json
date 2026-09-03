@@ -76,11 +76,11 @@
     "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
   },
   "dependencies": {
+    "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "fflate": "^0.8.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "@types/node": "^22.20.1",
     "esbuild-wasm": "^0.28.2",
     "tsup": "^8.5.1",
