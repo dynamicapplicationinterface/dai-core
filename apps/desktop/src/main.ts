@@ -5,7 +5,7 @@
  * for silent, in-place disk persistence without browser download prompts.
  */
 
-import { ContainerError, verifyContainer } from "../../../src/container.js";
+import { ContainerError, looksSectioned, verifyContainer } from "../../../src/container.js";
 import { payloadFingerprint } from "../../../src/core.js";
 import {
   compileInBrowser,
@@ -92,6 +92,14 @@ function clearAlert(): void {
 }
 
 let currentFilePath: string | undefined;
+/**
+ * Whether the open file is the sectioned binary rather than the viewer form.
+ *
+ * It decides how a save is written, and it is set from the file's leading bytes
+ * when it was opened — never from its name, because a name is a claim made by
+ * whoever renamed it.
+ */
+let currentFileIsSectioned = false;
 let mountedUrl: string | undefined;
 
 interface TauriWindow {
@@ -218,7 +226,15 @@ function eject(): void {
 async function openFile(file: File): Promise<void> {
   statusEl.textContent = `Loading ${file.name}...`;
   try {
-    const text = await file.text();
+    // Bytes, then the leading magic: a dropped `.dai` is binary, and reading it
+    // as text replaces most of a database with U+FFFD before anything gets to
+    // check it.
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const sectioned = looksSectioned(bytes);
+    const text: string | Uint8Array = sectioned ? bytes : new TextDecoder().decode(bytes);
+    // A dropped file carries no path, so nothing here can be saved in place
+    // whichever form it is.
+    currentFileIsSectioned = sectioned;
 
     // Full verification, not a shape check: digests both ways, the shell
     // against its sealed copy, and the publisher signature when one is carried.
@@ -258,6 +274,37 @@ async function openFile(file: File): Promise<void> {
  * verifying would mean the checks apply to the route users rarely take and not
  * the one they do.
  */
+
+/**
+ * Reads a cartridge from disk as whichever form it turns out to be.
+ *
+ * Both forms come back as bytes and the leading magic decides. Reading a
+ * sectioned container as text would not fail loudly — it would replace every
+ * byte that is not valid UTF-8, which is most of a database, and hand the
+ * verifier a file that was damaged on the way in.
+ */
+async function readCartridgeSource(path: string): Promise<string | Uint8Array> {
+  const base64 = await invokeTauri<string>("read_cartridge_bytes", { path });
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  currentFileIsSectioned = looksSectioned(bytes);
+  return currentFileIsSectioned ? bytes : new TextDecoder().decode(bytes);
+}
+
+/** base64 for the bridge, which carries strings and not byte arrays. */
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  // Chunked because a single spread of a large database overflows the argument
+  // limit, and a save that throws on a big document is a save that fails for
+  // exactly the users who have the most to lose.
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
 /**
  * Opens a cartridge from a filesystem path.
  *
@@ -269,9 +316,9 @@ async function openFile(file: File): Promise<void> {
 async function openCartridgeByPath(path: string): Promise<void> {
   try {
     statusEl.textContent = `Loading ${path}...`;
-    const content = await invokeTauri<string>("read_cartridge", { path });
+    const source = await readCartridgeSource(path);
 
-    const container = await verifyContainer(content);
+    const container = await verifyContainer(source);
     const trust = await gateOnTrust(container);
 
     mountHtml(
@@ -448,7 +495,10 @@ ${refusal.detail}` : ""),
 
     // The container sends a finished document. Resealing it here would be a
     // second implementation of the runtime's own logic.
-    const { html } = (data.payload || {}) as { html?: string };
+    const { html, databaseBytes } = (data.payload || {}) as {
+      html?: string;
+      databaseBytes?: Uint8Array;
+    };
 
     if (!html) {
       // A container carries the runtime it was compiled with, by design, so an
@@ -474,9 +524,20 @@ ${refusal.detail}` : ""),
     // Never acknowledge a save that did not happen. Reporting "ok" when
     // nothing was written is worse than reporting nothing: the application
     // believes the user's work is on disk and stops offering to save it.
-    invokeTauri("save_cartridge", { path: currentFilePath, html })
-      .then(() => reply("ok"))
-      .catch((error: unknown) => reply("error", String(error)));
+    //
+    // A sectioned container is saved by writing its database and nothing else.
+    // The document the container sealed is discarded here, because rewriting
+    // the whole file would replace a manifest the publisher signed with one
+    // this host assembled — and nothing here holds a key to sign it with.
+    const written =
+      currentFileIsSectioned && databaseBytes
+        ? invokeTauri("save_cartridge_data", {
+            path: currentFilePath,
+            dataBase64: toBase64(new Uint8Array(databaseBytes)),
+          })
+        : invokeTauri("save_cartridge", { path: currentFilePath, html });
+
+    written.then(() => reply("ok")).catch((error: unknown) => reply("error", String(error)));
   }
 });
 
@@ -571,11 +632,11 @@ async function openViaNativeDialog(): Promise<void> {
     if (typeof selected !== "string") return;
 
     statusEl.textContent = `Loading ${selected}...`;
-    const content = await invokeTauri<string>("read_cartridge", { path: selected });
+    const source = await readCartridgeSource(selected);
 
     // The same gate the runner uses. A cartridge refused there must not open
     // here: one reader, one verdict.
-    const container = await verifyContainer(content);
+    const container = await verifyContainer(source);
     const trust = await gateOnTrust(container);
 
     mountHtml(

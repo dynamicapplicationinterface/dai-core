@@ -152,7 +152,7 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
 }
 
 /** True when these bytes begin with the sectioned container's magic. */
-function looksSectioned(bytes: Uint8Array): boolean {
+export function looksSectioned(bytes: Uint8Array): boolean {
   return (
     bytes.byteLength >= MAGIC.byteLength &&
     MAGIC.every((byte, index) => bytes[index] === byte)

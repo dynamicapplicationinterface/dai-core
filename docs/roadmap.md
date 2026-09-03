@@ -220,6 +220,13 @@ Ordered by how much they hurt today.
    unrecoverable — as is a delete, which we have already seen happen. Writing
    `name.dai.bak` alongside before the rename costs one file and covers the
    overwrite case.
+
+   `save_cartridge_data`, the sectioned path, makes this more pressing rather
+   than less: it writes over the database in place, so there is no moment at
+   which the previous version exists anywhere. The ordering it guarantees means
+   a crash is *reported* rather than silent, which is not the same as
+   recoverable. Whatever is done here has to avoid copying the whole file on
+   every save, since not copying it is the reason the sectioned form exists.
 2. **Trust pinning in the runner.** The desktop host refuses a document re-signed
    by a different key; the web player has the same exposure and no registry.
    `checkTrust` already takes its storage as a parameter, so the decision logic

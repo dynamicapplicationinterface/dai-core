@@ -19,6 +19,9 @@ tauri = { version = "2.0.0", features = ["devtools"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"
+# The sectioned writer, kept out of this crate so it can be tested without a
+# webview toolchain — and so a second host could use it without Tauri.
+dai-sectioned = { path = "../../../crates/sectioned" }
 # Native file chooser. A browser File gives no filesystem path, so a cartridge
 # opened through the webview cannot be saved back in place.
 tauri-plugin-dialog = "2"

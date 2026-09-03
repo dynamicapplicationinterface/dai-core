@@ -1,7 +1,9 @@
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -240,6 +242,50 @@ fn save_cartridge(path: String, html: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Reads a cartridge as bytes, base64-encoded for the bridge.
+///
+/// The sectioned form is binary, so `read_cartridge` cannot carry it: reading
+/// it as a string either fails or silently replaces every byte that is not
+/// valid UTF-8, which is most of a SQLite database. The frontend decides which
+/// form it has from the leading bytes, never from the extension.
+#[tauri::command]
+fn read_cartridge_bytes(path: String) -> Result<String, String> {
+    let bytes = fs::read(&path)
+        .map_err(|e| format!("Failed to read cartridge file {}: {}", path, e))?;
+    Ok(BASE64.encode(bytes))
+}
+
+/// Saves a sectioned cartridge by writing only its database.
+///
+/// The counterpart to `save_cartridge`, which rewrites a whole viewer-form
+/// document. Here the manifest and the payload are left untouched — not as an
+/// optimisation, but because the publisher's signature covers them and a save
+/// carries no key to sign with. See `sectioned` for the ordering guarantees.
+///
+/// Returns the generation the file now carries, so the frontend can show that a
+/// save actually advanced the document rather than reporting a bare "ok".
+#[tauri::command]
+fn save_cartridge_data(path: String, data_base64: String) -> Result<u64, String> {
+    let data = BASE64
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("The database sent by the container is not valid base64: {}", e))?;
+
+    let target = resolve_target(&path)?;
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&target)
+        .map_err(|e| format!("Failed to open {} for writing: {}", target.display(), e))?;
+
+    let size = file
+        .metadata()
+        .map_err(|e| format!("Failed to measure {}: {}", target.display(), e))?
+        .len();
+
+    dai_sectioned::replace_data(&mut file, size, &data)
+}
+
 /// The cartridge this process was launched with, if any.
 ///
 /// Every argument is scanned rather than just the first. A shell, a launcher
@@ -322,7 +368,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             read_cartridge,
+            read_cartridge_bytes,
             save_cartridge,
+            save_cartridge_data,
             get_opened_file,
             get_pinned_key,
             pin_key,

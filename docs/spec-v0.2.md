@@ -261,6 +261,19 @@ signature therefore still holds.
 A host that has seen a later generation for a document MAY treat an earlier one
 as a rollback.
 
+An in-place save cannot be atomic, and a host MUST NOT pretend otherwise. It
+MUST write and flush the data section before it writes the table entry and the
+footer, so that a crash between the two leaves a file whose recorded digest does
+not match its contents — which §7 reports as a damaged database. The ordering
+rules out the dangerous failure rather than every failure: a file that reports
+itself intact while holding a half-written database.
+
+A host MUST refuse to save in place when the data section is not the last
+section, because moving it would move sections the signature covers. It SHOULD
+zero the padding between the end of the database and the section boundary; a
+shorter database otherwise leaves the tail of its predecessor inside a file
+whose owner believes those rows were deleted.
+
 A save in the viewer form rewrites the entire file, and the manifest with it.
 
 ---
