@@ -11,7 +11,7 @@
  * signed with a key minted in this tab, and the file that downloads is a working
  * application. A visitor who inspects it will find exactly what they were shown.
  */
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
 
@@ -70,6 +70,9 @@ const fileSize = ref(0);
 const errorText = ref('');
 const builtFile = ref<File | null>(null);
 const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(builtFile, downloadName);
+
+/** The build step appears once the conversation has finished replaying. */
+const finished = computed(() => revealed.value >= TRANSCRIPT.length);
 
 async function play(): Promise<void> {
   playing.value = true;

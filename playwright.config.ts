@@ -27,6 +27,21 @@ export default defineConfig({
       timeout: process.env.CI ? 300_000 : 120_000,
     },
     {
+      /*
+       * The website, built and previewed.
+       *
+       * Added because a page can lose the control it exists for without any
+       * test noticing: an edit removed the `finished` binding the build step is
+       * gated on, Vue resolved it to undefined, the section disappeared, and
+       * the build stayed green on three engines. Only opening the page catches
+       * that.
+       */
+      command: "npm --prefix website run build && npm --prefix website run preview -- --port 5176",
+      url: "http://localhost:5176/",
+      reuseExistingServer: !process.env.CI,
+      timeout: process.env.CI ? 300_000 : 120_000,
+    },
+    {
       // Built and previewed rather than dev-served: a cache-first service
       // worker would freeze a dev server's unbundled modules, and the worker is
       // most of what the runner tests are checking.

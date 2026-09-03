@@ -22,6 +22,10 @@ jobs:
 
       - run: npm run typecheck
 
+      # The website has its own dependency tree, and the suite now opens its
+      # pages: a control can vanish from one without any other test noticing.
+      - run: npm --prefix website ci
+
       # A second reader, sharing no code with the one that wrote the cases.
       # This is what tests the specification rather than the implementation: it
       # was written from the document, and the four places the document did not
