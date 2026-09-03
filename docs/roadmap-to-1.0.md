@@ -217,90 +217,96 @@ premature until the first four are done.
 
 ---
 
-## The five things that have to be true before approaching the industry
+## The five engineering jobs before we approach anyone
 
-Asked directly: what stands between here and being taken seriously as a
-standard rather than as one company's file format. These are ordered, and the
-order is load-bearing — each one is a precondition for the next being
-believable.
+The review read the published specification and the site, not the source —
+which is why three of its claims did not survive contact with the code. Taken
+as a reading of our documents it is sharp and largely right. Taken as a list of
+work, it is weighted toward writing things down, and the problem is not that
+our documents are unconvincing. It is that two of the properties they describe
+are not yet enforced by the implementation.
 
-### 1. The isolation boundary has to be real, and reviewed by someone else
+So these are jobs, in dependency order, each with a condition that a machine
+can check.
 
-Everything else is moot. The first competent reviewer opens the bootloader,
-reads the sandbox attribute, and stops. `allow-same-origin` means the
-application shares an origin with the shell that is meant to contain it; a
-format whose central claim is containment cannot ship that.
+### 1. Get the test suite passing where it runs, not just here
 
-The work is the loader rewrite described under 0.2 — the frame minting its own
-blob URLs from transferred bytes — followed by dropping the flags. Then an
-external red-team engagement, and the report published whatever it says.
+Every workflow run in the repository's history is red. The suite passes
+locally, and passed from a clean clone at 173 cases, so this is environmental
+and probably has been since the beginning. It is unglamorous and it is first,
+for two reasons: an evaluator looks at the repository before they look at the
+format, and nothing in items 2 to 5 can be verified while the only mechanism
+for verifying it is broken.
 
-**Done when:** a paid external review finds no exfiltration path from a
-conforming runner beyond residuals that are documented in the spec.
+**Done when:** `test` is green on every supported engine, and stays green.
 
-### 2. Standard crypto framing, and a manifest that is signed in full
+### 2. Rewrite the loader so the frame can lose `allow-same-origin`
 
-`"dai-v1
-" + uuid + digests` is the kind of construction standards reviewers
-reject on sight, not because it is broken but because it is unnecessary — COSE
-(RFC 9052) exists, is canonical, carries algorithm and key identifiers, and has
-verifiers in every language. Ours has one implementation and no reviewers.
+The isolation boundary is the central claim and it is not currently enforced.
+The obstacle is concrete: the import map, the chunk graph, the SQLite engine
+and its Emscripten glue all reach the frame as `blob:` URLs minted by the
+shell, and those only resolve when the origins match. The frame has to mint its
+own from bytes handed over by structured clone.
 
-The substantive half is that only the UUID, entry digests and expiry are signed
-today. A CBOR manifest signed whole closes that, and it is a precondition for
-capabilities: a capability declared in an unsigned field is not a declaration,
-it is a suggestion.
+Then `allow-popups`, `allow-downloads` and `allow-modals` go too — the first is
+an exfiltration channel that no CSP directive governs.
 
-**Done when:** a container verifies with an off-the-shelf COSE library nobody
-here wrote.
+**Done when:** the frame runs at an opaque origin, cannot reach
+`parent.document`, and a test asserts both.
 
-### 3. The container layout is frozen — after the change that makes it last
+### 3. Remove `'unsafe-inline'` from the shell's CSP
 
-You cannot standardize a format you intend to break, and the current one has a
-break coming: every save rewrites the entire file, base64 and all, which has no
-future past a few tens of megabytes and no story for two windows on one
-document.
+The compiler knows every byte it packages, which is exactly the condition under
+which a nonce is straightforward: rewrite inline script in the application's
+HTML to blob modules at build time, generate a nonce per boot, and drop both
+`'unsafe-inline'` and `'self'` — the latter being ill-defined at an opaque
+origin anyway.
 
-Do the sectioned layout, then freeze. Doing it in the other order means asking
-early adopters to migrate, which is exactly how a format loses the people who
-took a chance on it.
+This closes injected-script attacks through content stored in the database,
+which is a live path today: an application that renders a task title as HTML
+executes whatever the title contains.
 
-**Done when:** a save touches only the data section, and a runner can validate
-a two-gigabyte file by reading its footer.
+**Done when:** the policy is `script-src 'nonce-…' 'strict-dynamic'
+'wasm-unsafe-eval'`, and a container whose database contains a `<script>` tag
+cannot execute it.
 
-### 4. A specification that prescribes rather than describes
+### 4. Sign the whole manifest, using an envelope somebody else wrote
 
-Ours documents how the implementation behaves. A standard states what an
-implementation MUST do, in the vocabulary reviewers expect: RFC 2119 keywords,
-CDDL for the CBOR structures, the exact sandbox flag set, the exact CSP, and a
-registry of refusal codes with their meanings.
+Only the UUID, the entry digests and the expiry are covered today. `appName`,
+`favicon` and `integrityPolicy` are not, so a container can be renamed and
+re-iconed while its signature still verifies — most of what impersonating a
+publisher requires.
 
-The test of whether a spec is finished is not whether it reads well. It is
-whether somebody can implement from it **without reading our code** — which is
-what the next item measures.
+Fixing the coverage and adopting COSE_Sign1 over a CBOR manifest is the same
+piece of work, and the second half has an engineering payoff rather than a
+diplomatic one: correctness becomes checkable against an implementation we did
+not write.
 
-**Done when:** every normative requirement has a MUST/SHOULD/MAY, and every
-structure has a formal grammar.
+**Done when:** a container verifies with an off-the-shelf COSE library, and
+altering any manifest field breaks it.
 
-### 5. A conformance suite, and a second implementation written only from the spec
+### 5. Make a save stop rewriting the entire file
 
-This is the bar every standards body applies, and it is the one that cannot be
-faked. A suite of a few hundred cases across packaging, crypto, sandbox,
-persistence and the bridge — as data, not as our test framework, so anybody can
-run it against anything.
+Today every save exports the database, deflates it, base64-encodes it, splices
+it into a string of HTML and structured-clones the result: five copies and time
+proportional to the whole document, for a change of one row. It stalls
+perceptibly around twenty megabytes and has no answer for a second window.
 
-Then a second implementation. The value is not the second implementation; it is
-that writing one from the spec alone is the only reliable way to discover the
-spec is wrong. Every ambiguity surfaces as a disagreement between the two.
+The sectioned layout fixes it, and it is the last change that breaks the format.
+Everything after it is additive, which is the precondition for freezing
+anything.
 
-**Done when:** two implementations that share no code pass the same suite, and
-a file written by either opens in the other.
+**Done when:** saving a one-row change to a hundred-megabyte document writes
+only the changed section, and two windows on one document cannot corrupt it.
 
 ---
 
-### What not to do first
+### Then, and only then
 
-Not approach a standards body before these exist. A W3C Community Group or an
-IETF submission will ask for precisely these artifacts, and arriving without
-them spends the only first impression available. The sequence is: make it true,
-write it down, prove it twice, then go.
+A conformance suite as data, and a second implementation written from the
+specification without reading ours — which is the only reliable way to find out
+the specification is wrong. Both are wasted effort before the format stops
+moving, and the format cannot stop moving until item 5 lands.
+
+Approaching a standards body earlier spends the one first impression available
+on a format that still has a breaking change queued.
