@@ -1,8 +1,22 @@
 {
   "name": "dai-core",
   "version": "0.1.0",
-  "description": "Vite plugin that compiles a built React/Vite app into a single air-gapped .dai.html polyglot container.",
-  "license": "MIT",
+  "description": "Compile a web app into a single air-gapped .dai.html file that holds its own SQLite database, runs from a double-click with nothing installed, and is tamper-evident. Command line, MCP server and Vite plugin.",
+  "keywords": [
+    "dai",
+    "container",
+    "offline",
+    "air-gapped",
+    "single-file",
+    "sqlite",
+    "wasm",
+    "cli",
+    "mcp",
+    "vite-plugin",
+    "portable",
+    "tamper-evident"
+  ],
+  "homepage": "https://github.com/dynamicapplicationinterface/dai-core#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dynamicapplicationinterface/dai-core.git"
@@ -10,8 +24,16 @@
   "bugs": {
     "url": "https://github.com/dynamicapplicationinterface/dai-core/issues"
   },
-  "homepage": "https://github.com/dynamicapplicationinterface/dai-core#readme",
+  "license": "MIT",
+  "author": "Dynamic Application Interface",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "dai": "./dist/bin.js",
+    "dai-mcp": "./dist/mcp-bin.js"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -63,19 +85,6 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed"
   },
-  "keywords": [
-    "vite-plugin",
-    "dai",
-    "offline",
-    "air-gapped",
-    "polyglot"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
-  "peerDependencies": {
-    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
-  },
   "dependencies": {
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "fflate": "^0.8.3"
@@ -88,8 +97,7 @@
     "typescript": "^5.9.3",
     "vite": "^6.4.3"
   },
-  "bin": {
-    "dai": "./dist/bin.js",
-    "dai-mcp": "./dist/mcp-bin.js"
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
   }
 }
