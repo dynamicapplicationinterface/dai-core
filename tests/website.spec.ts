@@ -73,5 +73,11 @@ test("the app the walkthrough hands out actually runs", async ({ page }) => {
   await app.locator('button[data-filter="done"]').click();
   await expect(app.locator('.task:has-text("Buy milk")')).toHaveCount(1);
 
+  // The "this is the source, not the app" notice must stay out of the way here:
+  // it exists for somebody opening the folder directly, and showing it inside a
+  // working container would be worse than the blank page it replaced.
+  await expect(app.locator("#needs-container")).toBeHidden();
+  await expect(app.locator(".shell")).toBeVisible();
+
   expect(failures.filter((text) => !/favicon/i.test(text))).toEqual([]);
 });

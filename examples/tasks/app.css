@@ -763,6 +763,44 @@ h1 {
   color: var(--ink);
 }
 
+/* ------------------------------------------------- opened without a container */
+
+.needs-container {
+  max-width: 30rem;
+  margin: 14vh auto;
+  padding: 0 24px;
+}
+
+.needs-container h2 {
+  margin: 0 0 10px;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+}
+
+.needs-container p {
+  margin: 0 0 12px;
+  color: var(--ink-2);
+}
+
+.needs-container pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  overflow-x: auto;
+}
+
+.needs-container code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.needs-container-note {
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
 /* ----------------------------------------------------------------- toast */
 
 .toast {

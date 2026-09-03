@@ -463,3 +463,7 @@ if (query("SELECT COUNT(*) AS n FROM tasks")[0].n === 0) {
 
 ui.swatch.style.background = colour;
 draw();
+
+// Watched by the fallback notice in index.html, which shows an explanation if
+// this file never got the chance to run.
+window.__tasksReady = true;

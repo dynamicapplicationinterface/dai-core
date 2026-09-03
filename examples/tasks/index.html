@@ -10,7 +10,7 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <svg class="brand-mark" width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
             <rect x="2" y="2" width="20" height="20" rx="6" />
             <path d="M7 12.5l3.2 3.2L17 9" />
           </svg>
@@ -122,6 +122,36 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <!--
+      Opening this folder's index.html directly gives a dead page: the browser
+      refuses to load app.js as a module over file:// (an opaque origin fails
+      the CORS check), and window.dai only exists inside a container anyway.
+      Rather than leave a blank screen, say what happened and what to do. The
+      check is a classic script because a module would not run here either.
+    -->
+    <div class="needs-container" id="needs-container" hidden>
+      <h2>This is the source, not the app</h2>
+      <p>
+        Opening these files directly will not work: the browser blocks the script
+        from loading, and the database lives in the container rather than here.
+      </p>
+      <p>Compile it into one file first, then open that:</p>
+      <pre><code>npx dai build ./examples/tasks -n Tasks</code></pre>
+      <p class="needs-container-note">That writes <code>tasks.dai.html</code>, which opens by double-clicking.</p>
+    </div>
+
+    <script>
+      // Deliberately not a module, so it runs even when the module does not.
+      addEventListener("load", function () {
+        setTimeout(function () {
+          if (!window.__tasksReady) {
+            document.getElementById("needs-container").hidden = false;
+            document.querySelector(".shell").hidden = true;
+          }
+        }, 600);
+      });
+    </script>
 
     <script type="module" src="./app.js"></script>
   </body>
