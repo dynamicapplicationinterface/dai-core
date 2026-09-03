@@ -346,7 +346,7 @@ One thing checked on the way and found already sound: `signedEntries` is
 reconciled against `hashes` before the signature is verified, so a container
 cannot be verified against digests other than the ones just checked.
 
-### 5. Make a save stop rewriting the entire file
+### 5. Make a save stop rewriting the entire file — **layout landed, wiring next**
 
 Today every save exports the database, deflates it, base64-encodes it, splices
 it into a string of HTML and structured-clones the result: five copies and time
@@ -359,6 +359,19 @@ anything.
 
 **Done when:** saving a one-row change to a hundred-megabyte document writes
 only the changed section, and two windows on one document cannot corrupt it.
+
+The layout is in `src/format.ts` on `feat/opaque-origin-frame`, deliberately
+additive: nothing emits it yet, `.dai.html` is untouched, and the whole of it
+is exercised by its own tests. A container is a header, a table of sections, a
+manifest, a payload and the database, with a footer a fixed distance from the
+end. A save replaces the data section and advances a generation counter; the
+manifest and payload are copied through byte-identical, so a publisher's
+signature survives a save made by somebody holding no key.
+
+Still to do, and each is its own piece of work: the compiler emitting it, the
+readers accepting either form, a host writing the data section in place rather
+than rebuilding the file in memory, locking, and the COSE manifest that now
+belongs in this release rather than ahead of it.
 
 ---
 
