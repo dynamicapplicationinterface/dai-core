@@ -75,10 +75,19 @@ const routes = [
 <template>
   <div class="landing">
     <section class="hero">
-      <h1>An app that is<br />just a file.</h1>
+      <h1>An app that's<br />just a file.</h1>
+      <!--
+        The headline is the hook, not the claim: anyone can write a single HTML
+        file. The kicker carries what one of those cannot do — keep its data,
+        prove it has not been altered, and travel without a server.
+      -->
+      <p class="kick">
+        With its database inside.<br />
+        Sealed, offline, and yours to send.
+      </p>
       <p class="lede">
-        Build something with AI and get back one file. It holds the app, its
-        database and your data — and it cannot send any of it anywhere.
+        Ask an assistant for the app you want. Two minutes later you have a file
+        you can email to anyone.
       </p>
       <div class="actions">
         <a class="button primary" href="/make-one">I made something with AI</a>
@@ -176,10 +185,20 @@ h1 {
   letter-spacing: -0.045em;
 }
 
+.kick {
+  max-width: 30rem;
+  margin: 22px auto 0;
+  font-size: clamp(1.25rem, 2.4vw, 1.6rem);
+  font-weight: 550;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+  color: var(--vp-c-text-1);
+}
+
 .lede {
-  max-width: 34rem;
-  margin: 24px auto 0;
-  font-size: 1.2rem;
+  max-width: 30rem;
+  margin: 18px auto 0;
+  font-size: 1.05rem;
   line-height: 1.6;
   color: var(--vp-c-text-2);
 }

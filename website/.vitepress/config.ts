@@ -6,7 +6,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   title: 'DAI Protocol',
-  description: 'The open, air-gapped container standard (.dai) for AI-generated software.',
+  description:
+    "An app that's just a file, with its database inside. Sealed, offline, and yours to send.",
   head: [
     ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
     ['meta', { name: 'theme-color', content: '#3b82f6' }]
