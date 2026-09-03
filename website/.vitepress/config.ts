@@ -29,6 +29,7 @@ export default defineConfig({
       { text: 'Specification', link: '/docs/specification' },
       { text: 'Host Bridge', link: '/docs/host-bridge' },
       { text: 'Playground', link: '/playground' },
+      { text: 'See It Break', link: '/tamper-proof' },
       {
         text: 'v0.1',
         items: [
@@ -57,7 +58,8 @@ export default defineConfig({
       {
         text: 'Interactive Tools',
         items: [
-          { text: 'In-Browser Playground', link: '/playground' }
+          { text: 'In-Browser Playground', link: '/playground' },
+          { text: 'See It Break', link: '/tamper-proof' }
         ]
       }
     ],
