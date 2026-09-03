@@ -868,15 +868,30 @@ test.describe("host bridge", () => {
     return page.frames().find((f) => f.url().startsWith("blob:"))!;
   }
 
+  /**
+   * The application's frame, one level inside the container.
+   *
+   * It has to be reached as a frame rather than through `contentWindow`,
+   * because the container cannot see into it — the sandbox grants no shared
+   * origin, so a property read across that edge throws.
+   */
+  function appFrame(container: import("@playwright/test").Frame) {
+    const child = container.childFrames()[0];
+    if (!child) throw new Error("The container mounted no application frame.");
+    return child;
+  }
+
   test("routes saves to a host that answered the handshake", async ({ page }) => {
     const container = await frameContainer(page, true);
 
-    const result = await container.evaluate(async () => {
-      const win = window as unknown as { __DAI__: { files: Record<string, Uint8Array> } };
-      const frame = document.getElementById("dai-app") as HTMLIFrameElement;
+    // Driven from inside the application's own frame. Reaching in from the
+    // shell used to work and no longer can: the frame has no origin in common
+    // with the document that mounted it, which is the point of the boundary.
+    const app = appFrame(container);
+    const result = await app.evaluate(async () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (frame.contentWindow as any).dai.saveState(new Uint8Array([1, 2, 3]));
-    });
+      (window as any).dai.saveState(new Uint8Array([1, 2, 3])),
+    );
 
     expect(result).toEqual({ saved: true, method: "host" });
 
@@ -895,13 +910,11 @@ test.describe("host bridge", () => {
     // implementing the host protocol. Being framed is not evidence of a host.
     const container = await frameContainer(page, false);
 
-    const result = await container.evaluate(async () => {
-      const frame = document.getElementById("dai-app") as HTMLIFrameElement;
+    const app = appFrame(container);
+    const result = await app.evaluate(async () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (frame.contentWindow as any).dai.saveState(new Uint8Array([1, 2, 3]), {
-        method: "picker",
-      });
-    });
+      (window as any).dai.saveState(new Uint8Array([1, 2, 3]), { method: "picker" }),
+    );
 
     // Which browser path runs is engine-specific — Chromium auto-dismisses its
     // picker, Firefox and WebKit have none — so assert what actually matters:

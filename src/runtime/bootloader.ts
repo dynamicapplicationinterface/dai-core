@@ -6,9 +6,16 @@
  *
  *   1. Decode the Base64 payload out of `#dai-payload`.
  *   2. Unzip it in memory (fflate, bundled into this script).
- *   3. Turn every packaged asset into a `blob:` URL.
- *   4. Rewrite the packaged `index.html` to point at those URLs.
- *   5. Mount the result in a sandboxed iframe via `srcdoc`.
+ *   3. Verify every entry against the manifest, before anything executes.
+ *   4. Mount a sandboxed frame containing only a loader.
+ *   5. Hand the loader the bytes, and let it mint its own URLs and write the
+ *      application's document.
+ *
+ * Step 5 is arranged that way on purpose. A blob URL belongs to whoever minted
+ * it, so passing URLs inward would require the frame to share this origin —
+ * and a frame that shares this origin can rewrite the bootloader that a save
+ * seals into the next copy. Passing bytes instead costs a message and buys a
+ * boundary that actually holds.
  *
  * Service Workers are deliberately not used: they are unavailable on `file://`,
  * which is the primary way a container is opened. See §1 of the Phase 2 spec.
@@ -86,34 +93,6 @@ const HANDSHAKE_TIMEOUT_MS = 5000;
  */
 const SYNTHETIC_ORIGIN = "file:///dai/app/";
 
-const MIME_TYPES: Record<string, string> = {
-  js: "text/javascript",
-  mjs: "text/javascript",
-  css: "text/css",
-  html: "text/html",
-  json: "application/json",
-  wasm: "application/wasm",
-  svg: "image/svg+xml",
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
-  avif: "image/avif",
-  ico: "image/x-icon",
-  woff: "font/woff",
-  woff2: "font/woff2",
-  ttf: "font/ttf",
-  otf: "font/otf",
-  map: "application/json",
-  txt: "text/plain",
-};
-
-function mimeFor(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return MIME_TYPES[ext] ?? "application/octet-stream";
-}
-
 /**
  * Stops, says why on screen, and tells the host.
  *
@@ -166,34 +145,6 @@ function decodeBase64(b64: string): Uint8Array {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
-}
-
-/** Collapses `./a/../b` style references so archive lookups are exact. */
-function normalizePath(path: string): string {
-  const out: string[] = [];
-  for (const segment of path.split("/")) {
-    if (!segment || segment === ".") continue;
-    if (segment === "..") out.pop();
-    else out.push(segment);
-  }
-  return out.join("/");
-}
-
-/**
- * Rewrites every `src`/`href` in the packaged HTML to the blob URL for that
- * asset. Anything not present in the archive is left untouched — with
- * `connect-src 'none'` and no network, an unresolved reference simply fails to
- * load rather than reaching out.
- */
-function rewriteHtml(html: string, urls: Map<string, string>): string {
-  return html.replace(
-    /(\s(?:src|href))="([^"]+)"/g,
-    (whole, attr: string, value: string) => {
-      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(value)) return whole;
-      const url = urls.get(normalizePath(value));
-      return url ? `${attr}="${url}"` : whole;
-    },
-  );
 }
 
 /**
@@ -488,12 +439,18 @@ async function writeContainer(
  * This function is serialized with `Function.prototype.toString()` and injected
  * into the frame, so it MUST be self-contained: it may not reference anything
  * from this module's scope, because those bindings do not exist in the frame
- * (and are renamed by the minifier). Everything it needs comes off
- * `parent.__DAI__`.
+ * (and are renamed by the minifier).
+ *
+ * It reads its own window rather than the parent's. Reaching across the frame
+ * boundary for data is what forced `allow-same-origin`, and under that flag the
+ * application shared an origin with the shell meant to contain it — free to
+ * read the public key out of the DOM and to rewrite the bootloader that a save
+ * would seal into the next copy. The loader hands this object over by
+ * `postMessage` and sets it locally instead.
  */
 function bridgeMain(): void {
   type Any = Record<string, any>;
-  const host: Any = ((parent as unknown as Any).__DAI__ as Any) || {};
+  const host: Any = ((window as unknown as Any).__DAI__ as Any) || {};
 
   /**
    * Re-creates a buffer with this frame's intrinsics. A buffer minted in the
@@ -814,6 +771,197 @@ function installAppMode(frame: HTMLIFrameElement): void {
   notify();
 }
 
+/**
+ * Runs inside the frame, before the application exists.
+ *
+ * A blob URL belongs to the origin that minted it, so one created by the shell
+ * is unreachable from a frame that does not share that origin — which is
+ * precisely why the frame used to be granted one. Minting them here is what
+ * lets the sandbox drop `allow-same-origin`, and it means the asset resolution
+ * has to live in the frame as well.
+ *
+ * Serialized with `Function.prototype.toString()`, so like `bridgeMain` this
+ * must be entirely self-contained.
+ *
+ * The sequence matters: the frame announces itself, the shell replies with the
+ * bytes, and only then is the document written. An import map has to be in
+ * place before any module in the document is fetched, and it cannot be written
+ * until the URLs it names exist.
+ */
+function frameLoader(): void {
+  type Any = Record<string, any>;
+
+  /*
+   * Web storage, replaced with an in-memory stand-in.
+   *
+   * At an opaque origin `window.localStorage` does not return null — it throws
+   * a SecurityError, and sqlite3ApiBootstrap reads it while looking for
+   * configuration. Without this the engine cannot start at all, which is the
+   * one thing the isolation work must not cost.
+   *
+   * Substituting rather than merely surviving is deliberate. A container's data
+   * belongs in the file: anything written to browser storage stays on the
+   * machine that wrote it, so a document sent to somebody else would arrive
+   * empty. An in-memory store gives the same semantics the format already
+   * promises — writes succeed, nothing persists, nothing leaks into the
+   * browser's own storage for this origin. The compiler warns about
+   * localStorage separately, so an author is told rather than left guessing.
+   */
+  const memoryStorage = (): Any => {
+    const entries = new Map<string, string>();
+    return {
+      get length() {
+        return entries.size;
+      },
+      clear: () => entries.clear(),
+      getItem: (key: string) => (entries.has(String(key)) ? entries.get(String(key)) : null),
+      key: (index: number) => [...entries.keys()][index] ?? null,
+      removeItem: (key: string) => {
+        entries.delete(String(key));
+      },
+      setItem: (key: string, value: string) => {
+        entries.set(String(key), String(value));
+      },
+    };
+  };
+
+  for (const name of ["localStorage", "sessionStorage"]) {
+    try {
+      Object.defineProperty(window, name, { value: memoryStorage(), configurable: true });
+    } catch {
+      // An engine that refuses the shadow will throw from the getter instead,
+      // which the caller sees as the absence of storage.
+    }
+  }
+
+  const mimeFor = (path: string): string => {
+    const table: Record<string, string> = {
+      html: "text/html",
+      js: "text/javascript",
+      mjs: "text/javascript",
+      css: "text/css",
+      json: "application/json",
+      svg: "image/svg+xml",
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      avif: "image/avif",
+      ico: "image/x-icon",
+      woff: "font/woff",
+      woff2: "font/woff2",
+      ttf: "font/ttf",
+      otf: "font/otf",
+      wasm: "application/wasm",
+      map: "application/json",
+      txt: "text/plain",
+    };
+    return table[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] || "application/octet-stream";
+  };
+
+  const normalizePath = (path: string): string => {
+    const out: string[] = [];
+    for (const part of path.split("/")) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") out.pop();
+      else out.push(part);
+    }
+    return out.join("/");
+  };
+
+  window.addEventListener("message", (event: MessageEvent) => {
+    const data = event.data as Any;
+    if (!data || data.type !== "dai:payload") return;
+
+    const decoder = new TextDecoder();
+    const urls = new Map<string, string>();
+    const scripts = new Map<string, string>();
+    const imports: Record<string, string> = {};
+
+    const placeholderFor = (path: string): string => String(data.syntheticOrigin) + path;
+    const blobUrl = (body: BlobPart, path: string): string =>
+      URL.createObjectURL(new Blob([body], { type: mimeFor(path) }));
+
+    for (const [path, buffer] of data.assets as [string, ArrayBuffer][]) {
+      if (/\.m?js$/.test(path)) scripts.set(path, decoder.decode(new Uint8Array(buffer)));
+      else urls.set(path, blobUrl(new Uint8Array(buffer), path));
+    }
+
+    // Every spelling a chunk may use for a sibling: Vite emits basenames while
+    // the archive keys full paths. Longest first, so a path is never partly
+    // consumed by its own basename.
+    const spellings = (path: string): string[] => {
+      const base = path.slice(path.lastIndexOf("/") + 1);
+      const forms = ["./" + path, path, "./" + base, base];
+      return [...new Set(forms)].sort((a, b) => b.length - a.length);
+    };
+
+    const escapeRe = (value: string): string =>
+      [...value].map((c) => (/[a-zA-Z0-9_/-]/.test(c) ? c : "[" + c + "]")).join("");
+
+    // One pass with an ordered alternation. Replacing each spelling in turn
+    // corrupts the result: a substituted URL contains the bare basename and
+    // would then be matched again inside itself.
+    const substitute = (text: string, target: string, replacement: string): string =>
+      text.replace(new RegExp(spellings(target).map(escapeRe).join("|"), "g"), () => replacement);
+
+    for (const [path, source] of scripts) {
+      let text = source.split("import.meta.url").join(JSON.stringify(placeholderFor(path)));
+      for (const asset of urls.keys()) text = substitute(text, asset, urls.get(asset) as string);
+      for (const dep of scripts.keys()) {
+        if (dep !== path) text = substitute(text, dep, placeholderFor(dep));
+      }
+      urls.set(path, blobUrl(text, path));
+    }
+    for (const path of scripts.keys()) imports[placeholderFor(path)] = urls.get(path) as string;
+
+    const rewritten = String(data.entryHtml).replace(
+      /(\s(?:src|href))="([^"]+)"/g,
+      (whole: string, attr: string, value: string) => {
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(value)) return whole;
+        const url = urls.get(normalizePath(value));
+        return url ? attr + '="' + url + '"' : whole;
+      },
+    );
+
+    // Set before the document is written. `document.open()` clears the document
+    // and keeps the global, so the bridge finds this already waiting.
+    (window as unknown as Any).__DAI__ = {
+      version: data.facts.version,
+      documentUuid: data.facts.documentUuid,
+      verified: data.facts.verified,
+      signature: data.facts.signature,
+      publicKeyFingerprint: data.facts.publicKeyFingerprint,
+      sqlite: new Uint8Array(data.sqlite as ArrayBuffer),
+      sqliteWasm: (data.wasm as ArrayBuffer) || null,
+      sqliteGlueUrl: data.glueSource
+        ? URL.createObjectURL(new Blob([String(data.glueSource)], { type: "text/javascript" }))
+        : null,
+    };
+
+    const head =
+      "<" + 'script type="importmap">' + JSON.stringify({ imports }) + "<" + "/script>" +
+      String(data.bridgeSource) +
+      String(data.handshakeSource);
+
+    const html = /<head(\s[^>]*)?>/i.test(rewritten)
+      ? rewritten.replace(/<head(\s[^>]*)?>/i, (tag: string) => tag + head)
+      : "<head>" + head + "</head>" + rewritten;
+
+    document.open();
+    document.write(html);
+    document.close();
+  });
+
+  parent.postMessage({ type: "dai:frame-hello" }, "*");
+}
+
+/** Serializes frameLoader() into the frame's initial document. */
+function loaderScript(): string {
+  return "<script>(" + frameLoader.toString() + ")()<" + "/script>";
+}
+
 /** Serializes bridgeMain() into the frame. See the note on that function. */
 function bridgeScript(): string {
   return "<script>(" + bridgeMain.toString() + ")()<" + "/script>";
@@ -826,7 +974,14 @@ function handshakeScript(): string {
     `var ok=function(){try{parent.postMessage(${JSON.stringify(HANDSHAKE)},"*")}catch(e){}};` +
     `window.addEventListener("error",function(e){try{parent.postMessage(` +
     `{type:"dai:error",message:String(e.message)},"*")}catch(_){}}, true);` +
-    `if(document.readyState==="complete")ok();else window.addEventListener("load",ok);` +
+    // Several signals, because this document is written rather than navigated
+    // to. Firefox does not fire "load" for a document produced by
+    // document.write, so waiting only on that left the shell reporting
+    // "mounting" forever over an application that had already started. Posting
+    // more than once is harmless: the shell latches the first.
+    `if(document.readyState!=="loading")ok();else{` +
+    `window.addEventListener("DOMContentLoaded",ok);window.addEventListener("load",ok);}` +
+    `setTimeout(ok,0);` +
     `})()<\/script>`
   );
 }
@@ -834,12 +989,21 @@ function handshakeScript(): string {
 function mount(srcdoc: string): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   frame.id = "dai-app";
-  // allow-same-origin is required: blob: URLs minted by this document are only
-  // reachable from the frame if the frame shares its origin.
-  frame.setAttribute(
-    "sandbox",
-    "allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads",
-  );
+  /*
+   * Scripts and forms, and nothing else.
+   *
+   * `allow-same-origin` used to be here because blob URLs minted by this
+   * document only resolve in a frame that shares its origin. The frame mints
+   * its own now, so the flag can go — and with it the application's ability to
+   * read this document, replace the public key it carries, or rewrite the
+   * bootloader that a save seals into the next copy.
+   *
+   * `allow-popups` goes too. `window.open` carries a URL and a URL carries
+   * data, and no CSP directive governs it — `connect-src 'none'` does not close
+   * that door. `allow-downloads` and `allow-modals` are capabilities an
+   * application should have to be granted rather than be given by default.
+   */
+  frame.setAttribute("sandbox", "allow-scripts allow-forms");
   // Deny fullscreen to the frame. A same-origin frame inherits the permission
   // by default, which would let the application seize the whole viewport on any
   // gesture it happens to receive. App Mode is the shell's to grant.
@@ -848,98 +1012,6 @@ function mount(srcdoc: string): HTMLIFrameElement {
   frame.srcdoc = srcdoc;
   document.body.appendChild(frame);
   return frame;
-}
-
-/** Predictable, parseable stand-in URL for a packaged module. */
-function placeholderFor(path: string): string {
-  return `${SYNTHETIC_ORIGIN}${path}`;
-}
-
-interface ResolvedAssets {
-  /** Archive path -> blob URL. */
-  urls: Map<string, string>;
-  /** Placeholder URL -> blob URL, for the iframe's import map. */
-  imports: Record<string, string>;
-}
-
-/**
- * Turns every packaged asset into a `blob:` URL.
- *
- * Two problems make this more than a wrapper call:
- *
- * 1. Vite resolves siblings with `new URL(dep, import.meta.url)`. Under a blob
- *    module `import.meta.url` is `blob:null/<uuid>` — an opaque path that throws
- *    when parsed as a base, before `dep` is even considered.
- * 2. A blob's content is frozen at creation, so a module cannot be rewritten to
- *    point at a blob that does not exist yet. Vite's chunk graph is cyclic in
- *    practice — a lazy chunk imports shared code back from the entry chunk — so
- *    no ordering of blob creation can satisfy both directions.
- *
- * Both are solved with one indirection. Chunk-to-chunk references are rewritten
- * to `SYNTHETIC_ORIGIN` placeholder URLs, which are absolute (nothing to
- * resolve against a base) and known before any blob exists (so cycles are
- * irrelevant). An import map in the iframe then redirects each placeholder to
- * its real blob URL. Non-JS assets have no cycles and are substituted directly.
- */
-function resolveAssets(assets: Map<string, Uint8Array>): ResolvedAssets {
-  const urls = new Map<string, string>();
-  const imports: Record<string, string> = {};
-  const decoder = new TextDecoder();
-  const scripts = new Map<string, string>();
-
-  const blobUrl = (data: BlobPart, path: string): string =>
-    URL.createObjectURL(new Blob([data], { type: mimeFor(path) }));
-
-  for (const [path, bytes] of assets) {
-    if (path === "index.html") continue;
-    if (/\.m?js$/.test(path)) scripts.set(path, decoder.decode(bytes));
-    else urls.set(path, blobUrl(bytes as BlobPart, path));
-  }
-
-  /**
-   * Every spelling a chunk may use for an asset. Vite emits sibling references
-   * by basename (`./Lazy-abc123.js`) while the archive keys them by path
-   * (`assets/Lazy-abc123.js`), so both must be matched. Longest first, so a full
-   * path is never partially consumed by its own basename.
-   */
-  const spellings = (path: string): string[] => {
-    const base = path.slice(path.lastIndexOf("/") + 1);
-    const forms = [`./${path}`, path, `./${base}`, base];
-    return [...new Set(forms)].sort((a, b) => b.length - a.length);
-  };
-
-  /** Escapes a literal for regex use by wrapping metacharacters in classes. */
-  const escapeRe = (value: string): string =>
-    [...value].map((c) => (/[a-zA-Z0-9_/-]/.test(c) ? c : `[${c}]`)).join("");
-
-  /**
-   * Replaces every spelling of `target` in one pass. Sequential per-form
-   * replacement would corrupt the output: after `./Lazy-abc.js` becomes an
-   * absolute URL, the bare-basename form would match inside the URL just
-   * inserted and substitute again. Alternation is ordered longest-first so the
-   * most specific spelling wins at any given position.
-   */
-  const substitute = (text: string, target: string, replacement: string): string => {
-    const pattern = new RegExp(spellings(target).map(escapeRe).join("|"), "g");
-    return text.replace(pattern, () => replacement);
-  };
-
-  for (const [path, source] of scripts) {
-    // Give `import.meta.url` a parseable value; every specifier paired with it
-    // has already been made absolute, so the base is never actually applied.
-    let text = source
-      .split("import.meta.url")
-      .join(JSON.stringify(placeholderFor(path)));
-    for (const asset of urls.keys()) text = substitute(text, asset, urls.get(asset)!);
-    for (const dep of scripts.keys()) {
-      if (dep !== path) text = substitute(text, dep, placeholderFor(dep));
-    }
-    urls.set(path, blobUrl(text, path));
-  }
-
-  for (const path of scripts.keys()) imports[placeholderFor(path)] = urls.get(path)!;
-
-  return { urls, imports };
 }
 
 async function boot(): Promise<void> {
@@ -1048,18 +1120,51 @@ async function boot(): Promise<void> {
     return;
   }
 
-  const { urls, imports } = resolveAssets(assets);
+  /*
+   * What the frame is sent, once it says it is listening.
+   *
+   * Bytes rather than URLs, because a blob URL minted here is meaningless at
+   * the frame's own origin. Every buffer is a copy and is transferred, so the
+   * archive this document keeps for resealing is untouched and nothing is
+   * copied twice on the way across.
+   */
+  const framePayload = {
+    type: "dai:payload",
+    entryHtml: new TextDecoder().decode(entry),
+    assets: [...assets]
+      .filter(([name]) => name !== "index.html")
+      .map(([name, bytes]) => [name, toArrayBuffer(bytes)] as [string, ArrayBuffer]),
+    // The glue's own `import.meta.url` is neutralized before it travels, for
+    // the same reason application chunks need it: blob:null/<uuid> cannot be
+    // parsed as a base URL.
+    glueSource: files[GLUE_ENTRY]
+      ? new TextDecoder()
+          .decode(files[GLUE_ENTRY])
+          .split("import.meta.url")
+          .join(JSON.stringify(`${SYNTHETIC_ORIGIN}sqlite3.mjs`))
+      : null,
+    wasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
+    sqlite: toArrayBuffer(files[SQLITE_ENTRY] ?? new Uint8Array(0)),
+    syntheticOrigin: SYNTHETIC_ORIGIN,
+    bridgeSource: bridgeScript(),
+    handshakeSource: handshakeScript(),
+    facts: {
+      version: "0.1.0",
+      documentUuid: manifest?.documentUuid ?? null,
+      verified: policy === "required",
+      signature: signatureState,
+      publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
+    },
+  };
 
-  const html = new TextDecoder().decode(entry);
-  // The import map must be in place before any module in the frame is fetched.
-  const importMap =
-    `<script type="importmap">${JSON.stringify({ imports })}<\/script>`;
-  const srcdoc = rewriteHtml(html, urls).replace(
-    /<head(\s[^>]*)?>/i,
-    (head) => head + importMap + bridgeScript() + handshakeScript(),
-  );
+  const transfer: ArrayBuffer[] = [
+    ...framePayload.assets.map(([, buffer]) => buffer),
+    framePayload.sqlite,
+    ...(framePayload.wasm ? [framePayload.wasm] : []),
+  ];
 
-  // Expose the decoded archive for the persistence layer (Phase 2 §3).
+  // Kept for the persistence layer and for a host cross-checking what mounted.
+  // The frame no longer reads it — it cannot — so it holds no blob URLs.
   (window as unknown as Record<string, unknown>).__DAI__ = {
     version: "0.1.0",
     documentUuid: manifest?.documentUuid ?? null,
@@ -1068,26 +1173,7 @@ async function boot(): Promise<void> {
     publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
     files,
     assets,
-    urls,
     sqlite: files[SQLITE_ENTRY] ?? new Uint8Array(0),
-    // ArrayBuffer, not a blob URL: see bridgeMain().
-    sqliteWasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
-    // The glue is a module the frame imports, so it does need a URL. Its own
-    // `import.meta.url` is neutralized first, for the same reason app chunks
-    // need it: blob:null/<uuid> cannot be parsed as a base.
-    sqliteGlueUrl: files[GLUE_ENTRY]
-      ? URL.createObjectURL(
-          new Blob(
-            [
-              new TextDecoder()
-                .decode(files[GLUE_ENTRY])
-                .split("import.meta.url")
-                .join(JSON.stringify(`${SYNTHETIC_ORIGIN}sqlite3.mjs`)),
-            ],
-            { type: "text/javascript" },
-          ),
-        )
-      : null,
   };
 
   let ready = false;
@@ -1196,7 +1282,22 @@ async function boot(): Promise<void> {
     });
   }
 
-  const frame = mount(srcdoc);
+  /*
+   * The frame starts empty but for the loader, and asks for the payload itself.
+   *
+   * Posting the bytes before the frame is listening would lose them, and the
+   * frame is the only side that knows when its own script has run — so it
+   * speaks first. `"*"` as the target origin because the frame has no origin to
+   * name; the reply carries no secret the frame did not already hold.
+   */
+  const frame = mount(loaderScript());
+
+  window.addEventListener("message", (event) => {
+    if ((event.data as { type?: string })?.type !== "dai:frame-hello") return;
+    if (event.source !== frame.contentWindow) return;
+    frame.contentWindow?.postMessage(framePayload, "*", transfer);
+  });
+
   installAppMode(frame);
 
   if (window.parent !== window) {
