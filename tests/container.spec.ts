@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type ConsoleMessage, type Frame, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
+import { MANIFEST_VERSION } from "../src/core.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTAINER = resolve(here, "fixture/fixture.dai.html");
@@ -327,7 +328,10 @@ test.describe("manifest and integrity", () => {
       Buffer.from(archive["runtime/manifest.json"]!).toString("utf8"),
     );
 
-    expect(manifest.manifestVersion).toBe(1);
+    // The compiler's own constant: this asserts the manifest records a version,
+    // not which one. What the value must be is asserted in
+    // older-containers.spec.ts, where the reason it matters lives.
+    expect(manifest.manifestVersion).toBe(MANIFEST_VERSION);
     expect(manifest.algorithm).toBe("SHA-256");
     expect(manifest.documentUuid).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,

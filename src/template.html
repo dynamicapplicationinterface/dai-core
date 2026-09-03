@@ -127,8 +127,21 @@
   <div id="boot-ui">
     <div>
       <p><strong id="dai-app-name"></strong></p>
-      <p id="dai-boot-status">Decrypting and mounting local environment&hellip;</p>
+      <p id="dai-boot-status">Opening&hellip;</p>
       <p><code id="dai-boot-detail"></code></p>
+      <noscript>
+        <!--
+          A preview that renders the document without running it leaves the
+          line above on screen forever, describing work that never started.
+          This is the only message that can reach somebody in that situation,
+          because everything else here needs the script that is not running.
+        -->
+        <p>
+          This container needs scripting, and this viewer has it switched off.
+          Nothing is wrong with the file. Open it in a browser, or with the DAI
+          runner on a phone.
+        </p>
+      </noscript>
     </div>
   </div>
 

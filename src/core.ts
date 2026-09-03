@@ -16,7 +16,17 @@ import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 
 /** Bumped when the manifest's shape changes. */
-export const MANIFEST_VERSION = 1;
+/**
+ * Bumped to 2 when the signature became a COSE_Sign1 envelope over CBOR.
+ *
+ * It should have been bumped in that commit and was not, which is how a
+ * container built by one deployment came to be refused by another with
+ * "Unsupported signature algorithm" — an accurate sentence that tells the
+ * person holding the file nothing they can act on. This field exists precisely
+ * so a reader can say "older format" instead of guessing from a value it does
+ * not recognise.
+ */
+export const MANIFEST_VERSION = 2;
 
 export const DEFAULT_APP_PREFIX = "app";
 export const DEFAULT_SQLITE_ENTRY = "document.sqlite";

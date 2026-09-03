@@ -133,6 +133,9 @@ function nonceAttr(): string {
  * an unfamiliar message.
  */
 function refuse(reason: RefusalReason, message: string, detail = ""): void {
+  // A refusal is an answer. Letting the stall notice arrive twenty seconds
+  // later would replace it with a guess.
+  clearBootWatch?.();
   setStatus(message, detail);
 
   if (window.parent === window) return;
@@ -159,11 +162,52 @@ function refuse(reason: RefusalReason, message: string, detail = ""): void {
 /** Set once the manifest is parsed, so a later refusal can name the document. */
 let refusalUuid: string | null = null;
 
+/** Cancels the stall notice. Set when the boot starts watching. */
+let clearBootWatch: (() => void) | null = null;
+
 function setStatus(message: string, detail = ""): void {
   const status = document.getElementById("dai-boot-status");
   const detailEl = document.getElementById("dai-boot-detail");
   if (status) status.textContent = message;
   if (detailEl) detailEl.textContent = detail;
+}
+
+/**
+ * Names the stage that is running, so a boot that stops somewhere says where.
+ *
+ * The shell used to show one line for the whole of startup, which meant a
+ * container that hung was indistinguishable from a container that had not
+ * started — including in a screenshot from somebody a long way away, which is
+ * the only diagnostic a format like this usually gets.
+ */
+function stage(message: string): void {
+  const status = document.getElementById("dai-boot-status");
+  if (status) status.textContent = message;
+}
+
+/**
+ * Says what to try when startup has plainly stalled.
+ *
+ * Not a refusal: the boot is still running and may yet finish on a slow device,
+ * so nothing is stopped and nothing is claimed to have failed. What changes is
+ * that the screen stops implying progress it cannot demonstrate.
+ *
+ * The runner is named rather than linked. A container that carried a link out
+ * would be a self-contained file pointing at a service, and clicking it would
+ * tell that service the file had been opened.
+ */
+function watchBoot(): () => void {
+  const timer = setTimeout(() => {
+    const detail = document.getElementById("dai-boot-detail");
+    if (detail) {
+      detail.textContent =
+        "Still starting. Some viewers on phones and tablets will display this file " +
+        "but not run it. If nothing happens, open it with the DAI runner instead.";
+    }
+  }, 20000);
+
+  clearBootWatch = () => clearTimeout(timer);
+  return clearBootWatch;
 }
 
 function decodeBase64(b64: string): Uint8Array {
@@ -302,6 +346,16 @@ async function verifySignature(
 ): Promise<{ ok: boolean; reason?: string }> {
   if (!manifest.signature || !manifest.signedEntries) {
     return { ok: false, reason: "the container carries a public key but no signature" };
+  }
+  if (manifest.signatureAlgorithm === "ECDSA-P256-SHA256" || manifest.manifestVersion < 2) {
+    // Built before the signature became a COSE envelope. Naming the constant
+    // would be accurate and useless to whoever is holding the file.
+    return {
+      ok: false,
+      reason:
+        "built before the signature format changed, so its signature cannot be " +
+        "checked here — rebuild it and it will open",
+    };
   }
   if (manifest.signatureAlgorithm !== "COSE-ES256") {
     return { ok: false, reason: `unsupported signature algorithm ${manifest.signatureAlgorithm}` };
@@ -1108,6 +1162,12 @@ async function boot(): Promise<void> {
   const nameEl = document.getElementById("dai-app-name");
   if (nameEl) nameEl.textContent = document.title;
 
+  // Reaching this line is itself information: the bootloader ran. A viewer that
+  // renders the document without executing it never gets here, and the noscript
+  // block in the shell is what speaks in that case.
+  stage("Reading the payload…");
+  const stopWatching = watchBoot();
+
   const violations: string[] = [];
   document.addEventListener("securitypolicyviolation", (event) => {
     violations.push(`${event.violatedDirective} blocked ${event.blockedURI}`);
@@ -1141,6 +1201,8 @@ async function boot(): Promise<void> {
     );
     return;
   }
+
+  stage("Checking the seal…");
 
   const policy = integrityPolicy();
   const manifestBytes = files[MANIFEST_ENTRY];
@@ -1281,6 +1343,9 @@ async function boot(): Promise<void> {
   window.addEventListener("message", (event) => {
     if (event.data === HANDSHAKE) {
       ready = true;
+      // The application is on screen, so the boot line is no longer the truth
+      // about anything and the stall notice must not appear behind it.
+      stopWatching();
       document.body.classList.add("dai-mounted");
       return;
     }

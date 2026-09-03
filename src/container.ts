@@ -308,6 +308,16 @@ async function checkSignature(
       "This container carries a publisher key but no signature, so the key cannot be checked.",
     );
   }
+  // A container from before the signature became a COSE envelope. The manifest
+  // is intelligible and the signature is not checkable by anything current, so
+  // the refusal says what happened and what to do rather than naming a constant
+  // the reader has never heard of.
+  if (manifest.signatureAlgorithm === "ECDSA-P256-SHA256" || manifest.manifestVersion < 2) {
+    throw new ContainerError(
+      "This container was built before the signature format changed, so its " +
+        "signature cannot be checked here. Rebuild it and it will open.",
+    );
+  }
   if (manifest.signatureAlgorithm !== "COSE-ES256") {
     throw new ContainerError(
       `Unsupported signature algorithm: ${manifest.signatureAlgorithm}.`,
