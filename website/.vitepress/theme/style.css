@@ -25,3 +25,80 @@
   color: var(--vp-c-brand-1);
   margin-bottom: 8px;
 }
+
+/*
+ * Calm and confident: large type, generous air, one accent colour, and as few
+ * words per screen as the meaning allows. The reader is often somebody who does
+ * not write software, and prose is what loses them — so the pages that sell the
+ * idea are mostly space and pictures, and the pages that document it are dense
+ * on purpose.
+ */
+
+:root {
+  --vp-layout-max-width: 1440px;
+  --vp-home-hero-name-color: var(--vp-c-text-1);
+  --dai-measure: 34rem;
+}
+
+/* Headings carry the hierarchy, so they need room and tighter tracking. */
+.vp-doc h1 {
+  font-size: 2.6rem;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+
+.vp-doc h2 {
+  margin-top: 3.2rem;
+  padding-top: 1.6rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.vp-doc h3 {
+  margin-top: 2rem;
+  letter-spacing: -0.015em;
+}
+
+/*
+ * A measure. Full-width prose across a 1440px layout is unreadable, and the
+ * documentation pages are the ones people actually have to read carefully.
+ */
+.vp-doc p,
+.vp-doc ul,
+.vp-doc ol {
+  max-width: var(--dai-measure);
+}
+
+.vp-doc table,
+.vp-doc .recipe,
+.vp-doc .maker,
+.vp-doc .tamper,
+.vp-doc .make {
+  max-width: none;
+}
+
+.vp-doc p {
+  line-height: 1.7;
+}
+
+.vp-doc blockquote {
+  border-left: 3px solid var(--vp-c-brand-1);
+}
+
+/* Screenshots are evidence, so they get to look like objects rather than images. */
+.shot {
+  margin: 2rem 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16, 21, 31, 0.06), 0 18px 48px rgba(16, 21, 31, 0.09);
+}
+
+.dark .shot {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 48px rgba(0, 0, 0, 0.4);
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+}

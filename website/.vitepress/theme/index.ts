@@ -5,6 +5,7 @@ import DownloadCard from '../../components/DownloadCard.vue';
 import MakerWalkthrough from '../../components/MakerWalkthrough.vue';
 import MakeYourOwn from '../../components/MakeYourOwn.vue';
 import Recipe from '../../components/Recipe.vue';
+import Landing from '../../components/Landing.vue';
 import './style.css';
 
 export default {
@@ -16,5 +17,6 @@ export default {
     app.component('MakerWalkthrough', MakerWalkthrough);
     app.component('MakeYourOwn', MakeYourOwn);
     app.component('Recipe', Recipe);
+    app.component('Landing', Landing);
   }
 };

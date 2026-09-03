@@ -25,21 +25,22 @@ export default defineConfig({
     logo: '/favicon.svg',
     siteTitle: 'DAI Protocol',
     nav: [
-      { text: 'Make One', link: '/make-one' },
-      { text: 'Make Your Own', link: '/make-your-own' },
-      { text: 'Documentation', link: '/docs/introduction' },
-      { text: 'Specification', link: '/docs/specification' },
-      { text: 'Host Bridge', link: '/docs/host-bridge' },
-      { text: 'Playground', link: '/playground' },
-      { text: 'For IT', link: '/tamper-proof' },
+      { text: 'Make one', link: '/make-one' },
+      { text: 'Security', link: '/tamper-proof' },
       {
-        text: 'v0.1',
+        text: 'Documentation',
         items: [
-          { text: 'Specification v0.1', link: '/docs/specification' },
-          { text: 'GitHub Repository', link: 'https://github.com/dynamicapplicationinterface/dai-core' }
-        ]
-      }
+          { text: 'Making files', link: '/docs/making-files' },
+          { text: 'The recipe (for AI)', link: '/docs/the-recipe' },
+          { text: 'Quickstart', link: '/docs/quickstart' },
+          { text: 'Specification', link: '/docs/specification' },
+          { text: 'Host bridge', link: '/docs/host-bridge' },
+          { text: 'Security model', link: '/docs/security' },
+          { text: 'Playground', link: '/playground' },
+        ],
+      },
     ],
+
     sidebar: [
       {
         text: 'Overview',
