@@ -555,7 +555,12 @@ h1 {
   font-size: 14px;
 }
 
-.ideas-label { color: var(--vp-c-text-3); padding: 5px 0; }
+/*
+ * On its own line. Inline with the chips, the label and the first chip filled
+ * the first row and the rest spilled underneath in a shape that changed with
+ * every screen width.
+ */
+.ideas-label { flex-basis: 100%; color: var(--vp-c-text-3); margin-bottom: 2px; }
 
 .idea {
   padding: 5px 12px;
