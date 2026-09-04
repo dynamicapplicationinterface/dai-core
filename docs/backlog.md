@@ -15,19 +15,6 @@ disagreed, it is in the last section, undecided on purpose.
 
 Numbering continues from the security items, which are closed below.
 
-### 10. The recipe teaches the schema, and the kit survives a colon
-
-The schema gate exists to stop a model's v2 destroying a person's v1 data —
-and the recipe never mentions `schema.sql` or migrations, so no model ever
-declares one and the gate never runs for exactly the population it is for. And
-the kit's parameter matcher, `/:([a-zA-Z_]\w*)/g`, reads `strftime('%H:%M')`
-as two bindings; the one real sample we have is a medicine log.
-
-**Exit:** the recipe requires `schema.sql` and a migration on revision; the MCP
-`create` refuses to rebuild an existing document whose schema moved without
-one; the kit skips string literals and `::`; a container using
-`strftime('%H:%M')` builds and interacts with no phantom binding.
-
 ### 11. The host says what it applied, and the probe checks
 
 A misconfigured host is silently insecure. The specification should name the
@@ -138,6 +125,13 @@ Kept so the reasoning stays with the record.
 - **9. Two host classes, and the site says which is which** — `834e504`. `hostClass` on the handshake, viewer or editor; a viewer
   never claims an in-place save; the application is told `inPlace` on every
   save; the README no longer says the browser rewrites the file.
+- **10. The recipe teaches the schema, and the kit survives a colon** —
+  `c1b04b8`. `declareSchema` over the files, called by every door and by the
+  core when a door did not; the declared statements injected as the first SQL
+  block; the recipe's SCHEMA section and a migration in the bundle example;
+  the MCP tool's `upgradeOf` refusing a moved schema as tool output; the kit
+  walking statements past literals, comments and `::`; the three examples
+  declaring theirs.
 
 - **The five gates from the first review** — honest CI, opaque-origin frame,
   no `'unsafe-inline'`, the whole manifest signed, saves that write only the
