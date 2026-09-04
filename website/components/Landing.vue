@@ -36,17 +36,7 @@ const phones = [
   { shot: '/shots/home-packing.png', label: 'Packing for the beach', alt: 'A packing list for a beach trip' },
 ];
 
-/*
- * The sentence her assistant needs.
- *
- * She will paste this page's address into a chat, and the model will read the
- * page. If the prompt is here in full the model has nothing to invent; if it
- * is paraphrased it will improvise, and what it improvises is the reason the
- * recipe exists.
- */
-const PROMPT =
-  'Make me a DAI app for [a packing list for our beach trip]. ' +
-  'Follow the recipe at https://www.dynamicapplicationinterface.io/docs/the-recipe';
+import { IDEAS as ideas, PROMPT } from './prompt.js';
 
 const copied = ref(false);
 
@@ -60,15 +50,6 @@ async function copyPrompt(): Promise<void> {
   }
 }
 
-/** Things she might make, so the blank in the prompt has something in it. */
-const ideas = [
-  'a packing list for our beach trip',
-  'a chore chart for the kids',
-  'a reading log for Maya',
-  "a budget for Leo's birthday party",
-  'our weekly dinner plan',
-  'a plant-watering schedule',
-];
 </script>
 
 <template>

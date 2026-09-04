@@ -12,27 +12,35 @@ const PAGE = "http://localhost:5176/make-one";
  * passed. The page was useless.
  */
 test.describe("make-one", () => {
-  test("plays the conversation and then offers to build", async ({ page }) => {
+  test("offers three things to make, and builds the one chosen", async ({ page }) => {
     await page.goto(PAGE);
 
-    // Before playing there is nothing to build, and the page says so.
-    await expect(page.getByText("Press play to watch it back.")).toBeVisible();
+    // Three pictures of things she might make, not a chat transcript.
+    const choices = page.locator(".choice");
+    await expect(choices).toHaveCount(3);
 
-    await page.getByRole("button", { name: /^Play$/ }).click();
+    const build = page.getByRole("button", { name: /^Build the/ });
+    await expect(build).toHaveText(/packing list/i);
 
-    const build = page.getByRole("button", { name: /Build|Building/ });
-    await expect(build).toBeVisible({ timeout: 30_000 });
-    await expect(build).toBeEnabled();
+    await choices.nth(1).click();
+    await expect(build).toHaveText(/chore chart/i);
+    // And what was asked for follows the choice.
+    await expect(page.locator(".turn.you")).toContainText("chore chart");
+  });
+
+  test("the code is there, and folded away", async ({ page }) => {
+    // The people this is for do not read source. The people who want to
+    // check it is real can.
+    await page.goto(PAGE);
+    await expect(page.locator(".files")).toHaveCount(0);
+    await page.getByRole("button", { name: /Show the code/ }).click();
+    await expect(page.locator(".files pre")).toContainText("application/sql");
   });
 
   test("builds a real container and offers a way to take it", async ({ page }) => {
     test.slow();
     await page.goto(PAGE);
-    await page.getByRole("button", { name: /^Play$/ }).click();
-
-    const build = page.getByRole("button", { name: /Build|Building/ });
-    await expect(build).toBeVisible({ timeout: 30_000 });
-    await build.click();
+    await page.getByRole("button", { name: /^Build the/ }).click();
 
     // The compile happens in the visitor's browser, against the shell and
     // engine served from /runtime — so this also fails if those go missing.
@@ -65,12 +73,9 @@ test.describe("make-one", () => {
     });
 
     await page.goto(PAGE);
-    await page.getByRole("button", { name: /^Play$/ }).click();
-    const build = page.getByRole("button", { name: /Build|Building/ });
-    await expect(build).toBeVisible({ timeout: 30_000 });
-    await build.click();
+    await page.getByRole("button", { name: /^Build the/ }).click();
 
-    const save = page.getByRole("button", { name: /^Save my-tasks/ });
+    const save = page.getByRole("button", { name: /^Save beach-trip/ });
     await expect(save).toBeVisible({ timeout: 120_000 });
 
     // The download link is the route that does nothing on such a device.
@@ -91,12 +96,9 @@ test.describe("make-one", () => {
     });
 
     await page.goto(PAGE);
-    await page.getByRole("button", { name: /^Play$/ }).click();
-    const build = page.getByRole("button", { name: /Build|Building/ });
-    await expect(build).toBeVisible({ timeout: 30_000 });
-    await build.click();
+    await page.getByRole("button", { name: /^Build the/ }).click();
 
-    const save = page.getByRole("button", { name: /^Save my-tasks/ });
+    const save = page.getByRole("button", { name: /^Save beach-trip/ });
     await expect(save).toBeVisible({ timeout: 120_000 });
     await save.click();
 
