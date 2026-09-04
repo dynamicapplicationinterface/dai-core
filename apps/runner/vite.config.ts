@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
@@ -51,10 +51,26 @@ function stamp(): Plugin {
  * register at all. Preview is what the tests drive, since a dev server serves
  * unbundled modules that a cache-first worker would happily freeze.
  */
+/**
+ * The headers production sends, so the preview the tests drive sends them too.
+ *
+ * Without this, a test proved the handoff between the website and the opener
+ * worked — against two servers that sent no headers at all. Production sent
+ * Cross-Origin-Opener-Policy: same-origin on both, which severs a popup from
+ * the page that opened it, and the opener never received a thing.
+ */
+function productionHeaders(): Record<string, string> {
+  const config = JSON.parse(readFileSync(join(import.meta.dirname, "vercel.json"), "utf8")) as {
+    headers: { source: string; headers: { key: string; value: string }[] }[];
+  };
+  const all = config.headers.find((rule) => rule.source === "/(.*)");
+  return Object.fromEntries((all?.headers ?? []).map((h) => [h.key, h.value]));
+}
+
 export default defineConfig({
   base: "./",
   plugins: [stamp()],
   server: { port: 5175, strictPort: true },
-  preview: { port: 5175, strictPort: true },
+  preview: { port: 5175, strictPort: true, headers: productionHeaders() },
   build: { outDir: "dist", emptyOutDir: true },
 });

@@ -732,6 +732,21 @@ async function start(): Promise<void> {
    * The document is read and verified here exactly as a chosen file is. Where
    * bytes arrived from says nothing about what they are.
    */
+  if (location.hash === "#handoff" && !window.opener) {
+    /*
+     * Opened for a handoff, and the page that opened us is not reachable.
+     * A Cross-Origin-Opener-Policy on either side does this silently, and
+     * for a while it did: the symptom was this page's empty chooser, with
+     * nothing anywhere saying why.
+     */
+    say(
+      "This page was opened to receive a document, but lost touch with the page " +
+        "that opened it. Go back and use Save instead, then open the file here.",
+      true,
+    );
+    return;
+  }
+
   if (location.hash === "#handoff" && window.opener) {
     say("Waiting for the document…");
     receiveHandoff(
@@ -807,9 +822,14 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
    * shell. A page waiting on a handoff is safe to reload: the sender waits
    * for a ready that the fresh page will send.
    */
+  // Only an update, never a first install. On a first visit the new worker
+  // claims the page too, and reloading then threw away a document that had
+  // just been handed over — the sender had delivered and stopped listening
+  // before the reloaded page asked again.
+  const updating = Boolean(navigator.serviceWorker.controller);
   let reloaded = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (reloaded || document.body.classList.contains("loaded")) return;
+    if (!updating || reloaded || document.body.classList.contains("loaded")) return;
     reloaded = true;
     location.reload();
   });

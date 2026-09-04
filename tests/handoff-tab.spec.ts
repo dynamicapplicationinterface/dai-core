@@ -134,11 +134,24 @@ test.describe("handing a document to another tab", () => {
  * ReferenceError inside a check that was supposed to be protecting data.
  */
 test("a document crosses from one origin to another and runs", async ({ page, context }) => {
-  const container = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "fixture/fixture.dai.html"));
+  const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const container = readFileSync(resolve(repo, "tests/fixture/fixture.dai.html"));
+
+  // The sender carries the website's production Cross-Origin-Opener-Policy,
+  // read from its config, so this measures the header pair that production
+  // actually sends. With same-origin on this side the handle to the new tab
+  // is cut the moment it opens, and the test fails the way production did.
+  const site = JSON.parse(readFileSync(resolve(repo, "website/vercel.json"), "utf8")) as {
+    headers: { source: string; headers: { key: string; value: string }[] }[];
+  };
+  const coop = site.headers
+    .find((rule) => rule.source === "/(.*)")!
+    .headers.find((h) => h.key === "Cross-Origin-Opener-Policy")!.value;
 
   await page.route("http://localhost:5199/", (route) =>
     route.fulfill({
       contentType: "text/html",
+      headers: { "Cross-Origin-Opener-Policy": coop },
       body: `<!doctype html><meta charset="utf-8"><title>Sender</title><body>
         <script>
           const OPENER_READY = ${JSON.stringify(OPENER_READY)};

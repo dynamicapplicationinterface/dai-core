@@ -86,21 +86,14 @@ interface Listener {
 export async function handOffToOpener(
   tab: Poster,
   document_: HandedOver,
-  options: { origin: string; window: Listener; timeoutMs?: number },
+  options: { origin: string; window: Listener; timeoutMs?: number; graceMs?: number },
 ): Promise<void> {
-  const { origin, window: listener, timeoutMs = 15_000 } = options;
+  const { origin, window: listener, timeoutMs = 15_000, graceMs = 60_000 } = options;
 
   await new Promise<void>((resolve, reject) => {
-    let settled = false;
+    let sent = false;
 
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      listener.removeEventListener("message", onMessage);
-      if (error) reject(error);
-      else resolve();
-    };
+    const stop = () => listener.removeEventListener("message", onMessage);
 
     const onMessage = (event: MessageEvent) => {
       // The origin check is the whole security of this direction: any page can
@@ -114,13 +107,24 @@ export async function handOffToOpener(
       // would break it — a saving of one copy against a button that silently
       // produces an empty file.
       tab.postMessage({ type: HANDOFF, name: document_.name, bytes: document_.bytes }, origin);
-      finish();
+
+      // Answered, but not finished listening. A page that reloads itself —
+      // a service worker taking it over, say — asks again, and a sender that
+      // had stopped after the first answer left it with nothing. The receiver
+      // takes one document and ignores the rest, so answering twice is safe.
+      if (!sent) {
+        sent = true;
+        clearTimeout(timer);
+        setTimeout(stop, graceMs);
+        resolve();
+      }
     };
 
     listener.addEventListener("message", onMessage);
 
     const timer = setTimeout(() => {
-      finish(
+      stop();
+      reject(
         new Error(
           `The opener did not respond. It may have been blocked from opening, ` +
             `or closed before it finished loading.`,

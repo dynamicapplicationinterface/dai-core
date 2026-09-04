@@ -70,3 +70,31 @@ test.describe("caching", () => {
     }
   });
 });
+
+/**
+ * The headers the handoff depends on.
+ *
+ * "Open it now" builds a document on the website and hands it to the opener in
+ * a new tab by postMessage. That needs the new tab to keep a reference to the
+ * page that opened it, and Cross-Origin-Opener-Policy: same-origin — on either
+ * side — cuts that reference. Both sides sent it. Nothing in either app needs
+ * cross-origin isolation; the header had been copied in without a reason and
+ * broke the one feature that depended on its absence.
+ */
+test.describe("the handoff's headers", () => {
+  const coopOf = (file: string): string | undefined =>
+    (JSON.parse(readFileSync(join(repo, file), "utf8")) as { headers: Rule[] }).headers
+      .find((rule) => rule.source === "/(.*)")
+      ?.headers.find((header) => header.key === "Cross-Origin-Opener-Policy")?.value;
+
+  test("the opener keeps the page that opened it", () => {
+    // Anything but unsafe-none severs a popup from a cross-origin opener.
+    expect(coopOf("apps/runner/vercel.json")).toBe("unsafe-none");
+  });
+
+  test("the website keeps a handle on the tabs it opens", () => {
+    // same-origin would disconnect the handle the moment the tab opened;
+    // allow-popups keeps the site isolated and keeps the handle.
+    expect(coopOf("website/vercel.json")).toMatch(/^(same-origin-allow-popups|unsafe-none)$/);
+  });
+});

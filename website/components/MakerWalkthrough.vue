@@ -525,6 +525,18 @@ h2 {
   text-decoration: underline; text-underline-offset: 3px;
 }
 
+/*
+ * The docs layout caps every paragraph and list at a reading measure and
+ * leaves it on the left, which is right for prose and wrong inside a section
+ * where everything else is centred: the picture, the button and the line
+ * under it all sat left of centre.
+ */
+.try p,
+.try ol,
+.try ul,
+.step p,
+.step ol { max-width: none; margin-left: auto; margin-right: auto; }
+
 /* ------------------------------------------------------------ choose */
 
 /*
@@ -574,7 +586,9 @@ h2 {
   gap: 16px;
 }
 
-.choices li { display: flex; }
+/* The docs theme spaces list items with margin-top on every one after the
+   first, which made the first card sit higher than the other two. */
+.choices li { display: flex; margin: 0; }
 
 .choice {
   width: 100%;
@@ -591,14 +605,17 @@ h2 {
   transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
 
-.choice:hover { transform: translateY(-2px); border-color: var(--vp-c-text-3); }
+.choice:hover { border-color: var(--vp-c-text-3); }
 .choice.is-chosen { border-color: var(--vp-c-brand-1); box-shadow: 0 0 0 4px var(--vp-c-brand-soft); }
 
-.device { display: block; width: 100%; padding: 5px; border-radius: 20px; background: #101318; }
+.device {
+  display: block; position: relative; width: 100%; aspect-ratio: 390 / 760;
+  border-radius: 20px; background: #101318; overflow: hidden;
+}
 .dark .device { background: #2a2f3a; }
 .device img {
-  display: block; width: 100%; height: auto; border-radius: 16px;
-  aspect-ratio: 390 / 760; object-fit: cover; object-position: top;
+  position: absolute; inset: 5px; width: calc(100% - 10px); height: calc(100% - 10px);
+  border-radius: 16px; object-fit: cover; object-position: top;
 }
 
 .choice-title { font-weight: 600; color: var(--vp-c-text-1); }
@@ -656,6 +673,7 @@ mark { background: var(--vp-c-brand-soft); color: inherit; padding: 1px 5px; bor
   gap: 4px;
 }
 
+.pipeline li { margin: 0; }
 .stop { display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: 0.45; transition: opacity 0.3s; }
 .stop.lit { opacity: 1; }
 
@@ -727,8 +745,8 @@ mark { background: var(--vp-c-brand-soft); color: inherit; padding: 1px 5px; bor
   .try-title { font-size: 1.7rem !important; }
   .choices { gap: 10px; }
   .choice { padding: 6px 6px 10px; border-radius: 16px; }
-  .device { padding: 3px; border-radius: 13px; }
-  .device img { border-radius: 10px; aspect-ratio: 390 / 640; }
+  .device { border-radius: 13px; aspect-ratio: 390 / 640; }
+  .device img { inset: 3px; width: calc(100% - 6px); height: calc(100% - 6px); border-radius: 10px; }
   .choice-title { font-size: 13px; }
   .turn { grid-template-columns: 36px minmax(0, 1fr); padding: 12px 14px; }
   .pipeline { grid-template-columns: 1fr 18px 1fr 18px 1fr; }
