@@ -16,7 +16,7 @@ const USAGE = `dai — build and inspect DAI containers
 
 Usage:
   dai build <directory> [options]     Package a directory into one file
-  dai verify <file>                   Check a container and report what it finds
+  dai verify <file> [--json]          Check a container and report what it finds
 
 Build options:
   -o, --out <path>        Where to write the container
@@ -35,6 +35,11 @@ Build options:
                           whole file.
       --no-verify         Build a container that does not demand verification
       --quiet             Print only the output path
+
+Verify options:
+      --json              Report the whole audit as JSON, for a program rather
+                          than a person. The exit code is unchanged: 0 intact,
+                          1 refused
 
 Examples:
   dai build ./dist
@@ -184,6 +189,51 @@ async function verify(parsed: Parsed): Promise<number> {
   // Read as bytes, not text: the sectioned form is a binary and decoding it as
   // UTF-8 would corrupt it before the reader ever saw the magic.
   const report = await auditContainer(parseContainer(new Uint8Array(readFileSync(path))));
+
+  /*
+   * The same verdict, in a shape a program can branch on.
+   *
+   * The exit code says whether a container is intact; anything wanting to know
+   * *why* has had to parse prose written for a person, which is how a tool ends
+   * up depending on the wording of a sentence. An agent that builds containers
+   * needs the reasons, and so does anything reporting on a directory of them.
+   *
+   * This is the audit as it stands rather than a second opinion about it: the
+   * same function a host calls, serialised.
+   */
+  if (parsed.flags.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          file: path,
+          ok: report.ok,
+          documentUuid: report.documentUuid,
+          integrityPolicy: report.integrityPolicy,
+          shell: report.shell.status,
+          signature: {
+            status: report.signature.status,
+            fingerprint: report.signature.fingerprint ?? null,
+            reason: report.signature.reason ?? null,
+          },
+          expiry: {
+            status: report.expiry.status,
+            validUntil: report.expiry.validUntil ?? null,
+          },
+          entries: report.entries.map((entry) => ({
+            name: entry.name,
+            status: entry.status,
+            expected: entry.expected ?? null,
+            actual: entry.actual ?? null,
+          })),
+          sections: report.sections ?? null,
+          unavailable: report.unavailable ?? null,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    return report.unavailable || !report.ok ? 1 : 0;
+  }
 
   if (report.unavailable) {
     process.stderr.write(`${report.unavailable}\n`);

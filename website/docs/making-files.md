@@ -161,3 +161,18 @@ and reached through one of two doors: `compile.ts` for anything with a
 filesystem, `browser.ts` for anything in a page. A test fails the build if a
 wrapper starts zipping, hashing or signing on its own — which it caught
 within hours of being written.
+
+## Checking one from a script
+
+```bash
+dai verify tasks.dai.html --json
+```
+
+The whole audit as data: which entries matched, whether the shell is the sealed
+one, what the signature says, and — for the sectioned form — the section table
+and footer. The exit code is unchanged, 0 for intact and 1 for refused, so a
+pipeline can branch on the code and a report can read the reasons.
+
+It exists because the alternative is parsing sentences written for a person, and
+those sentences change. One of them changed this week, when a damaged database
+stopped being reported as tampering.

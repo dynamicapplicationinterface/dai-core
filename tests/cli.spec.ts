@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { unzipSync, zipSync } from "fflate";
 import { parseArgs } from "../src/cli.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -177,4 +178,90 @@ test("prints usage when asked, and when given nothing", () => {
   const nothing = dai([], dir);
   expect(nothing.code).toBe(2);
   expect(nothing.out).toContain("dai build");
+});
+
+test.describe("verify --json", () => {
+  /*
+   * The verdict in a shape a program can branch on.
+   *
+   * The exit code says whether a container is intact. Anything that wanted to
+   * know why has had to read prose written for a person, which makes a tool
+   * depend on the wording of a sentence — and the wording changes, as it did
+   * this week when a damaged database stopped being reported as tampering.
+   */
+  const build = (): { dir: string; out: string } => {
+    const dir = mkdtempSync(resolve(tmpdir(), "dai-json-"));
+    writeFileSync(resolve(dir, "index.html"), "<!doctype html><title>J</title><p>hi");
+    const out = resolve(dir, "app.dai.html");
+    spawnSync(process.execPath, [cli, "build", dir, "-o", out, "--quiet"], { cwd: repo });
+    return { dir, out };
+  };
+
+  test("reports an intact container as data, and exits zero", () => {
+    const { out } = build();
+    const run = spawnSync(process.execPath, [cli, "verify", out, "--json"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+
+    expect(run.status).toBe(0);
+    const report = JSON.parse(run.stdout) as {
+      ok: boolean;
+      documentUuid: string;
+      shell: string;
+      signature: { status: string };
+      entries: { name: string; status: string }[];
+    };
+
+    expect(report.ok).toBe(true);
+    expect(report.documentUuid).toMatch(/^[0-9a-f-]{36}$/);
+    expect(report.shell).toBe("ok");
+    expect(report.signature.status).toBe("unsigned");
+    expect(report.entries.every((entry) => entry.status === "ok")).toBe(true);
+  });
+
+  test("names what failed, and still exits non-zero", () => {
+    const { out } = build();
+    // The same tampering the security page invites people to try.
+    const html = readFileSync(out, "utf8");
+    const parts = /(<script[^>]*id="dai-payload"[^>]*>)([\s\S]*?)(<\/script>)/.exec(html)!;
+    const archive = unzipSync(Buffer.from(parts[2]!, "base64"));
+    archive["app/index.html"] = new TextEncoder().encode("<!doctype html><p>changed");
+    writeFileSync(
+      out,
+      html.replace(
+        /(<script[^>]*id="dai-payload"[^>]*>)([\s\S]*?)(<\/script>)/,
+        (_m, open: string, __: string, close: string) =>
+          open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
+      ),
+    );
+
+    const run = spawnSync(process.execPath, [cli, "verify", out, "--json"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+
+    expect(run.status).toBe(1);
+    const report = JSON.parse(run.stdout) as {
+      ok: boolean;
+      entries: { name: string; status: string }[];
+    };
+
+    expect(report.ok).toBe(false);
+    const failed = report.entries.filter((entry) => entry.status !== "ok");
+    expect(failed.map((entry) => entry.name)).toContain("app/index.html");
+    expect(failed[0]!.status).toBe("mismatch");
+  });
+
+  test("writes nothing but JSON, so a pipe can read it", () => {
+    // A warning on stdout would make the output unparseable, which is the
+    // commonest way a --json flag turns out not to work.
+    const { out } = build();
+    const run = spawnSync(process.execPath, [cli, "verify", out, "--json"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+
+    expect(() => JSON.parse(run.stdout)).not.toThrow();
+  });
 });
