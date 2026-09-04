@@ -31,3 +31,7 @@ apps/desktop/public/runtime/
 # A signing key is never committed. The one exception is conformance/signing-key.pem,
 # which signs documents that exist only to be checked, and says so in its README.
 /*.pem
+
+# Rust build output. 461 files of it were committed once, 375 carrying a local
+# home-directory path; nothing in target/ is source.
+crates/*/target/

@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# The suite needs to read the repository and nothing else. Without this the
+# token defaults to whatever the repository's setting allows, which on a public
+# repository is a wider grant than a test run has any use for.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
