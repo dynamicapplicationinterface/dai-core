@@ -385,7 +385,19 @@ A host MUST NOT substitute an entry whose digest it does not hold, MUST NOT
 treat a substitution as satisfying the entry check in §7, and MUST verify the
 container exactly as though it had loaded every byte.
 
+No host does this yet, and measurement says it is not where the time goes: the
+engine is compiled after the application is on screen, because an application
+asks for its database once it has painted. The permission is recorded because it
+is the decision a native runner needs before it is built, not because it is
+urgent. See [performance.md](performance.md).
+
 ### 6.2 The thin profile
+
+> **Not implemented.** Nothing emits a thin container and no host can supply an
+> engine to one, so this section describes an intention rather than a format.
+> It is written here because the rule above is the decision that permits it, and
+> a reader deciding whether to build a host should know which half exists. Do
+> not implement against this section until it says otherwise.
 
 A container MAY omit the engine and declare `integrityPolicy` unchanged but
 `profile: "requires-runner"` in its manifest. Such a container runs only where a

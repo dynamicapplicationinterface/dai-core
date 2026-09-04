@@ -7,6 +7,40 @@ the work in given that this is a very small team.
 
 ---
 
+## Status, 4 September 2026
+
+Checked against the code rather than against these notes.
+
+**The five gates are closed.** CI honest, opaque-origin frame, no
+`'unsafe-inline'`, the whole manifest under a COSE_Sign1 signature, and saves
+that write only the database section. The specification was rewritten to match
+in [spec-v0.2.md](spec-v0.2.md).
+
+**Landed since, and not on this list.** A conformance suite of fifteen
+containers with their verdicts stated in advance; an isolation probe that
+attacks the host running it; a second reader in Python written from the
+specification, which found four gaps in it; the schema gate, which refuses to
+build an application whose data shape moved without a migration and refuses to
+open data it cannot account for; a handshake nonce, so the bridge knows which
+window it is talking to; and the whole mobile path — a share sheet that works,
+a picker that does not exclude the format's own extension, a runner that
+reopens what was open, and containers that arrive by link or by being shared.
+
+**Measured rather than argued.** [performance.md](performance.md) records where
+a cold open spends its time. The costs everyone suspected — base64, unzip,
+digests — are under a tenth of it; verification in the host is more than half.
+The engine is not on the path to being interactive.
+
+**What that changed.** Capabilities, the second host, and the standards track
+are unstarted and correctly so. The synthesis profile (0.5) is unstarted and is
+now the largest block of remaining work, and it depends on nothing above.
+
+**Still true and still overdue:** the viewer/editor split is a positioning
+decision nobody has made, and the site is written as though editing works
+everywhere.
+
+---
+
 ## What was verified
 
 | Claim | Status in our code |
