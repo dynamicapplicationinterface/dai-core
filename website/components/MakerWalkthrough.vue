@@ -92,6 +92,8 @@ const CHOICES: Choice[] = [
 ];
 
 const chosen = ref<Choice>(CHOICES[0]!);
+/** See the build section; declared here because the typing watch below reads it. */
+const stage = ref(0);
 const showCode = ref(false);
 const openFile = ref(0);
 
@@ -127,6 +129,7 @@ function typeOut(text: string): void {
     typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   if (still) {
     typed.value = text;
+    if (stage.value === 0) stage.value = 1;
     return;
   }
   typed.value = '';
@@ -134,7 +137,13 @@ function typeOut(text: string): void {
   typing = setInterval(() => {
     at += 1;
     typed.value = text.slice(0, at);
-    if (at >= text.length) clearInterval(typing);
+    if (at >= text.length) {
+      clearInterval(typing);
+      // The request has been made, so the files are in hand: the first stop
+      // lights before anyone presses anything, and the button takes it from
+      // there.
+      if (stage.value === 0) stage.value = 1;
+    }
   }, 22);
 }
 
@@ -161,7 +170,6 @@ async function copyPrompt(): Promise<void> {
  * How far along the picture is: 0 nothing yet, 1 the files are in hand,
  * 2 they are becoming one file, 3 the file exists, 4 it is open and running.
  */
-const stage = ref(0);
 const buildState = ref<'idle' | 'working' | 'done' | 'error'>('idle');
 const downloadUrl = ref('');
 const downloadName = computed(() => chosen.value.fileName);
@@ -233,7 +241,7 @@ async function build(): Promise<void> {
     // states in that time shows nothing.
     stage.value = 1;
     const assets = await loadRuntimeAssets();
-    await pause(500);
+    await pause(300);
 
     stage.value = 2;
     const built = await compileInBrowser({

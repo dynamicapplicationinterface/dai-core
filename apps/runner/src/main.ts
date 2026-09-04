@@ -799,4 +799,18 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
       console.warn("DAI Runner: offline support unavailable.", error);
     });
   });
+
+  /*
+   * A new worker taking over mid-page means this page is the build before
+   * it. Reloading once picks up the current one — but only while nothing is
+   * open, because a reload under somebody's document is worse than a stale
+   * shell. A page waiting on a handoff is safe to reload: the sender waits
+   * for a ready that the fresh page will send.
+   */
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloaded || document.body.classList.contains("loaded")) return;
+    reloaded = true;
+    location.reload();
+  });
 }

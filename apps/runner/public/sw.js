@@ -3,13 +3,25 @@
  *
  * The point of the runner is to be installable and to work with no network at
  * all — a container is offline software, and a player that needs connectivity
- * to start would defeat it. So the strategy is cache-first for everything
- * same-origin, with the network used only to fill gaps.
+ * to start would defeat it. So everything same-origin is cached, and offline
+ * is answered from the cache.
+ *
+ * But not cache-first for the shell. The first version was, under a fixed
+ * cache name, and this file never changed between deploys — so a browser that
+ * had visited once kept the first build it ever saw, for ever. Every deploy
+ * after that was invisible to anyone who had been before, and the website was
+ * handing documents to an opener from weeks earlier that did not know how to
+ * receive one. The page showed its empty chooser, and nothing said why.
+ *
+ * So: the shell (a navigation, or index.html) goes to the network first and
+ * falls back to the cache only when the network fails. Hashed assets under
+ * /assets/ are immutable by name and stay cache-first. And the cache name
+ * carries a version, so a change here drops what the old worker kept.
  *
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v1";
+const CACHE = "dai-runner-v2";
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
@@ -83,25 +95,39 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  /** Fetches, and keeps a copy of anything worth keeping. */
+  const fromNetwork = () =>
+    fetch(request).then((response) => {
+      // Opaque and error responses are not worth persisting.
+      if (response.ok && response.type === "basic") {
+        const copy = response.clone();
+        caches.open(CACHE).then((cache) => cache.put(request, copy));
+      }
+      return response;
+    });
+
+  // The shell: whatever is deployed now, and the cache only when there is no
+  // network to ask. A navigation with a hash or query is still the one page.
+  const isShell =
+    request.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith("/index.html");
+
+  if (isShell) {
+    event.respondWith(
+      fromNetwork().catch(() =>
+        caches.match(request).then((hit) => hit || caches.match("./index.html")),
+      ),
+    );
+    return;
+  }
+
+  // Everything else — hashed assets, icons, the manifest — is fine from the
+  // cache, because a new shell names new assets and never the old ones.
   event.respondWith(
     caches.match(request).then((hit) => {
       if (hit) return hit;
-
-      return fetch(request)
-        .then((response) => {
-          // Opaque and error responses are not worth persisting.
-          if (response.ok && response.type === "basic") {
-            const copy = response.clone();
-            caches.open(CACHE).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => {
-          // Offline and uncached: a navigation can still be answered by the
-          // shell, since the runner is a single page.
-          if (request.mode === "navigate") return caches.match("./index.html");
-          throw new Error("offline and not cached");
-        });
+      return fromNetwork().catch(() => {
+        throw new Error("offline and not cached");
+      });
     }),
   );
 });
