@@ -926,3 +926,49 @@ test.describe("keeping it, per device", () => {
     expect(keys[0]).toMatch(/^dai:install-asked:.+/);
   });
 });
+
+/*
+ * One save at a time.
+ *
+ * The generation counter says a race was lost; a lock stops it being run. Two
+ * saves issued at once from the application must both be acknowledged, land
+ * one after the other, and leave the store holding the later one.
+ */
+test.describe("saves take turns", () => {
+  test("two saves at once both land, and the later one is what is kept", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    await expect(app.locator("#app")).toHaveText(/ready/);
+
+    const results = await app.locator("body").evaluate(async () => {
+      const dai = (window as unknown as { dai: { saveState: (b: Uint8Array) => Promise<{ saved: boolean }> } }).dai;
+      const header = new TextEncoder().encode("SQLite format 3\0");
+      const make = (fill: number) => { const b = new Uint8Array(4096).fill(fill); b.set(header, 0); return b; };
+      return Promise.all([dai.saveState(make(0x11)), dai.saveState(make(0x22))]);
+    });
+    expect(results.map((r) => r.saved)).toEqual([true, true]);
+
+    // Nothing left holding the document, and the store has the second write.
+    const held = await page.evaluate(async () => (await navigator.locks.query()).held?.map((l) => l.name) ?? []);
+    expect(held.filter((n) => n.startsWith("dai:"))).toEqual([]);
+    const stored = await page.evaluate(async (uuid) => {
+      const root = await navigator.storage.getDirectory();
+      const handle = await root.getFileHandle(`${uuid}.sqlite`);
+      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      return bytes[100];
+    }, await page.evaluate(() => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid));
+    expect(stored).toBe(0x22);
+  });
+
+  test("both hosts lock, and the specification names the refusals", () => {
+    const runner = readFileSync(resolve(here, "..", "apps", "runner", "src", "main.ts"), "utf8");
+    const desktop = readFileSync(resolve(here, "..", "apps", "desktop", "src", "main.ts"), "utf8");
+    const spec = readFileSync(resolve(here, "..", "docs", "spec-v0.2.md"), "utf8");
+    expect(runner).toMatch(/navigator\.locks\.request\(key, \{ mode: "exclusive" \}/);
+    expect(desktop).toMatch(/navigator\.locks\.request\(key, \{ mode: "exclusive" \}/);
+    expect(spec).toContain("`GENERATION_CONFLICT`");
+    expect(spec).toContain("`LOCK_UNAVAILABLE`");
+  });
+});

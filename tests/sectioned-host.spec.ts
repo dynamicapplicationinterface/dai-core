@@ -174,3 +174,20 @@ test.describe("a container saved by the host", () => {
     expect((await verifyContainerFile(after)).ok).toBe(true);
   });
 });
+
+test("a lost race is refused by name", async () => {
+  // The sentence changes; the code does not. A host reads the first word.
+  const directory = mkdtempSync(join(tmpdir(), "dai-sectioned-"));
+  const file = join(directory, "document.dai");
+  const next = join(directory, "next.sqlite");
+  writeFileSync(file, await container(sqlite(0x11, 200)));
+  writeFileSync(next, sqlite(0x22, 200));
+
+  let message = "";
+  try {
+    save(file, next, 99);
+  } catch (error) {
+    message = String((error as { stderr?: string }).stderr ?? error);
+  }
+  expect(message).toContain("GENERATION_CONFLICT:");
+});

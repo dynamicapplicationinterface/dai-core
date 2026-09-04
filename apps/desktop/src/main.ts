@@ -531,10 +531,14 @@ ${refusal.detail}` : ""),
     // this host mounted, carrying the value that container invented.
     if (event.source !== cartridgeFrame.contentWindow) return;
     if (!mountedNonce || (data as { sessionNonce?: string }).sessionNonce !== mountedNonce) return;
+    const requestId = (data as { requestId?: string }).requestId;
 
     const reply = (status: "ok" | "error", error?: string): void => {
+      // The Rust side puts the code first. Named here so the container can
+      // tell a lost race from a broken disk without parsing a sentence.
+      const code = /^(GENERATION_CONFLICT|LOCK_UNAVAILABLE):/.exec(error ?? "")?.[1];
       (event.source as Window | null)?.postMessage(
-        { type: "DAI_HOST_SAVE_ACK", status, error },
+        { type: "DAI_HOST_SAVE_ACK", status, error, code, requestId },
         "*",
       );
       statusEl.textContent =
@@ -577,28 +581,47 @@ ${refusal.detail}` : ""),
     // The document the container sealed is discarded here, because rewriting
     // the whole file would replace a manifest the publisher signed with one
     // this host assembled — and nothing here holds a key to sign it with.
+    // Captured before the closure: a narrowed module variable is widened
+    // again inside a function, and the path was checked a few lines up.
+    const filePath: string = currentFilePath as string;
+    const write = async (): Promise<void> => {
     const written =
       currentFileIsSectioned && databaseBytes
         ? invokeTauri<number>("save_cartridge_data", {
-            path: currentFilePath,
+            path: filePath,
             dataBase64: toBase64(new Uint8Array(databaseBytes)),
             expectedGeneration: currentGeneration ?? null,
-            backup: !backedUp.has(currentFilePath),
+            backup: !backedUp.has(filePath),
           }).then((generation) => {
-            backedUp.add(currentFilePath!);
+            backedUp.add(filePath);
             // Kept, so a second save from this window is checked against what
             // this window actually wrote rather than what it first read.
             currentGeneration = generation;
           })
         : invokeTauri("save_cartridge", {
-            path: currentFilePath,
+            path: filePath,
             html,
-            backup: !backedUp.has(currentFilePath),
+            backup: !backedUp.has(filePath),
           }).then(() => {
-            backedUp.add(currentFilePath!);
+            backedUp.add(filePath);
           });
 
     written.then(() => reply("ok")).catch((error: unknown) => reply("error", String(error)));
+  };
+
+  /*
+   * Two windows of this host on one file take turns here; two processes take
+   * turns on the OS lock inside the Rust command. The generation check runs
+   * inside both, as the backstop for a host that took neither.
+   */
+  const key = `dai:file:${currentFilePath}`;
+  if (navigator.locks?.request) {
+    void navigator.locks.request(key, { mode: "exclusive" }, async () => {
+      await write();
+    });
+  } else {
+    void write();
+  }
   }
 });
 

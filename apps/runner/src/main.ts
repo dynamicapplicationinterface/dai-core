@@ -674,7 +674,18 @@ window.addEventListener("message", (event) => {
     const { databaseBytes, documentUuid } = data.payload || {};
     if (databaseBytes && documentUuid) {
       const bytes = new Uint8Array(databaseBytes);
-      saveDatabaseToOpfs(documentUuid, bytes)
+      /*
+       * One save at a time per document, across every tab of this origin.
+       * Two tabs on one document each write the whole database; without the
+       * lock the second write can land under the first's reseal and the
+       * library keeps a copy that matches neither.
+       */
+      const key = `dai:${documentUuid}`;
+      const locked = <T,>(work: () => Promise<T>): Promise<T> =>
+        navigator.locks?.request
+          ? navigator.locks.request(key, { mode: "exclusive" }, work)
+          : work();
+      locked(() => saveDatabaseToOpfs(documentUuid, bytes))
         .then(async () => {
           if (loaded && loaded.manifest.documentUuid === documentUuid) {
             loaded = await resealCartridge(loaded, bytes);

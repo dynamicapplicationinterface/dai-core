@@ -327,6 +327,11 @@ fn save_cartridge_data(
         .open(&target)
         .map_err(|e| format!("Failed to open {} for writing: {}", target.display(), e))?;
 
+    // Taken before anything is read or written, and held until this handle
+    // drops. Another process saving the same document is refused with a code
+    // rather than made to wait or, worse, allowed through.
+    dai_sectioned::lock_exclusive(&file)?;
+
     let size = file
         .metadata()
         .map_err(|e| format!("Failed to measure {}: {}", target.display(), e))?

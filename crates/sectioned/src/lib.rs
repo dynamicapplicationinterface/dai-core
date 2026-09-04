@@ -177,6 +177,36 @@ fn read_table<F: Read + Seek>(file: &mut F, size: u64) -> Result<Vec<Entry>, Str
 
 /// Overwrites the database section, leaving the manifest and payload untouched.
 ///
+/// Takes an exclusive advisory lock on the file for as long as the handle
+/// lives, or refuses at once.
+///
+/// The generation counter detects a lost update; it does not prevent one. Two
+/// processes can read the same generation, both prepare a save, and the second
+/// is refused only after the first has already won. A lock makes them take
+/// turns: whoever holds it saves, and the generation check inside is the
+/// backstop for a host that did not take one. Advisory, because that is what
+/// every platform offers a cooperating program; a program that ignores it is a
+/// program that ignores the footer too.
+///
+/// Refuses rather than waits. A save that blocks behind another process is a
+/// save the person cannot see the state of; a save refused with a code is one
+/// the host can explain and retry.
+pub fn lock_exclusive(file: &std::fs::File) -> Result<(), String> {
+    use fs2::FileExt;
+    file.try_lock_exclusive().map_err(|_| {
+        "LOCK_UNAVAILABLE: Another program is saving this document right now. Try again in a \
+         moment."
+            .to_string()
+    })
+}
+
+/// Releases a lock taken with [`lock_exclusive`]. Closing the handle does the
+/// same; this is for a host that keeps the handle open.
+pub fn unlock(file: &std::fs::File) -> Result<(), String> {
+    use fs2::FileExt;
+    file.unlock().map_err(|e| format!("Could not release the lock: {}", e))
+}
+
 /// Returns the generation the file now carries. `size` is the file's current
 /// length, which the caller already knows.
 pub fn replace_data<F: Read + Write + Seek + Resize>(
@@ -249,8 +279,12 @@ fn write_data<F: Read + Write + Seek + Resize>(
     let current = read_u64(&footer, 0);
     if let Some(expected) = expected_generation {
         if current != expected {
+            // The code is the first word so a host can name the refusal
+            // without parsing the sentence.
             return Err(format!(
-                "This document has been saved somewhere else since it was opened here                  (it is now at save {}, and this window last saw {}). Writing would                  discard that work.",
+                "GENERATION_CONFLICT: This document has been saved somewhere else since it was \
+                 opened here (it is now at save {}, and this window last saw {}). Writing would \
+                 discard that work.",
                 current, expected
             ));
         }
@@ -297,6 +331,26 @@ fn write_data<F: Read + Write + Seek + Resize>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_second_handle_cannot_lock_while_the_first_holds() {
+        let dir = std::env::temp_dir().join(format!("dai-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("document.dai");
+        std::fs::write(&path, b"x").unwrap();
+
+        let first = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+        let second = std::fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+
+        lock_exclusive(&first).unwrap();
+        let refused = lock_exclusive(&second).unwrap_err();
+        assert!(refused.starts_with("LOCK_UNAVAILABLE:"), "{}", refused);
+
+        unlock(&first).unwrap();
+        lock_exclusive(&second).unwrap();
+        unlock(&second).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     use std::io::Cursor;
 

@@ -365,11 +365,20 @@ A host that has seen a later generation for a document MAY treat an earlier one
 as a rollback.
 
 A host that read a document at one generation and is asked to save on top of a
-different one SHOULD refuse, and MUST NOT present the refusal as a failure of
-the application: another window saved first, and the work in hand is still in
-hand. This is not a lock — two hosts can still read the same generation and
-both prepare a save — but it turns the common case from a silent overwrite into
-something a person is told about.
+different one MUST refuse with `GENERATION_CONFLICT`, and MUST NOT present the
+refusal as a failure of the application: another window saved first, and the
+work in hand is still in hand.
+
+The generation check detects a lost update; it does not prevent one. An
+editing host MUST therefore hold an exclusive lock over the document for the
+whole of a save — from reading the current generation to flushing the footer —
+and MUST keep the generation check inside the lock as the backstop for a host
+that took none. A browser host takes a Web Lock keyed on the document's
+identity; a native host takes an OS advisory lock on the file. A host that
+cannot obtain the lock MUST refuse with `LOCK_UNAVAILABLE` rather than wait
+indefinitely or proceed, and MUST NOT present that as a failure of the
+application either. Both codes are recoverable: the person's work is still in
+hand, and the save can be asked for again.
 
 An in-place save cannot be atomic, and a host MUST NOT pretend otherwise. It
 MUST write and flush the data section before it writes the table entry and the

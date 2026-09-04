@@ -9,3 +9,6 @@ description = "In-place saving of the sectioned DAI container format"
 # needed here: keeping this crate free of the desktop's dependencies is what
 # lets it be tested in seconds, without a webview toolchain.
 sha2 = "0.10"
+# Advisory file locks, so two processes on one document take turns. flock on
+# Unix, LockFileEx on Windows, behind one call.
+fs2 = "0.4"

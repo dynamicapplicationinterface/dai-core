@@ -115,6 +115,13 @@ type SaveMethod = "auto" | "picker" | "download" | "host";
 interface SaveResult {
   saved: boolean;
   method: "picker" | "download" | "cancelled" | "unsupported" | "host";
+  /**
+   * Why a host refused, when it did, as a name rather than a sentence:
+   * `GENERATION_CONFLICT` (another window saved first; the work in hand is
+   * still in hand) or `LOCK_UNAVAILABLE` (another program is saving now; try
+   * again). Absent when the save succeeded or failed for a reason with no name.
+   */
+  code?: string;
 }
 /**
  * Must match PAYLOAD_TAG_RE in the compiler. Anchored to the payload tag
@@ -1733,7 +1740,13 @@ async function boot(): Promise<void> {
           const requestId = randomHex(16);
           const onHostAck = (evt: MessageEvent) => {
             if (evt.source !== window.parent) return;
-            const data = evt.data as { type?: string; status?: string; error?: string; requestId?: string };
+            const data = evt.data as {
+              type?: string;
+              status?: string;
+              error?: string;
+              code?: string;
+              requestId?: string;
+            };
             if (data?.type !== "DAI_HOST_SAVE_ACK") return;
             if (data.requestId !== requestId) return;
             window.removeEventListener("message", onHostAck);
@@ -1741,7 +1754,11 @@ async function boot(): Promise<void> {
             if (data.status === "ok") {
               reply({ ok: true, result: { saved: true, method: "host" } });
             } else {
-              reply({ ok: false, error: data.error || "The host could not save this container." });
+              reply({
+                ok: false,
+                error: data.error || "The host could not save this container.",
+                code: data.code,
+              });
             }
           };
 
