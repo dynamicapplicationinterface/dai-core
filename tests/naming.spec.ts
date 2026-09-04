@@ -18,6 +18,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * stay true. Copy drifts back, and the drift is invisible.
  */
 const userFacing = [
+  "website/components/Landing.vue",
   "website/open.md",
   "website/components/PhoneFlow.vue",
   "website/components/MakerWalkthrough.vue",

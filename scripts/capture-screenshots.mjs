@@ -80,6 +80,65 @@ await shot("app-empty", {
   },
 });
 
+/*
+ * The front page's phones.
+ *
+ * Three apps that are nobody's product: a week of dinners, a chore chart, a
+ * packing list. The page's first argument is "you would recognise yourself in
+ * one of these", and a task manager — however good — is a thing engineers
+ * recognise themselves in. Each is compiled here from examples/ the same way,
+ * so what the page shows is what the format makes.
+ *
+ * Shot at a phone's size because that is where most people who arrive
+ * confused are standing.
+ */
+const phone = await browser.newContext({
+  viewport: { width: 390, height: 780 },
+  deviceScaleFactor: 2,
+});
+
+async function phoneShot(name, dir, appName, { dark = false } = {}) {
+  const compiled = await compileDirectory({ sourceDir: resolve(root, "examples", dir), root, appName });
+  const file = resolve(shots, `.${dir}.dai.html`);
+  writeFileSync(file, compiled.html, "utf8");
+
+  const page = await phone.newPage();
+  if (dark) await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(pathToFileURL(file).href);
+  await page.addStyleTag({ content: "#dai-app-mode { display: none !important; }" });
+
+  const app = page.frameLocator("iframe");
+  // The kit has drawn when a row exists that is not the template it drew from.
+  await app.locator("dai-rows > :not(template)").first().waitFor({ timeout: 30_000 });
+  // A frame's worth of layout, so a font that arrived late is in the picture.
+  await page.waitForTimeout(150);
+
+  await page.locator("iframe").screenshot({ path: resolve(shots, `${name}.png`) });
+  await page.close();
+  rmSync(file, { force: true });
+  console.log(`  ${name}.png`);
+}
+
+await phoneShot("home-dinners", "meal-plan", "This week");
+await phoneShot("home-chores", "chore-chart", "Chores");
+await phoneShot("home-packing", "packing-list", "Beach trip");
+
+// And one of them at a laptop's size, for the beat about it being a file.
+{
+  const compiled = await compileDirectory({ sourceDir: resolve(root, "examples/meal-plan"), root, appName: "This week" });
+  const file = resolve(shots, ".meal-plan-wide.dai.html");
+  writeFileSync(file, compiled.html, "utf8");
+  const page = await context.newPage();
+  await page.goto(pathToFileURL(file).href);
+  await page.addStyleTag({ content: "#dai-app-mode { display: none !important; }" });
+  await page.frameLocator("iframe").locator("dai-rows > :not(template)").first().waitFor({ timeout: 30_000 });
+  await page.waitForTimeout(150);
+  await page.locator("iframe").screenshot({ path: resolve(shots, "home-dinners-wide.png") });
+  await page.close();
+  rmSync(file, { force: true });
+  console.log("  home-dinners-wide.png");
+}
+
 await browser.close();
 
 // The container was scaffolding. Leaving it in public/ would publish an

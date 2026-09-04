@@ -26,7 +26,7 @@ function commit(): string {
 export default defineConfig({
   title: 'DAI Protocol',
   description:
-    "An app that's just a file, with its database inside. Sealed, offline, and yours to send.",
+    "An app that's just a file. Ask your AI for the app you want, get a file back, open it, use it, send it to anyone.",
   head: [
     ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
     ['meta', { name: 'theme-color', content: '#3b82f6' }]

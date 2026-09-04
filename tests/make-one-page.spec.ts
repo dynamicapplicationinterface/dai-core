@@ -204,3 +204,47 @@ test.describe("what the site claims", () => {
     ).toHaveAttribute("href", "https://opendai.app");
   });
 });
+
+test.describe("the front page, read by somebody who is not an engineer", () => {
+  /*
+   * The page was rewritten after somebody's wife read it and got stuck. It
+   * was careful and honest, and every section opened with the mechanism —
+   * "the database is inside the file" — which is a sentence for people who
+   * know what a database is. Copy drifts back towards the people who write
+   * it, and nothing fails when it does, so these hold the line.
+   */
+  test("no word above the fold that would not come up at a grocery store", async ({ page }) => {
+    await page.goto("http://localhost:5176/");
+    const hero = (await page.locator(".hero").innerText()).toLowerCase();
+    for (const word of ["database", "sqlite", "container", "compil", "signed", "seal", "host", "terminal", "command line", "opener"]) {
+      expect(hero, `"${word}" is in the first screen`).not.toContain(word);
+    }
+  });
+
+  test("there is a button for the person who was sent a file", async ({ page }) => {
+    // Most first visits are somebody holding a file. The previous page had a
+    // button for people who had built one and a button for IT, and nothing
+    // for them.
+    await page.goto("http://localhost:5176/");
+    await expect(page.locator(".hero").getByRole("link", { name: /sent me a file/i })).toHaveAttribute("href", "/open");
+    await expect(page.locator(".hero").getByRole("link", { name: /^Make one$/ })).toHaveAttribute("href", "/make-one");
+  });
+
+  test("the prompt her assistant needs is on the page in full", async ({ page }) => {
+    // She pastes this address into a chat; the model reads the page. If the
+    // prompt is here verbatim it has nothing to invent.
+    await page.goto("http://localhost:5176/");
+    const text = await page.locator(".prompt-text").innerText();
+    expect(text).toMatch(/^Make me a DAI app for \[/);
+    expect(text).toContain("/docs/the-recipe");
+  });
+
+  test("the pictures are of things she might make", async ({ page }) => {
+    await page.goto("http://localhost:5176/");
+    const labels = await page.locator(".gallery .label").allInnerTexts();
+    expect(labels).toHaveLength(3);
+    // Not a task manager. A task manager is what engineers recognise
+    // themselves in.
+    for (const label of labels) expect(label.toLowerCase()).not.toContain("task");
+  });
+});

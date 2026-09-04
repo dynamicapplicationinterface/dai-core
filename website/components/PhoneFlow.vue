@@ -43,13 +43,16 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
 
 <template>
   <section class="phones">
+    <!--
+      Used to open with the limitation — "files can't run themselves here" —
+      which is true and the wrong first sentence. Somebody holding a phone and
+      a file wants the taps, not the reason the taps exist.
+    -->
     <header>
-      <p class="kicker">On a phone</p>
-      <h2>Files can’t run themselves here</h2>
+      <p class="kicker">On your phone</p>
+      <h2>Three taps.</h2>
       <p class="lede">
-        A phone will show you a file but won’t execute one. The opener is a small
-        page that opens your container and keeps it — the app stays yours, the
-        data stays on the device.
+        Your file never leaves your phone. It opens right there, and stays yours.
       </p>
     </header>
 
@@ -171,7 +174,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
         <p class="cta-title">The opener</p>
         <p class="cta-address">{{ OPENER_LABEL }}</p>
         <p class="cta-note">
-          Nothing to install, nothing uploaded. Your containers stay on the device.
+          Nothing to install, nothing uploaded. Your files stay on your phone.
           Sent one and not sure what it is? <a href="/open">Start here</a>.
         </p>
       </div>

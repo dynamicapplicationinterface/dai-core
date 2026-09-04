@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chores</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <!--
+    Two children, one week, and who has done what. Made for the website's front
+    page, so a parent looks at it and sees their own kitchen wall.
+
+    No JavaScript of its own: the kit does the wiring, and the schema and the
+    starting data are SQL in the document.
+  -->
+  <script type="application/sql">
+    CREATE TABLE IF NOT EXISTS chores (
+      id INTEGER PRIMARY KEY,
+      who TEXT NOT NULL,
+      what TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT OR IGNORE INTO chores (id, who, what, done) VALUES
+      (1, 'Maya', 'Feed the cat', 1),
+      (2, 'Maya', 'Empty the dishwasher', 1),
+      (3, 'Maya', 'Tidy room', 0),
+      (4, 'Maya', 'Water the plants', 0),
+      (5, 'Leo', 'Take out recycling', 1),
+      (6, 'Leo', 'Set the table', 0),
+      (7, 'Leo', 'Fold laundry', 0);
+  </script>
+
+  <main>
+    <header>
+      <p class="eyebrow">This week</p>
+      <h1>Chores</h1>
+    </header>
+
+    <section class="person maya">
+      <h2>
+        <span class="avatar">M</span>
+        Maya
+        <span class="count">
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Maya' AND done = 1"></dai-value>
+          of
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Maya'"></dai-value>
+        </span>
+      </h2>
+      <dai-rows query="SELECT id, what, done FROM chores WHERE who = 'Maya' ORDER BY done, id">
+        <template>
+          <label class="chore">
+            <input type="checkbox" data-run="UPDATE chores SET done = 1 - done WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="star" data-when="done">★</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section class="person leo">
+      <h2>
+        <span class="avatar">L</span>
+        Leo
+        <span class="count">
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Leo' AND done = 1"></dai-value>
+          of
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Leo'"></dai-value>
+        </span>
+      </h2>
+      <dai-rows query="SELECT id, what, done FROM chores WHERE who = 'Leo' ORDER BY done, id">
+        <template>
+          <label class="chore">
+            <input type="checkbox" data-run="UPDATE chores SET done = 1 - done WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="star" data-when="done">★</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <dai-form run="INSERT INTO chores (who, what) VALUES (:who, :what)">
+      <select name="who" aria-label="Who">
+        <option>Maya</option>
+        <option>Leo</option>
+      </select>
+      <input name="what" placeholder="Add a chore" required maxlength="80" />
+      <button>Add</button>
+    </dai-form>
+
+    <footer>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./dai-kit.js"></script>
+</body>
+</html>

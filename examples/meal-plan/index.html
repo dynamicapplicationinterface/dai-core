@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>This week</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <!--
+      A week of dinners and the shopping they need. Written for the website's
+      front page: somebody who would never call themselves technical should
+      look at this and see their own fridge door.
+
+      No JavaScript of its own. The kit does the wiring, and the schema and
+      starting data are SQL in the document.
+    -->
+    <script type="application/sql">
+      CREATE TABLE IF NOT EXISTS dinners (
+        id INTEGER PRIMARY KEY,
+        day TEXT NOT NULL,
+        what TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS groceries (
+        id INTEGER PRIMARY KEY,
+        item TEXT NOT NULL,
+        got INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO dinners (id, day, what) VALUES
+        (1, 'Mon', 'Chicken tacos'),
+        (2, 'Tue', 'Pasta with the good tomatoes'),
+        (3, 'Wed', 'Leftovers night'),
+        (4, 'Thu', 'Salmon and rice'),
+        (5, 'Fri', 'Pizza — kids choose'),
+        (6, 'Sat', 'Grandma''s'),
+        (7, 'Sun', 'Roast');
+      INSERT OR IGNORE INTO groceries (id, item, got) VALUES
+        (1, 'Tortillas', 1),
+        (2, 'Chicken thighs', 1),
+        (3, 'Limes', 0),
+        (4, 'Salmon', 0),
+        (5, 'Jasmine rice', 0),
+        (6, 'Pizza dough', 0),
+        (7, 'Mozzarella', 0);
+    </script>
+
+    <main>
+      <header>
+        <p class="eyebrow">Dinners</p>
+        <h1>This week</h1>
+      </header>
+
+      <section class="week">
+        <dai-rows query="SELECT id, day, what FROM dinners ORDER BY id">
+          <template>
+            <div class="day">
+              <span class="dow" data-text="day"></span>
+              <span class="meal" data-text="what"></span>
+              <button class="x" aria-label="Remove" data-run="DELETE FROM dinners WHERE id = :id">×</button>
+            </div>
+          </template>
+        </dai-rows>
+
+        <dai-form run="INSERT INTO dinners (day, what) VALUES (:day, :what)">
+          <select name="day" aria-label="Day">
+            <option>Mon</option><option>Tue</option><option>Wed</option><option>Thu</option>
+            <option>Fri</option><option>Sat</option><option>Sun</option>
+          </select>
+          <input name="what" placeholder="Add a dinner" required maxlength="80" />
+          <button>Add</button>
+        </dai-form>
+      </section>
+
+      <section class="shop">
+        <h2>
+          To buy
+          <span class="count">
+            <dai-value query="SELECT count(*) FROM groceries WHERE got = 0"></dai-value> left
+          </span>
+        </h2>
+
+        <dai-rows
+          query="SELECT id, item, got FROM groceries ORDER BY got, id"
+          empty="Nothing to buy. Nice."
+        >
+          <template>
+            <label class="item">
+              <input type="checkbox" data-run="UPDATE groceries SET got = 1 - got WHERE id = :id" />
+              <span class="check" aria-hidden="true"></span>
+              <span class="name" data-text="item"></span>
+              <span class="got" data-when="got">✓</span>
+            </label>
+          </template>
+        </dai-rows>
+
+        <dai-form run="INSERT INTO groceries (item) VALUES (:item)">
+          <input name="item" placeholder="Add to the list" required maxlength="80" />
+          <button>Add</button>
+        </dai-form>
+      </section>
+
+      <footer>
+        <dai-save>Save</dai-save>
+      </footer>
+    </main>
+
+    <script type="module" src="./dai-kit.js"></script>
+  </body>
+</html>
