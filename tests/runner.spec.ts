@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
@@ -290,22 +290,32 @@ test.describe("cartridge ingestion", () => {
     });
   });
 
+  /*
+   * Served by the preview server rather than intercepted.
+   *
+   * Two earlier versions of these tests used request interception, and both
+   * failed intermittently on WebKit, which does not reliably apply it — once as
+   * the runner's own "that host would not let me read it" message, and once as
+   * "this file has no payload", because the runner's service worker answered
+   * the failed request with the app shell. Both messages were true; neither was
+   * about the container. A file the server actually has removes the question.
+   */
+  const serveFixture = (name: string, body: string): string => {
+    const dir = resolve(here, "..", "apps", "runner", "dist", "files");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), body);
+    return `${RUNNER_URL}files/${name}`;
+  };
+
   test("opens a container named by the link that opened it", async ({ page }) => {
     /*
      * The share path: a link, not an attachment. Any address this page may read
      * works, so sharing needs nothing belonging to this project — a container in
      * a bucket, on a file share, or behind a raw URL is a share link already.
      */
-    await page.route("https://files.test/tasks.dai.html", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "text/html",
-        headers: { "access-control-allow-origin": "*" },
-        body: readFileSync(CONTAINER, "utf8"),
-      }),
-    );
+    const url = serveFixture("tasks.dai.html", readFileSync(CONTAINER, "utf8"));
 
-    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://files.test/tasks.dai.html")}`);
+    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent(url)}`);
 
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await expect(page.locator("#cartridge")).toBeVisible();
@@ -313,17 +323,12 @@ test.describe("cartridge ingestion", () => {
 
   test("verifies what a link hands it, exactly as it verifies a chosen file", async ({ page }) => {
     // Where the bytes came from says nothing about what they are.
-    const tampered = readFileSync(CONTAINER, "utf8").replace("<head>", "<head><!-- altered -->");
-    await page.route("https://files.test/bad.dai.html", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "text/html",
-        headers: { "access-control-allow-origin": "*" },
-        body: tampered,
-      }),
+    const url = serveFixture(
+      "bad.dai.html",
+      readFileSync(CONTAINER, "utf8").replace("<head>", "<head><!-- altered -->"),
     );
 
-    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://files.test/bad.dai.html")}`);
+    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent(url)}`);
 
     await expect(page.locator("#report")).toContainText(/could not be opened|does not match/i, {
       timeout: 30_000,

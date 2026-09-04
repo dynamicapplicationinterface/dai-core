@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -96,35 +96,40 @@ test.describe("the isolation probe", () => {
      * that do are exactly the ones the host is responsible for.
      */
     /*
-     * Served over http rather than opened from disk. A module script inside a
-     * sandboxed file:// frame is blocked before it runs, so the probe would
-     * report nothing at all and the absence of findings would look like a
-     * finding. The origin is synthetic and never leaves the browser.
+     * Served by a real server rather than intercepted.
+     *
+     * A module script inside a sandboxed file:// frame never runs, so the probe
+     * would report nothing and the silence would read as a pass. An earlier
+     * version served it through request interception on a synthetic origin,
+     * which WebKit does not reliably apply — the probe then reported nothing
+     * for a different reason, and the test failed claiming the permissive host
+     * held every boundary.
      */
-    const files: Record<string, { body: string; type: string }> = {
-      "/host.html": { body: readFileSync(lax, "utf8"), type: "text/html" },
-      "/index.html": { body: readFileSync(join(isolation, "index.html"), "utf8"), type: "text/html" },
-      "/probe.js": { body: readFileSync(join(isolation, "probe.js"), "utf8"), type: "text/javascript" },
-      "/probe.css": { body: readFileSync(join(isolation, "probe.css"), "utf8"), type: "text/css" },
-    };
+    const dir = resolve(repo, "apps", "runner", "dist", "lax");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "host.html"), readFileSync(lax, "utf8"));
+    for (const name of ["index.html", "probe.js", "probe.css"]) {
+      writeFileSync(join(dir, name), readFileSync(join(isolation, name), "utf8"));
+    }
 
-    await page.route("http://isolation.test/**", async (route) => {
-      const path = new URL(route.request().url()).pathname;
-      const file = files[path];
-      if (!file) return route.fulfill({ status: 404, body: "" });
-      return route.fulfill({ status: 200, contentType: file.type, body: file.body });
-    });
-
-    await page.goto("http://isolation.test/host.html");
+    await page.goto("http://localhost:5175/lax/host.html");
 
     const app = page.frameLocator("#app");
     const verdict = app.locator("#verdict");
     await expect(verdict).toHaveAttribute("data-state", /pass|fail|error/, { timeout: 30_000 });
     await expect(verdict).toHaveAttribute("data-state", "fail");
 
-    const results = (await page.evaluate(
-      () => (window as unknown as { reports: { results: Result[] }[] }).reports[0]?.results ?? [],
-    )) as Result[];
+    // Waited for rather than read once: the verdict appears in the frame's own
+    // DOM, and the report reaches this window as a message a task later.
+    const collected = await page.waitForFunction(
+      () => {
+        const reports = (window as unknown as { reports: { results: Result[] }[] }).reports;
+        return reports.length > 0 ? reports[0]!.results : null;
+      },
+      undefined,
+      { timeout: 30_000 },
+    );
+    const results = (await collected.jsonValue()) as Result[];
 
     const allowed = results.filter((result) => result.status === "allowed").map((r) => r.id);
     // The policy checks, specifically: with no CSP there is nothing to report a
