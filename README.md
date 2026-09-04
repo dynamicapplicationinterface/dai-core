@@ -5,9 +5,9 @@ that holds the app, a SQLite engine and its data. It opens by double-clicking
 in any browser with nothing installed, works offline, cannot reach the network,
 and refuses to run if it has been altered.
 
-The protocol is specified in [docs/spec-v0.1.md](docs/spec-v0.1.md), which
-documents the container as it actually behaves — including where the original
-draft was wrong.
+The protocol is specified in [docs/spec-v0.2.md](docs/spec-v0.2.md), which
+documents the container as it actually behaves. v0.1 is superseded and kept
+only as the record of what an earlier review read.
 
 ## Installation
 

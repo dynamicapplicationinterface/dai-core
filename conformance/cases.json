@@ -191,6 +191,42 @@
       }
     },
     {
+      "name": "signed-extra-entry",
+      "file": "cases/signed-extra-entry.dai.html",
+      "form": "viewer",
+      "summary": "An entry added alongside a matching digest, with the signed list untouched.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "invalid",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "signed-schema-injected",
+      "file": "cases/signed-schema-injected.dai.html",
+      "form": "viewer",
+      "summary": "A schema declaration added the same way. A host runs its migration SQL.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "invalid",
+        "expiry": "none"
+      }
+    },
+    {
       "name": "sectioned-valid",
       "file": "cases/sectioned-valid.dai",
       "form": "sectioned",

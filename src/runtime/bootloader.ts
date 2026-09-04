@@ -432,6 +432,15 @@ async function verifySignature(
       return { ok: false, reason: `${name} is signed with a different digest` };
     }
   }
+  // The other direction. `hashes` is unsigned, so an entry added to it and
+  // to the archive with a matching digest would otherwise pass — including
+  // runtime/schema.json, whose SQL this bootloader runs. Everything digested
+  // except the database must be in the signed set.
+  for (const name of Object.keys(manifest.hashes)) {
+    if (name !== SQLITE_ENTRY && !(name in manifest.signedEntries)) {
+      return { ok: false, reason: `${name} is not covered by the signature` };
+    }
+  }
 
   let key: CryptoKey;
   try {

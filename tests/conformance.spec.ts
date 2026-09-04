@@ -100,3 +100,26 @@ test.describe("the conformance suite", () => {
     });
   }
 });
+
+/*
+ * The bootloader, not only the reader.
+ *
+ * The suite above drives `verifyContainer`. The entry that made the signed-set
+ * gap dangerous — runtime/schema.json — is executed by the bootloader, inside
+ * the container, so the refusal has to be proven there too: the file is
+ * opened in a real page and nothing may mount.
+ */
+test.describe("the bootloader refuses the signed-set cases", () => {
+  for (const name of ["signed-extra-entry", "signed-schema-injected"]) {
+    test(name, async ({ page }) => {
+      const { pathToFileURL } = await import("node:url");
+      const { resolve: resolvePath } = await import("node:path");
+      const file = resolvePath("conformance", "cases", `${name}.dai.html`);
+      await page.goto(pathToFileURL(file).href);
+      // Long enough for a container that was going to mount to have mounted.
+      await page.waitForTimeout(3000);
+      await expect(page.locator("iframe#dai-app")).toHaveCount(0);
+      await expect(page.locator("body")).toContainText(/not authentic/i);
+    });
+  }
+});

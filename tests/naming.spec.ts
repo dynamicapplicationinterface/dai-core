@@ -68,3 +68,11 @@ test.describe("the public word is open, not run", () => {
     }
   });
 });
+
+test("the README points at the current specification", () => {
+  // It linked v0.1 for a week after v0.2 superseded it, and one of three
+  // external reviews read the wrong document first because of it.
+  const readme = readFileSync(join(repo, "README.md"), "utf8");
+  expect(readme).toContain("docs/spec-v0.2.md");
+  expect(readme).not.toMatch(/specified in \[docs\/spec-v0\.1\.md\]/);
+});

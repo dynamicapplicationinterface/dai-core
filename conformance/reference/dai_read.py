@@ -431,6 +431,16 @@ def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> st
     for name, digest in signed_entries.items():
         if hashes.get(name) != digest:
             return "invalid"
+    # WAS A GAP, and a serious one. The rule above is one direction. `hashes`
+    # is outside the signature, so an entry added to the archive and to
+    # `hashes` with a matching digest passed integrity and passed signature
+    # without touching the signed set — and runtime/schema.json, added that
+    # way, has its migration SQL executed by a host under the pinned
+    # publisher's badge. Every digested entry except the database must be in
+    # the signed set. Now S3.1.
+    for name in hashes:
+        if name != DATABASE_ENTRY and name not in signed_entries:
+            return "invalid"
 
     fields: dict[str, Any] = {
         "manifestVersion": manifest["manifestVersion"],

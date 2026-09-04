@@ -201,8 +201,23 @@ and cannot re-sign after a save, so a signature covering the database would be
 invalidated by the first save.
 
 An implementation MUST reconcile `signedEntries` against `hashes` before
-verifying the signature, and MUST refuse where they disagree. Otherwise a
-signature could be validated over digests other than the ones just checked.
+verifying the signature, in **both directions**, and MUST refuse where they
+disagree:
+
+1. every entry in `signedEntries` MUST appear in `hashes` with the same
+   digest — otherwise a signature could be validated over digests other than
+   the ones just checked;
+2. every entry in `hashes` other than the database MUST appear in
+   `signedEntries` — otherwise an entry can be *added*, to the archive and to
+   `hashes` with a matching digest, without touching the signed list or the
+   signature. Integrity passes, the signature passes, and the addition runs
+   under the publisher's badge. `runtime/schema.json` added this way has its
+   migration SQL executed by a conforming host.
+
+`hashes` is outside the signature and MUST be treated as untrusted; at mount,
+`signedEntries` is the authority over what the application contains. The
+conformance cases `signed-extra-entry` and `signed-schema-injected` are the
+second direction.
 
 `savedAt`, if present, is outside the signed set.
 

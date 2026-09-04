@@ -359,6 +359,27 @@ async function checkSignature(
     }
   }
 
+  /*
+   * And the other direction, which was missing.
+   *
+   * `hashes` is outside the signature. Checking only that every signed entry
+   * matches `hashes` lets an entry be *added* — to the archive and to
+   * `hashes`, with a matching digest — without touching `signedEntries` or
+   * the signature. Integrity passes, the signature passes, and the addition
+   * runs under the badge of the pinned publisher. One such entry is executed
+   * by the host: `runtime/schema.json`, whose migration SQL runs against the
+   * person's data. So every digested entry except the database, which is
+   * unsigned by design, must be in the signed set.
+   */
+  for (const name of Object.keys(manifest.hashes)) {
+    if (name === SQLITE_ENTRY) continue;
+    if (!(name in manifest.signedEntries)) {
+      throw new ContainerError(
+        `This container is not authentic: ${name} is not covered by the signature.`,
+      );
+    }
+  }
+
   let key: Awaited<ReturnType<typeof crypto.subtle.importKey>>;
   try {
     key = await crypto.subtle.importKey(

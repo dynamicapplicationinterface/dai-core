@@ -18,6 +18,7 @@
  *
  * Run: node scripts/build-conformance.mjs
  */
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -282,6 +283,65 @@ define(
     manifest.signedEntries["app/app.js"] = "0".repeat(64);
     archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
     return { file: "signed-entries-disagree.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "signed-extra-entry",
+  "An entry added alongside a matching digest, with the signed list untouched.",
+  {
+    mount: false,
+    ok: false,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "invalid",
+    expiry: "none",
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    // Every file checks out, including the new one: it is listed in `hashes`
+    // with its true digest. Only `signedEntries` and the signature are as
+    // they were. A reader that reconciles the signed list against `hashes`
+    // in one direction only accepts this as authentic.
+    const evil = bytes("console.log('not signed')");
+    archive["app/evil.js"] = evil;
+    manifest.hashes["app/evil.js"] = createHash("sha256").update(evil).digest("hex");
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "signed-extra-entry.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "signed-schema-injected",
+  "A schema declaration added the same way. A host runs its migration SQL.",
+  {
+    mount: false,
+    ok: false,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "invalid",
+    expiry: "none",
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    // The same trick, aimed at the one unsigned entry a host executes:
+    // migration SQL from a schema the publisher never declared, run against
+    // the person's data under the publisher's badge.
+    const schema = bytes(
+      JSON.stringify({
+        version: 2,
+        tables: {},
+        migrations: [{ version: 2, from: 1, to: 2, sql: "DROP TABLE IF EXISTS notes" }],
+      }),
+    );
+    archive["runtime/schema.json"] = schema;
+    manifest.hashes["runtime/schema.json"] = createHash("sha256").update(schema).digest("hex");
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "signed-schema-injected.dai.html", body: repack(html, archive) };
   },
 );
 
