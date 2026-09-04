@@ -12,10 +12,13 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let container = args
         .next()
-        .expect("usage: replace-data <container> <database>");
+        .expect("usage: replace-data <container> <database> [expected-generation]");
     let database = args
         .next()
-        .expect("usage: replace-data <container> <database>");
+        .expect("usage: replace-data <container> <database> [expected-generation]");
+    // Optional, so the round-trip test can drive both the guarded and unguarded
+    // writes through the same binary the desktop calls.
+    let expected: Option<u64> = args.next().and_then(|value| value.parse().ok());
 
     let data = std::fs::read(&database).expect("failed to read the database");
 
@@ -29,7 +32,14 @@ fn main() {
         .expect("failed to measure the container")
         .len();
 
-    match dai_sectioned::replace_data(&mut file, size, &data) {
+    let outcome = match expected {
+        Some(generation) => {
+            dai_sectioned::replace_data_if_unchanged(&mut file, size, &data, generation)
+        }
+        None => dai_sectioned::replace_data(&mut file, size, &data),
+    };
+
+    match outcome {
         Ok(generation) => println!("{}", generation),
         Err(error) => {
             eprintln!("{}", error);

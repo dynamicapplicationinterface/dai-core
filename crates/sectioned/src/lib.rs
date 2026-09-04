@@ -184,6 +184,37 @@ pub fn replace_data<F: Read + Write + Seek + Resize>(
     size: u64,
     data: &[u8],
 ) -> Result<u64, String> {
+    write_data(file, size, data, None)
+}
+
+/**
+ * The same write, refusing when the file has moved on without us.
+ *
+ * Two windows on one document is the case nobody has a lock for. A lock would
+ * be the complete answer and needs a mechanism that works across processes on
+ * three operating systems; this is the half that needs nothing, because the
+ * footer already records how many times the file has been saved.
+ *
+ * A host that read generation 7 and asks to write on top of 7 gets to write. A
+ * host that read 7 while another window has since written 8 is told, and the
+ * work it is holding is still in memory to be dealt with — which is a great
+ * deal better than the last writer silently winning.
+ */
+pub fn replace_data_if_unchanged<F: Read + Write + Seek + Resize>(
+    file: &mut F,
+    size: u64,
+    data: &[u8],
+    expected_generation: u64,
+) -> Result<u64, String> {
+    write_data(file, size, data, Some(expected_generation))
+}
+
+fn write_data<F: Read + Write + Seek + Resize>(
+    file: &mut F,
+    size: u64,
+    data: &[u8],
+    expected_generation: Option<u64>,
+) -> Result<u64, String> {
     if data.len() < SQLITE_HEADER.len() || &data[..SQLITE_HEADER.len()] != SQLITE_HEADER {
         // The same guard the viewer-form save applies to HTML: refuse to
         // overwrite somebody's only copy of their data with something that is
@@ -215,7 +246,16 @@ pub fn replace_data<F: Read + Write + Seek + Resize>(
     if footer[60..64] != FOOTER_MAGIC {
         return Err("The footer is missing or damaged; refusing to save over it.".into());
     }
-    let generation = read_u64(&footer, 0).saturating_add(1);
+    let current = read_u64(&footer, 0);
+    if let Some(expected) = expected_generation {
+        if current != expected {
+            return Err(format!(
+                "This document has been saved somewhere else since it was opened here                  (it is now at save {}, and this window last saw {}). Writing would                  discard that work.",
+                current, expected
+            ));
+        }
+    }
+    let generation = current.saturating_add(1);
 
     let length = data.len() as u64;
     let padded = align(length);
@@ -420,6 +460,45 @@ mod tests {
         bytes[at..at + 8].copy_from_slice(&u64::MAX.to_le_bytes());
         let error = save(bytes, &database(2, 10)).unwrap_err();
         assert!(error.contains("past the end"), "{}", error);
+    }
+
+    #[test]
+    fn writes_when_the_file_is_where_it_was_left() {
+        let bytes = container(b"m", b"p", &database(1, 10));
+        let size = bytes.len() as u64;
+        let mut cursor = Cursor::new(bytes);
+        // The fixture is written at generation 7.
+        let generation = replace_data_if_unchanged(&mut cursor, size, &database(2, 10), 7).unwrap();
+        assert_eq!(generation, 8);
+    }
+
+    #[test]
+    fn refuses_when_another_window_has_saved_since() {
+        /*
+         * The case nobody has a lock for. Without this the last writer wins and
+         * says nothing, which is the version of this bug that costs somebody an
+         * afternoon of work they watched being saved.
+         */
+        let bytes = container(b"m", b"p", &database(1, 10));
+        let size = bytes.len() as u64;
+        let mut cursor = Cursor::new(bytes);
+
+        let error = replace_data_if_unchanged(&mut cursor, size, &database(2, 10), 6).unwrap_err();
+        assert!(error.contains("saved somewhere else"), "{}", error);
+        assert!(error.contains("now at save 7"), "{}", error);
+    }
+
+    #[test]
+    fn leaves_the_file_untouched_when_it_refuses() {
+        // A refusal that had already written half the database would be worse
+        // than the overwrite it was trying to prevent.
+        let bytes = container(b"m", b"p", &database(0xaa, 200));
+        let before = bytes.clone();
+        let size = bytes.len() as u64;
+        let mut cursor = Cursor::new(bytes);
+
+        let _ = replace_data_if_unchanged(&mut cursor, size, &database(0xbb, 200), 6).unwrap_err();
+        assert_eq!(cursor.into_inner(), before);
     }
 
     #[test]

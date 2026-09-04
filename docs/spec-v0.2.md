@@ -331,6 +331,13 @@ signature therefore still holds.
 A host that has seen a later generation for a document MAY treat an earlier one
 as a rollback.
 
+A host that read a document at one generation and is asked to save on top of a
+different one SHOULD refuse, and MUST NOT present the refusal as a failure of
+the application: another window saved first, and the work in hand is still in
+hand. This is not a lock — two hosts can still read the same generation and
+both prepare a save — but it turns the common case from a silent overwrite into
+something a person is told about.
+
 An in-place save cannot be atomic, and a host MUST NOT pretend otherwise. It
 MUST write and flush the data section before it writes the table entry and the
 footer, so that a crash between the two leaves a file whose recorded digest does

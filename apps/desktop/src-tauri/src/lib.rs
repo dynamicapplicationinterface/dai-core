@@ -263,9 +263,14 @@ fn read_cartridge_bytes(path: String) -> Result<String, String> {
 /// carries no key to sign with. See `sectioned` for the ordering guarantees.
 ///
 /// Returns the generation the file now carries, so the frontend can show that a
-/// save actually advanced the document rather than reporting a bare "ok".
+/// save actually advanced the document rather than reporting a bare "ok" — and
+/// so it can pass that number back on the next save.
 #[tauri::command]
-fn save_cartridge_data(path: String, data_base64: String) -> Result<u64, String> {
+fn save_cartridge_data(
+    path: String,
+    data_base64: String,
+    expected_generation: Option<u64>,
+) -> Result<u64, String> {
     let data = BASE64
         .decode(data_base64.as_bytes())
         .map_err(|e| format!("The database sent by the container is not valid base64: {}", e))?;
@@ -283,7 +288,16 @@ fn save_cartridge_data(path: String, data_base64: String) -> Result<u64, String>
         .map_err(|e| format!("Failed to measure {}: {}", target.display(), e))?
         .len();
 
-    dai_sectioned::replace_data(&mut file, size, &data)
+    match expected_generation {
+        // Guarded when the frontend knows which save it read, which is every
+        // time it opened the file itself. Two windows on one document have no
+        // lock; this is the half that needs none, because the footer already
+        // counts saves.
+        Some(expected) => {
+            dai_sectioned::replace_data_if_unchanged(&mut file, size, &data, expected)
+        }
+        None => dai_sectioned::replace_data(&mut file, size, &data),
+    }
 }
 
 /// The cartridge this process was launched with, if any.

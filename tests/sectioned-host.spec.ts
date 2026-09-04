@@ -42,10 +42,19 @@ const container = (data: Uint8Array) =>
     generation: 4,
   });
 
-const save = (file: string, database: string): number => {
+const save = (file: string, database: string, expectedGeneration?: number): number => {
   const output = execFileSync(
     "cargo",
-    ["run", "--quiet", "--example", "replace-data", "--", file, database],
+    [
+      "run",
+      "--quiet",
+      "--example",
+      "replace-data",
+      "--",
+      file,
+      database,
+      ...(expectedGeneration === undefined ? [] : [String(expectedGeneration)]),
+    ],
     { cwd: crate, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   );
   return Number(output.trim());
@@ -127,5 +136,41 @@ test.describe("a container saved by the host", () => {
     // The refusal has to leave the original intact: a host that damages a file
     // on its way to rejecting the save is worse than one that never tried.
     expect((await verifyContainerFile(new Uint8Array(readFileSync(file)))).ok).toBe(true);
+  });
+
+  test("refuses to write over a save it never saw", async () => {
+    /*
+     * Two windows on one document, which nothing locks. The footer counts
+     * saves, so a window holding save 4 can be told that the file is now at 5
+     * rather than quietly overwriting somebody else's afternoon.
+     */
+    const directory = mkdtempSync(join(tmpdir(), "dai-sectioned-"));
+    const file = join(directory, "document.dai");
+    const first = join(directory, "first.sqlite");
+    const second = join(directory, "second.sqlite");
+
+    writeFileSync(file, await container(sqlite(0x11, 200)));
+    writeFileSync(first, sqlite(0x22, 200));
+    writeFileSync(second, sqlite(0x33, 200));
+
+    // One window saves, taking the document from 4 to 5.
+    expect(save(file, first, 4)).toBe(5);
+
+    // The other still believes it is at 4.
+    let refusal = "";
+    try {
+      save(file, second, 4);
+    } catch (error) {
+      refusal = String((error as { stderr?: Buffer }).stderr ?? error);
+    }
+
+    expect(refusal).toContain("saved somewhere else");
+
+    // And the first window's work is still there.
+    const after = new Uint8Array(readFileSync(file));
+    const read = readContainerFile(after);
+    expect(read.generation).toBe(5);
+    expect(sectionBytes(after, read, SECTION.DATA)).toEqual(sqlite(0x22, 200));
+    expect((await verifyContainerFile(after)).ok).toBe(true);
   });
 });

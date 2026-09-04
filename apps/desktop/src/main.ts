@@ -6,6 +6,7 @@
  */
 
 import { ContainerError, looksSectioned, verifyContainer } from "../../../src/container.js";
+import { readContainerFile } from "../../../src/format.js";
 import { payloadFingerprint } from "../../../src/core.js";
 import {
   compileInBrowser,
@@ -100,6 +101,16 @@ let currentFilePath: string | undefined;
  * whoever renamed it.
  */
 let currentFileIsSectioned = false;
+
+/**
+ * Which save of this document was read, for the next one to check against.
+ *
+ * Two windows on one document have no lock. The footer counts saves, so a
+ * window that read save 7 and is asked to write on top of 8 can be told that
+ * somebody else got there first — and the work it is holding is still in
+ * memory, which is a great deal better than the last writer quietly winning.
+ */
+let currentGeneration: number | undefined;
 let mountedUrl: string | undefined;
 
 interface TauriWindow {
@@ -301,6 +312,7 @@ async function readCartridgeSource(path: string): Promise<string | Uint8Array> {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   currentFileIsSectioned = looksSectioned(bytes);
+  currentGeneration = currentFileIsSectioned ? readContainerFile(bytes).generation : undefined;
   return currentFileIsSectioned ? bytes : new TextDecoder().decode(bytes);
 }
 
@@ -555,9 +567,14 @@ ${refusal.detail}` : ""),
     // this host assembled — and nothing here holds a key to sign it with.
     const written =
       currentFileIsSectioned && databaseBytes
-        ? invokeTauri("save_cartridge_data", {
+        ? invokeTauri<number>("save_cartridge_data", {
             path: currentFilePath,
             dataBase64: toBase64(new Uint8Array(databaseBytes)),
+            expectedGeneration: currentGeneration ?? null,
+          }).then((generation) => {
+            // Kept, so a second save from this window is checked against what
+            // this window actually wrote rather than what it first read.
+            currentGeneration = generation;
           })
         : invokeTauri("save_cartridge", { path: currentFilePath, html });
 
