@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -94,6 +94,19 @@ test.describe("runner shell", () => {
   });
 });
 
+/**
+ * Reaches an action that now lives behind the ⋯ menu.
+ *
+ * Saving a copy, opening something else and putting a document away are things
+ * somebody does occasionally and reads past constantly, so they came off the
+ * bar. Tests that clicked them directly were the only callers left assuming a
+ * screen full of controls.
+ */
+async function menu(page: Page, action: string): Promise<void> {
+  await page.click("#more");
+  await page.click(action);
+}
+
 test.describe("cartridge ingestion", () => {
   test("runs a container chosen from the file picker", async ({ page }) => {
     const errors: string[] = [];
@@ -106,7 +119,7 @@ test.describe("cartridge ingestion", () => {
 
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await expect(page.locator("#cartridge")).toBeVisible();
-    await expect(page.locator("#badge")).toContainText("fixture");
+    await expect(page.locator("#title")).toContainText("fixture");
 
     // The container boots inside the runner exactly as it would on a desktop:
     // its own bootloader mounts its own frame, nested inside the runner's.
@@ -163,8 +176,10 @@ test.describe("cartridge ingestion", () => {
     await page.setInputFiles("#file", CONTAINER);
 
     // The fixture is signed, so the runner must say so rather than staying mute
-    // about provenance.
-    await expect(page.locator("#badge")).toContainText("signed");
+    // about provenance. It is no longer on the bar: provenance is a question
+    // somebody asks, not a label they read past, so it lives one tap away.
+    await page.click("#more");
+    await expect(page.locator("#sheet-note")).toContainText("signed");
 
     const state = await page.evaluate(() => {
       const runner = (window as unknown as { __runner: { loaded: unknown } }).__runner;
@@ -433,7 +448,7 @@ test.describe("cartridge ingestion", () => {
     await page.setInputFiles("#file", CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
-    await page.locator("#eject").click();
+    await menu(page, "#eject");
     await page.reload();
 
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
@@ -494,9 +509,9 @@ test.describe("cartridge ingestion", () => {
     await page.setInputFiles("#file", CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
-    await page.click("#eject");
+    await menu(page, "#eject");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
-    await expect(page.locator("#eject")).toBeHidden();
+    await expect(page.locator("#slot")).toBeVisible();
 
     // The input is cleared on eject, so re-choosing the same file still fires.
     await page.setInputFiles("#file", CONTAINER);
@@ -574,7 +589,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     expect(saveResult).toEqual({ saved: true, method: "host" });
 
     // Eject cartridge
-    await page.click("#eject");
+    await menu(page, "#eject");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Re-ingest same container
@@ -607,9 +622,9 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
       return dai.saveState(new Uint8Array(bytes));
     }, updatedBytes);
 
-    await expect(page.locator("#export")).toBeVisible();
-
     const downloadPromise = page.waitForEvent("download");
+    await page.click("#more");
+    await expect(page.locator("#export")).toBeVisible();
     await page.click("#export");
     const download = await downloadPromise;
 
@@ -620,7 +635,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     const exportedContent = readFileSync(path!, "utf8");
 
     // Eject existing cartridge
-    await page.click("#eject");
+    await menu(page, "#eject");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Re-ingest exported container file into runner
@@ -631,7 +646,9 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     });
 
     await expect(page.locator("body")).toHaveClass(/loaded/);
-    await expect(page.locator("#badge")).toContainText("signed");
+    await page.click("#more");
+    await expect(page.locator("#sheet-note")).toContainText("signed");
+    await page.keyboard.press("Escape");
 
     // Verify exported container mounts, passes signature check, and loads updated database
     const exportedAppFrame = await getInnerAppFrame(page);
@@ -673,7 +690,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     });
 
     // Eject to return to home screen
-    await page.click("#eject");
+    await menu(page, "#eject");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Verify library tray renders the imported cartridge card
@@ -686,7 +703,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     // Eject back to home screen
-    await page.click("#eject");
+    await menu(page, "#eject");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Delete app from tray
@@ -704,3 +721,51 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
   });
 });
 
+
+/*
+ * What somebody who did not build this sees on a phone.
+ *
+ * The first version spent about a fifth of the screen on five controls, in the
+ * vocabulary of the people who wrote them — "Eject", "Export Container" — above
+ * an app that scrolled and rubber-banded inside a page that also scrolled. A
+ * tester's verdict was that it was too clunky to adopt, which is the only
+ * verdict that matters for a thing whose entire purpose is being handed to
+ * somebody else.
+ *
+ * These are the two measurements behind that: the chrome is one line, and the
+ * page underneath it does not move.
+ */
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  test("the chrome is one line and the page does not scroll", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const layout = await page.evaluate(() => ({
+      header: document.querySelector("header")!.getBoundingClientRect().height,
+      scrollHeight: document.documentElement.scrollHeight,
+      height: window.innerHeight,
+    }));
+
+    // A single row of chrome. The old bar was ~90px; anything approaching that
+    // is the redesign coming undone.
+    expect(layout.header).toBeLessThanOrEqual(52);
+    // Nothing to scroll: the running app owns everything below the line, and
+    // the page itself cannot drift under a finger.
+    expect(layout.scrollHeight).toBe(layout.height);
+  });
+
+  test("the words on screen are not the words of the people who built it", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await page.click("#more");
+
+    const sheet = await page.locator("#sheet").innerText();
+    // "Eject" and "Export" describe what the code does. What somebody wants is
+    // to keep a copy, open something else, or put this away.
+    expect(sheet).not.toMatch(/eject|export|container|cartridge/i);
+    expect(sheet).toMatch(/save a copy/i);
+  });
+});

@@ -17,15 +17,33 @@
     <style>
       :root { color-scheme: dark; }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: #111827; color: #e5e7eb; }
+      /*
+       * The document is the screen. Everything here is furniture.
+       *
+       * dvh rather than vh, and the page itself does not scroll: on a phone the
+       * address bar collapses as you scroll, vh does not follow it, and the
+       * result is an application that drifts up and down inside its own frame
+       * while somebody is trying to tick a box.
+       */
+      html, body { margin: 0; height: 100dvh; overflow: hidden; background: #111827; color: #e5e7eb; }
       body {
         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         display: flex;
         flex-direction: column;
         padding-top: env(safe-area-inset-top);
         padding-bottom: env(safe-area-inset-bottom);
+        overscroll-behavior: none;
       }
 
+      /*
+       * Two heights: a chooser before anything is open, and a single slim line
+       * afterwards.
+       *
+       * The first version kept five controls and a key fingerprint on screen at
+       * all times — about a fifth of a phone, in vocabulary borrowed from the
+       * people who built it. Somebody trying the thing for the first time reads
+       * "Eject" and "Export Container" and concludes this is not for them.
+       */
       header {
         display: flex;
         align-items: center;
@@ -36,6 +54,78 @@
       }
       header h1 { font-size: 15px; margin: 0; font-weight: 600; }
       header .spacer { flex: 1; }
+
+      body.loaded header {
+        padding: 0 6px 0 14px;
+        min-height: 44px;
+        gap: 6px;
+      }
+      body.loaded header h1,
+      body.loaded #open { display: none; }
+
+      /* The document's name, and nothing else that is not a control. */
+      #title {
+        font-size: 15px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      body:not(.loaded) #title { display: none; }
+
+      #more {
+        width: 36px;
+        padding: 0;
+        font-size: 18px;
+        line-height: 1;
+        background: transparent;
+        border-color: transparent;
+      }
+      #more:hover { background: #1f2937; }
+      body:not(.loaded) #more { display: none; }
+
+      /* ------------------------------------------------------------ sheet */
+
+      #sheet[hidden] { display: none; }
+      #sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: rgba(3, 7, 18, 0.6);
+      }
+      .sheet-panel {
+        background: #111827;
+        border-top: 1px solid #1f2937;
+        border-radius: 16px 16px 0 0;
+        padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .sheet-grip {
+        width: 36px;
+        height: 4px;
+        border-radius: 2px;
+        background: #374151;
+        margin: 2px auto 8px;
+      }
+      .sheet-panel button {
+        width: 100%;
+        text-align: left;
+        font-size: 16px;
+        padding: 14px 16px;
+        background: transparent;
+        border-color: transparent;
+      }
+      .sheet-panel button:hover { background: #1f2937; }
+      .sheet-note {
+        margin: 4px 4px 8px;
+        font-size: 12px;
+        color: #6b7280;
+      }
       button {
         font: inherit;
         font-size: 13px;
@@ -118,18 +208,40 @@
   <body>
     <header>
       <h1>DAI Opener</h1>
+      <span id="title"></span>
       <span class="spacer"></span>
-      <span id="badge" hidden></span>
-      <button id="export" type="button" hidden>Export Container</button>
-      <button id="eject" type="button" hidden>Eject</button>
-      <button id="open" type="button">Open app</button>
+      <button id="open" type="button">Open a file</button>
+      <button id="more" type="button" aria-label="More" aria-haspopup="dialog">&#8943;</button>
     </header>
+
+    <!--
+      Everything that is not the document.
+
+      One button on screen instead of four, and the words are what a person
+      would use: a copy, closing it, opening another. The key that signed it is
+      here rather than in the bar, because "signed a3cab3dd" is a sentence for
+      somebody who already knows what it means.
+    -->
+    <div id="sheet" hidden role="dialog" aria-modal="true" aria-label="Document">
+      <div class="sheet-panel">
+        <div class="sheet-grip"></div>
+        <p class="sheet-note" id="sheet-note"></p>
+        <button id="export" type="button">Save a copy</button>
+        <button id="open-another" type="button">Open a different file</button>
+        <button id="eject" type="button">Close this document</button>
+      </div>
+    </div>
 
     <main>
       <div id="slot">
+        <!--
+          Named for what somebody has rather than for its extension. The
+          previous line opened with two file suffixes, which is a sentence
+          written by the people who chose the suffixes.
+        -->
         <p>
-          Choose a <code>.dai</code> or <code>.dai.html</code> file to run. Nothing is
-          uploaded — the file is read and run on this device.
+          Open a document somebody sent you. Nothing is uploaded — it opens and
+          runs here, on this device.
         </p>
         <p class="hint">
           Not sure what you have?

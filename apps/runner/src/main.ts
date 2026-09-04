@@ -27,7 +27,10 @@ const fileInput = document.getElementById("file") as HTMLInputElement;
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
 const report = document.getElementById("report") as HTMLElement;
 const slot = document.getElementById("slot") as HTMLElement;
-const badge = document.getElementById("badge") as HTMLElement;
+const title = document.getElementById("title") as HTMLElement;
+const sheet = document.getElementById("sheet") as HTMLElement;
+const sheetNote = document.getElementById("sheet-note") as HTMLElement;
+const moreButton = document.getElementById("more") as HTMLButtonElement;
 const libraryEl = document.getElementById("library") as HTMLElement;
 
 let mountedUrl: string | undefined;
@@ -88,9 +91,8 @@ function eject(): void {
   loaded = undefined;
   handshakeEstablished = false;
   document.body.classList.remove("loaded");
-  ejectButton.hidden = true;
-  exportButton.hidden = true;
-  badge.hidden = true;
+  sheet.hidden = true;
+  title.textContent = "";
   say("");
   fileInput.value = "";
   void refreshLibrary();
@@ -229,15 +231,20 @@ function mount(cartridge: Cartridge): void {
   cartridgeFrame.src = mountedUrl;
 
   document.body.classList.add("loaded");
-  ejectButton.hidden = false;
-  exportButton.hidden = false;
 
   const name = cartridge.manifest.appName ?? "container";
-  badge.hidden = false;
-  badge.textContent = cartridge.publicKeyFingerprint
-    ? `${name} · signed ${cartridge.publicKeyFingerprint.slice(0, 8)}`
-    : `${name} · unsigned`;
-  badge.title = `document ${cartridge.manifest.documentUuid}`;
+  title.textContent = name;
+
+  /*
+   * Who signed it, in the sheet rather than the bar.
+   *
+   * "signed a3cab3dd" is a sentence for somebody who already knows what a key
+   * fingerprint is. It is worth being able to find, and it is not worth a fifth
+   * of a phone screen in front of somebody opening their first document.
+   */
+  sheetNote.textContent = cartridge.publicKeyFingerprint
+    ? `${name} — signed by ${cartridge.publicKeyFingerprint.slice(0, 8)}`
+    : `${name} — not signed`;
 }
 
 /**
@@ -577,9 +584,35 @@ window.addEventListener("message", (event) => {
   }
 });
 
+const closeSheet = (): void => {
+  sheet.hidden = true;
+};
+
 openButton.addEventListener("click", () => fileInput.click());
-ejectButton.addEventListener("click", eject);
-exportButton.addEventListener("click", () => void exportContainer());
+moreButton.addEventListener("click", () => {
+  sheet.hidden = false;
+});
+// Anywhere off the panel dismisses it, which is what a sheet does everywhere
+// else on a phone.
+sheet.addEventListener("click", (event) => {
+  if (event.target === sheet) closeSheet();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeSheet();
+});
+
+ejectButton.addEventListener("click", () => {
+  closeSheet();
+  eject();
+});
+exportButton.addEventListener("click", () => {
+  closeSheet();
+  void exportContainer();
+});
+document.getElementById("open-another")?.addEventListener("click", () => {
+  closeSheet();
+  fileInput.click();
+});
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
