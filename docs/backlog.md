@@ -15,17 +15,6 @@ disagreed, it is in the last section, undecided on purpose.
 
 Numbering continues from the security items, which are closed below.
 
-### 7. Real locks, with the generation check inside them
-
-The generation counter detects a lost update; it does not prevent one. Two
-windows or two processes on one file can still race.
-
-**Exit:** browser editors take a Web Lock on the document identity around the
-save critical section; the desktop host takes an OS advisory lock for the
-duration of a save; the generation check stays inside the lock as the
-backstop; new refusals `GENERATION_CONFLICT` and `LOCK_UNAVAILABLE`. A
-two-writer test with a stale generation refuses and never overwrites.
-
 ### 8. Refusals have names
 
 Hosts refuse in prose. A second implementation needs codes it can compare.
@@ -161,6 +150,10 @@ Kept so the reasoning stays with the record.
   No `'unsafe-inline'`; outer frames lose popups and modals; the spec
   describes the shell frame as its own layer.
 - **6. The README points at the current specification** — `f60466d`.
+- **7. Real locks, with the generation check inside them** — `589fd26`. Web
+  Lock on the document identity in both hosts; OS advisory lock in the Rust
+  command; `GENERATION_CONFLICT` and `LOCK_UNAVAILABLE`, refused rather than
+  waited on; two-writer tests in the crate, the host suite and the opener.
 
 - **The five gates from the first review** — honest CI, opaque-origin frame,
   no `'unsafe-inline'`, the whole manifest signed, saves that write only the
