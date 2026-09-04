@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "note": "A starter set. A published run wants several hundred; these exist so the pipeline is real and the scoring is settled before anybody spends money on completions.",
+  "contract": "Every prompt asks for the same three ids, because an application nobody can drive cannot be scored. Requiring them is part of the task rather than a concession: an application whose controls have stable names is easier for a person to automate too.",
+  "prompts": [
+    {
+      "id": "reading-list",
+      "ask": "a reading list: add a book with a title and an author, mark one as finished, and see how many are left",
+      "requires": {
+        "#what": "text input for the title",
+        "#add": "button that adds it",
+        "#save": "button that saves into the file"
+      },
+      "try": [
+        { "fill": "#what", "text": "The Peregrine" },
+        { "click": "#add" },
+        { "wait": 500 },
+        { "click": "#save" }
+      ],
+      "expect": {
+        "sql": "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_dai_meta'",
+        "rows": [{ "n": 1 }],
+        "why": "One table of its own. The count is deliberately about shape rather than contents: a model may reasonably call the column title or name, and refusing it for that would be scoring vocabulary."
+      }
+    },
+    {
+      "id": "habit-tracker",
+      "ask": "a habit tracker: add a habit, tick it off for today, and see a streak",
+      "requires": {
+        "#what": "text input for the habit",
+        "#add": "button that adds it",
+        "#save": "button that saves into the file"
+      },
+      "try": [
+        { "fill": "#what", "text": "Walk" },
+        { "click": "#add" },
+        { "wait": 500 },
+        { "click": "#save" }
+      ],
+      "expect": {
+        "sql": "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_dai_meta'",
+        "atLeast": 1,
+        "why": "A habit tracker may reasonably use two tables — habits and the days they were done — so this asks for at least one rather than exactly one."
+      }
+    },
+    {
+      "id": "invoice-log",
+      "ask": "a log of invoices: record who it was for, how much, and whether it has been paid; show the unpaid total",
+      "requires": {
+        "#what": "text input for the client",
+        "#add": "button that adds it",
+        "#save": "button that saves into the file"
+      },
+      "try": [
+        { "fill": "#what", "text": "Acme" },
+        { "click": "#add" },
+        { "wait": 500 },
+        { "click": "#save" }
+      ],
+      "expect": {
+        "sql": "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_dai_meta'",
+        "atLeast": 1
+      }
+    },
+    {
+      "id": "packing-list",
+      "ask": "a packing list for a trip: add items, tick them off, and see what is left",
+      "requires": {
+        "#what": "text input for the item",
+        "#add": "button that adds it",
+        "#save": "button that saves into the file"
+      },
+      "try": [
+        { "fill": "#what", "text": "Passport" },
+        { "click": "#add" },
+        { "wait": 500 },
+        { "click": "#save" }
+      ],
+      "expect": {
+        "sql": "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_dai_meta'",
+        "atLeast": 1
+      }
+    }
+  ]
+}

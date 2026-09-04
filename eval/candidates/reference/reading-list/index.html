@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reading list</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Reading list</h1>
+      <p id="left"></p>
+
+      <form id="compose" autocomplete="off">
+        <input id="what" type="text" placeholder="Title" required maxlength="200" />
+        <input id="who" type="text" placeholder="Author" maxlength="120" />
+        <button id="add" type="submit">Add</button>
+      </form>
+
+      <ul id="books"></ul>
+      <button id="save" type="button">Save into this file</button>
+      <p id="status"></p>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; }
+body {
+  margin: 0;
+  padding: 32px 20px 64px;
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 34rem; margin: 0 auto; }
+h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.02em; }
+#left { margin: 0 0 20px; opacity: 0.65; }
+#compose { display: flex; gap: 8px; margin-bottom: 20px; }
+#compose input { flex: 1; padding: 9px 11px; border: 1px solid rgba(128,128,128,0.4); border-radius: 8px; font: inherit; }
+button { padding: 9px 16px; border: 0; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer; }
+#add { background: #2563eb; color: #fff; }
+#save { background: rgba(128,128,128,0.16); margin-top: 8px; }
+ul { list-style: none; margin: 0 0 16px; padding: 0; }
+li { display: flex; gap: 10px; align-items: baseline; padding: 9px 0; border-top: 1px solid rgba(128,128,128,0.25); }
+li.done span.title { opacity: 0.5; text-decoration: line-through; }
+li .who { opacity: 0.6; font-size: 13px; }
+#status { min-height: 1.2em; opacity: 0.7; font-size: 13px; }
