@@ -154,3 +154,18 @@ test.describe("what it tolerates, and mentions", () => {
     expect(bundle.warnings.join(" ")).toMatch(/open blank/);
   });
 });
+
+test("a bundle inside one fence is the bundle", async () => {
+  /*
+   * What the recipe now asks for, because the bare form was arriving in
+   * pieces: a chat window draws "--- file:" as a horizontal rule.
+   */
+  const { parseBundle } = await import("../src/bundle.js");
+  const inner = "dai bundle v1\nname: Dose log\n\n--- file: index.html\n<p>hi\n\n--- file: icon.svg\n<svg/>\n";
+  const fenced = "```text\n" + inner + "```\n";
+  const a = parseBundle(inner);
+  const b = parseBundle(fenced);
+  expect(b.name).toBe("Dose log");
+  expect(b.files).toEqual(a.files);
+  expect(b.warnings).toEqual([]);
+});

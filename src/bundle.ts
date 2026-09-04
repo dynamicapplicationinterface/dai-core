@@ -165,8 +165,29 @@ function parseFences(lines: string[]): { files: Record<string, string>; used: bo
  * present, because a bundle that contains both is one somebody wrote carefully
  * and then pasted a fenced block into.
  */
+/**
+ * Strips one fence wrapped around the whole bundle, if there is one.
+ *
+ * The recipe asks for the bundle inside a single fenced block, because a chat
+ * interface renders the bare form — whose file markers begin with three
+ * dashes — as horizontal rules, and hands the person a dozen fragments with no
+ * copy button. The first model to follow the recipe did exactly that, and the
+ * person had to ask it for a zip instead. Inside one fence the bundle stays
+ * whole and copies as one thing; this takes the fence back off.
+ */
+function unwrapOuterFence(lines: string[]): string[] {
+  let first = 0;
+  while (first < lines.length && (lines[first] ?? "").trim() === "") first++;
+  let last = lines.length - 1;
+  while (last > first && (lines[last] ?? "").trim() === "") last--;
+  if (last <= first) return lines;
+  if (!FENCE.test((lines[first] ?? "").trim())) return lines;
+  if (!/^```+\s*$/.test((lines[last] ?? "").trim())) return lines;
+  return lines.slice(first + 1, last);
+}
+
 export function parseBundle(text: string): Bundle {
-  const lines = text.split(/\r?\n/);
+  const lines = unwrapOuterFence(text.split(/\r?\n/));
   const warnings: string[] = [];
 
   let start = 0;

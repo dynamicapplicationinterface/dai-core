@@ -99,8 +99,9 @@ AN ICON
 Include a file named icon.svg: a simple, bold mark for this app on a square canvas (viewBox="0 0 100 100"), with a filled background and no text smaller than a third of the canvas. It becomes the app's icon on a phone's home screen and in a browser tab, so it should read at 48 pixels. No external references inside it — a self-contained SVG only.
 
 HOW TO HAND IT OVER
-Write the whole application as one block of plain text, in this shape, so that whoever receives it does not have to guess where one file ends and the next begins:
+If you can attach files, a zip of the files is best. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
 
+\`\`\`text
 dai bundle v1
 name: Reading list
 
@@ -113,10 +114,11 @@ const db = await window.dai.openDatabase();
 
 --- file: icon.svg
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">…</svg>
+\`\`\`
+
+One fence around everything, not one per file: the file markers begin with three dashes, and outside a fence a chat window draws them as dividing lines and breaks the application into pieces nobody can copy.
 
 Every file starts with a line reading "--- file: " and its path, at the start of the line. Everything after that line belongs to that file until the next one. If a line inside a file would itself start with "--- file:", put a backslash in front of it.
-
-Fenced code blocks with the filename above them are understood too, but the markers are the form that cannot be misread.
 
 FINALLY
 Make it look finished: real spacing, a considered empty state, keyboard support, and a dark mode via prefers-color-scheme. It is a document somebody will keep.`;

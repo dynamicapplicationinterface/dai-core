@@ -153,10 +153,11 @@ test.describe("one engine", () => {
 
     // The example out of the recipe itself, completed just enough to be a
     // bundle rather than an illustration.
-    const example = RECIPE.slice(RECIPE.indexOf("dai bundle v1"))
-      .split("Every file starts")[0]!
-      .replace("…", "<title>Example</title>")
-      .trim();
+    // From the opening fence to the closing one, exactly as a model would
+    // write it and a person would paste it.
+    const opening = RECIPE.indexOf("```text");
+    const closing = RECIPE.indexOf("```", RECIPE.indexOf("dai bundle v1"));
+    const example = RECIPE.slice(opening, closing + 3).replace("…", "<title>Example</title>");
 
     const bundle = parseBundle(`${example}\n`);
     expect(Object.keys(bundle.files).sort()).toEqual(["app.js", "icon.svg", "index.html"]);
