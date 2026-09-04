@@ -47,6 +47,27 @@ const SAVE_REQUEST = "dai:save";
 const BRIDGE_VERSION = 1;
 
 /**
+ * A value this container makes up, hands to its host, and expects back.
+ *
+ * Everything the bridge does was previously accepted from whoever posted it.
+ * Any window holding a reference to this one could announce itself as a host
+ * and be believed — which turns a save into a message sent to a stranger, and
+ * lets a page that never verified anything tell the application its work was
+ * written to disk.
+ *
+ * The nonce does not authenticate the host: a hostile embedder can echo it as
+ * easily as an honest one. What it establishes is that a message came from the
+ * party this container completed a handshake with, rather than from a third
+ * window that was listening. That is a smaller claim than it sounds, and it is
+ * the one that can actually be made from inside a frame.
+ */
+const sessionNonce = ((): string => {
+  const bytes = new Uint8Array(16);
+  (globalThis.crypto ?? ({} as Crypto)).getRandomValues?.(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+})();
+
+/**
  * Why a cartridge stopped, in a form a host can record without parsing prose.
  *
  * There is deliberately no SHELL_TAMPERED: a cartridge cannot detect its own
@@ -148,6 +169,7 @@ function refuse(reason: RefusalReason, message: string, detail = ""): void {
         type: "DAI_HOST_REFUSED",
         payload: {
           bridgeVersion: BRIDGE_VERSION,
+          sessionNonce,
           reason,
           message,
           detail,
@@ -1523,6 +1545,13 @@ async function boot(): Promise<void> {
     }
 
     if ((event.data as { type?: string })?.type === "DAI_HOST_HANDSHAKE_ACK") {
+      // From the window this container is embedded in, carrying the value this
+      // container invented. Neither check proves the sender is honest; together
+      // they establish that it is the same party the handshake was sent to,
+      // which is all that was ever missing here.
+      const ack = event.data as { payload?: { sessionNonce?: string } };
+      if (event.source !== window.parent) return;
+      if (ack.payload?.sessionNonce !== sessionNonce) return;
       hostAvailable = true;
       return;
     }
@@ -1567,6 +1596,7 @@ async function boot(): Promise<void> {
           window.parent.postMessage(
             {
               type: "DAI_HOST_SAVE",
+              sessionNonce,
               // Both, because hosts need different things: a native host
               // writes the document verbatim, while a browser host stores the
               // database on its own and would otherwise have to unzip the
@@ -1602,6 +1632,7 @@ async function boot(): Promise<void> {
           type: "DAI_HOST_HANDSHAKE",
           payload: {
             bridgeVersion: BRIDGE_VERSION,
+            sessionNonce,
             documentUuid: manifest?.documentUuid ?? null,
             verified: policy === "required",
             payloadFingerprint: fingerprint,
@@ -1654,6 +1685,7 @@ async function boot(): Promise<void> {
             type: "DAI_HOST_CLOSING",
             payload: {
               bridgeVersion: BRIDGE_VERSION,
+              sessionNonce,
               documentUuid: manifest?.documentUuid ?? null,
             },
           },

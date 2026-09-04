@@ -31,6 +31,15 @@ test.describe("what the paste page warns about", () => {
     "a beacon": "navigator.sendBeacon('/t', data);",
     "browser storage": "localStorage.setItem('notes', JSON.stringify(notes));",
     "a hosted image": '<img src="https://example.com/logo.png">',
+    // The channels connect-src does not govern. A native host can switch these
+    // off at the webview layer; a browser cannot, so the compiler refuses to
+    // seal them.
+    "a preconnect": '<link rel="preconnect" href="https://fonts.gstatic.com">',
+    "a DNS prefetch": '<link rel=dns-prefetch href="//cdn.example.com">',
+    "a prerender": '<link rel="prerender" href="/next.html">',
+    "a meta refresh": '<meta http-equiv="refresh" content="0; url=/next">',
+    "a link that opens a tab": '<a href="/docs" target="_blank">docs</a>',
+    "window.open": 'button.onclick = () => window.open("https://example.com");',
     // Removing 'unsafe-inline' made these stop working, and they fail in the
     // worst way available: the control is there, it is pressed, and nothing
     // happens. Models emit them constantly.
@@ -60,6 +69,12 @@ test.describe("what the paste page warns about", () => {
     "a handler assigned as a property": "<script>el.onclick = go;</script>",
     "a comparison before an assignment": "<script>if (a<b) { el.onclick = x; }</script>",
     "the word onclick in prose": "<p>Avoid onclick = handlers.</p>",
+    // A container preloading its own font is doing something legitimate, and a
+    // rule that also catches correct code teaches people to ignore the rules.
+    "preloading its own font": '<link rel="preload" as="font" href="./inter.woff2" crossorigin>',
+    "a stylesheet of its own": '<link rel="stylesheet" href="./app.css">',
+    "an ordinary link": '<a href="/docs">docs</a>',
+    "the word prefetch in prose": "<p>Prefetch hints do not work in a container.</p>",
   };
 
   for (const [what, source] of Object.entries(accepted)) {

@@ -290,15 +290,41 @@ async function exportContainer(): Promise<void> {
   window.setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
 }
 
+/**
+ * The value the mounted container invented, echoed back on the acknowledgement
+ * and required on everything after it.
+ *
+ * Without it this window acts on any message of the right shape from any
+ * window that has a reference to it — including a save, which writes to storage
+ * under a document's own identity. The nonce does not say the container is
+ * trustworthy; it says the message came from the one this runner mounted.
+ */
+let mountedNonce: string | null = null;
+
+/** Whether a message came from the container this runner is showing. */
+function fromMountedContainer(event: MessageEvent, data: { sessionNonce?: string }): boolean {
+  if (event.source !== cartridgeFrame.contentWindow) return false;
+  return Boolean(mountedNonce) && data.sessionNonce === mountedNonce;
+}
+
 // Host-Runner Bridge Protocol: handle DAI_HOST_HANDSHAKE and DAI_HOST_SAVE
 window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
 
   if (data.type === "DAI_HOST_HANDSHAKE") {
+    // The frame this runner mounted, and no other window.
+    if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
-    (event.source as Window | null)?.postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
+    mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+    (event.source as Window | null)?.postMessage(
+      { type: "DAI_HOST_HANDSHAKE_ACK", payload: { sessionNonce: mountedNonce } },
+      "*",
+    );
   } else if (data.type === "DAI_HOST_SAVE") {
+    // A save writes to this device's storage under a document's identity, so it
+    // is answered only for the container that handshook.
+    if (!fromMountedContainer(event, data)) return;
     const { databaseBytes, documentUuid } = data.payload || {};
     if (databaseBytes && documentUuid) {
       const bytes = new Uint8Array(databaseBytes);

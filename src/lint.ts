@@ -63,6 +63,60 @@ const CHECKS: Check[] = [
     fix: "Use an inline SVG, a data: URI, or an emoji instead of a hosted image.",
   },
   {
+    /*
+     * The channels `connect-src` does not govern.
+     *
+     * A container declares no permitted connections and the browser enforces
+     * that for requests, sockets and beacons. It does not enforce it for a
+     * speculative fetch the browser makes on the page's behalf: `preconnect`
+     * and `dns-prefetch` reach a name server before any policy is consulted,
+     * and `prefetch` and `prerender` fetch the document itself. None of them
+     * carry data on purpose, and all of them tell somebody the file was opened,
+     * which is the one thing a container promises it cannot do.
+     *
+     * A native host can switch these off at the webview layer. A browser cannot,
+     * so the compiler refuses to seal them in the first place.
+     *
+     * `preload` is deliberately absent. A container preloading its own font or
+     * stylesheet is doing something legitimate and useful, and these rules only
+     * earn their interruptions by firing on things that cannot work here. A
+     * rule that also catches correct code teaches people to ignore the rules.
+     */
+    id: "speculative-fetch",
+    pattern: /<link[^>]+rel\s*=\s*["']?(?:dns-prefetch|preconnect|prerender|prefetch)\b/i,
+    what: "It asks the browser to reach a server before the page needs it.",
+    why:
+      "Preconnect and prefetch are not covered by the container's connection policy, so they " +
+      "would leave a record that the file was opened — the one thing a container promises it " +
+      "cannot do.",
+    fix: "Remove the link tag. Everything a container needs is already inside it.",
+  },
+  {
+    /*
+     * A meta refresh is a navigation, and navigation is not a connection: no
+     * CSP directive governs where it goes. The sandbox stops it leaving the
+     * frame, so what remains is an application that reloads itself into
+     * nothing — but sealing one is never intentional.
+     */
+    id: "meta-refresh",
+    pattern: /<meta[^>]+http-equiv\s*=\s*["']?refresh\b/i,
+    what: "It redirects the page on a timer.",
+    why: "A container cannot navigate anywhere, so the redirect either does nothing or blanks the app.",
+    fix: "Remove the meta refresh and change what is on screen with script instead.",
+  },
+  {
+    /*
+     * `window.open` carries a URL, a URL carries data, and no CSP directive
+     * governs it. The sandbox withholds `allow-popups`, so this fails quietly
+     * — a link the person clicks and nothing happens.
+     */
+    id: "new-window",
+    pattern: /<a[^>]+target\s*=\s*["']?_blank\b|window\.open\s*\(/i,
+    what: "It tries to open a new window or tab.",
+    why: "A container is not allowed to open windows, so the link does nothing when clicked.",
+    fix: "Show the content in the page, or leave the address as text the person can copy.",
+  },
+  {
     // Deliberately precise about which attribute names count, so that `a < b`
     // followed by an assignment somewhere in a script block cannot be mistaken
     // for markup.

@@ -845,9 +845,21 @@ test.describe("host bridge", () => {
       const win = window as unknown as Record<string, unknown>;
       win.__saves = [];
       window.addEventListener("message", (event) => {
-        const data = event.data as { type?: string; payload?: { html?: string } };
+        const data = event.data as {
+          type?: string;
+          payload?: { html?: string; sessionNonce?: string };
+        };
         if (data?.type === "DAI_HOST_HANDSHAKE" && replies) {
-          (event.source as Window).postMessage({ type: "DAI_HOST_HANDSHAKE_ACK" }, "*");
+          // Echoing the value the container invented is what makes this a host
+          // rather than a window that happens to be listening. A container
+          // ignores an acknowledgement without it, which is the whole point.
+          (event.source as Window).postMessage(
+            {
+              type: "DAI_HOST_HANDSHAKE_ACK",
+              payload: { sessionNonce: data.payload?.sessionNonce },
+            },
+            "*",
+          );
         }
         if (data?.type === "DAI_HOST_SAVE") {
           (win.__saves as unknown[]).push(data.payload?.html ?? "");

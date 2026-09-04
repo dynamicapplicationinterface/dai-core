@@ -299,6 +299,24 @@ reference to the frame can replace a running application's document.
 The shell MUST answer only one hello. The buffers are transferred and therefore
 detached after the first reply.
 
+### 4.5 Talking to a host
+
+A container announces itself to the window it is embedded in, and everything
+that follows — a save, a refusal — is a message that window acts on.
+
+The container MUST invent an unpredictable value at boot and send it with its
+first message. A host MUST echo that value on its acknowledgement, and the
+container MUST NOT treat a host as present unless the acknowledgement came from
+its own parent and carried the value back. Every later message the container
+sends MUST carry it, and a host MUST ignore one that does not.
+
+This does not authenticate a host. An embedder can echo a value as easily as an
+honest host, and a container has no way to know which it is talking to. What it
+establishes is that a message came from the party the handshake completed with,
+rather than from a third window holding a reference — which is what stops an
+uninvolved page announcing itself as a host, receiving a document's data, or
+telling an application its work was written to disk.
+
 ---
 
 ## 5. Saving

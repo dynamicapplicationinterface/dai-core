@@ -162,6 +162,17 @@ let crossChecked = true;
 /** The newest host-bridge schema this host understands. */
 const HOST_BRIDGE_VERSION = 1;
 
+/**
+ * The value the mounted container invented, echoed on the acknowledgement and
+ * required on everything after it.
+ *
+ * Without it this window acts on any message of the right shape from any window
+ * holding a reference to it, and one of those messages overwrites a file on
+ * disk. It does not establish that the container is honest — it establishes
+ * that the message came from the one this host mounted.
+ */
+let mountedNonce: string | null = null;
+
 function armBootWatchdog(): void {
   clearBootWatchdog();
   bootWatchdog = window.setTimeout(() => {
@@ -420,8 +431,13 @@ ${refusal.detail}` : ""),
   }
 
   if (data.type === "DAI_HOST_HANDSHAKE") {
+    // The frame this host mounted, and no other window. Everything below acts
+    // on what the message says — including writing over a file on disk.
+    if (event.source !== cartridgeFrame.contentWindow) return;
+
     // The container is alive; it can report its own problems from here.
     clearBootWatchdog();
+    mountedNonce = ((data.payload ?? {}) as { sessionNonce?: string }).sessionNonce ?? null;
 
     const reported = (data.payload ?? {}) as {
       bridgeVersion?: number;
@@ -480,10 +496,18 @@ ${refusal.detail}` : ""),
     }
 
     (event.source as Window | null)?.postMessage(
-      { type: "DAI_HOST_HANDSHAKE_ACK", payload: { bridgeVersion: HOST_BRIDGE_VERSION } },
+      {
+        type: "DAI_HOST_HANDSHAKE_ACK",
+        payload: { bridgeVersion: HOST_BRIDGE_VERSION, sessionNonce: mountedNonce },
+      },
       "*",
     );
   } else if (data.type === "DAI_HOST_SAVE") {
+    // This writes over a file on disk. It is answered only for the container
+    // this host mounted, carrying the value that container invented.
+    if (event.source !== cartridgeFrame.contentWindow) return;
+    if (!mountedNonce || (data as { sessionNonce?: string }).sessionNonce !== mountedNonce) return;
+
     const reply = (status: "ok" | "error", error?: string): void => {
       (event.source as Window | null)?.postMessage(
         { type: "DAI_HOST_SAVE_ACK", status, error },
