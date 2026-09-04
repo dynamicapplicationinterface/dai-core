@@ -9,7 +9,7 @@
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
-import { watchForInstall } from "./install.js";
+import { describeSelf, watchForInstall } from "./install.js";
 import { checkTrust, forgetTrust } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -129,6 +129,7 @@ function eject(): void {
   handshakeEstablished = false;
   document.body.classList.remove("loaded");
   installBar.hidden = true;
+  describeSelf();
   sheet.hidden = true;
   title.textContent = "";
   say("");
@@ -275,9 +276,8 @@ function mount(cartridge: Cartridge): void {
    * is something to keep, and on an empty chooser it reads as being asked to
    * bookmark a file picker.
    */
-  offerInstall?.();
-
   const name = cartridge.manifest.appName ?? "container";
+  offerInstall?.({ name, favicon: cartridge.manifest.favicon });
   title.textContent = name;
 
   /*
