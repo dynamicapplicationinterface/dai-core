@@ -11,76 +11,9 @@ disagreed, it is in the last section, undecided on purpose.
 
 ---
 
-## Security — undisputed, in order
-
-### 1. The signed set is closed
-
-`checkSignature` walks `signedEntries` and checks each against `hashes`. Nothing
-checks the reverse: that every entry in the archive — and every entry in
-`hashes`, which is itself outside the signature — is *in* `signedEntries`. An
-entry added alongside a matching digest passes integrity and passes signature.
-One such entry is executed by the host: `runtime/schema.json`, whose migration
-SQL runs against the person's data, under the badge of the pinned publisher.
-
-**Exit:** two conformance cases, `signed-extra-entry` and
-`signed-schema-injected`, verdict `mount: false, signature: invalid`, refused
-with `SIGNED_SET_MISMATCH` by all three readers — `container.ts`, the
-bootloader, and the Python reader. `signedEntries` is the sole authority at
-mount; `hashes` is not consulted at verify time.
-
-### 2. What runs is what was signed
-
-The frame loader rewrites asset-name spellings across JavaScript source so
-that references resolve at an opaque origin. If that rewrite touches strings,
-comments or regexes, the bytes that execute are not the bytes that were
-digested and signed.
-
-**Exit:** verified first — a test that builds an application whose own file
-names appear as string literals and asserts the script text the frame executes
-is byte-identical to the sealed entry. If it fails, resolution moves to an
-import map and `src`/`href` rewriting only, and the test stays.
-
-### 3. A link does not mount without consent
-
-`?open=<url>` fetches and mounts with no click. Any page can put a full-screen
-application — one that asks for a password, say — in front of somebody who
-followed a link. The handoff path guards its origin; the URL path guards
-nothing.
-
-**Exit:** the opener shows the host it is about to fetch from and mounts on a
-click; a test asserts no mount before the click.
-
-### 4. Every bridge reply is bound to its request
-
-The handshake and save messages are bound to the frame's `event.source` and
-the session nonce. Replies are not bound to a request, so a stale or duplicated
-acknowledgement cannot be told from the one that was asked for. And when
-`crypto` is absent the nonce falls back rather than refusing.
-
-**Exit:** save request and response carry a cryptographically random request
-id; a spoofed acknowledgement, a duplicate response and a stale nonce are each
-rejected by a test; an absent `crypto` throws rather than degrading.
-
-### 5. The desktop host's policy matches the specification
-
-`tauri.conf.json` still carries `'unsafe-inline'` and disables asset CSP
-modification; both hosts' *outer* frame still allows same-origin and popups.
-The inner frame is the real boundary, so this is defence in depth rather than
-a hole — but it is not the policy §4 of the specification says a host applies.
-
-**Exit:** the desktop shell's policy has no `'unsafe-inline'`; the outer frame's
-flags are either tightened or written into the specification as the shell
-layer, with the reason.
-
-### 6. The README points at the current specification
-
-It links v0.1, which is superseded and was what one review read first.
-
-**Exit:** README links `spec-v0.2.md`; a test greps for the old link.
-
----
-
 ## Engineering — undisputed, in order
+
+Numbering continues from the security items, which are closed below.
 
 ### 7. Real locks, with the generation check inside them
 
@@ -210,6 +143,24 @@ Each has at least two reviews on opposite sides. None blocks anything above.
 ## Closed
 
 Kept so the reasoning stays with the record.
+
+- **1. The signed set is closed** — `f60466d`. The signature check reconciled
+  `signedEntries` against `hashes` in one direction; an entry added beside a
+  matching digest passed as signed, including `runtime/schema.json`, whose
+  migration SQL a host runs. Both directions now, in all three readers; two
+  conformance cases; the bootloader proven in a page.
+- **2. What runs is what was signed** — `7cd469c`. The loader rewrote every
+  spelling of every asset name across whole script texts. Only module
+  specifiers now; a test says its file names every other way.
+- **3. A link does not mount without consent** — `7cd469c`. `?open=` shows
+  the host and fetches on a click.
+- **4. Every bridge reply is bound to its request** — `7cd469c`. Random
+  request id, echoed by the host, accepted only from the parent; no random
+  source throws.
+- **5. The desktop host's policy matches the specification** — `7cd469c`.
+  No `'unsafe-inline'`; outer frames lose popups and modals; the spec
+  describes the shell frame as its own layer.
+- **6. The README points at the current specification** — `f60466d`.
 
 - **The five gates from the first review** — honest CI, opaque-origin frame,
   no `'unsafe-inline'`, the whole manifest signed, saves that write only the
