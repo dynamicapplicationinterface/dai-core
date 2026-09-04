@@ -2,22 +2,24 @@
 /**
  * The make-one page: from "my AI said go here" to a file that is running.
  *
- * She arrives in one of two states. Either she has not asked her assistant
- * yet, and needs the sentence to paste; or she has, and is holding code and
- * needs somewhere to put it. The top of the page routes those two. Below it
- * is the part for somebody who wants to see one made before she asks for
- * her own — pick an app, watch it get built, open it.
+ * A person arrives in one of two states. Either they have not asked their
+ * assistant yet, and need the sentence to paste; or they have, and are holding
+ * code and need somewhere to put it. The top of the page routes those two.
+ * Below it is the part for somebody who wants to see one made before asking
+ * for their own — pick an app, watch it get built, open it.
  *
  * A previous version was a chat replay with three tabs of source and eight
  * paragraphs underneath it. The people this is for do not read source, and
  * they did not read the paragraphs either. The code is still here, because
- * the point is that it is real — it is just folded away until asked for.
+ * the point is that it is real — it is just folded away until asked for, and
+ * what is shown instead is the shape of the thing: a few files go in, one
+ * file comes out, and that file runs.
  *
- * Everything after "Build" is real. The source is compiled by the same
+ * Everything after "Make" is real. The source is compiled by the same
  * compiler the command line uses, signed with a key minted in this tab, and
  * the file that results is a working application. Nothing is uploaded.
  */
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
 import { handOffToOpener } from '../../src/handoff-tab.js';
@@ -26,7 +28,7 @@ import { IDEAS, PROMPT } from './prompt.js';
 /*
  * The examples, imported from the repository rather than copied here: the
  * same files the front page photographs and the screenshot script compiles,
- * so what she sees, what she reads and what she gets cannot drift apart.
+ * so what is shown, what is read and what is handed over cannot drift apart.
  */
 import PACKING_HTML from '../../examples/packing-list/index.html?raw';
 import PACKING_CSS from '../../examples/packing-list/app.css?raw';
@@ -37,7 +39,7 @@ import DINNERS_CSS from '../../examples/meal-plan/app.css?raw';
 
 interface Choice {
   id: string;
-  /** What she would have typed in the brackets. */
+  /** What a person would have typed in the brackets. */
   ask: string;
   title: string;
   fileName: string;
@@ -51,7 +53,7 @@ const CHOICES: Choice[] = [
   {
     id: 'packing',
     ask: 'a packing list for our beach trip',
-    title: 'Packing list',
+    title: 'packing list',
     fileName: 'beach-trip.dai.html',
     appName: 'Beach trip',
     shot: '/shots/home-packing.png',
@@ -64,7 +66,7 @@ const CHOICES: Choice[] = [
   {
     id: 'chores',
     ask: 'a chore chart for the kids',
-    title: 'Chore chart',
+    title: 'chore chart',
     fileName: 'chores.dai.html',
     appName: 'Chores',
     shot: '/shots/home-chores.png',
@@ -77,7 +79,7 @@ const CHOICES: Choice[] = [
   {
     id: 'dinners',
     ask: 'our weekly dinner plan',
-    title: 'Dinner plan',
+    title: 'dinner plan',
     fileName: 'this-week.dai.html',
     appName: 'This week',
     shot: '/shots/home-dinners.png',
@@ -93,18 +95,51 @@ const chosen = ref<Choice>(CHOICES[0]!);
 const showCode = ref(false);
 const openFile = ref(0);
 
+/** "Chore chart" for a heading, "chore chart" for a sentence. */
+const Title = computed(() => chosen.value.title[0]!.toUpperCase() + chosen.value.title.slice(1));
+
 function choose(choice: Choice): void {
   if (chosen.value === choice) return;
   chosen.value = choice;
   openFile.value = 0;
   // A different app is a different build; the old file is not this one.
+  stage.value = 0;
   buildState.value = 'idle';
-  buildLog.value = [];
   builtFile.value = null;
   builtBytes.value = null;
   downloadUrl.value = '';
   openState.value = 'idle';
 }
+
+/* ---- the ask, typed out ------------------------------------------- */
+
+/*
+ * The request appears the way it would in a chat: typed. It is one line and
+ * takes under a second, which is enough to read as "this is what you say"
+ * rather than as a label. Skipped for anyone who has asked for less motion.
+ */
+const typed = ref('');
+let typing: ReturnType<typeof setInterval> | undefined;
+
+function typeOut(text: string): void {
+  clearInterval(typing);
+  const still =
+    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (still) {
+    typed.value = text;
+    return;
+  }
+  typed.value = '';
+  let at = 0;
+  typing = setInterval(() => {
+    at += 1;
+    typed.value = text.slice(0, at);
+    if (at >= text.length) clearInterval(typing);
+  }, 22);
+}
+
+watch(() => chosen.value.ask, typeOut, { immediate: true });
+onBeforeUnmount(() => clearInterval(typing));
 
 /* ---- the prompt ---------------------------------------------------- */
 
@@ -122,11 +157,14 @@ async function copyPrompt(): Promise<void> {
 
 /* ---- the build ----------------------------------------------------- */
 
+/**
+ * How far along the picture is: 0 nothing yet, 1 the files are in hand,
+ * 2 they are becoming one file, 3 the file exists, 4 it is open and running.
+ */
+const stage = ref(0);
 const buildState = ref<'idle' | 'working' | 'done' | 'error'>('idle');
-const buildLog = ref<string[]>([]);
 const downloadUrl = ref('');
 const downloadName = computed(() => chosen.value.fileName);
-const fingerprint = ref('');
 const fileSize = ref(0);
 const errorText = ref('');
 const builtFile = ref<File | null>(null);
@@ -166,6 +204,7 @@ async function openInOpener(): Promise<void> {
   try {
     await handOffToOpener(tab, { name: downloadName.value, bytes }, { origin: OPENER, window });
     openState.value = 'idle';
+    stage.value = 4;
   } catch (error) {
     openState.value = 'failed';
     openError.value = String((error as Error)?.message ?? error);
@@ -181,40 +220,41 @@ const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(
   'A DAI document — the app and its data in one file. Open it at opendai.app',
 );
 
-function log(line: string): void {
-  buildLog.value = [...buildLog.value, line];
-}
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Compiles the chosen example into a real, signed application. */
 async function build(): Promise<void> {
   buildState.value = 'working';
-  buildLog.value = [];
   errorText.value = '';
 
   try {
-    log('Getting the pieces every file carries…');
+    // The stages are held on screen for a moment each. The compile itself
+    // takes well under a second, and a picture that flashes through three
+    // states in that time shows nothing.
+    stage.value = 1;
     const assets = await loadRuntimeAssets();
+    await pause(500);
 
-    log('Making a key in this browser and signing with it…');
-    log('Putting everything into one file…');
+    stage.value = 2;
     const built = await compileInBrowser({
       files: Object.fromEntries(chosen.value.files.map((file) => [file.name, file.source])),
       appName: chosen.value.appName,
       assets,
     });
+    await pause(700);
 
     builtBytes.value = new TextEncoder().encode(built.html);
     const blob = new Blob([built.html], { type: 'text/html' });
     builtFile.value = new File([blob], downloadName.value, { type: 'text/html' });
     downloadUrl.value = URL.createObjectURL(blob);
     fileSize.value = blob.size;
-    fingerprint.value = built.publicKeyFingerprint ?? '';
 
-    log(`Done — ${Math.round(blob.size / 1024)} KB.`);
+    stage.value = 3;
     buildState.value = 'done';
   } catch (error) {
     errorText.value = String(error);
     buildState.value = 'error';
+    stage.value = 0;
   }
 }
 </script>
@@ -237,21 +277,22 @@ async function build(): Promise<void> {
       </div>
 
       <div class="door">
-        <p class="kicker">Already have the code?</p>
-        <h2>Turn it into a file.</h2>
+        <p class="kicker">Already have the files?</p>
+        <h2>Turn them into your app.</h2>
         <p class="door-text">
           Paste what your assistant gave you, or drop in the folder or zip. It
-          becomes a file right here — nothing is uploaded.
+          becomes one file right here — nothing is uploaded.
         </p>
-        <a class="primary as-link" href="/make-your-own">Paste my code →</a>
+        <a class="primary as-link" href="/make-your-own">Get my app →</a>
       </div>
     </section>
 
     <!-- ---------------------------------------------------------- choose -->
     <section class="try">
       <header class="try-head">
-        <p class="kicker">Or see one made first</p>
-        <h2>Pick one. Watch it become a file.</h2>
+        <span class="or">or</span>
+        <h2 class="try-title">Try one right here.</h2>
+        <p class="try-lede">Nothing to ask, nothing to paste. Pick one and watch it become a file.</p>
       </header>
 
       <ul class="choices" role="list">
@@ -264,51 +305,76 @@ async function build(): Promise<void> {
             @click="choose(choice)"
           >
             <span class="device"><img :src="choice.shot" :alt="choice.alt" loading="lazy" /></span>
-            <span class="choice-title">{{ choice.title }}</span>
+            <span class="choice-title">{{ choice.title[0]!.toUpperCase() + choice.title.slice(1) }}</span>
           </button>
         </li>
       </ul>
 
       <!--
-        The conversation, as one exchange. It is a replay and says so: scripting
-        it is fine for a tour and dishonest the moment it pretends to be live.
+        The conversation, as one exchange. It is a replay and looks like one:
+        scripting it is fine for a tour and dishonest the moment it pretends
+        to be live.
       -->
       <div class="chat" aria-label="What was asked">
         <div class="turn you">
           <span class="who">You</span>
-          <p>Make me a DAI app for <mark>{{ chosen.ask }}</mark>.</p>
+          <div class="said">
+            <p>Make me a DAI app for <mark>{{ typed }}</mark><span class="caret" aria-hidden="true"></span></p>
+          </div>
         </div>
         <div class="turn assistant">
           <span class="who">AI</span>
-          <p>
-            Here it is — {{ chosen.files.length }} short files.
-            <button type="button" class="link" @click="showCode = !showCode">
-              {{ showCode ? 'Hide the code' : 'Show the code' }}
-            </button>
-          </p>
-          <div v-if="showCode" class="files">
-            <div class="tabs">
-              <button
-                v-for="(file, at) in chosen.files"
-                :key="file.name"
-                type="button"
-                :class="{ 'is-open': openFile === at }"
-                @click="openFile = at"
-              >
-                {{ file.name }}
+          <div class="said">
+            <p>
+              Here you go — {{ chosen.files.length }} files.
+              <button type="button" class="link" @click="showCode = !showCode">
+                {{ showCode ? 'Hide them' : 'Peek inside' }}
               </button>
+            </p>
+            <div v-if="showCode" class="files">
+              <div class="tabs">
+                <button
+                  v-for="(file, at) in chosen.files"
+                  :key="file.name"
+                  type="button"
+                  :class="{ 'is-open': openFile === at }"
+                  @click="openFile = at"
+                >
+                  {{ file.name }}
+                </button>
+              </div>
+              <pre><code>{{ chosen.files[openFile]?.source }}</code></pre>
             </div>
-            <pre><code>{{ chosen.files[openFile]?.source }}</code></pre>
           </div>
         </div>
       </div>
 
       <!-- ----------------------------------------------------------- build -->
       <div class="step">
-        <p class="real">
-          <strong>This part is real.</strong> The code is turned into a file here, in your
-          browser. Nothing is uploaded.
-        </p>
+        <!--
+          The shape of what happens, as a picture: a few files go in, one
+          file comes out, that file runs. Each stop lights as the build reaches
+          it, so "building" is something a person watches rather than a word
+          on a button.
+        -->
+        <ol class="pipeline" :data-stage="stage" aria-label="What happens">
+          <li class="stop" :class="{ lit: stage >= 1, now: stage === 1 }">
+            <span class="glyph files-glyph" aria-hidden="true">
+              <i v-for="file in chosen.files" :key="file.name"></i>
+            </span>
+            <span class="stop-name">{{ chosen.files.length }} files from your AI</span>
+          </li>
+          <li class="arrow" :class="{ lit: stage >= 2 }" aria-hidden="true"></li>
+          <li class="stop" :class="{ lit: stage >= 2, now: stage === 2 }">
+            <span class="glyph one-glyph" aria-hidden="true"><i></i></span>
+            <span class="stop-name">One DAI file</span>
+          </li>
+          <li class="arrow" :class="{ lit: stage >= 3 }" aria-hidden="true"></li>
+          <li class="stop" :class="{ lit: stage >= 3, now: stage >= 3 }">
+            <span class="glyph run-glyph" aria-hidden="true"><i></i></span>
+            <span class="stop-name">Your {{ chosen.title }}, running</span>
+          </li>
+        </ol>
 
         <button
           v-if="buildState !== 'done'"
@@ -317,18 +383,17 @@ async function build(): Promise<void> {
           :disabled="buildState === 'working'"
           @click="build"
         >
-          {{ buildState === 'working' ? 'Building…' : `Build the ${chosen.title.toLowerCase()}` }}
+          {{ buildState === 'working' ? 'Making it…' : `Make my ${chosen.title}` }}
         </button>
-
-        <ul v-if="buildLog.length && buildState !== 'done'" class="log">
-          <li v-for="(line, index) in buildLog" :key="index">{{ line }}</li>
-        </ul>
+        <p v-if="buildState !== 'done'" class="real">
+          This part is real. It's made here, in your browser. Nothing is uploaded.
+        </p>
 
         <p v-if="errorText" class="bad">{{ errorText }}</p>
 
         <div v-if="buildState === 'done'" class="done">
           <p class="done-line">
-            Done. <strong>{{ downloadName }}</strong> — {{ Math.round(fileSize / 1024) }} KB, one file.
+            Your {{ chosen.title }} is ready. <span class="muted">{{ downloadName }} · {{ Math.round(fileSize / 1024) }} KB · one file</span>
           </p>
 
           <div class="done-actions">
@@ -363,6 +428,7 @@ async function build(): Promise<void> {
 
 <style scoped>
 .maker { margin: 8px 0 0; }
+.muted { color: var(--vp-c-text-3); font-weight: 400; }
 
 .kicker {
   margin: 0 0 8px;
@@ -403,8 +469,8 @@ h2 {
 
 .door-text { margin: 0 0 18px; color: var(--vp-c-text-2); line-height: 1.6; }
 
-/* Stacked. Beside the text, the button escaped the card at every width the card
-   is actually shown at. */
+/* Stacked. Beside the text, the button escaped the card at every width the
+   card is actually shown at. */
 .prompt-box {
   display: flex;
   flex-direction: column;
@@ -419,22 +485,9 @@ h2 {
 .prompt-text { margin: 0; font-size: 14.5px; line-height: 1.5; user-select: all; overflow-wrap: anywhere; }
 .prompt-box .primary { align-self: flex-end; }
 
-.ideas {
-  margin: 14px 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 13px;
-}
-
+.ideas { margin: 14px 0 0; display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
 .ideas-label { flex-basis: 100%; color: var(--vp-c-text-3); }
-
-.idea {
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--vp-c-divider);
-  color: var(--vp-c-text-2);
-}
+.idea { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--vp-c-divider); color: var(--vp-c-text-2); }
 
 /* ----------------------------------------------------------- buttons */
 
@@ -455,37 +508,70 @@ h2 {
 
 .primary:hover { background: var(--vp-c-brand-2); border-color: var(--vp-c-brand-2); }
 .primary:disabled { opacity: 0.6; cursor: default; }
-.primary.big { padding: 13px 26px; font-size: 16px; }
+.primary.big { padding: 14px 28px; font-size: 17px; }
 .as-link { align-self: flex-start; margin-top: auto; }
 
 .link {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  color: var(--vp-c-brand-1);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  background: none; border: 0; padding: 0; font: inherit;
+  color: var(--vp-c-brand-1); cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px;
 }
 
 /* ------------------------------------------------------------ choose */
 
-.try { margin-top: 64px; }
-.try-head { max-width: 34rem; }
+/*
+ * A band, so the break from "go do something" to "or stay here" is a thing
+ * the eye finds without reading. The first version marked it with a small
+ * uppercase label, which is the size of thing people scroll past.
+ */
+.try {
+  margin: 56px -24px 0;
+  padding: 40px 24px 44px;
+  border-top: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-alt);
+}
 
+.try-head { text-align: center; max-width: 34rem; margin: 0 auto; }
+
+.or {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--vp-c-text-2);
+}
+
+.try-title { font-size: 2.1rem !important; margin-bottom: 8px !important; }
+.try-lede { margin: 0; color: var(--vp-c-text-2); font-size: 1.05rem; }
+
+/*
+ * Narrow and tall, so they read as phones. At the width they first shipped
+ * they read as iPads, and the three cards came out at three heights because
+ * each picture's height was its own business.
+ */
 .choices {
   list-style: none;
-  margin: 22px 0 0;
+  margin: 28px auto 0;
   padding: 0;
+  max-width: 560px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
   gap: 16px;
 }
 
+.choices li { display: flex; }
+
 .choice {
   width: 100%;
-  padding: 12px 12px 14px;
+  height: 100%;
+  padding: 10px 10px 14px;
   border: 2px solid var(--vp-c-divider);
   border-radius: 22px;
   background: var(--vp-c-bg);
@@ -498,29 +584,13 @@ h2 {
 }
 
 .choice:hover { transform: translateY(-2px); border-color: var(--vp-c-text-3); }
+.choice.is-chosen { border-color: var(--vp-c-brand-1); box-shadow: 0 0 0 4px var(--vp-c-brand-soft); }
 
-.choice.is-chosen {
-  border-color: var(--vp-c-brand-1);
-  box-shadow: 0 0 0 4px var(--vp-c-brand-soft);
-}
-
-.device {
-  display: block;
-  width: 100%;
-  padding: 5px;
-  border-radius: 20px;
-  background: #101318;
-}
-
+.device { display: block; width: 100%; padding: 5px; border-radius: 20px; background: #101318; }
 .dark .device { background: #2a2f3a; }
-
 .device img {
-  display: block;
-  width: 100%;
-  border-radius: 16px;
-  aspect-ratio: 390 / 560;
-  object-fit: cover;
-  object-position: top;
+  display: block; width: 100%; height: auto; border-radius: 16px;
+  aspect-ratio: 390 / 760; object-fit: cover; object-position: top;
 }
 
 .choice-title { font-weight: 600; color: var(--vp-c-text-1); }
@@ -529,18 +599,30 @@ h2 {
 /* -------------------------------------------------------------- chat */
 
 .chat {
-  margin-top: 22px;
+  max-width: 720px;
+  margin: 22px auto 0;
   border: 1px solid var(--vp-c-divider);
   border-radius: 16px;
   overflow: hidden;
+  background: var(--vp-c-bg);
 }
 
-.turn { display: grid; grid-template-columns: 48px 1fr; gap: 12px; padding: 14px 18px; }
+/* Two columns, two children. A third child fell into the narrow column and
+   rendered the code forty pixels wide. */
+.turn { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; padding: 14px 18px; }
 .turn + .turn { border-top: 1px solid var(--vp-c-divider); }
-.turn.assistant { background: var(--vp-c-bg-alt); }
+.turn.assistant { background: var(--vp-c-bg-soft); }
 .who { font-size: 12px; font-weight: 600; color: var(--vp-c-text-3); padding-top: 3px; }
-.turn p { margin: 0; line-height: 1.55; }
+.said { min-width: 0; }
+.said p { margin: 0; line-height: 1.55; }
 mark { background: var(--vp-c-brand-soft); color: inherit; padding: 1px 5px; border-radius: 5px; }
+
+.caret {
+  display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -0.15em;
+  background: var(--vp-c-text-2); animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .caret { display: none; } }
 
 .files { margin-top: 12px; border: 1px solid var(--vp-c-divider); border-radius: 10px; overflow: hidden; }
 .tabs { display: flex; background: var(--vp-c-bg); border-bottom: 1px solid var(--vp-c-divider); }
@@ -552,41 +634,97 @@ mark { background: var(--vp-c-brand-soft); color: inherit; padding: 1px 5px; bor
 .tabs button.is-open { color: var(--vp-c-text-1); border-bottom-color: var(--vp-c-brand-1); }
 .files pre { margin: 0; padding: 12px; max-height: 320px; overflow: auto; font-size: 12px; background: var(--vp-c-bg); border: 0; }
 
-/* ------------------------------------------------------------- build */
+/* ---------------------------------------------------------- pipeline */
 
-.step { margin-top: 26px; }
-.real { margin: 0 0 14px; color: var(--vp-c-text-2); }
-.real strong { color: var(--vp-c-text-1); }
-.log { margin: 14px 0 0; padding-left: 18px; font-size: 13.5px; color: var(--vp-c-text-2); }
+.step { max-width: 720px; margin: 28px auto 0; text-align: center; }
+
+.pipeline {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 40px 1fr 40px 1fr;
+  align-items: center;
+  gap: 4px;
+}
+
+.stop { display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: 0.45; transition: opacity 0.3s; }
+.stop.lit { opacity: 1; }
+
+.glyph {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--vp-c-bg);
+  border: 1.5px solid var(--vp-c-divider);
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.stop.lit .glyph { border-color: var(--vp-c-brand-1); }
+.stop.now .glyph { box-shadow: 0 0 0 5px var(--vp-c-brand-soft); }
+
+/* Two small sheets, fanned. */
+.files-glyph { display: block; }
+.files-glyph i {
+  position: absolute; left: 50%; top: 50%;
+  width: 22px; height: 28px; border-radius: 4px;
+  background: var(--vp-c-bg); border: 1.5px solid var(--vp-c-text-3);
+  transform: translate(-60%, -50%) rotate(-8deg);
+}
+.files-glyph i + i { transform: translate(-40%, -50%) rotate(8deg); }
+.stop.lit .files-glyph i { border-color: var(--vp-c-brand-1); }
+
+/* One sheet, the corner turned. */
+.one-glyph i {
+  width: 26px; height: 32px; border-radius: 4px;
+  background: var(--vp-c-brand-soft); border: 1.5px solid var(--vp-c-brand-1);
+  clip-path: polygon(0 0, 70% 0, 100% 25%, 100% 100%, 0 100%);
+}
+
+/* A play mark. */
+.run-glyph i {
+  width: 0; height: 0;
+  border-left: 18px solid var(--vp-c-brand-1);
+  border-top: 11px solid transparent; border-bottom: 11px solid transparent;
+  margin-left: 4px;
+}
+
+.stop-name { font-size: 13.5px; font-weight: 500; color: var(--vp-c-text-2); line-height: 1.3; }
+.stop.lit .stop-name { color: var(--vp-c-text-1); }
+
+.arrow { height: 2px; background: var(--vp-c-divider); border-radius: 2px; transition: background 0.3s; }
+.arrow.lit { background: var(--vp-c-brand-1); }
+
+.real { margin: 12px 0 0; font-size: 14px; color: var(--vp-c-text-3); }
 .bad { color: var(--vp-c-red-1); margin: 10px 0 0; }
 
 .done { margin-top: 4px; }
-.done-line { margin: 0 0 14px; font-size: 1.05rem; }
-.done-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.done-line { margin: 0 0 14px; font-size: 1.15rem; font-weight: 600; }
+.done-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; align-items: center; }
 
 .download.secondary {
-  display: inline-block;
-  padding: 12px 20px;
-  border-radius: 999px;
-  border: 1px solid var(--vp-c-border);
-  background: var(--vp-c-bg);
-  color: var(--vp-c-text-1) !important;
-  text-decoration: none !important;
-  font: inherit;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
+  display: inline-block; padding: 12px 20px; border-radius: 999px;
+  border: 1px solid var(--vp-c-border); background: var(--vp-c-bg);
+  color: var(--vp-c-text-1) !important; text-decoration: none !important;
+  font: inherit; font-size: 15px; font-weight: 500; cursor: pointer;
 }
 
-.after { margin: 18px 0 0; color: var(--vp-c-text-2); line-height: 1.6; max-width: 34rem; }
+.after { margin: 18px auto 0; color: var(--vp-c-text-2); line-height: 1.6; max-width: 34rem; }
 
 @media (max-width: 760px) {
   .doors { grid-template-columns: 1fr; }
+  .try { margin: 44px -24px 0; padding: 32px 18px 36px; }
+  .try-title { font-size: 1.7rem !important; }
   .choices { gap: 10px; }
   .choice { padding: 6px 6px 10px; border-radius: 16px; }
   .device { padding: 3px; border-radius: 13px; }
-  .device img { border-radius: 10px; aspect-ratio: 390 / 500; }
+  .device img { border-radius: 10px; aspect-ratio: 390 / 640; }
   .choice-title { font-size: 13px; }
-  .turn { grid-template-columns: 36px 1fr; padding: 12px 14px; }
+  .turn { grid-template-columns: 36px minmax(0, 1fr); padding: 12px 14px; }
+  .pipeline { grid-template-columns: 1fr 18px 1fr 18px 1fr; }
+  .glyph { width: 52px; height: 52px; border-radius: 14px; }
+  .stop-name { font-size: 12px; }
 }
 </style>

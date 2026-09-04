@@ -15,11 +15,11 @@ test.describe("make-one", () => {
   test("offers three things to make, and builds the one chosen", async ({ page }) => {
     await page.goto(PAGE);
 
-    // Three pictures of things she might make, not a chat transcript.
+    // Three pictures of things a person might make, not a chat transcript.
     const choices = page.locator(".choice");
     await expect(choices).toHaveCount(3);
 
-    const build = page.getByRole("button", { name: /^Build the/ });
+    const build = page.getByRole("button", { name: /^Make my/ });
     await expect(build).toHaveText(/packing list/i);
 
     await choices.nth(1).click();
@@ -33,14 +33,14 @@ test.describe("make-one", () => {
     // check it is real can.
     await page.goto(PAGE);
     await expect(page.locator(".files")).toHaveCount(0);
-    await page.getByRole("button", { name: /Show the code/ }).click();
+    await page.getByRole("button", { name: /Peek inside/ }).click();
     await expect(page.locator(".files pre")).toContainText("application/sql");
   });
 
   test("builds a real container and offers a way to take it", async ({ page }) => {
     test.slow();
     await page.goto(PAGE);
-    await page.getByRole("button", { name: /^Build the/ }).click();
+    await page.getByRole("button", { name: /^Make my/ }).click();
 
     // The compile happens in the visitor's browser, against the shell and
     // engine served from /runtime — so this also fails if those go missing.
@@ -73,7 +73,7 @@ test.describe("make-one", () => {
     });
 
     await page.goto(PAGE);
-    await page.getByRole("button", { name: /^Build the/ }).click();
+    await page.getByRole("button", { name: /^Make my/ }).click();
 
     const save = page.getByRole("button", { name: /^Save beach-trip/ });
     await expect(save).toBeVisible({ timeout: 120_000 });
@@ -96,7 +96,7 @@ test.describe("make-one", () => {
     });
 
     await page.goto(PAGE);
-    await page.getByRole("button", { name: /^Build the/ }).click();
+    await page.getByRole("button", { name: /^Make my/ }).click();
 
     const save = page.getByRole("button", { name: /^Save beach-trip/ });
     await expect(save).toBeVisible({ timeout: 120_000 });
@@ -209,7 +209,7 @@ test.describe("what the site claims", () => {
 
 test.describe("the front page, read by somebody who is not an engineer", () => {
   /*
-   * The page was rewritten after somebody's wife read it and got stuck. It
+   * The page was rewritten after somebody who is not an engineer got stuck on it. It
    * was careful and honest, and every section opened with the mechanism —
    * "the database is inside the file" — which is a sentence for people who
    * know what a database is. Copy drifts back towards the people who write
@@ -232,8 +232,8 @@ test.describe("the front page, read by somebody who is not an engineer", () => {
     await expect(page.locator(".hero").getByRole("link", { name: /^Make one$/ })).toHaveAttribute("href", "/make-one");
   });
 
-  test("the prompt her assistant needs is on the page in full", async ({ page }) => {
-    // She pastes this address into a chat; the model reads the page. If the
+  test("the prompt the assistant needs is on the page in full", async ({ page }) => {
+    // A person pastes this address into a chat; the model reads the page. If the
     // prompt is here verbatim it has nothing to invent.
     await page.goto("http://localhost:5176/");
     const text = await page.locator(".prompt-text").innerText();
@@ -241,7 +241,7 @@ test.describe("the front page, read by somebody who is not an engineer", () => {
     expect(text).toContain("/docs/the-recipe");
   });
 
-  test("the pictures are of things she might make", async ({ page }) => {
+  test("the pictures are of things a person might make", async ({ page }) => {
     await page.goto("http://localhost:5176/");
     const labels = await page.locator(".gallery .label").allInnerTexts();
     expect(labels).toHaveLength(3);

@@ -8,14 +8,14 @@
  * in a hurry, and both are one bad sentence from leaving. A previous version
  * of this page was careful and honest and opened every section with the
  * mechanism — "the database is inside the file" — which is a sentence written
- * by someone who knows what a database is, for someone who does. Somebody's
- * wife read it and got stuck. This is the rewrite.
+ * by someone who knows what a database is, for someone who does. A person
+ * who is not an engineer read it and got stuck. This is the rewrite.
  *
  * The rules, so the copy does not drift back:
  *
  * - Every section is one idea: a headline, a sentence or two, one picture or
- *   one button. If she scrolls she never sees two ideas at once.
- * - Buttons say what she will get, not what she is.
+ *   one button. Scrolling never shows two ideas at once.
+ * - Buttons say what a person will get, not what they are.
  * - No word above the fold that would not come up at a grocery store.
  *   Database, container, compiler, signed, host, terminal, opener — all of
  *   them live happily in the docs, and none of them live here.
@@ -25,7 +25,7 @@
  * Every picture is a photograph of a real file, compiled and captured by
  * scripts/capture-screenshots.mjs. The three phones are three apps nobody
  * sells — dinners, chores, a packing list — because a task manager is a thing
- * engineers recognise themselves in, and she is not an engineer.
+ * engineers recognise themselves in, and the reader is not an engineer.
  */
 import { ref } from 'vue';
 
@@ -86,11 +86,11 @@ async function copyPrompt(): Promise<void> {
     </section>
 
     <!--
-      On a phone this is the second thing she sees; on a laptop it comes after
+      On a phone this is the second thing on screen; on a laptop it comes after
       the four beats. Most people who arrive confused arrive on a phone,
       holding a file, and "three taps" is the answer they came for.
     -->
-    <PhoneFlow class="taps" />
+    <PhoneFlow id="taps" class="taps" />
 
     <!-- ----------------------------------------------------------- beats -->
     <section class="beat with-shot">
@@ -135,6 +135,20 @@ async function copyPrompt(): Promise<void> {
 
     <section class="beat">
       <div class="beat-text centered">
+        <!-- A closed lock and a crossed-out signal: the two halves of the
+             sentence, for anyone who reads pictures before words. -->
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="64" height="64">
+            <rect class="mark-body" x="14" y="28" width="36" height="26" rx="7" />
+            <path class="mark-line" d="M22 28v-7a10 10 0 0 1 20 0v7" fill="none" />
+            <circle class="mark-dot" cx="32" cy="41" r="3.5" />
+          </svg>
+          <svg viewBox="0 0 64 64" width="64" height="64">
+            <path class="mark-line" d="M14 26a26 26 0 0 1 36 0M20 33a18 18 0 0 1 24 0M26 40a10 10 0 0 1 12 0" fill="none" />
+            <circle class="mark-dot" cx="32" cy="48" r="3.5" />
+            <path class="mark-cross" d="M12 12l40 40" />
+          </svg>
+        </div>
         <h2>It can't send your information anywhere.</h2>
         <p>
           A DAI file isn't allowed to use the internet, and your browser holds it to
@@ -158,12 +172,15 @@ async function copyPrompt(): Promise<void> {
     <!-- --------------------------------------------------------- desktop -->
     <section class="beat with-shot desktop">
       <div class="beat-text">
-        <p class="kicker">On your computer</p>
-        <h2>Or make it feel like a real app.</h2>
+        <p class="kicker">On a Mac or PC</p>
+        <h2>It can be a real app there too.</h2>
         <p>
-          Install DAI once and your files get an icon, open with a double-click, and
-          save themselves. Free, and takes a minute.
+          Install DAI once on your computer and your files get an icon, open with a
+          double-click, and save themselves. Free, and takes a minute.
         </p>
+        <!-- Most readers are on a phone, and a section about computers
+             right after one about phones reads as "you need one". They don't. -->
+        <p class="aside">On a phone you need nothing extra — it's the <a href="#taps">three taps</a> above.</p>
         <div class="row-actions">
           <a class="button" href="https://github.com/dynamicapplicationinterface/dai-core/releases">Get it for Mac</a>
           <a class="button" href="https://github.com/dynamicapplicationinterface/dai-core/releases">Get it for Windows</a>
@@ -414,6 +431,17 @@ h1 {
 
 .row-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 24px; }
 
+/* The lock and the crossed-out signal. */
+.mark { display: flex; justify-content: center; gap: 18px; margin-bottom: 22px; }
+.mark svg { width: 56px; height: 56px; }
+.mark-body { fill: var(--vp-c-brand-soft); stroke: var(--vp-c-brand-1); stroke-width: 3; }
+.mark-line { stroke: var(--vp-c-brand-1); stroke-width: 3.5; stroke-linecap: round; }
+.mark-dot { fill: var(--vp-c-brand-1); }
+.mark-cross { stroke: var(--vp-c-red-1, #e5484d); stroke-width: 4; stroke-linecap: round; }
+
+.aside { margin-top: 14px !important; font-size: 0.98rem !important; color: var(--vp-c-text-3) !important; }
+.aside a { color: var(--vp-c-brand-1); text-decoration: none; }
+
 /* The message thread. */
 .thread {
   max-width: 26rem;
@@ -593,7 +621,7 @@ h1 {
 
   .beat { padding-top: 72px; }
 
-  /* Three taps, right after the phones: she is probably holding one. */
+  /* Three taps, right after the phones: the reader is probably holding one. */
   .taps { order: 0; margin-top: 72px; }
 
   .prompt { padding-top: 80px; }
