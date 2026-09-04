@@ -224,3 +224,94 @@ test("an application that stores through the kit is not told its data will not t
   // And a page that only looks like one is still not storing anything.
   expect(storesDataInFile("<!doctype html><p>hello</p>")).toBe(false);
 });
+
+/**
+ * The kit survives a colon, and the schema reaches every door.
+ *
+ * Two findings from the first application a model wrote with the kit. The
+ * parameter matcher read strftime('%H:%M') as two bindings and threw on the
+ * first tap. And the schema gate — the thing that stops a version two from
+ * destroying a version one — ran only for containers built on the command
+ * line, because only that door read schema.sql.
+ */
+test.describe("colons, and a schema from the files", () => {
+  const shell = () => ({
+    template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+    runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+  });
+  const bytes = (text: string) => new TextEncoder().encode(text);
+
+  /** Writes the files to a directory and compiles it, so the engine is found. */
+  const compiled = async (files: Record<string, string>, appName: string) => {
+    const { writeFileSync: write, mkdirSync: mkdir, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const { compileDirectory } = await import("../src/compile.js");
+    const dir = mkdtempSync(join(tmpdir(), "dai-kit-"));
+    for (const [name, text] of Object.entries(files)) {
+      mkdir(dirname(join(dir, name)), { recursive: true });
+      write(join(dir, name), text, "utf8");
+    }
+    const built = await compileDirectory({ sourceDir: dir, root: repo, appName });
+    const file = join(dir, "out.dai.html");
+    write(file, built.html, "utf8");
+    return file;
+  };
+
+  test("a colon inside a literal is not a parameter", async ({ page }) => {
+    const { pathToFileURL } = await import("node:url");
+
+    const file = await compiled(
+      {
+        "index.html": (
+          '<!doctype html><meta charset="utf-8">' +
+            '<p id="time"><dai-value query="SELECT strftime(\'%H:%M\', \'2020-01-01 10:30:00\')"></dai-value></p>' +
+            '<dai-form run="INSERT INTO log (what, at) VALUES (:what, \'a:b\')"><input name="what"><button>Add</button></dai-form>' +
+            '<ul><dai-rows query="SELECT what, at FROM log"><template><li><span data-text="what"></span> <span data-text="at"></span></li></template></dai-rows></ul>' +
+            '<script type="module" src="./dai-kit.js"></script>'
+        ),
+        "schema.sql": "CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY, what TEXT, at TEXT);",
+      },
+      "Colons",
+    );
+
+    await page.goto(pathToFileURL(file).href);
+    const app = page.frameLocator("iframe");
+    // strftime('%H:%M') renders, rather than throwing over a phantom :M.
+    await expect(app.locator("#time")).toHaveText("10:30", { timeout: 30_000 });
+    await app.locator('input[name="what"]').fill("pill");
+    await app.locator("dai-form button").click();
+    await expect(app.locator("li")).toHaveText("pill a:b");
+  });
+
+  test("schema.sql among the files is declared and run, through the core", async () => {
+    const built = await buildContainer({
+      files: {
+        "index.html": bytes('<!doctype html><script type="module" src="./dai-kit.js"></script>'),
+        "schema.sql": bytes("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY);"),
+      },
+      appName: "Declared",
+      ...shell(),
+    });
+    const payload = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/.exec(built.html)![1]!;
+    const archive = unzipSync(Buffer.from(payload, "base64"));
+    // Declared: the sealed record of the shape.
+    expect(Object.keys(archive)).toContain("runtime/schema.json");
+    const declaration = JSON.parse(new TextDecoder().decode(archive["runtime/schema.json"]!));
+    expect(declaration.digest).toMatch(/^[0-9a-f]{64}$/);
+    // And run: the statements are in the page, once, ahead of everything.
+    const index = new TextDecoder().decode(archive["app/index.html"]!);
+    expect(index).toContain('data-dai="schema"');
+    expect(index.indexOf("CREATE TABLE")).toBeLessThan(index.indexOf("dai-kit.js"));
+  });
+
+  test("the recipe teaches the schema, and the example apps declare one", async () => {
+    const { RECIPE } = await import("../src/recipe.js");
+    expect(RECIPE).toContain("schema.sql");
+    expect(RECIPE).toMatch(/migrations\//);
+    const { existsSync: exists } = await import("node:fs");
+    for (const app of ["packing-list", "chore-chart", "meal-plan"]) {
+      expect(exists(resolve(repo, "examples", app, "schema.sql")), app).toBe(true);
+    }
+  });
+});

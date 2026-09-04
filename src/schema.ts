@@ -222,3 +222,118 @@ export function checkBuild(
     );
   }
 }
+
+/** The file an application declares its shape in, and where its migrations go. */
+export const SCHEMA_FILE = "schema.sql";
+export const MIGRATIONS_DIR = "migrations/";
+
+async function digestOf(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+const asText = (value: Uint8Array | string): string =>
+  typeof value === "string" ? value : new TextDecoder().decode(value);
+
+/**
+ * The declaration an application's files make, or none.
+ *
+ * Reads `schema.sql` and `migrations/*.sql` out of the files being sealed and
+ * stamps the chain. Works on the files map rather than on a directory so that
+ * every door — the command line, the browser, the desktop app, the MCP server
+ * — declares the same way. It lived in the command-line door alone for a
+ * while, which meant the gate that exists to stop a model's version two
+ * destroying a person's version one never ran for anything a model made
+ * through the website: the population it was for.
+ *
+ * An author writes SQL and a file name; every digest here is computed. Asking
+ * somebody to write the hash of their own schema into a migration header would
+ * be asking them to get it wrong.
+ *
+ * `previous` is the declaration of the container this build upgrades, when
+ * there is one. A migration's ends were fixed by the build that introduced it;
+ * re-deriving them would rewrite history whenever an old migration was edited.
+ */
+export async function declareSchema(
+  files: Record<string, Uint8Array | string>,
+  previous: SchemaDeclaration | undefined,
+): Promise<SchemaDeclaration | undefined> {
+  const source = files[SCHEMA_FILE];
+  if (source === undefined) return undefined;
+
+  const digest = await digestOf(normaliseSchema(asText(source)));
+
+  const names = Object.keys(files)
+    .filter((name) => name.startsWith(MIGRATIONS_DIR) && name.endsWith(".sql"))
+    .map((name) => name.slice(MIGRATIONS_DIR.length))
+    .filter((name) => !name.includes("/"))
+    .sort();
+
+  const known = new Map((previous?.migrations ?? []).map((entry) => [entry.version, entry]));
+  const migrations: MigrationRecord[] = [];
+  const fresh: { version: number; sql: string }[] = [];
+
+  for (const name of names) {
+    const version = migrationVersion(name);
+    const sql = asText(files[MIGRATIONS_DIR + name] as Uint8Array | string);
+    const recorded = known.get(version);
+    if (recorded) migrations.push({ ...recorded, sql });
+    else fresh.push({ version, sql });
+  }
+
+  if (fresh.length > 1) {
+    throw new SchemaError(
+      `This build adds ${fresh.length} migrations at once, and a migration records the ` +
+        `schema it starts from and the one it produces — which cannot be known for the ` +
+        `steps in between. Build once per migration.`,
+    );
+  }
+
+  if (fresh.length === 1) {
+    const start = previous?.digest;
+    if (!start) {
+      throw new SchemaError(
+        `A migration needs a schema to migrate from, and this build has nothing to ` +
+          `compare against. Pass the container it upgrades, or delete the migration if ` +
+          `this is a first build.`,
+      );
+    }
+    migrations.push({ version: fresh[0]!.version, from: start, to: digest, sql: fresh[0]!.sql });
+  }
+
+  const declaration: SchemaDeclaration = { digest, migrations };
+  checkBuild(previous, declaration);
+  return declaration;
+}
+
+/**
+ * Puts the declared schema into the page, so it runs before anything reads.
+ *
+ * The kit executes every `<script type="application/sql">` in document order
+ * before the elements draw. With the schema declared in its own file the
+ * CREATE TABLE statements would otherwise have to be written twice — once to
+ * declare, once to run — and two copies drift. So the compiler writes the
+ * declaration in as the first such block. An application that runs its own
+ * CREATE TABLE IF NOT EXISTS as well loses nothing; one that never used the
+ * kit ignores an unexecuted script type, as the browser does.
+ */
+export function injectSchema(indexHtml: string, schemaSql: string): string {
+  const block =
+    '<script type="application/sql" data-dai="schema">\n' +
+    schemaSql.replace(/<\/script/gi, "<\\/script").trim() +
+    "\n</script>";
+  const head = /<head(\s[^>]*)?>/i.exec(indexHtml);
+  if (head) {
+    const at = head.index + head[0].length;
+    return indexHtml.slice(0, at) + "\n" + block + indexHtml.slice(at);
+  }
+  const body = /<body(\s[^>]*)?>/i.exec(indexHtml);
+  if (body) {
+    const at = body.index + body[0].length;
+    return indexHtml.slice(0, at) + "\n" + block + indexHtml.slice(at);
+  }
+  return block + "\n" + indexHtml;
+}

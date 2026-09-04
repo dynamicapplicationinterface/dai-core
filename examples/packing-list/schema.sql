@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS items (
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      what TEXT NOT NULL,
+      packed INTEGER NOT NULL DEFAULT 0
+    );

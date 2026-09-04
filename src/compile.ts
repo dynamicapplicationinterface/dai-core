@@ -31,14 +31,7 @@ import {
   type BuildContainerResult,
 } from "./core.js";
 import { looksSectioned, parseContainer } from "./container.js";
-import {
-  SchemaError,
-  checkBuild,
-  migrationVersion,
-  normaliseSchema,
-  type MigrationRecord,
-  type SchemaDeclaration,
-} from "./schema.js";
+import { SchemaError, type SchemaDeclaration, declareSchema } from "./schema.js";
 
 /** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
 const SQLITE_WASM_LOOKUP = [
@@ -181,7 +174,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
    */
   // The kit is added by buildContainer, so every door gets it.
 
-  const declared = await readSchemaDeclaration(sourceDir, previousSchema(options.upgradeOf));
+  const declared = await declareSchema(files, previousSchema(options.upgradeOf));
 
   const sqlite = readOptional(root, options.sqlitePath);
   if (options.sqlitePath && !sqlite) {
@@ -283,77 +276,6 @@ function previousSchema(path?: string): SchemaDeclaration | undefined {
   );
   const entry = parsed.archive[SCHEMA_ENTRY];
   return entry ? (JSON.parse(new TextDecoder().decode(entry)) as SchemaDeclaration) : undefined;
-}
-
-/**
- * Reads `schema.sql` and `migrations/` from the application, and stamps the
- * chain.
- *
- * An author writes SQL and a file name; every digest here is computed. Asking
- * somebody to write the hash of their own schema into a migration header would
- * be asking them to get it wrong.
- */
-async function readSchemaDeclaration(
-  sourceDir: string,
-  previous: SchemaDeclaration | undefined,
-): Promise<SchemaDeclaration | undefined> {
-  const schemaPath = join(sourceDir, "schema.sql");
-  if (!existsSync(schemaPath)) {
-    // No declaration, no gate. Every container built before this existed keeps
-    // building exactly as it did.
-    return undefined;
-  }
-
-  const digest = await sha256Hex(
-    new TextEncoder().encode(normaliseSchema(readFileSync(schemaPath, "utf8"))),
-  );
-
-  const dir = join(sourceDir, "migrations");
-  const names = existsSync(dir)
-    ? (await readdir(dir)).filter((name) => name.endsWith(".sql")).sort()
-    : [];
-
-  const known = new Map((previous?.migrations ?? []).map((entry) => [entry.version, entry]));
-  const migrations: MigrationRecord[] = [];
-  const fresh: { version: number; sql: string }[] = [];
-
-  for (const name of names) {
-    const version = migrationVersion(name);
-    const sql = readFileSync(join(dir, name), "utf8");
-    const recorded = known.get(version);
-    if (recorded) {
-      // Its ends were fixed by the build that introduced it. Re-deriving them
-      // now would silently rewrite history whenever an old migration was
-      // edited, which is the one thing a chain must not allow.
-      migrations.push({ ...recorded, sql });
-    } else {
-      fresh.push({ version, sql });
-    }
-  }
-
-  if (fresh.length > 1) {
-    throw new SchemaError(
-      `This build adds ${fresh.length} migrations at once, and a migration records the ` +
-        `schema it starts from and the one it produces — which cannot be known for the ` +
-        `steps in between. Build once per migration.`,
-    );
-  }
-
-  if (fresh.length === 1) {
-    const start = previous?.digest;
-    if (!start) {
-      throw new SchemaError(
-        `A migration needs a schema to migrate from, and this build has nothing to ` +
-          `compare against. Pass the container it upgrades, or delete the migration if ` +
-          `this is a first build.`,
-      );
-    }
-    migrations.push({ version: fresh[0]!.version, from: start, to: digest, sql: fresh[0]!.sql });
-  }
-
-  const declaration: SchemaDeclaration = { digest, migrations };
-  checkBuild(previous, declaration);
-  return declaration;
 }
 
 export function readOptional(root: string, path?: string): Uint8Array | undefined {

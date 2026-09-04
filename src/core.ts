@@ -13,6 +13,7 @@
 import { zipSync, type Zippable } from "fflate";
 import { encode as cborEncode, type CborValue } from "./cbor.js";
 import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
+import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 
@@ -246,6 +247,26 @@ export async function buildContainer(
     files[KIT_ENTRY] = new TextEncoder().encode(KIT_SOURCE);
   }
 
+  /*
+   * The schema, declared from the files whichever door they came through.
+   *
+   * A door that already worked out the declaration — the command line, which
+   * knows the container being upgraded — passes it in. Any other door gets it
+   * here, from schema.sql and migrations/ in the files themselves, so the gate
+   * against a version two destroying a version one runs for everything, not
+   * only for people who use a terminal.
+   */
+  const schema = input.schema !== undefined ? input.schema : await declareSchema(files, undefined);
+
+  // And the declared statements go into the page, so they run first and are
+  // written once. See injectSchema.
+  if (files[SCHEMA_FILE] && files["index.html"]) {
+    const decoder = new TextDecoder();
+    files["index.html"] = new TextEncoder().encode(
+      injectSchema(decoder.decode(files["index.html"]), decoder.decode(files[SCHEMA_FILE])),
+    );
+  }
+
   const prefix = normalizePrefix(input.appEntryPrefix ?? DEFAULT_APP_PREFIX);
   const sqliteEntry = input.sqliteEntryName ?? DEFAULT_SQLITE_ENTRY;
   const wasmEntry = input.wasmEntryName ?? DEFAULT_WASM_ENTRY;
@@ -256,8 +277,8 @@ export async function buildContainer(
     archive[prefix + name.split("\\").join("/")] = bytes;
   }
   archive[sqliteEntry] = sqlite;
-  if (input.schema !== undefined) {
-    archive[SCHEMA_ENTRY] = new TextEncoder().encode(JSON.stringify(input.schema, null, 2));
+  if (schema !== undefined) {
+    archive[SCHEMA_ENTRY] = new TextEncoder().encode(JSON.stringify(schema, null, 2));
   }
   if (wasm) archive[wasmEntry] = wasm;
   if (wasm && glue) archive[glueEntry] = glue;

@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS chores (
+      id INTEGER PRIMARY KEY,
+      who TEXT NOT NULL,
+      what TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0
+    );

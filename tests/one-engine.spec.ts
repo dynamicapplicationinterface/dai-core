@@ -31,6 +31,11 @@ const ENGINE_FILES = [
   // entire reason they exist.
   "src/compile.ts",
   "src/browser.ts",
+  // The schema declaration digests the normalised schema. It is a record the
+  // compiler seals, computed in one place so every door — command line,
+  // browser, desktop, MCP — declares identically; a door computing it for
+  // itself is exactly the drift this test exists to stop.
+  "src/schema.ts",
 ];
 
 /** What it means to be doing the container's own work. */
@@ -160,7 +165,7 @@ test.describe("one engine", () => {
     const example = RECIPE.slice(opening, closing + 3).replace("…", "<title>Example</title>");
 
     const bundle = parseBundle(`${example}\n`);
-    expect(Object.keys(bundle.files).sort()).toEqual(["app.js", "icon.svg", "index.html"]);
+    expect(Object.keys(bundle.files).sort()).toEqual(["app.js", "icon.svg", "index.html", "schema.sql"]);
     expect(bundle.name).toBe("Reading list");
   });
 

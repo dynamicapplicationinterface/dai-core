@@ -54,20 +54,39 @@ Pass bind only when there are parameters: an empty array is read as parameters p
 
 Use SQL for the work — joins, aggregates, ORDER BY — rather than loading everything and filtering in JavaScript. It is a real database.
 
-SEED DATA
-Insert a few example rows on first run, so the app is not an empty shell when somebody opens it:
+THE SCHEMA — declare it once, in schema.sql
+Put every CREATE TABLE in a file named schema.sql, each with IF NOT EXISTS. It is run first when the file opens, and its shape is recorded with the file. Do not repeat the CREATE TABLE statements anywhere else.
 
-  if (db.selectObjects("SELECT COUNT(*) AS n FROM notes")[0].n === 0) {
-    db.exec("INSERT INTO notes (body) VALUES ('Try editing this'), ('Add one of your own')");
-  }
+  --- file: schema.sql
+  CREATE TABLE IF NOT EXISTS notes (
+    id      INTEGER PRIMARY KEY,
+    body    TEXT NOT NULL,
+    done    INTEGER NOT NULL DEFAULT 0,
+    created TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+This is what protects the person's data when you change the app later. If a later version changes a table, add a migration — one file, named with the next number, holding the ALTER statements that move the old shape to the new — and update schema.sql to match:
+
+  --- file: migrations/002-add-priority.sql
+  ALTER TABLE notes ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+
+A version whose schema moved without a migration is refused at build. Do not work around that by dropping tables: the old file holds a month of somebody's entries.
+
+SEED DATA
+Insert a few example rows on first run, so the app is not an empty shell when somebody opens it. Make it idempotent, so it does nothing on the second open:
+
+  INSERT INTO notes (body) SELECT 'Try editing this' WHERE NOT EXISTS (SELECT 1 FROM notes);
+  INSERT INTO notes (body) SELECT 'Add one of your own' WHERE (SELECT count(*) FROM notes) = 1;
+
+TIMES
+Store times as SQLite text in UTC (datetime('now')), and show them the way a person reads them: format with strftime and prefer words — "today", "2 hours ago" — over raw timestamps. Never show 2026-09-04 15:01:27 to a person.
 
 THE SHORTCUT — dai-kit
 Every container carries dai-kit.js. It gives you four elements, so most of an application is HTML and SQL rather than code that queries, renders, attaches handlers and redraws. Use it unless the application needs something it cannot express.
 
   <script type="application/sql">
-    CREATE TABLE IF NOT EXISTS tasks (
-      id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0
-    );
+    -- seed rows only; the tables come from schema.sql
+    INSERT INTO tasks (title) SELECT 'Try ticking this' WHERE NOT EXISTS (SELECT 1 FROM tasks);
   </script>
 
   <dai-value query="SELECT count(*) AS n FROM tasks WHERE done = 0"></dai-value> left
@@ -108,6 +127,9 @@ name: Reading list
 --- file: index.html
 <!doctype html>
 …
+
+--- file: schema.sql
+CREATE TABLE IF NOT EXISTS books (…);
 
 --- file: app.js
 const db = await window.dai.openDatabase();

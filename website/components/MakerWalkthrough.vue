@@ -32,10 +32,13 @@ import { IDEAS, PROMPT } from './prompt.js';
  */
 import PACKING_HTML from '../../examples/packing-list/index.html?raw';
 import PACKING_CSS from '../../examples/packing-list/app.css?raw';
+import PACKING_SQL from '../../examples/packing-list/schema.sql?raw';
 import CHORES_HTML from '../../examples/chore-chart/index.html?raw';
 import CHORES_CSS from '../../examples/chore-chart/app.css?raw';
+import CHORES_SQL from '../../examples/chore-chart/schema.sql?raw';
 import DINNERS_HTML from '../../examples/meal-plan/index.html?raw';
 import DINNERS_CSS from '../../examples/meal-plan/app.css?raw';
+import DINNERS_SQL from '../../examples/meal-plan/schema.sql?raw';
 
 interface Choice {
   id: string;
@@ -61,6 +64,9 @@ const CHOICES: Choice[] = [
     files: [
       { name: 'index.html', source: PACKING_HTML },
       { name: 'app.css', source: PACKING_CSS },
+      // The tables, declared once. The compiler runs it first and records
+      // its shape, so a later version cannot quietly change it.
+      { name: 'schema.sql', source: PACKING_SQL },
     ],
   },
   {
@@ -74,6 +80,9 @@ const CHOICES: Choice[] = [
     files: [
       { name: 'index.html', source: CHORES_HTML },
       { name: 'app.css', source: CHORES_CSS },
+      // The tables, declared once. The compiler runs it first and records
+      // its shape, so a later version cannot quietly change it.
+      { name: 'schema.sql', source: CHORES_SQL },
     ],
   },
   {
@@ -87,6 +96,9 @@ const CHOICES: Choice[] = [
     files: [
       { name: 'index.html', source: DINNERS_HTML },
       { name: 'app.css', source: DINNERS_CSS },
+      // The tables, declared once. The compiler runs it first and records
+      // its shape, so a later version cannot quietly change it.
+      { name: 'schema.sql', source: DINNERS_SQL },
     ],
   },
 ];

@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { compileDirectory, CompileError, formatBytes, sanitizeFileName } from "./compile.js";
+import { SchemaError } from "./schema.js";
 import { auditContainer, parseContainer } from "./container.js";
 import { lintFiles } from "./lint.js";
 import { RECIPE } from "./recipe.js";
@@ -80,6 +81,15 @@ const TOOLS = [
           description:
             "Optional PKCS#8 PEM private key to sign with. Without one the container is " +
             "still tamper-evident but carries no publisher identity.",
+        },
+        upgradeOf: {
+          type: "string",
+          description:
+            "When rebuilding an app that already exists — a second version, a change the " +
+            "person asked for — the path of the existing .dai.html or .dai. The build then " +
+            "checks that the data shape did not move without a migration, and refuses if it " +
+            "did, because the old file holds the person's data and the new code would " +
+            "silently ignore it. Always pass this when there is a previous file.",
         },
       },
       required: ["files", "appName"],
@@ -217,6 +227,8 @@ async function createApp(
       typeof params.signingKeyPath === "string"
         ? withinRoot(options.root, params.signingKeyPath)
         : undefined,
+    upgradeOf:
+      typeof params.upgradeOf === "string" ? withinRoot(options.root, params.upgradeOf) : undefined,
   });
 
   const outputPath = withinRoot(
@@ -357,7 +369,7 @@ export async function handleMessage(
   } catch (error) {
     // A CompileError is the caller's to fix and is reported as tool output, so
     // the model can read it and try again rather than seeing a transport fault.
-    if (error instanceof CompileError) {
+    if (error instanceof CompileError || error instanceof SchemaError) {
       return { jsonrpc: "2.0", id, result: text(error.message, true) };
     }
     return {

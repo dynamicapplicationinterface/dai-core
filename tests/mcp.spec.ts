@@ -311,3 +311,52 @@ test("speaks the protocol over stdio, as a client would launch it", async () => 
   const tools = (replies[1]?.result as { tools: { name: string }[] }).tools;
   expect(tools.map((tool) => tool.name)).toContain("create_dai_app");
 });
+
+test.describe("rebuilding an app that already exists", () => {
+  /*
+   * The gate that stops a version two destroying a version one. A model
+   * rebuilding an app is the exact case it exists for, and until the tool
+   * could be told which file it was rebuilding, the gate never ran for one.
+   */
+  const v1 = {
+    "index.html": '<!doctype html><script type="module" src="./dai-kit.js"></script>',
+    "schema.sql": "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL);",
+  };
+
+  test("a changed schema with no migration is refused, and says what to write", async () => {
+    const root = workspace();
+    const first = await call(root, "create_dai_app", { files: v1, appName: "Notes", outputPath: "notes.dai.html" });
+    expect(first.isError).toBe(false);
+
+    const second = await call(root, "create_dai_app", {
+      files: { ...v1, "schema.sql": "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, priority INTEGER);" },
+      appName: "Notes",
+      outputPath: "notes.dai.html",
+      upgradeOf: "notes.dai.html",
+    });
+    expect(second.isError).toBe(true);
+    expect(second.text).toMatch(/migration/i);
+  });
+
+  test("the same change with a migration is accepted", async () => {
+    const root = workspace();
+    await call(root, "create_dai_app", { files: v1, appName: "Notes", outputPath: "notes.dai.html" });
+    const second = await call(root, "create_dai_app", {
+      files: {
+        ...v1,
+        "schema.sql": "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, priority INTEGER);",
+        "migrations/002-priority.sql": "ALTER TABLE notes ADD COLUMN priority INTEGER;",
+      },
+      appName: "Notes",
+      outputPath: "notes-v2.dai.html",
+      upgradeOf: "notes.dai.html",
+    });
+    expect(second.isError).toBe(false);
+  });
+
+  test("the tool tells the model to pass the previous file", () => {
+    const create = TOOLS.find((tool) => tool.name === "create_dai_app")!;
+    const schema = create.inputSchema as { properties: Record<string, { description: string }> };
+    expect(schema.properties.upgradeOf?.description).toMatch(/previous file|already exists/i);
+  });
+});

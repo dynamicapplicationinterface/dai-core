@@ -98,12 +98,49 @@ function refresh() {
  * out of a value here.
  */
 function parametersIn(sql) {
+  // Walked rather than matched with one regular expression, because a colon
+  // inside a string literal is not a parameter: strftime('%H:%M') was read
+  // as two bindings and threw on the first tap, in the first application a
+  // model wrote with this kit — a medicine log, which is all times.
   const names = [];
-  const pattern = /:([a-zA-Z_][a-zA-Z0-9_]*)/g;
-  let found = pattern.exec(sql);
-  while (found) {
-    if (!names.includes(found[1])) names.push(found[1]);
-    found = pattern.exec(sql);
+  const isStart = (c) => /[a-zA-Z_]/.test(c);
+  const isPart = (c) => /[a-zA-Z0-9_]/.test(c);
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    if (c === "'" || c === '"' || c === String.fromCharCode(96)) {
+      // A literal or a quoted identifier, to its matching quote; a doubled
+      // quote inside is an escaped quote, not the end.
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === c) {
+          if (sql[j + 1] === c) { j += 2; continue; }
+          break;
+        }
+        j++;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (c === "-" && sql[i + 1] === "-") {
+      const end = sql.indexOf(String.fromCharCode(10), i);
+      i = end < 0 ? sql.length : end + 1;
+      continue;
+    }
+    if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? sql.length : end + 2;
+      continue;
+    }
+    if (c === ":" && sql[i + 1] !== ":" && sql[i - 1] !== ":" && isStart(sql[i + 1] || "")) {
+      let j = i + 2;
+      while (j < sql.length && isPart(sql[j])) j++;
+      const name = sql.slice(i + 1, j);
+      if (!names.includes(name)) names.push(name);
+      i = j;
+      continue;
+    }
+    i++;
   }
   return names;
 }

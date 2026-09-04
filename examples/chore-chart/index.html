@@ -15,12 +15,7 @@
     starting data are SQL in the document.
   -->
   <script type="application/sql">
-    CREATE TABLE IF NOT EXISTS chores (
-      id INTEGER PRIMARY KEY,
-      who TEXT NOT NULL,
-      what TEXT NOT NULL,
-      done INTEGER NOT NULL DEFAULT 0
-    );
+      -- seed rows; the tables are declared in schema.sql
     INSERT OR IGNORE INTO chores (id, who, what, done) VALUES
       (1, 'Maya', 'Feed the cat', 1),
       (2, 'Maya', 'Empty the dishwasher', 1),
@@ -29,7 +24,8 @@
       (5, 'Leo', 'Take out recycling', 1),
       (6, 'Leo', 'Set the table', 0),
       (7, 'Leo', 'Fold laundry', 0);
-  </script>
+  
+    </script>
 
   <main>
     <header>
