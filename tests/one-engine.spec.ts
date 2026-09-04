@@ -135,6 +135,11 @@ test.describe("one engine", () => {
     // a chat window by hand.
     expect(RECIPE).toContain("dai bundle v1");
     expect(RECIPE).toContain("--- file: ");
+    // The shortcut that removes most of the code a model gets wrong. A recipe
+    // that stopped mentioning it would quietly go back to asking for a state
+    // machine.
+    expect(RECIPE).toContain("dai-kit.js");
+    expect(RECIPE).toContain("<dai-rows");
   });
 
   test("the bundle the recipe describes is the bundle the reader accepts", async () => {

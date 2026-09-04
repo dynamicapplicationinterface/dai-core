@@ -61,6 +61,40 @@ Insert a few example rows on first run, so the app is not an empty shell when so
     db.exec("INSERT INTO notes (body) VALUES ('Try editing this'), ('Add one of your own')");
   }
 
+THE SHORTCUT — dai-kit
+Every container carries dai-kit.js. It gives you four elements, so most of an application is HTML and SQL rather than code that queries, renders, attaches handlers and redraws. Use it unless the application needs something it cannot express.
+
+  <script type="application/sql">
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0
+    );
+  </script>
+
+  <dai-value query="SELECT count(*) AS n FROM tasks WHERE done = 0"></dai-value> left
+
+  <dai-form run="INSERT INTO tasks (title) VALUES (:title)">
+    <input name="title" required>
+    <button type="button">Add</button>
+  </dai-form>
+
+  <dai-rows query="SELECT id, title, done FROM tasks ORDER BY id" empty="Nothing to do">
+    <template>
+      <li>
+        <input type="checkbox" data-run="UPDATE tasks SET done = 1 - done WHERE id = :id">
+        <span data-text="title"></span>
+      </li>
+    </template>
+  </dai-rows>
+
+  <dai-save>Save</dai-save>
+
+  <script type="module" src="./dai-kit.js"></script>
+
+- A form's fields become the :parameters of its statement, by name.
+- Inside a row, :parameters come from that row's columns, so a control knows which row it is in.
+- data-text writes a column as text. Values are never treated as markup.
+- Anything the kit cannot express is ordinary JavaScript against window.dai, which is still there.
+
 HOW TO HAND IT OVER
 Write the whole application as one block of plain text, in this shape, so that whoever receives it does not have to guess where one file ends and the next begins:
 

@@ -20,6 +20,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import {
   SCHEMA_ENTRY,
   buildContainer,
@@ -179,6 +180,23 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
    * payload having to change shape. A container that declares a schema cannot
    * have that declaration edited any more than it can have its code edited.
    */
+  /*
+   * The kit ships with every container.
+   *
+   * An application references it or does not; either way it is there, because
+   * the alternative is telling a model to write a file it will not write and
+   * then failing to build when it does not. Four kilobytes against a container
+   * that carries a database engine, and it is what lets an application be HTML
+   * and SQL rather than a state machine.
+   *
+   * Never overwrites one the author supplied: somebody who has their own
+   * dai-kit.js has decided something, and a compiler that replaced it would be
+   * overruling them silently.
+   */
+  if (!files[KIT_ENTRY]) {
+    files[KIT_ENTRY] = new TextEncoder().encode(KIT_SOURCE);
+  }
+
   const declared = await readSchemaDeclaration(sourceDir, previousSchema(options.upgradeOf));
 
   const sqlite = readOptional(root, options.sqlitePath);

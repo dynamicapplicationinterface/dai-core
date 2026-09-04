@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Kit</title>
+  </head>
+  <body>
+    <h1>Tasks</h1>
+
+    <script type="application/sql">
+      CREATE TABLE IF NOT EXISTS tasks (
+        id    INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        done  INTEGER NOT NULL DEFAULT 0
+      );
+    </script>
+
+    <p><dai-value id="left" query="SELECT count(*) AS n FROM tasks WHERE done = 0"></dai-value> left</p>
+
+    <dai-form id="compose" run="INSERT INTO tasks (title) VALUES (:title)">
+      <input id="what" name="title" required />
+      <button id="add" type="button">Add</button>
+    </dai-form>
+
+    <ul id="list">
+      <dai-rows query="SELECT id, title, done FROM tasks ORDER BY id" empty="Nothing to do">
+        <template>
+          <li>
+            <input class="tick" type="checkbox" data-run="UPDATE tasks SET done = 1 - done WHERE id = :id" />
+            <span class="title" data-text="title"></span>
+          </li>
+        </template>
+      </dai-rows>
+    </ul>
+
+    <dai-save id="save">Save</dai-save>
+
+    <script type="module" src="./dai-kit.js"></script>
+  </body>
+</html>
