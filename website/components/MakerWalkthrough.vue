@@ -207,9 +207,9 @@ async function build(): Promise<void> {
         <ol v-if="canShareFile">
           <li>Choose <strong>Save to Files</strong>, and pick somewhere you will find it.</li>
           <li>
-            Open <a href="https://run.dynamicapplicationinterface.io">the runner</a>, tap
-            <strong>Open a file</strong> and choose it. A phone cannot run a file straight
-            from storage, so the runner is what opens it.
+            Go to <a href="https://run.dynamicapplicationinterface.io">the opener</a>, tap
+            <strong>Open a file</strong> and choose it. A phone will show you a file but
+            will not run one, which is what the opener is for.
           </li>
           <li>Add a task. It is saved onto this device, and nowhere else.</li>
         </ol>

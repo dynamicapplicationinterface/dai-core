@@ -402,7 +402,13 @@ async function exportContainer(): Promise<void> {
  */
 let mountedNonce: string | null = null;
 
-/** Where somebody holding one of these can find out what to do with it. */
+/**
+ * Where somebody holding one of these can find out what to do with it.
+ *
+ * "Open" rather than "run", in both the verb and the address: a person opens a
+ * document, and a message telling a stranger to *run* a file they were sent is
+ * the sentence everybody has been trained to delete.
+ */
 const OPENER = "dynamicapplicationinterface.io/open";
 
 /** Milliseconds from the container starting to the application being usable. */

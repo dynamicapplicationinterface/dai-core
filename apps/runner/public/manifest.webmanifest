@@ -1,7 +1,7 @@
 {
-  "name": "DAI Runner",
+  "name": "DAI Opener",
   "short_name": "DAI",
-  "description": "Opens and runs DAI containers on a device that cannot execute them from the filesystem.",
+  "description": "Opens DAI documents on a device that cannot run them from the filesystem.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

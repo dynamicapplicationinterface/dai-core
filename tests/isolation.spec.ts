@@ -210,6 +210,17 @@ test.describe("the loader's handshake", () => {
     const app = page.frameLocator("iframe");
     await app.locator("body").waitFor({ timeout: 20_000 });
 
+    /*
+     * Waited for, not just present.
+     *
+     * The application announces itself with `data-ready`, and until it does its
+     * own markup is still changing. Snapshotting a booting document and
+     * comparing it four hundred milliseconds later reports a normal boot
+     * finishing as a document that was tampered with — which is what this test
+     * did, on WebKit, about once in a hundred runs.
+     */
+    await app.locator("[data-ready]").waitFor({ timeout: 20_000 });
+
     // postMessage is reachable across origins by anyone holding a WindowProxy,
     // and an embedder can reach this frame through contentWindow.frames[0]. A
     // loader that accepted the message would write an attacker's document into

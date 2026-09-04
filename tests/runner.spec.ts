@@ -87,7 +87,8 @@ test.describe("runner shell", () => {
     await page.reload();
 
     await expect(page.locator("#open")).toBeVisible();
-    expect(await page.title()).toBe("DAI Runner");
+    // The name a person sees, which is deliberately not the name the code uses.
+    expect(await page.title()).toBe("DAI Opener");
 
     await context.setOffline(false);
   });

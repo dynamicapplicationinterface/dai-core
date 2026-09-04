@@ -12,9 +12,9 @@ Here is how, on whatever you are holding.
 
 ## On a phone
 
-Open **[the runner](https://run.dynamicapplicationinterface.io)** and choose the
-file. That is the whole thing: a page, nothing to install, and your file never
-leaves the device.
+Go to **[the opener](https://run.dynamicapplicationinterface.io)** and choose
+your file. That is the whole thing: a page, nothing to install, and the file
+never leaves your device.
 
 Add it to your home screen and it behaves like an app, reopening whatever you
 had open last.

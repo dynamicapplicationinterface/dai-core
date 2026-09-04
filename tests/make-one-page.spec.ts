@@ -108,7 +108,7 @@ test.describe("make-one", () => {
 });
 
 test.describe("the landing page", () => {
-  test("explains the phone route and says where the runner is", async ({ page }) => {
+  test("explains the phone route and says where the opener is", async ({ page }) => {
     /*
      * A section can vanish from a page without a build failing — that happened
      * to the download button on this same site — and this one carries the only
@@ -123,7 +123,7 @@ test.describe("the landing page", () => {
     await expect(phones.locator("svg")).toHaveCount(3);
 
     await expect(phones.getByText("run.dynamicapplicationinterface.io")).toBeVisible();
-    await expect(phones.getByRole("link", { name: /Open the runner/ })).toHaveAttribute(
+    await expect(phones.getByRole("link", { name: /Open a file/ })).toHaveAttribute(
       "href",
       "https://run.dynamicapplicationinterface.io",
     );
@@ -177,7 +177,7 @@ test.describe("what the site claims", () => {
     const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
     // The three ways out, in the order somebody is likely to need them.
-    expect(text).toMatch(/runner/i);
+    expect(text).toMatch(/opener/i);
     expect(text).toMatch(/dai\.html/i);
     expect(text).toMatch(/desktop app/i);
 
@@ -186,7 +186,7 @@ test.describe("what the site claims", () => {
     expect(text).toMatch(/asking for a password/i);
 
     await expect(
-      page.getByRole("link", { name: /the runner/i }).first(),
+      page.getByRole("link", { name: /the opener/i }).first(),
     ).toHaveAttribute("href", "https://run.dynamicapplicationinterface.io");
   });
 });

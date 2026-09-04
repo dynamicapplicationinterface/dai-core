@@ -1,5 +1,11 @@
 # The runner
 
+> Called **the opener** everywhere a person can see it, and the runner here and
+> in the code. A person opens a document; telling somebody to *run* a file they
+> were sent is the sentence everybody has been trained to delete. The directory
+> keeps the technical name because that is what this is — a host that runs a
+> container.
+
 Opens a container on a device that cannot execute one from its filesystem —
 which is every iPhone, and most Android configurations. A phone will not run a
 `.dai.html` out of its Files app, so the code has to arrive from somewhere; this

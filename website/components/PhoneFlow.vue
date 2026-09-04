@@ -9,10 +9,19 @@
  *
  * Drawn in SVG rather than screenshotted. Screenshots of a phone date, carry
  * somebody's battery percentage and carrier, and need retaking every time the
- * runner's header moves; these follow the site's own colours and the reader's
+ * opener's header moves; these follow the site's own colours and the reader's
  * theme.
  */
-const RUNNER = 'https://run.dynamicapplicationinterface.io';
+/*
+ * The public address, and the public word.
+ *
+ * "Open" rather than "run": a person opens a document, and a message telling
+ * somebody to *run* a file they were sent reads as the thing everybody is
+ * trained to delete. The code calls this the runner because that is what it
+ * technically is — a host that runs a container — and nothing a stranger reads
+ * says so.
+ */
+const OPENER = 'https://run.dynamicapplicationinterface.io';
 
 /** A home screen: three across, two down, and one of them is the app. */
 const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
@@ -29,7 +38,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
       <p class="kicker">On a phone</p>
       <h2>Files can’t run themselves here</h2>
       <p class="lede">
-        A phone will show you a file but won’t execute one. The runner is a small
+        A phone will show you a file but won’t execute one. The opener is a small
         page that opens your container and keeps it — the app stays yours, the
         data stays on the device.
       </p>
@@ -71,7 +80,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
 
       <li class="step">
         <figure>
-          <svg viewBox="0 0 200 300" role="img" aria-label="The runner opening the container">
+          <svg viewBox="0 0 200 300" role="img" aria-label="The opener running the container">
             <g class="phone">
               <rect class="body" x="16" y="12" width="168" height="276" rx="28" />
               <rect class="bezel" x="24" y="20" width="152" height="260" rx="21" />
@@ -98,7 +107,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
             </g>
           </svg>
         </figure>
-        <p><span class="n">2</span><strong>Open it.</strong> The runner verifies, then runs it.</p>
+        <p><span class="n">2</span><strong>Open it.</strong> The opener checks it, then runs it.</p>
       </li>
 
       <li class="step">
@@ -145,14 +154,14 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
 
     <div class="cta">
       <div>
-        <p class="cta-title">The runner</p>
+        <p class="cta-title">The opener</p>
         <p class="cta-address">run.dynamicapplicationinterface.io</p>
         <p class="cta-note">
           Nothing to install, nothing uploaded. Your containers stay on the device.
           Sent one and not sure what it is? <a href="/open">Start here</a>.
         </p>
       </div>
-      <a class="button primary" :href="RUNNER">Open the runner</a>
+      <a class="button primary" :href="OPENER">Open a file</a>
     </div>
   </section>
 </template>

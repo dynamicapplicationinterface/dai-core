@@ -332,9 +332,9 @@ async function build(): Promise<void> {
         <p v-if="shareError" class="bad">{{ shareError }}</p>
         <p v-if="canShareFile">
           Choose <strong>Save to Files</strong>, then open
-          <a href="https://run.dynamicapplicationinterface.io">the runner</a> and pick it
-          there. A phone cannot run a file straight from storage, so the runner is what
-          opens it.
+          <a href="https://run.dynamicapplicationinterface.io">the opener</a> and pick it
+          there. A phone will show you a file but will not run one, which is what the
+          opener is for.
         </p>
         <p v-else>
           Double-click it. It opens in your browser, works with the wifi off, and
