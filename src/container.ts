@@ -436,6 +436,14 @@ export interface AuditReport {
   unavailable?: string;
 }
 
+/** Section numbers, in the words somebody reading a refusal would use. */
+function sectionName(id: number): string {
+  if (id === SECTION.MANIFEST) return "manifest";
+  if (id === SECTION.PAYLOAD) return "application";
+  if (id === SECTION.DATA) return "database";
+  return `section ${id}`;
+}
+
 /**
  * Checks a container and reports everything it found, without throwing.
  *
@@ -608,22 +616,46 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
   // a section and an entry digest covers only what unzipped out of one. When
   // both fail, the section is the more precise account of what changed.
   if (report.sections) {
-    if (report.sections.mismatched.length > 0) {
+    /*
+     * Which part is damaged decides what a person should do about it, and the
+     * two cases could not be less alike.
+     *
+     * A manifest or an application that does not match its digest is a file
+     * that has been changed: what is inside is not what was sealed, and the
+     * answer is to get the file again from wherever it came from.
+     *
+     * A database that does not match is almost always an interrupted save. The
+     * write order exists to make exactly this detectable — data first, then the
+     * table entry and the footer that vouch for it — so a crash between the two
+     * leaves the application intact and its own record of the database wrong.
+     * Nothing here can repair that, and reporting it as modification would send
+     * somebody looking for an attacker when their laptop lost power.
+     */
+    const damaged = report.sections.mismatched;
+    const onlyTheDatabase =
+      damaged.every((id) => id === SECTION.DATA) &&
+      (damaged.length > 0 || report.sections.staleFooter);
+
+    if (onlyTheDatabase) {
       throw new ContainerError(
-        "This container has been modified and will not be run.\n" +
-          `section ${report.sections.mismatched.join(", ")} does not match its digest`,
+        "This document's data is damaged and it will not be opened.\n" +
+          "The application inside it is intact and correctly sealed — it is the database " +
+          "that does not match the record kept of it, which is what an interrupted save " +
+          "looks like. An earlier copy of the file, if you have one, will still open.",
       );
     }
+
+    if (damaged.length > 0) {
+      throw new ContainerError(
+        "This container has been modified and will not be run.\n" +
+          `the ${damaged.map(sectionName).join(" and the ")} does not match its digest`,
+      );
+    }
+
     if (report.sections.missing.length > 0) {
       throw new ContainerError(
         "This container is incomplete and will not be run.\n" +
-          `section ${report.sections.missing.join(", ")} is missing`,
-      );
-    }
-    if (report.sections.staleFooter) {
-      throw new ContainerError(
-        "This container's database does not match the record of it kept at the end of " +
-          "the file. It has been modified outside its own save path and will not be run.",
+          `it has no ${report.sections.missing.map(sectionName).join(" and no ")}`,
       );
     }
   }
