@@ -10,6 +10,7 @@ import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { describeSelf, watchForInstall } from "./install.js";
+import { platform } from "./platform.js";
 import { checkTrust, forgetTrust } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -64,7 +65,7 @@ function say(message: string, isError = false): void {
  * with it.
  */
 const installBar = document.getElementById("install") as HTMLElement;
-const offerInstall = watchForInstall();
+const keeper = watchForInstall();
 
 const RESUME_KEY = "dai:resume";
 
@@ -277,7 +278,12 @@ function mount(cartridge: Cartridge): void {
    * bookmark a file picker.
    */
   const name = cartridge.manifest.appName ?? "container";
-  offerInstall?.({ name, favicon: cartridge.manifest.favicon });
+  keeper?.offer({
+    uuid: cartridge.manifest.documentUuid,
+    name,
+    favicon: cartridge.manifest.favicon,
+    savedAsFile: arrivedAsFile,
+  });
   title.textContent = name;
 
   /*
@@ -380,6 +386,15 @@ async function collectSharedContainer(): Promise<File | null> {
   }
 }
 
+/**
+ * Whether the open document exists as a file somewhere the person can find.
+ *
+ * Chosen from a picker or shared in: yes. Handed straight over from the page
+ * that built it: no — and on iOS that is the difference between "add to Home
+ * Screen" working and the new icon having nothing to open.
+ */
+let arrivedAsFile = true;
+
 async function ingest(file: File): Promise<void> {
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
@@ -454,22 +469,54 @@ async function exportContainer(): Promise<void> {
   const fileName = `${name}.dai.html`;
   const file = new File([activeCartridge.html], fileName, { type: "text/html" });
 
-  // The same decision the website makes, from the same place. A device that
-  // will not take a file directly is why the download link below exists, and
-  // two implementations of "can this device take a file" would eventually
-  // disagree about the device somebody is holding.
-  const handed = await handOff(
-    navigator,
-    file,
-    name,
-    // What a recipient with nothing installed needs, in the only place it can
-    // reach them: the message the file arrives in.
-    `${name} — a DAI document. It holds the app and its data in one file. ` +
-      `Open it at ${OPENER}`,
-  );
-  // Dismissed rather than failed: offering a download after somebody declined
-  // to save would be the app arguing with them.
-  if (handed.shared || !handed.error) return;
+  // Once a copy exists as a file, the iOS home-screen steps get shorter.
+  arrivedAsFile = true;
+
+  /*
+   * A phone shares; a computer saves.
+   *
+   * Windows Edge answers yes to "can you share a file", and the answer put a
+   * Windows share sheet — Teams, Outlook, Nearby Sharing — in front of
+   * somebody who had pressed Save a copy. On a computer a copy is a file on
+   * the disk: the save dialog where the browser has one, a download where it
+   * does not.
+   */
+  if (platform() === "desktop") {
+    const picker = (window as { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> })
+      .showSaveFilePicker;
+    if (picker) {
+      try {
+        const handle = await picker({
+          suggestedName: fileName,
+          types: [{ description: "DAI document", accept: { "text/html": [".html"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(activeCartridge.html);
+        await writable.close();
+        return;
+      } catch (error) {
+        // Cancelled is a choice; anything else falls through to a download.
+        if ((error as { name?: string }).name === "AbortError") return;
+      }
+    }
+  } else {
+    // The same decision the website makes, from the same place. A device that
+    // will not take a file directly is why the download below exists, and two
+    // implementations of "can this device take a file" would eventually
+    // disagree about the device somebody is holding.
+    const handed = await handOff(
+      navigator,
+      file,
+      name,
+      // What a recipient with nothing installed needs, in the only place it
+      // can reach them: the message the file arrives in.
+      `${name} — a DAI document. It holds the app and its data in one file. ` +
+        `Open it at ${OPENER}`,
+    );
+    // Dismissed rather than failed: offering a download after somebody
+    // declined to save would be the app arguing with them.
+    if (handed.shared || !handed.error) return;
+  }
 
   const link = document.createElement("a");
   link.href = URL.createObjectURL(new Blob([activeCartridge.html], { type: "text/html" }));
@@ -654,6 +701,10 @@ exportButton.addEventListener("click", () => {
   closeSheet();
   void exportContainer();
 });
+document.getElementById("keep")?.addEventListener("click", () => {
+  // Stays in the sheet: the steps are written into it.
+  keeper?.keep();
+});
 document.getElementById("open-another")?.addEventListener("click", () => {
   closeSheet();
   fileInput.click();
@@ -661,7 +712,10 @@ document.getElementById("open-another")?.addEventListener("click", () => {
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
-  if (file) void ingest(file);
+  if (file) {
+    arrivedAsFile = true;
+    void ingest(file);
+  }
 });
 
 /*
@@ -752,6 +806,7 @@ async function start(): Promise<void> {
     receiveHandoff(
       window.opener as Window,
       ({ name, bytes }) => {
+        arrivedAsFile = false;
         void ingest(new File([bytes as BlobPart], name, { type: "text/html" }));
       },
       { allows: mayHandOver, window },
@@ -764,6 +819,32 @@ async function start(): Promise<void> {
   const asked = parameters.get("open");
   if (asked) {
     await openFromUrl(asked);
+    return;
+  }
+
+  /*
+   * An icon for one document.
+   *
+   * A document kept as an app launches here with its id in the address. If
+   * this opener has it, that is the document to open — not whatever was open
+   * last. If it does not, this is an iOS home-screen app, which gets storage
+   * of its own and has never seen the file; the address carries the name so
+   * this can ask for exactly that file rather than showing an empty chooser.
+   */
+  const wanted = parameters.get("doc");
+  if (wanted) {
+    const item = (await listCartridgesFromLibrary()).find(
+      (candidate) => candidate.documentUuid === wanted,
+    );
+    if (item) {
+      await launchFromLibrary(item);
+      return;
+    }
+    const name = parameters.get("name") ?? "your document";
+    say(
+      `This icon is for ${name}. Open ${name} from your files once — tap Open a file ` +
+        `and choose it — and it will be here every time after that.`,
+    );
     return;
   }
 

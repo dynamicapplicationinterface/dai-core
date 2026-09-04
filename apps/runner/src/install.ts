@@ -1,48 +1,45 @@
 /**
- * Telling somebody, once, that the thing they are looking at is keepable —
- * and making what they keep be *their document*, not this opener.
+ * Keeping a document as an app on this device — and being honest, per
+ * platform, about what that takes.
  *
  * Somebody who has just watched their document run is in a browser tab. They
- * have no idea it can be anything else, and no browser will tell them. On a
- * phone the gesture that keeps it — Share, then Add to Home Screen — is buried
- * two menus deep and completely unguessable; the difference between a thing
- * somebody tried once and a thing somebody has is whether anyone said that
- * sentence to them at the right moment.
+ * have no idea it can be anything else, and no browser will tell them. The
+ * gesture that keeps it is buried and unguessable on every platform, and
+ * different on each; the difference between a thing somebody tried once and a
+ * thing somebody has is whether anyone said the right sentence to them at
+ * the right moment. So this says it once, unprompted, after a document is
+ * running — and keeps it one tap away in the menu after that.
  *
- * The right moment is after a document is open and running. Before that there
- * is nothing to keep, and an install prompt on an empty chooser is asking
- * somebody to bookmark a file picker.
+ * ## What "keep" installs
  *
- * ## Whose name goes on the icon
+ * The document, not this opener. While a document is open the page describes
+ * itself as that document: the tab title, the name and icon a home screen
+ * uses, and the manifest an installer reads. Each document is its own app,
+ * with its own id and a launch address that opens that document — so three
+ * documents kept are three icons, each landing in the right one, rather than
+ * one icon called whatever was open last.
  *
- * The first version installed as "DAI Opener" with this app's own icon, and
- * somebody who had just made a packing list found "DAI Opener" on their
- * desktop and, fairly, did not think they had got a packing list. So while a
- * document is open this page describes *itself* as that document: its title,
- * the name and icon a home screen will use, and the manifest an installer
- * reads. The document's own icon is the one its file carries; every file has
- * one, because the compiler puts one in.
+ * ## What each platform actually does
  *
- * ## Why this is honest
+ * Android and desktop Chrome fire `beforeinstallprompt`; it is saved and
+ * replayed from a button, and the installed app shares this origin's
+ * storage, so the document is simply there.
  *
- * A home screen icon launches this app cold, with no file attached. It is only
- * worth suggesting because the opener reopens whatever was last open and
- * re-verifies it on the way in — so the icon lands somebody back in their
- * document, with their data, exactly where they left it. If that ever stops
- * being true this prompt has to go with it, or it becomes an invitation to a
- * blank screen.
+ * iOS has no prompt, and — the part that was got wrong once — a home-screen
+ * app on iOS gets its own storage, separate from Safari. The new icon
+ * launches an opener that has never seen the document. So on iOS the honest
+ * instruction is three steps: save a copy to Files, add to Home Screen, and
+ * open the file once from the new icon. After that it stays. The launch
+ * address carries the document's name so the new icon can ask for exactly
+ * that file instead of showing an empty chooser.
  *
- * ## The two platforms
+ * iOS also ignores a data: URL as a home-screen icon, so the document's icon
+ * is put where the service worker can serve it from a real address.
  *
- * Android and desktop Chrome fire `beforeinstallprompt`, which can be saved and
- * replayed from a button: one tap, done. Chrome reads the name and icon from
- * the manifest link at the time of the install, so that link is pointed at a
- * manifest written here for the document. iOS has no such event and never
- * will, so all that is left is describing the gesture — which is why the text
- * names Share and Add to Home Screen literally rather than saying "install" —
- * and iOS takes the name and icon from two tags in the head, which are set
- * the same way.
+ * Other desktop browsers have no install of their own; their menu does, and
+ * the text says where.
  */
+import { installShareStorage, platform, standalone } from "./platform.js";
 
 /** What Chrome hands over, and which is not in the DOM typings. */
 interface InstallEvent extends Event {
@@ -52,39 +49,44 @@ interface InstallEvent extends Event {
 
 /** What a document says about itself, for the icon that will stand for it. */
 export interface Identity {
+  uuid: string;
   name: string;
   /** A data URL or inline SVG, as the container manifest carries it. */
   favicon?: string;
+  /** Whether a copy of this document exists as a file somewhere the person can find. */
+  savedAsFile?: boolean;
 }
 
-const ASKED_KEY = "dai:install-asked";
+/** Where the page puts a document's icon so the worker can serve it by address. */
+const ICON_CACHE = "dai-doc-icons";
 
-/** Already an app, by either platform's way of saying so. */
-function alreadyInstalled(): boolean {
-  if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
-  return (navigator as { standalone?: boolean }).standalone === true;
+function iconAddress(uuid: string): string {
+  return new URL(`./doc-icons/${uuid}.png`, location.href).href;
 }
 
-function isIos(): boolean {
-  // iPadOS reports itself as a Mac, and the touch points are what give it away.
-  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const ipad = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
-  return ios || ipad;
+/** The address an icon for this document launches into. */
+export function launchAddress(identity: Pick<Identity, "uuid" | "name">): string {
+  const url = new URL("./", location.href);
+  url.searchParams.set("doc", identity.uuid);
+  url.searchParams.set("name", identity.name);
+  return url.href;
 }
 
-function asked(): boolean {
+function dismissedKey(uuid: string): string {
+  return `dai:install-asked:${uuid}`;
+}
+
+function dismissed(uuid: string): boolean {
   try {
-    return localStorage.getItem(ASKED_KEY) === "yes";
+    return localStorage.getItem(dismissedKey(uuid)) === "yes";
   } catch {
-    // Storage refused. Better to say it again than to lose the only chance
-    // somebody has of learning this exists.
     return false;
   }
 }
 
-function remember(): void {
+function remember(uuid: string): void {
   try {
-    localStorage.setItem(ASKED_KEY, "yes");
+    localStorage.setItem(dismissedKey(uuid), "yes");
   } catch {
     /* Nothing to do; the prompt is not important enough to fail over. */
   }
@@ -94,20 +96,16 @@ function remember(): void {
 function faviconUrl(favicon: string | undefined): string | null {
   if (!favicon) return null;
   if (favicon.startsWith("data:")) return favicon;
-  if (favicon.trim().startsWith("<svg")) {
-    return "data:image/svg+xml," + encodeURIComponent(favicon);
-  }
+  if (favicon.trim().startsWith("<svg")) return "data:image/svg+xml," + encodeURIComponent(favicon);
   return null;
 }
 
 /**
  * The document's icon as a PNG, because a home screen will not take an SVG.
- *
- * Drawn onto a canvas at the size a home screen wants. Resolves to null when
- * the image will not load, in which case the caller keeps this app's own
+ * Null when the image will not load; the caller then keeps this app's own
  * icon rather than showing a broken one.
  */
-async function iconPng(favicon: string | undefined, size: number): Promise<string | null> {
+async function iconPng(favicon: string | undefined, size: number): Promise<Blob | null> {
   const url = faviconUrl(favicon);
   if (!url) return null;
 
@@ -125,18 +123,11 @@ async function iconPng(favicon: string | undefined, size: number): Promise<strin
   const context = canvas.getContext("2d");
   if (!context) return null;
   context.drawImage(image, 0, 0, size, size);
-  try {
-    return canvas.toDataURL("image/png");
-  } catch {
-    return null;
-  }
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
 }
 
 /** One element in the head, created if it is not there. */
-function headTag<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  match: string,
-): HTMLElementTagNameMap[K] {
+function headTag<K extends keyof HTMLElementTagNameMap>(tag: K, match: string): HTMLElementTagNameMap[K] {
   let element = document.head.querySelector<HTMLElementTagNameMap[K]>(`${tag}[${match}]`);
   if (!element) {
     element = document.createElement(tag);
@@ -150,34 +141,47 @@ function headTag<K extends keyof HTMLElementTagNameMap>(
 /**
  * Makes this page describe the open document rather than the opener.
  *
- * The manifest link is swapped for one written here; Chrome reads it fresh at
- * install time. The two iOS tags are set directly. The tab's title follows.
- * Everything is put back by `describeSelf` when the document is closed.
+ * The manifest link is swapped for one written here, which Chrome reads
+ * fresh at install time. The two iOS tags are set directly. The icon goes
+ * into a cache the service worker serves from a real address, because iOS
+ * will not take a data: URL for a home-screen icon.
  */
 export async function describeDocument(identity: Identity): Promise<void> {
   document.title = identity.name;
   headTag("meta", 'name="apple-mobile-web-app-title"').setAttribute("content", identity.name);
 
+  let icon: string | null = null;
   const png = await iconPng(identity.favicon, 512);
   if (png) {
-    headTag("link", 'rel="apple-touch-icon"').setAttribute("href", png);
-    headTag("link", 'rel="icon"').setAttribute("href", png);
+    icon = iconAddress(identity.uuid);
+    try {
+      const cache = await caches.open(ICON_CACHE);
+      await cache.put(icon, new Response(png, { headers: { "content-type": "image/png" } }));
+    } catch {
+      // No Cache API (a private window, say). A data URL still works for
+      // Chrome's manifest; iOS will show this app's icon instead.
+      icon = URL.createObjectURL(png);
+    }
+    headTag("link", 'rel="apple-touch-icon"').setAttribute("href", icon);
+    headTag("link", 'rel="icon"').setAttribute("href", icon);
   }
 
+  const start = launchAddress(identity);
   const manifest = {
+    // Its own app. Same id, same app: a second document with a different id
+    // installs beside the first rather than renaming it.
+    id: `doc:${identity.uuid}`,
     name: identity.name,
     short_name: identity.name.length > 12 ? identity.name.slice(0, 12) : identity.name,
-    // Absolute, because a manifest that is not fetched from a URL has no base
-    // to resolve against. Landing at the root reopens the last document.
-    start_url: new URL("./", location.href).href,
+    start_url: start,
     scope: new URL("./", location.href).href,
     display: "standalone",
     background_color: "#111827",
     theme_color: "#111827",
-    icons: png
+    icons: icon
       ? [
-          { src: png, sizes: "512x512", type: "image/png" },
-          { src: png, sizes: "512x512", type: "image/png", purpose: "maskable" },
+          { src: icon, sizes: "512x512", type: "image/png" },
+          { src: icon, sizes: "512x512", type: "image/png", purpose: "maskable" },
         ]
       : [
           { src: new URL("./icons/icon-192.png", location.href).href, sizes: "192x192", type: "image/png" },
@@ -200,17 +204,58 @@ export function describeSelf(): void {
 }
 
 /**
- * Wires the prompt up. Call once at start-up; it shows nothing until a document
- * is open and the returned function is called with what to call it.
+ * The sentence for this device. Short, and named for the taps a person makes,
+ * because "install" describes something that does not happen on most of
+ * these platforms.
  */
-export function watchForInstall(): ((identity: Identity) => void) | null {
+export function howToKeep(identity: Identity, prompt: boolean): { title: string; steps: string[] } {
+  const name = identity.name;
+  switch (platform()) {
+    case "ios":
+      return {
+        title: `Keep ${name} on your Home Screen`,
+        steps: [
+          ...(identity.savedAsFile ? [] : ["Tap ⋯ and Save a copy, then Save to Files."]),
+          "Tap Share, then Add to Home Screen.",
+          `Open the new icon once and choose ${name} from Files. After that it stays.`,
+        ],
+      };
+    case "android":
+      return prompt
+        ? { title: `Keep ${name} on your home screen`, steps: [] }
+        : { title: `Keep ${name} on your home screen`, steps: ["Tap ⋮ in your browser, then Add to Home screen."] };
+    default:
+      return prompt
+        ? { title: `Keep ${name} on this computer`, steps: [] }
+        : {
+            title: `Keep ${name} on this computer`,
+            steps: ["Use your browser's menu: look for Install, Add to Dock, or Create shortcut."],
+          };
+  }
+}
+
+export interface Keeper {
+  /** A document is open: describe it, and offer once. */
+  offer(identity: Identity): void;
+  /** Somebody asked from the menu: do it, or say how. */
+  keep(): void;
+  /** Whether a one-tap install exists on this device right now. */
+  readonly canPrompt: boolean;
+}
+
+/**
+ * Wires the offer and the menu item up. Call once at start-up.
+ */
+export function watchForInstall(): Keeper | null {
   const bar = document.getElementById("install");
   const text = document.getElementById("install-text");
   const go = document.getElementById("install-go") as HTMLButtonElement | null;
   const dismiss = document.getElementById("install-dismiss");
-  if (!bar || !text || !go || !dismiss) return null;
+  const how = document.getElementById("keep-how");
+  if (!bar || !text || !go || !dismiss || !how) return null;
 
   let saved: InstallEvent | null = null;
+  let current: Identity | null = null;
 
   window.addEventListener("beforeinstallprompt", (event) => {
     // Kept rather than allowed to fire on its own, so it arrives after somebody
@@ -221,38 +266,79 @@ export function watchForInstall(): ((identity: Identity) => void) | null {
 
   const hide = () => {
     bar.hidden = true;
-    remember();
+    if (current) remember(current.uuid);
   };
 
   dismiss.addEventListener("click", hide);
 
-  go.addEventListener("click", () => {
+  const install = () => {
     const prompt = saved;
-    hide();
-    if (!prompt) return;
+    if (!prompt) return false;
+    saved = null;
     void prompt.prompt();
+    return true;
+  };
+
+  go.addEventListener("click", () => {
+    hide();
+    install();
   });
 
-  return (identity) => {
-    // The page describes the document whether or not the bar is shown: an
-    // install from the browser's own menu, later, should still get the right
-    // name and icon.
-    void describeDocument(identity);
-
-    if (alreadyInstalled() || asked()) return;
-
-    if (saved) {
-      text.textContent = `Keep ${identity.name} on your home screen and open it like an app.`;
-      go.hidden = false;
-    } else if (isIos()) {
-      // No event exists on this platform, so the gesture has to be spelled out.
-      text.textContent = `To keep ${identity.name}: tap Share, then Add to Home Screen.`;
-      go.hidden = true;
-    } else {
-      // A desktop browser with no install support has nothing useful to offer.
-      return;
+  /** Writes the steps for this device into the menu. */
+  const explain = () => {
+    how.replaceChildren();
+    if (!current) return;
+    const guide = howToKeep(current, Boolean(saved));
+    const title = document.createElement("p");
+    title.className = "keep-title";
+    title.textContent = guide.title;
+    how.appendChild(title);
+    if (guide.steps.length) {
+      const list = document.createElement("ol");
+      for (const step of guide.steps) {
+        const item = document.createElement("li");
+        item.textContent = step;
+        list.appendChild(item);
+      }
+      how.appendChild(list);
     }
+    how.hidden = false;
+  };
 
-    bar.hidden = false;
+  return {
+    get canPrompt() {
+      return Boolean(saved);
+    },
+
+    offer(identity) {
+      current = identity;
+      how.hidden = true;
+      // The page describes the document whether or not the bar is shown: an
+      // install from the browser's own menu, later, should still get the
+      // right name and icon.
+      void describeDocument(identity);
+
+      if (standalone() || dismissed(identity.uuid)) return;
+
+      if (saved) {
+        text.textContent = `Keep ${identity.name} on this device and open it like an app.`;
+        go.hidden = false;
+      } else if (platform() === "ios") {
+        text.textContent = installShareStorage()
+          ? `To keep ${identity.name}: tap Share, then Add to Home Screen.`
+          : `To keep ${identity.name}: tap ⋯ for the steps — Share, Add to Home Screen, then open the file once.`;
+        go.hidden = true;
+      } else {
+        // A desktop browser with no install support has nothing useful to offer
+        // unprompted; the menu still says how.
+        return;
+      }
+      bar.hidden = false;
+    },
+
+    keep() {
+      if (install()) return;
+      explain();
+    },
   };
 }

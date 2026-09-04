@@ -609,6 +609,11 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
   });
 
   test("export action reseals container with OPFS database while preserving publisher signature integrity", async ({ page }) => {
+    // A computer with a save dialog would use it; this test wants the file, so
+    // it takes the dialog away and gets the download instead.
+    await page.addInitScript(() => {
+      delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+    });
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
@@ -822,5 +827,93 @@ test.describe("keeping it", () => {
     await page.reload();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await expect(page.locator("#install")).toBeHidden();
+  });
+});
+
+/*
+ * Keeping a document as an app, on the device somebody actually has.
+ *
+ * Two things were found by keeping one. On a computer, Save a copy opened a
+ * Windows share sheet, because the browser said it could share a file. And a
+ * document kept on an iPhone's home screen launched an opener that had never
+ * seen it: a home-screen app on iOS gets storage of its own. So the offer is
+ * per device, the menu always has a way back to it, and an icon for one
+ * document says which document it is for.
+ */
+test.describe("keeping it, per device", () => {
+  test("on a computer, Save a copy saves a file and does not share", async ({ page }) => {
+    await page.addInitScript(() => {
+      // A desktop browser that can share, as Windows Edge can.
+      Object.defineProperty(navigator, "canShare", { value: () => true, configurable: true });
+      Object.defineProperty(navigator, "share", {
+        value: () => {
+          (window as unknown as { __shared: boolean }).__shared = true;
+          return Promise.resolve();
+        },
+        configurable: true,
+      });
+      // And no save dialog, so the fallback is the download.
+      delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+    });
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const download = page.waitForEvent("download");
+    await menu(page, "#export");
+    expect((await download).suggestedFilename()).toMatch(/\.dai\.html$/);
+    expect(await page.evaluate(() => (window as unknown as { __shared?: boolean }).__shared)).toBeFalsy();
+  });
+
+  test("the menu always has a way to keep it, with steps for this device", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    await page.click("#more");
+    await page.click("#keep");
+    // No install prompt in a test browser, so the steps appear instead.
+    await expect(page.locator("#keep-how")).toBeVisible();
+    await expect(page.locator("#keep-how")).toContainText(/Keep .* on this computer/);
+  });
+
+  test("an icon for one document opens that document", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    const uuid = await page.evaluate(
+      () => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid,
+    );
+    await menu(page, "#eject");
+
+    // Closed, and reopened by the address an installed icon launches with.
+    await page.goto(`${RUNNER_URL}?doc=${uuid}&name=Fixture`);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect(page.locator("#title")).toContainText("fixture");
+  });
+
+  test("an icon for a document this opener has never seen asks for that file", async ({ page }) => {
+    // What an iOS home-screen app sees on first launch: its own empty storage.
+    await page.goto(`${RUNNER_URL}?doc=00000000-0000-0000-0000-000000000000&name=Chores`);
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+    await expect(page.locator("#slot")).toContainText("This icon is for Chores");
+    await expect(page.locator("#slot")).toContainText("Open a file");
+  });
+
+  test("the offer is per document, not for ever", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "userAgent", {
+        get: () => "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148 Safari",
+      });
+    });
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("#install")).toBeVisible();
+    await page.click("#install-dismiss");
+
+    // A different document is a different offer.
+    await page.evaluate(() => localStorage.removeItem("dai:resume"));
+    const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("dai:install-asked")));
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/^dai:install-asked:.+/);
   });
 });

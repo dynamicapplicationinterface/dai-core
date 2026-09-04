@@ -211,6 +211,11 @@
         box-shadow: 0 8px 30px rgb(0 0 0 / 0.4);
       }
       #install[hidden] { display: none; }
+      #keep-how { margin: 4px 0 8px; padding: 12px 14px; border-radius: 12px; background: #111827; font-size: 14px; line-height: 1.45; }
+      #keep-how[hidden] { display: none; }
+      #keep-how .keep-title { margin: 0 0 6px; font-weight: 600; }
+      #keep-how ol { margin: 0; padding-left: 20px; }
+      #keep-how li + li { margin-top: 4px; }
       #install p { margin: 0; flex: 1 1 180px; font-size: 13px; line-height: 1.4; }
       #install button {
         font: inherit;
@@ -258,6 +263,13 @@
         <div class="sheet-grip"></div>
         <p class="sheet-note" id="sheet-note"></p>
         <button id="export" type="button">Save a copy</button>
+        <!--
+          Always here, not only in a bar that can be dismissed. The bar says it
+          once; this is where somebody finds it again, and where the steps for
+          this particular device are spelled out.
+        -->
+        <button id="keep" type="button">Keep on this device</button>
+        <div id="keep-how" hidden></div>
         <button id="open-another" type="button">Open a different file</button>
         <button id="eject" type="button">Close this document</button>
       </div>

@@ -65,10 +65,17 @@ Once a document is running, the opener offers, once, to be added to the home
 screen. Android and desktop Chrome get a button; iOS gets the gesture spelled
 out, because iOS has no install event and never will.
 
-This is only honest because the opener reopens whatever was last open and
-re-verifies it on the way in. A home screen icon launches cold with no file
-attached, so if that resume ever stops working the prompt has to go with it —
-otherwise it is an invitation to a blank screen.
+Each document kept is its own app, with its own id and a launch address that
+opens that document, so three documents kept are three icons.
+
+On Android and desktop Chrome the installed app shares the opener's storage,
+and the document is simply there. **On iOS it is not.** A home-screen app on
+iOS gets storage of its own, separate from Safari, so the new icon launches an
+opener that has never seen the document. The honest instruction there is three
+steps — save a copy to Files, add to Home Screen, open the file once from the
+new icon — and the opener says exactly that. The launch address carries the
+document's name, so a new icon with nothing in its library asks for that file
+by name instead of showing an empty chooser. After that one open, it stays.
 
 ## What did not change
 
