@@ -451,7 +451,9 @@ test.describe("cartridge ingestion", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     await page.evaluate(async () => {
-      const open = indexedDB.open("dai_runner_storage", 2);
+      // No version: the store's schema is the app's business, and a test that
+      // named a version broke the day the app added one.
+      const open = indexedDB.open("dai_runner_storage");
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         open.onsuccess = () => resolve(open.result);
         open.onerror = () => reject(open.error);

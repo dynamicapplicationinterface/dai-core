@@ -127,7 +127,21 @@
   <div id="boot-ui">
     <div>
       <p><strong id="dai-app-name"></strong></p>
-      <p id="dai-boot-status">Opening&hellip;</p>
+      <!--
+        Written to be true if nothing else ever happens.
+
+        The bootloader replaces this the moment it runs. When it cannot run —
+        blocked by a viewer, or in a preview that renders a document without
+        executing it — this line is the only thing anybody will ever see, and a
+        word like "Opening" leaves them watching a file that is not opening.
+        A message that is a spinner when things work and an explanation when
+        they do not costs nothing and is the difference between a stall and an
+        answer.
+      -->
+      <p id="dai-boot-status">
+        Opening&hellip; if this does not change, this viewer will not run the
+        file. Open it in a browser, or with the opener at opendai.app.
+      </p>
       <p><code id="dai-boot-detail"></code></p>
       <noscript>
         <!--

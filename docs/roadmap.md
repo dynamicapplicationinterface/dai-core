@@ -232,10 +232,18 @@ Ordered by how much they hurt today.
    a crash is *reported* rather than silent, which is not the same as
    recoverable. Whatever is done here has to avoid copying the whole file on
    every save, since not copying it is the reason the sectioned form exists.
-2. **Trust pinning in the runner.** The desktop host refuses a document re-signed
-   by a different key; the web player has the same exposure and no registry.
-   `checkTrust` already takes its storage as a parameter, so the decision logic
-   moves unchanged and only the backend differs (IndexedDB).
+2. **Trust pinning in the runner.** **Done.** The decision moved to
+   `src/trust.ts` and is shared: the desktop keeps pins in Rust, the opener in
+   IndexedDB, and neither has an opinion of its own. A second implementation of
+   "is this the publisher you trusted" would eventually disagree, and the day it
+   did would be the day one of them let an impersonation through.
+
+   It matters more in the opener than it did in the desktop, because the opener
+   takes containers from a link: an address that can serve an update is an
+   address that can serve an impersonation. Checked on the way in and on the way
+   back out of the library, since a gate that applied only on first sight would
+   apply to the way people open a container once and not to the way they open it
+   every day.
 3. **Windows per document.** Single-instance closed the registry race by making
    a second cartridge replace the first. For a document application that is the
    wrong shape; the right one is a window per cartridge with a single owner for

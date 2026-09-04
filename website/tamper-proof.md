@@ -46,9 +46,14 @@ signature covers the manifest, so a changed file fails its own check — and eve
 host here refuses on that basis before anything runs. What that proves is that
 the file has not changed since it was signed, *not* who signed it: a container
 carries its own key, so somebody who alters one can re-sign it with a key of
-their own. Recognising a publisher needs something from outside the file. The
-desktop app pins a key the first time it sees a document and refuses a different
-one afterwards.
+their own. Recognising a publisher needs something from outside the file. Both the desktop
+app and the opener pin a key the first time they see a document and refuse a
+different one afterwards — so a copy signed by somebody else is visible, even
+though it is validly signed.
+
+What that protects is a document you already have. A *new* document arriving for
+the first time has nothing to compare against, and no amount of signing fixes
+that.
 
 **Not closed, in a browser host.** DNS prefetch, speculation rules and WebRTC
 are not governed by `connect-src`, and a page cannot switch them off for a frame

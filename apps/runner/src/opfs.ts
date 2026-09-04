@@ -7,6 +7,10 @@
 const IDB_NAME = "dai_runner_storage";
 const DB_STORE = "sqlite_databases";
 const LIB_STORE = "cartridges";
+/** Which key each document was first opened with. */
+const PIN_STORE = "pins";
+
+import type { PinnedKey, TrustStore } from "../../../src/trust.js";
 
 export interface LibraryItem {
   documentUuid: string;
@@ -18,11 +22,18 @@ export interface LibraryItem {
 
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 2);
+    const request = indexedDB.open(IDB_NAME, 3);
     request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(DB_STORE)) {
         db.createObjectStore(DB_STORE);
+      }
+      // Version 3 adds the pin store. Somebody with a library from before this
+      // existed keeps it: the upgrade adds, and every document they already
+      // have is pinned on its next open, which is a first use as far as this
+      // host is concerned.
+      if (!db.objectStoreNames.contains(PIN_STORE)) {
+        db.createObjectStore(PIN_STORE);
       }
       if (!db.objectStoreNames.contains(LIB_STORE)) {
         db.createObjectStore(LIB_STORE, { keyPath: "documentUuid" });
@@ -194,4 +205,54 @@ export async function deleteCartridgeFromLibrary(
   } catch {
     // Ignore error
   }
+}
+
+/**
+ * Where this device remembers which key signed each document.
+ *
+ * The decision is in `src/trust.ts` and is shared with the desktop host. This
+ * is only the storage — and it is per-device by nature, which is the honest
+ * shape of trust on first use: a pin means "the key this browser saw the first
+ * time", not a claim anybody else can check.
+ */
+export function trustStore(): TrustStore {
+  return {
+    async get(documentUuid) {
+      const db = await openIdb();
+      return new Promise((resolve, reject) => {
+        const request = db.transaction(PIN_STORE, "readonly").objectStore(PIN_STORE).get(documentUuid);
+        request.onsuccess = () => resolve((request.result as PinnedKey | undefined) ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    },
+
+    async pin(documentUuid, key) {
+      const db = await openIdb();
+      await new Promise<void>((resolve, reject) => {
+        const write = db.transaction(PIN_STORE, "readwrite");
+        // `add` rather than `put`: trust on first use means the first use, and
+        // a store that let a later open replace the record would be remembering
+        // whatever it was last told rather than what it first saw.
+        const request = write.objectStore(PIN_STORE).add(key, documentUuid);
+        request.onerror = () => {
+          // Already pinned by a race. Not an error: the pin that is there is
+          // the one that counts.
+          request.transaction?.abort();
+        };
+        write.oncomplete = () => resolve();
+        write.onabort = () => resolve();
+        write.onerror = () => reject(write.error);
+      });
+    },
+
+    async forget(documentUuid) {
+      const db = await openIdb();
+      await new Promise<void>((resolve, reject) => {
+        const write = db.transaction(PIN_STORE, "readwrite");
+        write.objectStore(PIN_STORE).delete(documentUuid);
+        write.oncomplete = () => resolve();
+        write.onerror = () => reject(write.error);
+      });
+    },
+  };
 }

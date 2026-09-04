@@ -77,3 +77,24 @@ test("the shell says something when a viewer will not run scripts", () => {
   expect(template).toContain("<noscript>");
   expect(template).toMatch(/needs scripting/i);
 });
+
+test("the shell's first line explains itself if nothing else runs", () => {
+  /*
+   * The one thing guaranteed to render.
+   *
+   * A viewer that will not execute the bootloader leaves this line on screen
+   * for ever, so it has to read as an answer rather than as a spinner. On a
+   * phone, opened from a Files app, that is exactly what somebody saw: the
+   * word "Opening" and then nothing, with no way to know whether to wait.
+   */
+  const template = readFileSync(resolve(repo, "dist/template.html"), "utf8");
+  // Collapsed first: the sentence wraps in the source, and a reader sees it as
+  // one line however it is written.
+  const status = (/<p id="dai-boot-status">([\s\S]*?)<\/p>/.exec(template)?.[1] ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+
+  expect(status).toMatch(/will not run the file/i);
+  expect(status).toContain("opendai.app");
+});

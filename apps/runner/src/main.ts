@@ -8,12 +8,14 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { handOff } from "../../../src/handoff.js";
+import { checkTrust, forgetTrust } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
   deleteDatabaseFromOpfs,
   listCartridgesFromLibrary,
   loadDatabaseFromOpfs,
   saveCartridgeToLibrary,
+  trustStore,
   saveDatabaseToOpfs,
   type LibraryItem,
 } from "./opfs.js";
@@ -168,6 +170,17 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
     const file = new File([item.html], `${item.appName}.dai.html`, { type: "text/html" });
     const cartridge = await readCartridge(file);
 
+    // Checked on the way back in as well. A document reopened from the library
+    // has been sitting in storage this app does not exclusively control, and a
+    // gate that only applied the first time would apply to the way people open
+    // a container once and not to the way they open it every day.
+    const verdict = await checkTrust(trustStore(), cartridge);
+    if (verdict.status === "mismatch") {
+      say(verdict.message, true);
+      slot.classList.remove("busy");
+      return;
+    }
+
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
@@ -196,6 +209,10 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
 async function deleteApp(documentUuid: string): Promise<void> {
   await deleteCartridgeFromLibrary(documentUuid);
   await deleteDatabaseFromOpfs(documentUuid);
+  // And the pin: somebody who removes a document and is later handed a new one
+  // under a new key has made a decision, and a pin that outlived the document
+  // would refuse it for ever with no way to say otherwise.
+  await forgetTrust(trustStore(), documentUuid);
   if (loaded?.manifest.documentUuid === documentUuid) {
     eject();
   } else {
@@ -320,6 +337,26 @@ async function ingest(file: File): Promise<void> {
   try {
     const cartridge = await readCartridge(file);
     hostMark("verified");
+
+    /*
+     * Whose document is this?
+     *
+     * Verification proves nothing has changed since this container was signed.
+     * It cannot prove who signed it, because somebody who alters a container
+     * can replace the key and re-sign — every check passes, against their key.
+     *
+     * This device remembers which key each document was first opened with, so a
+     * later copy signed by somebody else is visible. It matters more now than
+     * when the desktop got it: this app takes containers from a link, and an
+     * address that serves an update is an address that can serve an
+     * impersonation.
+     */
+    const verdict = await checkTrust(trustStore(), cartridge);
+    if (verdict.status === "mismatch") {
+      say(verdict.message, true);
+      slot.classList.remove("busy");
+      return;
+    }
 
     // If an OPFS database exists for this documentUuid, mount the latest database.
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
