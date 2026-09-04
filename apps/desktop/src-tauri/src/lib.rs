@@ -242,6 +242,41 @@ fn save_cartridge(path: String, html: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Copies a document beside itself before it is written over.
+///
+/// An in-place save cannot be atomic, and the ordering that makes a crash
+/// *detectable* does not make it recoverable: the previous database is gone the
+/// moment the new one starts being written. A copy is the only thing that
+/// changes that, and one copy per session is the price — every save would be
+/// absurd for a file this format expects to be large, and no copy at all leaves
+/// somebody with a document that reports its own data as damaged and nothing to
+/// go back to.
+///
+/// Staged and renamed like every other write here, so a crash midway cannot
+/// replace a good backup with half of one.
+fn write_backup(target: &Path) -> Result<(), String> {
+    let directory = target
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory.", target.display()))?;
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("document");
+
+    let staging = directory.join(format!(".{}.bak-writing", name));
+    let backup = directory.join(format!("{}.bak", name));
+
+    fs::copy(target, &staging)
+        .map_err(|e| format!("Failed to copy {} before saving: {}", target.display(), e))?;
+
+    if let Err(e) = fs::rename(&staging, &backup) {
+        let _ = fs::remove_file(&staging);
+        return Err(format!("Failed to write {}: {}", backup.display(), e));
+    }
+
+    Ok(())
+}
+
 /// Reads a cartridge as bytes, base64-encoded for the bridge.
 ///
 /// The sectioned form is binary, so `read_cartridge` cannot carry it: reading
@@ -270,6 +305,7 @@ fn save_cartridge_data(
     path: String,
     data_base64: String,
     expected_generation: Option<u64>,
+    backup: bool,
 ) -> Result<u64, String> {
     let data = BASE64
         .decode(data_base64.as_bytes())
@@ -287,6 +323,10 @@ fn save_cartridge_data(
         .metadata()
         .map_err(|e| format!("Failed to measure {}: {}", target.display(), e))?
         .len();
+
+    if backup {
+        write_backup(&target)?;
+    }
 
     match expected_generation {
         // Guarded when the frontend knows which save it read, which is every
@@ -396,7 +436,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::cartridge_argument;
+    use super::{cartridge_argument, write_backup};
     use std::fs;
     use std::path::PathBuf;
 
@@ -410,6 +450,52 @@ mod tests {
 
     fn args(values: &[&str]) -> impl Iterator<Item = String> {
         values.iter().map(|v| v.to_string()).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test]
+    fn backs_a_document_up_before_writing_over_it() {
+        /*
+         * The only thing that makes an interrupted in-place save recoverable.
+         * The ordering makes a crash detectable; a copy is what makes it
+         * survivable, and there was none.
+         */
+        let dir = std::env::temp_dir().join(format!("dai-backup-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let document = dir.join("notes.dai");
+        fs::write(&document, b"the bytes before any save").unwrap();
+
+        write_backup(&document).unwrap();
+
+        let backup = dir.join("notes.dai.bak");
+        assert_eq!(fs::read(&backup).unwrap(), b"the bytes before any save");
+
+        // Nothing left behind from the staging step.
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains("bak-writing"))
+            .collect();
+        assert!(leftovers.is_empty(), "staging file left behind: {:?}", leftovers);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_backup_replaces_the_first() {
+        // One copy per session, so the backup is of the state this window
+        // opened rather than of whatever it wrote a moment ago.
+        let dir = std::env::temp_dir().join(format!("dai-backup2-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let document = dir.join("notes.dai");
+
+        fs::write(&document, b"first").unwrap();
+        write_backup(&document).unwrap();
+        fs::write(&document, b"second").unwrap();
+        write_backup(&document).unwrap();
+
+        assert_eq!(fs::read(dir.join("notes.dai.bak")).unwrap(), b"second");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -111,6 +111,18 @@ let currentFileIsSectioned = false;
  * memory, which is a great deal better than the last writer quietly winning.
  */
 let currentGeneration: number | undefined;
+
+/**
+ * Documents this window has already copied beside themselves.
+ *
+ * An in-place save cannot be atomic, and the write ordering that makes a crash
+ * detectable does not make it recoverable — the previous database is gone as
+ * soon as the new one starts being written. One copy per document per session
+ * is the compromise: every save would be absurd for a file this format expects
+ * to be large, and no copy leaves somebody holding a document that reports its
+ * own data as damaged with nothing to go back to.
+ */
+const backedUp = new Set<string>();
 let mountedUrl: string | undefined;
 
 interface TauriWindow {
@@ -571,7 +583,9 @@ ${refusal.detail}` : ""),
             path: currentFilePath,
             dataBase64: toBase64(new Uint8Array(databaseBytes)),
             expectedGeneration: currentGeneration ?? null,
+            backup: !backedUp.has(currentFilePath),
           }).then((generation) => {
+            backedUp.add(currentFilePath!);
             // Kept, so a second save from this window is checked against what
             // this window actually wrote rather than what it first read.
             currentGeneration = generation;
