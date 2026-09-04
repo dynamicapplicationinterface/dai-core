@@ -81,6 +81,30 @@ Two details:
   redirects across origins tends to bounce out into a browser tab. Which is the
   argument for doing this while that is nobody.
 
+## Caching, and the part that must not be cached
+
+`/assets/*` is served `immutable` for a year. Those filenames carry a hash of
+their own contents, so a change produces a new name and the old one is never
+asked for again — which makes a year-long cache safe and saves every returning
+visitor a revalidation round trip.
+
+**`/runtime/*` is deliberately excluded, and extending the rule to cover it
+would be a correctness bug.** Those names are stable — `sqlite3.wasm`,
+`dai-runtime.js`, `template.html` — and their contents change every time the
+shell or the bootloader is rebuilt. Cached immutably, a returning visitor would
+compile containers with a months-old bootloader, and there would be no way to
+reach them: the stale copy lives in their browser rather than on our server.
+
+It is the staging trap in a worse place. When the committed copies under
+`website/public/runtime` went stale, one redeploy fixed it. A stale copy in
+somebody's cache cannot be fixed at all.
+
+`/shots/*` is excluded for the same reason and lower stakes: stable names,
+contents that change when a screenshot is retaken. A stale screenshot is
+cosmetic; the rule is the same.
+
+`tests/website-headers.spec.ts` fails if that ever changes.
+
 ## The one that bites
 
 The website serves the container shell, the bootloader and the SQLite engine as
