@@ -345,6 +345,13 @@ test.describe("cartridge ingestion", () => {
 
     await page.goto(`${RUNNER_URL}?open=${encodeURIComponent(url)}`);
 
+    // Nothing is fetched until asked: a link can put a page in front of
+    // somebody, and only a click puts an application there.
+    await expect(page.locator("#open-link")).toBeVisible();
+    await expect(page.locator("#open-link")).toContainText("localhost");
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+    await page.click("#open-link");
+
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await expect(page.locator("#cartridge")).toBeVisible();
   });
@@ -357,6 +364,7 @@ test.describe("cartridge ingestion", () => {
     );
 
     await page.goto(`${RUNNER_URL}?open=${encodeURIComponent(url)}`);
+    await page.click("#open-link");
 
     await expect(page.locator("#report")).toContainText(/could not be opened|does not match/i, {
       timeout: 30_000,
@@ -374,6 +382,7 @@ test.describe("cartridge ingestion", () => {
     await page.route("https://blocked.test/**", (route) => route.abort("failed"));
 
     await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://blocked.test/x.dai.html")}`);
+    await page.click("#open-link");
 
     await expect(page.locator("#report")).toContainText(/does not allow other sites/i, {
       timeout: 30_000,

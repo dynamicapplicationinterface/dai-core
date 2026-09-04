@@ -61,11 +61,24 @@ const BRIDGE_VERSION = 1;
  * window that was listening. That is a smaller claim than it sounds, and it is
  * the one that can actually be made from inside a frame.
  */
-const sessionNonce = ((): string => {
-  const bytes = new Uint8Array(16);
-  (globalThis.crypto ?? ({} as Crypto)).getRandomValues?.(bytes);
+const sessionNonce = ((): string => randomHex(16))();
+
+/**
+ * Sixteen random bytes as hex, or a thrown error.
+ *
+ * The first version fell back to sixteen zero bytes when `crypto` was absent,
+ * which is a nonce anyone can guess. A context with no random source has no
+ * business completing a handshake; refusing is the honest outcome.
+ */
+function randomHex(length: number): string {
+  const source = (globalThis.crypto as Crypto | undefined)?.getRandomValues;
+  if (typeof source !== "function") {
+    throw new Error("DAI: no random source in this context, so no session nonce can be made.");
+  }
+  const bytes = new Uint8Array(length);
+  source.call(globalThis.crypto, bytes);
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-})();
+}
 
 /**
  * Why a cartridge stopped, in a form a host can record without parsing prose.
@@ -1215,30 +1228,54 @@ function frameLoader(): void {
       else urls.set(path, blobUrl(new Uint8Array(buffer), path));
     }
 
-    // Every spelling a chunk may use for a sibling: Vite emits basenames while
-    // the archive keys full paths. Longest first, so a path is never partly
-    // consumed by its own basename.
-    const spellings = (path: string): string[] => {
-      const base = path.slice(path.lastIndexOf("/") + 1);
-      const forms = ["./" + path, path, "./" + base, base];
-      return [...new Set(forms)].sort((a, b) => b.length - a.length);
+    /*
+     * Only module specifiers are rewritten. Nothing else in a script is.
+     *
+     * The first version replaced every spelling of every asset name across
+     * the whole source text of every script — strings, comments, regexes —
+     * so an application that mentioned its own file name in a string literal
+     * ran with a blob URL where the literal had been. The bytes that executed
+     * were not the bytes that were signed. A review caught it.
+     *
+     * A specifier is the quoted string in one of four positions: after
+     * `from`, in a bare `import "x"`, inside `import("x")`, and as the first
+     * argument of `new URL("x", import.meta.url)`. Those are the only places
+     * a reference to a sibling can live and still be a reference; anywhere
+     * else it is the application's own text and is left alone.
+     */
+    const dirOf = (path: string): string => path.slice(0, path.lastIndexOf("/") + 1);
+    const baseOf = (path: string): string => path.slice(path.lastIndexOf("/") + 1);
+
+    /** The archive entry a specifier written in `fromPath` refers to, if any. */
+    const resolveSpecifier = (spec: string, fromPath: string): string | null => {
+      if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(spec)) return null;
+      const stripped = spec.replace(/^\.\//, "");
+      const joined = normalizePath(dirOf(fromPath) + stripped);
+      const candidates = [spec, stripped, joined];
+      for (const candidate of candidates) {
+        if (scripts.has(candidate) || urls.has(candidate)) return candidate;
+      }
+      // Vite writes siblings by basename. Unique by basename, or nothing.
+      const base = baseOf(stripped);
+      const byBase = [...scripts.keys(), ...urls.keys()].filter((entry) => baseOf(entry) === base);
+      return byBase.length === 1 ? (byBase[0] as string) : null;
     };
 
-    const escapeRe = (value: string): string =>
-      [...value].map((c) => (/[a-zA-Z0-9_/-]/.test(c) ? c : "[" + c + "]")).join("");
+    const SPECIFIER = /(\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|new\s+URL\s*\(\s*)(["'])([^"'\n]+)\2/g;
 
-    // One pass with an ordered alternation. Replacing each spelling in turn
-    // corrupts the result: a substituted URL contains the bare basename and
-    // would then be matched again inside itself.
-    const substitute = (text: string, target: string, replacement: string): string =>
-      text.replace(new RegExp(spellings(target).map(escapeRe).join("|"), "g"), () => replacement);
+    const rewriteSpecifiers = (text: string, fromPath: string): string =>
+      text.replace(SPECIFIER, (whole: string, lead: string, quote: string, spec: string) => {
+        const entry = resolveSpecifier(spec, fromPath);
+        if (!entry) return whole;
+        const target = scripts.has(entry) ? placeholderFor(entry) : (urls.get(entry) as string);
+        return lead + quote + target + quote;
+      });
 
     for (const [path, source] of scripts) {
-      let text = source.split("import.meta.url").join(JSON.stringify(placeholderFor(path)));
-      for (const asset of urls.keys()) text = substitute(text, asset, urls.get(asset) as string);
-      for (const dep of scripts.keys()) {
-        if (dep !== path) text = substitute(text, dep, placeholderFor(dep));
-      }
+      const text = rewriteSpecifiers(
+        source.split("import.meta.url").join(JSON.stringify(placeholderFor(path))),
+        path,
+      );
       urls.set(path, blobUrl(text, path));
     }
     for (const path of scripts.keys()) imports[placeholderFor(path)] = urls.get(path) as string;
@@ -1690,9 +1727,15 @@ async function boot(): Promise<void> {
       const databaseBytes = request.sqlite ?? documentBytes;
       resealContainer(files, databaseBytes)
         .then((html) => {
+          // Bound to this request, and to the window that was asked. A reply
+          // from anywhere else, or for any other request — a duplicate, a
+          // stale one, a forged one from a third window — is not this reply.
+          const requestId = randomHex(16);
           const onHostAck = (evt: MessageEvent) => {
-            const data = evt.data as { type?: string; status?: string; error?: string };
+            if (evt.source !== window.parent) return;
+            const data = evt.data as { type?: string; status?: string; error?: string; requestId?: string };
             if (data?.type !== "DAI_HOST_SAVE_ACK") return;
+            if (data.requestId !== requestId) return;
             window.removeEventListener("message", onHostAck);
             window.clearTimeout(hostTimer);
             if (data.status === "ok") {
@@ -1713,6 +1756,7 @@ async function boot(): Promise<void> {
             {
               type: "DAI_HOST_SAVE",
               sessionNonce,
+              requestId,
               // Both, because hosts need different things: a native host
               // writes the document verbatim, while a browser host stores the
               // database on its own and would otherwise have to unzip the

@@ -326,6 +326,28 @@ async function openFromUrl(address: string): Promise<void> {
     return;
   }
 
+  /*
+   * A click, first.
+   *
+   * A link used to fetch and mount with no step in between, so any page could
+   * put a full-screen application — one asking for a password, say — in front
+   * of somebody who had merely followed a link. The handoff from the website
+   * checks where it came from; a URL checks nothing. So the address is shown,
+   * with the host it will read from, and nothing is fetched until asked.
+   */
+  await new Promise<void>((proceed) => {
+    say(`Open a document from ${url.hostname}?`);
+    const button = document.createElement("button");
+    button.id = "open-link";
+    button.type = "button";
+    button.textContent = `Open it from ${url.hostname}`;
+    button.addEventListener("click", () => {
+      button.remove();
+      proceed();
+    });
+    report.appendChild(button);
+  });
+
   slot.classList.add("busy");
   say(`Fetching ${url.hostname}…`);
 
@@ -646,6 +668,9 @@ window.addEventListener("message", (event) => {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
     if (!fromMountedContainer(event, data)) return;
+    // Echoed on the reply so the container can tell this answer from any
+    // other message that happens to be shaped like one.
+    const requestId = typeof data.requestId === "string" ? data.requestId : undefined;
     const { databaseBytes, documentUuid } = data.payload || {};
     if (databaseBytes && documentUuid) {
       const bytes = new Uint8Array(databaseBytes);
@@ -662,13 +687,13 @@ window.addEventListener("message", (event) => {
             });
           }
           (event.source as Window | null)?.postMessage(
-            { type: "DAI_HOST_SAVE_ACK", status: "ok" },
+            { type: "DAI_HOST_SAVE_ACK", status: "ok", requestId },
             "*",
           );
         })
         .catch((error: unknown) => {
           (event.source as Window | null)?.postMessage(
-            { type: "DAI_HOST_SAVE_ACK", status: "error", error: String(error) },
+            { type: "DAI_HOST_SAVE_ACK", status: "error", error: String(error), requestId },
             "*",
           );
         });

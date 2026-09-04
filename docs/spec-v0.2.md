@@ -114,7 +114,7 @@ viewer form's payload.
 
 ```jsonc
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "documentUuid": "…",          // v4 UUID, the document's identity
   "appName": "…",
   "favicon": "…",
@@ -246,6 +246,24 @@ An implementation MUST NOT pass `blob:` URLs into the frame. A blob URL belongs
 to the origin that minted it and is unreachable from an opaque origin; passing
 them is what previously forced `allow-same-origin`. The frame MUST mint its own
 from bytes it receives.
+
+When rewriting references so they resolve inside the frame, an implementation
+MUST rewrite only module specifiers — the quoted string after `from`, in a bare
+`import`, inside `import()`, and as the first argument of `new URL(…,
+import.meta.url)` — and MUST leave every other byte of a script as it was
+sealed. A rewrite that touches string literals, comments or regular expressions
+executes bytes other than the ones that were signed.
+
+#### The shell frame
+
+A host that itself embeds the container's *shell* — the verified outer
+document carrying the bootloader — in a frame of its own is embedding code it
+has just verified against the sealed copy, not the application. That frame is
+a second layer, outside the boundary this section defines. It MAY grant
+`allow-same-origin` where the host's own storage or bridge needs it, and
+`allow-downloads` where the shell's export fallback needs it. It MUST NOT grant
+`allow-popups`, which the shell has no use for and which is an exfiltration
+channel no policy governs, and SHOULD NOT grant `allow-modals`.
 
 ### 4.2 Content Security Policy
 
