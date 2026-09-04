@@ -364,9 +364,42 @@ sqlite3ApiBootstrap reads it. A runtime MUST provide an in-memory stand-in for
 promises: data belongs in the file, and anything in browser storage would not
 travel with it.
 
+### 6.1 Substituting a runtime
+
+**A container MUST carry its runtime. A host MAY substitute its own copy of any
+runtime entry whose digest it already holds.**
+
+The first sentence is the property everything else rests on: a file that arrives
+on a machine with nothing installed still runs, because the engine came with it.
+Nothing a host does may erode that, and a container that expects a host to
+supply an engine is not a container.
+
+The second is what a host is allowed to do about the cost. The engine is the
+largest thing in most containers by an order of magnitude — roughly 850 kB
+against 60 kB for everything else — and a host that has already loaded that
+exact engine, byte for byte, gains nothing by loading the copy in the file.
+Substitution is permitted only on an exact digest match against an entry the
+manifest covers, so it can change nothing about what runs.
+
+A host MUST NOT substitute an entry whose digest it does not hold, MUST NOT
+treat a substitution as satisfying the entry check in §7, and MUST verify the
+container exactly as though it had loaded every byte.
+
+### 6.2 The thin profile
+
+A container MAY omit the engine and declare `integrityPolicy` unchanged but
+`profile: "requires-runner"` in its manifest. Such a container runs only where a
+host supplies a matching engine, and a host MUST refuse it when it cannot.
+
+This exists for distribution inside an organisation, where the runner is
+guaranteed and the saving is real. It is not the default and MUST NOT be
+presented as one: a `requires-runner` container is not portable in the sense the
+rest of this document means, and the difference has to be visible to whoever is
+handed one.
+
 ---
 
-## 6.1 Declared schemas
+### 6.3 Declared schemas
 
 A container MAY declare the shape of the data its application expects, at
 `runtime/schema.json` — an ordinary entry, so the digests and the signature

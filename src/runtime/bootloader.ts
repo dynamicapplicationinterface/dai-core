@@ -109,6 +109,47 @@ interface SaveResult {
  * it, so an unanchored match would rewrite the bootloader's own source.
  */
 const PAYLOAD_TAG_RE = /(<script[^>]*id="dai-payload"[^>]*>)<!--DAI_PAYLOAD-->/;
+/**
+ * Where the time goes between a tap and a usable application.
+ *
+ * The number that decides whether this is a product on a phone is seconds from
+ * tap to interactive, and it cannot be improved by argument. The costs are
+ * genuinely unobvious — an 850 kB WebAssembly instantiate looks like the
+ * expensive part and may well not be, next to decoding base64, inflating a zip
+ * and digesting every entry before anything is allowed to run.
+ *
+ * So the boot records where it actually spent its time, and hands the table to
+ * whoever is hosting it. Marks are cheap, they ship in every container, and a
+ * number nobody can see is a number nobody improves.
+ */
+const timings: { phase: string; at: number; took?: number }[] = [];
+
+/**
+ * Records a phase once.
+ *
+ * Once, because the signal for several of these arrives more than once — the
+ * application announcing itself is answered by anything still listening — and a
+ * phase recorded three times reads as three phases with implausible durations.
+ * The first occurrence is the one that happened.
+ */
+function mark(phase: string, took?: number): void {
+  if (timings.some((entry) => entry.phase === phase)) return;
+  timings.push({ phase, at: Math.round(performance.now() * 10) / 10, took });
+}
+
+/** The table as elapsed milliseconds per phase, in the order they happened. */
+function timingTable(): { phase: string; at: number; took: number }[] {
+  return timings.map((entry, index) => ({
+    phase: entry.phase,
+    at: entry.at,
+    // A phase measured somewhere else reports its own duration; everything else
+    // is the gap since the phase before it.
+    took:
+      entry.took ??
+      Math.round((entry.at - (index > 0 ? timings[index - 1]!.at : 0)) * 10) / 10,
+  }));
+}
+
 const HANDSHAKE = "dai:ready";
 /** How long the iframe has to report back before we surface a diagnostic. */
 const HANDSHAKE_TIMEOUT_MS = 5000;
@@ -640,6 +681,26 @@ function bridgeMain(): void {
    */
   const initSqlite = (): Promise<Any> => {
     if (booting) return booting;
+    // Timed and reported to the shell, which is the only side keeping the
+    // table. The engine starts when the application first asks for the
+    // database, which for most applications is after they are on screen — so
+    // this is usually not on the path to interactive, and the measurement is
+    // how anybody would know that rather than assume it.
+    const engineStarted = performance.now();
+    const reportEngine = (): void => {
+      try {
+        window.parent.postMessage(
+          {
+            type: "dai:timing",
+            phase: "engine",
+            took: Math.round((performance.now() - engineStarted) * 10) / 10,
+          },
+          "*",
+        );
+      } catch {
+        /* A parent that is not listening changes nothing about the boot. */
+      }
+    };
     if (!wasm) {
       return Promise.reject(
         new Error("No sqlite3.wasm was packaged in this container."),
@@ -683,6 +744,7 @@ function bridgeMain(): void {
       )
       .then((instance) => {
         sqlite3 = instance;
+        reportEngine();
         window.removeEventListener("unhandledrejection", muffle);
         return instance;
       })
@@ -1294,6 +1356,7 @@ function mount(srcdoc: string): HTMLIFrameElement {
   // gesture it happens to receive. App Mode is the shell's to grant.
   frame.setAttribute("allow", "fullscreen 'none'");
   // Direct property assignment prevents HTML attribute string escaping issues with unescaped double quotes inside app payloads
+  mark("frame");
   frame.srcdoc = srcdoc;
   document.body.appendChild(frame);
   return frame;
@@ -1306,6 +1369,7 @@ async function boot(): Promise<void> {
   // Reaching this line is itself information: the bootloader ran. A viewer that
   // renders the document without executing it never gets here, and the noscript
   // block in the shell is what speaks in that case.
+  mark("boot");
   stage("Reading the payload…");
   const stopWatching = watchBoot();
 
@@ -1323,7 +1387,10 @@ async function boot(): Promise<void> {
 
   let files: Record<string, Uint8Array>;
   try {
-    files = unzipSync(decodeBase64(b64));
+    const decoded = decodeBase64(b64);
+    mark("decoded");
+    files = unzipSync(decoded);
+    mark("unzipped");
   } catch (error) {
     refuse("PAYLOAD_UNREADABLE", "Payload could not be decoded.", String(error));
     return;
@@ -1376,6 +1443,7 @@ async function boot(): Promise<void> {
       return;
     }
     const problems = await verifyPayload(files, manifest);
+    mark("digests");
     if (problems.length > 0) {
       refuse("DIGEST_MISMATCH", 
         "Integrity check failed — this container has been modified.",
@@ -1400,6 +1468,7 @@ async function boot(): Promise<void> {
       return;
     }
     signatureState = "valid";
+    mark("signature");
   }
 
   const assets = new Map<string, Uint8Array>();
@@ -1473,6 +1542,10 @@ async function boot(): Promise<void> {
     files,
     assets,
     sqlite: files[SQLITE_ENTRY] ?? new Uint8Array(0),
+    /** Where the boot spent its time, for whoever is measuring. */
+    get timings() {
+      return timingTable();
+    },
   };
 
   let ready = false;
@@ -1503,6 +1576,13 @@ async function boot(): Promise<void> {
   })();
 
   window.addEventListener("message", (event) => {
+    const reported = event.data as { type?: string; phase?: string; took?: number };
+    if (reported?.type === "dai:timing" && event.source === frame.contentWindow) {
+      // Measured inside the frame, which is the only side that can time it.
+      mark(String(reported.phase), Number(reported.took));
+      return;
+    }
+
     const asked = event.data as { type?: string; id?: string; actual?: string | null };
     if (asked?.type === "dai:schema" && declaredSchema) {
       const verdict = compatibility({
@@ -1536,6 +1616,33 @@ async function boot(): Promise<void> {
     }
 
     if (event.data === HANDSHAKE) {
+      // The application is on screen. This is the only mark that corresponds to
+      // anything a person would call ready.
+      mark("interactive");
+
+      /*
+       * Sent again, because the handshake went out before this happened.
+       *
+       * The handshake is posted as soon as the container has verified itself,
+       * which is well before the application has painted — so the table it
+       * carried could not contain the one number the whole thing is judged on.
+       * A host that only read the handshake would have been reading a boot that
+       * had not finished.
+       */
+      if (window.parent !== window) {
+        try {
+          window.parent.postMessage(
+            {
+              type: "DAI_HOST_TIMING",
+              sessionNonce,
+              payload: { bridgeVersion: BRIDGE_VERSION, timings: timingTable() },
+            },
+            "*",
+          );
+        } catch {
+          /* A parent that is not listening changes nothing about the boot. */
+        }
+      }
       ready = true;
       // The application is on screen, so the boot line is no longer the truth
       // about anything and the stall notice must not appear behind it.
@@ -1636,6 +1743,9 @@ async function boot(): Promise<void> {
             documentUuid: manifest?.documentUuid ?? null,
             verified: policy === "required",
             payloadFingerprint: fingerprint,
+            // Handed over rather than kept: a host is the only party that can
+            // compare one open against another, or against a target.
+            timings: timingTable(),
           },
         },
         "*",

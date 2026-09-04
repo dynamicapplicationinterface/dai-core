@@ -236,6 +236,35 @@ test.describe("cartridge ingestion", () => {
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
   });
 
+  test("records how long the container took to become usable", async ({ page }) => {
+    /*
+     * The number the whole mobile path is judged on, taken where it can
+     * actually be taken. A desktop measurement is a sanity check; this is the
+     * mechanism that will report from a phone, which is the only device whose
+     * answer counts.
+     */
+    await page.goto(`${RUNNER_URL}?timing`);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    // Waiting for the phase, not for the table. The handshake carries an
+    // earlier table — the boot has not finished when it is sent — and waiting
+    // for the table alone resolves on that one, which is a measurement of the
+    // wrong moment.
+    const timings = await page.waitForFunction(
+      () => {
+        const table = (window as unknown as { __daiTimings?: { phase: string }[] }).__daiTimings;
+        return table?.some((entry) => entry.phase === "interactive") ? table : null;
+      },
+      undefined,
+      { timeout: 30_000 },
+    );
+
+    const phases = (await timings.jsonValue()) as { phase: string; at: number }[];
+    expect(phases.some((entry) => entry.phase === "interactive")).toBe(true);
+    await expect(page.locator("#report")).toContainText(/Interactive in \d+ ms/);
+  });
+
   test("reopens what was open when the app is launched again", async ({ page }) => {
     /*
      * The installed app, opened a second time.
@@ -292,7 +321,19 @@ test.describe("cartridge ingestion", () => {
       });
       const item = all[0]!;
       item.html = item.html.replace("<head>", "<head><!-- tampered -->");
-      db.transaction("cartridges", "readwrite").objectStore("cartridges").put(item);
+
+      // Awaited to completion, and the database closed, before the reload. A
+      // transaction still open when the page reloads blocks the next one — the
+      // resume path then waits on storage for ever and the runner sits on
+      // "Loading", which is what this test did on Firefox until it was written
+      // this way.
+      const write = db.transaction("cartridges", "readwrite");
+      write.objectStore("cartridges").put(item);
+      await new Promise<void>((resolve, reject) => {
+        write.oncomplete = () => resolve();
+        write.onerror = () => reject(write.error);
+      });
+      db.close();
     });
 
     await page.reload();

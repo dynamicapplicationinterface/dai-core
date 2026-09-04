@@ -301,6 +301,26 @@ async function exportContainer(): Promise<void> {
  */
 let mountedNonce: string | null = null;
 
+/** Milliseconds from the container starting to the application being usable. */
+let lastOpenMs: number | null = null;
+
+function recordTimings(timings?: { phase: string; at: number }[]): void {
+  if (!timings?.length) return;
+
+  (window as unknown as { __daiTimings?: unknown }).__daiTimings = timings;
+
+  const interactive = timings.find((entry) => entry.phase === "interactive");
+  if (!interactive) return;
+
+  lastOpenMs = interactive.at;
+  if (new URLSearchParams(location.search).has("timing")) {
+    say(
+      `Interactive in ${Math.round(lastOpenMs)} ms — ` +
+        timings.map((entry) => `${entry.phase} ${Math.round(entry.at)}`).join(", "),
+    );
+  }
+}
+
 /** Whether a message came from the container this runner is showing. */
 function fromMountedContainer(event: MessageEvent, data: { sessionNonce?: string }): boolean {
   if (event.source !== cartridgeFrame.contentWindow) return false;
@@ -317,10 +337,30 @@ window.addEventListener("message", (event) => {
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+
+    /*
+     * How long the container took to become usable, on this device.
+     *
+     * The number that decides whether this is a product on a phone is seconds
+     * from tap to interactive, and it cannot be measured anywhere else: a
+     * desktop is not a mid-range Android over cellular. The container reports
+     * where it spent its time; this is the only place that can say how long
+     * that took on the hardware somebody is actually holding.
+     *
+     * Kept on the window rather than shown, until there is a reason to show it.
+     */
+    recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
+
     (event.source as Window | null)?.postMessage(
       { type: "DAI_HOST_HANDSHAKE_ACK", payload: { sessionNonce: mountedNonce } },
       "*",
     );
+  } else if (data.type === "DAI_HOST_TIMING") {
+    // The boot finished. The handshake went out before the application had
+    // painted, so this is the message carrying the number that matters.
+    if (fromMountedContainer(event, data)) {
+      recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
+    }
   } else if (data.type === "DAI_HOST_SAVE") {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
