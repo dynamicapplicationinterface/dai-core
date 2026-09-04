@@ -315,8 +315,11 @@ async function ingest(file: File): Promise<void> {
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
 
+  startHostTiming();
+
   try {
     const cartridge = await readCartridge(file);
+    hostMark("verified");
 
     // If an OPFS database exists for this documentUuid, mount the latest database.
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
@@ -336,7 +339,9 @@ async function ingest(file: File): Promise<void> {
     });
 
     rememberOpen(loaded.manifest.documentUuid);
+    hostMark("prepared");
     mount(loaded);
+    hostMark("mounted");
   } catch (error) {
     const message =
       error instanceof ContainerError
@@ -392,6 +397,31 @@ let mountedNonce: string | null = null;
 /** Milliseconds from the container starting to the application being usable. */
 let lastOpenMs: number | null = null;
 
+/**
+ * What this app spends before the container starts.
+ *
+ * The container measures its own boot and can see nothing before it, so a chain
+ * that stopped at its first mark would be optimising the visible half. Reading
+ * the file, verifying every digest and assembling the document to mount all
+ * happen here — and for the sectioned form the last of those is not free, since
+ * the manifest and the payload have to be put back together before a shell can
+ * carry them.
+ */
+let lastHostPhases: { phase: string; at: number }[] = [];
+let hostStarted = 0;
+
+function startHostTiming(): void {
+  hostStarted = performance.now();
+  lastHostPhases = [];
+}
+
+function hostMark(phase: string): void {
+  lastHostPhases.push({
+    phase,
+    at: Math.round((performance.now() - hostStarted) * 10) / 10,
+  });
+}
+
 function recordTimings(timings?: { phase: string; at: number }[]): void {
   if (!timings?.length) return;
 
@@ -401,10 +431,20 @@ function recordTimings(timings?: { phase: string; at: number }[]): void {
   if (!interactive) return;
 
   lastOpenMs = interactive.at;
+
+  // The whole chain, in the order a person experiences it: what this app did
+  // with the file, then what the container did with itself.
+  const host = lastHostPhases.length ? lastHostPhases[lastHostPhases.length - 1]!.at : 0;
+  (window as unknown as { __daiHostTimings?: unknown }).__daiHostTimings = lastHostPhases;
+
   if (new URLSearchParams(location.search).has("timing")) {
     say(
-      `Interactive in ${Math.round(lastOpenMs)} ms — ` +
-        timings.map((entry) => `${entry.phase} ${Math.round(entry.at)}`).join(", "),
+      `Usable in ${Math.round(host + lastOpenMs)} ms — ` +
+        `host ${Math.round(host)} ms (` +
+        lastHostPhases.map((entry) => `${entry.phase} ${Math.round(entry.at)}`).join(", ") +
+        `), container ${Math.round(lastOpenMs)} ms (` +
+        timings.map((entry) => `${entry.phase} ${Math.round(entry.at)}`).join(", ") +
+        ")",
     );
   }
 }

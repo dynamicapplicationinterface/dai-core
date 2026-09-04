@@ -399,7 +399,11 @@ test.describe("cartridge ingestion", () => {
 
     const phases = (await timings.jsonValue()) as { phase: string; at: number }[];
     expect(phases.some((entry) => entry.phase === "interactive")).toBe(true);
-    await expect(page.locator("#report")).toContainText(/Interactive in \d+ ms/);
+    // Host and container, because a person waits for both: the runner reads and
+    // verifies the file before the container is given a chance to start.
+    await expect(page.locator("#report")).toContainText(/Usable in \d+ ms/);
+    await expect(page.locator("#report")).toContainText(/host \d+ ms/);
+    await expect(page.locator("#report")).toContainText(/container \d+ ms/);
   });
 
   test("reopens what was open when the app is launched again", async ({ page }) => {
