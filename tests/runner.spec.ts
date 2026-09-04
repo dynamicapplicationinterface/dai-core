@@ -769,3 +769,58 @@ test.describe("on a phone", () => {
     expect(sheet).toMatch(/save a copy/i);
   });
 });
+
+/*
+ * The offer to keep it.
+ *
+ * A tab is a thing somebody tried; a home screen icon is a thing somebody has.
+ * The gesture that converts one into the other is unguessable on a phone, so
+ * this app says it — once, and only once there is something worth keeping.
+ */
+test.describe("keeping it", () => {
+  const IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
+    "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
+  const pretendIphone = (page: Page) =>
+    page.addInitScript((agent) => {
+      Object.defineProperty(navigator, "userAgent", { get: () => agent });
+    }, IPHONE);
+
+  test("nothing is offered until a document is open", async ({ page }) => {
+    await pretendIphone(page);
+    await page.goto(RUNNER_URL);
+    // On an empty chooser this would be asking somebody to bookmark a file
+    // picker.
+    await expect(page.locator("#install")).toBeHidden();
+  });
+
+  test("iOS is told the gesture, because iOS has no prompt to fire", async ({ page }) => {
+    await pretendIphone(page);
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    // Named literally. "Install" is a word for something that does not happen
+    // here, and somebody following it would look for a button that is not there.
+    await expect(page.locator("#install")).toBeVisible();
+    await expect(page.locator("#install-text")).toContainText("Share");
+    await expect(page.locator("#install-text")).toContainText("Add to Home Screen");
+    await expect(page.locator("#install-go")).toBeHidden();
+  });
+
+  test("dismissing it means it is not asked again", async ({ page }) => {
+    await pretendIphone(page);
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("#install")).toBeVisible();
+
+    await page.click("#install-dismiss");
+    await expect(page.locator("#install")).toBeHidden();
+
+    // The whole difference between a hint and a nag.
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect(page.locator("#install")).toBeHidden();
+  });
+});

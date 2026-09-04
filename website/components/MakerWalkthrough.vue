@@ -14,6 +14,7 @@
 import { computed, ref } from 'vue';
 import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
+import { handOffToOpener } from '../../src/handoff-tab.js';
 
 /*
  * The example, imported from the repository rather than copied into this file.
@@ -69,6 +70,47 @@ const fingerprint = ref('');
 const fileSize = ref(0);
 const errorText = ref('');
 const builtFile = ref<File | null>(null);
+const builtBytes = ref<Uint8Array | null>(null);
+const openState = ref<'idle' | 'opening' | 'failed'>('idle');
+const openError = ref('');
+
+/*
+ * The deployed opener, unless this page is itself local — otherwise a
+ * development build hands its document to production, which works and proves
+ * nothing about the code being changed.
+ */
+const OPENER =
+  typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? 'http://localhost:5175'
+    : 'https://opendai.app';
+
+/**
+ * Opens the built document in the opener directly, with no download.
+ *
+ * `window.open` first and synchronously: a popup opened after an await is
+ * blocked, and a blocked popup is indistinguishable from a dead button.
+ */
+async function openInOpener(): Promise<void> {
+  const bytes = builtBytes.value;
+  if (!bytes) return;
+
+  const tab = window.open(`${OPENER}/#handoff`, '_blank');
+  if (!tab) {
+    openState.value = 'failed';
+    openError.value =
+      'Your browser blocked the new tab. Allow pop-ups for this page, or download the file and open it at opendai.app.';
+    return;
+  }
+
+  openState.value = 'opening';
+  try {
+    await handOffToOpener(tab, { name: downloadName, bytes }, { origin: OPENER, window });
+    openState.value = 'idle';
+  } catch (error) {
+    openState.value = 'failed';
+    openError.value = String((error as Error)?.message ?? error);
+  }
+}
 const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(
   builtFile,
   downloadName,
@@ -113,6 +155,7 @@ async function build(): Promise<void> {
       assets,
     });
 
+    builtBytes.value = new TextEncoder().encode(built.html);
     const blob = new Blob([built.html], { type: 'text/html' });
     builtFile.value = new File([blob], downloadName, { type: 'text/html' });
     downloadUrl.value = URL.createObjectURL(blob);
@@ -188,29 +231,38 @@ async function build(): Promise<void> {
           the one that works. It appears only if the share sheet actually
           fails — which is the moment the sentence about it becomes true.
         -->
-        <button v-if="canShareFile" class="download" type="button" @click="shareBuilt">
+        <button class="download" type="button" :disabled="openState === 'opening'" @click="openInOpener">
+          {{ openState === 'opening' ? 'Opening…' : 'Open it now' }}
+        </button>
+        <p v-if="openState === 'failed'" class="bad">{{ openError }}</p>
+
+        <button v-if="canShareFile" class="download secondary" type="button" @click="shareBuilt">
           Save {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </button>
         <a
           v-if="!canShareFile || shareError"
           :href="downloadUrl"
           :download="downloadName"
-          class="download"
-          :class="{ secondary: canShareFile }"
+          class="download secondary"
         >
           Download {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </a>
 
         <p v-if="shareError" class="bad">{{ shareError }}</p>
 
+        <!--
+          Was three steps beginning with Save to Files: save it, leave the
+          browser, find it, pick it out of a chooser. Everybody who did that
+          was doing it because the builder had no way to hand the document to
+          the opener. It has one now.
+        -->
         <ol v-if="canShareFile">
-          <li>Choose <strong>Save to Files</strong>, and pick somewhere you will find it.</li>
-          <li>
-            Go to <a href="https://opendai.app">the opener</a>, tap
-            <strong>Open a file</strong> and choose it. A phone will show you a file but
-            will not run one, which is what the opener is for.
-          </li>
+          <li>It opens in a new tab and runs there. Nothing is uploaded.</li>
           <li>Add a task. It is saved onto this device, and nowhere else.</li>
+          <li>
+            Tap <strong>Share</strong> then <strong>Add to Home Screen</strong>, and it
+            becomes an app you open from your home screen with your data still in it.
+          </li>
         </ol>
         <ol v-else>
           <li>Open your downloads folder and double-click it. It opens in your browser.</li>

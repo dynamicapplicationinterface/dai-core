@@ -18,6 +18,7 @@ import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, isNoise, stripCommonPrefix, unpackZip } from '../../src/browser.js';
 import { lintFiles, storesDataInFile, type Finding } from '../../src/lint.js';
 import { RECIPE_AS_PROMPT as PROMPT } from '../../src/recipe.js';
+import { handOffToOpener } from '../../src/handoff-tab.js';
 
 interface Loaded {
   name: string;
@@ -41,6 +42,20 @@ const downloadUrl = ref('');
 const builtFile = ref<File | null>(null);
 const fileSize = ref(0);
 const appName = ref('My App');
+const builtBytes = ref<Uint8Array | null>(null);
+const openState = ref<'idle' | 'opening' | 'failed'>('idle');
+const openError = ref('');
+
+/*
+ * Where the opener lives — the deployed one, unless this page is itself running
+ * locally, in which case the local one. Without this the button on a
+ * development build hands a document to production, which works and proves
+ * nothing about the code being changed.
+ */
+const OPENER =
+  typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+    ? 'http://localhost:5175'
+    : 'https://opendai.app';
 
 const fileInput = ref<HTMLInputElement>();
 const folderInput = ref<HTMLInputElement>();
@@ -154,6 +169,39 @@ async function copyPrompt(): Promise<void> {
   setTimeout(() => (promptCopied.value = false), 2000);
 }
 
+/**
+ * Opens the built document in the opener, in a new tab, without a download.
+ *
+ * `window.open` happens first and synchronously: a popup opened after an await
+ * is blocked, and a blocked popup looks exactly like a button that does
+ * nothing. Everything that can fail happens after the tab exists.
+ *
+ * Failure is not fatal. The download is still on screen, and a file somebody
+ * can keep is the point of the format — this is a shortcut past needing one
+ * today, not a replacement for having one.
+ */
+async function openInOpener(): Promise<void> {
+  const bytes = builtBytes.value;
+  if (!bytes) return;
+
+  const tab = window.open(`${OPENER}/#handoff`, '_blank');
+  if (!tab) {
+    openState.value = 'failed';
+    openError.value =
+      'Your browser blocked the new tab. Allow pop-ups for this page, or download the file and open it at opendai.app.';
+    return;
+  }
+
+  openState.value = 'opening';
+  try {
+    await handOffToOpener(tab, { name: downloadName.value, bytes }, { origin: OPENER, window });
+    openState.value = 'idle';
+  } catch (error) {
+    openState.value = 'failed';
+    openError.value = String((error as Error)?.message ?? error);
+  }
+}
+
 async function build(): Promise<void> {
   state.value = 'working';
   errorText.value = '';
@@ -168,6 +216,7 @@ async function build(): Promise<void> {
       appName: appName.value.trim() || 'My App',
     });
 
+    builtBytes.value = new TextEncoder().encode(built.html);
     const blob = new Blob([built.html], { type: 'text/html' });
     builtFile.value = new File([blob], downloadName.value, { type: 'text/html' });
     downloadUrl.value = URL.createObjectURL(blob);
@@ -313,31 +362,41 @@ async function build(): Promise<void> {
       <p v-if="errorText" class="bad">{{ errorText }}</p>
 
       <div v-if="state === 'done'" class="result">
-        <!-- One control. See MakerWalkthrough: the second appears only if the
-             share sheet fails, because until then it is a button we know does
-             nothing on this device. -->
-        <button v-if="canShareFile" class="download" type="button" @click="share">
+        <!--
+          Running it comes first, and keeping it second.
+
+          The order used to be the other way round, which meant somebody's first
+          experience of the thing they had just made was a file in a Downloads
+          folder, and a set of instructions about leaving the browser to go find
+          it. Most people never got as far as seeing it run.
+        -->
+        <button class="download" type="button" :disabled="openState === 'opening'" @click="openInOpener">
+          {{ openState === 'opening' ? 'Opening…' : 'Open it now' }}
+        </button>
+        <p v-if="openState === 'failed'" class="bad">{{ openError }}</p>
+
+        <button v-if="canShareFile" class="download secondary" type="button" @click="share">
           Save {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </button>
         <a
           v-if="!canShareFile || shareError"
           :href="downloadUrl"
           :download="downloadName"
-          class="download"
-          :class="{ secondary: canShareFile }"
+          class="download secondary"
         >
           Download {{ downloadName }} ({{ Math.round(fileSize / 1024) }} KB)
         </a>
         <p v-if="shareError" class="bad">{{ shareError }}</p>
-        <p v-if="canShareFile">
-          Choose <strong>Save to Files</strong>, then open
-          <a href="https://opendai.app">the opener</a> and pick it
-          there. A phone will show you a file but will not run one, which is what the
-          opener is for.
+
+        <p>
+          It opens in a new tab and runs there — nothing is uploaded, and no file
+          is downloaded. On a phone, tap <strong>Share</strong> then
+          <strong>Add to Home Screen</strong> and it becomes an app you can open
+          from your home screen, with your data still in it.
         </p>
-        <p v-else>
-          Double-click it. It opens in your browser, works with the wifi off, and
-          you can send it to anyone.
+        <p class="muted">
+          Saving it gives you the file itself: it runs by double-clicking, works
+          with the wifi off, and you can send it to anyone.
         </p>
         <p class="muted">
           It was signed with a key created in this tab and then thrown away. That
@@ -429,7 +488,7 @@ button {
   padding: 9px 18px; font-size: 15px; border-radius: 8px; cursor: pointer;
   color: var(--vp-c-white); background: var(--vp-c-brand-1); border: 1px solid var(--vp-c-brand-1);
 }
-button.secondary { color: var(--vp-c-text-1); background: transparent; border-color: var(--vp-c-divider); }
+.download.secondary { color: var(--vp-c-text-1); background: transparent; border-color: var(--vp-c-divider); }
 button:disabled { opacity: 0.55; cursor: default; }
 .result { margin-top: 20px; }
 .download {

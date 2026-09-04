@@ -8,6 +8,8 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { handOff } from "../../../src/handoff.js";
+import { receiveHandoff } from "../../../src/handoff-tab.js";
+import { watchForInstall } from "./install.js";
 import { checkTrust, forgetTrust } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -61,7 +63,42 @@ function say(message: string, isError = false): void {
  * Cleared by ejecting, because ejecting is how somebody says they are done
  * with it.
  */
+const installBar = document.getElementById("install") as HTMLElement;
+const offerInstall = watchForInstall();
+
 const RESUME_KEY = "dai:resume";
+
+/*
+ * Who may hand this app a document directly.
+ *
+ * Not a safety property of the document — everything is verified and sandboxed
+ * however it arrives. It is about consent: without a list, any page on the web
+ * could open this one and put something in front of somebody who believes they
+ * opened it themselves.
+ */
+/*
+ * Who may hand this app a document directly.
+ *
+ * Not a safety property of the document — everything is verified and sandboxed
+ * however it arrives. It is about consent: without a list, any page on the web
+ * could open this one and put something in front of somebody who believes they
+ * opened it themselves.
+ *
+ * Localhost is allowed so the flow can be developed and tested at all. A page
+ * on somebody's own machine handing them a document is not a thing this can
+ * protect them from, and pretending otherwise would only mean the handoff is
+ * exercised for the first time in production.
+ */
+function mayHandOver(origin: string): boolean {
+  if (origin === "https://www.dynamicapplicationinterface.io") return true;
+  if (origin === "https://dynamicapplicationinterface.io") return true;
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === "localhost" || hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
+}
 
 function rememberOpen(documentUuid: string): void {
   try {
@@ -91,6 +128,7 @@ function eject(): void {
   loaded = undefined;
   handshakeEstablished = false;
   document.body.classList.remove("loaded");
+  installBar.hidden = true;
   sheet.hidden = true;
   title.textContent = "";
   say("");
@@ -231,6 +269,13 @@ function mount(cartridge: Cartridge): void {
   cartridgeFrame.src = mountedUrl;
 
   document.body.classList.add("loaded");
+
+  /*
+   * Now, and not before: an offer to keep something is meaningless until there
+   * is something to keep, and on an empty chooser it reads as being asked to
+   * bookmark a file picker.
+   */
+  offerInstall?.();
 
   const name = cartridge.manifest.appName ?? "container";
   title.textContent = name;
@@ -673,6 +718,29 @@ async function start(): Promise<void> {
       return;
     }
     say("Nothing arrived from the share. Try opening the file instead.", true);
+    return;
+  }
+
+  /*
+   * A document handed straight over by the page that built it.
+   *
+   * The alternative was telling somebody on a phone to save the file, leave
+   * the browser, find it in a Files app and pick it out of a chooser — which
+   * is the flow a tester gave up on, and fairly. The bytes come across by
+   * message instead: no download, no upload, nothing on the network.
+   *
+   * The document is read and verified here exactly as a chosen file is. Where
+   * bytes arrived from says nothing about what they are.
+   */
+  if (location.hash === "#handoff" && window.opener) {
+    say("Waiting for the document…");
+    receiveHandoff(
+      window.opener as Window,
+      ({ name, bytes }) => {
+        void ingest(new File([bytes as BlobPart], name, { type: "text/html" }));
+      },
+      { allows: mayHandOver, window },
+    );
     return;
   }
 

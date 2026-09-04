@@ -84,7 +84,12 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
             </g>
           </svg>
         </figure>
-        <p><span class="n">1</span><strong>Save it.</strong> Share → Save to Files.</p>
+        <!--
+          Was "Share → Save to Files", which was the truth until the builder
+          could hand the document to the opener directly. Describing the long
+          way round now would teach somebody a detour past the thing that works.
+        -->
+        <p><span class="n">1</span><strong>Open it.</strong> One tap — no download.</p>
       </li>
 
       <li class="step">
@@ -116,7 +121,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
             </g>
           </svg>
         </figure>
-        <p><span class="n">2</span><strong>Open it.</strong> The opener checks it, then runs it.</p>
+        <p><span class="n">2</span><strong>It runs.</strong> Checked first, then run on your phone.</p>
       </li>
 
       <li class="step">
@@ -157,7 +162,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
             <rect class="home" x="80" y="278" width="40" height="4" rx="2" />
           </svg>
         </figure>
-        <p><span class="n">3</span><strong>Keep it.</strong> It reopens where you left off.</p>
+        <p><span class="n">3</span><strong>Keep it.</strong> Add to Home Screen, and it reopens where you left off.</p>
       </li>
     </ol>
 

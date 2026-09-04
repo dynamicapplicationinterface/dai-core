@@ -192,6 +192,36 @@
       .btn-del { background: #7f1d1d; border-color: #991b1b; color: #fecaca; }
       .btn-del:hover { background: #991b1b; }
 
+      /* Sits over the running app, out of the way of its own chrome. */
+      #install {
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: calc(10px + env(safe-area-inset-bottom));
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: #1f2937;
+        border: 1px solid #374151;
+        box-shadow: 0 8px 30px rgb(0 0 0 / 0.4);
+      }
+      #install[hidden] { display: none; }
+      #install p { margin: 0; flex: 1 1 180px; font-size: 13px; line-height: 1.4; }
+      #install button {
+        font: inherit;
+        font-size: 13px;
+        padding: 7px 12px;
+        border-radius: 8px;
+        border: 1px solid #374151;
+        background: transparent;
+        color: #e5e7eb;
+      }
+      #install #install-go { background: #2563eb; border-color: #2563eb; color: #fff; }
+
       #cartridge {
         position: absolute;
         inset: 0;
@@ -257,6 +287,24 @@
         allow="fullscreen"
       ></iframe>
     </main>
+
+    <!--
+      The step that turns a tab into an app.
+
+      Somebody who has just watched their document run has no idea that this is
+      keepable. On a phone the browser will never tell them, and the gesture
+      that does it — Share, then Add to Home Screen — is buried and unguessable.
+      Saying it once, at the only moment it makes sense, is the difference
+      between a thing somebody tried and a thing somebody has.
+
+      Only honest because the opener reopens what was last open: a home screen
+      icon lands in their document rather than on an empty chooser.
+    -->
+    <div id="install" hidden>
+      <p id="install-text"></p>
+      <button id="install-go" type="button" hidden>Add to Home Screen</button>
+      <button id="install-dismiss" type="button" aria-label="Dismiss">Not now</button>
+    </div>
 
     <!-- Kept out of the layout; the header button drives it. -->
     <!--

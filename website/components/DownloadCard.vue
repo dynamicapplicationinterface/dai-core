@@ -1,8 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-
 const downloadUrl = '/dai-docs.dai';
 const fileName = 'dai-docs.dai';
+
+/*
+ * Opening beats downloading, on a phone by a wide margin.
+ *
+ * Downloading it puts the file in Downloads and the person in the position of
+ * leaving the browser, finding it in a Files app, and working out what opens
+ * it — three steps, each of which somebody abandons. The opener takes an
+ * address, so the same file can simply be run: one tap, and they are in it.
+ *
+ * The download stays, because a file you can keep is the point of the format.
+ * It is just no longer the thing being asked of somebody who has not yet seen
+ * one work.
+ */
+const openUrl =
+  'https://opendai.app/?open=' +
+  encodeURIComponent('https://www.dynamicapplicationinterface.io/dai-docs.dai');
 </script>
 
 <template>
@@ -24,8 +38,11 @@ const fileName = 'dai-docs.dai';
         The complete DAI protocol specification bundled as an authentic, signed, air-gapped container with embedded offline search and SQLite schema. Zero external dependencies.
       </p>
       <div class="card-actions">
-        <a :href="downloadUrl" :download="fileName" class="btn-primary">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+        <a :href="openUrl" class="btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Open it now
+        </a>
+        <a :href="downloadUrl" :download="fileName" class="btn-secondary">
           Download <code>dai-docs.dai</code>
         </a>
         <a href="/playground" class="btn-secondary">

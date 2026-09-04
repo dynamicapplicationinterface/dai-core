@@ -26,6 +26,11 @@ window it is talking to; and the whole mobile path — a share sheet that works,
 a picker that does not exclude the format's own extension, a runner that
 reopens what was open, and containers that arrive by link or by being shared.
 
+**Counted rather than argued.** [opening.md](opening.md) lists every route a
+document takes to somebody and the number of steps each costs them. The original
+route cost five, and a tester stopped at three. Two of the routes now cost one,
+and one costs none.
+
 **Measured rather than argued.** [performance.md](performance.md) records where
 a cold open spends its time. The costs everyone suspected — base64, unzip,
 digests — are under a tenth of it; verification in the host is more than half.
