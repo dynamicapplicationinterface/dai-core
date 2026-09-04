@@ -12,7 +12,7 @@ Here is how, on whatever you are holding.
 
 ## On a phone
 
-Go to **[the opener](https://run.dynamicapplicationinterface.io)** and choose
+Go to **[the opener](https://opendai.app)** and choose
 your file. That is the whole thing: a page, nothing to install, and the file
 never leaves your device.
 

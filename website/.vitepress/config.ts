@@ -67,7 +67,7 @@ export default defineConfig({
       // The opener is the only way into a container on a phone, so it belongs
       // in the nav rather than in a paragraph somebody has to reach. Named for
       // what a person does with it, not for what it technically is.
-      { text: 'Open a file', link: 'https://run.dynamicapplicationinterface.io' },
+      { text: 'Open a file', link: 'https://opendai.app' },
       { text: 'Security', link: '/tamper-proof' },
       {
         text: 'Documentation',

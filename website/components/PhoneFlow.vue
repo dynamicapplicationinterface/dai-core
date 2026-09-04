@@ -21,7 +21,7 @@
  * technically is — a host that runs a container — and nothing a stranger reads
  * says so.
  */
-const OPENER = 'https://run.dynamicapplicationinterface.io';
+const OPENER = 'https://opendai.app';
 
 /** A home screen: three across, two down, and one of them is the app. */
 const grid = [0, 1, 2, 3, 4, 5].map((index) => ({

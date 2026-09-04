@@ -409,7 +409,7 @@ let mountedNonce: string | null = null;
  * document, and a message telling a stranger to *run* a file they were sent is
  * the sentence everybody has been trained to delete.
  */
-const OPENER = "dynamicapplicationinterface.io/open";
+const OPENER = "opendai.app";
 
 /** Milliseconds from the container starting to the application being usable. */
 let lastOpenMs: number | null = null;

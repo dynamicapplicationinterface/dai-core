@@ -55,8 +55,7 @@ const { canShareFile, share, shareError } = useFileHandoff(
   // Carried into whatever the sheet sends this to. Somebody who is handed a
   // container and has nothing installed gets a file their system cannot name;
   // the message it arrives in is the one place an answer fits.
-  'A DAI document — the app and its data in one file. Open it at ' +
-    'dynamicapplicationinterface.io/open',
+  'A DAI document — the app and its data in one file. Open it at opendai.app',
 );
 
 /** What the checks can read. Binary files are not worth decoding. */
@@ -332,7 +331,7 @@ async function build(): Promise<void> {
         <p v-if="shareError" class="bad">{{ shareError }}</p>
         <p v-if="canShareFile">
           Choose <strong>Save to Files</strong>, then open
-          <a href="https://run.dynamicapplicationinterface.io">the opener</a> and pick it
+          <a href="https://opendai.app">the opener</a> and pick it
           there. A phone will show you a file but will not run one, which is what the
           opener is for.
         </p>

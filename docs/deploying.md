@@ -34,30 +34,18 @@ website  ok   current
 runner   ok   current
 ```
 
-## Moving the opener to opendai.app
+## The opener lives at opendai.app
 
-Not done yet: the address below still points at
-`run.dynamicapplicationinterface.io`, and it stays there until the new domain
-resolves. Pointing the site at an address that does not answer would be worse
-than a long one.
+Everything a person is pointed at — the nav, the phone section, the page for
+somebody holding a file, and the sentence that travels with a shared file — uses
+`https://opendai.app`.
 
-**Do it early.** The opener stores every document's data in the browser's
-per-origin storage, so moving it strands every library saved at the old address.
-The `.dai` files themselves are untouched — that is the point of the format —
-but somebody would have to open them again. The installed base is approximately
-nobody today and grows every week.
-
-When the domain answers, the address changes in these places:
-
-| | |
-|---|---|
-| `website/components/PhoneFlow.vue` | the `OPENER` constant |
-| `website/components/MakerWalkthrough.vue`, `MakeYourOwn.vue` | the link in the after-build steps |
-| `website/open.md` | the link for somebody holding a file |
-| `website/.vitepress/config.ts` | the nav entry |
-| `apps/runner/src/main.ts` | the `OPENER` constant in the share text |
-| `apps/runner/index.html` | the empty state's hint |
-| `docs/deploying.md`, `scripts/check-deploys.mjs` | this table, and the deployment check |
+The apex currently redirects to `www.opendai.app`, which means the app runs, and
+therefore stores every document, on the `www` origin. **Which one is canonical
+has to be settled once and left alone**: storage is scoped per origin, so
+changing it later strands every library saved before the change. Linking to the
+apex is safe either way — the redirect keeps the path and query — but the
+decision itself should not be deferred.
 
 ### Keep the old address, as a redirect and not a second copy
 

@@ -125,7 +125,7 @@ test.describe("the landing page", () => {
     await expect(phones.getByText("run.dynamicapplicationinterface.io")).toBeVisible();
     await expect(phones.getByRole("link", { name: /Open a file/ })).toHaveAttribute(
       "href",
-      "https://run.dynamicapplicationinterface.io",
+      "https://opendai.app",
     );
   });
 });
@@ -187,6 +187,6 @@ test.describe("what the site claims", () => {
 
     await expect(
       page.getByRole("link", { name: /the opener/i }).first(),
-    ).toHaveAttribute("href", "https://run.dynamicapplicationinterface.io");
+    ).toHaveAttribute("href", "https://opendai.app");
   });
 });
