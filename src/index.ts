@@ -54,6 +54,11 @@ export type { ContainerFile, FileAudit, Section } from "./format.js";
 // site failed on iOS.
 export { canHandOff, handOff } from "./handoff.js";
 export type { HandOffResult, ShareCapableNavigator } from "./handoff.js";
+// The plain-text shape a model emits and a person pastes. Exported because
+// anything receiving generated source needs to read it, and a second parser
+// would be a second format.
+export { BundleError, parseBundle, writeBundle } from "./bundle.js";
+export type { Bundle } from "./bundle.js";
 export {
   ContainerError,
   parseContainer,

@@ -61,7 +61,15 @@ eval/candidates/<model>/<prompt id>/index.html, app.js, …
 ```
 
 Send `RECIPE_AS_PROMPT` from `src/recipe.ts` followed by the prompt's `ask` and
-its `requires`, and write what comes back into that directory. Record the model
+its `requires`. What comes back should be a bundle — the recipe asks for one —
+so `parseBundle` turns it into the directory:
+
+```js
+import { parseBundle } from "dai-core";
+const { files } = parseBundle(completion);
+```
+
+Write those files into that directory. Record the model
 and the date beside it, because a score without them is a rumour.
 
 ## Reading the result

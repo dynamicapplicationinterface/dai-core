@@ -61,6 +61,23 @@ Insert a few example rows on first run, so the app is not an empty shell when so
     db.exec("INSERT INTO notes (body) VALUES ('Try editing this'), ('Add one of your own')");
   }
 
+HOW TO HAND IT OVER
+Write the whole application as one block of plain text, in this shape, so that whoever receives it does not have to guess where one file ends and the next begins:
+
+dai bundle v1
+name: Reading list
+
+--- file: index.html
+<!doctype html>
+…
+
+--- file: app.js
+const db = await window.dai.openDatabase();
+
+Every file starts with a line reading "--- file: " and its path, at the start of the line. Everything after that line belongs to that file until the next one. If a line inside a file would itself start with "--- file:", put a backslash in front of it.
+
+Fenced code blocks with the filename above them are understood too, but the markers are the form that cannot be misread.
+
 FINALLY
 Make it look finished: real spacing, a considered empty state, keyboard support, and a dark mode via prefers-color-scheme. It is a document somebody will keep.`;
 

@@ -16,14 +16,17 @@ import {
   sanitizeFileName,
 } from "./compile.js";
 import { lintFiles, storesDataInFile } from "./lint.js";
+import { parseBundle, writeBundle } from "./bundle.js";
 import { auditContainer, parseContainer } from "./container.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 
 const USAGE = `dai — build and inspect DAI containers
 
 Usage:
   dai build <directory> [options]     Package a directory into one file
-  dai check <directory> [--json]      Check source before building it
+  dai check <directory|bundle> [--json]
+                                      Check source before building it
+  dai bundle <directory>              Write the source as one pasteable file
   dai verify <file> [--json]          Check a container and report what it finds
 
 Build options:
@@ -47,6 +50,9 @@ Build options:
 Check options:
       --json              Report the findings as JSON. Exit 0 when the source
                           will work inside a container, 1 when it will not
+
+Bundle options:
+  -o, --out <path>        Where to write it (default: stdout)
 
 Verify options:
       --json              Report the whole audit as JSON, for a program rather
@@ -223,11 +229,26 @@ async function check(parsed: Parsed): Promise<number> {
     return 2;
   }
 
-  const collected = await collectFiles(root);
+  /*
+   * A directory or a bundle, because both are things somebody has in hand.
+   * The source arrives from a model as one pasteable file far more often than
+   * as a directory, and asking somebody to unpack it before it can be checked
+   * puts the unpacking before the checking.
+   */
+  const bundled = !statSync(root).isDirectory();
   const sources: Record<string, string> = {};
-  for (const file of collected) {
-    if (!/\.(?:html?|m?js|ts|css)$/i.test(file.entry)) continue;
-    sources[file.entry] = readFileSync(file.absolute, "utf8");
+  const warnings: string[] = [];
+
+  if (bundled) {
+    const bundle = parseBundle(readFileSync(root, "utf8"));
+    warnings.push(...bundle.warnings);
+    for (const [name, body] of Object.entries(bundle.files)) sources[name] = body;
+  } else {
+    const collected = await collectFiles(root);
+    for (const file of collected) {
+      if (!/\.(?:html?|m?js|ts|css)$/i.test(file.entry)) continue;
+      sources[file.entry] = readFileSync(file.absolute, "utf8");
+    }
   }
 
   const findings = lintFiles(sources);
@@ -238,8 +259,9 @@ async function check(parsed: Parsed): Promise<number> {
     process.stdout.write(
       JSON.stringify(
         {
-          directory: root,
+          source: root,
           ok: findings.length === 0 && entry,
+          warnings,
           files: Object.keys(sources).sort(),
           hasEntryPoint: entry,
           // Not a failure. An application that keeps nothing is a legitimate
@@ -265,6 +287,9 @@ async function check(parsed: Parsed): Promise<number> {
   ${Object.keys(sources).length} files
 `);
 
+  for (const warning of warnings) process.stdout.write(`  ${warning}
+`);
+
   if (!entry) {
     process.stdout.write("  no index.html — the container will open blank\n");
   }
@@ -283,6 +308,47 @@ async function check(parsed: Parsed): Promise<number> {
   if (findings.length === 0 && entry) process.stdout.write("  ready to build\n");
 
   return findings.length === 0 && entry ? 0 : 1;
+}
+
+/**
+ * Writes a directory as one pasteable file.
+ *
+ * The direction people actually need is the other one — a model writes a
+ * bundle and somebody builds it — but a format nothing emits is a format
+ * nobody can check their reader against. This is also how the recipe's example
+ * stays honest: it is generated from an application that runs.
+ */
+async function bundle(parsed: Parsed): Promise<number> {
+  const target = parsed.positional[0];
+  if (!target) {
+    process.stderr.write("dai bundle needs a directory. Try: dai bundle ./app\n");
+    return 2;
+  }
+
+  const root = resolve(process.cwd(), target);
+  if (!existsSync(root)) {
+    process.stderr.write(`No directory at ${root}.\n`);
+    return 2;
+  }
+
+  const files: Record<string, string> = {};
+  for (const file of await collectFiles(root)) {
+    files[file.entry] = readFileSync(file.absolute, "utf8");
+  }
+
+  const text = writeBundle(files, {
+    name: typeof parsed.flags.name === "string" ? parsed.flags.name : undefined,
+  });
+
+  if (typeof parsed.flags.out === "string") {
+    writeFileSync(resolve(process.cwd(), parsed.flags.out), text, "utf8");
+    process.stdout.write(`${resolve(process.cwd(), parsed.flags.out)}
+`);
+  } else {
+    process.stdout.write(text);
+  }
+
+  return 0;
 }
 
 async function verify(parsed: Parsed): Promise<number> {
@@ -388,6 +454,8 @@ export async function run(argv: string[]): Promise<number> {
         return await build(parsed);
       case "check":
         return await check(parsed);
+      case "bundle":
+        return await bundle(parsed);
       case "verify":
         return await verify(parsed);
       default:

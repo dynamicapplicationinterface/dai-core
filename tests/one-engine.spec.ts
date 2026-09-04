@@ -130,6 +130,32 @@ test.describe("one engine", () => {
     expect(RECIPE).toMatch(/type="module"/);
     expect(RECIPE).toMatch(/localStorage/);
     expect(RECIPE).toMatch(/index\.html/);
+    // The shape it should hand the application back in. Without this a model
+    // invents a layout per answer, and whoever receives it copies files out of
+    // a chat window by hand.
+    expect(RECIPE).toContain("dai bundle v1");
+    expect(RECIPE).toContain("--- file: ");
+  });
+
+  test("the bundle the recipe describes is the bundle the reader accepts", async () => {
+    /*
+     * The instruction and the parser are two statements of one format, written
+     * in different places, and the day they disagree is a day every completion
+     * is rejected for following the instructions.
+     */
+    const { RECIPE } = await import("../src/recipe.js");
+    const { parseBundle } = await import("../src/bundle.js");
+
+    // The example out of the recipe itself, completed just enough to be a
+    // bundle rather than an illustration.
+    const example = RECIPE.slice(RECIPE.indexOf("dai bundle v1"))
+      .split("Every file starts")[0]!
+      .replace("…", "<title>Example</title>")
+      .trim();
+
+    const bundle = parseBundle(`${example}\n`);
+    expect(Object.keys(bundle.files).sort()).toEqual(["app.js", "index.html"]);
+    expect(bundle.name).toBe("Reading list");
   });
 
   test("every front end reaches the compiler through one of two doors", async () => {
