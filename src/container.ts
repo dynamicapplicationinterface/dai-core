@@ -202,16 +202,43 @@ function parseSectioned(bytes: Uint8Array): ParsedContainer {
       `This container has no ${CONTAINER_ENTRY}, so its publisher key cannot be read.`,
     );
   }
-  const html = new TextDecoder().decode(shell);
+  const sealedShell = new TextDecoder().decode(shell);
 
   archive[MANIFEST_ENTRY] = manifestBytes;
+
+  /*
+   * A document a host can actually mount.
+   *
+   * Two things stand between the sectioned form and a running container, and
+   * both follow from the layout rather than being mistakes in it. The sealed
+   * shell carries a placeholder where its payload goes, because a shell
+   * containing its own payload could not be compared against anything. And the
+   * manifest is a section of the file rather than an entry in the archive,
+   * which is what lets a save leave the publisher's signature untouched.
+   *
+   * So a host mounting the sealed shell mounts a document with the literal
+   * string `<!--DAI_PAYLOAD-->` where the application should be; a container
+   * that got past that would then find no manifest and refuse itself. Both
+   * happened, in that order, and neither was noticed for weeks because the
+   * runner marks itself loaded when it mounts rather than when the container
+   * answers — and the test asserted the same thing the host had assumed.
+   *
+   * Stored uncompressed: this archive lives for the length of one mount and
+   * never reaches a disk, and deflating it again costs more time than the
+   * memory it would save.
+   */
+  const html = sealedShell.replace(
+    PAYLOAD_TAG_RE,
+    (_match, open: string, close: string) =>
+      open + toBase64(zipSync(archive, { level: 0 })) + close,
+  );
 
   return {
     html,
     archive,
     manifest,
-    integrityPolicy: metaContent(html, "dai-integrity") ?? "unknown",
-    publicKey: metaContent(html, "dai-public-key") || undefined,
+    integrityPolicy: metaContent(sealedShell, "dai-integrity") ?? "unknown",
+    publicKey: metaContent(sealedShell, "dai-public-key") || undefined,
     publicKeyFingerprint: manifest.publicKeyFingerprint,
     database: sectionBytes(bytes, file, SECTION.DATA) ?? new Uint8Array(0),
     sectioned: { bytes },

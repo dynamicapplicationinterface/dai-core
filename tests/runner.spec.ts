@@ -119,13 +119,15 @@ test.describe("cartridge ingestion", () => {
 
   test("runs a sectioned .dai, which is the form a phone is handed", async ({ page }) => {
     /*
-     * The binary form, through the same picker.
+     * The binary form, through the same picker — and asserted on the
+     * application, not on the host.
      *
-     * This is the file a mail attachment or a Files app hands over, and the
-     * runner used to decode every chosen file as UTF-8 text — which does not
-     * fail loudly on a binary. It replaces most of the bytes with U+FFFD and
-     * then reports the container as damaged, so the file the format calls
-     * canonical could not be opened on the device the runner exists for.
+     * The first version of this test checked that the runner had marked itself
+     * loaded and shown the frame, both of which it does the moment it mounts
+     * rather than when a container answers. It passed for weeks against a
+     * container that died inside `atob` on the way up, because the sealed shell
+     * carries a placeholder where its payload goes and nothing put the payload
+     * back. A test that asserts what the host assumed is not a test.
      */
     const sectioned = resolve(here, "..", "conformance", "cases", "sectioned-valid.dai");
 
@@ -133,7 +135,17 @@ test.describe("cartridge ingestion", () => {
     await page.setInputFiles("#file", sectioned);
 
     await expect(page.locator("body")).toHaveClass(/loaded/);
-    await expect(page.locator("#cartridge")).toBeVisible();
+
+    /*
+     * The application's own words, two frames down: the runner mounts the
+     * container, the container mounts the application. Text that only exists
+     * inside the payload cannot appear unless the payload was decoded, unzipped
+     * and written — which is the whole path that was silently broken.
+     */
+    const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    await expect(app.locator("body")).toContainText("A container that exists to be checked", {
+      timeout: 30_000,
+    });
   });
 
   test("puts no type filter on the picker, so a .dai is selectable", async ({ page }) => {
