@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- A plate, warm as a kitchen. -->
+  <rect width="100" height="100" rx="22" fill="#d9663c"/>
+  <circle cx="50" cy="50" r="30" fill="#fff8f1"/>
+  <circle cx="50" cy="50" r="19" fill="none" stroke="#fbe9e0" stroke-width="3"/>
+  <path d="M18 28v22M24 28v22M21 50v20" fill="none" stroke="#fff8f1" stroke-width="4" stroke-linecap="round"/>
+  <path d="M82 28c-6 4-6 16 0 22v20" fill="none" stroke="#fff8f1" stroke-width="4" stroke-linecap="round"/>
+</svg>
