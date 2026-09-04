@@ -15,9 +15,15 @@
  */
 import { execSync } from "node:child_process";
 
+/*
+ * The opener moves to opendai.app when that domain answers. Change the address
+ * here and in the places docs/deploying.md lists; the old host stays pointed at
+ * Vercel and is answered there with a redirect, so links already sent keep
+ * working and every document's storage stays on one origin.
+ */
 const SITES = [
   { name: "website", url: "https://www.dynamicapplicationinterface.io/version.json" },
-  { name: "runner", url: "https://run.dynamicapplicationinterface.io/version.json" },
+  { name: "opener", url: "https://run.dynamicapplicationinterface.io/version.json" },
 ];
 
 const head = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
