@@ -238,13 +238,19 @@ async function check(parsed: Parsed): Promise<number> {
   const bundled = !statSync(root).isDirectory();
   const sources: Record<string, string> = {};
   const warnings: string[] = [];
+  // Everything that would go into the container, not only what the lint
+  // reads. "2 files" for a directory holding three was a count of the wrong
+  // thing.
+  let fileCount = 0;
 
   if (bundled) {
     const bundle = parseBundle(readFileSync(root, "utf8"));
     warnings.push(...bundle.warnings);
     for (const [name, body] of Object.entries(bundle.files)) sources[name] = body;
+    fileCount = Object.keys(bundle.files).length;
   } else {
     const collected = await collectFiles(root);
+    fileCount = collected.length;
     for (const file of collected) {
       if (!/\.(?:html?|m?js|ts|css)$/i.test(file.entry)) continue;
       sources[file.entry] = readFileSync(file.absolute, "utf8");
@@ -284,7 +290,7 @@ async function check(parsed: Parsed): Promise<number> {
   }
 
   process.stdout.write(`${root}
-  ${Object.keys(sources).length} files
+  ${fileCount} files
 `);
 
   for (const warning of warnings) process.stdout.write(`  ${warning}

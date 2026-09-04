@@ -190,5 +190,12 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
 
 /** True when the source stores data in a way that survives being sent to someone. */
 export function storesDataInFile(source: string): boolean {
-  return /window\.dai|dai\.openDatabase/.test(source);
+  // The kit stores through window.dai on the application's behalf, so an
+  // application written entirely as HTML and SQL never names it. The first
+  // such application — made by a model from the public recipe — was told its
+  // data would not travel, which was false and is the one warning here that
+  // would frighten exactly the person it is meant to help.
+  return /window\.dai|dai\.openDatabase|dai-kit\.js|type\s*=\s*["']application\/sql["']|<dai-(?:rows|form|save|value)\b/.test(
+    source,
+  );
 }

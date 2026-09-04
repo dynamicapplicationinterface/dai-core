@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Dose Log</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script type="application/sql">
+    CREATE TABLE IF NOT EXISTS medicines (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      last_taken TEXT
+    );
+
+    INSERT INTO medicines (name, type, last_taken)
+    SELECT 'Multivitamin', 'Capsule', datetime('now', '-5 hours')
+    WHERE NOT EXISTS (SELECT 1 FROM medicines);
+
+    INSERT INTO medicines (name, type, last_taken)
+    SELECT 'Allergy Relief', 'Tablet', datetime('now', '-18 hours')
+    WHERE (SELECT count(*) FROM medicines) = 1;
+  </script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="navbar">
+      <h1>Medicines</h1>
+      <dai-save class="save-button">Save</dai-save>
+    </header>
+
+    <main class="content">
+      <section class="card form-card">
+        <h2 class="section-title">Add Medication</h2>
+        <dai-form run="INSERT INTO medicines (name, type, last_taken) VALUES (:name, :type, datetime('now', 'localtime'))">
+          <div class="form-row">
+            <input name="name" type="text" placeholder="Medication name" required autocomplete="off">
+            <select name="type">
+              <option value="Pill">Pill</option>
+              <option value="Tablet">Tablet</option>
+              <option value="Capsule">Capsule</option>
+              <option value="Liquid">Liquid</option>
+              <option value="Drops">Drops</option>
+              <option value="Inhaler">Inhaler</option>
+            </select>
+          </div>
+          <button type="button" class="btn-primary">Add Medicine</button>
+        </dai-form>
+      </section>
+
+      <section class="list-section">
+        <div class="list-header">
+          <span class="eyebrow">Tracked Prescriptions</span>
+          <span class="count-badge">
+            <dai-value query="SELECT count(*) AS n FROM medicines"></dai-value> total
+          </span>
+        </div>
+
+        <ul class="med-list">
+          <dai-rows query="SELECT id, name, type, coalesce(last_taken, 'Never') AS taken_display FROM medicines ORDER BY (last_taken IS NULL) ASC, last_taken DESC" empty="No medicines recorded yet.">
+            <template>
+              <li class="med-item">
+                <div class="med-info">
+                  <div class="med-headline">
+                    <span class="med-name" data-text="name"></span>
+                    <span class="med-pill-tag" data-text="type"></span>
+                  </div>
+                  <div class="med-timestamp">
+                    Last dose: <strong data-text="taken_display"></strong>
+                  </div>
+                </div>
+                <div class="med-actions">
+                  <button type="button" class="btn-take" data-run="UPDATE medicines SET last_taken = datetime('now', 'localtime') WHERE id = :id">
+                    Take Now
+                  </button>
+                  <button type="button" class="btn-delete" title="Remove" data-run="DELETE FROM medicines WHERE id = :id">
+                    &times;
+                  </button>
+                </div>
+              </li>
+            </template>
+          </dai-rows>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./dai-kit.js"></script>
+</body>
+</html>

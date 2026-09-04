@@ -1,0 +1,241 @@
+:root {
+  --bg-app: #f2f2f7;
+  --bg-card: #ffffff;
+  --bg-item: #ffffff;
+  --fill-subtle: #e5e5ea;
+  --text-primary: #000000;
+  --text-secondary: #8e8e93;
+  --separator: #c6c6c8;
+  --accent: #007aff;
+  --accent-pressed: #0056b3;
+  --accent-soft: #e5f1ff;
+  --danger: #ff3b30;
+  --font-stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  --radius-ios: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-app: #000000;
+    --bg-card: #1c1c1e;
+    --bg-item: #1c1c1e;
+    --fill-subtle: #2c2c2e;
+    --text-primary: #ffffff;
+    --text-secondary: #8e8e93;
+    --separator: #38383a;
+    --accent: #0a84ff;
+    --accent-pressed: #409cff;
+    --accent-soft: #0d2744;
+    --danger: #ff453a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: var(--font-stack);
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  line-height: 1.4;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app-shell {
+  max-width: 520px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top, 20px) 16px env(safe-area-inset-bottom, 20px) 16px;
+}
+
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+}
+
+.navbar h1 {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+dai-save.save-button {
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.card {
+  background-color: var(--bg-card);
+  border-radius: var(--radius-ios);
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.section-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: -0.08px;
+  margin-bottom: 12px;
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+input[type="text"],
+select {
+  border: 1px solid var(--fill-subtle);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 16px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: inherit;
+  outline: none;
+}
+
+input[type="text"] {
+  flex: 1;
+}
+
+select {
+  flex-shrink: 0;
+}
+
+button {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: opacity 0.15s ease;
+}
+
+button:active {
+  opacity: 0.7;
+}
+
+.btn-primary {
+  width: 100%;
+  padding: 12px;
+  background-color: var(--accent);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0 4px 8px 4px;
+}
+
+.eyebrow {
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: -0.08px;
+}
+
+.count-badge {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.med-list {
+  list-style: none;
+  background-color: var(--bg-card);
+  border-radius: var(--radius-ios);
+  overflow: hidden;
+}
+
+.med-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.med-item:last-child {
+  border-bottom: none;
+}
+
+.med-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.med-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.med-name {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.med-pill-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background-color: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.med-timestamp {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.med-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-take {
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
+.btn-delete {
+  background: transparent;
+  color: var(--separator);
+  font-size: 20px;
+  line-height: 1;
+  padding: 8px 4px;
+}
+
+.btn-delete:hover,
+.btn-delete:active {
+  color: var(--danger);
+}

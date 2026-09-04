@@ -206,3 +206,21 @@ test.describe("the document's own icon", () => {
     expect(RECIPE).toMatch(/home screen/i);
   });
 });
+
+/**
+ * The checker knows what the kit is.
+ *
+ * `dai check` warned the first application a model ever wrote with the kit
+ * that its data would not travel, because the check looked for `window.dai`
+ * and an application written as HTML and SQL never names it. It is the one
+ * warning that would frighten exactly the person it is meant to help.
+ */
+test("an application that stores through the kit is not told its data will not travel", async () => {
+  const { storesDataInFile } = await import("../src/lint.js");
+  const { readFileSync: read } = await import("node:fs");
+  const gemini = read(resolve(repo, "eval/candidates/gemini/dose-log/index.html"), "utf8");
+  expect(gemini).not.toContain("window.dai");
+  expect(storesDataInFile(gemini)).toBe(true);
+  // And a page that only looks like one is still not storing anything.
+  expect(storesDataInFile("<!doctype html><p>hello</p>")).toBe(false);
+});
