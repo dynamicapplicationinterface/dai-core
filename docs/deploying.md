@@ -5,7 +5,7 @@ Two sites, both static, both built from this repository:
 | | |
 |---|---|
 | `www.dynamicapplicationinterface.io` | the website, built from `website/` |
-| `run.dynamicapplicationinterface.io` | the runner, built from `apps/runner/` |
+| `opendai.app` | the opener, built from `apps/runner/`. `www` and the old `run.dynamicapplicationinterface.io` both redirect to it |
 
 **A push is not a release.** Production is promoted by hand, so a successful
 build and a live change are different events. A preview deployment looks

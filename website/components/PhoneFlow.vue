@@ -23,6 +23,15 @@
  */
 const OPENER = 'https://opendai.app';
 
+/*
+ * What the card prints, taken from the address it links to.
+ *
+ * This line was typed out separately, so when the opener moved the link changed
+ * and the words underneath it did not — the card invited people to opendai.app
+ * and showed them the old host. One address, written once.
+ */
+const OPENER_LABEL = OPENER.replace(/^https?:\/\//, '');
+
 /** A home screen: three across, two down, and one of them is the app. */
 const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
   key: index,
@@ -155,7 +164,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
     <div class="cta">
       <div>
         <p class="cta-title">The opener</p>
-        <p class="cta-address">run.dynamicapplicationinterface.io</p>
+        <p class="cta-address">{{ OPENER_LABEL }}</p>
         <p class="cta-note">
           Nothing to install, nothing uploaded. Your containers stay on the device.
           Sent one and not sure what it is? <a href="/open">Start here</a>.

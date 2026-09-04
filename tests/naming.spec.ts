@@ -51,4 +51,19 @@ test.describe("the public word is open, not run", () => {
     expect(readme).toContain("the runner");
     expect(readme).toMatch(/called \*\*the opener\*\*/i);
   });
+
+  test("nothing a person reads still names the old address", () => {
+    /*
+     * The link and the words under it were two copies of one string, and the
+     * move changed only the link. A find-and-replace on the address with a
+     * protocol in front of it does not touch the address written as bare text,
+     * which is exactly the half a person reads.
+     */
+    for (const file of userFacing) {
+      const source = readFileSync(join(repo, file), "utf8");
+      expect(source, `${file} still names run.dynamicapplicationinterface.io`).not.toContain(
+        "run.dynamicapplicationinterface.io",
+      );
+    }
+  });
 });

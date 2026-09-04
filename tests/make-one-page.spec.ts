@@ -122,7 +122,21 @@ test.describe("the landing page", () => {
     // Drawn, not screenshotted, so this also fails if the artwork is dropped.
     await expect(phones.locator("svg")).toHaveCount(3);
 
-    await expect(phones.getByText("run.dynamicapplicationinterface.io")).toBeVisible();
+    /*
+     * The address on the card, checked against the address it links to.
+     *
+     * These were two copies of one string, and when the opener moved only the
+     * link changed: the card invited people to opendai.app and printed the old
+     * host underneath. Comparing them to each other is what makes that a
+     * failure rather than a thing somebody notices on the live site.
+     */
+    const href = await phones
+      .getByRole("link", { name: /Open a file/ })
+      .getAttribute("href");
+    const host = new URL(href!).host;
+
+    await expect(phones.getByText(host, { exact: true })).toBeVisible();
+    expect(host).toBe("opendai.app");
     await expect(phones.getByRole("link", { name: /Open a file/ })).toHaveAttribute(
       "href",
       "https://opendai.app",
