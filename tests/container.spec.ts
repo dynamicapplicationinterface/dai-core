@@ -912,7 +912,9 @@ test.describe("host bridge", () => {
       (window as any).dai.saveState(new Uint8Array([1, 2, 3])),
     );
 
-    expect(result).toEqual({ saved: true, method: "host" });
+    // The fake host declares no class, so the container takes it for a viewer
+    // and says so: a copy was kept, the file was not written.
+    expect(result).toEqual({ saved: true, method: "host", inPlace: false });
 
     // The host must receive a finished container, not raw database bytes:
     // resealing in the host would duplicate the runtime's logic.

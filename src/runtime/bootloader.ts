@@ -116,6 +116,12 @@ interface SaveResult {
   saved: boolean;
   method: "picker" | "download" | "cancelled" | "unsupported" | "host";
   /**
+   * For a save the host handled: whether it wrote the document in place (an
+   * editor) or kept a copy on the device (a viewer). An application that says
+   * "saved" should say "saved a copy" when this is false.
+   */
+  inPlace?: boolean;
+  /**
    * Why a host refused, when it did, as a name rather than a sentence:
    * `GENERATION_CONFLICT` (another window saved first; the work in hand is
    * still in hand) or `LOCK_UNAVAILABLE` (another program is saving now; try
@@ -1609,6 +1615,12 @@ async function boot(): Promise<void> {
   // also frame containers, and assuming a host there would post a save into
   // silence and hang the application waiting for an acknowledgement.
   let hostAvailable = false;
+  /**
+   * What kind of host answered: a viewer keeps a copy on the device and can
+   * export; an editor writes the file in place. The application is told
+   * which, on every save, so it can say "saved" or "saved a copy" honestly.
+   */
+  let hostClass: "viewer" | "editor" | null = null;
 
   /*
    * The frame asking whether the data it just opened may be written to.
@@ -1709,10 +1721,13 @@ async function boot(): Promise<void> {
       // container invented. Neither check proves the sender is honest; together
       // they establish that it is the same party the handshake was sent to,
       // which is all that was ever missing here.
-      const ack = event.data as { payload?: { sessionNonce?: string } };
+      const ack = event.data as { payload?: { sessionNonce?: string; hostClass?: string } };
       if (event.source !== window.parent) return;
       if (ack.payload?.sessionNonce !== sessionNonce) return;
       hostAvailable = true;
+      // A host that does not say is taken for a viewer: claiming an in-place
+      // save that did not happen is the failure this exists to prevent.
+      hostClass = ack.payload?.hostClass === "editor" ? "editor" : "viewer";
       return;
     }
 
@@ -1752,7 +1767,10 @@ async function boot(): Promise<void> {
             window.removeEventListener("message", onHostAck);
             window.clearTimeout(hostTimer);
             if (data.status === "ok") {
-              reply({ ok: true, result: { saved: true, method: "host" } });
+              reply({
+                ok: true,
+                result: { saved: true, method: "host", inPlace: hostClass === "editor" },
+              });
             } else {
               reply({
                 ok: false,

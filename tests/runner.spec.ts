@@ -972,3 +972,44 @@ test.describe("saves take turns", () => {
     expect(spec).toContain("`LOCK_UNAVAILABLE`");
   });
 });
+
+/*
+ * Which kind of host this is, said out loud.
+ *
+ * A browser cannot write the file it was given back in place. This host keeps
+ * a copy on the device and can export; it says so on the handshake, and the
+ * application is told on every save, so nothing on screen can claim more than
+ * happened.
+ */
+test.describe("host class", () => {
+  test("the opener declares itself a viewer, and a save says it kept a copy", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    await expect(app.locator("#app")).toHaveText(/ready/);
+
+    const result = await app.locator("body").evaluate(async () => {
+      const dai = (window as unknown as { dai: { saveState: (b: Uint8Array) => Promise<{ saved: boolean; method: string; inPlace?: boolean }> } }).dai;
+      const bytes = new Uint8Array(4096);
+      bytes.set(new TextEncoder().encode("SQLite format 3\0"), 0);
+      return dai.saveState(bytes);
+    });
+    expect(result.saved).toBe(true);
+    expect(result.method).toBe("host");
+    expect(result.inPlace).toBe(false);
+  });
+
+  test("the desktop host declares itself an editor", () => {
+    const desktop = readFileSync(resolve(here, "..", "apps", "desktop", "src", "main.ts"), "utf8");
+    expect(desktop).toMatch(/hostClass: "editor"/);
+  });
+
+  test("nothing a person reads says a browser saves in place", () => {
+    // The sentence that was true only in the desktop app, said about everything.
+    for (const file of ["README.md", "website/components/Landing.vue", "website/docs/introduction.md", "website/open.md"]) {
+      const text = readFileSync(resolve(here, "..", file), "utf8");
+      expect(text, file).not.toMatch(/rewrites the container in place/);
+    }
+  });
+});

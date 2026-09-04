@@ -522,7 +522,8 @@ ${refusal.detail}` : ""),
     (event.source as Window | null)?.postMessage(
       {
         type: "DAI_HOST_HANDSHAKE_ACK",
-        payload: { bridgeVersion: HOST_BRIDGE_VERSION, sessionNonce: mountedNonce },
+        // An editor: saves go back into the file on disk, under a lock.
+        payload: { bridgeVersion: HOST_BRIDGE_VERSION, sessionNonce: mountedNonce, hostClass: "editor" },
       },
       "*",
     );

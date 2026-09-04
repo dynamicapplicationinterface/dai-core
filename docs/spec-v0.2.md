@@ -350,6 +350,25 @@ rather than from a third window holding a reference — which is what stops an
 uninvolved page announcing itself as a host, receiving a document's data, or
 telling an application its work was written to disk.
 
+### 4.6 Host classes
+
+Not every host can write a document in place. A browser has no filesystem to
+write back to outside one engine's picker; a native host has. Rather than let
+every host claim the same thing, a host declares which of two classes it is
+when it answers the handshake, as `hostClass` on the acknowledgement:
+
+- **`viewer`** — verifies, mounts, keeps a copy of the database on the device,
+  and can export a file. It MUST NOT report a save as having written the
+  document it was given. This is what a browser opener is.
+- **`editor`** — writes the document in place under §5's lock and generation
+  check. This is what a native host is.
+
+A host that omits `hostClass` MUST be treated as a viewer. The container MUST
+report the class's consequence to the application on every save the host
+handled, as `inPlace`, so an application can say "saved" or "saved a copy"
+truthfully. A site or document describing a viewer MUST NOT say it saves in
+place.
+
 ---
 
 ## 5. Saving

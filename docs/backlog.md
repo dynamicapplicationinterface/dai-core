@@ -15,29 +15,6 @@ disagreed, it is in the last section, undecided on purpose.
 
 Numbering continues from the security items, which are closed below.
 
-### 8. Refusals have names
-
-Hosts refuse in prose. A second implementation needs codes it can compare.
-
-**Exit:** a registry in the specification — structure, section digest, entry
-digest, unsigned, signature invalid, signature unsupported, publisher
-mismatch, expired, `DATA_DAMAGED`, `SECTION_MISMATCH`, `SCHEMA_AHEAD`,
-`GENERATION_CONFLICT`, `LOCK_UNAVAILABLE`, `SIGNED_SET_MISMATCH` — each
-carrying code, message, recoverable, and the document id and generation when
-known. All three readers emit the same code for the same conformance case.
-
-### 9. Two host classes, and the site says which is which
-
-The browser cannot honestly write in place outside Chromium; the desktop
-host can. Decided: the browser is a **viewer** — verify, mount, keep a local
-copy, export — and the desktop host is an **editor** — in-place save, lock,
-generation check. The landing page and `introduction.md` currently claim
-universal in-place save.
-
-**Exit:** the handshake carries the host's class; a viewer never claims an
-in-place save; the site's copy is corrected and a test greps out the old
-sentence.
-
 ### 10. The recipe teaches the schema, and the kit survives a colon
 
 The schema gate exists to stop a model's v2 destroying a person's v1 data —
@@ -154,6 +131,14 @@ Kept so the reasoning stays with the record.
   Lock on the document identity in both hosts; OS advisory lock in the Rust
   command; `GENERATION_CONFLICT` and `LOCK_UNAVAILABLE`, refused rather than
   waited on; two-writer tests in the crate, the host suite and the opener.
+- **8. Refusals have names** — `159827f`. A registry in `src/refusals.ts` and
+  spec §7.2; every reader refusal coded; the Python reader computes the same
+  name by the same priority; every refused conformance case states its code
+  and all three readers are checked against it.
+- **9. Two host classes, and the site says which is which** — see the commit
+  after `159827f`. `hostClass` on the handshake, viewer or editor; a viewer
+  never claims an in-place save; the application is told `inPlace` on every
+  save; the README no longer says the browser rewrites the file.
 
 - **The five gates from the first review** — honest CI, opaque-origin frame,
   no `'unsafe-inline'`, the whole manifest signed, saves that write only the

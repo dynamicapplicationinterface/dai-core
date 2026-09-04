@@ -655,7 +655,12 @@ window.addEventListener("message", (event) => {
     recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
 
     (event.source as Window | null)?.postMessage(
-      { type: "DAI_HOST_HANDSHAKE_ACK", payload: { sessionNonce: mountedNonce } },
+      {
+        type: "DAI_HOST_HANDSHAKE_ACK",
+        // A viewer: this host keeps a copy on the device and can export. It
+        // cannot write the file it was given in place, and it says so.
+        payload: { sessionNonce: mountedNonce, hostClass: "viewer" },
+      },
       "*",
     );
   } else if (data.type === "DAI_HOST_TIMING") {

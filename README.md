@@ -3,7 +3,7 @@
 Compiles a web application into a single air-gapped file (`my-app.dai.html`)
 that holds the app, a SQLite engine and its data. It opens by double-clicking
 in any browser with nothing installed, works offline, cannot reach the network,
-and refuses to run if it has been altered.
+and detects alteration: a conforming host refuses to run a changed file.
 
 The protocol is specified in [docs/spec-v0.2.md](docs/spec-v0.2.md), which
 documents the container as it actually behaves. v0.1 is superseded and kept
@@ -88,7 +88,7 @@ SHA-256 digest of every other entry:
 
 ```json
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "documentUuid": "ff251284-e266-4a8f-802c-65ba3aa28337",
   "algorithm": "SHA-256",
   "verifyIntegrity": true,
@@ -178,7 +178,10 @@ Inside the app, the bootloader exposes `window.dai`:
 | `saveState(bytes?, opts?)` | `Promise<SaveResult>` | Rewrites the container around a new database |
 
 `SaveResult` is
-`{saved: boolean, method: "picker" | "download" | "cancelled" | "unsupported"}`.
+`{saved: boolean, method: "picker" | "download" | "cancelled" | "unsupported" | "host", inPlace?: boolean, code?: string}`.
+`method: "host"` means a host handled it; `inPlace` says whether that host
+wrote the document (an editor) or kept a copy on the device (a viewer); `code`
+names a refusal, such as `GENERATION_CONFLICT`, when there is one.
 A dismissed dialog resolves as `cancelled` rather than resolving silently, so a
 caller can tell a real write from a cancel. `opts.method` is `"auto"` (default),
 `"picker"`, or `"download"`; an explicit `"picker"` on an engine without the
@@ -263,7 +266,7 @@ wrote it. A seeded database keeps the page size its own bytes declare.
 ```ts
 const db = await window.dai.openDatabase()
 db.exec('CREATE TABLE IF NOT EXISTS notes(body TEXT)')
-await window.dai.saveDatabase(db)   // rewrites the container in place
+await window.dai.saveDatabase(db)   // in place in the desktop app; a copy on the device in a browser
 ```
 
 `initSqlite()` passes Emscripten an `instantiateWasm` hook that compiles the

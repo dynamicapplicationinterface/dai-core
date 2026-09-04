@@ -89,10 +89,18 @@ Informs the cartridge that an active host runner is present:
 {
   type: "DAI_HOST_HANDSHAKE_ACK",
   payload: {
-    bridgeVersion: 1
+    bridgeVersion: 1,
+    sessionNonce: "…",        // the value the container sent, echoed
+    hostClass: "viewer"       // or "editor"; see the specification §4
   }
 }
 ```
+
+`hostClass` says what a save through this host does. A **viewer** keeps a
+copy of the database on the device and can export a file; it never claims to
+have written the file it was given. An **editor** writes the document in
+place. A host that omits it is treated as a viewer. The container reports the
+answer to the application on every save as `inPlace`.
 
 #### 2. `DAI_HOST_SAVE_ACK`
 Reports whether the host successfully persisted the container:
