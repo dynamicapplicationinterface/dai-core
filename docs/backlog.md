@@ -135,8 +135,7 @@ Kept so the reasoning stays with the record.
   spec §7.2; every reader refusal coded; the Python reader computes the same
   name by the same priority; every refused conformance case states its code
   and all three readers are checked against it.
-- **9. Two host classes, and the site says which is which** — see the commit
-  after `159827f`. `hostClass` on the handshake, viewer or editor; a viewer
+- **9. Two host classes, and the site says which is which** — `834e504`. `hostClass` on the handshake, viewer or editor; a viewer
   never claims an in-place save; the application is told `inPlace` on every
   save; the README no longer says the browser rewrites the file.
 
