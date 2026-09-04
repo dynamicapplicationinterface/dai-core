@@ -12,6 +12,7 @@
  */
 import { zipSync, type Zippable } from "fflate";
 import { encode as cborEncode, type CborValue } from "./cbor.js";
+import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 
@@ -197,6 +198,25 @@ export async function buildContainer(
   }
   if (Object.keys(files).length === 0) {
     throw new Error("DAI: no application files were provided.");
+  }
+
+  /*
+   * The kit rides in every container, whichever door it was built through.
+   *
+   * It lived in the command-line door for a while, and the browser door — the
+   * one the website uses — did not have it. Every file made on the make-one
+   * page referenced ./dai-kit.js and got nothing: the page drew, no query ran,
+   * no button did anything. The command line, and every test, was fine.
+   *
+   * An application references it or does not; either way it is there. Four
+   * kilobytes against a container that carries a database engine, and it is
+   * what lets an application be HTML and SQL rather than a state machine.
+   * Never overwrites one the author supplied: somebody with their own
+   * dai-kit.js has decided something, and replacing it would be overruling
+   * them silently.
+   */
+  if (!files[KIT_ENTRY]) {
+    files[KIT_ENTRY] = new TextEncoder().encode(KIT_SOURCE);
   }
 
   const prefix = normalizePrefix(input.appEntryPrefix ?? DEFAULT_APP_PREFIX);

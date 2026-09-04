@@ -250,3 +250,38 @@ test.describe("the front page, read by somebody who is not an engineer", () => {
     for (const label of labels) expect(label.toLowerCase()).not.toContain("task");
   });
 });
+
+test.describe("what the make-one page hands over actually runs", () => {
+  /*
+   * The page built a container, offered it, and the container did nothing:
+   * every query was silent and Add was inert. The browser compiler was not
+   * shipping the kit the examples rely on. The download was the right size
+   * and passed every check, because a missing module fails only when a
+   * person opens the file.
+   *
+   * So the file the page produces is opened, and something in it has to work.
+   */
+  test("the built file opens and its buttons do something", async ({ page, context }) => {
+    test.slow();
+    await page.goto(PAGE);
+    await page.getByRole("button", { name: /^Make my/ }).click();
+    const download = page.locator("a.download");
+    await expect(download).toBeVisible({ timeout: 120_000 });
+
+    const html = await page.evaluate(async (href) => (await fetch(href)).text(), await download.getAttribute("href"));
+
+    const opener = await context.newPage();
+    await opener.goto("http://localhost:5175/");
+    await opener.setInputFiles("#file", { name: "beach-trip.dai.html", mimeType: "text/html", buffer: Buffer.from(html) });
+    await expect(opener.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+
+    const app = opener.frameLocator("#cartridge").frameLocator("#dai-app");
+    // Rows drawn from the database: the kit ran.
+    await expect(app.locator(".item").first()).toBeVisible({ timeout: 30_000 });
+    const before = await app.locator(".item").count();
+    await app.locator('input[name="what"]').fill("Kite");
+    await app.locator("dai-form button").click();
+    // And a button did something.
+    await expect(app.locator(".item")).toHaveCount(before + 1);
+  });
+});

@@ -2,7 +2,10 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { unzipSync } from "fflate";
+import { buildContainer } from "../src/core.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const app = join(repo, "tests", "fixture", "kit");
@@ -127,5 +130,36 @@ test.describe("the kit", () => {
     const report = drive([{ wait: 400 }]);
     expect(report.mounted).toBe(true);
     expect(report.problems).toEqual([]);
+  });
+});
+
+/**
+ * The kit is in the container whichever way the container was built.
+ *
+ * It was added in the command-line door only. The browser door — the website's
+ * — did not add it, so every file made on the make-one page referenced a
+ * dai-kit.js that was not there: the page drew, nothing ran, and the Add
+ * button did nothing. The command line and every test were fine, which is why
+ * this is checked at the engine and not at a door.
+ */
+test.describe("the kit ships from the engine", () => {
+  test("a container built straight from the core carries it", async () => {
+    const built = await buildContainer({
+      files: { "index.html": new TextEncoder().encode('<!doctype html><script type="module" src="./dai-kit.js"></script>') },
+      template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+      runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+      appName: "Kit",
+    });
+    const payload = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/.exec(built.html)![1]!;
+    const archive = unzipSync(Buffer.from(payload, "base64"));
+    expect(Object.keys(archive)).toContain("dai-kit.js");
+    expect(new TextDecoder().decode(archive["dai-kit.js"])).toContain("customElements.define('dai-rows'");
+  });
+
+  test("no door adds it on its own", () => {
+    // A second place that adds the kit is a place that can be the only place.
+    for (const door of ["src/compile.ts", "src/browser.ts"]) {
+      expect(readFileSync(resolve(repo, door), "utf8")).not.toContain("KIT_SOURCE");
+    }
   });
 });
