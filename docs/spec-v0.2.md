@@ -546,6 +546,55 @@ only the accept-or-refuse.
 
 The suite is where this document stops being a description of one program.
 
+### 7.2 Refusals
+
+An implementation that refuses MUST say why with one of these names, so that
+two implementations can be held to the same answer about the same file. The
+conformance suite states the name for every refused case, and a reader is
+conforming only if it emits that name.
+
+The bootloader's names came first and are read by hosts over the bridge, so
+they are kept; the reader-only names sit beside them. `recoverable` means the
+person's work is still in hand.
+
+| Code | Recoverable | Means |
+|---|---|---|
+| `NO_PAYLOAD` | no | No payload: probably not a container |
+| `PAYLOAD_UNREADABLE` | no | The payload did not decode or unzip |
+| `MANIFEST_MISSING` | no | No manifest, so nothing can be verified |
+| `MANIFEST_UNREADABLE` | no | The manifest is not valid JSON |
+| `UNSUPPORTED_ALGORITHM` | no | A digest algorithm this reader does not implement |
+| `UNSUPPORTED_CRYPTO` | no | No WebCrypto: not a secure context |
+| `SECTION_MISSING` | no | A required section is absent; the file is incomplete |
+| `DIGEST_MISMATCH` | no | An entry does not match its digest, is missing, or is unlisted |
+| `SECTION_MISMATCH` | no | The manifest or application section does not match its digest |
+| `DATA_DAMAGED` | no | Only the database disagrees with its record: an interrupted save; the application is intact |
+| `SHELL_MISSING` | no | No sealed copy of the shell |
+| `SHELL_MISMATCH` | no | The shell does not match the sealed copy inside it |
+| `SIGNATURE_UNVERIFIABLE` | no | A publisher key is present but there is nothing usable to check |
+| `SIGNATURE_UNSUPPORTED` | no | A signature format this reader does not implement |
+| `SIGNED_SET_MISMATCH` | no | The signed list and the digest list disagree, in either direction (§3.1) |
+| `UNVERIFIED_SIGNATURE` | no | The signature does not verify against the key the file carries |
+| `KEY_EXPIRED` | no | The expiry has passed |
+| `PUBLISHER_MISMATCH` | no | Signed by a different key than the host pinned for this document |
+| `NO_APPLICATION` | no | Verified, but no `index.html` to run |
+| `SCHEMA_INCOMPATIBLE` | no | The data's shape is not one the application declared and no migration reaches it |
+| `SCHEMA_AHEAD` | yes | The data is newer than the application; a host MUST NOT migrate backwards |
+| `GENERATION_CONFLICT` | yes | Another window saved first (§5) |
+| `LOCK_UNAVAILABLE` | yes | Another program is saving now (§5) |
+| `MOUNT_TIMEOUT` | no | The application never reported that it started |
+| `BOOT_FAILED` | no | The bootloader threw |
+| `HOST_REFUSED` | no | The host declined for a reason of its own; see the message |
+
+When more than one applies, an implementation MUST report the first in this
+order: unsupported crypto or algorithm; a section that is missing, damaged or
+mismatched; an entry; the shell; expiry; the signature. A section digest covers
+every byte of a section and an entry digest only what unzipped out of one, so
+the section is the more precise account when both fail.
+
+A refusal SHOULD also carry the document's identity and generation when they
+could be read, so a host can say which document, and which save of it.
+
 ---
 
 ## 8. What this format does not address

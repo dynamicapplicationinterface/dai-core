@@ -67,6 +67,7 @@ def main() -> int:
             "shell": report.shell,
             "signature": report.signature,
             "expiry": report.expiry,
+            "code": report.code,
         }
         if report.sections is not None:
             seen["sections"] = {

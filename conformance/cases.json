@@ -65,6 +65,7 @@
       "summary": "The expiry has passed. A host must refuse rather than warn.",
       "expect": {
         "mount": false,
+        "code": "KEY_EXPIRED",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -83,6 +84,7 @@
       "summary": "One application file has been edited. Its digest no longer matches the manifest.",
       "expect": {
         "mount": false,
+        "code": "DIGEST_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [
@@ -103,6 +105,7 @@
       "summary": "A file the manifest does not list. Refused: otherwise content can simply be appended.",
       "expect": {
         "mount": false,
+        "code": "DIGEST_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -123,6 +126,7 @@
       "summary": "The manifest lists a file the archive no longer carries.",
       "expect": {
         "mount": false,
+        "code": "DIGEST_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -143,6 +147,7 @@
       "summary": "The outer document differs from the sealed copy inside the payload.",
       "expect": {
         "mount": false,
+        "code": "SHELL_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -161,6 +166,7 @@
       "summary": "Signed, then the signature bytes were altered. The manifest is otherwise intact.",
       "expect": {
         "mount": false,
+        "code": "UNVERIFIED_SIGNATURE",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -179,6 +185,7 @@
       "summary": "The signed digest list disagrees with the digest list that was checked.",
       "expect": {
         "mount": false,
+        "code": "SIGNED_SET_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -197,6 +204,7 @@
       "summary": "An entry added alongside a matching digest, with the signed list untouched.",
       "expect": {
         "mount": false,
+        "code": "SIGNED_SET_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -215,6 +223,7 @@
       "summary": "A schema declaration added the same way. A host runs its migration SQL.",
       "expect": {
         "mount": false,
+        "code": "SIGNED_SET_MISMATCH",
         "ok": false,
         "entries": {
           "mismatched": [],
@@ -256,6 +265,7 @@
       "summary": "A byte inside the payload section no longer matches the section table.",
       "expect": {
         "mount": false,
+        "code": "SECTION_MISMATCH",
         "ok": false,
         "shell": "ok",
         "signature": "unsigned",
@@ -276,6 +286,7 @@
       "summary": "The footer records a database other than the one the file carries.",
       "expect": {
         "mount": false,
+        "code": "DATA_DAMAGED",
         "ok": false,
         "shell": "ok",
         "signature": "unsigned",
@@ -294,6 +305,7 @@
       "summary": "The section table declares no database. Not an empty document: an incomplete file.",
       "expect": {
         "mount": false,
+        "code": "SECTION_MISSING",
         "ok": false,
         "shell": "ok",
         "signature": "unsigned",

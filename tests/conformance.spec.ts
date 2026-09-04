@@ -14,6 +14,7 @@ interface Case {
   summary: string;
   expect: {
     mount: boolean;
+    code?: string;
     parses?: boolean;
     ok?: boolean;
     entries?: { mismatched: string[]; missing: string[]; unlisted: string[] };
@@ -65,12 +66,16 @@ test.describe("the conformance suite", () => {
       }
 
       let mounted = true;
+      let code: string | undefined;
       try {
         await verifyContainer(source);
-      } catch {
+      } catch (error) {
         mounted = false;
+        code = (error as { code?: string }).code;
       }
       expect(mounted).toBe(entry.expect.mount);
+      // The reason, by name. A second implementation is held to the same word.
+      if (entry.expect.code) expect(code).toBe(entry.expect.code);
 
       const report = await auditContainer(parseContainer(source));
       const named = (status: string) =>

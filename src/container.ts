@@ -11,6 +11,7 @@
  * imports, no DOM types. A host that has a `File` reads the text itself.
  */
 import { unzipSync, zipSync } from "fflate";
+import { isRefusalCode, type RefusalCode } from "./refusals.js";
 import { verifySign1 } from "./cose.js";
 import {
   MAGIC,
@@ -43,9 +44,17 @@ const SQLITE_ENTRY = "document.sqlite";
  * file rather than which line threw.
  */
 export class ContainerError extends Error {
-  constructor(message: string) {
-    super(message);
+  /** Why, as a name from the registry, so a host can act without parsing prose. */
+  readonly code: RefusalCode;
+
+  constructor(code: RefusalCode, message: string);
+  /** @deprecated Name the reason. Kept so a host built against the old shape still compiles. */
+  constructor(message: string);
+  constructor(codeOrMessage: string, message?: string) {
+    const coded = message !== undefined && isRefusalCode(codeOrMessage);
+    super(coded ? (message as string) : codeOrMessage);
     this.name = "ContainerError";
+    this.code = coded ? (codeOrMessage as RefusalCode) : "HOST_REFUSED";
   }
 }
 
@@ -112,7 +121,7 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
 
   const payload = PAYLOAD_RE.exec(html)?.[1]?.trim();
   if (!payload) {
-    throw new ContainerError(
+    throw new ContainerError("NO_PAYLOAD", 
       "This file has no DAI payload. It may be an ordinary web page rather than a container.",
     );
   }
@@ -121,12 +130,12 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
   try {
     archive = unzipSync(fromBase64(payload));
   } catch (cause) {
-    throw new ContainerError(`The container's payload could not be read (${String(cause)}).`);
+    throw new ContainerError("PAYLOAD_UNREADABLE", `The container's payload could not be read (${String(cause)}).`);
   }
 
   const manifestBytes = archive[MANIFEST_ENTRY];
   if (!manifestBytes) {
-    throw new ContainerError(
+    throw new ContainerError("MANIFEST_MISSING", 
       `This container has no ${MANIFEST_ENTRY}, so its contents cannot be verified.`,
     );
   }
@@ -135,7 +144,7 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
   try {
     manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as ContainerManifest;
   } catch (cause) {
-    throw new ContainerError(`The container's manifest is unreadable (${String(cause)}).`);
+    throw new ContainerError("MANIFEST_UNREADABLE", `The container's manifest is unreadable (${String(cause)}).`);
   }
 
   const publicKey = metaContent(html, "dai-public-key") || undefined;
@@ -179,26 +188,26 @@ function parseSectioned(bytes: Uint8Array): ParsedContainer {
   const manifestBytes = sectionBytes(bytes, file, SECTION.MANIFEST);
   const payloadBytes = sectionBytes(bytes, file, SECTION.PAYLOAD);
   if (!manifestBytes || !payloadBytes) {
-    throw new ContainerError("This container is missing a manifest or a payload section.");
+    throw new ContainerError("SECTION_MISSING", "This container is missing a manifest or a payload section.");
   }
 
   let archive: Record<string, Uint8Array>;
   try {
     archive = unzipSync(payloadBytes);
   } catch (cause) {
-    throw new ContainerError(`The container's payload could not be read (${String(cause)}).`);
+    throw new ContainerError("PAYLOAD_UNREADABLE", `The container's payload could not be read (${String(cause)}).`);
   }
 
   let manifest: ContainerManifest;
   try {
     manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as ContainerManifest;
   } catch (cause) {
-    throw new ContainerError(`The container's manifest is unreadable (${String(cause)}).`);
+    throw new ContainerError("MANIFEST_UNREADABLE", `The container's manifest is unreadable (${String(cause)}).`);
   }
 
   const shell = archive[CONTAINER_ENTRY];
   if (!shell) {
-    throw new ContainerError(
+    throw new ContainerError("SHELL_MISSING", 
       `This container has no ${CONTAINER_ENTRY}, so its publisher key cannot be read.`,
     );
   }
@@ -291,7 +300,7 @@ async function checkDigests(
 function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void {
   const sealed = archive[CONTAINER_ENTRY];
   if (!sealed) {
-    throw new ContainerError(
+    throw new ContainerError("SHELL_MISSING", 
       `This container has no ${CONTAINER_ENTRY}, so its bootloader cannot be checked.`,
     );
   }
@@ -302,7 +311,7 @@ function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void
   );
 
   if (stripped !== new TextDecoder().decode(sealed)) {
-    throw new ContainerError(
+    throw new ContainerError("SHELL_MISMATCH", 
       "This container's bootloader does not match the sealed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
@@ -331,7 +340,7 @@ async function checkSignature(
   documentUuid: string,
 ): Promise<void> {
   if (!manifest.signature || !manifest.signedEntries) {
-    throw new ContainerError(
+    throw new ContainerError("SIGNATURE_UNVERIFIABLE", 
       "This container carries a publisher key but no signature, so the key cannot be checked.",
     );
   }
@@ -340,20 +349,20 @@ async function checkSignature(
   // the refusal says what happened and what to do rather than naming a constant
   // the reader has never heard of.
   if (manifest.signatureAlgorithm === "ECDSA-P256-SHA256" || manifest.manifestVersion < 2) {
-    throw new ContainerError(
+    throw new ContainerError("SIGNATURE_UNSUPPORTED", 
       "This container was built before the signature format changed, so its " +
         "signature cannot be checked here. Rebuild it and it will open.",
     );
   }
   if (manifest.signatureAlgorithm !== "COSE-ES256") {
-    throw new ContainerError(
+    throw new ContainerError("SIGNATURE_UNSUPPORTED", 
       `Unsupported signature algorithm: ${manifest.signatureAlgorithm}.`,
     );
   }
 
   for (const [name, digest] of Object.entries(manifest.signedEntries)) {
     if (manifest.hashes[name] !== digest) {
-      throw new ContainerError(
+      throw new ContainerError("SIGNED_SET_MISMATCH", 
         `This container is not authentic: ${name} is signed with a different digest.`,
       );
     }
@@ -374,7 +383,7 @@ async function checkSignature(
   for (const name of Object.keys(manifest.hashes)) {
     if (name === SQLITE_ENTRY) continue;
     if (!(name in manifest.signedEntries)) {
-      throw new ContainerError(
+      throw new ContainerError("SIGNED_SET_MISMATCH", 
         `This container is not authentic: ${name} is not covered by the signature.`,
       );
     }
@@ -390,7 +399,7 @@ async function checkSignature(
       ["verify"],
     );
   } catch (cause) {
-    throw new ContainerError(`The container's publisher key is unreadable (${String(cause)}).`);
+    throw new ContainerError("SIGNATURE_UNVERIFIABLE", `The container's publisher key is unreadable (${String(cause)}).`);
   }
 
   // The payload is rebuilt from the manifest rather than taken from the
@@ -410,11 +419,11 @@ async function checkSignature(
   ).catch((cause: unknown) => {
     // A malformed envelope is a refusal with a reason, not a stack trace: a
     // host shows this to somebody.
-    throw new ContainerError(`The container's signature is unreadable (${String(cause)}).`);
+    throw new ContainerError("UNVERIFIED_SIGNATURE", `The container's signature is unreadable (${String(cause)}).`);
   });
 
   if (!ok) {
-    throw new ContainerError(
+    throw new ContainerError("UNVERIFIED_SIGNATURE", 
       "This container is not authentic: the signature does not match the publisher key.",
     );
   }
@@ -439,6 +448,8 @@ export interface AuditReport {
   shell: { status: "ok" | "mismatch" | "absent" };
   signature: {
     status: "valid" | "invalid" | "unsigned" | "unverifiable";
+    /** The registry name for a refusal, when the status is not valid or unsigned. */
+    code?: RefusalCode;
     fingerprint?: string;
     reason?: string;
   };
@@ -600,6 +611,7 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
         ? "unverifiable"
         : "invalid";
       report.signature.reason = message;
+      if (error instanceof ContainerError) report.signature.code = error.code;
     }
   }
 
@@ -631,7 +643,12 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
   // tools, an exception for hosts. A second verifier written for either would
   // drift, and the drift would surface as a playground passing what a host
   // refuses.
-  if (report.unavailable) throw new ContainerError(report.unavailable);
+  if (report.unavailable) {
+    throw new ContainerError(
+      report.unavailable.startsWith("Unsupported digest") ? "UNSUPPORTED_ALGORITHM" : "UNSUPPORTED_CRYPTO",
+      report.unavailable,
+    );
+  }
 
   // Reported before the entries, because a section digest covers every byte of
   // a section and an entry digest covers only what unzipped out of one. When
@@ -658,7 +675,7 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
       (damaged.length > 0 || report.sections.staleFooter);
 
     if (onlyTheDatabase) {
-      throw new ContainerError(
+      throw new ContainerError("DATA_DAMAGED", 
         "This document's data is damaged and it will not be opened.\n" +
           "The application inside it is intact and correctly sealed — it is the database " +
           "that does not match the record kept of it, which is what an interrupted save " +
@@ -667,14 +684,14 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
     }
 
     if (damaged.length > 0) {
-      throw new ContainerError(
+      throw new ContainerError("SECTION_MISMATCH", 
         "This container has been modified and will not be run.\n" +
           `the ${damaged.map(sectionName).join(" and the ")} does not match its digest`,
       );
     }
 
     if (report.sections.missing.length > 0) {
-      throw new ContainerError(
+      throw new ContainerError("SECTION_MISSING", 
         "This container is incomplete and will not be run.\n" +
           `it has no ${report.sections.missing.map(sectionName).join(" and no ")}`,
       );
@@ -693,16 +710,16 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
             : `${entry.name} does not match its digest`,
       )
       .join("\n");
-    throw new ContainerError(`This container has been modified and will not be run.\n${detail}`);
+    throw new ContainerError("DIGEST_MISMATCH", `This container has been modified and will not be run.\n${detail}`);
   }
 
   if (report.shell.status === "absent") {
-    throw new ContainerError(
+    throw new ContainerError("SHELL_MISSING", 
       `This container has no ${CONTAINER_ENTRY}, so its bootloader cannot be checked.`,
     );
   }
   if (report.shell.status === "mismatch") {
-    throw new ContainerError(
+    throw new ContainerError("SHELL_MISMATCH", 
       "This container's bootloader does not match the sealed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
@@ -710,14 +727,17 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
 
   if (report.expiry.status === "expired") {
     const expiry = new Date(report.expiry.validUntil! * 1000).toISOString();
-    throw new ContainerError(
+    throw new ContainerError("KEY_EXPIRED", 
       `This container expired on ${expiry} and will not be run. Only its publisher ` +
         `can issue a replacement; an expiry cannot be extended without the signing key.`,
     );
   }
 
   if (report.signature.status === "invalid" || report.signature.status === "unverifiable") {
-    throw new ContainerError(report.signature.reason ?? "This container is not authentic.");
+    throw new ContainerError(
+      report.signature.code ?? "UNVERIFIED_SIGNATURE",
+      report.signature.reason ?? "This container is not authentic.",
+    );
   }
 
   return { ...parsed, signature: report.signature.status === "valid" ? "valid" : "unsigned" };

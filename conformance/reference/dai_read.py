@@ -263,7 +263,9 @@ class Report:
     missing: list[str] = field(default_factory=list)
     unlisted: list[str] = field(default_factory=list)
     sections: dict[str, Any] | None = None
-    refused: str = ""
+    # The registry name (spec §7.2) for a refusal; empty when the container
+    # may be mounted.
+    code: str = ""
 
 
 def _read_sectioned(data: bytes) -> tuple[dict[str, bytes], bytes, dict[str, Any]]:
@@ -385,7 +387,7 @@ def verify(data: bytes, now: int) -> Report:
         report.expiry = "expired" if now > valid_until else "current"
 
     # 6. Signature, over §3.1.
-    report.signature = _check_signature(manifest, shell_text, hashes)
+    report.signature, signature_code = _check_signature(manifest, shell_text, hashes)
 
     section_failure = bool(
         report.sections
@@ -406,10 +408,33 @@ def verify(data: bytes, now: int) -> Report:
         and report.signature in ("valid", "unsigned")
     )
     report.mount = report.ok
+
+    # The name for the refusal, in the same priority the reference reader
+    # uses, so both say the same word about the same file.
+    if not report.ok:
+        sections = report.sections or {"mismatched": [], "missing": [], "staleFooter": False}
+        damaged = sections["mismatched"]
+        only_data = all(sid == 3 for sid in damaged) and (damaged or sections["staleFooter"])
+        if only_data:
+            report.code = "DATA_DAMAGED"
+        elif damaged:
+            report.code = "SECTION_MISMATCH"
+        elif sections["missing"]:
+            report.code = "SECTION_MISSING"
+        elif report.mismatched or report.missing or report.unlisted:
+            report.code = "DIGEST_MISMATCH"
+        elif report.shell == "absent":
+            report.code = "SHELL_MISSING"
+        elif report.shell == "mismatch":
+            report.code = "SHELL_MISMATCH"
+        elif report.expiry == "expired":
+            report.code = "KEY_EXPIRED"
+        else:
+            report.code = signature_code or "UNVERIFIED_SIGNATURE"
     return report
 
 
-def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> str:
+def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> tuple[str, str]:
     # WAS A GAP: §7 step 6 said the signature is checked "when the shell carries
     # a publisher key" and never said where, or in what encoding. Now §3.
     key = None
@@ -419,18 +444,18 @@ def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> st
 
     signature = manifest.get("signature")
     if not signature:
-        return "unsigned"
+        return "unsigned", ""
     if not key:
         # Signed, but nothing here can check it. Not the same as unsigned, and
         # reporting it as such would launder a claim nobody verified.
-        return "unverifiable"
+        return "unverifiable", "SIGNATURE_UNVERIFIABLE"
 
     signed_entries: dict[str, str] = manifest.get("signedEntries", {})
     # Reconciled before verifying, per §3.1: otherwise a signature could be
     # validated over digests other than the ones just checked.
     for name, digest in signed_entries.items():
         if hashes.get(name) != digest:
-            return "invalid"
+            return "invalid", "SIGNED_SET_MISMATCH"
     # WAS A GAP, and a serious one. The rule above is one direction. `hashes`
     # is outside the signature, so an entry added to the archive and to
     # `hashes` with a matching digest passed integrity and passed signature
@@ -440,7 +465,7 @@ def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> st
     # the signed set. Now S3.1.
     for name in hashes:
         if name != DATABASE_ENTRY and name not in signed_entries:
-            return "invalid"
+            return "invalid", "SIGNED_SET_MISMATCH"
 
     fields: dict[str, Any] = {
         "manifestVersion": manifest["manifestVersion"],
@@ -466,20 +491,22 @@ def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> st
 
     envelope = cbor_decode(base64.b64decode(signature))
     if not isinstance(envelope, list) or len(envelope) != 4:
-        return "invalid"
+        return "invalid", "UNVERIFIED_SIGNATURE"
     protected, _unprotected, carried, raw_signature = envelope
     if carried is not None:
         # The payload is detached. A second copy inside the envelope is one that
         # can disagree with the manifest, and it would be the one the signature
         # covered.
-        return "invalid"
+        return "invalid", "UNVERIFIED_SIGNATURE"
 
     header = cbor_decode(protected)
     if header.get(1) != -7:
-        return "invalid"
+        return "invalid", "UNVERIFIED_SIGNATURE"
 
     structure = cbor_encode(["Signature1", protected, b"", payload])
-    return "valid" if verify_es256(base64.b64decode(key), raw_signature, structure) else "invalid"
+    if verify_es256(base64.b64decode(key), raw_signature, structure):
+        return "valid", ""
+    return "invalid", "UNVERIFIED_SIGNATURE"
 
 
 def main(argv: list[str]) -> int:

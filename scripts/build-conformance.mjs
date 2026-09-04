@@ -147,6 +147,7 @@ define(
   "The expiry has passed. A host must refuse rather than warn.",
   {
     mount: false,
+    code: "KEY_EXPIRED",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: [] },
     shell: "ok",
@@ -164,6 +165,7 @@ define(
   "One application file has been edited. Its digest no longer matches the manifest.",
   {
     mount: false,
+    code: "DIGEST_MISMATCH",
     ok: false,
     entries: { mismatched: ["app/app.js"], missing: [], unlisted: [] },
     shell: "ok",
@@ -183,6 +185,7 @@ define(
   "A file the manifest does not list. Refused: otherwise content can simply be appended.",
   {
     mount: false,
+    code: "DIGEST_MISMATCH",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: ["app/extra.js"] },
     shell: "ok",
@@ -202,6 +205,7 @@ define(
   "The manifest lists a file the archive no longer carries.",
   {
     mount: false,
+    code: "DIGEST_MISMATCH",
     ok: false,
     entries: { mismatched: [], missing: ["app/app.js"], unlisted: [] },
     shell: "ok",
@@ -221,6 +225,7 @@ define(
   "The outer document differs from the sealed copy inside the payload.",
   {
     mount: false,
+    code: "SHELL_MISMATCH",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: [] },
     shell: "mismatch",
@@ -243,6 +248,7 @@ define(
   "Signed, then the signature bytes were altered. The manifest is otherwise intact.",
   {
     mount: false,
+    code: "UNVERIFIED_SIGNATURE",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: [] },
     shell: "ok",
@@ -266,6 +272,7 @@ define(
   "The signed digest list disagrees with the digest list that was checked.",
   {
     mount: false,
+    code: "SIGNED_SET_MISMATCH",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: [] },
     shell: "ok",
@@ -291,6 +298,7 @@ define(
   "An entry added alongside a matching digest, with the signed list untouched.",
   {
     mount: false,
+    code: "SIGNED_SET_MISMATCH",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: [] },
     shell: "ok",
@@ -318,6 +326,7 @@ define(
   "A schema declaration added the same way. A host runs its migration SQL.",
   {
     mount: false,
+    code: "SIGNED_SET_MISMATCH",
     ok: false,
     entries: { mismatched: [], missing: [], unlisted: [] },
     shell: "ok",
@@ -368,6 +377,7 @@ define(
   "A byte inside the payload section no longer matches the section table.",
   {
     mount: false,
+    code: "SECTION_MISMATCH",
     ok: false,
     shell: "ok",
     signature: "unsigned",
@@ -393,6 +403,7 @@ define(
   "The footer records a database other than the one the file carries.",
   {
     mount: false,
+    code: "DATA_DAMAGED",
     ok: false,
     shell: "ok",
     signature: "unsigned",
@@ -412,6 +423,7 @@ define(
   "The section table declares no database. Not an empty document: an incomplete file.",
   {
     mount: false,
+    code: "SECTION_MISSING",
     ok: false,
     shell: "ok",
     signature: "unsigned",
@@ -447,10 +459,12 @@ async function observe(body) {
   // rather than inferred from the report. The two are meant to agree, and a
   // suite that assumed they did could not notice the day they stopped.
   let mount = true;
+  let code;
   try {
     await verifyContainer(source);
-  } catch {
+  } catch (error) {
     mount = false;
+    code = error && error.code;
   }
 
   const named = (status) =>
@@ -468,6 +482,7 @@ async function observe(body) {
     signature: report.signature.status,
     expiry: report.expiry.status,
   };
+  if (code) observed.code = code;
 
   if (report.sections) {
     observed.sections = {

@@ -864,8 +864,11 @@ test.describe("host bridge", () => {
         if (data?.type === "DAI_HOST_SAVE") {
           (win.__saves as unknown[]).push(data.payload?.html ?? "");
           if (replies) {
+            // Echoing the request id, as a real host does: a reply without it
+            // is not this request's reply, and the container waits for one
+            // that is.
             (event.source as Window).postMessage(
-              { type: "DAI_HOST_SAVE_ACK", status: "ok" },
+              { type: "DAI_HOST_SAVE_ACK", status: "ok", requestId: data.requestId },
               "*",
             );
           }
