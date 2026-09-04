@@ -165,4 +165,28 @@ test.describe("what the site claims", () => {
     // And the limit of what a signature proves.
     expect(text).toMatch(/not.*who signed it/i);
   });
+
+  test("the page for somebody holding a file they cannot open", async ({ page }) => {
+    /*
+     * The address that goes in the message a container arrives in. Somebody
+     * reaching it has an attachment their computer will not name and no idea
+     * what to do, so the page has to answer that before it explains anything.
+     */
+    await page.goto("http://localhost:5176/open");
+
+    const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+
+    // The three ways out, in the order somebody is likely to need them.
+    expect(text).toMatch(/runner/i);
+    expect(text).toMatch(/dai\.html/i);
+    expect(text).toMatch(/desktop app/i);
+
+    // And the part a security-minded reader will look for.
+    expect(text).toMatch(/cannot make a network request/i);
+    expect(text).toMatch(/asking for a password/i);
+
+    await expect(
+      page.getByRole("link", { name: /the runner/i }).first(),
+    ).toHaveAttribute("href", "https://run.dynamicapplicationinterface.io");
+  });
 });

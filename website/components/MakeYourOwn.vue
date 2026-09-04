@@ -49,7 +49,15 @@ const downloadName = computed(() => {
   const slug = appName.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `${slug || 'my-app'}.dai.html`;
 });
-const { canShareFile, share, shareError } = useFileHandoff(builtFile, downloadName);
+const { canShareFile, share, shareError } = useFileHandoff(
+  builtFile,
+  downloadName,
+  // Carried into whatever the sheet sends this to. Somebody who is handed a
+  // container and has nothing installed gets a file their system cannot name;
+  // the message it arrives in is the one place an answer fits.
+  'A DAI document — the app and its data in one file. Open it at ' +
+    'dynamicapplicationinterface.io/open',
+);
 
 /** What the checks can read. Binary files are not worth decoding. */
 const readable = computed<Record<string, string>>(() => {

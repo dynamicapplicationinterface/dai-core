@@ -62,6 +62,10 @@
         text-align: center;
       }
       #slot p { margin: 0; color: #9ca3af; max-width: 34ch; }
+      /* Quieter than the instruction above it: the answer to a question only
+         some people arrive with. */
+      #slot p.hint { font-size: 13px; color: #6b7280; }
+      #slot p.hint a { color: #93c5fd; }
       #slot.busy { opacity: 0.6; }
 
       #report {
@@ -124,8 +128,12 @@
     <main>
       <div id="slot">
         <p>
-          Choose a <code>.dai.html</code> container to run. Nothing is uploaded —
-          the file is read and executed on this device.
+          Choose a <code>.dai</code> or <code>.dai.html</code> file to run. Nothing is
+          uploaded — the file is read and run on this device.
+        </p>
+        <p class="hint">
+          Not sure what you have?
+          <a href="https://www.dynamicapplicationinterface.io/open">What is a .dai file?</a>
         </p>
         <div id="report"></div>
         <div id="library"></div>

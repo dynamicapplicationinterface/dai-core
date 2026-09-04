@@ -69,7 +69,15 @@ const fingerprint = ref('');
 const fileSize = ref(0);
 const errorText = ref('');
 const builtFile = ref<File | null>(null);
-const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(builtFile, downloadName);
+const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(
+  builtFile,
+  downloadName,
+  // Carried into whatever the sheet sends this to. Somebody who is handed a
+  // container and has nothing installed gets a file their system cannot name;
+  // the message it arrives in is the one place an answer fits.
+  'A DAI document — the app and its data in one file. Open it at ' +
+    'dynamicapplicationinterface.io/open',
+);
 
 /** The build step appears once the conversation has finished replaying. */
 const finished = computed(() => revealed.value >= TRANSCRIPT.length);

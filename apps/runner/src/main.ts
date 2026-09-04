@@ -369,7 +369,15 @@ async function exportContainer(): Promise<void> {
   // will not take a file directly is why the download link below exists, and
   // two implementations of "can this device take a file" would eventually
   // disagree about the device somebody is holding.
-  const handed = await handOff(navigator, file, name);
+  const handed = await handOff(
+    navigator,
+    file,
+    name,
+    // What a recipient with nothing installed needs, in the only place it can
+    // reach them: the message the file arrives in.
+    `${name} — a DAI document. It holds the app and its data in one file. ` +
+      `Open it at ${OPENER}`,
+  );
   // Dismissed rather than failed: offering a download after somebody declined
   // to save would be the app arguing with them.
   if (handed.shared || !handed.error) return;
@@ -393,6 +401,9 @@ async function exportContainer(): Promise<void> {
  * trustworthy; it says the message came from the one this runner mounted.
  */
 let mountedNonce: string | null = null;
+
+/** Where somebody holding one of these can find out what to do with it. */
+const OPENER = "dynamicapplicationinterface.io/open";
 
 /** Milliseconds from the container starting to the application being usable. */
 let lastOpenMs: number | null = null;

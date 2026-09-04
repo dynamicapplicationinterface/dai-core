@@ -8,7 +8,11 @@ import { canHandOff, handOff } from '../../src/handoff.js';
  * part worth testing and every host that hands somebody a file needs it. What
  * is here is only the part Vue requires.
  */
-export function useFileHandoff(file: Ref<File | null>, title: Ref<string> | string) {
+export function useFileHandoff(
+  file: Ref<File | null>,
+  title: Ref<string> | string,
+  text?: string,
+) {
   const shareError = ref('');
 
   const canShareFile = computed(() =>
@@ -22,6 +26,7 @@ export function useFileHandoff(file: Ref<File | null>, title: Ref<string> | stri
       navigator,
       value,
       typeof title === 'string' ? title : title.value,
+      text,
     );
     shareError.value = result.error ?? '';
   }

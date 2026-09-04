@@ -40,7 +40,7 @@ test.describe("deciding whether to offer the share sheet", () => {
 
 test.describe("handing the file over", () => {
   test("passes the file and the name to the sheet", async () => {
-    const calls: { files?: File[]; title?: string }[] = [];
+    const calls: { files?: File[]; title?: string; text?: string }[] = [];
     const subject = file();
 
     const result = await handOff(
@@ -98,5 +98,35 @@ test.describe("handing the file over", () => {
     const result = await handOff({}, file(), "x");
     expect(result.shared).toBe(false);
     expect(result.error).toBeTruthy();
+  });
+
+  test("carries a sentence for somebody whose computer cannot name the file", async () => {
+    /*
+     * A recipient with nothing installed gets an attachment their system offers
+     * no way to open and no way to identify. The message it arrives in is the
+     * only place an answer fits, so the sentence travels with the file.
+     */
+    const calls: { text?: string }[] = [];
+    const result = await handOff(
+      { canShare: () => true, share: async (data) => void calls.push(data) },
+      file(),
+      "my-tasks.dai.html",
+      "A DAI document. Open it at example.test/open",
+    );
+
+    expect(result.shared).toBe(true);
+    expect(calls[0]!.text).toContain("example.test/open");
+  });
+
+  test("sends no text field at all when there is nothing to say", async () => {
+    // An empty string in a share sheet is a blank line in somebody's message.
+    const calls: Record<string, unknown>[] = [];
+    await handOff(
+      { canShare: () => true, share: async (data) => void calls.push(data) },
+      file(),
+      "x",
+    );
+
+    expect("text" in calls[0]!).toBe(false);
   });
 });

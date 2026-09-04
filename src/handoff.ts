@@ -18,7 +18,7 @@
 
 /** The parts of `navigator` this needs. Narrow so a caller can pass a stub. */
 export interface ShareCapableNavigator {
-  share?: (data: { files?: File[]; title?: string }) => Promise<void>;
+  share?: (data: { files?: File[]; title?: string; text?: string }) => Promise<void>;
   canShare?: (data: { files?: File[] }) => boolean;
 }
 
@@ -55,13 +55,25 @@ export async function handOff(
   navigator: ShareCapableNavigator | undefined,
   file: File,
   title: string,
+  text?: string,
 ): Promise<HandOffResult> {
   if (!navigator?.share) {
     return { shared: false, error: "This device cannot be handed a file directly." };
   }
 
   try {
-    await navigator.share({ files: [file], title });
+    /*
+     * The sentence travels with the file.
+     *
+     * Somebody who receives a container and has nothing installed gets an
+     * attachment their system cannot name — "how do you want to open this
+     * file?", and no answer anywhere on the screen. The one place an answer
+     * can be put is the message the file arrives in, and it costs a line.
+     *
+     * Ignored by "Save to Files", which is the other thing this sheet does, so
+     * it is only ever seen where it helps.
+     */
+    await navigator.share({ files: [file], title, ...(text ? { text } : {}) });
     return { shared: true };
   } catch (error) {
     if ((error as Error)?.name === "AbortError") return { shared: false };

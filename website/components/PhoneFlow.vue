@@ -149,6 +149,7 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
         <p class="cta-address">run.dynamicapplicationinterface.io</p>
         <p class="cta-note">
           Nothing to install, nothing uploaded. Your containers stay on the device.
+          Sent one and not sure what it is? <a href="/open">Start here</a>.
         </p>
       </div>
       <a class="button primary" :href="RUNNER">Open the runner</a>
