@@ -36,7 +36,15 @@ export interface SchemaDeclaration {
 export interface MigrationRecord {
   /** Ascending integer taken from the file name: `002-add-tags.sql` is 2. */
   version: number;
-  /** The digest this migration produces once it has run. */
+  /**
+   * The schema this migration expects to find, and the one it leaves behind.
+   *
+   * Both are recorded rather than inferred from position, because a chain that
+   * only knows its own order cannot say where a given database sits in it. The
+   * compiler fills them in from the build it is upgrading, so an author writes
+   * SQL and a file name and never a digest.
+   */
+  from: string;
   to: string;
   /** SQL, executed in one transaction. */
   sql: string;
@@ -118,8 +126,7 @@ export function compatibility(input: CompatibilityInput): Compatibility {
 
   const ordered = [...input.migrations].sort((a, b) => a.version - b.version);
 
-  const start = ordered.findIndex((migration) => migration.version > 0);
-  if (start === -1) {
+  if (ordered.length === 0) {
     return {
       status: "incompatible",
       reason:
@@ -128,14 +135,26 @@ export function compatibility(input: CompatibilityInput): Compatibility {
     };
   }
 
-  // Where the data currently sits in the chain. Not finding it is decisive:
-  // an unknown schema means an unknown starting point, and migrations written
-  // for a different starting point would run against data they were never
-  // meant to touch. The first version of this returned the whole chain in that
-  // case — every migration, from the beginning, over data that had already
-  // been through some of them.
-  const at = ordered.findIndex((migration) => migration.to === input.actual);
-  if (at === -1) {
+  // Walk the chain from where the data actually is. Not finding a starting
+  // point is decisive: migrations written for a different one would run
+  // against data they were never meant to touch. The first version of this
+  // handed back the whole chain in that case — every migration, from the
+  // beginning, over data that had already been through some of them.
+  const run: MigrationRecord[] = [];
+  let position = input.actual;
+
+  for (;;) {
+    const next = ordered.find((migration) => migration.from === position);
+    if (!next) break;
+    run.push(next);
+    position = next.to;
+    // A chain that returns to where it has been would run for ever. It cannot
+    // happen from a compiler-built declaration, and this is not the place to
+    // find out that something else built one.
+    if (run.length > ordered.length) break;
+  }
+
+  if (run.length === 0) {
     return {
       status: "incompatible",
       reason:
@@ -144,9 +163,7 @@ export function compatibility(input: CompatibilityInput): Compatibility {
     };
   }
 
-  const run = ordered.slice(at + 1);
-
-  if (run.length === 0 || run[run.length - 1]!.to !== input.expected) {
+  if (position !== input.expected) {
     return {
       status: "incompatible",
       reason: "This application's migrations do not reach the schema it expects.",

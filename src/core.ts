@@ -33,6 +33,8 @@ export const DEFAULT_SQLITE_ENTRY = "document.sqlite";
 export const DEFAULT_WASM_ENTRY = "runtime/sqlite3.wasm";
 export const DEFAULT_GLUE_ENTRY = "runtime/sqlite3.mjs";
 export const CONTAINER_ENTRY = "runtime/container.html";
+/** The application's declared schema and migration chain, when it declares one. */
+export const SCHEMA_ENTRY = "runtime/schema.json";
 export const MANIFEST_ENTRY = "runtime/manifest.json";
 
 export const DEFAULT_FAVICON =
@@ -105,6 +107,14 @@ export interface BuildContainerInput {
   favicon?: string;
   /** Seed database. Absent means an empty document. */
   sqlite?: Uint8Array;
+  /**
+   * The schema this application expects, and the migrations it carries.
+   *
+   * Sealed at `runtime/schema.json`, outside the application's own namespace
+   * and inside the signed set, so a container's account of its own data shape
+   * cannot be edited any more than its code can.
+   */
+  schema?: unknown;
   /** SQLite engine bytes. */
   wasm?: Uint8Array;
   /** Emscripten glue source. Only meaningful alongside `wasm`. */
@@ -199,6 +209,9 @@ export async function buildContainer(
     archive[prefix + name.split("\\").join("/")] = bytes;
   }
   archive[sqliteEntry] = sqlite;
+  if (input.schema !== undefined) {
+    archive[SCHEMA_ENTRY] = new TextEncoder().encode(JSON.stringify(input.schema, null, 2));
+  }
   if (wasm) archive[wasmEntry] = wasm;
   if (wasm && glue) archive[glueEntry] = glue;
 

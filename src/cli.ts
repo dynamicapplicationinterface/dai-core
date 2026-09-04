@@ -24,6 +24,9 @@ Build options:
   -n, --name <name>       Application name, shown as the window title
   -k, --key <path|pem>    Sign with this ECDSA P-256 private key
       --seed <path>       Start from this SQLite database
+      --upgrade-of <path> The container this build replaces. Compares the schema
+                          being sealed against the one that container declared,
+                          and refuses a build that moved it with no migration
       --uuid <uuid>       Reuse a document identity instead of minting one
       --valid-until <s>   Unix seconds after which hosts should refuse it
       --dai               Write the sectioned binary container instead of the
@@ -52,7 +55,16 @@ interface Parsed {
  */
 export function parseArgs(argv: string[]): Parsed {
   const aliases: Record<string, string> = { o: "out", n: "name", k: "key", h: "help" };
-  const valued = new Set(["out", "name", "key", "seed", "uuid", "valid-until", "template"]);
+  const valued = new Set([
+    "out",
+    "name",
+    "key",
+    "seed",
+    "uuid",
+    "valid-until",
+    "template",
+    "upgrade-of",
+  ]);
 
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -119,6 +131,7 @@ async function build(parsed: Parsed): Promise<number> {
     appName: typeof flags.name === "string" ? flags.name : undefined,
     signingKey: typeof flags.key === "string" ? flags.key : undefined,
     sqlitePath: typeof flags.seed === "string" ? flags.seed : undefined,
+    upgradeOf: typeof flags["upgrade-of"] === "string" ? flags["upgrade-of"] : undefined,
     templatePath: typeof flags.template === "string" ? flags.template : undefined,
     documentUuid: typeof flags.uuid === "string" ? flags.uuid : undefined,
     validUntil,

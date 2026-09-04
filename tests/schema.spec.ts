@@ -19,8 +19,9 @@ import {
  *
  * These are written as the cases somebody would actually hit, not as coverage.
  */
-const at = (version: number, to: string): MigrationRecord => ({
+const step = (version: number, from: string, to: string): MigrationRecord => ({
   version,
+  from,
   to,
   sql: `-- ${version}`,
 });
@@ -87,7 +88,7 @@ test.describe("deciding what to do with a database", () => {
     const verdict = compatibility({
       expected: "cc",
       actual: "aa",
-      migrations: [at(1, "aa"), at(2, "bb"), at(3, "cc")],
+      migrations: [step(1, "zero", "aa"), step(2, "aa", "bb"), step(3, "bb", "cc")],
     });
     expect(verdict.status).toBe("migrate");
     expect(verdict.status === "migrate" && verdict.run.map((m) => m.version)).toEqual([2, 3]);
@@ -97,7 +98,7 @@ test.describe("deciding what to do with a database", () => {
     const verdict = compatibility({
       expected: "cc",
       actual: "aa",
-      migrations: [at(3, "cc"), at(1, "aa"), at(2, "bb")],
+      migrations: [step(3, "bb", "cc"), step(1, "zero", "aa"), step(2, "aa", "bb")],
     });
     expect(verdict.status === "migrate" && verdict.run.map((m) => m.version)).toEqual([2, 3]);
   });
@@ -108,7 +109,7 @@ test.describe("deciding what to do with a database", () => {
     const verdict = compatibility({
       expected: "dd",
       actual: "aa",
-      migrations: [at(1, "aa"), at(2, "bb")],
+      migrations: [step(1, "zero", "aa"), step(2, "aa", "bb")],
     });
     expect(verdict.status).toBe("incompatible");
   });
@@ -117,7 +118,7 @@ test.describe("deciding what to do with a database", () => {
     const verdict = compatibility({
       expected: "cc",
       actual: "zz",
-      migrations: [at(1, "aa"), at(2, "cc")],
+      migrations: [step(1, "zero", "aa"), step(2, "aa", "cc")],
     });
     expect(verdict).toEqual({
       status: "incompatible",
@@ -164,27 +165,27 @@ test.describe("the build gate", () => {
 
   test("passes a changed schema with a migration that reaches it", () => {
     expect(() =>
-      checkBuild(declaration("aa"), declaration("bb", [at(1, "aa"), at(2, "bb")])),
+      checkBuild(declaration("aa"), declaration("bb", [step(1, "aa", "bb")])),
     ).not.toThrow();
   });
 
   test("fails when the last migration does not produce the declared schema", () => {
     // The commonest mistake: edit schema.sql, write the migration, forget that
     // the two have to agree.
-    expect(() => checkBuild(declaration("aa"), declaration("cc", [at(1, "aa"), at(2, "bb")])))
+    expect(() => checkBuild(declaration("aa"), declaration("cc", [step(1, "aa", "bb")])))
       .toThrow(/does not produce the schema/);
   });
 
   test("fails on two migrations with the same number", () => {
     expect(() =>
-      checkBuild(undefined, declaration("bb", [at(1, "aa"), at(1, "bb")])),
+      checkBuild(undefined, declaration("bb", [step(1, "zero", "aa"), step(1, "aa", "bb")])),
     ).toThrow(/numbered 1/);
   });
 
   test("suggests the next free number, not 001, when migrations exist", () => {
     let message = "";
     try {
-      checkBuild(declaration("aa"), declaration("cc", [at(1, "aa"), at(2, "cc")]));
+      checkBuild(declaration("aa"), declaration("cc", [step(1, "aa", "cc")]));
     } catch (error) {
       message = (error as Error).message;
     }

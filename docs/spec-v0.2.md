@@ -348,6 +348,48 @@ travel with it.
 
 ---
 
+## 6.1 Declared schemas
+
+A container MAY declare the shape of the data its application expects, at
+`runtime/schema.json` — an ordinary entry, so the digests and the signature
+cover it like any other.
+
+```jsonc
+{
+  "digest": "…",            // SHA-256 of the normalised schema
+  "migrations": [
+    { "version": 1, "from": "…", "to": "…", "sql": "…" }
+  ]
+}
+```
+
+A database records what last wrote it in a table named `_dai_meta`, as the row
+`('schema', <digest>)`.
+
+Where a container declares a schema, a host MUST reconcile the two before the
+application is given a handle to the database:
+
+- **Equal digests.** Open.
+- **No recorded digest.** Stamp the declared one and open. A database with no
+  record is one written before the application declared a schema, and refusing
+  it would discard data over a row that was never written.
+- **A migration chain from the recorded digest to the declared one.** Run it in
+  a single transaction, stamp, and open. A chain that stops half way MUST be
+  rolled back.
+- **Anything else.** Refuse, and do not open the database.
+
+There is no case in which a host opens a database it cannot account for. SQLite
+does not object to a schema mismatch — it creates what is missing, ignores what
+it does not recognise, and reports nothing — so this is the only point at which
+the disagreement is visible, and an application that never receives a handle
+cannot write over data it does not understand.
+
+A compiler MUST refuse to build a container whose declared schema differs from
+the one it is replacing without a migration reaching the new digest. That is the
+last moment the problem costs nothing.
+
+---
+
 ## 7. Verification
 
 A host MUST perform these checks, in this order, and MUST NOT mount anything

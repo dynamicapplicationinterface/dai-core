@@ -25,8 +25,10 @@ import { unzipSync, zipSync } from "fflate";
 // same helper, and two spellings of "canonical" would disagree eventually.
 import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
 import { verifySign1 } from "../cose.js";
+import { compatibility, type SchemaDeclaration } from "../schema.js";
 
 const APP_PREFIX = "app/";
+const SCHEMA_ENTRY = "runtime/schema.json";
 const WASM_ENTRY = "runtime/sqlite3.wasm";
 const SQLITE_ENTRY = "document.sqlite";
 const CONTAINER_ENTRY = "runtime/container.html";
@@ -64,6 +66,7 @@ type RefusalReason =
   | "UNVERIFIED_SIGNATURE"
   | "NO_APPLICATION"
   | "KEY_EXPIRED"
+  | "SCHEMA_INCOMPATIBLE"
   | "MOUNT_TIMEOUT"
   | "BOOT_FAILED";
 const APP_MODE_EVENT = "dai:appmode";
@@ -684,6 +687,21 @@ function bridgeMain(): void {
    * pragma cannot change an existing file, and silently rewriting someone's
    * document geometry would be worse than honouring it.
    */
+  /**
+   * The schema this container declares, if it declares one.
+   *
+   * An ordinary sealed entry, so it is covered by the manifest digests and by
+   * the publisher's signature — a container's account of the shape of its own
+   * data cannot be edited any more than its code can.
+   */
+  /*
+   * Whether this container declares a schema at all.
+   *
+   * The declaration itself stays in the shell, which is where the decision is
+   * made. All the frame needs to know is whether to ask.
+   */
+  const declaresSchema = Boolean(host.schema);
+
   const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
     initSqlite().then((api2) => {
       const db = new api2.oo1.DB() as Any;
@@ -712,6 +730,83 @@ function bridgeMain(): void {
       db.exec("SELECT count(*) FROM sqlite_schema");
       return db;
     });
+
+  /**
+   * Reconciles the data with the code about to run over it.
+   *
+   * SQLite will open a database whose tables do not match the application: it
+   * creates what is missing, ignores what it does not recognise, and reports
+   * nothing. Everything the container can check has already passed at this
+   * point — the digests match and the signature is valid — because the mismatch
+   * is between the code and the data, which is a level no checksum reaches.
+   *
+   * The decision is not made here. This function is serialized into the frame
+   * and has no access to this module, so it reads the stamp, asks the shell
+   * what that means, and applies the answer. Inlining a second copy of the rule
+   * would be two rules, and the day they disagreed would be a day somebody's
+   * data disappeared quietly.
+   */
+  const reconcileSchema = (db: Any): Promise<void> => {
+    db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+
+    const rows: Any[] = [];
+    db.exec({
+      sql: "SELECT value FROM _dai_meta WHERE key = 'schema'",
+      rowMode: "array",
+      resultRows: rows,
+    });
+    const first = rows[0] as string[] | undefined;
+    const actual = first ? first[0] : undefined;
+
+    const id = "schema-" + Math.random().toString(36).slice(2);
+
+    return new Promise<void>((resolve, reject) => {
+      const onReply = (event: MessageEvent): void => {
+        const data = event.data as Any;
+        if (!data || data.type !== "dai:schema-verdict" || data.id !== id) return;
+        window.removeEventListener("message", onReply);
+        window.clearTimeout(timer);
+
+        if (data.status === "incompatible") {
+          reject(new Error(String(data.reason)));
+          return;
+        }
+        if (data.status === "current") {
+          resolve();
+          return;
+        }
+
+        // One transaction for the whole path. A chain that stopped half way
+        // would leave the data in a shape no version of the application
+        // understands, which is worse than either end of it.
+        try {
+          db.exec("BEGIN");
+          for (const sql of (data.run as string[]) || []) db.exec(sql);
+          db.exec({
+            sql:
+              "INSERT INTO _dai_meta (key, value) VALUES ('schema', ?) " +
+              "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            bind: [String(data.digest)],
+          });
+          db.exec("COMMIT");
+          resolve();
+        } catch (error) {
+          db.exec("ROLLBACK");
+          reject(error as Error);
+        }
+      };
+
+      const timer = window.setTimeout(() => {
+        window.removeEventListener("message", onReply);
+        // Refusing on silence rather than opening: an unanswered question about
+        // whether this data is safe to write to is not a yes.
+        reject(new Error("The container did not answer whether this data can be opened."));
+      }, 10000);
+
+      window.addEventListener("message", onReply);
+      window.parent.postMessage({ type: "dai:schema", id: id, actual: actual ?? null }, "*");
+    });
+  };
 
   /** Extracts the live database as bytes, ready to be written back. */
   const exportDatabase = (db: Any): Uint8Array => {
@@ -807,7 +902,27 @@ function bridgeMain(): void {
       });
     },
     initSqlite: initSqlite,
-    openDatabase: openDatabase,
+    /*
+     * Reconciled before the application is given the handle. An application
+     * that cannot open the database cannot write over data it does not
+     * understand, which is the only protection available at this point: every
+     * check the container can make has already passed, because the mismatch is
+     * between the code and the data.
+     */
+    openDatabase: (options?: { pageSize?: number }): Promise<Any> =>
+      openDatabase(options).then((db: Any) => {
+        if (!declaresSchema) return db;
+        // Closed before the error propagates: an application asking for a
+        // handle to data it cannot account for does not get one, which is the
+        // only protection left at this point.
+        return reconcileSchema(db).then(
+          () => db,
+          (error: Error) => {
+            db.close();
+            throw error;
+          },
+        );
+      }),
     /** Page size declared by a serialized database, read from its header. */
     pageSizeOf: (bytes: Uint8Array) => {
       if (bytes.byteLength < 20) return 0;
@@ -1062,6 +1177,10 @@ function frameLoader(): void {
       sqliteGlueUrl: data.glueSource
         ? URL.createObjectURL(new Blob([String(data.glueSource)], { type: "text/javascript" }))
         : null,
+      // The declared schema travels with the data it describes. Without it the
+      // frame has the database and no account of what wrote it, and opens
+      // whatever it is handed — which is the failure this exists to prevent.
+      schema: (data.schema as string | null) ?? null,
     };
 
     /*
@@ -1297,6 +1416,9 @@ async function boot(): Promise<void> {
       : null,
     wasm: files[WASM_ENTRY] ? toArrayBuffer(files[WASM_ENTRY]) : null,
     sqlite: toArrayBuffer(files[SQLITE_ENTRY] ?? new Uint8Array(0)),
+    // Carried across as text: the frame decides whether the data it is about
+    // to be handed matches the code that is about to run over it.
+    schema: files[SCHEMA_ENTRY] ? new TextDecoder().decode(files[SCHEMA_ENTRY]) : null,
     syntheticOrigin: SYNTHETIC_ORIGIN,
     // So the loader can stamp the import map and the application's own inline
     // scripts; the frame inherits this document's policy.
@@ -1340,7 +1462,57 @@ async function boot(): Promise<void> {
   // silence and hang the application waiting for an acknowledgement.
   let hostAvailable = false;
 
+  /*
+   * The frame asking whether the data it just opened may be written to.
+   *
+   * The decision lives here because `src/schema.ts` lives here: the frame is
+   * serialized into its own document and cannot reach this module, and a second
+   * copy of the rule would be a second rule. The frame reads the stamp and
+   * executes the SQL; nothing else about the decision is its business.
+   */
+  const declaredSchema = ((): SchemaDeclaration | null => {
+    const entry = files[SCHEMA_ENTRY];
+    if (!entry) return null;
+    try {
+      return JSON.parse(new TextDecoder().decode(entry)) as SchemaDeclaration;
+    } catch {
+      return null;
+    }
+  })();
+
   window.addEventListener("message", (event) => {
+    const asked = event.data as { type?: string; id?: string; actual?: string | null };
+    if (asked?.type === "dai:schema" && declaredSchema) {
+      const verdict = compatibility({
+        expected: declaredSchema.digest,
+        actual: asked.actual ?? undefined,
+        migrations: declaredSchema.migrations,
+      });
+
+      (event.source as Window | null)?.postMessage(
+        {
+          type: "dai:schema-verdict",
+          id: asked.id,
+          status: verdict.status === "migrate" ? "migrate" : verdict.status,
+          digest: declaredSchema.digest,
+          run: verdict.status === "migrate" ? verdict.run.map((step) => step.sql) : [],
+          reason: verdict.status === "incompatible" ? verdict.reason : "",
+        },
+        "*",
+      );
+
+      if (verdict.status === "incompatible") {
+        // Recorded where a host can see it. A refusal the application swallows
+        // is a refusal nobody outside the frame ever hears about.
+        refuse(
+          "SCHEMA_INCOMPATIBLE",
+          "This document's data does not match this version of the application.",
+          verdict.reason,
+        );
+      }
+      return;
+    }
+
     if (event.data === HANDSHAKE) {
       ready = true;
       // The application is on screen, so the boot line is no longer the truth
