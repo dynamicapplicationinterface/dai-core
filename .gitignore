@@ -27,3 +27,7 @@ apps/desktop/public/runtime/
 !conformance/cases/*.dai
 !conformance/cases/*.dai.html
 !conformance/cases/*.html
+
+# A signing key is never committed. The one exception is conformance/signing-key.pem,
+# which signs documents that exist only to be checked, and says so in its README.
+/*.pem

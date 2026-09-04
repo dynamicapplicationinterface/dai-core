@@ -29,13 +29,18 @@ const openUrl =
       </svg>
     </div>
     <div class="card-body">
+      <!--
+        Says what the file is. It used to call itself the complete specification,
+        signed — and it is a small demo app, unsigned. A claim on the page that
+        tells people to check claims is the one place that must not overstate.
+      -->
       <div class="badge-row">
-        <span class="pill-spec">Air-Gapped Container</span>
+        <span class="pill-spec">Sample file</span>
         <span class="pill-size">Standalone .dai</span>
       </div>
-      <h3 class="card-title">Download Offline Spec Cartridge</h3>
+      <h3 class="card-title">Try a DAI file</h3>
       <p class="card-desc">
-        The complete DAI protocol specification bundled as an authentic, signed, air-gapped container with embedded offline search and SQLite schema. Zero external dependencies.
+        A small demo app as one file: the app, its database and its data, with no way to reach the network. Open it here, or download it and open it anywhere.
       </p>
       <div class="card-actions">
         <a :href="openUrl" class="btn-primary">
