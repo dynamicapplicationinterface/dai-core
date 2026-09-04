@@ -159,7 +159,7 @@ test.describe("one engine", () => {
       .trim();
 
     const bundle = parseBundle(`${example}\n`);
-    expect(Object.keys(bundle.files).sort()).toEqual(["app.js", "index.html"]);
+    expect(Object.keys(bundle.files).sort()).toEqual(["app.js", "icon.svg", "index.html"]);
     expect(bundle.name).toBe("Reading list");
   });
 

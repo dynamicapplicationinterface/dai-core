@@ -152,8 +152,8 @@ test.describe("the kit ships from the engine", () => {
     });
     const payload = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/.exec(built.html)![1]!;
     const archive = unzipSync(Buffer.from(payload, "base64"));
-    expect(Object.keys(archive)).toContain("dai-kit.js");
-    expect(new TextDecoder().decode(archive["dai-kit.js"])).toContain("customElements.define('dai-rows'");
+    expect(Object.keys(archive)).toContain("app/dai-kit.js");
+    expect(new TextDecoder().decode(archive["app/dai-kit.js"]!)).toContain("customElements.define('dai-rows'");
   });
 
   test("no door adds it on its own", () => {
@@ -161,5 +161,48 @@ test.describe("the kit ships from the engine", () => {
     for (const door of ["src/compile.ts", "src/browser.ts"]) {
       expect(readFileSync(resolve(repo, door), "utf8")).not.toContain("KIT_SOURCE");
     }
+  });
+});
+
+/**
+ * An application's own icon becomes the document's icon.
+ *
+ * Every document used to get this project's mark, which is right for a file
+ * about this project and wrong for somebody's packing list. The recipe asks
+ * the assistant for an icon.svg; this is the compiler honouring it.
+ */
+test.describe("the document's own icon", () => {
+  const shell = () => ({
+    template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+    runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+  });
+  const page = new TextEncoder().encode("<!doctype html><p>hi");
+
+  test("an icon.svg among the files is the icon", async () => {
+    const icon = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#d9663c"/></svg>';
+    const built = await buildContainer({
+      files: { "index.html": page, "icon.svg": new TextEncoder().encode(icon) },
+      appName: "Beach trip",
+      ...shell(),
+    });
+    expect(built.manifest.favicon).toBe("data:image/svg+xml," + encodeURIComponent(icon));
+    // And the shell shows it, so a tab has it before anything runs.
+    expect(built.html).toContain(encodeURIComponent(icon).slice(0, 40));
+  });
+
+  test("a file that is not an SVG is not trusted as one", async () => {
+    // This string ends up in the shell. Only a thing that is an SVG gets there.
+    const built = await buildContainer({
+      files: { "index.html": page, "icon.svg": new TextEncoder().encode("<script>alert(1)</script>") },
+      appName: "Nope",
+      ...shell(),
+    });
+    expect(built.manifest.favicon).not.toContain("script");
+  });
+
+  test("the recipe asks for one", async () => {
+    const { RECIPE } = await import("../src/recipe.js");
+    expect(RECIPE).toContain("icon.svg");
+    expect(RECIPE).toMatch(/home screen/i);
   });
 });

@@ -95,6 +95,9 @@ Every container carries dai-kit.js. It gives you four elements, so most of an ap
 - data-text writes a column as text. Values are never treated as markup.
 - Anything the kit cannot express is ordinary JavaScript against window.dai, which is still there.
 
+AN ICON
+Include a file named icon.svg: a simple, bold mark for this app on a square canvas (viewBox="0 0 100 100"), with a filled background and no text smaller than a third of the canvas. It becomes the app's icon on a phone's home screen and in a browser tab, so it should read at 48 pixels. No external references inside it — a self-contained SVG only.
+
 HOW TO HAND IT OVER
 Write the whole application as one block of plain text, in this shape, so that whoever receives it does not have to guess where one file ends and the next begins:
 
@@ -107,6 +110,9 @@ name: Reading list
 
 --- file: app.js
 const db = await window.dai.openDatabase();
+
+--- file: icon.svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">…</svg>
 
 Every file starts with a line reading "--- file: " and its path, at the start of the line. Everything after that line belongs to that file until the next one. If a line inside a file would itself start with "--- file:", put a backslash in front of it.
 

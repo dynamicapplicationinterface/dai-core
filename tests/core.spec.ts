@@ -77,6 +77,8 @@ test.describe("buildContainer", () => {
     const archive = payloadOf(built.html);
     expect(Object.keys(archive).sort()).toEqual([
       "app/app.js",
+      // The kit rides in every container, from the engine.
+      "app/dai-kit.js",
       "app/index.html",
       "document.sqlite",
       "runtime/container.html",

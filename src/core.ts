@@ -173,6 +173,33 @@ export interface BuildContainerResult {
  * (it carries the runtime and the public key), and the manifest is written last
  * because it describes everything else and cannot describe itself.
  */
+/** The names an application may give its own icon. */
+const ICON_ENTRIES = ["icon.svg", "favicon.svg"];
+
+/**
+ * An icon the application brought with it.
+ *
+ * A document's icon is what stands for it on a home screen and in a tab, and
+ * every document was getting this project's mark — which is fine for a file
+ * about this project and wrong for somebody's packing list. An assistant can
+ * draw a simple SVG as easily as it writes the rest, so the recipe asks for
+ * one, and if it is here it is used.
+ *
+ * SVG only. It is text, so it travels in the bundle an assistant writes; it
+ * scales to every size a home screen wants; and anything that is not an SVG
+ * is ignored rather than trusted, because this string ends up in the shell.
+ */
+function iconAmong(files: Record<string, Uint8Array>): string | undefined {
+  for (const name of ICON_ENTRIES) {
+    const bytes = files[name];
+    if (!bytes) continue;
+    const text = new TextDecoder().decode(bytes).trim();
+    if (!/^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(text)) continue;
+    return "data:image/svg+xml," + encodeURIComponent(text);
+  }
+  return undefined;
+}
+
 export async function buildContainer(
   input: BuildContainerInput,
 ): Promise<BuildContainerResult> {
@@ -248,7 +275,7 @@ export async function buildContainer(
 
   // The policy lives in the shell, never in the payload it governs.
   const integrityPolicy = verifyIntegrity === false ? "advisory" : "required";
-  const favicon = input.favicon ?? DEFAULT_FAVICON;
+  const favicon = input.favicon ?? iconAmong(files) ?? DEFAULT_FAVICON;
   /*
    * The nonce that replaces `'unsafe-inline'` in the shell's script policy.
    *
