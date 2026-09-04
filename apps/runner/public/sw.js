@@ -34,8 +34,50 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+/**
+ * Where a shared container waits between the share sheet and the page.
+ *
+ * Android hands a shared file to the manifest's share target as a POST, and a
+ * POST cannot navigate the app: the response would replace the page. So the
+ * worker takes the file out of the form, keeps it here, and redirects to the
+ * app, which collects it. Nothing about this reaches a network.
+ */
+const SHARED = "dai-shared-v1";
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
+  const target = new URL(request.url);
+
+  if (request.method === "POST" && target.pathname.endsWith("/shared")) {
+    event.respondWith(
+      (async () => {
+        try {
+          const form = await request.formData();
+          const file = form.get("container");
+          if (file && typeof file !== "string") {
+            const cache = await caches.open(SHARED);
+            // Stored as a response so the name survives alongside the bytes;
+            // the page needs both to report what it opened.
+            await cache.put(
+              "./shared-container",
+              new Response(file, {
+                headers: {
+                  "content-type": file.type || "application/octet-stream",
+                  "x-dai-name": encodeURIComponent(file.name || "shared.dai"),
+                },
+              }),
+            );
+            return Response.redirect("./?shared=1", 303);
+          }
+        } catch {
+          /* Falls through to the app, which will say nothing arrived. */
+        }
+        return Response.redirect("./?shared=0", 303);
+      })(),
+    );
+    return;
+  }
+
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);

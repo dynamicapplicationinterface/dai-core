@@ -236,6 +236,126 @@ test.describe("cartridge ingestion", () => {
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
   });
 
+  test("opens a container shared to it from elsewhere on the device", async ({ page }) => {
+    /*
+     * The Android share sheet, driven the way the platform drives it: a POST of
+     * a multipart form to the share target. The service worker parks the file
+     * and redirects, because a POST response would replace the app rather than
+     * open it.
+     *
+     * This was declared in the manifest once with nothing behind it, and
+     * withdrawn rather than left as a claim. It is a claim again now.
+     */
+    await page.goto(RUNNER_URL);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, {
+      timeout: 30_000,
+    });
+
+    const html = readFileSync(CONTAINER, "utf8");
+    const landed = await page.evaluate(async (body: string) => {
+      const form = new FormData();
+      form.append("container", new File([body], "shared.dai.html", { type: "text/html" }));
+      const response = await fetch("./shared", { method: "POST", body: form });
+      return response.url;
+    }, html);
+
+    expect(landed).toContain("shared=1");
+
+    await page.goto(`${RUNNER_URL}?shared=1`);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect(page.locator("#cartridge")).toBeVisible();
+  });
+
+  test("does not reopen a shared container on the next launch", async ({ page }) => {
+    // A file left parked would reappear at the next launch, which is somebody's
+    // document opening itself without being asked for.
+    await page.goto(RUNNER_URL);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, {
+      timeout: 30_000,
+    });
+
+    const html = readFileSync(CONTAINER, "utf8");
+    await page.evaluate(async (body: string) => {
+      const form = new FormData();
+      form.append("container", new File([body], "shared.dai.html", { type: "text/html" }));
+      await fetch("./shared", { method: "POST", body: form });
+    }, html);
+
+    await page.goto(`${RUNNER_URL}?shared=1`);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+
+    await page.goto(`${RUNNER_URL}?shared=1`);
+    await expect(page.locator("#report")).toContainText(/Nothing arrived from the share/i, {
+      timeout: 30_000,
+    });
+  });
+
+  test("opens a container named by the link that opened it", async ({ page }) => {
+    /*
+     * The share path: a link, not an attachment. Any address this page may read
+     * works, so sharing needs nothing belonging to this project — a container in
+     * a bucket, on a file share, or behind a raw URL is a share link already.
+     */
+    await page.route("https://files.test/tasks.dai.html", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        headers: { "access-control-allow-origin": "*" },
+        body: readFileSync(CONTAINER, "utf8"),
+      }),
+    );
+
+    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://files.test/tasks.dai.html")}`);
+
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect(page.locator("#cartridge")).toBeVisible();
+  });
+
+  test("verifies what a link hands it, exactly as it verifies a chosen file", async ({ page }) => {
+    // Where the bytes came from says nothing about what they are.
+    const tampered = readFileSync(CONTAINER, "utf8").replace("<head>", "<head><!-- altered -->");
+    await page.route("https://files.test/bad.dai.html", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        headers: { "access-control-allow-origin": "*" },
+        body: tampered,
+      }),
+    );
+
+    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://files.test/bad.dai.html")}`);
+
+    await expect(page.locator("#report")).toContainText(/could not be opened|does not match/i, {
+      timeout: 30_000,
+    });
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+  });
+
+  test("says what actually went wrong when a host will not allow the read", async ({ page }) => {
+    /*
+     * The commonest failure this feature will have, and the one that would
+     * otherwise be blamed on us: a file host that does not permit other sites
+     * to read its files. The browser reports that identically to being offline,
+     * so the message has to name the likely cause.
+     */
+    await page.route("https://blocked.test/**", (route) => route.abort("failed"));
+
+    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://blocked.test/x.dai.html")}`);
+
+    await expect(page.locator("#report")).toContainText(/does not allow other sites/i, {
+      timeout: 30_000,
+    });
+  });
+
+  test("refuses an address that is not a web address", async ({ page }) => {
+    // `?open=file:///etc/passwd` and friends: a link cannot ask this page to
+    // read something the person did not choose from their own device.
+    await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("file:///etc/passwd")}`);
+    await expect(page.locator("#report")).toContainText(/only open http and https/i, {
+      timeout: 30_000,
+    });
+  });
+
   test("records how long the container took to become usable", async ({ page }) => {
     /*
      * The number the whole mobile path is judged on, taken where it can

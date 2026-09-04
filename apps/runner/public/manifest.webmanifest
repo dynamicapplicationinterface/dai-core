@@ -39,5 +39,23 @@
       },
       "launch_type": "single-client"
     }
-  ]
+  ],
+  "share_target": {
+    "action": "./shared",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "container",
+          "accept": [
+            "text/html",
+            "application/octet-stream",
+            ".dai",
+            ".dai.html"
+          ]
+        }
+      ]
+    }
+  }
 }

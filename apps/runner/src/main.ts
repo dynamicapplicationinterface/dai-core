@@ -223,6 +223,94 @@ function mount(cartridge: Cartridge): void {
   badge.title = `document ${cartridge.manifest.documentUuid}`;
 }
 
+/**
+ * Opens a container named by the address that opened this page.
+ *
+ * `?open=<url>` is what makes a container shareable: a link, not an attachment.
+ * Any address this page is allowed to read works — a file on Dropbox, in an S3
+ * bucket, on a GitHub raw URL, on a company file share — so sharing a container
+ * needs no infrastructure belonging to this project. A relay would be a
+ * convenience for people with nowhere to put a file, not the mechanism, and the
+ * difference is what keeps "the file needs no server" true.
+ *
+ * Nothing about verification changes. The bytes are checked exactly as a chosen
+ * file is, before anything runs, because where they came from says nothing
+ * about what they are.
+ */
+async function openFromUrl(address: string): Promise<void> {
+  let url: URL;
+  try {
+    url = new URL(address, location.href);
+  } catch {
+    say(`"${address}" is not an address this can open.`, true);
+    return;
+  }
+
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    say(`This can only open http and https addresses, and that one is ${url.protocol}`, true);
+    return;
+  }
+
+  slot.classList.add("busy");
+  say(`Fetching ${url.hostname}…`);
+
+  let response: Response;
+  try {
+    response = await fetch(url.href, { mode: "cors", credentials: "omit" });
+  } catch {
+    /*
+     * Almost always CORS, and worth saying so.
+     *
+     * A cross-origin fetch that the other server does not allow fails
+     * identically to one that could not connect at all — the browser reports
+     * neither — and somebody whose link does not work will otherwise conclude
+     * that this is broken rather than that their file host does not permit it.
+     */
+    slot.classList.remove("busy");
+    say(
+      `Could not read ${url.hostname}. Either it is unreachable, or it does not allow ` +
+        `other sites to read its files. A link from Dropbox, S3, or a GitHub raw URL will work; ` +
+        `many web servers will not without being configured to.`,
+      true,
+    );
+    return;
+  }
+
+  if (!response.ok) {
+    slot.classList.remove("busy");
+    say(`${url.hostname} answered ${response.status} for that file.`, true);
+    return;
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const name = url.pathname.split("/").pop() || "container.dai";
+  slot.classList.remove("busy");
+  await ingest(new File([bytes], name, { type: "text/html" }));
+}
+
+/**
+ * Takes a shared container out of the worker's hands.
+ *
+ * Removed as it is read: a file left here would be opened again by the next
+ * launch, which is somebody's document reappearing without being asked for.
+ */
+async function collectSharedContainer(): Promise<File | null> {
+  try {
+    const cache = await caches.open("dai-shared-v1");
+    const response = await cache.match("./shared-container");
+    if (!response) return null;
+
+    const name = decodeURIComponent(response.headers.get("x-dai-name") ?? "shared.dai");
+    const bytes = await response.arrayBuffer();
+    await cache.delete("./shared-container");
+    return new File([bytes], name, {
+      type: response.headers.get("content-type") ?? "application/octet-stream",
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function ingest(file: File): Promise<void> {
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
@@ -440,6 +528,34 @@ launch?.setConsumer((params: LaunchParams) => {
  */
 async function start(): Promise<void> {
   await refreshLibrary();
+
+  const parameters = new URLSearchParams(location.search);
+
+  /*
+   * A container shared to this app from somewhere else on the device.
+   *
+   * Android delivers a shared file as a POST to the share target, which cannot
+   * navigate the app, so the service worker parks the file and redirects here
+   * to collect it. Both of those are explicit instructions and outrank
+   * reopening whatever was last used.
+   */
+  if (parameters.has("shared")) {
+    const collected = await collectSharedContainer();
+    if (collected) {
+      await ingest(collected);
+      return;
+    }
+    say("Nothing arrived from the share. Try opening the file instead.", true);
+    return;
+  }
+
+  // An address in the link is an explicit instruction too: somebody who
+  // followed a link to a container meant that container.
+  const asked = parameters.get("open");
+  if (asked) {
+    await openFromUrl(asked);
+    return;
+  }
 
   let resume: string | null = null;
   try {

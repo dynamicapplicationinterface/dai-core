@@ -53,8 +53,28 @@ cannot be added retroactively to files already cached on someone's phone.
 
 HTTPS is not optional — service workers and OPFS both need a secure context.
 
-## What it does not do yet
+## Getting a container into it
 
-Sharing a container to the runner from a chat application. That needs the
-service worker to intercept the POST a share target sends and hand the file to
-the page; until it exists, the manifest does not claim it.
+Three ways in, and none of them upload anything.
+
+**Choosing a file.** The picker, with no type filter — iOS greys out anything a
+filter does not name and the Files app has no type for `.dai`.
+
+**A link.** `?open=<url>` opens any address this page is allowed to read: a file
+on Dropbox, in a bucket, on a GitHub raw URL, on a company file share. That
+makes a container shareable without infrastructure belonging to this project. A
+relay would be a convenience for people with nowhere to put a file, not the
+mechanism — which is what keeps "the file needs no server" true.
+
+Most web servers do not allow other sites to read their files, and a browser
+reports that identically to being offline. The runner says which is likely,
+because otherwise the blame lands here.
+
+**A share.** On Android, the share sheet delivers a file as a POST to the share
+target. A POST cannot navigate an app, so the service worker takes the file out
+of the form, parks it, and redirects; the page collects it and deletes it. A
+file left parked would reappear at the next launch, which is somebody's document
+opening itself without being asked for.
+
+Whichever way it arrives, it is verified before it runs. Where bytes came from
+says nothing about what they are.
