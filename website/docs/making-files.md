@@ -162,6 +162,22 @@ filesystem, `browser.ts` for anything in a page. A test fails the build if a
 wrapper starts zipping, hashing or signing on its own — which it caught
 within hours of being written.
 
+## Checking source before you build it
+
+```bash
+dai check ./app          # or --json
+```
+
+Answers the question that comes before "is this container intact": will this
+code work once it is inside one. A container has no network, no browser storage
+and no inline event handlers, and every one of those fails *silently* — a button
+that does nothing, a fetch that never returns, data that arrives empty at the
+other end. This says so while it is still cheap to change.
+
+Exit 0 when the source will work, 1 when it will not. `--json` reports each
+finding with the rule it broke and what to do instead, which is the form an
+assistant writing the code can act on.
+
 ## Checking one from a script
 
 ```bash

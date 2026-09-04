@@ -265,3 +265,96 @@ test.describe("verify --json", () => {
     expect(() => JSON.parse(run.stdout)).not.toThrow();
   });
 });
+
+test.describe("dai check", () => {
+  /*
+   * The question that comes before "is this container intact".
+   *
+   * `verify` refuses a container because somebody changed it. `check` refuses
+   * source because it does something a container cannot do, which is not a
+   * fault so much as a fact nobody has told the author yet — usually a model,
+   * which is why the machine-readable form matters as much as the prose.
+   */
+  const app = (files: Record<string, string>): string => {
+    const dir = mkdtempSync(resolve(tmpdir(), "dai-check-"));
+    for (const [name, body] of Object.entries(files)) {
+      writeFileSync(resolve(dir, name), body);
+    }
+    return dir;
+  };
+
+  const check = (dir: string, ...args: string[]) =>
+    spawnSync(process.execPath, [cli, "check", dir, ...args], { cwd: repo, encoding: "utf8" });
+
+  test("passes source that will work, and says so", () => {
+    const dir = app({
+      "index.html": '<!doctype html><title>Fine</title><script type="module" src="./app.js"></script>',
+      "app.js": "const db = await window.dai.openDatabase();\n",
+    });
+
+    const run = check(dir);
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("ready to build");
+  });
+
+  test("refuses source that cannot work inside a container", () => {
+    const dir = app({
+      "index.html": '<!doctype html><script src="https://cdn.example.com/x.js"></script>',
+    });
+
+    const run = check(dir);
+    expect(run.status).toBe(1);
+    expect(run.stdout).toContain("loads a script from the internet");
+    // Every finding says what to do instead. A refusal that only names the
+    // problem sends an author back to the same mistake.
+    expect(run.stdout).toContain("Inline the library");
+  });
+
+  test("reports findings as data, for something that is not a person", () => {
+    const dir = app({
+      "index.html": "<!doctype html><title>x</title>",
+      "app.js": 'const rows = await fetch("/api/rows");\n',
+    });
+
+    const run = check(dir, "--json");
+    expect(run.status).toBe(1);
+
+    const report = JSON.parse(run.stdout) as {
+      ok: boolean;
+      hasEntryPoint: boolean;
+      storesDataInTheFile: boolean;
+      findings: { file: string; id: string; fix: string }[];
+    };
+
+    expect(report.ok).toBe(false);
+    expect(report.hasEntryPoint).toBe(true);
+    expect(report.findings.map((finding) => finding.id)).toContain("network-call");
+    expect(report.findings[0]!.file).toBe("app.js");
+    expect(report.findings[0]!.fix).toBeTruthy();
+  });
+
+  test("notices there is no way in", () => {
+    // A container with no index.html mounts a blank frame, which looks exactly
+    // like a broken file to whoever opened it.
+    const dir = app({ "app.js": "const db = await window.dai.openDatabase();\n" });
+
+    const run = check(dir, "--json");
+    expect(run.status).toBe(1);
+    expect((JSON.parse(run.stdout) as { hasEntryPoint: boolean }).hasEntryPoint).toBe(false);
+  });
+
+  test("says when nothing is stored in the file, without refusing it", () => {
+    /*
+     * An application that keeps nothing is a legitimate thing to build. It is
+     * worth reporting because "my data vanished" is what somebody says
+     * afterwards about a file that was never keeping any.
+     */
+    const dir = app({ "index.html": "<!doctype html><title>Static</title><p>hello" });
+
+    const run = check(dir, "--json");
+    expect(run.status).toBe(0);
+    const report = JSON.parse(run.stdout) as { ok: boolean; storesDataInTheFile: boolean };
+    expect(report.ok).toBe(true);
+    expect(report.storesDataInTheFile).toBe(false);
+  });
+});

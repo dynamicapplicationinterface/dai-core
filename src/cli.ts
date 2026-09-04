@@ -8,14 +8,22 @@
  */
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { compileDirectory, CompileError, formatBytes, sanitizeFileName } from "./compile.js";
+import {
+  collectFiles,
+  compileDirectory,
+  CompileError,
+  formatBytes,
+  sanitizeFileName,
+} from "./compile.js";
+import { lintFiles, storesDataInFile } from "./lint.js";
 import { auditContainer, parseContainer } from "./container.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const USAGE = `dai — build and inspect DAI containers
 
 Usage:
   dai build <directory> [options]     Package a directory into one file
+  dai check <directory> [--json]      Check source before building it
   dai verify <file> [--json]          Check a container and report what it finds
 
 Build options:
@@ -35,6 +43,10 @@ Build options:
                           whole file.
       --no-verify         Build a container that does not demand verification
       --quiet             Print only the output path
+
+Check options:
+      --json              Report the findings as JSON. Exit 0 when the source
+                          will work inside a container, 1 when it will not
 
 Verify options:
       --json              Report the whole audit as JSON, for a program rather
@@ -178,6 +190,101 @@ async function build(parsed: Parsed): Promise<number> {
   return 0;
 }
 
+/**
+ * Checks source before it is sealed into anything.
+ *
+ * `verify` answers "is this container intact"; this answers the question that
+ * comes before it — will this code work once it is inside one. They are
+ * different failures with different audiences. A container is refused because
+ * somebody changed it; source is refused because it does something a container
+ * cannot do, which is not a fault so much as a fact somebody has not been told
+ * yet.
+ *
+ * The rules are the ones the website's paste page shows and the MCP server
+ * enforces, from `src/lint.ts`, because three sets of rules would be three
+ * answers to one question.
+ *
+ * It exists for an agent as much as for a person. Something writing an
+ * application unattended needs to find out that its `fetch` will never work
+ * before it packages a container around it, and needs to be told in a form it
+ * can act on rather than in prose.
+ */
+async function check(parsed: Parsed): Promise<number> {
+  const target = parsed.positional[0];
+  if (!target) {
+    process.stderr.write("dai check needs a directory. Try: dai check ./app\n");
+    return 2;
+  }
+
+  const root = resolve(process.cwd(), target);
+  if (!existsSync(root)) {
+    process.stderr.write(`No directory at ${root}.
+`);
+    return 2;
+  }
+
+  const collected = await collectFiles(root);
+  const sources: Record<string, string> = {};
+  for (const file of collected) {
+    if (!/\.(?:html?|m?js|ts|css)$/i.test(file.entry)) continue;
+    sources[file.entry] = readFileSync(file.absolute, "utf8");
+  }
+
+  const findings = lintFiles(sources);
+  const entry = Object.keys(sources).some((name) => name === "index.html");
+  const stores = Object.values(sources).some((source) => storesDataInFile(source));
+
+  if (parsed.flags.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          directory: root,
+          ok: findings.length === 0 && entry,
+          files: Object.keys(sources).sort(),
+          hasEntryPoint: entry,
+          // Not a failure. An application that keeps nothing is a legitimate
+          // thing to build; it is worth reporting because "my data vanished"
+          // is what somebody says afterwards when it was never being kept.
+          storesDataInTheFile: stores,
+          findings: findings.map((finding) => ({
+            file: finding.file,
+            id: finding.id,
+            what: finding.what,
+            why: finding.why,
+            fix: finding.fix,
+          })),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    return findings.length === 0 && entry ? 0 : 1;
+  }
+
+  process.stdout.write(`${root}
+  ${Object.keys(sources).length} files
+`);
+
+  if (!entry) {
+    process.stdout.write("  no index.html — the container will open blank\n");
+  }
+  if (!stores) {
+    process.stdout.write("  nothing stored through window.dai — data will not travel\n");
+  }
+
+  for (const finding of findings) {
+    process.stdout.write(`
+  ${finding.file}: ${finding.what}
+    ${finding.why}
+    ${finding.fix}
+`);
+  }
+
+  if (findings.length === 0 && entry) process.stdout.write("  ready to build\n");
+
+  return findings.length === 0 && entry ? 0 : 1;
+}
+
 async function verify(parsed: Parsed): Promise<number> {
   const target = parsed.positional[0];
   if (!target) {
@@ -279,6 +386,8 @@ export async function run(argv: string[]): Promise<number> {
     switch (parsed.command) {
       case "build":
         return await build(parsed);
+      case "check":
+        return await check(parsed);
       case "verify":
         return await verify(parsed);
       default:
