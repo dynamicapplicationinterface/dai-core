@@ -590,7 +590,13 @@ ${refusal.detail}` : ""),
             // this window actually wrote rather than what it first read.
             currentGeneration = generation;
           })
-        : invokeTauri("save_cartridge", { path: currentFilePath, html });
+        : invokeTauri("save_cartridge", {
+            path: currentFilePath,
+            html,
+            backup: !backedUp.has(currentFilePath),
+          }).then(() => {
+            backedUp.add(currentFilePath!);
+          });
 
     written.then(() => reply("ok")).catch((error: unknown) => reply("error", String(error)));
   }

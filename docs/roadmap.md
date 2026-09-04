@@ -215,18 +215,16 @@ direction is a capability an attacker inherits along with everyone else.
 
 Ordered by how much they hurt today.
 
-1. **Back up before an in-place save.** ~~Done for the sectioned path~~: the
-   desktop copies a document to `name.dai.bak` once per session, before the
-   first write, staged and renamed so a crash cannot replace a good backup with
-   half of one. One copy per session rather than per save, because this format
-   expects large files. The viewer-form path below is unchanged and still
-   wants the same treatment.
+1. **Back up before an in-place save.** **Done.** Both save paths copy a
+   document to `name.dai.bak` before the first write of a session, staged and
+   renamed so a crash cannot replace a good backup with half of one. Once per
+   session rather than per save, because this format expects large files and the
+   copy worth having is of the state the window opened.
 
-   `save_cartridge` renames over the
-   original. The database has no copy anywhere else, so a bad save is
-   unrecoverable — as is a delete, which we have already seen happen. Writing
-   `name.dai.bak` alongside before the rename costs one file and covers the
-   overwrite case.
+   The sectioned path needed it because an in-place write is not atomic and the
+   previous database is gone the moment the new one starts. The viewer path
+   needed it for a different reason: its rename *is* atomic, so the file is
+   never half-written, and the version it replaced is gone regardless.
 
    `save_cartridge_data`, the sectioned path, makes this more pressing rather
    than less: it writes over the database in place, so there is no moment at

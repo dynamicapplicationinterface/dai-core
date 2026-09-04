@@ -190,7 +190,7 @@ fn resolve_target(path: &str) -> Result<PathBuf, String> {
 /// it the rename can reach the disk before the contents do, so a power loss
 /// between the two leaves a cartridge that looks intact and is empty.
 #[tauri::command]
-fn save_cartridge(path: String, html: String) -> Result<(), String> {
+fn save_cartridge(path: String, html: String, backup: bool) -> Result<(), String> {
     if html.trim().is_empty() {
         return Err("The container sent an empty document; refusing to overwrite.".into());
     }
@@ -203,6 +203,14 @@ fn save_cartridge(path: String, html: String) -> Result<(), String> {
     }
 
     let target = resolve_target(&path)?;
+
+    // The rename below is atomic, so this file is never half-written — but the
+    // version it replaces is gone all the same, and a person who has just
+    // overwritten a document wants the same way back as one whose save was
+    // interrupted.
+    if backup {
+        write_backup(&target)?;
+    }
 
     let directory = target
         .parent()
