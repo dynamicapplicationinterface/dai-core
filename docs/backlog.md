@@ -36,7 +36,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.3 | Reference link and dumb store | [x] `bca1061` — interface, two adapters, opener; the bucket is yours |
 | 2.4 | Carriers in the specification | [~] `5606a87` `6c23954` — the Python reader verifies signed links; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [x] `8ce30f3` — link done; QR is its own item |
-| 2.6 | Every share path carries the link | [x] `PENDING` |
+| 2.6 | Every share path carries the link | [x] `abc0a59` |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
 | 3.3 | Unfurl without the blob | [ ] |
@@ -370,7 +370,7 @@ link when a store is configured.
 The `handOff` share text points at the opener; it should point at *this*
 document.
 
-Done in `PENDING`. The message a shared document travels in carries a link to
+Done in `abc0a59`. The message a shared document travels in carries a link to
 the document, and the file travels beside it for whoever would rather keep
 one. Above the cap there is no link and the sentence falls back to the
 address, which is what it always was. Copy a link and the share sheet now go
