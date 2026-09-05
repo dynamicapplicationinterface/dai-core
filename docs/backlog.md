@@ -45,7 +45,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
 | 4.1 | Succession | [ ] |
 | 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
-| 4.3 | A publisher who is somebody | [x] `PENDING` — known / new / conflict on the card; QR deferred |
+| 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [ ] |
 | 5.1 | The north star, measured | [ ] |
@@ -439,7 +439,7 @@ never the word "verified":
 Same key with a changed name is Known with "renamed from X"; the pinned name
 updates after the person proceeds.
 
-Done in `PENDING`. `publisherName` is in the signed set, present only when
+Done in `6ae143b`. `publisherName` is in the signed set, present only when
 given, so every container signed before names existed verifies unchanged —
 and the Python reader agrees on two new conformance cases, one signed under a
 name and one with the name edited afterwards. `src/publisher.ts` is the one
