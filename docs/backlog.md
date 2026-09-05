@@ -309,10 +309,9 @@ itself and has `presignPut` for a browser. The opener opens both link forms and
 checks the hash before it imports the key. `dai publish` is the sender. Spec
 §1.1 has the grammar.
 
-The bucket exists: `dai-store` on R2, public reads at its r2.dev address,
+The bucket exists: `dai-store` on R2, public reads at `store.opendai.app`,
 CORS from `infra/r2-cors.json`, and `check-store.mjs` says ready. `STORE_BASE`
-points at it, so `/d/<id>` links resolve — by a redirect to `/?d=<id>`, which keeps the opener's relative assets and single worker scope; the fragment survives a redirect, so the key still never leaves the browser. Still open: a custom domain (the
-r2.dev address is meant for development and is rate-limited), S3 API
+points at it, so `/d/<id>` links resolve — by a redirect to `/?d=<id>`, which keeps the opener's relative assets and single worker scope; the fragment survives a redirect, so the key still never leaves the browser. Still open: S3 API
 credentials for the bucket so `dai publish` and a presigning route can write
 to it, and a lifecycle rule for unopened blobs. Uploads today go through
 `wrangler r2 object put`.

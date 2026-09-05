@@ -1164,12 +1164,11 @@ async function openFromLink(carried: string): Promise<void> {
 /**
  * Where `/d/<id>` links resolve: this project's store.
  *
- * An R2 bucket serving ciphertext under content hashes, public for GET with
- * CORS open, checked by scripts/check-store.mjs. This is the bucket's
- * development address; a custom domain would change only this line. The
- * any-host form (`#h=&u=&k=`) never touches it.
+ * An R2 bucket behind store.opendai.app, serving ciphertext under content
+ * hashes, public for GET with CORS open, checked by scripts/check-store.mjs.
+ * The any-host form (`#h=&u=&k=`) never touches it.
  */
-const STORE_BASE: string | undefined = "https://pub-ff38a45eca704d8f98b86753c34be0d4.r2.dev/";
+const STORE_BASE: string | undefined = "https://store.opendai.app/";
 
 /**
  * Opens a document a reference link names.
