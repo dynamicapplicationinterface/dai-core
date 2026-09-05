@@ -4,8 +4,8 @@
   "buildCommand": "cd ../.. && npm run build && npm run build:runner",
   "outputDirectory": "dist",
   "cleanUrls": true,
-  "rewrites": [
-    { "source": "/d/:id", "destination": "/" }
+  "redirects": [
+    { "source": "/d/:id", "destination": "/?d=:id", "permanent": true }
   ],
   "headers": [
     {
