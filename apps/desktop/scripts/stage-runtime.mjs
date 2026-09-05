@@ -11,7 +11,7 @@
  * can call the very same loadRuntimeAssets() rather than growing its own
  * loader — the difference between sharing a door and having a matching one.
  */
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,5 +32,10 @@ const assets = {
 for (const [name, from] of Object.entries(assets)) {
   copyFileSync(from, resolve(out, name));
 }
+
+// The UTS #39 table (spec §9.6), by its content hash, so this host and the
+// opener compare names with the same bytes.
+const id = readFileSync(resolve(repo, "src/confusables-id.ts"), "utf8").match(/CONFUSABLES_ID = "([0-9a-f]+)"/)?.[1];
+if (id) copyFileSync(resolve(repo, "conformance", `confusables.${id}.json`), resolve(out, `confusables.${id}.json`));
 
 console.log(`[dai] staged ${Object.keys(assets).length} runtime assets into public/runtime`);

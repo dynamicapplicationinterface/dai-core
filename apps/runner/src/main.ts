@@ -11,7 +11,8 @@ import { refatten } from "../../../src/container.js";
 import { decodeInline, INLINE_CAP, inlineFrom, inlineLink } from "../../../src/link.js";
 import { heldEngine } from "./engine.js";
 import { openFromStore, referenceFrom } from "../../../src/store.js";
-import { publisherState, recordPublisher } from "../../../src/publisher.js";
+import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
+import { confusables } from "./confusables.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -266,7 +267,7 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
       return;
     }
 
-    await recordPublisher(publisherStore(), cartridge);
+    await recordPublisher(publisherStore(), cartridge, await confusables());
 
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
     if (opfsDb && opfsDb.byteLength > 0) {
@@ -526,7 +527,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * the card, shown on it, and recorded only after the person proceeds — so
      * a conflict that was refused never becomes a pin.
      */
-    const who = await publisherState(publisherStore(), cartridge);
+    const who = await publisherState(publisherStore(), cartridge, await confusables());
     installSuppressed = who.state === "conflict";
 
     /*
@@ -559,7 +560,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       });
       slot.classList.add("busy");
     }
-    await recordPublisher(publisherStore(), cartridge);
+    await recordPublisher(publisherStore(), cartridge, await confusables());
 
     if (succession?.inherit) {
       // Copied, never moved: the previous document's own store is untouched.
@@ -955,6 +956,32 @@ async function copyLink(): Promise<void> {
   }
 }
 
+const labelButton = document.getElementById("label") as HTMLButtonElement;
+
+/**
+ * "Call this publisher…": a name the person gives a key, on this device.
+ *
+ * Local, never exported, shown before anything a document asserts — and from
+ * then on a stranger's name is compared against it too (spec §9.6). The UI is
+ * the host's, and this host's is the smallest that works: a prompt.
+ */
+async function namePublisher(): Promise<void> {
+  if (!loaded?.publicKey) {
+    say("This document is not signed, so there is no publisher to name.", true);
+    return;
+  }
+  const current = await publisherStore().byKey(loaded.publicKey);
+  const label = window.prompt("What do you call this publisher?", current?.hostLabel ?? current?.name ?? "");
+  if (label === null) return;
+  await labelPublisher(publisherStore(), loaded.publicKey, label, await confusables());
+  say(label.trim() ? `This publisher is "${label.trim()}" on this device.` : "Label removed.");
+}
+
+labelButton.addEventListener("click", () => {
+  sheet.hidden = true;
+  void namePublisher();
+});
+
 linkButton.addEventListener("click", () => {
   sheet.hidden = true;
   void copyLink();
@@ -1341,6 +1368,9 @@ async function start(): Promise<void> {
 }
 
 void start();
+// Off the first-paint path, alongside the engine: the table a name is compared
+// with is wanted at the first card, not at the first frame.
+void confusables();
 
 // Exposed for tests and for the storage layer.
 Object.defineProperty(window, "__runner", {

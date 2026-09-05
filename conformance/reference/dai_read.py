@@ -963,6 +963,163 @@ def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str
     return "invalid", "UNVERIFIED_SIGNATURE"
 
 
+# ---------------------------------------------------------------------------
+# What a host remembers (§9.6)
+# ---------------------------------------------------------------------------
+
+import unicodedata
+
+
+def load_confusables(path) -> dict[str, str]:
+    """The UTS #39 prototype table as `confusables.json` carries it:
+    {"unicode": "...", "map": {"<char>": "<prototype string>"}}."""
+    return json.loads(Path(path).read_text(encoding="utf-8"))["map"]
+
+
+def skeleton(name: str, table: dict[str, str]) -> str:
+    """§9.6 rule 2: NFKC → case fold → drop Z* and P* → UTS #39 §4 skeleton.
+
+    The UTS #39 skeleton is NFD, then each character replaced by its prototype
+    (a character the table does not list maps to itself), then NFD again.
+    """
+    folded = unicodedata.normalize("NFKC", name).casefold()
+    kept = "".join(ch for ch in folded if unicodedata.category(ch)[0] not in ("Z", "P"))
+    decomposed = unicodedata.normalize("NFD", kept)
+    replaced = "".join(table.get(ch, ch) for ch in decomposed)
+    return unicodedata.normalize("NFD", replaced)
+
+
+# Script names by unicodedata.name() prefix. Han, Hiragana and Katakana are one
+# writing system: a Japanese name spells one word with all three.
+_SCRIPT_PREFIXES = (
+    ("LATIN", "latin"),
+    ("CYRILLIC", "cyrillic"),
+    ("GREEK", "greek"),
+    ("ARMENIAN", "armenian"),
+    ("HEBREW", "hebrew"),
+    ("ARABIC", "arabic"),
+    ("CJK", "cjk"),
+    ("HAN", "cjk"),
+    ("HIRAGANA", "cjk"),
+    ("KATAKANA", "cjk"),
+    ("HANGUL", "hangul"),
+    ("THAI", "thai"),
+    ("DEVANAGARI", "devanagari"),
+)
+
+
+def _script(ch: str) -> str | None:
+    """The script of a letter, or None for a non-letter or a script §9.6 does
+    not name.
+
+    SPEC GAP: §9.6 says "letters from more than one script" and gives neither
+    a letter test nor a script list. This reader takes "letter" as Unicode
+    category L*, reads the script off the character name's first word, and
+    counts only the scripts listed above; a letter of any other script never
+    contributes, so it can neither cause nor prevent a conflict. Han with
+    Hiragana and Katakana is one script here. The document should say all of
+    this.
+    """
+    if not unicodedata.category(ch).startswith("L"):
+        return None
+    label = unicodedata.name(ch, "")
+    for prefix, script in _SCRIPT_PREFIXES:
+        if label.startswith(prefix + " ") or label.startswith(prefix + "-"):
+            return script
+    return None
+
+
+def mixed_script(name: str) -> bool:
+    """§9.6 rule 1: after NFKC and case fold, any whitespace-separated token
+    whose letters come from more than one script."""
+    folded = unicodedata.normalize("NFKC", name).casefold()
+    for token in folded.split():
+        scripts = {s for s in (_script(ch) for ch in token) if s}
+        if len(scripts) > 1:
+            return True
+    return False
+
+
+class KeyStore:
+    """§9.6's two stores, in memory. `keys` is SPKI (base64) → record;
+    `documents` is documentUuid → SPKI (or "unsigned")."""
+
+    def __init__(self, roots: list[dict] | None = None):
+        self.keys: dict[str, dict[str, Any]] = {}
+        self.documents: dict[str, str] = {}
+        # A root list entry's `name` is a host label for that key (§9.6).
+        for entry in roots or []:
+            self.keys[entry["spki"]] = {
+                "name": "",
+                "hostLabel": entry.get("name", ""),
+                "skeletons": [],
+                "documents": [],
+                "root": True,
+            }
+
+
+def _held_names(store: KeyStore, table: dict[str, str]):
+    """Every (name, skeleton) the host holds: asserted names and host labels."""
+    for entry in store.keys.values():
+        for name in (entry.get("name"), entry.get("hostLabel")):
+            if name:
+                yield name, skeleton(name, table)
+
+
+def trust_state(store: KeyStore, manifest: dict, key_b64: str | None, table: dict[str, str]) -> dict[str, Any]:
+    """The state a host reaches on opening this document (§9.6)."""
+    if not manifest.get("signature") or not key_b64:
+        return {"state": "unsigned"}
+
+    # §9.6 conflict rule "document", decided before the name rules: the
+    # document's UUID is already in the document store under a different key
+    # (or as "unsigned"). This holds even when the new key is itself known;
+    # the same UUID under two keys is a conflict by definition (§9.7).
+    uuid = manifest.get("documentUuid")
+    if uuid:
+        holder = store.documents.get(uuid)
+        if holder is not None and holder != key_b64:
+            return {"state": "conflict", "rule": "document"}
+
+    entry = store.keys.get(key_b64)
+    if entry is not None:
+        return {"state": "known", "count": len(entry["documents"])}
+
+    name = manifest.get("publisherName", "")
+    if not name:
+        # SPEC GAP: §9.6 defines NEW and CONFLICT for an asserted name; a
+        # signed document under an unseen key with no `publisherName` has
+        # nothing to collide. Reported "anonymous" here.
+        return {"state": "anonymous"}
+
+    if mixed_script(name):
+        return {"state": "conflict", "rule": "mixed-script"}
+    own = skeleton(name, table)
+    for other, other_skeleton in _held_names(store, table):
+        if other_skeleton == own:
+            return {"state": "conflict", "rule": "skeleton", "knownAs": other}
+    return {"state": "new"}
+
+
+def record(store: KeyStore, manifest: dict, key_b64: str | None, table: dict[str, str]) -> None:
+    """Pin or update a key after the person proceeds (§9.6)."""
+    uuid = manifest.get("documentUuid")
+    if not manifest.get("signature") or not key_b64:
+        if uuid:
+            store.documents.setdefault(uuid, "unsigned")
+        return
+    entry = store.keys.setdefault(key_b64, {"name": "", "hostLabel": "", "skeletons": [], "documents": []})
+    name = manifest.get("publisherName", "")
+    if name:
+        entry["name"] = name
+    entry["skeletons"] = [skeleton(n, table) for n in (entry["name"], entry["hostLabel"]) if n]
+    if uuid and uuid not in entry["documents"]:
+        entry["documents"].append(uuid)
+    if uuid:
+        store.documents.setdefault(uuid, key_b64)
+
+
+
 def main(argv: list[str]) -> int:
     import time
 

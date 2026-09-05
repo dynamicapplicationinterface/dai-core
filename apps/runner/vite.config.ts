@@ -96,9 +96,28 @@ function engine(): Plugin {
   };
 }
 
+/**
+ * Names the confusable table in the page, so the worker precaches it.
+ *
+ * The table is content-hashed (spec §9.6) and the worker learns asset names
+ * from index.html; a prefetch link is the honest way to say "this page will
+ * want that file" without the page fetching it before it is needed.
+ */
+function tableLink(): Plugin {
+  return {
+    name: "dai-confusables-link",
+    transformIndexHtml(html) {
+      const id = readFileSync(join(import.meta.dirname, "../../src/confusables-id.ts"), "utf8")
+        .match(/CONFUSABLES_ID = "([0-9a-f]+)"/)?.[1];
+      if (!id) return html;
+      return html.replace("</head>", `  <link rel="prefetch" href="./confusables.${id}.json">\n</head>`);
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
-  plugins: [stamp(), engine()],
+  plugins: [stamp(), engine(), tableLink()],
   server: { port: 5175, strictPort: true },
   preview: { port: 5175, strictPort: true, headers: productionHeaders() },
   build: { outDir: "dist", emptyOutDir: true },

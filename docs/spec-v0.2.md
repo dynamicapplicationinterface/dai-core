@@ -1035,9 +1035,11 @@ present any of them with the word "verified":
 
 - **KNOWN** — the key is in the key store, or in a root list (below).
 - **NEW** — the key is unseen and the asserted name collides with nothing.
-- **CONFLICT** — either the document's UUID is in the document store under a
-  different key, or the key is unseen and the asserted name collides with a
-  name in the key store, a host label, or a root list entry. A host MUST show a
+- **CONFLICT** — by one of three rules, named `document`, `mixed-script` and
+  `skeleton` in reports and vectors: the document's UUID is in the document
+  store under a different key; or the key is unseen and the asserted name
+  collides with a name in the key store, a host label, or a root list entry,
+  by either collision rule below. A host MUST show a
   conflict as a warning and MUST NOT offer to install, pin, or adopt data on
   that open.
 
@@ -1097,11 +1099,19 @@ The suite gains, in addition to the version 2 cases, which remain:
 - **envelope-tagged** — the same valid signature wrapped in tag 18; verifies.
 - **countersignature-valid** — a countersignature under the suite's second
   key; reported present and valid when that key is held, absent when it is not.
-- **trust-vectors.json** — sequences of containers with the state a host MUST
-  reach after each: same key, second document → KNOWN; Cyrillic а inside a
-  Latin name → CONFLICT (mixed script); whole-script Cyrillic "Acme" against a
-  pinned Latin "Acme" → CONFLICT (skeleton); a fullwidth variant → CONFLICT
-  (NFKC); an all-CJK name against every pinned name → NEW.
+- **trust-vectors.json** — a sequence of signed containers with the state a
+  host MUST reach after each, starting from an empty key store and recording
+  each one marked to be recorded: same key, second document → KNOWN with a
+  count of one; a Cyrillic а inside a Latin word → CONFLICT (mixed script);
+  whole-script Cyrillic "Асе Ѕрасе" against a pinned Latin "Ace Space" →
+  CONFLICT (skeleton) — chosen because every letter of it is a UTS #39
+  prototype of a Latin one, which is not true of "Асме" for "Acme", where
+  Cyrillic м is not a confusable of m; a fullwidth variant → CONFLICT (NFKC);
+  an all-CJK name against every pinned name → NEW; and the first document
+  again under the stranger's key → CONFLICT (document). Every other step is
+  its own document: the vectors carry distinct UUIDs, because the same UUID
+  under two keys is rule 3's conflict by definition. The table the vectors
+  were computed with is `confusables.json` beside them.
 - **identity-vectors.json** — a bundle that verifies against the suite's test
   root → identity shown; timestamp outside the certificate window, certificate
   key not the manifest's key, root not held → absent, never a refusal.

@@ -766,6 +766,53 @@ console.log(`${written.length} cases written to conformance/cases.json`);
 }
 
 /*
+ * Trust vectors (spec §9.6 and §9.7).
+ *
+ * A sequence of signed documents and the state a conforming host must reach
+ * after each, starting from an empty key store, recording each one it opens.
+ * Two keys: the suite's signing key as the publisher, the countersign key as a
+ * stranger. The names are the four collisions §9.7 names plus the one that
+ * must not collide.
+ */
+{
+  const csPem = readFileSync(join(suite, "countersign-key.pem"), "utf8");
+  const steps = [
+    { name: "first", key: KEY, publisherName: "Ace Space", expect: { state: "new" }, record: true },
+    { name: "second", key: KEY, publisherName: "Ace Space", expect: { state: "known", count: 1 }, record: true },
+    // Rule 1: one word, two alphabets. A Cyrillic а inside a Latin word.
+    { name: "mixed-script", key: csPem, publisherName: "Ace Spаce", expect: { state: "conflict", rule: "mixed-script" }, record: false },
+    // Rule 2: whole-script Cyrillic, every letter a UTS #39 prototype of a Latin one.
+    { name: "cyrillic-skeleton", key: csPem, publisherName: "Асе Ѕрасе", expect: { state: "conflict", rule: "skeleton", knownAs: "Ace Space" }, record: false },
+    // NFKC: fullwidth Latin.
+    { name: "fullwidth", key: csPem, publisherName: "Ａｃｅ Ｓｐａｃｅ", expect: { state: "conflict", rule: "skeleton", knownAs: "Ace Space" }, record: false },
+    // An all-CJK name must collide with nothing.
+    { name: "cjk-no-collision", key: csPem, publisherName: "株式会社アクメ", expect: { state: "new" }, record: true },
+    // Rule 3: a document this host has under one key, arriving under another.
+    { name: "same-document-other-key", key: csPem, publisherName: "Northwind", uuidOf: "first", expect: { state: "conflict", rule: "document" }, record: false },
+  ];
+  // Every step is its own document. The suite's fixed UUID would make every
+  // step the same document under two keys, which is rule 3's conflict — the
+  // Python reader implemented the rule and failed four steps, correctly.
+  const uuidFor = (name) => {
+    const h = createHash("sha256").update("trust-vector:" + name).digest("hex");
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+  };
+  const vectors = [];
+  for (const step of steps) {
+    const documentUuid = uuidFor(step.uuidOf ?? step.name);
+    const built = await buildContainer(base({ signingKey: step.key, manifestVersion: 3, publisherName: step.publisherName, documentUuid }));
+    const file = `cases/trust-${step.name}.dai.html`;
+    writeFileSync(join(suite, file), built.html);
+    vectors.push({ name: step.name, file, documentUuid, publisherName: step.publisherName, expect: step.expect, record: step.record });
+  }
+  writeFileSync(
+    join(suite, "trust-vectors.json"),
+    JSON.stringify({ suiteVersion: 1, generatedBy: "scripts/build-conformance.mjs", table: "confusables.json", sequence: vectors }, null, 2) + "\n",
+  );
+  console.log(`trust vectors written to conformance/trust-vectors.json (${vectors.length} steps)`);
+}
+
+/*
  * The same documents, carried in links (§1.1).
  *
  * Only the intact viewer-form cases: a link is made from a document a reader

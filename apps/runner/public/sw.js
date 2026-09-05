@@ -62,6 +62,9 @@ async function appAssets() {
     // Same-origin build output only. An absolute URL is somebody else's server
     // and has no business in this cache.
     if (url.startsWith("./assets/") || url.startsWith("/assets/")) found.add(url);
+    // The confusable table (spec §9.6) is content-hashed too, and named in the
+    // page by a prefetch link so this worker can find it the same way.
+    if (/^\.?\/?confusables\.[0-9a-f]+\.json$/.test(url)) found.add(url);
   }
   return [...found];
 }

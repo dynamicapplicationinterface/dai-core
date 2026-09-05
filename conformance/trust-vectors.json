@@ -1,0 +1,84 @@
+{
+  "suiteVersion": 1,
+  "generatedBy": "scripts/build-conformance.mjs",
+  "table": "confusables.json",
+  "sequence": [
+    {
+      "name": "first",
+      "file": "cases/trust-first.dai.html",
+      "documentUuid": "f2078fa5-98c0-4dc6-86a9-37692577d7ca",
+      "publisherName": "Ace Space",
+      "expect": {
+        "state": "new"
+      },
+      "record": true
+    },
+    {
+      "name": "second",
+      "file": "cases/trust-second.dai.html",
+      "documentUuid": "5a1b3a59-b74e-4cef-821c-550cff3e1e7a",
+      "publisherName": "Ace Space",
+      "expect": {
+        "state": "known",
+        "count": 1
+      },
+      "record": true
+    },
+    {
+      "name": "mixed-script",
+      "file": "cases/trust-mixed-script.dai.html",
+      "documentUuid": "bf0bce46-fb70-4986-85dd-bce22ac5aa57",
+      "publisherName": "Ace Spаce",
+      "expect": {
+        "state": "conflict",
+        "rule": "mixed-script"
+      },
+      "record": false
+    },
+    {
+      "name": "cyrillic-skeleton",
+      "file": "cases/trust-cyrillic-skeleton.dai.html",
+      "documentUuid": "d733989a-8230-4b0e-87bd-e77cf0c5c418",
+      "publisherName": "Асе Ѕрасе",
+      "expect": {
+        "state": "conflict",
+        "rule": "skeleton",
+        "knownAs": "Ace Space"
+      },
+      "record": false
+    },
+    {
+      "name": "fullwidth",
+      "file": "cases/trust-fullwidth.dai.html",
+      "documentUuid": "43a9a096-fd94-4719-8416-de9974b1f467",
+      "publisherName": "Ａｃｅ Ｓｐａｃｅ",
+      "expect": {
+        "state": "conflict",
+        "rule": "skeleton",
+        "knownAs": "Ace Space"
+      },
+      "record": false
+    },
+    {
+      "name": "cjk-no-collision",
+      "file": "cases/trust-cjk-no-collision.dai.html",
+      "documentUuid": "cb8cfdab-82b2-4b40-8a25-dcecd27983d4",
+      "publisherName": "株式会社アクメ",
+      "expect": {
+        "state": "new"
+      },
+      "record": true
+    },
+    {
+      "name": "same-document-other-key",
+      "file": "cases/trust-same-document-other-key.dai.html",
+      "documentUuid": "f2078fa5-98c0-4dc6-86a9-37692577d7ca",
+      "publisherName": "Northwind",
+      "expect": {
+        "state": "conflict",
+        "rule": "document"
+      },
+      "record": false
+    }
+  ]
+}

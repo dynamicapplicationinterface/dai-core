@@ -107,18 +107,29 @@ export function showCard(input: CardInput): Promise<void> {
       verify.hidden = false;
       safety.textContent = `Safety number ${who.safetyNumber}. Ask whoever sent this to read you theirs. If it matches, it is the same key.`;
       break;
-    case "known":
+    case "known": {
+      // The person's own label first, then what the document says it is.
+      const name = who.asserted ? `${who.name} (signs as ${who.asserted})` : who.name;
+      const tail = who.org
+        ? who.count > 0
+          ? `${who.org} · ${ofTheirApps(who.count)}`
+          : `${who.org} · trusted by your organisation`
+        : ofTheirApps(who.count);
       publisher.textContent = who.renamedFrom
-        ? `${who.name} (renamed from ${who.renamedFrom}) · ${ofTheirApps(who.count)}`
-        : `${who.name} · ${ofTheirApps(who.count)}`;
+        ? `${name} (renamed from ${who.renamedFrom}) · ${tail}`
+        : `${name} · ${tail}`;
       break;
+    }
     case "new":
       publisher.textContent = `${who.name} · first time you've seen this publisher`;
       verify.hidden = false;
       safety.textContent = `Safety number ${who.safetyNumber}. Ask ${who.name} to read you theirs over a call or another channel. If it matches, it is the same key.`;
       break;
     case "conflict":
-      publisher.textContent = `Claims to be ${who.claimed}, but the ${who.knownAs} you know uses a different key. Treat as a stranger.`;
+      publisher.textContent =
+        who.rule === "mixed-script"
+          ? `Claims to be ${who.claimed}, a name spelled from two alphabets so it looks like another. Treat as a stranger.`
+          : `Claims to be ${who.claimed}, but the ${who.knownAs} you know uses a different key. Treat as a stranger.`;
       break;
   }
   publisher.dataset.state = who.state;

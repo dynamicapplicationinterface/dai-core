@@ -284,6 +284,33 @@ def main() -> int:
     else:
         print(f"{'skip':>7}  no conformance/countersign-vectors.json; run `npm run conformance`")
 
+    # §9.6: the trust states, reached in sequence from an empty key store.
+    trust_file = SUITE / "trust-vectors.json"
+    if trust_file.exists():
+        vectors = json.loads(trust_file.read_text(encoding="utf-8"))
+        table = dai_read.load_confusables(SUITE / vectors["table"])
+        store = dai_read.KeyStore()
+        for step in vectors["sequence"]:
+            name = f"{step['name']} — trust state"
+            try:
+                data = (SUITE / step["file"]).read_bytes()
+                manifest_json, key = _manifest_and_key(data)
+                got = dai_read.trust_state(store, manifest_json, key, table)
+                wrong = [
+                    f"{k}: expected {v!r}, read {got.get(k)!r}"
+                    for k, v in step["expect"].items()
+                    if got.get(k) != v
+                ]
+                if step.get("record"):
+                    dai_read.record(store, manifest_json, key, table)
+            except (ContainerError, ValueError, KeyError, zipfile.BadZipFile) as error:
+                wrong = [f"could not be read: {error}"]
+            if wrong:
+                failures.append((name, "; ".join(wrong)))
+            print(f"{'ok' if not wrong else 'FAILED':>7}  {name}")
+    else:
+        print(f"{'skip':>7}  no conformance/trust-vectors.json; run `npm run conformance`")
+
     print()
     if failures:
         for name, detail in failures:

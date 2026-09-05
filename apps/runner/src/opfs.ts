@@ -13,7 +13,7 @@ const PIN_STORE = "pins";
 const PUB_STORE = "publishers";
 
 import type { PinnedKey, TrustStore } from "../../../src/trust.js";
-import type { PublisherPin, PublisherStore } from "../../../src/publisher.js";
+import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 
 export interface LibraryItem {
   documentUuid: string;
@@ -25,7 +25,7 @@ export interface LibraryItem {
 
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 4);
+    const request = indexedDB.open(IDB_NAME, 5);
     request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(DB_STORE)) {
@@ -45,8 +45,16 @@ function openIdb(): Promise<IDBDatabase> {
       // documents opened under it. Indexed on the folded name, so "is this
       // name one I know under another key" is one lookup.
       if (!db.objectStoreNames.contains(PUB_STORE)) {
-        const publishers = db.createObjectStore(PUB_STORE, { keyPath: "publicKey" });
-        publishers.createIndex("folded", "folded", { unique: false });
+        db.createObjectStore(PUB_STORE, { keyPath: "publicKey" });
+      }
+      // Version 5: names are found by UTS #39 skeleton (spec §9.6), and a pin
+      // carries one per name it goes by — the asserted name and the person's
+      // label — so the index is multi-entry. The version 4 records had a
+      // single folded name; they are re-skeletoned lazily as they are met.
+      const publishers = request.transaction!.objectStore(PUB_STORE);
+      if (publishers.indexNames.contains("folded")) publishers.deleteIndex("folded");
+      if (!publishers.indexNames.contains("skeletons")) {
+        publishers.createIndex("skeletons", "skeletons", { unique: false, multiEntry: true });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -284,14 +292,14 @@ export function publisherStore(): PublisherStore {
       });
     },
 
-    async byFoldedName(folded) {
+    async bySkeleton(skeleton) {
       const db = await openIdb();
       return new Promise((resolve, reject) => {
         const request = db
           .transaction(PUB_STORE, "readonly")
           .objectStore(PUB_STORE)
-          .index("folded")
-          .getAll(folded);
+          .index("skeletons")
+          .getAll(skeleton);
         request.onsuccess = () => resolve((request.result as PublisherPin[]) ?? []);
         request.onerror = () => reject(request.error);
       });
@@ -306,5 +314,27 @@ export function publisherStore(): PublisherStore {
         write.onerror = () => reject(write.error);
       });
     },
+
+    roots: rootList,
   };
+}
+
+/**
+ * Keys an organisation told this opener to know (spec §9.6, root lists).
+ *
+ * Read from `roots.json` beside the opener, so a mirror an organisation runs
+ * can ship one with the build and a public opener simply has none. Fetched
+ * once; a missing file is an empty list, not an error.
+ */
+let rootsLoading: Promise<RootPublisher[]> | undefined;
+export function rootList(): Promise<RootPublisher[]> {
+  rootsLoading ??= fetch(new URL("roots.json", document.baseURI))
+    .then(async (response) => {
+      if (!response.ok) return [];
+      const list = (await response.json()) as { formatVersion?: number; publishers?: RootPublisher[] };
+      if (list?.formatVersion !== 1 || !Array.isArray(list.publishers)) return [];
+      return list.publishers.filter((p) => typeof p?.spki === "string" && typeof p?.name === "string");
+    })
+    .catch(() => []);
+  return rootsLoading;
 }

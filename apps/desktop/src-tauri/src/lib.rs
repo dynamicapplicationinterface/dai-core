@@ -155,7 +155,15 @@ fn forget_pinned_key(app: tauri::AppHandle, document_uuid: String) -> Result<(),
 struct PublisherPin {
     public_key: String,
     name: String,
-    folded: String,
+    /// A name the person gave this key here. Local; never leaves this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    host_label: Option<String>,
+    /// UTS #39 skeletons of the names this key goes by (spec §9.6).
+    #[serde(default)]
+    skeletons: Vec<String>,
+    /// Which table computed them, so a host recomputes when it changes.
+    #[serde(default)]
+    table: String,
     /// Unix milliseconds, matching the opener's records.
     first_seen: u64,
     documents: Vec<String>,
@@ -217,12 +225,31 @@ fn get_publisher(app: tauri::AppHandle, public_key: String) -> Result<Option<Pub
 }
 
 #[tauri::command]
-fn find_publishers(app: tauri::AppHandle, folded: String) -> Result<Vec<PublisherPin>, String> {
+fn find_publishers(app: tauri::AppHandle, skeleton: String) -> Result<Vec<PublisherPin>, String> {
     Ok(read_publishers(&app)?
         .values()
-        .filter(|p| p.folded == folded)
+        .filter(|p| p.skeletons.iter().any(|s| *s == skeleton))
         .cloned()
         .collect())
+}
+
+/// A root list an organisation provisioned (spec §9.6), as text, or nothing.
+///
+/// Read from `publisher-roots.json` in the config directory. How it got there
+/// — MDM, a person, a setup script — is not this host's business.
+#[tauri::command]
+fn read_root_list(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("No config directory available: {}", e))?;
+    let path = dir.join("publisher-roots.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))
 }
 
 /// Writes or replaces the record for a key. Unlike a document pin, a publisher
@@ -536,7 +563,8 @@ pub fn run() {
             forget_pinned_key,
             get_publisher,
             find_publishers,
-            save_publisher
+            save_publisher,
+            read_root_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

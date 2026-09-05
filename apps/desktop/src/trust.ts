@@ -70,7 +70,7 @@ export async function forgetTrust(invoke: Invoke, documentUuid: string): Promise
   await drop(storeFor(invoke), documentUuid);
 }
 
-import type { PublisherPin, PublisherStore } from "../../../src/publisher.js";
+import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 
 /**
  * Publishers, kept by the Rust side (4.3). The decision is shared with the
@@ -81,11 +81,22 @@ export function publisherStoreFor(invoke: Invoke): PublisherStore {
     async byKey(publicKey) {
       return (await invoke<PublisherPin | null>("get_publisher", { publicKey })) ?? null;
     },
-    async byFoldedName(folded) {
-      return invoke<PublisherPin[]>("find_publishers", { folded });
+    async bySkeleton(skeleton) {
+      return invoke<PublisherPin[]>("find_publishers", { skeleton });
     },
     async save(pin) {
       await invoke<void>("save_publisher", { pin });
+    },
+    async roots() {
+      const text = await invoke<string | null>("read_root_list");
+      if (!text) return [];
+      try {
+        const list = JSON.parse(text) as { formatVersion?: number; publishers?: RootPublisher[] };
+        if (list?.formatVersion !== 1 || !Array.isArray(list.publishers)) return [];
+        return list.publishers.filter((p) => typeof p?.spki === "string" && typeof p?.name === "string");
+      } catch {
+        return [];
+      }
     },
   };
 }

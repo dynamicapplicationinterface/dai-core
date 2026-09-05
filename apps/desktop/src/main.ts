@@ -29,6 +29,7 @@ import {
 import { lintFiles } from "../../../src/lint.js";
 import { checkTrust, publisherStoreFor, type TrustVerdict } from "./trust.js";
 import { publisherState, recordPublisher } from "../../../src/publisher.js";
+import { CONFUSABLES_FILE } from "../../../src/confusables-id.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 
 
@@ -734,11 +735,21 @@ ${refusal.detail}` : ""),
  * Who signed it, as far as this machine has seen, in a sentence for the status
  * line (4.3). This host has no card; the sentence is where the state goes.
  */
+/** The UTS #39 table, staged beside the engine; the empty table when absent. */
+let tableLoading: Promise<import("../../../src/publisher.js").ConfusableTable> | undefined;
+function confusableTable(): Promise<import("../../../src/publisher.js").ConfusableTable> {
+  tableLoading ??= fetch(`/runtime/${CONFUSABLES_FILE}`)
+    .then(async (r) => (r.ok ? ((await r.json()) as import("../../../src/publisher.js").ConfusableTable) : { unicode: "none", map: {} }))
+    .catch(() => ({ unicode: "none", map: {} }));
+  return tableLoading;
+}
+
 async function describePublisher(container: Awaited<ReturnType<typeof verifyContainer>>): Promise<string> {
   if (!isTauri()) return "";
   const store = publisherStoreFor(invokeTauri);
-  const who = await publisherState(store, container);
-  await recordPublisher(store, container);
+  const table = await confusableTable();
+  const who = await publisherState(store, container, table);
+  await recordPublisher(store, container, table);
   switch (who.state) {
     case "known":
       return who.renamedFrom
