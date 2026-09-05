@@ -37,7 +37,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.4 | Carriers in the specification | [ ] |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
-| 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `PENDING` |
+| 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
 | 3.2 | Mirrorable static opener | [ ] |
 | 3.3 | Unfurl without the blob | [ ] |
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
@@ -210,7 +210,7 @@ visit; mount-before-engine kept.
 
 Done across `1b31ea1` (the opener holds an engine, so it precaches one),
 `8b66364` (two worker bugs that made offline not actually work) and
-`PENDING` (the proof).
+`fd2723f` (the proof).
 
 **Exit:** the second open of any app makes zero network requests. Proven by
 switching the network off rather than by counting fetches: a request served
