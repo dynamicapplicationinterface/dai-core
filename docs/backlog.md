@@ -32,9 +32,9 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.4 | One sentence everywhere | [x] `0f9f72d` — the unfurl inherits it with 3.3 |
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
-| 2.2 | Inline link | [x] `8b66364` grammar, `PENDING` compact carrier — a chore chart is 2.8 kB |
+| 2.2 | Inline link | [x] `8b66364` grammar, `6c23954` compact carrier — a chore chart is 2.8 kB |
 | 2.3 | Reference link and dumb store | [ ] decided: R2 behind a three-call Store |
-| 2.4 | Carriers in the specification | [~] `5606a87` `PENDING` — the Python reader verifies signed links; CDDL and vectors open |
+| 2.4 | Carriers in the specification | [~] `5606a87` `6c23954` — the Python reader verifies signed links; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
@@ -216,7 +216,7 @@ link is 115 KB because it carries the runtime.
    sender falls back to the reference link. Per-channel caps in the sender
    when the channel is known (QR ~2.5 KB, Slack 35 KB, WhatsApp 60 KB).
 
-Done in `PENDING`, with two departures from the list above, both said here.
+Done in `6c23954`, with two departures from the list above, both said here.
 The carried files travel inside the CBOR map as byte strings rather than in
 the text bundle format, because a database is not text; the effect — one
 DEFLATE stream, no zip framing — is the same. And the shell is elided under the
