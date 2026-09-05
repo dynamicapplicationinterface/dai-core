@@ -43,7 +43,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
 | 3.5 | iOS solved by the link | [ ] |
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
-| 4.1 | Succession | [x] `PENDING` — opener adopts under the same key; desktop and the scripted eval stage open |
+| 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
 | 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
@@ -403,7 +403,7 @@ earlier evaluation item: the three added stages — first interaction survives,
 data round-trips, regeneration is safe — and then the run at scale, which is a
 decision about spend and is not made here.
 
-Done in `PENDING`, in the opener. `supersedes` is in the signed set, present
+Done in `c31a68b`, in the opener. `supersedes` is in the signed set, present
 only when given, and the compiler fills it from `--upgrade-of` so a build that
 declared what it upgrades also says so under the signature; `--supersedes`
 names it by hand. The opener adopts the previous document's data by copy,
