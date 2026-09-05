@@ -4,3 +4,8 @@ CREATE TABLE IF NOT EXISTS items (
       what TEXT NOT NULL,
       packed INTEGER NOT NULL DEFAULT 0
     );
+
+CREATE TABLE IF NOT EXISTS trip (
+      id INTEGER PRIMARY KEY,
+      dates TEXT NOT NULL
+    );

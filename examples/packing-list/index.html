@@ -27,12 +27,28 @@
       (8, 'Kids', 'Floaties', 1),
       (9, 'Kids', 'Snacks for the car', 0),
       (10, 'Kids', 'Bear', 0);
+
+    INSERT OR IGNORE INTO trip (id, dates) VALUES (1, 'Sat 14 - Sun 22');
   
     </script>
 
   <main>
     <header>
-      <p class="eyebrow">Sat 14 – Sun 22</p>
+      <!--
+        The dates, which are the one thing on this page that is about a
+        particular trip rather than about packing. Typed over, not decoration:
+        a list somebody cannot date is a list about somebody else's holiday.
+      -->
+      <dai-rows query="SELECT id, dates FROM trip WHERE id = 1">
+        <template>
+          <input
+            class="eyebrow"
+            aria-label="When the trip is"
+            data-text="dates"
+            data-run="UPDATE trip SET dates = :typed WHERE id = 1"
+          />
+        </template>
+      </dai-rows>
       <h1>Beach trip</h1>
       <p class="progress">
         <dai-value query="SELECT count(*) FROM items WHERE packed = 1"></dai-value>

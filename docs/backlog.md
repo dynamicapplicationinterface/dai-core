@@ -52,7 +52,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 5.2 | Propagation without a beacon | [ ] relay side |
 | — | Media type registered | [ ] |
 | — | Desktop window shows the document's icon | [ ] |
-| — | Packing list date editable | [ ] |
+| — | Packing list date editable | [x] `PENDING` |
 | — | dai-core 0.2.0 published | [ ] yours |
 
 ---

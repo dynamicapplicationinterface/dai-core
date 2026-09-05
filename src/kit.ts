@@ -175,9 +175,20 @@ function fill(element, row) {
   for (const target of targets) {
     const column = target.getAttribute('data-text');
     const value = row[column];
+    const text = value === null || value === undefined ? '' : String(value);
+
+    /*
+     * A control shows its value; everything else shows its text.
+     *
+     * Setting textContent on an input puts the text somewhere nobody can see
+     * and leaves the box empty, which is the whole of what somebody looking at
+     * it would call broken. This is the reading half of :typed — one attribute
+     * fills the box and sends back what was typed into it.
+     */
+    if ('value' in target && target.tagName !== 'OPTION') target.value = text;
     // textContent rather than innerHTML, always: a value in the database is
     // somebody's text and must not become markup.
-    target.textContent = value === null || value === undefined ? '' : String(value);
+    else target.textContent = text;
   }
 
   const conditionals = element.querySelectorAll('[data-when]');
@@ -195,6 +206,23 @@ function wire(element, values) {
     trigger.addEventListener(event, (e) => {
       if (trigger.tagName === 'BUTTON') e.preventDefault();
       const withOwn = Object.assign({}, values);
+
+      /*
+       * What somebody typed into this control, as :typed.
+       *
+       * Without it there is no way for an application to change a value in
+       * place — only to add a row and to toggle one — because a data-run
+       * carried the row it was drawn from and the attributes written into the
+       * document, and never the thing in front of the person. A packing list
+       * could tick an item off and could not change the dates of the trip.
+       *
+       * Named :typed rather than :value so it cannot quietly shadow a column
+       * called value in the row this was drawn from. A checkbox is left out:
+       * its value is the string "on" whether it is ticked or not, and the
+       * useful thing about one is already how a toggle is written.
+       */
+      if (trigger.type !== 'checkbox' && 'value' in trigger) withOwn.typed = trigger.value;
+
       for (const attribute of trigger.attributes) {
         if (attribute.name.startsWith('data-') && attribute.name !== 'data-run') {
           withOwn[attribute.name.slice(5)] = attribute.value;

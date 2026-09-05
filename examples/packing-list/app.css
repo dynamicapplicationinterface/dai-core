@@ -38,6 +38,34 @@ header { display: flex; flex-direction: column; gap: 4px; }
   color: var(--accent);
 }
 
+/*
+ * The dates are a control, and read as the line they replaced until touched.
+ * A form field sitting above the title would say "fill this in" to somebody
+ * who came here to pack a bag.
+ */
+input.eyebrow {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+input.eyebrow:hover {
+  border-bottom-color: var(--accent);
+}
+
+input.eyebrow:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
 h1 {
   margin: 0;
   font-size: 34px;
