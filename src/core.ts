@@ -138,6 +138,13 @@ export interface ContainerManifest {
    * signed set from version 3.
    */
   generator?: Generator;
+  /**
+   * A Sigstore bundle binding the signing key to an identity (spec §9.5).
+   * Outside the signed set: its log entry records the signature, which covers
+   * the manifest, so a field containing a proof of the signature cannot be
+   * signed by it. Read by hosts that hold a root; otherwise ignored.
+   */
+  identity?: unknown;
   createdAt: string;
   algorithm: "SHA-256";
   integrityPolicy: "required" | "advisory";

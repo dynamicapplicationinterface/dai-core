@@ -1,0 +1,54 @@
+{
+  "suiteVersion": 1,
+  "generatedBy": "scripts/build-conformance.mjs",
+  "roots": [
+    {
+      "name": "Conformance Sigstore",
+      "fulcioRoots": [
+        "-----BEGIN CERTIFICATE-----\nMIIBPDCB4qADAgECAgEBMAoGCCqGSM49BAMCMBsxGTAXBgNVBAMMEHRlc3QgZnVs\nY2lvIHJvb3QwIhgPMjAyNjA5MDUxNDI2MDdaGA8yMDM2MDkwMjE1MjYwN1owGzEZ\nMBcGA1UEAwwQdGVzdCBmdWxjaW8gcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEH\nA0IABE2MPAiDWT1S7az8JKu2dqRfmdM3EZsEuewmzzr6Nrq92enU60KBwsogCBRU\nBDxjePBVPWqCx7COy4uX5HrhdaujEzARMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZI\nzj0EAwIDSQAwRgIhAIxq/WFqkPMqmiD2v4w67z0X3sTnKzaVHa6+Vj1m92u8AiEA\nn5AvIfmdBIUvA6B2+mcpiyGY7DtfHtQCyyHEv/Qavjo=\n-----END CERTIFICATE-----\n"
+      ],
+      "rekorKeys": [
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEeW9CddydP/7AadvMZNLzh7xAE0gDIp7Jh4Ed08mo/acIVo9wvYvLlHAKRX3JtIVWli5EVH3jQqZwOZk7tEv1iw=="
+      ]
+    }
+  ],
+  "vectors": [
+    {
+      "name": "identity-valid",
+      "file": "cases/identity-valid.dai.html",
+      "expect": {
+        "status": "shown",
+        "identity": "https://github.com/conformance",
+        "issuer": "https://accounts.example"
+      }
+    },
+    {
+      "name": "identity-outside-window",
+      "file": "cases/identity-outside-window.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    },
+    {
+      "name": "identity-wrong-key",
+      "file": "cases/identity-wrong-key.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    },
+    {
+      "name": "identity-unheld-root",
+      "file": "cases/identity-unheld-root.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    },
+    {
+      "name": "identity-other-signature",
+      "file": "cases/identity-other-signature.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    }
+  ]
+}

@@ -34,6 +34,11 @@ export interface CardInput {
    * `src/publisher.ts` defines, and what to do about it.
    */
   publisher: PublisherState;
+  /**
+   * An identity a root this host holds vouched for (spec §9.5). Shown only
+   * when it verified; absent otherwise, and absent says nothing.
+   */
+  identity?: { identity: string; issuer?: string; root: string };
   /** Where it came from, in a person's words. Shown under the button. */
   from?: string;
   /**
@@ -43,6 +48,16 @@ export interface CardInput {
   succession?: { state: "adopting" | "refused" | "nothing-here"; previous: string; why?: string };
   /** The §4 clauses this host applies. */
   applied: readonly string[];
+}
+
+/** " with github.com", from an issuer URL, or nothing. */
+function issuerHost(issuer?: string): string {
+  if (!issuer) return "";
+  try {
+    return ` with ${new URL(issuer).hostname}`;
+  } catch {
+    return ` with ${issuer}`;
+  }
 }
 
 /** "3 of their apps", said the way a person would. */
@@ -67,8 +82,9 @@ export function showCard(input: CardInput): Promise<void> {
   const verify = document.getElementById("card-verify") as HTMLButtonElement | null;
   const safety = document.getElementById("card-safety");
   const succession = document.getElementById("card-succession");
+  const identity = document.getElementById("card-identity");
 
-  if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety || !succession) {
+  if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety || !succession || !identity) {
     // No card in this document. Opening without one is the old behaviour and
     // is better than refusing to open at all.
     return Promise.resolve();
@@ -133,6 +149,14 @@ export function showCard(input: CardInput): Promise<void> {
       break;
   }
   publisher.dataset.state = who.state;
+
+  // Who vouched for the key, when a root this host holds says so. The words
+  // are "signed in as", which is what happened; not "verified", which is a
+  // claim about the world this host cannot make.
+  identity.hidden = !input.identity;
+  identity.textContent = input.identity
+    ? `Signed in as ${input.identity.identity}${issuerHost(input.identity.issuer)} · vouched for by ${input.identity.root}`
+    : "";
   const reveal = (): void => {
     safety.hidden = false;
     verify.hidden = true;

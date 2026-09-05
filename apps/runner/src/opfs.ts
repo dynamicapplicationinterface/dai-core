@@ -14,6 +14,7 @@ const PUB_STORE = "publishers";
 
 import type { PinnedKey, TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
+import type { SigstoreRoot } from "../../../src/identity.js";
 
 export interface LibraryItem {
   documentUuid: string;
@@ -326,15 +327,25 @@ export function publisherStore(): PublisherStore {
  * can ship one with the build and a public opener simply has none. Fetched
  * once; a missing file is an empty list, not an error.
  */
-let rootsLoading: Promise<RootPublisher[]> | undefined;
-export function rootList(): Promise<RootPublisher[]> {
+interface RootFile {
+  formatVersion?: number;
+  publishers?: RootPublisher[];
+  sigstore?: SigstoreRoot[];
+}
+let rootsLoading: Promise<RootFile> | undefined;
+function rootFile(): Promise<RootFile> {
   rootsLoading ??= fetch(new URL("roots.json", document.baseURI))
-    .then(async (response) => {
-      if (!response.ok) return [];
-      const list = (await response.json()) as { formatVersion?: number; publishers?: RootPublisher[] };
-      if (list?.formatVersion !== 1 || !Array.isArray(list.publishers)) return [];
-      return list.publishers.filter((p) => typeof p?.spki === "string" && typeof p?.name === "string");
-    })
-    .catch(() => []);
+    .then(async (response) => (response.ok ? ((await response.json()) as RootFile) : {}))
+    .then((list) => (list?.formatVersion === 1 ? list : {}))
+    .catch(() => ({}));
   return rootsLoading;
+}
+export async function rootList(): Promise<RootPublisher[]> {
+  const list = await rootFile();
+  return (list.publishers ?? []).filter((p) => typeof p?.spki === "string" && typeof p?.name === "string");
+}
+/** The Fulcio and Rekor roots this opener holds (spec §9.5). None on a public opener. */
+export async function sigstoreRoots(): Promise<SigstoreRoot[]> {
+  const list = await rootFile();
+  return (list.sigstore ?? []).filter((r) => Array.isArray(r?.fulcioRoots) && Array.isArray(r?.rekorKeys));
 }

@@ -71,6 +71,7 @@ export async function forgetTrust(invoke: Invoke, documentUuid: string): Promise
 }
 
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
+import type { SigstoreRoot } from "../../../src/identity.js";
 
 /**
  * Publishers, kept by the Rust side (4.3). The decision is shared with the
@@ -99,4 +100,17 @@ export function publisherStoreFor(invoke: Invoke): PublisherStore {
       }
     },
   };
+}
+
+/** The Fulcio and Rekor roots provisioned to this machine (spec §9.5), if any. */
+export async function sigstoreRootsFor(invoke: Invoke): Promise<SigstoreRoot[]> {
+  const text = await invoke<string | null>("read_root_list");
+  if (!text) return [];
+  try {
+    const list = JSON.parse(text) as { formatVersion?: number; sigstore?: SigstoreRoot[] };
+    if (list?.formatVersion !== 1 || !Array.isArray(list.sigstore)) return [];
+    return list.sigstore.filter((r) => Array.isArray(r?.fulcioRoots) && Array.isArray(r?.rekorKeys));
+  } catch {
+    return [];
+  }
 }

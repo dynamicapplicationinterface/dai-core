@@ -27,7 +27,8 @@ import {
   type RuntimeAssets,
 } from "../../../src/browser.js";
 import { lintFiles } from "../../../src/lint.js";
-import { checkTrust, publisherStoreFor, type TrustVerdict } from "./trust.js";
+import { checkTrust, publisherStoreFor, sigstoreRootsFor, type TrustVerdict } from "./trust.js";
+import { verifyIdentity } from "../../../src/identity.js";
 import { publisherState, recordPublisher } from "../../../src/publisher.js";
 import { CONFUSABLES_FILE } from "../../../src/confusables-id.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
@@ -750,13 +751,23 @@ async function describePublisher(container: Awaited<ReturnType<typeof verifyCont
   const table = await confusableTable();
   const who = await publisherState(store, container, table);
   await recordPublisher(store, container, table);
+  let vouched = "";
+  if (container.manifest.identity && container.publicKey && container.manifest.signature) {
+    const identity = await verifyIdentity(
+      container.manifest.identity,
+      container.publicKey,
+      container.manifest.signature,
+      await sigstoreRootsFor(invokeTauri),
+    );
+    if (identity.status === "shown") vouched = ` Signed in as ${identity.identity}, vouched for by ${identity.root}.`;
+  }
   switch (who.state) {
     case "known":
       return who.renamedFrom
         ? ` ${who.name} (renamed from ${who.renamedFrom}), ${who.count} of their documents opened here.`
-        : ` ${who.name}, ${who.count} of their documents opened here.`;
+        : ` ${who.name}, ${who.count} of their documents opened here.${vouched}`;
     case "new":
-      return ` ${who.name}: the first time this publisher has been seen here. Safety number ${who.safetyNumber}.`;
+      return ` ${who.name}: the first time this publisher has been seen here. Safety number ${who.safetyNumber}.${vouched}`;
     case "conflict":
       return ` Claims to be ${who.claimed}, but the ${who.knownAs} known here uses a different key. Treat as a stranger.`;
     case "anonymous":

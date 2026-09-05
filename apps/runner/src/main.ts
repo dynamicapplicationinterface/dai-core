@@ -13,6 +13,7 @@ import { heldEngine } from "./engine.js";
 import { openFromStore, referenceFrom } from "../../../src/store.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { confusables } from "./confusables.js";
+import { verifyIdentity } from "../../../src/identity.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -41,6 +42,7 @@ import {
   saveCartridgeToLibrary,
   trustStore,
   publisherStore,
+  sigstoreRoots,
   saveDatabaseToOpfs,
   type LibraryItem,
 } from "./opfs.js";
@@ -531,6 +533,21 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     installSuppressed = who.state === "conflict";
 
     /*
+     * Identity (spec §9.5): a name somebody else vouched for, checked against
+     * roots this opener holds. A public opener holds none, and then this is
+     * simply absent — never a refusal, never the word verified.
+     */
+    const identity =
+      cartridge.manifest.identity && cartridge.publicKey && cartridge.manifest.signature
+        ? await verifyIdentity(
+            cartridge.manifest.identity,
+            cartridge.publicKey,
+            cartridge.manifest.signature,
+            await sigstoreRoots(),
+          )
+        : undefined;
+
+    /*
      * Succession (4.1): the next version of something this device has.
      *
      * Decided here so the card can say what will happen, and applied after
@@ -554,6 +571,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         name: cartridge.manifest.appName ?? "container",
         favicon: cartridge.manifest.favicon,
         publisher: who,
+        identity: identity?.status === "shown" ? identity : undefined,
         from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
         succession: succession?.card,
         applied: ISOLATION_CLAUSES,

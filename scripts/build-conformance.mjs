@@ -813,6 +813,53 @@ console.log(`${written.length} cases written to conformance/cases.json`);
 }
 
 /*
+ * Identity vectors (spec §9.5 and §9.7).
+ *
+ * A test Fulcio and Rekor, minted here and published as the root a reader is
+ * to hold. Each vector is a version 3 signed container whose manifest carries
+ * a bundle — outside the signed set, so it is added after signing without
+ * re-signing — and the verdict a reader holding that root must reach. The
+ * root is regenerated with the suite; a reader holds what the file says.
+ */
+{
+  const { testSigstore } = await import("./lib/sigstore-test.mjs");
+  const { root, issue } = await testSigstore("Conformance Sigstore");
+  const other = await testSigstore("Some other Sigstore");
+  const built = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+  const parsedKey = parseContainer(built.html).publicKey;
+  const signature = built.manifest.signature;
+  const now = Math.floor(Date.now() / 1000);
+  const stranger = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const strangerSpki = Buffer.from(await crypto.subtle.exportKey("spki", stranger.publicKey)).toString("base64");
+
+  const variants = [
+    { name: "identity-valid", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature }), expect: { status: "shown", identity: "https://github.com/conformance", issuer: "https://accounts.example" } },
+    { name: "identity-outside-window", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature, integratedTime: now, certWindow: [now - 7200, now - 3600] }), expect: { status: "absent" } },
+    { name: "identity-wrong-key", bundle: await issue({ subjectSpki: strangerSpki, identity: "https://github.com/conformance", signatureB64: signature }), expect: { status: "absent" } },
+    { name: "identity-unheld-root", bundle: await other.issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature }), expect: { status: "absent" } },
+    { name: "identity-other-signature", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: (await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }))).manifest.signature }), expect: { status: "absent" } },
+  ];
+  const vectors = [];
+  for (const v of variants) {
+    const archive = archiveOf(built.html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    manifest.identity = v.bundle;
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    const file = `cases/${v.name}.dai.html`;
+    writeFileSync(join(suite, file), repack(built.html, archive));
+    // The container itself still verifies: identity is outside the signed set.
+    const report = await auditContainer(parseContainer(readFileSync(join(suite, file), "utf8")));
+    if (!report.ok) throw new Error(`${v.name}: the container should verify regardless of its bundle`);
+    vectors.push({ name: v.name, file, expect: v.expect });
+  }
+  writeFileSync(
+    join(suite, "identity-vectors.json"),
+    JSON.stringify({ suiteVersion: 1, generatedBy: "scripts/build-conformance.mjs", roots: [root], vectors }, null, 2) + "\n",
+  );
+  console.log(`identity vectors written to conformance/identity-vectors.json (${vectors.length})`);
+}
+
+/*
  * The same documents, carried in links (§1.1).
  *
  * Only the intact viewer-form cases: a link is made from a document a reader

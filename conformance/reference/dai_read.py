@@ -1119,6 +1119,292 @@ def record(store: KeyStore, manifest: dict, key_b64: str | None, table: dict[str
         store.documents.setdefault(uuid, key_b64)
 
 
+# ---------------------------------------------------------------------------
+# Identity (§9.5): enough DER and X.509 to check a Sigstore bundle offline
+# ---------------------------------------------------------------------------
+
+
+class DerError(Exception):
+    """A DER structure that is not what §9.5 needs it to be."""
+
+
+def _der_item(data: bytes, at: int = 0) -> tuple[int, bytes, int]:
+    """One TLV at `at`: (tag byte, content, index after it). Definite lengths only."""
+    if at + 2 > len(data):
+        raise DerError("DER value ended early.")
+    tag, first = data[at], data[at + 1]
+    at += 2
+    if first < 0x80:
+        length = first
+    else:
+        count = first & 0x7F
+        if count == 0 or count > 4 or at + count > len(data):
+            raise DerError("Unsupported DER length.")
+        length = int.from_bytes(data[at : at + count], "big")
+        at += count
+    if at + length > len(data):
+        raise DerError("DER value reaches past its container.")
+    return tag, data[at : at + length], at + length
+
+
+def _der_children(content: bytes) -> list[tuple[int, bytes, bytes]]:
+    """Every TLV inside a constructed value, as (tag, content, whole encoding)."""
+    items, at = [], 0
+    while at < len(content):
+        tag, body, after = _der_item(content, at)
+        items.append((tag, body, content[at:after]))
+        at = after
+    return items
+
+
+def _oid_bytes(dotted: str) -> bytes:
+    arcs = [int(a) for a in dotted.split(".")]
+    out = bytearray([arcs[0] * 40 + arcs[1]])
+    for arc in arcs[2:]:
+        chunk = [arc & 0x7F]
+        arc >>= 7
+        while arc:
+            chunk.append(arc & 0x7F | 0x80)
+            arc >>= 7
+        out.extend(reversed(chunk))
+    return bytes(out)
+
+
+OID_SAN = _oid_bytes("2.5.29.17")
+OID_FULCIO_ISSUER_V2 = _oid_bytes("1.3.6.1.4.1.57264.1.8")
+OID_FULCIO_ISSUER_V1 = _oid_bytes("1.3.6.1.4.1.57264.1.1")
+OID_ECDSA_SHA256 = _oid_bytes("1.2.840.10045.4.3.2")
+
+
+def _der_time(tag: int, content: bytes) -> int:
+    """UTCTime (0x17) or GeneralizedTime (0x18), Z-suffixed, to unix seconds."""
+    import calendar
+
+    text = content.decode("ascii")
+    if not text.endswith("Z"):
+        raise DerError("Certificate time is not in UTC.")
+    digits = text[:-1]
+    if tag == 0x17:
+        if len(digits) != 12:
+            raise DerError("Malformed UTCTime.")
+        year = int(digits[:2])
+        year += 1900 if year >= 50 else 2000
+        digits = f"{year:04d}" + digits[2:]
+    elif tag != 0x18 or len(digits) < 14:
+        raise DerError("Malformed certificate time.")
+    digits = digits[:14]  # GeneralizedTime MAY carry fractional seconds; DER forbids them
+    parts = [int(digits[i : i + 2]) for i in range(4, 14, 2)]
+    return calendar.timegm((int(digits[:4]), *parts))
+
+
+@dataclass
+class Certificate:
+    tbs: bytes
+    spki: bytes
+    not_before: int
+    not_after: int
+    names: list[str]
+    issuer: str | None
+    signature: bytes  # raw r||s, 64 bytes, for verify_es256
+
+
+def _ecdsa_der_to_raw(signature: bytes) -> bytes:
+    tag, body, _ = _der_item(signature)
+    if tag != 0x30:
+        raise DerError("ECDSA signature is not a SEQUENCE.")
+    parts = _der_children(body)
+    if len(parts) != 2 or any(t != 0x02 for t, _, _ in parts):
+        raise DerError("ECDSA signature is not two INTEGERs.")
+    r = int.from_bytes(parts[0][1], "big")
+    s = int.from_bytes(parts[1][1], "big")
+    if r.bit_length() > 256 or s.bit_length() > 256:
+        raise DerError("ECDSA signature integer too large for P-256.")
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+def parse_certificate(der: bytes) -> Certificate:
+    """The parts of an X.509 certificate §9.5 consults, and nothing else."""
+    tag, body, after = _der_item(der)
+    if tag != 0x30 or after != len(der):
+        raise DerError("Certificate is not a single SEQUENCE.")
+    outer = _der_children(body)
+    if len(outer) != 3:
+        raise DerError("Certificate does not have three parts.")
+    (tbs_tag, tbs_body, tbs_whole), (_, alg_body, _), (sig_tag, sig_body, _) = outer
+    if tbs_tag != 0x30 or sig_tag != 0x03 or not sig_body or sig_body[0] != 0:
+        raise DerError("Certificate parts have the wrong tags.")
+    alg = _der_children(alg_body)
+    if not alg or alg[0][0] != 0x06 or alg[0][1] != OID_ECDSA_SHA256:
+        raise DerError("Certificate is not signed with ecdsa-with-SHA256.")
+    signature = _ecdsa_der_to_raw(sig_body[1:])
+
+    fields = _der_children(tbs_body)
+    if fields and fields[0][0] == 0xA0:  # [0] EXPLICIT version
+        fields = fields[1:]
+    if len(fields) < 6:
+        raise DerError("tbsCertificate is too short.")
+    # serial, signature algorithm, issuer, validity, subject, SPKI, [extensions]
+    validity = _der_children(fields[3][1])
+    if len(validity) != 2:
+        raise DerError("Validity is not two times.")
+    not_before = _der_time(validity[0][0], validity[0][1])
+    not_after = _der_time(validity[1][0], validity[1][1])
+    spki = fields[5][2]
+
+    names: list[str] = []
+    issuer: str | None = None
+    issuer_v1: str | None = None
+    for tag, body, _ in fields[6:]:
+        if tag != 0xA3:  # [3] EXPLICIT extensions
+            continue
+        seq = _der_children(body)
+        if len(seq) != 1:
+            raise DerError("Malformed extensions.")
+        for _, ext_body, _ in _der_children(seq[0][1]):
+            parts = _der_children(ext_body)
+            if not parts or parts[0][0] != 0x06:
+                continue
+            oid = parts[0][1]
+            value = parts[-1][1] if parts[-1][0] == 0x04 else None
+            if value is None:
+                continue
+            if oid == OID_SAN:
+                san_tag, san_body, _ = _der_item(value)
+                if san_tag == 0x30:
+                    for name_tag, name_body, _ in _der_children(san_body):
+                        if name_tag in (0x81, 0x86):  # [1] rfc822Name, [6] uniformResourceIdentifier
+                            names.append(name_body.decode("utf-8"))
+            elif oid == OID_FULCIO_ISSUER_V2:
+                inner_tag, inner_body, _ = _der_item(value)
+                if inner_tag == 0x0C:
+                    issuer = inner_body.decode("utf-8")
+            elif oid == OID_FULCIO_ISSUER_V1:
+                issuer_v1 = value.decode("utf-8")
+    return Certificate(tbs_whole, spki, not_before, not_after, names, issuer or issuer_v1, signature)
+
+
+def certificate_signed_by(cert: Certificate, signer_spki: bytes) -> bool:
+    return verify_es256(signer_spki, cert.signature, cert.tbs)
+
+
+def _pem_to_der(pem: str) -> bytes:
+    lines = [l.strip() for l in pem.strip().splitlines() if l.strip() and not l.startswith("-----")]
+    return base64.b64decode("".join(lines))
+
+
+def _canonical_json(value: Any) -> bytes:
+    """RFC 8785 for the shape §9.5 signs: ASCII keys, strings and integers."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def verify_identity(bundle: Any, manifest_key_b64: str | None, manifest_signature_b64: str | None, roots: list[dict]) -> dict[str, Any]:
+    """§9.5's four checks, in order, offline. Never raises: any failure, and any
+    bundle whose roots are not held, is {"status": "absent", "reason"}.
+
+    `roots` is a §9.6 `sigstore` list: [{name, fulcioRoots: [PEM], rekorKeys: [b64 SPKI]}].
+    """
+    try:
+        return _verify_identity(bundle, manifest_key_b64, manifest_signature_b64, roots)
+    except Exception as broken:  # a bad bundle is a document with no binding
+        return {"status": "absent", "reason": f"malformed bundle: {type(broken).__name__}: {broken}"}
+
+
+def _verify_identity(bundle, manifest_key_b64, manifest_signature_b64, roots) -> dict[str, Any]:
+    if not isinstance(bundle, dict):
+        return {"status": "absent", "reason": "no bundle"}
+    if not manifest_key_b64 or not manifest_signature_b64:
+        return {"status": "absent", "reason": "manifest is unsigned"}
+    material = bundle.get("verificationMaterial")
+    if not isinstance(material, dict):
+        return {"status": "absent", "reason": "no verificationMaterial"}
+
+    # The leaf, and any intermediates, as §9.5 names them.
+    chain_b64: list[str] = []
+    cert = material.get("certificate")
+    if isinstance(cert, dict) and cert.get("rawBytes"):
+        chain_b64 = [cert["rawBytes"]]
+    else:
+        x509 = material.get("x509CertificateChain", {})
+        chain_b64 = [c["rawBytes"] for c in x509.get("certificates", []) if isinstance(c, dict) and c.get("rawBytes")]
+    if not chain_b64:
+        return {"status": "absent", "reason": "no certificate"}
+    chain = [parse_certificate(base64.b64decode(c)) for c in chain_b64]
+    leaf = chain[0]
+
+    # 1. The certificate chains to a Fulcio root the host holds. Walked leaf-
+    #    first: each link is signed either by a held root's key or by the next
+    #    certificate in the chain.
+    root_name = None
+    root_keys: list[tuple[str, bytes]] = []
+    for root in roots:
+        for pem in root.get("fulcioRoots", []):
+            root_keys.append((root["name"], parse_certificate(_pem_to_der(pem)).spki))
+    for index, link in enumerate(chain):
+        found = next((name for name, spki in root_keys if certificate_signed_by(link, spki)), None)
+        if found is not None:
+            root_name = found
+            break
+        if index + 1 >= len(chain) or not certificate_signed_by(link, chain[index + 1].spki):
+            break
+    if root_name is None:
+        return {"status": "absent", "reason": "certificate does not chain to a held Fulcio root"}
+    root = next(r for r in roots if r["name"] == root_name)
+
+    # 2. The leaf's subject public key is the manifest's key.
+    if leaf.spki != base64.b64decode(manifest_key_b64):
+        return {"status": "absent", "reason": "certificate key is not the manifest's key"}
+
+    # 3. The first log entry's signed entry timestamp verifies against a held
+    #    Rekor key named by logId.keyId, and its time lies in the leaf's validity.
+    entries = material.get("tlogEntries")
+    if not isinstance(entries, list) or not entries or not isinstance(entries[0], dict):
+        return {"status": "absent", "reason": "no log entry"}
+    entry = entries[0]
+    key_id = entry.get("logId", {}).get("keyId")
+    rekor_spki = None
+    for k in root.get("rekorKeys", []):
+        der = base64.b64decode(k)
+        if base64.b64encode(hashlib.sha256(der).digest()).decode("ascii") == key_id:
+            rekor_spki = der
+            break
+    if rekor_spki is None:
+        return {"status": "absent", "reason": "log key is not held"}
+    # SPEC GAP: §9.5 says `integratedTime` and `logIndex` "are numbers" in the
+    # signed JSON, but the bundle's protobuf-JSON form carries both as decimal
+    # strings (int64 in proto3 JSON). The document should say the reader
+    # converts them; this reader does.
+    integrated = int(entry["integratedTime"])
+    log_index = int(entry["logIndex"])
+    body_b64 = entry["canonicalizedBody"]
+    signed = _canonical_json({
+        "body": body_b64,
+        "integratedTime": integrated,
+        "logID": hashlib.sha256(rekor_spki).hexdigest(),
+        "logIndex": log_index,
+    })
+    set_der = base64.b64decode(entry["inclusionPromise"]["signedEntryTimestamp"])
+    if not verify_es256(rekor_spki, _ecdsa_der_to_raw(set_der), signed):
+        return {"status": "absent", "reason": "signed entry timestamp does not verify"}
+    if not (leaf.not_before <= integrated <= leaf.not_after):
+        return {"status": "absent", "reason": "log time lies outside the certificate's validity"}
+
+    # 4. The logged signature is the manifest's signature bytes.
+    logged = None
+    try:
+        body = json.loads(base64.b64decode(body_b64))
+        logged = body["spec"]["signature"]["content"]
+    except (ValueError, KeyError, TypeError):
+        logged = bundle.get("messageSignature", {}).get("signature")
+    if not isinstance(logged, str) or base64.b64decode(logged) != base64.b64decode(manifest_signature_b64):
+        return {"status": "absent", "reason": "logged signature is not the manifest's signature"}
+
+    if not leaf.names:
+        return {"status": "absent", "reason": "certificate carries no subject alternative name"}
+    result: dict[str, Any] = {"status": "shown", "identity": leaf.names[0], "root": root_name}
+    if leaf.issuer:
+        result["issuer"] = leaf.issuer
+    return result
+
 
 def main(argv: list[str]) -> int:
     import time

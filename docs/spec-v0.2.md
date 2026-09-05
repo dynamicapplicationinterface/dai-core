@@ -990,6 +990,25 @@ signature to a Rekor instance. The bundle carries the certificate chain, the
 log entry with its signed timestamp, and nothing about the document that is
 not already in the manifest.
 
+A reader consults these bundle fields and no others: the leaf certificate,
+`verificationMaterial.certificate.rawBytes` or the first entry of
+`verificationMaterial.x509CertificateChain.certificates` (DER, base64), with
+any further chain entries as intermediates; the first of
+`verificationMaterial.tlogEntries`, taking `logIndex`, `logId.keyId` (the
+base64 SHA-256 of the log's public key), `integratedTime`,
+`inclusionPromise.signedEntryTimestamp` (a DER ECDSA signature, base64) and
+`canonicalizedBody`; and, as the logged signature, `spec.signature.content`
+inside the decoded `canonicalizedBody` (a `hashedrekord`), or failing that
+`messageSignature.signature`. The signed entry timestamp is verified over the
+RFC 8785 canonical JSON of `{"body", "integratedTime", "logID", "logIndex"}`,
+where `body` is the base64 canonicalized body as carried, `integratedTime` and
+`logIndex` are JSON numbers — the bundle carries both as decimal strings, in
+the protobuf JSON form, and a reader converts them — and `logID` is the log
+key's SHA-256 in lowercase hex.
+The identity shown is the leaf's first subject alternative name (an
+rfc822Name or a URI), and the issuer is Fulcio's extension
+1.3.6.1.4.1.57264.1.8 (a DER UTF8String) or, failing that, 1.3.6.1.4.1.57264.1.1.
+
 A host holding a root for the bundle's Fulcio and Rekor MUST check, offline:
 
 1. the certificate chains to a Fulcio root the host holds;

@@ -275,6 +275,8 @@
       #card-publisher[data-state="anonymous"] { color: #d1d5db; }
       /* Conflict is red: a key this device has never seen, using a name it has. */
       #card-publisher[data-state="conflict"] { color: #f87171; font-weight: 600; }
+      #card-identity { margin: 0; font-size: 12.5px; line-height: 1.45; color: #34d399; }
+      #card-identity[hidden] { display: none; }
       #card-verify {
         padding: 5px 12px;
         font: inherit;
@@ -393,6 +395,7 @@
           <img id="card-icon" alt="" width="72" height="72" />
           <h2 id="card-name"></h2>
           <p id="card-publisher"></p>
+          <p id="card-identity" hidden></p>
           <button id="card-verify" type="button" hidden>Verify</button>
           <p id="card-safety" hidden></p>
           <ul id="card-claims"></ul>

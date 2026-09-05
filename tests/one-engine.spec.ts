@@ -45,6 +45,10 @@ const ENGINE_FILES = [
   // The S3 adapter signs its own requests. All of it is done here or nowhere.
   "src/store.ts",
   "src/store-s3.ts",
+  // Identity (spec §9.5): reading a certificate and checking a chain and a
+  // log timestamp is signature verification, and lives in these two files.
+  "src/x509.ts",
+  "src/identity.ts",
 ];
 
 /** What it means to be doing the container's own work. */

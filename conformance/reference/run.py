@@ -311,6 +311,37 @@ def main() -> int:
     else:
         print(f"{'skip':>7}  no conformance/trust-vectors.json; run `npm run conformance`")
 
+    # §9.5: identity bundles, checked offline against the suite's own Fulcio
+    # root and Rekor key. Never a verdict: shown, or absent with a reason.
+    identity_file = SUITE / "identity-vectors.json"
+    if identity_file.exists():
+        vectors = json.loads(identity_file.read_text(encoding="utf-8"))
+        for vector in vectors["vectors"]:
+            name = f"{vector['name']} — identity"
+            path = SUITE / vector["file"]
+            if not path.exists():
+                print(f"{'skip':>7}  {name}: no {vector['file']}")
+                continue
+            try:
+                manifest_json, key = _manifest_and_key(path.read_bytes())
+                got = dai_read.verify_identity(
+                    manifest_json.get("identity"), key, manifest_json.get("signature"), vectors["roots"]
+                )
+                wrong = [
+                    f"{k}: expected {v!r}, read {got.get(k)!r}"
+                    for k, v in vector["expect"].items()
+                    if got.get(k) != v
+                ]
+                if wrong and got.get("reason"):
+                    wrong.append(f"reason: {got['reason']}")
+            except (ContainerError, ValueError, KeyError, zipfile.BadZipFile) as error:
+                wrong = [f"could not be read: {error}"]
+            if wrong:
+                failures.append((name, "; ".join(wrong)))
+            print(f"{'ok' if not wrong else 'FAILED':>7}  {name}")
+    else:
+        print(f"{'skip':>7}  no conformance/identity-vectors.json; run `npm run conformance`")
+
     print()
     if failures:
         for name, detail in failures:
