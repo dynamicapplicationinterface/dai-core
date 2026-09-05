@@ -192,8 +192,10 @@ test.describe("what the site claims", () => {
 
     const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
 
-    // The three ways out, in the order somebody is likely to need them.
-    expect(text).toMatch(/opener/i);
+    // The three ways out, in the order somebody is likely to need them. Named
+    // by where they go rather than by what we call them: "opener" is our word
+    // for it, and item 1.4 took our words off the pages people are sent to.
+    expect(text).toMatch(/opendai\.app/i);
     expect(text).toMatch(/dai\.html/i);
     expect(text).toMatch(/desktop app/i);
 
@@ -202,7 +204,7 @@ test.describe("what the site claims", () => {
     expect(text).toMatch(/asking for a password/i);
 
     await expect(
-      page.getByRole("link", { name: /the opener/i }).first(),
+      page.getByRole("link", { name: /opendai\.app/i }).first(),
     ).toHaveAttribute("href", "https://opendai.app");
   });
 });

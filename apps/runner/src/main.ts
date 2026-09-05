@@ -9,6 +9,15 @@
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
 import { decodeInline, inlineFrom } from "../../../src/link.js";
+
+/**
+ * The one sentence, in the one place it is written.
+ *
+ * It appears on the card, in the message a shared document travels in, and on
+ * the page somebody lands on when they have a file their computer does not
+ * recognise. Three copies of a sentence drift; this is the sentence.
+ */
+const STANDING_LINE = "Send an app like you send a document.";
 import { hostShell } from "../../../src/container.js";
 // The shell this host runs, shipped with this host: never the container's own.
 import HOST_TEMPLATE from "../../../dist/template.html?raw";
@@ -614,8 +623,8 @@ async function exportContainer(): Promise<void> {
       name,
       // What a recipient with nothing installed needs, in the only place it
       // can reach them: the message the file arrives in.
-      `${name} — a DAI document. It holds the app and its data in one file. ` +
-        `Open it at ${OPENER}`,
+      `${name} — ${STANDING_LINE} This one holds its app and its data in one ` +
+        `file. Open it at ${OPENER}`,
     );
     // Dismissed rather than failed: offering a download after somebody
     // declined to save would be the app arguing with them.

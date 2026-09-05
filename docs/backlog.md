@@ -29,7 +29,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.1 | Launch card with backed claims | [x] `f625dcc` |
 | 1.2 | One card for every carrier | [ ] |
 | 1.3 | Install after use | [x] `a7df929` |
-| 1.4 | One sentence everywhere | [ ] |
+| 1.4 | One sentence everywhere | [x] `PENDING` — the unfurl inherits it with 3.3 |
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` — the cap is a decision, see below |
@@ -97,6 +97,12 @@ links in Phase 2 add — and holding the screen identical across all of them.
 
 "Send an app like you send a document." On the card, the unfurl, `/open` and
 the share text the opener already emits.
+
+Done in `PENDING`. Written once, in `apps/runner/src/main.ts`, and carried to
+the card, the share message and `/open`. The three words that are ours rather
+than the reader's — "runtime", "PWA", "opener" — are gone from `/open`, and a
+test holds them out. The unfurl does not exist yet and inherits the line when
+3.3 lands.
 
 **Exit:** a site test greps the card and unfurl for the line and for the
 absence of "runtime", "PWA" and "opener".

@@ -4,20 +4,20 @@ title: Someone sent you a .dai file
 
 # You have a file your computer doesn't recognise
 
-Nothing is wrong with it. A `.dai` file is a document that contains its own
-application — the thing you use it with is *inside* it — so your computer has
-nothing to open it with until you give it something.
+Send an app like you send a document. That is what somebody just did, and
+nothing is wrong with the file: a `.dai` holds its own application — the thing
+you use it with is *inside* it — so your computer has nothing to open it with
+until you give it something.
 
 Here is how, on whatever you are holding.
 
 ## On a phone
 
-Go to **[the opener](https://opendai.app)** and choose
-your file. That is the whole thing: a page, nothing to install, and the file
-never leaves your device.
+Go to **[opendai.app](https://opendai.app)** and choose your file. That is the
+whole thing: a page, nothing to install, and the file never leaves your device.
 
-Add it to your home screen and it behaves like an app, reopening whatever you
-had open last.
+Add it to your home screen and it behaves like any other app, reopening
+whatever you had open last — with no network, on a plane, anywhere.
 
 ## On a computer
 
@@ -30,6 +30,8 @@ Same document, same data, larger file.
 **Or install [the desktop app](/desktop).** It makes `.dai` files behave like
 documents — their own icon, double-click to open, saved back into the same file
 rather than downloaded as a copy.
+
+Either way it is the same file. Nothing is converted and nothing is uploaded.
 
 ## What it actually is
 
