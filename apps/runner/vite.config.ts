@@ -1,14 +1,14 @@
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 
 /**
  * Records which commit a build came from.
  *
- * Production here is promoted by hand, so "is the fix live" is a question
- * somebody has to ask several times a day. Without this the only way to answer
- * it is to grep the deployed bundle for a string and hope the right one
+ * Production is promoted from main automatically, so "is the fix live" is a
+ * question about whether a deploy has landed yet. Without this the only way to
+ * answer it is to grep the deployed bundle for a string and hope the right one
  * changed, which produced two confident wrong answers in one evening.
  *
  * `environment` comes from Vercel and is what distinguishes a preview that was
@@ -67,9 +67,38 @@ function productionHeaders(): Record<string, string> {
   return Object.fromEntries((all?.headers ?? []).map((h) => [h.key, h.value]));
 }
 
+/**
+ * Puts the SQLite engine on this origin, where the opener can offer it.
+ *
+ * A document may be published without its engine, for a host that already
+ * holds that exact copy (spec §6.2). Holding it means having the bytes to
+ * serve, and these are the bytes the compiler puts in a container: the same
+ * file from the same package, so the digests match and the offer is accepted.
+ *
+ * Copied rather than imported because @sqlite.org/sqlite-wasm does not expose
+ * the raw .wasm through its exports map. Staged rather than committed because
+ * it is a build output of a dependency — the same reason the desktop app
+ * stages its own, under the same /runtime prefix.
+ */
+function engine(): Plugin {
+  return {
+    name: "dai-stage-engine",
+    buildStart() {
+      const repo = join(import.meta.dirname, "../..");
+      const out = join(import.meta.dirname, "public/runtime");
+      mkdirSync(out, { recursive: true });
+      const files = {
+        "sqlite3.wasm": join(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm"),
+        "sqlite3.mjs": join(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"),
+      };
+      for (const [name, from] of Object.entries(files)) copyFileSync(from, join(out, name));
+    },
+  };
+}
+
 export default defineConfig({
   base: "./",
-  plugins: [stamp()],
+  plugins: [stamp(), engine()],
   server: { port: 5175, strictPort: true },
   preview: { port: 5175, strictPort: true, headers: productionHeaders() },
   build: { outDir: "dist", emptyOutDir: true },

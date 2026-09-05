@@ -7,6 +7,7 @@
  * are opened from the user's own files. The console, not the cartridge.
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
+import { refatten } from "../../../src/container.js";
 import { hostShell } from "../../../src/container.js";
 // The shell this host runs, shipped with this host: never the container's own.
 import HOST_TEMPLATE from "../../../dist/template.html?raw";
@@ -551,7 +552,25 @@ async function exportContainer(): Promise<void> {
 
   const name = activeCartridge.manifest.appName ?? "container";
   const fileName = `${name}.dai.html`;
-  const file = new File([activeCartridge.html], fileName, { type: "text/html" });
+
+  /*
+   * A copy leaves here complete, whatever arrived.
+   *
+   * A document published without its engine (§6.2) runs here because this app
+   * holds that engine. The copy somebody saves has to stand on its own: they
+   * are going to mail it, or open it on a machine that has never seen this
+   * site, and a copy that only works where it was made is not a copy of the
+   * document. So the bytes go back in, and the result is the file the complete
+   * build produced — byte for byte, which is the claim that makes the two
+   * forms one document.
+   *
+   * A resealed container is already complete: resealing packs the archive this
+   * app verified, engine included, so `supplied` is empty by then and this
+   * does nothing.
+   */
+  const html =
+    activeCartridge.supplied.length > 0 ? refatten(activeCartridge) : activeCartridge.html;
+  const file = new File([html], fileName, { type: "text/html" });
 
   // Once a copy exists as a file, the iOS home-screen steps get shorter.
   arrivedAsFile = true;
@@ -575,7 +594,7 @@ async function exportContainer(): Promise<void> {
           types: [{ description: "DAI document", accept: { "text/html": [".html"] } }],
         });
         const writable = await handle.createWritable();
-        await writable.write(activeCartridge.html);
+        await writable.write(html);
         await writable.close();
         return;
       } catch (error) {
@@ -603,7 +622,7 @@ async function exportContainer(): Promise<void> {
   }
 
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([activeCartridge.html], { type: "text/html" }));
+  link.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
   link.download = fileName;
   document.body.appendChild(link);
   link.click();

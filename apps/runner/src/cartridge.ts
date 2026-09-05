@@ -14,6 +14,7 @@ import {
   verifyContainer,
   type VerifiedContainer,
 } from "../../../src/container.js";
+import { heldEngine } from "./engine.js";
 
 export { ContainerError };
 export type { VerifiedContainer };
@@ -41,7 +42,27 @@ export async function readCartridge(file: File): Promise<Cartridge> {
   // container as text does not fail loudly — it replaces every byte that is not
   // valid UTF-8, which is most of a database, and hands the verifier a file
   // that this function damaged on the way in.
-  return verifyContainer(looksSectioned(bytes) ? bytes : new TextDecoder().decode(bytes));
+  const source = looksSectioned(bytes) ? bytes : new TextDecoder().decode(bytes);
+
+  try {
+    return await verifyContainer(source);
+  } catch (error) {
+    /*
+     * A document published without its engine (§6.2), which this app holds.
+     *
+     * Tried the plain way first on purpose. The overwhelming majority of
+     * documents carry their own engine, and fetching a megabyte before every
+     * one of them on the chance that this one does not would make the common
+     * case pay for the rare one. The refusal is how we learn, and it costs a
+     * parse we had to do anyway.
+     *
+     * Nothing here weakens the check. The bytes go in and the whole archive is
+     * verified against the manifest a moment later, so an engine that is not
+     * the one the manifest names fails exactly as a tampered entry does.
+     */
+    if (!(error instanceof ContainerError) || error.code !== "RUNTIME_UNAVAILABLE") throw error;
+    return verifyContainer(source, { supply: await heldEngine() });
+  }
 }
 
 /**

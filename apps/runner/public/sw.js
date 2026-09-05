@@ -21,11 +21,24 @@
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v2";
+const CACHE = "dai-runner-v3";
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
-const PRECACHE = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png"];
+// The engine is here because a document published without one (spec §6.2)
+// cannot run unless this app has those bytes, and "works with no network at
+// all" has to include that document. It is the largest thing precached by a
+// long way, which is the trade: a megabyte once, against every thin document
+// afterwards opening offline.
+const PRECACHE = [
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./runtime/sqlite3.wasm",
+  "./runtime/sqlite3.mjs",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

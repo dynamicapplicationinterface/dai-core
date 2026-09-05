@@ -21,6 +21,9 @@ apps/desktop/src-tauri/gen/
 # Staged by apps/desktop/scripts/stage-runtime.mjs
 apps/desktop/public/runtime/
 
+# Staged by the runner's vite build, so the opener can offer an engine
+apps/runner/public/runtime/
+
 # The conformance suite is committed on purpose. Its cases are built containers,
 # which the rules above would otherwise sweep out — and a suite that cannot be
 # checked out is not a suite anybody else can run against.
