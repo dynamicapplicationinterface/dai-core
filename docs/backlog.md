@@ -47,9 +47,9 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 4.2 | "Modify this app" | [~] output carries `supersedes`; the card affordance is a decision |
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
-| 4.5 | Attachments in the document | [ ] |
+| 4.5 | Attachments in the document | [x] `<dai-attach>`, blob columns, downscale, a budget |
 | 5.1 | The north star, measured | [~] the walk is measured; a device for CI is a decision |
-| 5.2 | Propagation without a beacon | [ ] relay side |
+| 5.2 | Propagation without a beacon | [~] the opener's half is a test; the dashboard is the relay's |
 | v3 | manifestVersion 3: spec | [x] `9adbfb8` |
 | v3 | readers accept 3, refuse others by name | [x] `00af8e6` — opener, website and desktop v0.2.0 |
 | v3 | countersignature slot | [x] `35cf65e` |
@@ -631,12 +631,36 @@ engineering.
 **Exit:** ten seed apps in the category, each shared at least once outside
 its maker in a pilot.
 
-### 4.5 Attachments in the document
+### 4.5 Attachments in the document — closed
 
-`<dai-attach>`, blob columns, client-side downscale, a size budget.
+A fifth kit element, and the rule it enforces:
 
-**Exit:** an evaluation case: a photo attached on device A survives export
-and open on device B.
+    <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">
+      Add a photo
+    </dai-attach>
+    <img data-blob="photo" alt="">
+
+`:file` binds the picture; every other parameter comes from the row it was
+drawn in, exactly as `data-run` does. The bytes go into a BLOB column, which
+is to say into the document — not into a folder beside it and not to a server.
+That is the whole claim: a photograph attached on one device is in the file
+that arrives on the other.
+
+**The budget is enforced, not advised.** A phone camera produces four
+megabytes without being asked, and a document is a thing people mail. Every
+attachment is scaled to fit 1280 pixels and re-encoded as JPEG before it goes
+near the database; anything still over 512 kB after that is refused out loud
+rather than quietly making a document nobody can send. A file that is not a
+picture is refused in the element itself, in words, and the document is
+unchanged.
+
+Rendering goes through an object URL rather than a data URL — a data URL of a
+photograph is a megabyte of string in the DOM — and the URL is revoked when
+the row redraws, so a list that refreshes does not leak one per redraw.
+
+**Exit met:** `tests/attachments.spec.ts` walks it — attach on device A,
+export through the container's own save, open on a browser context that has
+never seen the document, and the photograph decodes there.
 
 ---
 
@@ -666,8 +690,28 @@ and the exit.
 ### 5.2 Propagation without a beacon
 
 Distinct fetches per `/d/<id>` at the relay, which sees the request and never
-the content. The opener sends nothing. The dashboard belongs to whoever runs
-a relay, not to this repository.
+the content. The opener sends nothing. The dashboard belongs to whoever runs a
+relay, not to this repository.
+
+**The opener's half is done, and it is the half that could go wrong.**
+Everything a store can count, it counts by serving files: a request is a log
+line, and the store holds ciphertext and never holds the key, so the number is
+real and says nothing about what is in the document. Everything else would be
+a beacon — an open reported, a session, a name, or "just an anonymous count" —
+and no amount of care about the payload changes what a program that phones
+home about a file somebody was sent is.
+
+That property is one script tag away from gone, so `tests/no-beacon.spec.ts`
+holds it: opening a document makes not one request off the opener's own
+origin, and the page carries no analytics, no error reporter and nothing
+loaded from anywhere else. It watches every request rather than a list of
+hosts somebody remembered to keep up to date.
+
+**Not here, deliberately.** The dashboard is the relay operator's. For the R2
+bucket behind `store.opendai.app` that means Cloudflare's own request
+analytics, which already counts requests per object and holds no more than
+that. Anything this repository shipped would be this project asking to be told
+about other people's documents.
 
 ---
 

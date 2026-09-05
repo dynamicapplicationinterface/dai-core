@@ -15,7 +15,7 @@
 
 /** The rules, addressed to whoever is writing the code. */
 export const RECIPE = `HOW TO ANSWER
-Content is the kit: HTML with dai-rows, dai-value, dai-form and dai-save, and SQL in the document. The kit
+Content is the kit: HTML with dai-rows, dai-value, dai-form, dai-attach and dai-save, and SQL in the document. The kit
 removes the dangerous sinks by construction (no statement built from a value, text-only rendering), so
 write the app with it and reach for JavaScript only for what the kit cannot do. Transport is whatever the
 channel has: when a tool is available, call it with the files as its arguments; when it is not, write the
@@ -119,6 +119,11 @@ Every container carries dai-kit.js. It gives you four elements, so most of an ap
 - A form's fields become the :parameters of its statement, by name.
 - Inside a row, :parameters come from that row's columns, so a control knows which row it is in.
 - data-text writes a column as text. Values are never treated as markup.
+- A picture goes in the document, in a BLOB column, so it travels with the file:
+  <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">Add a photo</dai-attach>
+  and <img data-blob="photo" alt=""> to show it. :file is the picture, scaled and re-encoded before it is
+  stored. Never write a file path or a URL to an image the document does not carry — it will not be there
+  on the device the file arrives at.
 - Anything the kit cannot express is ordinary JavaScript against window.dai, which is still there.
 
 AN ICON

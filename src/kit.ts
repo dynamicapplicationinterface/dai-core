@@ -1,5 +1,5 @@
 /**
- * Four elements, so an application can be HTML and SQL.
+ * Five elements, so an application can be HTML and SQL.
  *
  * Most of what a model gets wrong is not the idea, it is the wiring: query the
  * database, build the DOM, attach a handler, mutate, remember to redraw. That
@@ -25,6 +25,13 @@
  *     </dai-form>
  *
  *     <dai-save>Save</dai-save>
+ *
+ * And a picture goes in the document itself, not in a folder beside it:
+ *
+ *     <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">
+ *       Add a photo
+ *     </dai-attach>
+ *     <img data-blob="photo" alt="">
  *
  * The schema goes in the document too, so an application can have no JavaScript
  * at all:
@@ -61,7 +68,7 @@
  * A second copy on disk would be a second version of the answer.
  */
 export const KIT_SOURCE = `/**
- * dai-kit — four elements, so an application can be HTML and SQL.
+ * dai-kit — five elements, so an application can be HTML and SQL.
  *
  * Shipped inside every container. Reference it with:
  *   <script type="module" src="./dai-kit.js"></script>
@@ -189,6 +196,28 @@ function fill(element, row) {
     // textContent rather than innerHTML, always: a value in the database is
     // somebody's text and must not become markup.
     else target.textContent = text;
+  }
+
+  /*
+   * A picture that lives in the document (backlog 4.5).
+   *
+   * A blob column holds the bytes, so a photo goes wherever the document goes:
+   * exported, mailed, opened on another device, still there. Rendered through
+   * an object URL rather than a data URL — a data URL of a photograph is a
+   * megabyte of string in the DOM, and the object URL is revoked when the row
+   * is redrawn, so a list that refreshes does not leak one per redraw.
+   */
+  const pictures = element.querySelectorAll('[data-blob]');
+  for (const target of pictures) {
+    const bytes = row[target.getAttribute('data-blob')];
+    if (target.src && target.src.startsWith('blob:')) URL.revokeObjectURL(target.src);
+    if (!bytes || !bytes.length) {
+      target.removeAttribute('src');
+      target.hidden = true;
+      continue;
+    }
+    target.hidden = false;
+    target.src = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
   }
 
   const conditionals = element.querySelectorAll('[data-when]');
@@ -331,6 +360,104 @@ class DaiForm extends HTMLElement {
   }
 }
 
+/**
+ * The largest a picture may be once this has finished with it.
+ *
+ * A document is a thing people send each other, and a phone camera produces
+ * four megabytes without being asked. Every attachment is scaled to fit inside
+ * a square of \`max\` pixels and re-encoded as JPEG before it goes anywhere
+ * near the database, which takes a modern phone photo to something in the tens
+ * of kilobytes. Anything still over the cap after that is refused out loud
+ * rather than quietly making a document nobody can mail.
+ */
+const ATTACH_MAX_PIXELS = 1280;
+const ATTACH_CAP_BYTES = 512 * 1024;
+
+/** Scales a picture to fit, and returns JPEG bytes. */
+async function downscale(file, maxPixels) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxPixels / Math.max(bitmap.width, bitmap.height));
+  const width = Math.round(bitmap.width * scale);
+  const height = Math.round(bitmap.height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+
+  const blob = await new Promise((done) => canvas.toBlob(done, 'image/jpeg', 0.8));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/**
+ * A picture, into the document itself (backlog 4.5).
+ *
+ *     <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="3">
+ *       Add a photo
+ *     </dai-attach>
+ *
+ * \`:file\` is bound to the scaled bytes; every other parameter comes from the
+ * row it was drawn in and from its own data- attributes, exactly as data-run
+ * does. Inside a dai-rows template that means one attribute and nothing else.
+ *
+ * The picture goes into a blob column, which is to say into the document —
+ * not into a folder beside it, not to a server. That is the whole point: a
+ * photograph attached on one device is in the file that arrives on the other.
+ */
+class DaiAttach extends HTMLElement {
+  connectedCallback() {
+    if (!this.textContent.trim()) this.textContent = 'Add a photo';
+    this.setAttribute('role', 'button');
+    this.setAttribute('tabindex', '0');
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.hidden = true;
+    this.appendChild(input);
+
+    const say = (message) => {
+      const before = this.firstChild;
+      if (before && before.nodeType === 3) before.textContent = message;
+    };
+    const label = this.firstChild && this.firstChild.nodeType === 3 ? this.firstChild.textContent : '';
+
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      input.value = '';
+      if (!file) return;
+
+      say('Adding…');
+      try {
+        const max = Number(this.getAttribute('max')) || ATTACH_MAX_PIXELS;
+        const bytes = await downscale(file, max);
+        if (bytes.length > ATTACH_CAP_BYTES) {
+          say('That picture is too large to put in this document');
+          return;
+        }
+
+        const values = { file: bytes };
+        for (const attribute of this.attributes) {
+          if (attribute.name.startsWith('data-')) values[attribute.name.slice(5)] = attribute.value;
+        }
+        run(this.getAttribute('run'), values);
+        say(label);
+      } catch (error) {
+        say('That file could not be read as a picture');
+      }
+    });
+
+    const pick = () => input.click();
+    this.addEventListener('click', (event) => {
+      if (event.target !== input) pick();
+    });
+    this.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') pick();
+    });
+  }
+}
+
 /** Writes the database back into the file. */
 class DaiSave extends HTMLElement {
   connectedCallback() {
@@ -356,6 +483,7 @@ class DaiSave extends HTMLElement {
 customElements.define('dai-rows', DaiRows);
 customElements.define('dai-value', DaiValue);
 customElements.define('dai-form', DaiForm);
+customElements.define('dai-attach', DaiAttach);
 customElements.define('dai-save', DaiSave);
 
 // Anything outside these four is ordinary JavaScript against window.dai, which
