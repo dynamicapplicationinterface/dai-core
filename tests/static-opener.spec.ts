@@ -49,7 +49,16 @@ test.describe("the opener on a host that does nothing", () => {
       const path = decodeURIComponent((request.url ?? "/").split("?")[0]!.split("#")[0]!);
       // A directory is index.html, which is the one convention every static
       // host shares. Anything beyond that would be logic.
-      const file = join(dist, path === "/" ? "index.html" : path.replace(/^\/+/, ""));
+      /*
+       * The one rewrite a mirror needs: `/d/<id>` is the same document as `/`.
+       *
+       * A reference link names the opener at a path, and the opener reads the
+       * id out of `location.pathname` itself. Serving index.html there is all
+       * a static host has to do — no function, no redirect, no forwarding
+       * page — and it is what makes those links work on a mirror at all.
+       */
+      const rewritten = /^\/d\/[0-9a-f]{64}\/?$/i.test(path) ? "/" : path;
+      const file = join(dist, rewritten === "/" ? "index.html" : rewritten.replace(/^\/+/, ""));
 
       if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) {
         response.writeHead(404).end("not here");
@@ -121,5 +130,90 @@ test.describe("the opener on a host that does nothing", () => {
     );
 
     expect(missing, `served nothing for: ${missing.join(", ")}`).toEqual([]);
+  });
+});
+
+/**
+ * A reference link on a mirror (backlog 3.3, the half that needs no function).
+ *
+ * `/d/<id>` is served the opener's own index.html, and the opener reads the id
+ * from the path. Nothing else is required: no redirect, no forwarding page, no
+ * code at the edge. A host that can run code at the edge adds a preview to the
+ * same document; a host that cannot serves it plainly and the link still opens.
+ */
+test.describe("a /d/ link on a plain static host", () => {
+  test.skip(!existsSync(dist), "run `vite build apps/runner` first");
+
+  test("opens the document, with the fragment intact and no preview tags", async ({ page }) => {
+    test.slow();
+    const { createServer: createStore } = await import("node:http");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { compileDirectory } = await import("../src/compile.js");
+    const { publish } = await import("../src/store.js");
+    const { fsStore } = await import("../src/store-fs.js");
+
+    // The opener, with the one rewrite; and a store, on its own origin.
+    const opener = createServer((request, response) => {
+      const path = decodeURIComponent((request.url ?? "/").split("?")[0]!);
+      const rewritten = /^\/d\/[0-9a-f]{64}\/?$/i.test(path) ? "/" : path;
+      const file = join(dist, rewritten === "/" ? "index.html" : rewritten.replace(/^\/+/, ""));
+      if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) {
+        response.writeHead(404).end("not here");
+        return;
+      }
+      response.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
+      createReadStream(file).pipe(response);
+    });
+    await new Promise<void>((ok) => opener.listen(0, "127.0.0.1", ok));
+    const openerPort = (opener.address() as { port: number }).port;
+
+    const root = mkdtempSync(join(tmpdir(), "dai-store-"));
+    const store = createStore((request, response) => {
+      const name = decodeURIComponent((request.url ?? "/").slice(1));
+      const file = join(root, name);
+      if (!name || !existsSync(file)) {
+        response.writeHead(404, { "access-control-allow-origin": "*" }).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/octet-stream", "access-control-allow-origin": "*" });
+      createReadStream(file).pipe(response);
+    });
+    await new Promise<void>((ok) => store.listen(0, "127.0.0.1", ok));
+    const storeOrigin = `http://127.0.0.1:${(store.address() as { port: number }).port}`;
+
+    try {
+      const built = await compileDirectory({
+        sourceDir: resolve(repo, "examples/packing-list"),
+        root: repo,
+        appName: "Beach trip",
+      });
+      const { sealed } = await publish(built.html, fsStore({ root, baseUrl: storeOrigin }), `http://127.0.0.1:${openerPort}`);
+
+      // The path names the document; the fragment carries the hash, the store
+      // and the key, and never leaves the browser.
+      const link =
+        `http://127.0.0.1:${openerPort}/d/${sealed.hash}` +
+        `#h=${sealed.hash}&u=${encodeURIComponent(`${storeOrigin}/${sealed.hash}`)}&k=${sealed.key}`;
+
+      // Nothing may 404 under /d/: every relative URL in the page — the
+      // engine, the confusable table, the worker — resolves against the base
+      // tag, not against the path the document was served at.
+      const missing: string[] = [];
+      page.on("requestfailed", (r) => missing.push(new URL(r.url()).pathname));
+      await page.goto(link);
+      // Served plainly: the placeholder is untouched and the generic tags stand.
+      const head = await page.evaluate(() => document.head.innerHTML);
+      expect(head).toContain("A DAI app");
+      expect(await page.evaluate(() => location.pathname)).toBe(`/d/${sealed.hash}`);
+
+      await page.locator("#card-open").click({ timeout: 60_000 });
+      await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+      await expect(page.locator("#title")).toContainText("Beach trip");
+      expect(missing, `404 under /d/: ${missing.join(", ")}`).toEqual([]);
+    } finally {
+      await new Promise<void>((done) => opener.close(() => done()));
+      await new Promise<void>((done) => store.close(() => done()));
+    }
   });
 });

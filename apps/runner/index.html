@@ -2,6 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      One document, served at more than one path.
+
+      A reference link is `/d/<id>`, and the host serves this same file there
+      rather than redirecting, so the link previews and opens without a
+      forwarding page. Every relative URL in the page — the engine, the
+      confusable table, the worker — would otherwise resolve under `/d/` and
+      404. This is what the first attempt got wrong, twice.
+
+      The cost is that a mirror must be served from a domain root. `?d=<id>`
+      and the any-host link form work from anywhere.
+    -->
+    <base href="/" />
+    <!--
+      Where a link preview goes.
+
+      A host that can run code at the edge replaces this comment with the
+      document's name and icon, read from the store's sidecar, when the sender
+      asked for a preview. Nothing here depends on that: the tags below are
+      what a chat client sees otherwise, and the opener works identically
+      either way. The fragment — the hash and the key — is never sent to a
+      server, so no preview can be built from the document itself.
+    -->
+    <!--DAI_PREVIEW-->
+    <meta property="og:title" content="A DAI app" />
+    <meta property="og:description" content="Runs on your device. No account, nothing installed." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>DAI Opener</title>
 

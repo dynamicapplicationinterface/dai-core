@@ -116,7 +116,19 @@ function tableLink(): Plugin {
 }
 
 export default defineConfig({
-  base: "./",
+  /*
+   * Absolute, because one document is served at more than one path.
+   *
+   * A reference link is `/d/<id>`, and the opener itself answers there — the
+   * host rewrites the path to the same index.html rather than redirecting, so
+   * a link previews and opens without a forwarding page. Relative asset paths
+   * would then resolve under `/d/` and 404, which is exactly how the first
+   * attempt at this failed.
+   *
+   * The cost is that a mirror must be served from a domain root, or rewrite
+   * `/d/*` itself. `?d=<id>` and the any-host link form work from anywhere.
+   */
+  base: "/",
   plugins: [stamp(), engine(), tableLink()],
   server: { port: 5175, strictPort: true },
   preview: { port: 5175, strictPort: true, headers: productionHeaders() },
