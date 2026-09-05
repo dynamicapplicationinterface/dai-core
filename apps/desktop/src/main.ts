@@ -5,7 +5,10 @@
  * for silent, in-place disk persistence without browser download prompts.
  */
 
-import { ContainerError, looksSectioned, verifyContainer } from "../../../src/container.js";
+import { ContainerError, hostShell, looksSectioned, parseContainer, verifyContainer } from "../../../src/container.js";
+// The shell this host runs, shipped with this host: never the container's own.
+import HOST_TEMPLATE from "../../../dist/template.html?raw";
+import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { readContainerFile } from "../../../src/format.js";
 import { payloadFingerprint } from "../../../src/core.js";
 import {
@@ -223,7 +226,7 @@ function clearBootWatchdog(): void {
   }
 }
 
-function mountHtml(html: string, filePath?: string, fingerprint?: string): void {
+async function mountHtml(html: string, filePath?: string, fingerprint?: string): Promise<void> {
   clearAlert();
   expectedFingerprint = fingerprint;
   crossChecked = true;
@@ -231,7 +234,11 @@ function mountHtml(html: string, filePath?: string, fingerprint?: string): void 
     URL.revokeObjectURL(mountedUrl);
   }
   currentFilePath = filePath;
-  const blob = new Blob([html], { type: "text/html" });
+  // This host's own shell around the archive, never the container's document:
+  // the container's bootloader is the publisher's code and would run here with
+  // this window's IPC in reach. See hostShell.
+  const shell = await hostShell(parseContainer(html), { template: HOST_TEMPLATE, runtime: HOST_RUNTIME });
+  const blob = new Blob([shell], { type: "text/html" });
   mountedUrl = URL.createObjectURL(blob);
   cartridgeFrame.src = mountedUrl;
 
@@ -280,7 +287,7 @@ async function openFile(file: File): Promise<void> {
     // be saved back in place — there is nothing to overwrite. Passing the bare
     // name on would make the host write into its working directory instead.
     const nativePath = (file as File & { path?: string }).path;
-    mountHtml(
+    await mountHtml(
       container.html,
       nativePath,
       await payloadFingerprint(container.manifest.documentUuid, container.manifest.hashes),
@@ -357,7 +364,7 @@ async function openCartridgeByPath(path: string): Promise<void> {
     const container = await verifyContainer(source);
     const trust = await gateOnTrust(container);
 
-    mountHtml(
+    await mountHtml(
       container.html,
       path,
       await payloadFingerprint(container.manifest.documentUuid, container.manifest.hashes),
@@ -734,7 +741,7 @@ async function openViaNativeDialog(): Promise<void> {
     const container = await verifyContainer(source);
     const trust = await gateOnTrust(container);
 
-    mountHtml(
+    await mountHtml(
       container.html,
       selected,
       await payloadFingerprint(container.manifest.documentUuid, container.manifest.hashes),
@@ -976,7 +983,7 @@ mintBtn.addEventListener("click", async () => {
     });
 
     hideModal();
-    mountHtml(built.html, appName.toLowerCase().replace(/\s+/g, "-") + ".dai.html");
+    await mountHtml(built.html, appName.toLowerCase().replace(/\s+/g, "-") + ".dai.html");
     badge.textContent =
       "Signed (" + (built.publicKeyFingerprint ?? "").slice(0, 8) + ") · " + appName;
 

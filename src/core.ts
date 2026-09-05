@@ -201,6 +201,51 @@ function iconAmong(files: Record<string, Uint8Array>): string | undefined {
   return undefined;
 }
 
+/** The nonce a document's shell carries: derived from its identity, so builds reproduce. */
+export async function nonceFor(documentUuid: string): Promise<string> {
+  return (await sha256Hex(new TextEncoder().encode("dai-nonce:" + documentUuid))).slice(0, 32);
+}
+
+export interface ShellInput {
+  template: string;
+  runtime: string;
+  appName: string;
+  favicon: string;
+  integrityPolicy: "required" | "advisory";
+  /** Base64 SPKI, or empty for an unsigned document. */
+  publicKey: string;
+  nonce: string;
+}
+
+/**
+ * Fills the shell template: the document the bootloader runs in.
+ *
+ * One function, because two things build a shell. The compiler builds the
+ * one sealed into a container. A host builds its own around an archive it has
+ * just verified, so that the bootloader it executes is the host's and never
+ * the publisher's — a publisher's shell runs with the host's origin, and a
+ * hostile one would reach the host's storage and keys. The payload is left as
+ * the placeholder; whoever assembles the shell splices the archive in.
+ */
+export function assembleShell(input: ShellInput): string {
+  return input.template
+    .split(NONCE_PLACEHOLDER)
+    .join(input.nonce)
+    .split(APP_NAME_PLACEHOLDER)
+    .join(escapeHtml(input.appName))
+    .split(FAVICON_PLACEHOLDER)
+    // Attribute-escaped: a raw SVG data URI carries double quotes, which would
+    // terminate the href early. The markup after it then parses as elements,
+    // and an element in <head> closes it — putting the CSP meta in <body>,
+    // where it is ignored entirely and the air gap silently disappears.
+    .join(escapeHtml(input.favicon))
+    .split(INTEGRITY_PLACEHOLDER)
+    .join(input.integrityPolicy)
+    .split(PUBLIC_KEY_PLACEHOLDER)
+    .join(input.publicKey)
+    .replace(RUNTIME_PLACEHOLDER, () => input.runtime);
+}
+
 export async function buildContainer(
   input: BuildContainerInput,
 ): Promise<BuildContainerResult> {
@@ -312,24 +357,17 @@ export async function buildContainer(
    * permitted it. Scripts the compiler sealed are stamped and still run;
    * anything introduced afterwards is not and does not.
    */
-  const nonce = (await sha256Hex(new TextEncoder().encode("dai-nonce:" + documentUuid))).slice(0, 32);
+  const nonce = await nonceFor(documentUuid);
 
-  const shell = template
-    .split(NONCE_PLACEHOLDER)
-    .join(nonce)
-    .split(APP_NAME_PLACEHOLDER)
-    .join(escapeHtml(appName))
-    .split(FAVICON_PLACEHOLDER)
-    // Attribute-escaped: a raw SVG data URI carries double quotes, which would
-    // terminate the href early. The markup after it then parses as elements,
-    // and an element in <head> closes it — putting the CSP meta in <body>,
-    // where it is ignored entirely and the air gap silently disappears.
-    .join(escapeHtml(favicon))
-    .split(INTEGRITY_PLACEHOLDER)
-    .join(integrityPolicy)
-    .split(PUBLIC_KEY_PLACEHOLDER)
-    .join(signing ? signing.spki : "")
-    .replace(RUNTIME_PLACEHOLDER, () => runtime);
+  const shell = assembleShell({
+    template,
+    runtime,
+    appName,
+    favicon,
+    integrityPolicy,
+    publicKey: signing ? signing.spki : "",
+    nonce,
+  });
 
   const shellBytes = new TextEncoder().encode(shell);
   archive[CONTAINER_ENTRY] = shellBytes;

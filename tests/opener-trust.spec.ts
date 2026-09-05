@@ -59,6 +59,8 @@ test.describe("the opener remembers who signed a document", () => {
     await page.setInputFiles("#file", original);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
+    // Closing lives behind the menu now; see the opener redesign.
+    await page.click("#more");
     await page.locator("#eject").click();
     await page.setInputFiles("#file", impostor);
 
@@ -80,6 +82,8 @@ test.describe("the opener remembers who signed a document", () => {
     await page.setInputFiles("#file", first);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
+    // Closing lives behind the menu now; see the opener redesign.
+    await page.click("#more");
     await page.locator("#eject").click();
     await page.setInputFiles("#file", again);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
@@ -102,6 +106,8 @@ test.describe("the opener remembers who signed a document", () => {
     await page.setInputFiles("#file", signed);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
+    // Closing lives behind the menu now; see the opener redesign.
+    await page.click("#more");
     await page.locator("#eject").click();
     await page.setInputFiles("#file", bare);
 

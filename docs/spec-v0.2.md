@@ -256,14 +256,24 @@ executes bytes other than the ones that were signed.
 
 #### The shell frame
 
-A host that itself embeds the container's *shell* — the verified outer
-document carrying the bootloader — in a frame of its own is embedding code it
-has just verified against the sealed copy, not the application. That frame is
-a second layer, outside the boundary this section defines. It MAY grant
-`allow-same-origin` where the host's own storage or bridge needs it, and
+A host that embeds a shell — the outer document carrying the bootloader — in
+a frame of its own is embedding the bootloader, not the application. That
+frame is a second layer, outside the boundary this section defines. It MAY
+grant `allow-same-origin` where the host's own storage or bridge needs it, and
 `allow-downloads` where the shell's export fallback needs it. It MUST NOT grant
 `allow-popups`, which the shell has no use for and which is an exfiltration
 channel no policy governs, and SHOULD NOT grant `allow-modals`.
+
+Because that frame shares the host's origin, **a host MUST NOT execute the
+container's own shell.** The sealed shell is verified only against its own
+sealed copy, which proves the publisher wrote it and nothing more; a hostile
+publisher's bootloader would run with the host's origin, storage and keys in
+reach. A host MUST assemble a shell of its own — from the template and
+bootloader it ships — around the archive it has verified, and mount that. The
+container's `runtime/container.html` remains in the archive, checked and
+inert. A host-built shell carries `<meta name="dai-shell" content="host">`.
+The container's own shell is executed only where there is no host: the
+`file://` double-click path.
 
 ### 4.2 Content Security Policy
 

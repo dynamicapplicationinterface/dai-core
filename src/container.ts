@@ -20,16 +20,7 @@ import {
   sectionBytes,
   verifyContainerFile,
 } from "./format.js";
-import {
-  CONTAINER_ENTRY,
-  MANIFEST_ENTRY,
-  signedBytes,
-  signedViewOf,
-  fromBase64,
-  sha256Hex,
-  toBase64,
-  type ContainerManifest,
-} from "./core.js";
+import { CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -813,4 +804,55 @@ export async function resealContainer(
     manifest: JSON.parse(new TextDecoder().decode(manifestBytes)) as ContainerManifest,
     database,
   };
+}
+
+/** The meta a host-built shell carries, so it can be told from a sealed one. */
+export const HOST_SHELL_META = '<meta name="dai-shell" content="host">';
+
+/**
+ * A shell of the host's own, around an archive the host has verified.
+ *
+ * A container carries its own bootloader, and a host that loads the
+ * container's document executes that bootloader with the host's origin — in
+ * a frame that has `allow-same-origin`, because the bridge and the host's
+ * storage need it. The bootloader is verified only against its own sealed
+ * copy, which proves the publisher wrote it and nothing else. A hostile
+ * publisher's shell therefore ran as the host: with its library, its pinned
+ * keys and its OPFS in reach. The launch card cannot say "your data stays
+ * here" while that is so.
+ *
+ * So a host does not execute the container's shell. It takes the archive it
+ * has just verified, and assembles a document around it from the template
+ * and bootloader it ships itself — the same function the compiler uses, so
+ * the shell a host runs is the shell a compiler would have sealed today, not
+ * whatever a publisher sealed. The publisher's `runtime/container.html` stays
+ * in the archive, checked and inert; it is executed only where there is no
+ * host to protect, which is the `file://` double-click path.
+ *
+ * The archive is re-zipped without compression: it is unpacked again a
+ * moment later by the bootloader, and the bytes never leave this process.
+ */
+export async function hostShell(
+  container: ParsedContainer,
+  host: { template: string; runtime: string },
+): Promise<string> {
+  const archive: Record<string, Uint8Array> = { ...container.archive };
+  if (!archive[MANIFEST_ENTRY]) {
+    archive[MANIFEST_ENTRY] = new TextEncoder().encode(JSON.stringify(container.manifest, null, 2));
+  }
+
+  const shell = assembleShell({
+    template: host.template,
+    runtime: host.runtime,
+    appName: container.manifest.appName ?? "container",
+    favicon: container.manifest.favicon || DEFAULT_FAVICON,
+    integrityPolicy: container.integrityPolicy === "advisory" ? "advisory" : "required",
+    publicKey: container.publicKey ?? "",
+    nonce: await nonceFor(container.manifest.documentUuid),
+  });
+
+  const payload = toBase64(zipSync(archive, { level: 0 }));
+  return shell
+    .replace(PAYLOAD_TAG_RE, (_match, open: string, close: string) => open + payload + close)
+    .replace(/<meta charset[^>]*>/i, (tag) => tag + "\n  " + HOST_SHELL_META);
 }

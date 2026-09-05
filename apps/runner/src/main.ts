@@ -7,6 +7,10 @@
  * are opened from the user's own files. The console, not the cartridge.
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
+import { hostShell } from "../../../src/container.js";
+// The shell this host runs, shipped with this host: never the container's own.
+import HOST_TEMPLATE from "../../../dist/template.html?raw";
+import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
@@ -244,7 +248,7 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
     });
 
     rememberOpen(loaded.manifest.documentUuid);
-    mount(loaded);
+    await mount(loaded);
   } catch (error) {
     say(`Failed to load ${item.appName} (${(error as Error).message})`, true);
   } finally {
@@ -269,8 +273,15 @@ async function deleteApp(documentUuid: string): Promise<void> {
 /**
  * Mounts a verified container.
  */
-function mount(cartridge: Cartridge): void {
-  const blob = new Blob([cartridge.html], { type: "text/html" });
+async function mount(cartridge: Cartridge): Promise<void> {
+  /*
+   * The host's own shell around the verified archive — never the container's
+   * document. The container's bootloader is the publisher's code, and it
+   * would run here with this origin, this library and these pinned keys in
+   * reach. See hostShell.
+   */
+  const shell = await hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME });
+  const blob = new Blob([shell], { type: "text/html" });
   mountedUrl = URL.createObjectURL(blob);
   cartridgeFrame.src = mountedUrl;
 
@@ -470,7 +481,7 @@ async function ingest(file: File): Promise<void> {
 
     rememberOpen(loaded.manifest.documentUuid);
     hostMark("prepared");
-    mount(loaded);
+    await mount(loaded);
     hostMark("mounted");
   } catch (error) {
     const message =
