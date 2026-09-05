@@ -84,6 +84,10 @@ export interface CompileOptions {
    * signed set; may be given on its own for a build made without the old file.
    */
   supersedes?: string;
+  /** What produced the application (spec §9.3). Signed from version 3. */
+  generator?: import("./core.js").Generator;
+  /** Which manifest version to write. Default: the one every deployed reader accepts. */
+  manifestVersion?: 2 | 3;
   validUntil?: number;
   verifyIntegrity?: boolean;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -233,6 +237,8 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     documentUuid: options.documentUuid,
     publisherName: options.publisherName,
     supersedes: options.supersedes ?? previous?.documentUuid,
+    generator: options.generator,
+    manifestVersion: options.manifestVersion,
     validUntil: options.validUntil,
     verifyIntegrity: options.verifyIntegrity,
     thin: options.thin,

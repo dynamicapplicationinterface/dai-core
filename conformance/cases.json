@@ -89,6 +89,65 @@
       }
     },
     {
+      "name": "version-3-minimal",
+      "file": "cases/version-3-minimal.dai.html",
+      "form": "viewer",
+      "summary": "manifestVersion 3 with no optional field: the shell out of the signed set, signedEntries the authority (§9.2).",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "valid",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "version-3-shell-listed",
+      "file": "cases/version-3-shell-listed.dai.html",
+      "form": "viewer",
+      "summary": "A version 3 manifest whose signed set lists the shell, which §9.2 forbids. Not made by a version 3 compiler, whatever it says.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "code": "SIGNED_SET_MISMATCH",
+        "signature": "invalid"
+      }
+    },
+    {
+      "name": "version-4",
+      "file": "cases/version-4.dai.html",
+      "form": "viewer",
+      "summary": "A manifestVersion this reader does not know. Not damage: refused by name, with a remedy (§9.1).",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "code": "UNSUPPORTED_MANIFEST_VERSION"
+      }
+    },
+    {
+      "name": "envelope-tagged",
+      "file": "cases/envelope-tagged.dai.html",
+      "form": "viewer",
+      "summary": "The same valid signature wrapped in CBOR tag 18, as a standard COSE library emits it (§9.4).",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "valid",
+        "expiry": "none"
+      }
+    },
+    {
       "name": "valid-expiry-current",
       "file": "cases/valid-expiry-current.dai.html",
       "form": "viewer",

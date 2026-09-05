@@ -183,6 +183,82 @@ define(
 );
 
 define(
+  "version-3-minimal",
+  "manifestVersion 3 with no optional field: the shell out of the signed set, signedEntries the authority (§9.2).",
+  {
+    mount: true,
+    ok: true,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "valid",
+    expiry: "none",
+  },
+  async () => ({
+    file: "version-3-minimal.dai.html",
+    body: (await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }))).html,
+  }),
+);
+
+define(
+  "version-3-shell-listed",
+  "A version 3 manifest whose signed set lists the shell, which §9.2 forbids. Not made by a version 3 compiler, whatever it says.",
+  {
+    mount: false,
+    ok: false,
+    code: "SIGNED_SET_MISMATCH",
+    signature: "invalid",
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    manifest.signedEntries["runtime/container.html"] = manifest.hashes["runtime/container.html"];
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "version-3-shell-listed.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "version-4",
+  "A manifestVersion this reader does not know. Not damage: refused by name, with a remedy (§9.1).",
+  {
+    mount: false,
+    ok: false,
+    code: "UNSUPPORTED_MANIFEST_VERSION",
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    manifest.manifestVersion = 4;
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "version-4.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "envelope-tagged",
+  "The same valid signature wrapped in CBOR tag 18, as a standard COSE library emits it (§9.4).",
+  {
+    mount: true,
+    ok: true,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "valid",
+    expiry: "none",
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    const envelope = Buffer.from(manifest.signature, "base64");
+    manifest.signature = Buffer.concat([Buffer.from([0xd2]), envelope]).toString("base64");
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "envelope-tagged.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
   "valid-expiry-current",
   "Carries an expiry that has not passed. Accepted, and the expiry is reported.",
   {

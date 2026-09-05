@@ -55,6 +55,15 @@ MANIFEST_ENTRY = "runtime/manifest.json"
 CONTAINER_ENTRY = "runtime/container.html"
 DATABASE_ENTRY = "document.sqlite"
 
+# §9.1: the versions a reader accepts. Anything else is refused by name, before
+# step 1, because the file is not damaged and the person can update the host.
+SUPPORTED_MANIFEST_VERSIONS = (2, 3)
+
+# §9.4: a writer emits an untagged COSE_Sign1; a reader accepts tag 18 around
+# it as well, because standard COSE libraries emit one.
+COSE_SIGN1_TAG = 18
+COUNTERSIGNATURE_LABEL = 11
+
 # WAS A GAP: §1 said the viewer form carried its content "base64-encoded inside
 # a <script> tag" and stopped there — no id, no statement that the content is
 # the payload archive. Both are needed to read one. Now §1.
@@ -79,6 +88,14 @@ def sha256_hex(data: bytes) -> str:
 # ---------------------------------------------------------------------------
 # CBOR, enough of it for COSE (§3.1)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Tagged:
+    """A CBOR tag (major type 6) around a value. Only the envelope uses one (§9.4)."""
+
+    tag: int
+    value: Any
 
 
 def cbor_decode(data: bytes) -> Any:
@@ -130,6 +147,9 @@ def _cbor_item(data: bytes) -> tuple[Any, bytes]:
             item, rest = _cbor_item(rest)
             pairs[key] = item
         return pairs, rest
+    if major == 6:
+        item, rest = _cbor_item(rest)
+        return Tagged(argument, item), rest
     if major == 7:
         if argument == 22:
             return None, rest
@@ -455,8 +475,14 @@ def from_inline_link(link: str) -> InlineDocument:
         else:
             raise ContainerError(f"LINK_DAMAGED: This link leaves out {name}, which a link may not leave out.")
 
+    # Label 12: `manifestVersion`, absent means 2 (§1.1). A version this reader
+    # does not know is refused by name (§9.1), as it is for a file.
+    version = fields.get(12, 2)
+    if version not in SUPPORTED_MANIFEST_VERSIONS:
+        raise ContainerError(f"UNSUPPORTED_MANIFEST_VERSION: manifestVersion {version!r}.")
+
     manifest: dict[str, Any] = {
-        "manifestVersion": 2,
+        "manifestVersion": version,
         "documentUuid": uuid,
         "appName": fields.get(2, ""),
         "favicon": fields.get(3, ""),
@@ -472,13 +498,34 @@ def from_inline_link(link: str) -> InlineDocument:
     if isinstance(fields.get(11), bytes) and len(fields[11]) == 16:
         g = fields[11].hex()
         manifest["supersedes"] = f"{g[:8]}-{g[8:12]}-{g[12:16]}-{g[16:20]}-{g[20:]}"
+    # Label 13: `generator` as `[tool, model, provider]`, empty strings for
+    # absent (§1.1). The manifest's object carries only the keys that are set,
+    # which is what §9.3 signs.
+    #
+    # SPEC GAP: §1.1 does not say what a reader does with a label 13 array of
+    # the wrong length, or one whose entries are not strings, or one whose
+    # three strings are all empty (§9.3 makes `tool` the one required key).
+    # This reader treats the first two as LINK_DAMAGED and the third as no
+    # `generator` at all. The document should say which.
+    generator = fields.get(13)
+    if generator is not None:
+        if not (isinstance(generator, list) and len(generator) == 3 and all(isinstance(s, str) for s in generator)):
+            raise ContainerError("LINK_DAMAGED: This link does not describe a document.")
+        named = {k: v for k, v in zip(("tool", "model", "provider"), generator) if v}
+        if named:
+            manifest["generator"] = named
     raw_signature = fields.get(8)
     if public_key and isinstance(raw_signature, bytes):
         protected = cbor_encode({1: -7, 4: fingerprint.encode("ascii")})
         envelope = cbor_encode([protected, {}, None, raw_signature])
         manifest["signatureAlgorithm"] = "COSE-ES256"
         manifest["publicKeyFingerprint"] = fingerprint
-        manifest["signedEntries"] = {n: d for n, d in hashes.items() if n != DATABASE_ENTRY}
+        # The signed set by the version's rules (§1.1 label 12): never the
+        # database; for version 3, not the sealed shell either (§9.2). The
+        # shell's digest stays in `hashes`, where a host holds its rebuilt
+        # shell to it.
+        outside = {DATABASE_ENTRY} | ({SHELL_ENTRY} if version == 3 else set())
+        manifest["signedEntries"] = {n: d for n, d in hashes.items() if n not in outside}
         manifest["signature"] = base64.b64encode(envelope).decode("ascii")
 
     return InlineDocument(manifest, carried, elided, public_key)
@@ -530,10 +577,21 @@ def verify(data: bytes, now: int) -> Report:
         raise ContainerError("This container has no manifest.")
     manifest = json.loads(manifest_bytes)
 
+    # §9.1. A version this reader does not know is refused before step 1. It is
+    # routed through the Report rather than raised: run.py compares
+    # `report.code` with the suite's stated name, and a ContainerError there
+    # reads as "could not be read", which is the generic failure §9.1 says this
+    # must not be. The file is not damaged; the host is behind.
+    version = manifest.get("manifestVersion")
+    if version not in SUPPORTED_MANIFEST_VERSIONS:
+        report.code = "UNSUPPORTED_MANIFEST_VERSION"
+        return report
+
     # 3. Entries, both directions. An unlisted entry is as much a failure as a
     #    modified one, or content could simply be appended.
     hashes: dict[str, str] = manifest.get("hashes", {})
-    for name, expected in sorted(hashes.items()):
+    listed, exempt = _entry_list(manifest)
+    for name, expected in sorted(listed.items()):
         if name not in archive:
             report.missing.append(name)
         elif sha256_hex(archive[name]) != expected:
@@ -543,9 +601,9 @@ def verify(data: bytes, now: int) -> Report:
     # two: the database, which is unsigned and changes on every save, and the
     # manifest, which cannot appear in its own list of digests. This reader
     # refused all ten viewer-form cases on its first run, correctly, by the
-    # document as written. Now §7 step 3.
+    # document as written. Now §7 step 3. Version 3 adds the shell (§9.2).
     for name in sorted(archive):
-        if name not in hashes and name not in (DATABASE_ENTRY, MANIFEST_ENTRY):
+        if name not in listed and name not in exempt:
             report.unlisted.append(name)
 
     # 4. Shell.
@@ -556,6 +614,15 @@ def verify(data: bytes, now: int) -> Report:
         # There is no live shell in a binary to compare the sealed one against,
         # and comparing it with itself would always agree. Its entry digest is
         # the honest answer.
+        #
+        # SPEC GAP: §9.2 says the sealed shell "stays in the archive and in
+        # `hashes`" for version 3, but with no MUST, and says nothing about a
+        # version 3 sectioned container whose `hashes` omits the shell. There
+        # is then no digest to hold it to. This reader reports it "ok" on the
+        # grounds that `hashes` and the section table are both unsigned, so
+        # the section digest already gives the shell everything `hashes`
+        # would; the document should say whether that is the intended answer
+        # or whether such a manifest is to be refused.
         report.shell = "mismatch" if CONTAINER_ENTRY in report.mismatched else "ok"
     else:
         report.shell = "ok" if sealed.decode("utf-8") == shell_text else "mismatch"
@@ -613,6 +680,34 @@ def verify(data: bytes, now: int) -> Report:
     return report
 
 
+def _entry_list(manifest: dict) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The entries step 3 holds the archive to, and the names exempt from the
+    unlisted check.
+
+    Version 2, and an unsigned version 3: `hashes` is the list (§7 step 3).
+    A signed version 3: `signedEntries` is the sole authority (§9.2), with the
+    database and the sealed shell taken from `hashes` because neither is
+    signed — the database changes on every save, and the shell is a self-
+    attesting part whose digest a host with its own shell cannot reproduce.
+    """
+    hashes: dict[str, str] = manifest.get("hashes", {})
+    if manifest.get("manifestVersion") != 3 or not manifest.get("signature"):
+        return dict(hashes), (DATABASE_ENTRY, MANIFEST_ENTRY)
+
+    listed = dict(manifest.get("signedEntries", {}))
+    for name in (DATABASE_ENTRY, CONTAINER_ENTRY):
+        if name in hashes:
+            listed[name] = hashes[name]
+    # SPEC GAP: §9.2 makes `signedEntries` the authority and says `hashes` MAY
+    # be present, but does not say what a reader does with a `hashes` entry
+    # that `signedEntries` does not list and the archive does not carry. Where
+    # the archive carries it, §9.2's unlisted rule refuses it. Where it does
+    # not, this reader ignores it: `hashes` is untrusted, and an untrusted list
+    # naming bytes that are not there is noise rather than damage. The
+    # document should say so, or say it is a refusal.
+    return listed, (DATABASE_ENTRY, MANIFEST_ENTRY, CONTAINER_ENTRY)
+
+
 def _key_from_shell(shell_text: str | None) -> str | None:
     # WAS A GAP: §7 step 6 said the signature is checked "when the shell carries
     # a publisher key" and never said where, or in what encoding. Now §3.
@@ -627,27 +722,45 @@ def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str
     signature = manifest.get("signature")
     if not signature:
         return "unsigned", ""
+
+    version = manifest.get("manifestVersion")
+    signed_entries: dict[str, str] = manifest.get("signedEntries", {})
+
+    if version == 3:
+        # §9.2, both mandatory changes. Checked before the key, because they are
+        # facts about the manifest that hold whether or not anyone can verify
+        # the signature: a version 3 signed set that lists the shell is wrong
+        # in itself.
+        if CONTAINER_ENTRY in signed_entries:
+            return "invalid", "SIGNED_SET_MISMATCH"
+        # `hashes` MAY be present and MAY omit signed entries; where both list
+        # an entry they MUST agree.
+        for name, digest in signed_entries.items():
+            if name in hashes and hashes[name] != digest:
+                return "invalid", "SIGNED_SET_MISMATCH"
+
     if not key:
         # Signed, but nothing here can check it. Not the same as unsigned, and
         # reporting it as such would launder a claim nobody verified.
         return "unverifiable", "SIGNATURE_UNVERIFIABLE"
 
-    signed_entries: dict[str, str] = manifest.get("signedEntries", {})
-    # Reconciled before verifying, per §3.1: otherwise a signature could be
-    # validated over digests other than the ones just checked.
-    for name, digest in signed_entries.items():
-        if hashes.get(name) != digest:
-            return "invalid", "SIGNED_SET_MISMATCH"
-    # WAS A GAP, and a serious one. The rule above is one direction. `hashes`
-    # is outside the signature, so an entry added to the archive and to
-    # `hashes` with a matching digest passed integrity and passed signature
-    # without touching the signed set — and runtime/schema.json, added that
-    # way, has its migration SQL executed by a host under the pinned
-    # publisher's badge. Every digested entry except the database must be in
-    # the signed set. Now S3.1.
-    for name in hashes:
-        if name != DATABASE_ENTRY and name not in signed_entries:
-            return "invalid", "SIGNED_SET_MISMATCH"
+    if version != 3:
+        # Version 2, unchanged. Reconciled before verifying, per §3.1: otherwise
+        # a signature could be validated over digests other than the ones just
+        # checked.
+        for name, digest in signed_entries.items():
+            if hashes.get(name) != digest:
+                return "invalid", "SIGNED_SET_MISMATCH"
+        # WAS A GAP, and a serious one. The rule above is one direction. `hashes`
+        # is outside the signature, so an entry added to the archive and to
+        # `hashes` with a matching digest passed integrity and passed signature
+        # without touching the signed set — and runtime/schema.json, added that
+        # way, has its migration SQL executed by a host under the pinned
+        # publisher's badge. Every digested entry except the database must be in
+        # the signed set. Now S3.1, and restated as a version 2 rule in §9.1.
+        for name in hashes:
+            if name != DATABASE_ENTRY and name not in signed_entries:
+                return "invalid", "SIGNED_SET_MISMATCH"
 
     fields: dict[str, Any] = {
         "manifestVersion": manifest["manifestVersion"],
@@ -674,13 +787,44 @@ def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str
         fields["publisherName"] = manifest["publisherName"]
     if manifest.get("supersedes"):
         fields["supersedes"] = manifest["supersedes"]
+    # §9.3: `generator` joins the signed set in version 3, after `supersedes`,
+    # as a map of tool/model/provider with each key present only when set.
+    # Absent from the manifest means absent from the bytes — never null, never
+    # the empty string. (The map's keys are ordered by cbor_encode, which sorts
+    # deterministically; the order §9.3 lists is the order of the field
+    # list, which a sorted map does not depend on.)
+    #
+    # SPEC GAP: §9.3 is the version 3 section, and §3.1's version 2 field list
+    # does not include `generator`. This reader therefore signs it only for
+    # version 3; a version 2 manifest carrying one has it outside the signed
+    # set. §9.3 also does not say whether keys beyond tool/model/provider are
+    # signed; this reader drops them, since the bytes are defined as those
+    # three. The document should state both.
+    generator = manifest.get("generator")
+    if version == 3 and isinstance(generator, dict):
+        signed_generator = {
+            k: generator[k] for k in ("tool", "model", "provider") if generator.get(k)
+        }
+        fields["generator"] = signed_generator
 
     payload = cbor_encode(fields)
 
     envelope = cbor_decode(base64.b64decode(signature))
+    # §9.4: tag 18 around the envelope is the same envelope. Any other tag is a
+    # signature format this reader does not implement.
+    if isinstance(envelope, Tagged):
+        if envelope.tag != COSE_SIGN1_TAG:
+            return "invalid", "SIGNATURE_UNSUPPORTED"
+        envelope = envelope.value
     if not isinstance(envelope, list) or len(envelope) != 4:
         return "invalid", "UNVERIFIED_SIGNATURE"
-    protected, _unprotected, carried, raw_signature = envelope
+    protected, unprotected, carried, raw_signature = envelope
+    if not isinstance(unprotected, dict):
+        return "invalid", "UNVERIFIED_SIGNATURE"
+    # §9.4: the unprotected header MAY carry label 11, a countersignature or an
+    # array of them. Not verified here yet; one this reader cannot verify is
+    # treated as absent, never as a refusal, so its presence changes nothing.
+    _countersignatures = unprotected.get(COUNTERSIGNATURE_LABEL)
     if carried is not None:
         # The payload is detached. A second copy inside the envelope is one that
         # can disagree with the manifest, and it would be the one the signature

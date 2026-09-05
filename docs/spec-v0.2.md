@@ -83,6 +83,8 @@ The stream inflates to one CBOR map (RFC 8949) with integer keys:
 | 9 | entries, in archive order: `[name, 0, bytes]` carried or `[name, 1, digest]` elided |
 | 10 | `publisherName`, when the publisher signed under one |
 | 11 | `supersedes`, 16 bytes, when this document replaces another |
+| 12 | `manifestVersion`, when it is not 2. Absent means 2. A reader rebuilds the signed set by that version's rules (§9.2): for 3, the shell is not in it. |
+| 13 | `generator` as `[tool, model, provider]`, empty strings for absent, when set (§9.3). Exactly three strings; anything else is `LINK_DAMAGED`. All three empty means no `generator`. |
 
 An entry MAY be elided only when it is the sealed shell, the kit, or the
 engine and its glue — the things a host has of its own. The manifest is not
@@ -884,8 +886,10 @@ Two mandatory changes. A compiler MUST apply both to emit version 3; a reader
 MUST require both of a version 3 container.
 
 **The shell leaves the signed set.** `signedEntries` MUST NOT contain
-`runtime/container.html`. The sealed shell stays in the archive and in
-`hashes`, and §7 step 4 still compares the live shell with it: that is an
+`runtime/container.html`. The sealed shell MUST stay in the archive and MUST be
+listed in `hashes` — a version 3 manifest whose `hashes` omits it is refused as
+`SHELL_MISSING`, because there is then no digest to hold the shell to — and §7
+step 4 still compares the live shell with it: that is an
 integrity check on an unsigned part, which is what the shell always was — the
 viewer form's top document is self-attesting (§8) whether or not a digest of it
 was signed. What changes is that a host with its own shell (§4.4) no longer
@@ -899,8 +903,10 @@ refuse with `DIGEST_MISMATCH` any archive entry that is neither listed there
 nor one of the three exemptions: `document.sqlite`, `runtime/manifest.json`,
 and `runtime/container.html`. `hashes` MAY be present; where it lists an entry
 that `signedEntries` also lists, the two MUST agree, and a disagreement is
-`SIGNED_SET_MISMATCH`. When a container is unsigned, `hashes` is the list, as
-in version 2.
+`SIGNED_SET_MISMATCH`. An entry that `hashes` lists, `signedEntries` does not,
+and the archive does not carry is noise: a reader MUST ignore it, since the
+archive rule above already refuses the case where the bytes are present. When
+a container is unsigned, `hashes` is the list, as in version 2.
 
 ### 9.3 Fields
 
@@ -911,7 +917,7 @@ is valid; only §9.2 is required to emit version 3.
 |---|---|---|
 | `publisherName` | yes | The name the publisher signs under. A claim the key makes about itself; a host MUST NOT present it as verified. |
 | `supersedes` | yes | The document this one replaces (§5.1). Honoured only under the same key. |
-| `generator` | yes | `{ "tool": string, "model"?: string, "provider"?: string }`. What produced the application. Asserted, never verified, and never the prompt. |
+| `generator` | yes | `{ "tool": string, "model"?: string, "provider"?: string }`. What produced the application. Asserted, never verified, and never the prompt. Exactly these three keys: a writer MUST NOT add others, and a reader signs only these, so an extra key would be an unsigned field wearing a signed name. Version 3 only; a version 2 manifest carrying one has it outside the signed set. |
 | `identity` | **no** | A Sigstore bundle binding the signing key to an identity (§9.5). Outside the signed set because its transparency-log entry records the signature, which covers the manifest; a field that contains a proof of the signature cannot itself be signed by it. |
 
 The signed bytes (§3.1) gain the signed fields in this order after `entries`,
@@ -927,7 +933,7 @@ The signature is an **untagged** `COSE_Sign1` (RFC 9052 §4.2), detached
 payload. A writer MUST NOT emit CBOR tag 18 around it. A reader MUST accept an
 envelope with tag 18 as well, because standard COSE libraries emit one and a
 reader that refused it would refuse a correct signature over a correct
-container.
+container. Any other tag is `SIGNATURE_UNSUPPORTED`.
 
 A countersignature slot exists whether or not anything is in it. The
 `COSE_Sign1` unprotected header MAY carry label **11** (`countersignature`,

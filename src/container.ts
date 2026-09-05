@@ -154,6 +154,52 @@ function fillFromHost(
   return { supplied, absent };
 }
 
+/** The versions this reader knows (spec §9.1). */
+export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3];
+
+/**
+ * Refuses a version this reader does not know, by name.
+ *
+ * Not damage: the file is fine and the person can do something about it,
+ * which is why it has its own code and a message about updating rather than
+ * about modification. Version 1 predates the signature envelope and gets the
+ * same code with the other remedy, since a rebuild is what fixes that one.
+ */
+export function checkManifestVersion(manifest: { manifestVersion?: unknown }): void {
+  const version = manifest.manifestVersion;
+  if (typeof version === "number" && SUPPORTED_MANIFEST_VERSIONS.includes(version)) return;
+  if (typeof version === "number" && version < 2) {
+    throw new ContainerError(
+      "UNSUPPORTED_MANIFEST_VERSION",
+      "This container was built with an older compiler than this reader supports. Rebuild it and it will open.",
+    );
+  }
+  throw new ContainerError(
+    "UNSUPPORTED_MANIFEST_VERSION",
+    `This container uses manifest version ${String(version)}, which this app does not know yet. ` +
+      "Nothing is wrong with the file: update the app that opens it.",
+  );
+}
+
+/**
+ * The entries a reader holds the archive to, and their digests.
+ *
+ * Version 3, signed: `signedEntries` is the sole authority (spec §9.2), with
+ * the two unsigned parts — the database and the shell — taken from `hashes`
+ * so they are still checked for integrity. Otherwise `hashes`, as in version
+ * 2, where the reconciliation in checkSignature is what ties the two together.
+ */
+export function authoritativeDigests(manifest: ContainerManifest): Record<string, string> {
+  if (manifest.manifestVersion >= 3 && manifest.signature && manifest.signedEntries) {
+    const out: Record<string, string> = { ...manifest.signedEntries };
+    for (const name of [SQLITE_ENTRY, CONTAINER_ENTRY]) {
+      if (manifest.hashes?.[name]) out[name] = manifest.hashes[name]!;
+    }
+    return out;
+  }
+  return manifest.hashes ?? {};
+}
+
 export function parseContainer(
   source: string | Uint8Array,
   options: ParseOptions = {},
@@ -175,7 +221,7 @@ export function parseContainer(
 
   const payload = PAYLOAD_RE.exec(html)?.[1]?.trim();
   if (!payload) {
-    throw new ContainerError("NO_PAYLOAD", 
+    throw new ContainerError("NO_PAYLOAD",
       "This file has no DAI payload. It may be an ordinary web page rather than a container.",
     );
   }
@@ -189,7 +235,7 @@ export function parseContainer(
 
   const manifestBytes = archive[MANIFEST_ENTRY];
   if (!manifestBytes) {
-    throw new ContainerError("MANIFEST_MISSING", 
+    throw new ContainerError("MANIFEST_MISSING",
       `This container has no ${MANIFEST_ENTRY}, so its contents cannot be verified.`,
     );
   }
@@ -264,7 +310,7 @@ function parseSectioned(bytes: Uint8Array, options: ParseOptions = {}): ParsedCo
 
   const shell = archive[CONTAINER_ENTRY];
   if (!shell) {
-    throw new ContainerError("SHELL_MISSING", 
+    throw new ContainerError("SHELL_MISSING",
       `This container has no ${CONTAINER_ENTRY}, so its publisher key cannot be read.`,
     );
   }
@@ -360,7 +406,7 @@ async function checkDigests(
 function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void {
   const sealed = archive[CONTAINER_ENTRY];
   if (!sealed) {
-    throw new ContainerError("SHELL_MISSING", 
+    throw new ContainerError("SHELL_MISSING",
       `This container has no ${CONTAINER_ENTRY}, so its bootloader cannot be checked.`,
     );
   }
@@ -371,7 +417,7 @@ function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void
   );
 
   if (stripped !== new TextDecoder().decode(sealed)) {
-    throw new ContainerError("SHELL_MISMATCH", 
+    throw new ContainerError("SHELL_MISMATCH",
       "This container's bootloader does not match the sealed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
@@ -412,7 +458,7 @@ async function checkSignature(
   documentUuid: string,
 ): Promise<void> {
   if (!manifest.signature || !manifest.signedEntries) {
-    throw new ContainerError("SIGNATURE_UNVERIFIABLE", 
+    throw new ContainerError("SIGNATURE_UNVERIFIABLE",
       "This container carries a publisher key but no signature, so the key cannot be checked.",
     );
   }
@@ -421,20 +467,32 @@ async function checkSignature(
   // the refusal says what happened and what to do rather than naming a constant
   // the reader has never heard of.
   if (manifest.signatureAlgorithm === "ECDSA-P256-SHA256" || manifest.manifestVersion < 2) {
-    throw new ContainerError("SIGNATURE_UNSUPPORTED", 
+    throw new ContainerError("SIGNATURE_UNSUPPORTED",
       "This container was built before the signature format changed, so its " +
         "signature cannot be checked here. Rebuild it and it will open.",
     );
   }
   if (manifest.signatureAlgorithm !== "COSE-ES256") {
-    throw new ContainerError("SIGNATURE_UNSUPPORTED", 
+    throw new ContainerError("SIGNATURE_UNSUPPORTED",
       `Unsupported signature algorithm: ${manifest.signatureAlgorithm}.`,
     );
   }
 
+  if (manifest.manifestVersion >= 3 && CONTAINER_ENTRY in manifest.signedEntries) {
+    // Version 3 took the shell out of the signed set (spec §9.2). One that
+    // lists it was not made by a version 3 compiler, whatever it says.
+    throw new ContainerError(
+      "SIGNED_SET_MISMATCH",
+      `This container is not authentic: ${CONTAINER_ENTRY} is in the signed set, which version 3 forbids.`,
+    );
+  }
+
   for (const [name, digest] of Object.entries(manifest.signedEntries)) {
-    if (manifest.hashes[name] !== digest) {
-      throw new ContainerError("SIGNED_SET_MISMATCH", 
+    // Where both list an entry they must agree. In version 3 `hashes` may
+    // omit what `signedEntries` covers; in version 2 it may not.
+    const listed = manifest.hashes?.[name];
+    if (listed === undefined ? manifest.manifestVersion < 3 : listed !== digest) {
+      throw new ContainerError("SIGNED_SET_MISMATCH",
         `This container is not authentic: ${name} is signed with a different digest.`,
       );
     }
@@ -452,10 +510,11 @@ async function checkSignature(
    * person's data. So every digested entry except the database, which is
    * unsigned by design, must be in the signed set.
    */
-  for (const name of Object.keys(manifest.hashes)) {
+  for (const name of Object.keys(manifest.hashes ?? {})) {
     if (name === SQLITE_ENTRY) continue;
+    if (manifest.manifestVersion >= 3 && name === CONTAINER_ENTRY) continue;
     if (!(name in manifest.signedEntries)) {
-      throw new ContainerError("SIGNED_SET_MISMATCH", 
+      throw new ContainerError("SIGNED_SET_MISMATCH",
         `This container is not authentic: ${name} is not covered by the signature.`,
       );
     }
@@ -495,7 +554,7 @@ async function checkSignature(
   });
 
   if (!ok) {
-    throw new ContainerError("UNVERIFIED_SIGNATURE", 
+    throw new ContainerError("UNVERIFIED_SIGNATURE",
       "This container is not authentic: the signature does not match the publisher key.",
     );
   }
@@ -589,6 +648,13 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
     return report;
   }
 
+  try {
+    checkManifestVersion(manifest);
+  } catch (error) {
+    report.unavailable = (error as Error).message;
+    return report;
+  }
+
   if (manifest.algorithm !== "SHA-256") {
     report.unavailable = `Unsupported digest algorithm: ${manifest.algorithm}.`;
     return report;
@@ -596,12 +662,13 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
 
   // Both directions, as the verifier does. An entry the manifest never listed
   // is as much a failure as one that mismatches, or content could be appended.
+  const listed = authoritativeDigests(manifest);
   const seen = new Set<string>();
   for (const [name, bytes] of Object.entries(archive)) {
     if (name === MANIFEST_ENTRY) continue;
     seen.add(name);
 
-    const expected = manifest.hashes?.[name];
+    const expected = listed[name];
     const actual = await sha256Hex(bytes);
     if (!expected) {
       report.entries.push({ name, actual, status: "unlisted" });
@@ -610,9 +677,9 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
     }
   }
 
-  for (const name of Object.keys(manifest.hashes ?? {})) {
+  for (const name of Object.keys(listed)) {
     if (!seen.has(name)) {
-      report.entries.push({ name, expected: manifest.hashes[name], status: "missing" });
+      report.entries.push({ name, expected: listed[name], status: "missing" });
     }
   }
   report.entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -712,6 +779,7 @@ export async function verifyContainer(
   options: ParseOptions = {},
 ): Promise<VerifiedContainer> {
   const parsed = parseContainer(source, options);
+  checkManifestVersion(parsed.manifest);
   const report = await auditContainer(parsed);
 
   // One implementation of what checking means, presented two ways: a report for
@@ -750,7 +818,7 @@ export async function verifyContainer(
       (damaged.length > 0 || report.sections.staleFooter);
 
     if (onlyTheDatabase) {
-      throw new ContainerError("DATA_DAMAGED", 
+      throw new ContainerError("DATA_DAMAGED",
         "This document's data is damaged and it will not be opened.\n" +
           "The application inside it is intact and correctly sealed — it is the database " +
           "that does not match the record kept of it, which is what an interrupted save " +
@@ -759,14 +827,14 @@ export async function verifyContainer(
     }
 
     if (damaged.length > 0) {
-      throw new ContainerError("SECTION_MISMATCH", 
+      throw new ContainerError("SECTION_MISMATCH",
         "This container has been modified and will not be run.\n" +
           `the ${damaged.map(sectionName).join(" and the ")} does not match its digest`,
       );
     }
 
     if (report.sections.missing.length > 0) {
-      throw new ContainerError("SECTION_MISSING", 
+      throw new ContainerError("SECTION_MISSING",
         "This container is incomplete and will not be run.\n" +
           `it has no ${report.sections.missing.map(sectionName).join(" and no ")}`,
       );
@@ -807,12 +875,12 @@ export async function verifyContainer(
   }
 
   if (report.shell.status === "absent") {
-    throw new ContainerError("SHELL_MISSING", 
+    throw new ContainerError("SHELL_MISSING",
       `This container has no ${CONTAINER_ENTRY}, so its bootloader cannot be checked.`,
     );
   }
   if (report.shell.status === "mismatch") {
-    throw new ContainerError("SHELL_MISMATCH", 
+    throw new ContainerError("SHELL_MISMATCH",
       "This container's bootloader does not match the sealed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
@@ -820,7 +888,7 @@ export async function verifyContainer(
 
   if (report.expiry.status === "expired") {
     const expiry = new Date(report.expiry.validUntil! * 1000).toISOString();
-    throw new ContainerError("KEY_EXPIRED", 
+    throw new ContainerError("KEY_EXPIRED",
       `This container expired on ${expiry} and will not be run. Only its publisher ` +
         `can issue a replacement; an expiry cannot be extended without the signing key.`,
     );

@@ -40,6 +40,7 @@ const MAJOR = {
   TEXT: 3,
   ARRAY: 4,
   MAP: 5,
+  TAG: 6,
   SIMPLE: 7,
 } as const;
 
@@ -191,6 +192,16 @@ function decodeAt(cursor: Cursor): CborValue {
       }
       return map;
     }
+    case MAJOR.TAG:
+      /*
+       * One tag, and only as a wrapper: 18 marks a COSE_Sign1. The envelope is
+       * written untagged (spec §9.4), but standard COSE libraries emit the tag
+       * and a reader that refused it would refuse a correct signature. The tag
+       * is dropped and the enclosed value returned; every other tag is a value
+       * this decoder has no meaning for.
+       */
+      if (value !== 18) throw new CborError(`Unsupported tag: ${value}`);
+      return decodeAt(cursor);
     case MAJOR.SIMPLE:
       if (value === 22) return null;
       throw new CborError(`Unsupported simple value: ${value}`);

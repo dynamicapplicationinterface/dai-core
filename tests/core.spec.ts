@@ -836,9 +836,11 @@ test.describe("parsing bytes and malformed input", () => {
 
     const report = await auditContainer(parseContainer(stripped));
     // Reported as unsupported rather than crashing on the absent hashes table.
-    expect(report.unavailable).toMatch(/algorithm/i);
+    // The version gate (spec §9.1) answers first, since a version 1 manifest
+    // is one this reader does not read whatever else it lacks.
+    expect(report.unavailable).toMatch(/older compiler|algorithm/i);
     expect(report.ok).toBe(false);
-    await expect(verifyContainer(stripped)).rejects.toThrow(/algorithm/i);
+    await expect(verifyContainer(stripped)).rejects.toMatchObject({ code: "UNSUPPORTED_MANIFEST_VERSION" });
   });
 });
 
@@ -1003,7 +1005,9 @@ test.describe("what the signature covers", () => {
     createdAt: (manifest) => (manifest.createdAt = "2001-01-01T00:00:00.000Z"),
     // The fingerprint a host pins on first use and shows on every later open.
     publicKeyFingerprint: (manifest) => (manifest.publicKeyFingerprint = "0".repeat(16)),
-    manifestVersion: (manifest) => (manifest.manifestVersion = 99),
+    // To a version this reader knows: an unknown one is refused by name before
+    // the signature is looked at (§9.1), which is a different test.
+    manifestVersion: (manifest) => (manifest.manifestVersion = manifest.manifestVersion === 2 ? 3 : 2),
     integrityPolicy: (manifest) => (manifest.integrityPolicy = "advisory"),
   };
 

@@ -106,6 +106,12 @@ export interface SigningKeyPair {
   publicKey: WebCryptoKey;
 }
 
+export interface Generator {
+  tool: string;
+  model?: string;
+  provider?: string;
+}
+
 export interface ContainerManifest {
   manifestVersion: number;
   documentUuid: string;
@@ -126,6 +132,12 @@ export interface ContainerManifest {
    * replaces nothing.
    */
   supersedes?: string;
+  /**
+   * What produced the application: a tool, and the model and provider when
+   * one wrote it. Asserted and never verified, and never the prompt. In the
+   * signed set from version 3.
+   */
+  generator?: Generator;
   createdAt: string;
   algorithm: "SHA-256";
   integrityPolicy: "required" | "advisory";
@@ -161,6 +173,14 @@ export interface BuildContainerInput {
   publisherName?: string;
   /** The document this build replaces (4.1). Goes into the signed set when given. */
   supersedes?: string;
+  /** What produced the application. In the signed set from version 3. */
+  generator?: Generator;
+  /**
+   * Which manifest version to write. Version 3 (spec §9) leaves the shell out
+   * of the signed set and makes `signedEntries` the authority. The default is
+   * the version every deployed reader accepts; it moves once they all do.
+   */
+  manifestVersion?: 2 | 3;
   /**
    * Leave the engine out, for a host that already has it (§6.2).
    *
@@ -441,9 +461,16 @@ export async function buildContainer(
   // Signed entries deliberately exclude the database: the application is
   // immutable but its database is not, and a container has no private key to
   // re-sign with after a save.
+  const version = input.manifestVersion ?? MANIFEST_VERSION;
+  // Version 3 (spec §9.2): the shell is an unsigned, self-attesting part and
+  // leaves the signed set, so a host with its own shell verifies a signature
+  // without reproducing the publisher's, and a template can change without
+  // every signature it ever made becoming uncheckable.
   const signedEntries: Record<string, string> = {};
   for (const [name, digest] of Object.entries(hashes)) {
-    if (name !== sqliteEntry) signedEntries[name] = digest;
+    if (name === sqliteEntry) continue;
+    if (version >= 3 && name === CONTAINER_ENTRY) continue;
+    signedEntries[name] = digest;
   }
 
   const validUntil = input.validUntil;
@@ -454,16 +481,18 @@ export async function buildContainer(
   // manifest unchanged, and a verifier rebuilds this same view from it.
   const publisherName = input.publisherName?.trim() || undefined;
   const supersedes = input.supersedes?.trim() || undefined;
+  const generator = version >= 3 && input.generator?.tool ? input.generator : undefined;
   if (supersedes === documentUuid) {
     throw new Error("DAI: a document cannot supersede itself.");
   }
   const signedView: SignedView = {
-    manifestVersion: MANIFEST_VERSION,
+    manifestVersion: version,
     documentUuid,
     appName,
     favicon,
     publisherName,
     supersedes,
+    generator,
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy,
@@ -478,12 +507,13 @@ export async function buildContainer(
     : undefined;
 
   const manifest: ContainerManifest = {
-    manifestVersion: MANIFEST_VERSION,
+    manifestVersion: version,
     documentUuid,
     appName,
     favicon,
     ...(publisherName ? { publisherName } : {}),
     ...(supersedes ? { supersedes } : {}),
+    ...(generator ? { generator } : {}),
     createdAt,
     algorithm: "SHA-256",
     // Informational only: the shell decides whether this is enforced.
@@ -605,6 +635,8 @@ export interface SignedView {
   publisherName?: string;
   /** Present only when this document replaces another. */
   supersedes?: string;
+  /** Present only when set; version 3. */
+  generator?: Generator;
   createdAt: string;
   algorithm: string;
   integrityPolicy: string;
@@ -720,6 +752,7 @@ export function signedViewOf(manifest: {
   favicon?: string;
   publisherName?: string;
   supersedes?: string;
+  generator?: Generator;
   createdAt: string;
   algorithm: string;
   integrityPolicy: string;
@@ -735,6 +768,7 @@ export function signedViewOf(manifest: {
     favicon: manifest.favicon ?? "",
     publisherName: manifest.publisherName,
     supersedes: manifest.supersedes,
+    generator: manifest.generator,
     createdAt: manifest.createdAt,
     algorithm: manifest.algorithm,
     integrityPolicy: manifest.integrityPolicy,
@@ -774,6 +808,12 @@ export function signedBytes(view: SignedView): Uint8Array {
   // every container signed before names existed still verifies unchanged.
   if (view.publisherName) fields.set("publisherName", view.publisherName);
   if (view.supersedes) fields.set("supersedes", view.supersedes);
+  if (view.generator?.tool) {
+    const generator = new Map<CborValue, CborValue>([["tool", view.generator.tool]]);
+    if (view.generator.model) generator.set("model", view.generator.model);
+    if (view.generator.provider) generator.set("provider", view.generator.provider);
+    fields.set("generator", generator);
+  }
 
   return cborEncode(fields);
 }

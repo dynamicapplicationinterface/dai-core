@@ -452,18 +452,32 @@ async function verifySignature(
   if (manifest.signatureAlgorithm !== "COSE-ES256") {
     return { ok: false, reason: `unsupported signature algorithm ${manifest.signatureAlgorithm}` };
   }
+  if (manifest.manifestVersion > 3) {
+    return {
+      ok: false,
+      reason: `uses manifest version ${manifest.manifestVersion}, which this bootloader does not know — update the app that opens it`,
+    };
+  }
 
+  if (manifest.manifestVersion >= 3 && CONTAINER_ENTRY in manifest.signedEntries) {
+    // Version 3 took the shell out of the signed set (spec §9.2).
+    return { ok: false, reason: `${CONTAINER_ENTRY} is in the signed set, which version 3 forbids` };
+  }
   for (const [name, digest] of Object.entries(manifest.signedEntries)) {
-    if (manifest.hashes[name] !== digest) {
+    const listed = manifest.hashes[name];
+    if (listed === undefined ? manifest.manifestVersion < 3 : listed !== digest) {
       return { ok: false, reason: `${name} is signed with a different digest` };
     }
   }
   // The other direction. `hashes` is unsigned, so an entry added to it and
   // to the archive with a matching digest would otherwise pass — including
   // runtime/schema.json, whose SQL this bootloader runs. Everything digested
-  // except the database must be in the signed set.
+  // except the database — and, from version 3, the shell — must be in the
+  // signed set.
   for (const name of Object.keys(manifest.hashes)) {
-    if (name !== SQLITE_ENTRY && !(name in manifest.signedEntries)) {
+    if (name === SQLITE_ENTRY) continue;
+    if (manifest.manifestVersion >= 3 && name === CONTAINER_ENTRY) continue;
+    if (!(name in manifest.signedEntries)) {
       return { ok: false, reason: `${name} is not covered by the signature` };
     }
   }

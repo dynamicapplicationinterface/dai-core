@@ -91,6 +91,10 @@ const L = {
   entries: 9,
   publisherName: 10,
   supersedes: 11,
+  /** Absent means 2. Version 3 leaves the shell out of the signed set (§9.2). */
+  version: 12,
+  /** `[tool, model?, provider?]`, empty strings for absent. Version 3. */
+  generator: 13,
 } as const;
 
 const CARRIED = 0;
@@ -215,6 +219,14 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
   if (manifest.validUntil !== undefined) fields.set(L.validUntil, manifest.validUntil);
   if (manifest.publisherName) fields.set(L.publisherName, manifest.publisherName);
   if (manifest.supersedes) fields.set(L.supersedes, uuidToBytes(manifest.supersedes));
+  if (manifest.manifestVersion >= 3) fields.set(L.version, manifest.manifestVersion);
+  if (manifest.generator?.tool) {
+    fields.set(L.generator, [
+      manifest.generator.tool,
+      manifest.generator.model ?? "",
+      manifest.generator.provider ?? "",
+    ]);
+  }
   if (publicKey && manifest.signature) {
     fields.set(L.key, compressPublicKey(fromBase64(publicKey)));
     fields.set(L.signature, parseSign1(fromBase64(manifest.signature)).signature);
@@ -292,6 +304,17 @@ export async function unpackInline(
   const validUntil = fields.get(L.validUntil);
   const publisherName = fields.get(L.publisherName);
   const supersedesBytes = fields.get(L.supersedes);
+  const versionField = fields.get(L.version);
+  const version = typeof versionField === "number" ? versionField : 2;
+  const generatorField = fields.get(L.generator);
+  const generator =
+    Array.isArray(generatorField) && typeof generatorField[0] === "string" && generatorField[0]
+      ? {
+          tool: generatorField[0],
+          ...(typeof generatorField[1] === "string" && generatorField[1] ? { model: generatorField[1] } : {}),
+          ...(typeof generatorField[2] === "string" && generatorField[2] ? { provider: generatorField[2] } : {}),
+        }
+      : undefined;
   const key = fields.get(L.key);
   const signature = fields.get(L.signature);
   const entries = fields.get(L.entries);
@@ -378,13 +401,15 @@ export async function unpackInline(
 
   const signedEntries: Record<string, string> = {};
   for (const [name, digest] of Object.entries(hashes)) {
-    if (name !== DEFAULT_SQLITE_ENTRY) signedEntries[name] = digest;
+    if (name === DEFAULT_SQLITE_ENTRY) continue;
+    if (version >= 3 && name === CONTAINER_ENTRY) continue;
+    signedEntries[name] = digest;
   }
 
   // Field order matches the compiler's, so that when both hosts agree the
   // manifest — and therefore the whole file — is the one the build produced.
   const manifest: ContainerManifest = {
-    manifestVersion: 2,
+    manifestVersion: version,
     documentUuid: uuid,
     appName,
     favicon,
@@ -392,6 +417,7 @@ export async function unpackInline(
     ...(supersedesBytes instanceof Uint8Array && supersedesBytes.length === 16
       ? { supersedes: bytesToUuid(supersedesBytes) }
       : {}),
+    ...(generator ? { generator } : {}),
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy: required ? "required" : "advisory",

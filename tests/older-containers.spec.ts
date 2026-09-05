@@ -59,8 +59,11 @@ test("an older container is refused in words its owner can act on", async () => 
   const refusal = await verifyContainer(html).catch((error: unknown) => error);
   expect(refusal).toBeInstanceOf(ContainerError);
 
+  // Refused by name (spec §9.1): a version this reader does not read, with the
+  // remedy that fits it, since a rebuild is what fixes a version 1 file.
+  expect((refusal as ContainerError).code).toBe("UNSUPPORTED_MANIFEST_VERSION");
   const message = (refusal as ContainerError).message;
-  expect(message).toContain("built before the signature format changed");
+  expect(message).toContain("older compiler");
   expect(message).toContain("Rebuild it");
   // The constant is what the reader knows and what the person does not.
   expect(message).not.toContain("ECDSA-P256-SHA256");
