@@ -23,6 +23,7 @@
 import { claimsFor } from "../../../src/host-profile.js";
 import type { PublisherState } from "../../../src/publisher.js";
 import { faviconUrl } from "./install.js";
+import { handOffToOpener } from "../../../src/handoff-tab.js";
 
 export interface CardInput {
   name: string;
@@ -48,6 +49,23 @@ export interface CardInput {
   succession?: { state: "adopting" | "refused" | "nothing-here"; previous: string; why?: string };
   /** The §4 clauses this host applies. */
   applied: readonly string[];
+  /**
+   * Looking inside, before running it (backlog 1.5).
+   *
+   * The card says what this document claims and what this host will not let
+   * any document do. It cannot say what is actually in the archive, and
+   * somebody who wants to know that has had no way to find out that did not
+   * come down to trusting this page's summary.
+   *
+   * So: the same bytes, handed to the playground, which unpacks them,
+   * recomputes every digest, checks the signature and shows what it found —
+   * and never mounts anything. The document goes tab to tab by `postMessage`,
+   * the same way a freshly built one reaches this app: no upload, no server,
+   * nothing on the network.
+   *
+   * Absent when there is nothing to look inside of.
+   */
+  inspect?: { file: File; playground: string };
 }
 
 /** " with github.com", from an issuer URL, or nothing. */
@@ -83,6 +101,7 @@ export function showCard(input: CardInput): Promise<void> {
   const safety = document.getElementById("card-safety");
   const succession = document.getElementById("card-succession");
   const identity = document.getElementById("card-identity");
+  const inspect = document.getElementById("card-inspect") as HTMLButtonElement | null;
 
   if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety || !succession || !identity) {
     // No card in this document. Opening without one is the old behaviour and
@@ -191,6 +210,41 @@ export function showCard(input: CardInput): Promise<void> {
       : next.state === "refused"
         ? `Claims to replace ${next.previous}, but ${next.why ?? "this device cannot confirm that"}. Your data stays where it is.`
         : `Replaces ${next.previous}, which this device does not have. It starts empty.`;
+
+  /*
+   * The tab must be opened inside the click itself. A popup opened after an
+   * await is blocked, and the failure looks exactly like the button doing
+   * nothing — which is the failure this whole card exists to stop.
+   */
+  if (inspect) {
+    const target = input.inspect;
+    inspect.hidden = !target;
+    if (target) {
+      inspect.onclick = () => {
+        const tab = window.open(`${target.playground}#handoff`, "_blank", "noopener=no");
+        if (!tab) {
+          inspect.textContent = "Allow pop-ups to look inside";
+          return;
+        }
+        inspect.disabled = true;
+        void target.file
+          .arrayBuffer()
+          .then((buffer) =>
+            handOffToOpener(
+              tab,
+              { name: target.file.name, bytes: new Uint8Array(buffer) },
+              { origin: new URL(target.playground).origin, window },
+            ),
+          )
+          .catch(() => {
+            inspect.textContent = "The playground did not answer";
+          })
+          .finally(() => {
+            inspect.disabled = false;
+          });
+      };
+    }
+  }
 
   card.hidden = false;
   document.body.classList.add("deciding");

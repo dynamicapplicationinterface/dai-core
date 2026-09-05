@@ -7,6 +7,7 @@ import {
   type VerifiedContainer,
 } from '../../src/container.js';
 import { sha256Hex, toBase64 } from '../../src/core.js';
+import { receiveHandoff } from '../../src/handoff-tab.js';
 
 interface EntryAudit {
   name: string;
@@ -36,9 +37,51 @@ const isLoading = ref(false);
 const state = ref<PlaygroundState | null>(null);
 const rawExpanded = ref(false);
 
+/*
+ * A document handed here from the card, to be looked inside (backlog 1.5).
+ *
+ * The opener's card says what a document claims and what the opener will not
+ * let it do. What it cannot say is what is actually in the archive. So the
+ * card opens this page and posts it the same bytes: they go tab to tab, with
+ * no upload, no server and nothing on the network — the same handshake a
+ * freshly built document takes to the opener, in the other direction.
+ *
+ * This page reads them and stops there. It never mounts anything, which is
+ * the whole reason it is a different page from the one that runs documents.
+ */
+const handedOver = ref(false);
+
 onMounted(() => {
   isSecure.value = typeof window !== 'undefined' && window.isSecureContext && !!window.crypto?.subtle;
+
+  if (location.hash !== '#handoff' || !window.opener) return;
+  handedOver.value = true;
+  receiveHandoff(
+    window.opener as { postMessage(data: unknown, origin: string): void },
+    ({ name, bytes }) => {
+      void handleFileBytes(bytes, name);
+    },
+    { allows: mayReceiveFrom, window },
+  );
 });
+
+/**
+ * Which pages may put a document in front of somebody here.
+ *
+ * Not because a handed-over document is dangerous — nothing here runs one, and
+ * every check it reports is recomputed from the bytes — but because without a
+ * check, any page on the web could open this one and show a stranger a
+ * container while they believe they arrived themselves.
+ */
+function mayReceiveFrom(origin: string): boolean {
+  if (origin === 'https://opendai.app') return true;
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return bytes + ' B';
@@ -276,6 +319,10 @@ async function loadSampleCartridge() {
     </div>
 
     <!-- Dropzone Area -->
+    <p v-if="handedOver && !state && !isLoading" class="handed-over">
+      Waiting for the document from the app that opened this page. It is read
+      here and never run — nothing is uploaded.
+    </p>
     <div
       class="dropzone"
       :class="{ 'is-dragging': isDragging, 'is-loading': isLoading }"
@@ -436,6 +483,11 @@ async function loadSampleCartridge() {
   font-size: 20px;
   flex-shrink: 0;
 }
+.handed-over {
+  margin: 0 0 1rem;
+  color: var(--vp-c-text-2);
+}
+
 .dropzone {
   border: 2px dashed var(--vp-c-border);
   border-radius: 12px;

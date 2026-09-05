@@ -30,7 +30,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.2 | One card for every carrier | [x] `7fec986` — `/d/<id>` joins when 2.3 lands |
 | 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [x] `0f9f72d` — the unfurl inherits it with 3.3 |
-| 1.5 | Look inside | [ ] |
+| 1.5 | Look inside | [x] the card hands the same bytes to the playground |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` grammar, `6c23954` compact carrier — a chore chart is 2.8 kB |
 | 2.3 | Reference link and dumb store | [x] `bca1061` — interface, two adapters, opener; the bucket is yours |
@@ -165,13 +165,26 @@ test holds them out. The unfurl does not exist yet and inherits the line when
 **Exit:** a site test greps the card and unfurl for the line and for the
 absence of "runtime", "PWA" and "opener".
 
-### 1.5 Look inside
+### 1.5 Look inside — closed
 
-A link from the card to the playground, which reads the same bytes and never
-mounts.
+The card says what a document claims about itself and what this host will not
+let any document do. Neither is what is actually in the archive, and somebody
+who wanted to know that had exactly one option: believe the card.
 
-**Exit:** the card links to the playground with the same bytes; the playground
-never mounts.
+"Look inside first" opens the playground and posts it the same bytes — tab to
+tab, no upload, no server, nothing on the network, the same handshake a freshly
+built document takes to the opener, in the other direction. The playground
+unpacks the archive, recomputes every digest and checks the signature itself,
+and never mounts anything, which is why it stayed a separate page.
+
+The receiving side takes documents only from origins it is willing to, for the
+same reason the opener does: not because handed-over bytes are dangerous —
+nothing there runs them — but because otherwise any page could open it and put
+a container in front of somebody who believes they arrived themselves.
+
+**Exit met:** `tests/look-inside.spec.ts` — the card's control opens the
+playground, the playground reads the same document, mounts nothing, and the
+card in the first tab is still waiting, because looking inside decided nothing.
 
 ---
 

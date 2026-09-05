@@ -429,6 +429,19 @@
           <ul id="card-claims"></ul>
           <p id="card-succession" hidden></p>
           <button id="card-open" type="button">Open it</button>
+          <!--
+            Look inside, before running it (backlog 1.5).
+
+            The playground reads the same bytes and never mounts them: it
+            unpacks the archive, recomputes every digest and checks the
+            signature, and shows what it found. Somebody who wants to know what
+            is in a document before they run it has had no way to find out that
+            did not involve trusting this page's summary of it.
+
+            Hidden unless a document is on the card, because there is nothing
+            to look inside of otherwise.
+          -->
+          <button id="card-inspect" type="button" hidden>Look inside first</button>
           <p id="card-from" hidden></p>
           <p id="card-line">Send an app like you send a document.</p>
         </div>
