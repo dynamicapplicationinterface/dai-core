@@ -292,7 +292,10 @@ supersedes         — present only when set
 ```
 
 Keys MUST be sorted by their encoded bytes, lengths MUST use the shortest form
-that fits, and indefinite lengths MUST NOT be used. Two encoders that agree on
+that fits, and indefinite lengths MUST NOT be used. The shape is written as
+CDDL in [cddl.md](cddl.md), with frozen byte vectors in
+`conformance/vectors.json` — an implementer with an encoder can check it
+against bytes without building a container. Two encoders that agree on
 the values and disagree on the bytes produce signatures that do not verify.
 
 `validUntil` MUST be omitted entirely when unset, not encoded as null or zero.

@@ -917,6 +917,125 @@ console.log(`${written.length} cases written to conformance/cases.json`);
 }
 
 /*
+ * Byte vectors (docs/cddl.md).
+ *
+ * The CDDL says what the shapes are; these say what the bytes are. An
+ * implementer with an encoder can check it against these without building a
+ * container at all, and a change to any of them is a change to the format,
+ * visible as a diff rather than as a signature that stops verifying.
+ *
+ * Every input is fixed, so the file is stable across runs. The one thing that
+ * cannot be fixed is a signature — ECDSA draws a fresh nonce — so the signed
+ * payload and the structures over it are given with a key and a signature that
+ * are themselves fixed, taken from the suite's key over the suite's document.
+ */
+{
+  const { signedBytes, signedViewOf, fromBase64, toBase64 } = await import("../dist/core.js");
+  const { encode } = await import("../dist/cbor.js");
+  const { protectedHeader, sigStructure, countersignStructure, countersignerHeader } = await import("../dist/cose.js");
+  const { packInline } = await import("../dist/inline.js");
+  const { writeContainerFile } = await import("../dist/format.js");
+
+  const hex = (bytes) => Buffer.from(bytes).toString("hex");
+
+  // One signed container, built with the suite's fixed clock and identity, is
+  // the source of every vector below.
+  const built = await buildContainer(
+    base({
+      signingKey: KEY,
+      manifestVersion: 3,
+      publisherName: "Acme Finance",
+      supersedes: "11111111-2222-4333-8444-555555555555",
+      generator: { tool: "dai-core", model: "example-model" },
+      validUntil: 4102444800,
+    }),
+  );
+  const view = signedViewOf(built.manifest);
+  const payload = signedBytes(view);
+  const envelope = fromBase64(built.manifest.signature);
+  const kid = built.manifest.publicKeyFingerprint;
+
+  // The COSE_Sign1 array, so the pieces can be named separately.
+  const { decode } = await import("../dist/cbor.js");
+  const parts = decode(envelope);
+  const bodyProtected = parts[1] instanceof Map ? parts[0] : parts[0];
+  const signature = parts[3];
+
+  const csKid = new TextEncoder().encode("conformance-countersigner");
+  const csProtected = countersignerHeader(csKid);
+
+  const inlineValue = await packInline(parseContainer(built.html), {
+    template: TEMPLATE,
+    runtime: RUNTIME,
+  });
+  const inlineBytes = Buffer.from(inlineValue.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+
+  // A footer, from a container written with a fixed generation and data.
+  const sectioned = await writeContainerFile({
+    manifest: bytes("{}"),
+    payload: bytes("payload"),
+    data: bytes("data"),
+    generation: 7,
+  });
+
+  const vectors = {
+    suiteVersion: 1,
+    generatedBy: "scripts/build-conformance.mjs",
+    describes: "docs/cddl.md",
+    note:
+      "Hex, lowercase. Built from fixed inputs: a change here is a change to the format. " +
+      "The signature is one the suite's key made over this payload; another key or another " +
+      "run makes different signature bytes, and everything else stays identical.",
+    signedPayload: {
+      what: "The bytes the publisher signature is computed over (docs/cddl.md, signed-payload).",
+      view,
+      cbor: hex(payload),
+    },
+    protectedHeader: {
+      what: "The COSE_Sign1 protected header: alg ES256, kid the publisher fingerprint.",
+      kid,
+      cbor: hex(protectedHeader(kid)),
+    },
+    sigStructure: {
+      what: "What ES256 actually signs (RFC 9052 §4.4).",
+      cbor: hex(sigStructure(protectedHeader(kid), payload)),
+    },
+    envelope: {
+      what: "The whole COSE_Sign1, untagged, detached payload. Base64 as the manifest carries it.",
+      base64: built.manifest.signature,
+      cbor: hex(envelope),
+      tagged: hex(Buffer.concat([Buffer.from([0xd2]), Buffer.from(envelope)])),
+    },
+    countersignStructure: {
+      what: "RFC 9338 §3.3 version 2, over the same payload and this publisher signature.",
+      kidHex: hex(csKid),
+      protectedHeader: hex(csProtected),
+      cbor: hex(countersignStructure(bodyProtected, csProtected, payload, signature)),
+    },
+    inlineCarrier: {
+      what: "The fragment value for this document: version byte, dictionary id, deflate stream.",
+      version: inlineBytes[0],
+      dictionaryId: hex(inlineBytes.subarray(1, 5)),
+      length: inlineBytes.length,
+      head: hex(inlineBytes.subarray(0, 32)),
+      fragment: `#a=${inlineValue}`,
+    },
+    footer: {
+      what: "The last 64 bytes of a sectioned container, generation 7 over the data 'data'.",
+      generation: 7,
+      hex: hex(sectioned.subarray(sectioned.length - 64)),
+    },
+    header: {
+      what: "The first 12 bytes: magic, formatVersion 2, flags 0, sectionCount 3.",
+      hex: hex(sectioned.subarray(0, 12)),
+    },
+  };
+
+  writeFileSync(join(suite, "vectors.json"), JSON.stringify(vectors, null, 2) + "\n");
+  console.log("byte vectors written to conformance/vectors.json");
+}
+
+/*
  * The same documents, carried in links (§1.1).
  *
  * Only the intact viewer-form cases: a link is made from a document a reader

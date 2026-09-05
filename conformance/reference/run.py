@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -138,6 +139,145 @@ def countersignature_selfcheck(failures: list) -> None:
             failures.append((label, f"expected [], read {got!r}"))
         print(f"{'ok' if got == [] else 'FAILED':>7}  {label}")
 
+
+
+def byte_vectors(failures: list) -> None:
+    """docs/cddl.md's frozen vectors, recomputed here from the vector's own
+    inputs and compared byte for byte.
+
+    Everything else in this suite agrees about verdicts. This is the one hook
+    that makes two independent encoders agree about *bytes*: the signed payload
+    above all, which is what every signature in the format is computed over. A
+    reader that reaches the right verdict on the suite's own files and encodes
+    the payload differently would still reject every signature anyone else made.
+    """
+    vectors_file = SUITE / "vectors.json"
+    if not vectors_file.exists():
+        print(f"{'skip':>7}  no conformance/vectors.json; run `npm run conformance`")
+        return
+    vectors = json.loads(vectors_file.read_text(encoding="utf-8"))
+
+    def check(label: str, wrong: list) -> None:
+        name = f"{label} — byte vector"
+        if wrong:
+            failures.append((name, "; ".join(wrong)))
+        print(f"{'ok' if not wrong else 'FAILED':>7}  {name}")
+
+    def compare(label: str, got: bytes, expected_hex: str) -> None:
+        check(label, [] if got.hex() == expected_hex else [
+            f"expected {expected_hex}, encoded {got.hex()}"
+        ])
+
+    # 1. The signed payload (§3.1, §9.3). Built through the reader's own
+    #    field-selection path rather than by encoding the view directly, so the
+    #    rules about which optional fields are present are under test too.
+    view = vectors["signedPayload"]["view"]
+    rebuilt = {k: v for k, v in view.items() if k != "entries"}
+    rebuilt["signedEntries"] = view["entries"]
+    try:
+        payload = dai_read._signed_payload(rebuilt)
+        compare("signedPayload", payload, vectors["signedPayload"]["cbor"])
+    except (ContainerError, KeyError) as error:
+        payload = b""
+        check("signedPayload", [f"could not be encoded: {error}"])
+
+    # 2. The protected header: alg ES256, kid as ASCII bytes (§3.1).
+    protected = dai_read.cbor_encode(
+        {1: -7, 4: vectors["protectedHeader"]["kid"].encode("ascii")}
+    )
+    compare("protectedHeader", protected, vectors["protectedHeader"]["cbor"])
+
+    # 3. Sig_structure, RFC 9052 §4.4. Uses the header just rebuilt, not the
+    #    vector's, so a disagreement about either shows up here.
+    compare(
+        "sigStructure",
+        dai_read.cbor_encode(["Signature1", protected, b"", payload]),
+        vectors["sigStructure"]["cbor"],
+    )
+
+    # 5. The envelope, first because 4 needs its parts. §9.4: untagged on write,
+    #    tag 18 accepted on read, and the two are the same value.
+    envelope_bytes = bytes.fromhex(vectors["envelope"]["cbor"])
+    tagged_bytes = bytes.fromhex(vectors["envelope"]["tagged"])
+    envelope = dai_read.cbor_decode(envelope_bytes)
+    tagged = dai_read.cbor_decode(tagged_bytes)
+    wrong = []
+    if envelope_bytes[0] >> 5 != 4:
+        wrong.append(f"the untagged form begins with 0x{envelope_bytes[0]:02x}, not an array head")
+    if not isinstance(tagged, dai_read.Tagged) or tagged.tag != dai_read.COSE_SIGN1_TAG:
+        wrong.append("the tagged form is not tag 18")
+    elif tagged.value != envelope:
+        wrong.append("the tagged and untagged forms decode to different values")
+    if not (isinstance(envelope, list) and len(envelope) == 4 and envelope[2] is None):
+        wrong.append(f"not a four-element COSE_Sign1 with a detached payload: {envelope!r}")
+    check("envelope", wrong)
+
+    # 4. Countersign_structure, RFC 9338 §3.3 version 2 (§9.4). body_protected
+    #    and the publisher signature come out of the envelope above.
+    body_protected, _unprotected, _detached, publisher_signature = envelope
+    compare(
+        "countersignStructure",
+        dai_read.cbor_encode([
+            "CounterSignatureV2",
+            body_protected,
+            bytes.fromhex(vectors["countersignStructure"]["protectedHeader"]),
+            b"",
+            payload,
+            [publisher_signature],
+        ]),
+        vectors["countersignStructure"]["cbor"],
+    )
+
+    # 6. The fixed byte layouts of §2. Not CBOR, and the one place a reader can
+    #    disagree about endianness rather than about encoding.
+    header = bytes.fromhex(vectors["header"]["hex"])
+    magic, format_version, flags, section_count = struct.unpack("<4sHHI", header[:12])
+    wrong = []
+    if len(header) != dai_read.HEADER_BYTES:
+        wrong.append(f"header is {len(header)} bytes, not {dai_read.HEADER_BYTES}")
+    if magic != dai_read.MAGIC:
+        wrong.append(f"magic {magic!r}, not {dai_read.MAGIC!r}")
+    if format_version != dai_read.FORMAT_VERSION:
+        wrong.append(f"formatVersion {format_version}, not {dai_read.FORMAT_VERSION}")
+    if flags != 0:
+        wrong.append(f"flags {flags}, not 0")
+    if section_count != len(dai_read.REQUIRED_SECTIONS):
+        wrong.append(f"sectionCount {section_count}, not {len(dai_read.REQUIRED_SECTIONS)}")
+    check("header", wrong)
+
+    footer = bytes.fromhex(vectors["footer"]["hex"])
+    wrong = []
+    if len(footer) != dai_read.FOOTER_BYTES:
+        wrong.append(f"footer is {len(footer)} bytes, not {dai_read.FOOTER_BYTES}")
+    else:
+        generation = struct.unpack_from("<Q", footer, 0)[0]
+        if generation != vectors["footer"]["generation"]:
+            wrong.append(f"generation {generation}, not {vectors['footer']['generation']}")
+        if footer[8:40] == bytes(32):
+            wrong.append("dataDigest is all zero")
+        if footer[40:60] != bytes(20):
+            wrong.append(f"reserved is {footer[40:60].hex()}, not zero")
+        if footer[60:64] != dai_read.FOOTER_MAGIC:
+            wrong.append(f"trailing magic {footer[60:64].hex()}, not {dai_read.FOOTER_MAGIC.hex()}")
+    check("footer", wrong)
+
+    # 7. The inline carrier (§1.1): the header bytes by hand, and the whole
+    #    fragment back through the reader to the document it carries.
+    carrier = vectors["inlineCarrier"]
+    head = bytes.fromhex(carrier["head"])
+    wrong = []
+    if head[0] != carrier["version"]:
+        wrong.append(f"version byte {head[0]}, not {carrier['version']}")
+    if head[1:5].hex() != carrier["dictionaryId"]:
+        wrong.append(f"dictionaryId {head[1:5].hex()}, not {carrier['dictionaryId']}")
+    try:
+        carried = dai_read.from_inline_link(carrier["fragment"])
+        got_uuid = carried.manifest["documentUuid"]
+        if got_uuid != view["documentUuid"]:
+            wrong.append(f"documentUuid {got_uuid!r}, not the payload's {view['documentUuid']!r}")
+    except (ContainerError, ValueError, KeyError) as error:
+        wrong.append(f"the fragment could not be read: {error}")
+    check("inlineCarrier", wrong)
 
 
 def _manifest_and_key(data: bytes) -> tuple[dict, str | None]:
@@ -341,6 +481,11 @@ def main() -> int:
             print(f"{'ok' if not wrong else 'FAILED':>7}  {name}")
     else:
         print(f"{'skip':>7}  no conformance/identity-vectors.json; run `npm run conformance`")
+
+    # docs/cddl.md: the frozen byte vectors. Not a verdict about any file —
+    # the check that this reader's encoder and the one that built the vectors
+    # produce the same bytes, which is what a signature actually depends on.
+    byte_vectors(failures)
 
     print()
     if failures:
