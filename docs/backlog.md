@@ -34,7 +34,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` — the cap is a decision, see below |
 | 2.3 | Reference link and dumb store | [ ] |
-| 2.4 | Carriers in the specification | [ ] |
+| 2.4 | Carriers in the specification | [~] `PENDING` — carriers and the inline grammar; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
@@ -186,6 +186,18 @@ fragment grammar frozen so any opener honours it. Carries the earlier item on
 implementability: CDDL and frozen byte vectors for the signed payload, the
 footer, the bridge envelope and the fragment; the Python reader finished to a
 full verifier that opens all three carriers with no dai-core source reuse.
+
+Half done in `PENDING`. Spec §1.1 defines carrier beside form — file, inline
+link, reference link reserved — and freezes the inline fragment grammar:
+base64url without padding over gzip, in the fragment and nowhere else. The
+Python reader, which shares no code with ours, opens that carrier from the
+specification alone and reaches the identical verdict on all 17 conformance
+cases sent through a link, and refuses one cut in transit.
+
+What is left is the part that needs 2.3: the reference link's grammar, which
+is not frozen because the store is not decided. And the part that is simply
+work: CDDL and frozen byte vectors for the signed payload, the footer and the
+bridge envelope.
 
 **Exit:** CDDL and vectors published; the Python reader opens all three
 carriers and agrees with the reference on every conformance case.

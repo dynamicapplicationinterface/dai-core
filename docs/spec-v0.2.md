@@ -38,6 +38,50 @@ demonstrable. A save from this form rewrites the entire file.
 An implementation MUST determine the form from the leading bytes (§2.1), and
 MUST NOT determine it from a file extension.
 
+### 1.1 Carriers
+
+A **form** is how a document is encoded. A **carrier** is how it reaches
+somebody. They are independent: any form may travel by any carrier, and a
+reader MUST verify what arrives by §7 regardless of which carrier brought it.
+Where bytes came from says nothing about what they are.
+
+Three carriers are defined.
+
+**The file.** The document as a file: attached, copied, handed over on a disk.
+This is the carrier the rest of this document assumes, and the only one that
+needs nothing but the file.
+
+**The inline link.** The document in the address itself:
+
+```
+<opener>/#a=<base64url of gzip of the document>
+```
+
+`a` for the application, in the fragment and nowhere else. The fragment is the
+whole of it, which is the point: a fragment is not sent to a server, so a
+document carried this way is in the link and in no log, on no host, and behind
+nothing that can expire. The value MUST be base64url (RFC 4648 §5) without
+padding, over a gzip stream (RFC 1952) of the document's bytes. gzip because a
+browser can undo it without being sent a decompressor first.
+
+A reader MUST refuse a fragment it cannot decode rather than acting on part of
+one, and SHOULD say that the link was probably cut in transit — chat clients
+linkify up to a length and mail wraps long lines, so a link carrying a document
+is a link that can arrive half-present.
+
+A sender SHOULD cap what it will put in a link and MUST NOT emit one over its
+cap, because a link cut in transit arrives as a document that will not open and
+nothing to say why. No cap is normative: what truncates a long link is
+everything between the two people, not the format.
+
+**The reference link.** Reserved. An address that names a document rather than
+carrying it, for documents too large for the fragment. The grammar is not
+frozen here and no implementation should assume one.
+
+Nothing about a carrier is recorded in a document. A document that travelled as
+a link and a document that arrived as a file are the same bytes and the same
+document, and an implementation MUST NOT treat them differently.
+
 ---
 
 ## 2. The sectioned form

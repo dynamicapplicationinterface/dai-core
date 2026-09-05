@@ -38,3 +38,7 @@ apps/runner/public/runtime/
 # Rust build output. 461 files of it were committed once, 375 carrying a local
 # home-directory path; nothing in target/ is source.
 crates/*/target/
+
+# Python bytecode from the reference reader
+__pycache__/
+*.pyc

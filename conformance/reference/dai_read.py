@@ -25,6 +25,7 @@ document has a list of what it must not drop again.
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import re
@@ -332,6 +333,40 @@ def _read_viewer(text: str) -> tuple[dict[str, bytes], str]:
         lambda m: m.group(1) + PAYLOAD_PLACEHOLDER + m.group(3), text, count=1
     )
     return archive, stripped
+
+
+INLINE_RE = re.compile(r"[#&]a=([A-Za-z0-9_-]+)")
+
+
+def from_inline_link(link: str) -> bytes:
+    """Take a document out of an inline link (§1.1).
+
+    A carrier, not a form: what comes back is the document's own bytes, and the
+    caller verifies it exactly as it would a file. Where bytes came from says
+    nothing about what they are.
+
+    Written from the specification like the rest of this file, and it needed
+    nothing the document did not give: base64url without padding, over a gzip
+    stream, in the fragment.
+    """
+    found = INLINE_RE.search(link)
+    if not found:
+        raise ContainerError("This link carries no document.")
+
+    value = found.group(1)
+    # base64url without padding (RFC 4648 section 5). Python wants the padding
+    # back, and refusing to guess it would refuse every conforming link.
+    padded = value + "=" * (-len(value) % 4)
+    try:
+        packed = base64.urlsafe_b64decode(padded)
+        return gzip.decompress(packed)
+    except Exception as broken:
+        # Refused rather than acted on in part: a link that carries a document
+        # can arrive half-present, because chat clients linkify up to a length
+        # and mail wraps long lines.
+        raise ContainerError(
+            "This link is damaged. It was probably shortened or wrapped on the way here."
+        ) from broken
 
 
 def verify(data: bytes, now: int) -> Report:
