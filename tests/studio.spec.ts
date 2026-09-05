@@ -52,6 +52,9 @@ test.describe("web studio", () => {
     // one: same sealed structure, same enforced policy.
     expect(Object.keys(archive).sort()).toEqual([
       "app/app.js",
+      // The kit rides in every container, from the engine rather than from a
+      // door, so a browser build carries it exactly as a command-line one does.
+      "app/dai-kit.js",
       "app/index.html",
       "document.sqlite",
       "runtime/container.html",
