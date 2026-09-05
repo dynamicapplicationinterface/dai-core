@@ -1,85 +1,309 @@
 # Backlog
 
-The live list. Ordered by what it costs to be wrong, not by what is
-interesting. Each item has an exit a machine can check. When an item is done
-it moves to the bottom with the commit that closed it, so the record of why
-stays with the record of what.
+The live list. Ordered by what it costs to be wrong, and gated rather than
+dated. Each item has an exit a machine can check. When an item is done it
+moves to the bottom with the commit that closed it, so the record of why stays
+with the record of what.
 
-Written 4 September 2026 after three independent architectural reviews of the
-code at `a9e6b27`. Where the reviews agreed, the item is here. Where they
-disagreed, it is in the last section, undecided on purpose.
+Reshaped 4 September 2026 around one sentence: **someone sends you a DAI app,
+and you can use it immediately.** On a phone the only pre-installed executor
+is the browser, and a browser executes URLs, not files. So the file stays
+canonical and the link is how a document is met on first contact: **send a
+link, keep a file.** `.dai.html` is the zero-install path on a desktop; on a
+phone a tapped attachment is a static preview at best.
+
+Phase 0 is serial and nothing below it ships first. Phases 1 and 2 run in
+parallel after it; 3 follows 2; 4 and 5 follow 1. Critical path:
+
+    0.2 → 0.3 → { 1.1, 1.3 } ‖ { 2.1 → 2.2, 2.3 → 2.5 } → 3.1 → 3.3 → 3.5 → 4.1 → 4.3
 
 ---
 
-## Engineering — undisputed, in order
+## Phase 0 — Make "open from a stranger" true
 
-Numbering continues from the security items, which are closed below.
+### 0.2 The host owns the runtime
 
-### 12. The evaluation measures the things that actually fail
+Both hosts mount the container's *sealed shell* — the bootloader the
+publisher shipped — in a frame with `allow-same-origin` at the host's own
+origin. That shell is verified only against its own sealed copy; a hostile
+publisher's shell runs at `opendai.app`'s origin and can reach the library,
+the pinned keys and OPFS. The launch card of Phase 1 promises "no filesystem,
+data stays here", and that promise is false until this lands.
 
-Four stages score checked, built, mounted, usable. What breaks at scale is
-after that.
+The opener and the desktop host supply the bootloader and the engine
+themselves and mount only `app/*`, the manifest and the data. The sealed
+shell is used on the `file://` double-click path only, where there is no host
+to protect.
 
-**Exit:** three more stages — first interaction survives (click every control,
-nothing throws), data round-trips (write, export, reopen, row present), and
-regeneration is safe (v1 seeded, v2 built from a new prompt, data survives or
-is refused loudly). Then a run of several hundred prompts across several
-models, reporting pass@1 usable-and-persistent. The run is a decision about
-spend and is not made here.
+**Exit:** a container built with a custom `--template` runs in the opener
+under the opener's bootloader; a hostile-shell probe container gets no access
+to the host origin, OPFS, IndexedDB or Tauri IPC, and a test asserts each.
 
-### 13. The specification can be implemented from the specification
+### 0.3 The shell binds its frame's messages
 
-The signed payload's field list, its empty-string-for-absent rule and its key
-order live in code and one paragraph; the Python reader rediscovered one of
-them as a "gap". The spec's example says `manifestVersion: 1`; the code says 2.
+The host-side bridge is bound to source, nonce and request id (closed, 4).
+The shell's own listener for the frame is not: `dai:schema` and the save
+request accept any window; the timing and hello handlers check
+`event.source`. `?open=` consent is closed (3).
 
-**Exit:** CDDL for the signed payload, the footer and the bridge envelope;
-frozen byte vectors for a known-good signed payload; the example corrected;
-the Python reader finished to a full reader and verifier with no dai-core
-source reuse, agreeing with the reference on every conformance case.
+**Exit:** a third window posting `dai:save` or `dai:schema` is ignored; a test
+asserts it.
 
-### 14. One tool contract, two transports
+---
 
-The three MCP tools exist over stdio and write to disk. A remote server should
-serve the same tools and return a link the opener can open.
+## Phase 1 — The launch surface
 
-**Exit:** the tools and their result shape — `{ ok, diagnostics, document? }`
-plus a locator that is a path or a URL — in one module both servers mount; a
-store interface of `put`, `get`, `link`; a filesystem store in the open repo so
-anyone can run their own; and one sentence in the specification: a served
-container MUST be readable cross-origin by the opener. Everything about an
-operated instance stays out.
+### 1.1 A launch card, with claims the host can back
 
-### 15. Small, undisputed, cheap
+Name, icon, publisher (or "unsigned"), then a short list of ✓ claims. A ✓ may
+be shown only when the host's declared class and profile back it — the host
+profile (closed, 11) is what backs it, and the probe is what proves the
+profile.
+
+**Exit:** a host failing any §4 probe clause cannot render the matching ✓; a
+test asserts the DOM.
+
+### 1.2 One card for every carrier and both hosts
+
+Link, file, share attachment and assistant hand-off all land on the same
+screen.
+
+**Exit:** snapshot tests show an identical card from `?open=`, `#a=`,
+`/d/<id>`, the file picker and `launchQueue`.
+
+### 1.3 Install after use, not on open
+
+`keeper.offer()` runs at mount today. It moves to the first successful
+`data-run`; the second open offers "Save to my apps"; the third behaves like
+an app.
+
+**Exit:** the install prompt never appears before a `data-run` succeeds.
+
+### 1.4 One sentence everywhere
+
+"Send an app like you send a document." On the card, the unfurl, `/open` and
+the share text the opener already emits.
+
+**Exit:** a site test greps the card and unfurl for the line and for the
+absence of "runtime", "PWA" and "opener".
+
+### 1.5 Look inside
+
+A link from the card to the playground, which reads the same bytes and never
+mounts.
+
+**Exit:** the card links to the playground with the same bytes; the playground
+never mounts.
+
+---
+
+## Phase 2 — Carriers: link and file are one object
+
+### 2.1 The thin profile
+
+Reverses the "not implemented" note in spec §6.2. The manifest is complete
+and signed; the engine bytes are elided; a host supplies them on exact digest
+match per §6.1; export re-fattens with the same signature.
+
+**Exit:** thin and fat forms of one build verify to the same signature; a thin
+container exported from the opener is byte-identical to the fat build.
+
+### 2.2 The inline link
+
+`https://<opener>/#a=<base64url thin container>`, capped near 32 KB; the
+sender falls back to a reference link above it.
+
+**Exit:** a chore-chart-sized app opens from the link with the network
+disabled, once the opener is cached.
+
+### 2.3 The reference link, and a dumb store
+
+`https://<opener>/d/<id>#h=<sha256>&k=<key>` — content-addressed, encrypted
+end to end, the key in the fragment; an any-host variant `#h=&u=&k=`; a store
+interface of `put`, `get`, `head` and nothing more, so the relay is a
+commodity and an enterprise hosts its own in an afternoon. Subsumes the
+earlier "one tool contract, two transports": the store is this store.
+
+**Exit:** the same link resolves from two different hosts; a tampered blob is
+refused by hash before the signature is checked; the store's logs contain no
+fragment.
+
+### 2.4 Carriers in the specification
+
+"Carrier" defined beside "form": file, reference link, inline link. The
+fragment grammar frozen so any opener honours it. Carries the earlier item on
+implementability: CDDL and frozen byte vectors for the signed payload, the
+footer, the bridge envelope and the fragment; the Python reader finished to a
+full verifier that opens all three carriers with no dai-core source reuse.
+
+**Exit:** CDDL and vectors published; the Python reader opens all three
+carriers and agrees with the reference on every conformance case.
+
+### 2.5 The sender's last line is the link
+
+MCP `create_dai_app` returns `{ file, link, qr }`; the assistant's last line
+is the link.
+
+**Exit:** the MCP test sees an inline link for a small app and a reference
+link when a store is configured.
+
+### 2.6 Every share path carries the link to this document
+
+The `handOff` share text points at the opener; it should point at *this*
+document.
+
+**Exit:** exported share text contains a link that opens the exported bytes.
+
+---
+
+## Phase 3 — The opener as the pre-installed viewer
+
+### 3.1 Engine once, offline forever
+
+Brotli, content-hashed URL, `immutable`, service-worker precache on first
+visit; mount-before-engine kept.
+
+**Exit:** the second open of any app makes zero network requests; a test
+counts fetches.
+
+### 3.2 A mirrorable static opener
+
+No server logic on the runtime path. Largely true today; unproven.
+
+**Exit:** the opener's build output served from a plain static host passes
+the full conformance and probe suites.
+
+### 3.3 Unfurl without the blob
+
+`/d/<id>` serves name, icon and the standard line from a sender-consented
+sidecar; never the ciphertext.
+
+**Exit:** a chat preview shows name and icon; a GET on the unfurl route never
+returns ciphertext.
+
+### 3.4 A stripped fragment degrades to a sentence
+
+"Ask the sender for the key", never a blank page; an enterprise-internal
+no-key variant.
+
+**Exit:** a test with the fragment removed renders the recovery message.
+
+### 3.5 iOS, solved by the link
+
+The per-document install manifest (closed, in `edd236c`) uses the reference
+link as `start_url`; the home-screen app fetches on first launch, then runs
+offline. Replaces the one-time hand-in.
+
+**Exit:** an iOS device test: the home-screen icon opens the document with no
+manual step.
+
+### 3.6 Second-use integrations only
+
+`share_target`, `file_handlers` and the desktop file association exist and
+stay; none is the first-use path.
+
+**Exit:** the docs and the card never reference an install step before first
+run.
+
+---
+
+## Phase 4 — Propagation
+
+### 4.1 Succession
+
+`supersedes: <uuid>` in the signed set, valid only under the same publisher
+key. A host adopts v1's data into v2 through the migration chain (closed, 10),
+keeps v1 as backup, and refuses loudly if no chain reaches. Carries the
+earlier evaluation item: the three added stages — first interaction survives,
+data round-trips, regeneration is safe — and then the run at scale, which is a
+decision about spend and is not made here.
+
+**Exit:** an evaluation stage builds v1, seeds it, builds v2 with
+`supersedes`, opens v2 — data present or loud refusal, never silent loss.
+
+### 4.2 "Modify this app"
+
+An affordance on the card that hands the bundle back to an assistant with
+`upgradeOf` set (closed, 10), so the improved version is a successor rather
+than a stranger.
+
+**Exit:** MCP `create` with `upgradeOf` refuses a schema move without a
+migration (done); its output carries `supersedes`.
+
+### 4.3 A publisher who is somebody
+
+Publisher display name and `publisherKeyId` in the signed view; TOFU pins the
+publisher key across documents, not only the document UUID. This was on the
+undecided list; the loop decides it.
+
+**Exit:** a second document from a pinned publisher shows "known publisher";
+a new key under a known name is a mismatch.
+
+### 4.4 The wedge
+
+One category where an app is useful enough to send to somebody else. Not
+engineering.
+
+**Exit:** ten seed apps in the category, each shared at least once outside
+its maker in a pilot.
+
+### 4.5 Attachments in the document
+
+`<dai-attach>`, blob columns, client-side downscale, a size budget.
+
+**Exit:** an evaluation case: a photo attached on device A survives export
+and open on device B.
+
+---
+
+## Phase 5 — Measurement
+
+### 5.1 The north star, measured
+
+Tap → first successful `data-run`, cold and warm, on a mid-range Android over
+cellular, from the opener's existing timing table (`?timing`,
+`performance.md`). Targets: warm under 1 s, cold under 3 s, inline-link cold
+under 1.5 s.
+
+**Exit:** CI publishes the number per release from a real device.
+
+### 5.2 Propagation without a beacon
+
+Distinct fetches per `/d/<id>` at the relay, which sees the request and never
+the content. The opener sends nothing. The dashboard belongs to whoever runs
+a relay, not to this repository.
+
+---
+
+## Small, undisputed, cheap
 
 - Register the media type; serve `.dai` as it. Independent of everything.
 - The desktop window shows the document's own icon, not the host's.
-- The example apps: the packing list's date is editable or gone; times are
-  shown as people read them.
+- The example apps: the packing list's date is editable or gone.
 - Publish dai-core 0.2.0. Not made here.
 
 ---
 
-## Disagreements — deliberately undecided
+## Not doing
 
-Each has at least two reviews on opposite sides. None blocks anything above.
+- Native phone apps as a prerequisite for first use.
+- OS file association or share target as the first-use foundation.
+- A smart relay. The moment the store does more than hold bytes, the format
+  has a dependency and cannot be self-hosted in an afternoon.
+- A marketplace as the distribution model.
+- Real-time sync or two-person editing. Succession plus export, never a CRDT.
 
-- **`strict-dynamic`.** One review says add it; two say it stops an attack we
-  do not have and would make a nonce-authorised script a trust root for
-  anything it inserts. The two that read the loader say don't.
-- **What a model should emit.** Keep the kit and harden it; or a
-  grammar-constrained bundle for the envelope with the kit as a versioned UI
-  profile beneath it; or a JSON payload for the tool path, which has none of
-  the chat-rendering problems the bundle was shaped around. These are about
-  different layers and may all be right.
-- **The first capability.** `dai.print`, `document.save`, or `fs:export`. A
-  question that does not need an answer until something needs a capability.
-- **What TOFU pins.** The document's UUID, as now; or a publisher key id in the
-  signed set, pinned across documents, with the first-ever publisher still
-  uncloseable offline.
+## Disagreements — still undecided
+
+- **`strict-dynamic`.** Two of three reviews say it stops an attack we do
+  not have. Unchanged by the loop.
+- **What a model should emit.** Kit, grammar-constrained bundle, or JSON tool
+  payload. Different layers; may all be right. Unchanged.
+- **The first capability.** Unchanged; nothing needs one yet.
 - **Whether an RFC is worth it.** Media type early, Community Group after a
-  second implementation — agreed. An IETF Independent Submission afterwards,
-  or never, because an RFC for a format nobody uses is a tombstone.
+  second implementation — agreed. The RFC afterwards, or never.
+
+Decided by the loop and moved above: what TOFU pins (4.3).
 
 ---
 
@@ -87,53 +311,23 @@ Each has at least two reviews on opposite sides. None blocks anything above.
 
 Kept so the reasoning stays with the record.
 
-- **1. The signed set is closed** — `f60466d`. The signature check reconciled
-  `signedEntries` against `hashes` in one direction; an entry added beside a
-  matching digest passed as signed, including `runtime/schema.json`, whose
-  migration SQL a host runs. Both directions now, in all three readers; two
-  conformance cases; the bootloader proven in a page.
-- **2. What runs is what was signed** — `7cd469c`. The loader rewrote every
-  spelling of every asset name across whole script texts. Only module
-  specifiers now; a test says its file names every other way.
-- **3. A link does not mount without consent** — `7cd469c`. `?open=` shows
-  the host and fetches on a click.
-- **4. Every bridge reply is bound to its request** — `7cd469c`. Random
-  request id, echoed by the host, accepted only from the parent; no random
-  source throws.
+- **0.1 / 1. The signed set is closed** — `f60466d`. Both directions, all
+  three readers, two conformance cases, the bootloader proven in a page.
+- **2. What runs is what was signed** — `7cd469c`. Only module specifiers
+  are rewritten.
+- **3. A link does not mount without consent** — `7cd469c`. Half of 0.3.
+- **4. Every bridge reply is bound to its request** — `7cd469c`. The host
+  side of 0.3; the shell side is open above.
 - **5. The desktop host's policy matches the specification** — `7cd469c`.
-  No `'unsafe-inline'`; outer frames lose popups and modals; the spec
-  describes the shell frame as its own layer.
 - **6. The README points at the current specification** — `f60466d`.
-- **7. Real locks, with the generation check inside them** — `589fd26`. Web
-  Lock on the document identity in both hosts; OS advisory lock in the Rust
-  command; `GENERATION_CONFLICT` and `LOCK_UNAVAILABLE`, refused rather than
-  waited on; two-writer tests in the crate, the host suite and the opener.
-- **8. Refusals have names** — `159827f`. A registry in `src/refusals.ts` and
-  spec §7.2; every reader refusal coded; the Python reader computes the same
-  name by the same priority; every refused conformance case states its code
-  and all three readers are checked against it.
-- **9. Two host classes, and the site says which is which** — `834e504`. `hostClass` on the handshake, viewer or editor; a viewer
-  never claims an in-place save; the application is told `inPlace` on every
-  save; the README no longer says the browser rewrites the file.
-- **10. The recipe teaches the schema, and the kit survives a colon** —
-  `c1b04b8`. `declareSchema` over the files, called by every door and by the
-  core when a door did not; the declared statements injected as the first SQL
-  block; the recipe's SCHEMA section and a migration in the bundle example;
-  the MCP tool's `upgradeOf` refusing a moved schema as tool output; the kit
-  walking statements past literals, comments and `::`; the three examples
-  declaring theirs.
-- **11. The host says what it applied, and the probe checks** — the commit
-  following `2167a27`. `applied` on the handshake, by the probe's nine clause
-  ids; the shell passes the probe's report up with the claim attached; a
-  checker fails a claimed clause the probe finds open; CI mounts the probe in
-  the opener.
-
-- **The five gates from the first review** — honest CI, opaque-origin frame,
-  no `'unsafe-inline'`, the whole manifest signed, saves that write only the
-  data section. See `roadmap-to-1.0.md`.
-- **The desktop shell verifies less than the runner.** The reader moved to
-  `src/container.ts`; both hosts verify before mounting.
-- **One app instance per cartridge.** `tauri-plugin-single-instance`.
-- **Trust pinning in the opener.** The decision moved to `src/trust.ts` and is
-  shared by both hosts.
-- **A private key in the repository root.** `a9e6b27`. Signed nothing.
+- **7. Real locks, with the generation check inside them** — `589fd26`.
+- **8. Refusals have names** — `159827f`.
+- **9. Two host classes, and the site says which is which** — `834e504`.
+- **10. The recipe teaches the schema, every door declares it, the kit
+  survives a colon** — `c1b04b8`. `upgradeOf` is the plumbing 4.2 needs.
+- **11. The host says what it applied, and the probe checks** — `5f0c68c`.
+  What 1.1's ✓ claims are backed by.
+- **The five gates from the first review** — see `roadmap-to-1.0.md`.
+- **A private key in the repository root** — `a9e6b27`. Signed nothing.
+- **The desktop shell verifies less than the runner; one app instance per
+  cartridge; trust pinning in the opener** — earlier, see git history.
