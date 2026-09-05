@@ -15,7 +15,7 @@ import {
   formatBytes,
   sanitizeFileName,
 } from "./compile.js";
-import { lintFiles, storesDataInFile } from "./lint.js";
+import { advisory, breaking, lintFiles, storesDataInFile } from "./lint.js";
 import { parseBundle, writeBundle } from "./bundle.js";
 import { auditContainer, parseContainer } from "./container.js";
 import { sha256Hex } from "./core.js";
@@ -279,7 +279,10 @@ async function check(parsed: Parsed): Promise<number> {
     }
   }
 
-  const findings = lintFiles(sources);
+  const all = lintFiles(sources);
+  // What breaks decides the exit code; what is merely worth fixing is listed.
+  const findings = breaking(all);
+  const advice = advisory(all);
   const entry = Object.keys(sources).some((name) => name === "index.html");
   const stores = Object.values(sources).some((source) => storesDataInFile(source));
 
@@ -297,6 +300,13 @@ async function check(parsed: Parsed): Promise<number> {
           // is what somebody says afterwards when it was never being kept.
           storesDataInTheFile: stores,
           findings: findings.map((finding) => ({
+            file: finding.file,
+            id: finding.id,
+            what: finding.what,
+            why: finding.why,
+            fix: finding.fix,
+          })),
+          advice: advice.map((finding) => ({
             file: finding.file,
             id: finding.id,
             what: finding.what,
@@ -328,6 +338,14 @@ async function check(parsed: Parsed): Promise<number> {
   for (const finding of findings) {
     process.stdout.write(`
   ${finding.file}: ${finding.what}
+    ${finding.why}
+    ${finding.fix}
+`);
+  }
+
+  for (const finding of advice) {
+    process.stdout.write(`
+  worth fixing — ${finding.file}: ${finding.what}
     ${finding.why}
     ${finding.fix}
 `);

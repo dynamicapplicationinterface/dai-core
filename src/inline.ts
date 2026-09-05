@@ -42,7 +42,7 @@
  */
 import { deflateSync, inflateSync, zipSync } from "fflate";
 import { decode, encode, type CborValue } from "./cbor.js";
-import { ContainerError, type ParsedContainer, type Supplier } from "./container.js";
+import { applicationFiles, ContainerError, type ParsedContainer, type Supplier } from "./container.js";
 import { parseSign1, protectedHeader } from "./cose.js";
 import {
   assembleShell,
@@ -55,6 +55,7 @@ import {
   sha256Hex,
   SUBSTITUTABLE_ENTRIES,
   toBase64,
+  wantsTrustedTypes,
   ZIP_EPOCH,
   type ContainerManifest,
 } from "./core.js";
@@ -138,7 +139,15 @@ function fromBase64Url(value: string): Uint8Array {
  */
 async function rebuildShell(
   host: Host,
-  fields: { appName: string; favicon: string; required: boolean; publicKey: string; uuid: string },
+  fields: {
+    appName: string;
+    favicon: string;
+    required: boolean;
+    publicKey: string;
+    uuid: string;
+    /** The application's files, so Trusted Types is decided as the compiler decided it. */
+    files: Record<string, Uint8Array>;
+  },
 ): Promise<Uint8Array> {
   return new TextEncoder().encode(
     assembleShell({
@@ -149,6 +158,7 @@ async function rebuildShell(
       integrityPolicy: fields.required ? "required" : "advisory",
       publicKey: fields.publicKey,
       nonce: await nonceFor(fields.uuid),
+      trustedTypes: wantsTrustedTypes(fields.files),
     }),
   );
 }
@@ -177,6 +187,7 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
           required,
           publicKey,
           uuid: manifest.documentUuid,
+          files: applicationFiles(container.archive),
         }),
       ),
     ),
@@ -369,7 +380,16 @@ export async function unpackInline(
     const digest = bytesToHex(payload);
     let rebuilt: Uint8Array | undefined;
     if (name === CONTAINER_ENTRY) {
-      rebuilt = await rebuildShell(host, { appName, favicon, required, publicKey, uuid });
+      // The shell needs the application's files to decide its policy, and
+      // they were carried ahead of it: the manifest lists app/ entries first.
+      rebuilt = await rebuildShell(host, {
+        appName,
+        favicon,
+        required,
+        publicKey,
+        uuid,
+        files: applicationFiles(archive),
+      });
     } else if (name === KIT_PATH) {
       rebuilt = new TextEncoder().encode(KIT_SOURCE);
     } else {

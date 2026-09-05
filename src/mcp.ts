@@ -23,7 +23,7 @@ import { dirname, relative, resolve } from "node:path";
 import { compileDirectory, CompileError, formatBytes, sanitizeFileName } from "./compile.js";
 import { SchemaError } from "./schema.js";
 import { auditContainer, parseContainer } from "./container.js";
-import { lintFiles } from "./lint.js";
+import { advisory, breaking, lintFiles } from "./lint.js";
 import { RECIPE } from "./recipe.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -186,7 +186,7 @@ async function createApp(
   // Refused rather than warned about: the model can fix this before anything is
   // written, and a container that silently does nothing is the worst outcome
   // for a person who cannot read the code to find out why.
-  const findings = lintFiles(files);
+  const findings = breaking(lintFiles(files));
   /*
    * What is refused rather than warned about.
    *
@@ -301,10 +301,13 @@ async function callTool(
       const files = args.files as Record<string, string> | undefined;
       if (!files) return text("check_dai_app needs a files object.", true);
       const findings = lintFiles(files);
+      const errors = breaking(findings);
+      const warnings = advisory(findings);
       return text(
-        findings.length === 0
+        (errors.length === 0
           ? "Nothing here will break inside a container."
-          : `These will not work inside a container:\n${describe(findings)}`,
+          : `These will not work inside a container:\n${describe(errors)}`) +
+          (warnings.length > 0 ? `\n\nWorth fixing before it is shared:\n${describe(warnings)}` : ""),
       );
     }
     case "verify_dai_app":

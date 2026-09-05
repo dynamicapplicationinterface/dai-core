@@ -84,6 +84,54 @@ const FAVICON_PLACEHOLDER = "<!--DAI_FAVICON-->";
 const INTEGRITY_PLACEHOLDER = "<!--DAI_INTEGRITY-->";
 const PUBLIC_KEY_PLACEHOLDER = "<!--DAI_PUBLIC_KEY-->";
 const NONCE_PLACEHOLDER = "<!--DAI_NONCE-->";
+const TRUSTED_TYPES_PLACEHOLDER = "<!--DAI_TRUSTED_TYPES-->";
+
+/**
+ * The directives Trusted Types adds to the shell's policy (spec §4.2).
+ *
+ * `require-trusted-types-for 'script'` makes every DOM sink that can turn a
+ * string into markup or script — innerHTML, document.write, srcdoc,
+ * createContextualFragment — refuse a plain string. The runtime's own two
+ * uses of such sinks go through named policies, and only those names are
+ * allowed, so an application cannot create a policy of its own.
+ */
+export const TRUSTED_TYPES_DIRECTIVES =
+  " require-trusted-types-for 'script'; trusted-types dai-shell dai-frame;";
+
+/**
+ * Whether an application can run under Trusted Types as it stands.
+ *
+ * Decided from the files and nothing else, so the compiler, a host building
+ * its own shell around a verified archive, and the inline carrier rebuilding
+ * a shell all reach the same answer from the same bytes. The rule: the only
+ * script in the application is the kit — no other JavaScript file, and no
+ * inline script block that is not a SQL block or the kit's own include. The
+ * kit touches no sink, so such an application costs nothing to protect. An
+ * application with JavaScript of its own is left alone, and `dai check` says
+ * where its sinks are.
+ */
+export function wantsTrustedTypes(files: Record<string, Uint8Array>): boolean {
+  const decoder = new TextDecoder();
+  for (const [name, bytes] of Object.entries(files)) {
+    const lower = name.toLowerCase();
+    if (lower.endsWith(".js") || lower.endsWith(".mjs")) {
+      if (name.split("/").pop() !== KIT_ENTRY) return false;
+      continue;
+    }
+    if (!lower.endsWith(".html") && !lower.endsWith(".htm")) continue;
+    const html = decoder.decode(bytes);
+    for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      const attrs = match[1] ?? "";
+      const body = match[2] ?? "";
+      if (/type\s*=\s*["']application\/sql["']/i.test(attrs)) continue;
+      if (/\bsrc\s*=\s*["'][^"']*dai-kit\.js["']/i.test(attrs) && body.trim() === "") continue;
+      if (/type\s*=\s*["']importmap["']/i.test(attrs)) continue;
+      return false;
+    }
+  }
+  return true;
+}
+
 
 /**
  * Anchors the payload substitution to the payload tag itself.
@@ -307,6 +355,8 @@ export interface ShellInput {
   /** Base64 SPKI, or empty for an unsigned document. */
   publicKey: string;
   nonce: string;
+  /** Emit the Trusted Types directives (spec §4.2). Decided by wantsTrustedTypes. */
+  trustedTypes?: boolean;
 }
 
 /**
@@ -335,6 +385,8 @@ export function assembleShell(input: ShellInput): string {
     .join(input.integrityPolicy)
     .split(PUBLIC_KEY_PLACEHOLDER)
     .join(input.publicKey)
+    .split(TRUSTED_TYPES_PLACEHOLDER)
+    .join(input.trustedTypes ? TRUSTED_TYPES_DIRECTIVES : "")
     .replace(RUNTIME_PLACEHOLDER, () => input.runtime);
 }
 
@@ -459,6 +511,7 @@ export async function buildContainer(
     integrityPolicy,
     publicKey: signing ? signing.spki : "",
     nonce,
+    trustedTypes: wantsTrustedTypes(files),
   });
 
   const shellBytes = new TextEncoder().encode(shell);

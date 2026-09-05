@@ -23,6 +23,13 @@ export interface Finding {
   what: string;
   why: string;
   fix: string;
+  /**
+   * Absent for something that will not work once sealed. `warning` for
+   * something that works and is worth fixing — today, only a DOM sink that
+   * Trusted Types would refuse (spec §4.2), which an app with JavaScript of
+   * its own is allowed to keep until it is clean.
+   */
+  severity?: "warning";
 }
 
 interface Check {
@@ -31,6 +38,17 @@ interface Check {
   what: string;
   why: string;
   fix: string;
+  severity?: "warning";
+}
+
+/** The findings that stop a build: everything that is not a warning. */
+export function breaking<T extends Finding>(findings: T[]): T[] {
+  return findings.filter((finding) => finding.severity !== "warning");
+}
+
+/** The findings worth fixing that do not stop a build. */
+export function advisory<T extends Finding>(findings: T[]): T[] {
+  return findings.filter((finding) => finding.severity === "warning");
 }
 
 const CHECKS: Check[] = [
@@ -132,6 +150,17 @@ const CHECKS: Check[] = [
       "document.getElementById(\"save\").addEventListener(\"click\", …).",
   },
   {
+    id: "trusted-types-sink",
+    severity: "warning",
+    pattern: /\.(?:innerHTML|outerHTML|srcdoc)\s*=|document\.write(?:ln)?\s*\(|insertAdjacentHTML\s*\(|createContextualFragment\s*\(/,
+    what: "It writes a string into the page as markup.",
+    why:
+      "A value stored in the database can come back through that sink and run as script or markup. " +
+      "Apps built from the kit alone are sealed with Trusted Types on, which makes those sinks refuse strings; " +
+      "an app with JavaScript of its own is left unprotected until it stops using them.",
+    fix: "Use textContent, replaceChildren, or the kit's data-text and dai-rows, which render text and never markup.",
+  },
+  {
     id: "browser-storage",
     pattern: /localStorage|sessionStorage|indexedDB/i,
     what: "It saves data in browser storage.",
@@ -164,7 +193,7 @@ export function lintSource(source: string): Finding[] {
   if (!source.trim()) return [];
 
   const findings: Finding[] = CHECKS.filter((check) => check.pattern.test(source)).map(
-    ({ id, what, why, fix }) => ({ id, what, why, fix }),
+    ({ id, what, why, fix, severity }) => ({ id, what, why, fix, ...(severity ? { severity } : {}) }),
   );
 
   if (usesAwaitInClassicScript(source)) {

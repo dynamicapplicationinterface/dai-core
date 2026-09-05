@@ -56,10 +56,11 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | v3 | confusables, two rules, two stores, root lists | [x] `5fcd4b0` |
 | v3 | identity: Sigstore bundle, offline | [x] `6925a25` |
 | v3 | compiler default flips to 3 | [ ] on a branch until the desktop reader ships |
-| — | Media type registered | [ ] |
+| — | Media type registered | [ ] `docs/media-type-registration.md` drafted; the form is yours to submit |
 | — | Desktop window shows the document's icon | [ ] |
 | — | Packing list date editable | [x] `30a83aa` |
 | — | dai-core 0.2.0 published | [ ] yours |
+| — | Trusted Types | [ ] the control strict-dynamic stood in for |
 
 ---
 
@@ -569,19 +570,46 @@ a relay, not to this repository.
 - A marketplace as the distribution model.
 - Real-time sync or two-person editing. Succession plus export, never a CRDT.
 
-## Disagreements — still undecided
+## Decided, 5 September (the four that were undecided)
 
-- **`strict-dynamic`.** Two of three reviews say it stops an attack we do
-  not have. Unchanged by the loop.
-- **What a model should emit.** Kit, grammar-constrained bundle, or JSON tool
-  payload. Different layers; may all be right. Unchanged.
-- **The first capability.** Unchanged; nothing needs one yet.
-- **Whether an RFC is worth it.** Media type early, Community Group after a
-  second implementation — agreed. The RFC afterwards, or never.
+- **`strict-dynamic`: no.** It stops a nonce'd script being tricked into
+  loading an attacker's script from an allowlisted host; this format has no
+  allowlist and no network. Recorded in spec §4.2 so nobody hardens their way
+  into it. The residual it stood in for is different — with a public nonce, a
+  stored value pushed through `innerHTML`, `document.write`, `srcdoc` or
+  `createContextualFragment` does execute — and the control for that is
+  Trusted Types (`require-trusted-types-for 'script'`, Baseline since
+  February 2026 in all three engines). Free for kit-only apps, a lint warning
+  for JavaScript apps until they are clean. **Tracked as the item below.**
+- **What a model emits: one content rule, two transports.** Content is the
+  kit, because it removes the sinks by construction and a grammar only
+  constrains shape, which is not where the failures are. Transport is the JSON
+  tool payload when tools exist (`create_dai_app`, whose input schema is the
+  grammar for free) and the text bundle, parsed tolerantly, when they do not.
+  No grammar-constrained bundle is built. Written into the recipe's header.
+- **The first capability: deferred by rule, not by argument.** The mechanism is
+  decided — an unforgeable `MessagePort`, declared in the signed manifest,
+  never network — and the pick is made by evidence: the first capability is
+  built when the pilot produces ten apps that are unusable without it. Print is
+  the presumptive first. Attachments (4.5) need none; `<input type="file">`
+  works inside the sandbox. Spec §4.7.
+- **Standards path.** Media type now: `application/vnd.dai` is a vendor-tree
+  form, not an RFC; the registration is drafted at
+  `docs/media-type-registration.md` and the desktop no longer declares `.dai`
+  as `text/html`. Community Group not until the Python reader also writes and
+  there is one participant who is not us. RFC never, unless adoption forces it.
 
-Decided by the loop and moved above: what TOFU pins (4.3).
+## Trusted Types
 
----
+The control the `strict-dynamic` decision names. `require-trusted-types-for
+'script'` in the shell's policy, with named policies for the two sinks the
+runtime itself uses (the shell's `srcdoc`, the frame's `document.write`),
+enabled by the compiler for kit-only applications and surfaced by `dai check`
+as a warning on any app JavaScript that touches a sink.
+
+**Exit:** a kit-only app mounts and runs under the directive; an app that
+assigns `innerHTML` is warned by `dai check`, and refused at runtime when built
+with the directive on.
 
 ## Closed
 

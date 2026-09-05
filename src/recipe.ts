@@ -14,7 +14,14 @@
  */
 
 /** The rules, addressed to whoever is writing the code. */
-export const RECIPE = `Write a self-contained application that will be sealed into a DAI container: a single file holding the app, its database and its data, opened by double-clicking, with no server and no installation.
+export const RECIPE = `HOW TO ANSWER
+Content is the kit: HTML with dai-rows, dai-value, dai-form and dai-save, and SQL in the document. The kit
+removes the dangerous sinks by construction (no statement built from a value, text-only rendering), so
+write the app with it and reach for JavaScript only for what the kit cannot do. Transport is whatever the
+channel has: when a tool is available, call it with the files as its arguments; when it is not, write the
+files as one text bundle, in the format shown at the end of this recipe. There is no third format.
+
+Write a self-contained application that will be sealed into a DAI container: a single file holding the app, its database and its data, opened by double-clicking, with no server and no installation.
 
 STRUCTURE
 - index.html is the entry point. Other files (app.css, app.js) are referenced by relative path.

@@ -20,7 +20,8 @@ import {
   sectionBytes,
   verifyContainerFile,
 } from "./format.js";
-import { CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES } from "./core.js";
+import {
+  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -979,6 +980,15 @@ export async function resealContainer(
 /** The meta a host-built shell carries, so it can be told from a sealed one. */
 export const HOST_SHELL_META = '<meta name="dai-shell" content="host">';
 
+/** The application's files, as the compiler saw them: the `app/` entries, prefix stripped. */
+export function applicationFiles(archive: Record<string, Uint8Array>): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
+  for (const [name, bytes] of Object.entries(archive)) {
+    if (name.startsWith("app/")) out[name.slice(4)] = bytes;
+  }
+  return out;
+}
+
 /**
  * A shell of the host's own, around an archive the host has verified.
  *
@@ -1019,6 +1029,9 @@ export async function hostShell(
     integrityPolicy: container.integrityPolicy === "advisory" ? "advisory" : "required",
     publicKey: container.publicKey ?? "",
     nonce: await nonceFor(container.manifest.documentUuid),
+    // From the archive, as the compiler decided it: the same rule over the
+    // same files reaches the same answer.
+    trustedTypes: wantsTrustedTypes(applicationFiles(container.archive)),
   });
 
   const payload = toBase64(zipSync(archive, { level: 0, mtime: ZIP_EPOCH }));

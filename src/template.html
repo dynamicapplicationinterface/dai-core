@@ -17,7 +17,7 @@
     neither frame the app nor load a single packaged asset. Do not add any
     scheme that can reach a remote host.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-<!--DAI_NONCE-->' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-<!--DAI_NONCE-->' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';<!--DAI_TRUSTED_TYPES-->">
 
   <!--
     viewport-fit=cover lets the app paint under the notch and home indicator;

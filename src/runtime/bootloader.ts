@@ -707,10 +707,14 @@ function bridgeMain(): void {
       // policy no longer allows unnonced inline script. A nonce set through the
       // property is honoured; the attribute is hidden from the DOM by design.
       if (host.nonce) script.nonce = String(host.nonce);
-      script.textContent =
+      const code =
         "import init from " + JSON.stringify(glueUrl) + ";" +
         "window[" + JSON.stringify(token) + "]={ok:init};" +
         "window.dispatchEvent(new Event(" + JSON.stringify(token) + "));";
+      // A script's text is a Trusted Types sink (spec §4.2). The frame's
+      // policy was made by the loader and kept on the global for this.
+      const policy = (window as unknown as Any).__DAI_TT__;
+      script.textContent = policy ? policy.createScript(code) : code;
       window.addEventListener(token, () => {
         const slot = (window as unknown as Any)[token] as Any;
         delete (window as unknown as Any)[token];
@@ -1377,8 +1381,26 @@ function frameLoader(): void {
       ? stamped.replace(/<head(\s[^>]*)?>/i, (tag: string) => tag + head)
       : "<head>" + head + "</head>" + stamped;
 
+    // The frame's one sink, through its one policy (spec §4.2). See mount().
+    // Made once and kept on the global, which document.open() preserves:
+    // the glue loader needs the same policy for a script it creates later.
+    const tt = (window as unknown as Any).trustedTypes;
+    let trusted: unknown = html;
+    if (tt) {
+      try {
+        const policy = tt.createPolicy("dai-frame", {
+          createHTML: (input: string) => input,
+          createScript: (input: string) => input,
+          createScriptURL: (input: string) => input,
+        });
+        (window as unknown as Any).__DAI_TT__ = policy;
+        trusted = policy.createHTML(html);
+      } catch (e) {
+        /* Not enforced here, or already created: the string will do. */
+      }
+    }
     document.open();
-    document.write(html);
+    document.write(trusted as string);
     document.close();
   };
 
@@ -1439,7 +1461,22 @@ function mount(srcdoc: string): HTMLIFrameElement {
   frame.setAttribute("allow", "fullscreen 'none'");
   // Direct property assignment prevents HTML attribute string escaping issues with unescaped double quotes inside app payloads
   mark("frame");
-  frame.srcdoc = srcdoc;
+  /*
+   * Under Trusted Types (spec §4.2) a string cannot be assigned to srcdoc;
+   * it has to come from a policy the policy allowlist names. This is the
+   * shell's one sink, and `dai-shell` is its one policy. Without the
+   * directive the API is absent or inert and the plain string is used.
+   */
+  const tt = (window as unknown as { trustedTypes?: { createPolicy: (n: string, r: { createHTML: (s: string) => string }) => { createHTML: (s: string) => unknown } } }).trustedTypes;
+  let doc: unknown = srcdoc;
+  if (tt) {
+    try {
+      doc = tt.createPolicy("dai-shell", { createHTML: (input: string) => input }).createHTML(srcdoc);
+    } catch {
+      /* Policy already made, or Trusted Types not enforced: the string will do. */
+    }
+  }
+  (frame as unknown as { srcdoc: unknown }).srcdoc = doc;
   document.body.appendChild(frame);
   return frame;
 }

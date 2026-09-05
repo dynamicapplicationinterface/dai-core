@@ -430,6 +430,18 @@ and does not execute. `'unsafe-eval'` MUST NOT be granted.
 `connect-src 'none'` is the invariant. An implementation MUST NOT add any scheme
 that can reach a network host.
 
+**`'strict-dynamic'` is deliberately absent.** It exists to stop a nonce'd
+script being tricked into loading an attacker's script from an allowlisted
+host. This policy has no allowlist and no network, so there is nothing for it
+to stop, and an implementer MUST NOT add it in the belief that it hardens
+anything here. What the nonce leaves open is different: with a nonce that is
+public, a stored value pushed through `innerHTML`, `document.write`, an iframe
+`srcdoc` or `createContextualFragment` does execute. The control for that is
+Trusted Types: a compiler SHOULD emit `require-trusted-types-for 'script'`
+with a `trusted-types` allowlist naming only the runtime's own policies when
+the application touches none of those sinks, and a host MAY report an
+application that does.
+
 **Residual channels.** `connect-src` does not govern top-level navigation, DNS
 prefetch, speculation rules, or WebRTC. The sandbox flags above close navigation
 and popups. A native host SHOULD disable WebRTC and DNS prefetch at the webview
@@ -524,7 +536,17 @@ handled, as `inPlace`, so an application can say "saved" or "saved a copy"
 truthfully. A site or document describing a viewer MUST NOT say it saves in
 place.
 
----
+### 4.7 Capabilities
+
+A container has no capabilities. The mechanism by which one would be granted
+is decided, so that a future one is added the same way by everyone: an
+unforgeable `MessagePort`, handed to the application by the host, for a
+capability the manifest declared in the signed set — never a network
+permission, and never anything the application can reach without the host
+choosing to hand it over. Which capability comes first is not decided by
+argument. It is built when applications exist that are unusable without it;
+until then there is none, and an implementation MUST NOT invent one.
+
 
 ## 5. Saving
 
