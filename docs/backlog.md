@@ -50,12 +50,47 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 4.5 | Attachments in the document | [ ] |
 | 5.1 | The north star, measured | [ ] |
 | 5.2 | Propagation without a beacon | [ ] relay side |
+| v3 | manifestVersion 3: spec | [x] `9adbfb8` |
+| v3 | readers accept 3, refuse others by name | [x] `00af8e6` — opener and website live; desktop needs a release |
+| v3 | countersignature slot | [x] `35cf65e` |
+| v3 | confusables, two rules, two stores, root lists | [x] `5fcd4b0` |
+| v3 | identity: Sigstore bundle, offline | [x] `6925a25` |
+| v3 | compiler default flips to 3 | [ ] on a branch until the desktop reader ships |
 | — | Media type registered | [ ] |
 | — | Desktop window shows the document's icon | [ ] |
 | — | Packing list date editable | [x] `30a83aa` |
 | — | dai-core 0.2.0 published | [ ] yours |
 
 ---
+
+## manifestVersion 3
+
+Decided 5 September, one deliberate bump before any second implementer exists.
+Spec §9 is normative for version 3 and was written before any code; the
+Python reader was changed from the spec text alone in a fresh context at every
+step, and found nine gaps in the text, all closed. The order was readers
+before writers: every reader accepts version 3 and refuses unknown versions
+as `UNSUPPORTED_MANIFEST_VERSION` before any compiler writes one.
+
+- **Signed set:** the shell leaves it; `signedEntries` is sole authority; the
+  reverse reconciliation applies to version 2 too.
+- **Fields:** `publisherName`, `supersedes`, `generator` signed and optional;
+  `identity` outside the signed set. Carrier labels 12 and 13.
+- **Envelope:** untagged, tag 18 accepted; RFC 9338 countersignature slot at
+  label 11, verified only against held keys, never a refusal.
+- **Trust:** two stores; three states; conflict by three named rules
+  (`document`, `mixed-script`, `skeleton`); one content-hashed UTS #39 table
+  every host loads; host labels shown first; root lists for organisations.
+- **Identity:** Sigstore bundle verified offline against held Fulcio and Rekor
+  roots; four checks; absent on any failure. A test Fulcio and Rekor mint the
+  vectors.
+- **Vectors:** 24 cases, 7 trust steps, 5 identity vectors, 2 countersignature
+  vectors, all agreed by both readers.
+
+**Left:** the default flip to 3, which waits on a desktop release carrying
+the version 3 reader (installers do not auto-update, and a version 3 file must
+never land on a host that cannot read it); `hostLabel` UI beyond a prompt; a
+QR for the safety number; CDDL and byte vectors for 2.4.
 
 ## Phase 0 — Make "open from a stranger" true
 
