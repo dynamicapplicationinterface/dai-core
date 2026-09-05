@@ -29,7 +29,7 @@ import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 import { describeSelf, watchForInstall } from "./install.js";
-import { hideCard, showCard } from "./card.js";
+import { hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { checkTrust, forgetTrust } from "../../../src/trust.js";
 import {
@@ -529,12 +529,23 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const who = await publisherState(publisherStore(), cartridge);
     installSuppressed = who.state === "conflict";
 
+    /*
+     * Succession (4.1): the next version of something this device has.
+     *
+     * Decided here so the card can say what will happen, and applied after
+     * the person opens it. Adopting is a copy of the previous document's
+     * data into this one's; the previous document and its data stay exactly
+     * as they were. Honoured only under the key this device pinned for the
+     * document being replaced — otherwise anybody could claim to be the next
+     * version of anything and walk off with what is in it.
+     */
+    const library = await listCartridgesFromLibrary();
+    const succession = await planSuccession(cartridge, library);
+
     const familiar =
       verdict.status === "trusted" &&
       who.state !== "conflict" &&
-      (await listCartridgesFromLibrary()).some(
-        (item) => item.documentUuid === cartridge.manifest.documentUuid,
-      );
+      library.some((item) => item.documentUuid === cartridge.manifest.documentUuid);
     if (!familiar) {
       slot.classList.remove("busy");
       say("");
@@ -543,11 +554,19 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         favicon: cartridge.manifest.favicon,
         publisher: who,
         from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
+        succession: succession?.card,
         applied: ISOLATION_CLAUSES,
       });
       slot.classList.add("busy");
     }
     await recordPublisher(publisherStore(), cartridge);
+
+    if (succession?.inherit) {
+      // Copied, never moved: the previous document's own store is untouched.
+      // Saved under this document's identity before it mounts, so a reload in
+      // the middle of migrating finds the data where this document looks.
+      await saveDatabaseToOpfs(cartridge.manifest.documentUuid, succession.inherit);
+    }
 
     // If an OPFS database exists for this documentUuid, mount the latest database.
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
@@ -791,6 +810,30 @@ window.addEventListener("message", (event) => {
       },
       "*",
     );
+  } else if (data.type === "DAI_HOST_REFUSED") {
+    /*
+     * The shell refused to run what it was handed — most often the schema
+     * gate: data written by one version of an application that this version
+     * has no migration for. Until now that stayed inside the frame, where the
+     * application had already failed to draw anything. The person saw a blank
+     * pane. It is a refusal, so it is said here, loudly, in the words the
+     * shell chose, and the frame comes down.
+     */
+    // The refusal carries its nonce inside the payload, unlike the other
+    // bridge messages, because it can be sent before the handshake settles.
+    const refusal = (data.payload ?? {}) as {
+      sessionNonce?: string;
+      reason?: string;
+      message?: string;
+      detail?: string;
+    };
+    if (!fromMountedContainer(event, refusal)) return;
+    say(
+      `${refusal.message ?? "This document could not be opened."}${refusal.detail ? ` ${refusal.detail}` : ""} ` +
+        `Nothing has been changed or lost.`,
+      true,
+    );
+    document.body.classList.remove("loaded");
   } else if (data.type === "DAI_HOST_TIMING") {
     // The boot finished. The handshake went out before the application had
     // painted, so this is the message carrying the number that matters.
@@ -973,6 +1016,55 @@ launch?.setConsumer((params: LaunchParams) => {
  * stopped being the one they had.
  */
 /**
+ * What to do about the document this one says it replaces.
+ *
+ * Returns nothing when the document replaces nothing, and otherwise both what
+ * the card should say and, when adoption is allowed, the bytes to start from.
+ * Nothing is written here; the caller writes after the person has opened it.
+ */
+async function planSuccession(
+  cartridge: Cartridge,
+  library: LibraryItem[],
+): Promise<{ card: NonNullable<CardInput["succession"]>; inherit?: Uint8Array } | undefined> {
+  const previousUuid = cartridge.manifest.supersedes;
+  if (!previousUuid) return undefined;
+
+  // Already started: this document has data of its own, and adoption happens
+  // once, on the first open. Otherwise every reopen would overwrite what the
+  // person did in the new version with what they had in the old.
+  const own = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+  if (own && own.byteLength > 0) return undefined;
+
+  const previous = library.find((item) => item.documentUuid === previousUuid);
+  if (!previous) return { card: { state: "nothing-here", previous: previousUuid.slice(0, 8) } };
+
+  const pinned = await trustStore().get(previousUuid);
+  if (cartridge.signature !== "valid" || !cartridge.publicKey) {
+    return {
+      card: { state: "refused", previous: previous.appName, why: "this copy is not signed" },
+    };
+  }
+  if (!pinned?.publicKey || pinned.publicKey !== cartridge.publicKey) {
+    return {
+      card: {
+        state: "refused",
+        previous: previous.appName,
+        why: `it is signed by a different key from the ${previous.appName} you have`,
+      },
+    };
+  }
+
+  const inherited = await loadDatabaseFromOpfs(previousUuid);
+  if (!inherited || inherited.byteLength === 0) {
+    // Kept here but never saved to: there is nothing to bring, and saying
+    // "your data comes along" over an empty database would be a promise
+    // about nothing.
+    return { card: { state: "nothing-here", previous: previous.appName } };
+  }
+  return { card: { state: "adopting", previous: previous.appName }, inherit: inherited };
+}
+
+/**
  * Opens the document a link carries.
  *
  * Everything after the `#` stays in the browser: a fragment is never sent to
@@ -1085,8 +1177,9 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
 
   slot.classList.remove("busy");
   arrivedAsFile = false;
+  const store = reference.url ? where : "this project's store";
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
-    from: `From ${where}, sealed so that ${where} cannot read it. Nothing is uploaded — it runs on this device.`,
+    from: `From ${store}, sealed so it could not be read there. Nothing is uploaded — it runs on this device.`,
   });
 }
 

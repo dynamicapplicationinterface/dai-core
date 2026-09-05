@@ -118,6 +118,14 @@ export interface ContainerManifest {
    * as fact. Absent when the publisher gave none.
    */
   publisherName?: string;
+  /**
+   * The document this one replaces, by UUID. Covered by the signature, and
+   * honoured by a host only when this document is signed by the same key the
+   * host pinned for that one — otherwise anybody could claim to be the next
+   * version of anything and walk off with its data. Absent for a document that
+   * replaces nothing.
+   */
+  supersedes?: string;
   createdAt: string;
   algorithm: "SHA-256";
   integrityPolicy: "required" | "advisory";
@@ -151,6 +159,8 @@ export interface BuildContainerInput {
   favicon?: string;
   /** The name the publisher signs under. Goes into the signed set when given. */
   publisherName?: string;
+  /** The document this build replaces (4.1). Goes into the signed set when given. */
+  supersedes?: string;
   /**
    * Leave the engine out, for a host that already has it (§6.2).
    *
@@ -443,12 +453,17 @@ export async function buildContainer(
   // cannot therefore be an input to it. Every field here ends up in the
   // manifest unchanged, and a verifier rebuilds this same view from it.
   const publisherName = input.publisherName?.trim() || undefined;
+  const supersedes = input.supersedes?.trim() || undefined;
+  if (supersedes === documentUuid) {
+    throw new Error("DAI: a document cannot supersede itself.");
+  }
   const signedView: SignedView = {
     manifestVersion: MANIFEST_VERSION,
     documentUuid,
     appName,
     favicon,
     publisherName,
+    supersedes,
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy,
@@ -468,6 +483,7 @@ export async function buildContainer(
     appName,
     favicon,
     ...(publisherName ? { publisherName } : {}),
+    ...(supersedes ? { supersedes } : {}),
     createdAt,
     algorithm: "SHA-256",
     // Informational only: the shell decides whether this is enforced.
@@ -587,6 +603,8 @@ export interface SignedView {
   favicon: string;
   /** Present only when the publisher signs under a name. */
   publisherName?: string;
+  /** Present only when this document replaces another. */
+  supersedes?: string;
   createdAt: string;
   algorithm: string;
   integrityPolicy: string;
@@ -701,6 +719,7 @@ export function signedViewOf(manifest: {
   appName: string;
   favicon?: string;
   publisherName?: string;
+  supersedes?: string;
   createdAt: string;
   algorithm: string;
   integrityPolicy: string;
@@ -715,6 +734,7 @@ export function signedViewOf(manifest: {
     appName: manifest.appName,
     favicon: manifest.favicon ?? "",
     publisherName: manifest.publisherName,
+    supersedes: manifest.supersedes,
     createdAt: manifest.createdAt,
     algorithm: manifest.algorithm,
     integrityPolicy: manifest.integrityPolicy,
@@ -753,6 +773,7 @@ export function signedBytes(view: SignedView): Uint8Array {
   // Likewise the publisher's name: present only when one was signed under, so
   // every container signed before names existed still verifies unchanged.
   if (view.publisherName) fields.set("publisherName", view.publisherName);
+  if (view.supersedes) fields.set("supersedes", view.supersedes);
 
   return cborEncode(fields);
 }

@@ -78,6 +78,12 @@ export interface CompileOptions {
   documentUuid?: string;
   /** The name the publisher signs under (4.3). */
   publisherName?: string;
+  /**
+   * The document this one replaces (4.1). Filled in from `upgradeOf` when that
+   * is given, so a build that declared what it upgrades also says so in the
+   * signed set; may be given on its own for a build made without the old file.
+   */
+  supersedes?: string;
   validUntil?: number;
   verifyIntegrity?: boolean;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -184,7 +190,8 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
    */
   // The kit is added by buildContainer, so every door gets it.
 
-  const declared = await declareSchema(files, previousSchema(options.upgradeOf));
+  const previous = readPrevious(options.upgradeOf);
+  const declared = await declareSchema(files, previous?.schema);
 
   const sqlite = readOptional(root, options.sqlitePath);
   if (options.sqlitePath && !sqlite) {
@@ -225,6 +232,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     signingKey: options.signingKey ? readSigningKey(root, options.signingKey) : undefined,
     documentUuid: options.documentUuid,
     publisherName: options.publisherName,
+    supersedes: options.supersedes ?? previous?.documentUuid,
     validUntil: options.validUntil,
     verifyIntegrity: options.verifyIntegrity,
     thin: options.thin,
@@ -276,7 +284,13 @@ export async function collectFiles(dir: string, base = dir): Promise<CollectedFi
 
 /** Reads a file if the path resolves to one, otherwise undefined. */
 /** The declaration a previous container sealed, if it sealed one. */
-function previousSchema(path?: string): SchemaDeclaration | undefined {
+/**
+ * What a build needs from the container it upgrades: the schema it declared,
+ * to gate the change against, and its identity, to name as superseded.
+ */
+function readPrevious(
+  path?: string,
+): { schema: SchemaDeclaration | undefined; documentUuid: string } | undefined {
   if (!path) return undefined;
   if (!existsSync(path)) {
     throw new CompileError(`No container at ${path} to compare this build against.`);
@@ -287,7 +301,10 @@ function previousSchema(path?: string): SchemaDeclaration | undefined {
     looksSectioned(bytes) ? bytes : new TextDecoder().decode(bytes),
   );
   const entry = parsed.archive[SCHEMA_ENTRY];
-  return entry ? (JSON.parse(new TextDecoder().decode(entry)) as SchemaDeclaration) : undefined;
+  return {
+    schema: entry ? (JSON.parse(new TextDecoder().decode(entry)) as SchemaDeclaration) : undefined,
+    documentUuid: parsed.manifest.documentUuid,
+  };
 }
 
 export function readOptional(root: string, path?: string): Uint8Array | undefined {

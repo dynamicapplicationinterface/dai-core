@@ -164,6 +164,25 @@ define(
 );
 
 define(
+  "valid-signed-supersedes",
+  "Signed, and naming the document it replaces. The name is in the signed set, so it cannot be pointed elsewhere.",
+  {
+    mount: true,
+    ok: true,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "valid",
+    expiry: "none",
+  },
+  async () => ({
+    file: "valid-signed-supersedes.dai.html",
+    body: (
+      await buildContainer(base({ signingKey: KEY, supersedes: "11111111-2222-4333-8444-555555555555" }))
+    ).html,
+  }),
+);
+
+define(
   "valid-expiry-current",
   "Carries an expiry that has not passed. Accepted, and the expiry is reported.",
   {

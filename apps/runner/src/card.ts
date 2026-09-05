@@ -36,6 +36,11 @@ export interface CardInput {
   publisher: PublisherState;
   /** Where it came from, in a person's words. Shown under the button. */
   from?: string;
+  /**
+   * What this document says about the one it replaces, and what this host is
+   * doing about it (4.1). Absent when it replaces nothing this host has.
+   */
+  succession?: { state: "adopting" | "refused" | "nothing-here"; previous: string; why?: string };
   /** The §4 clauses this host applies. */
   applied: readonly string[];
 }
@@ -61,8 +66,9 @@ export function showCard(input: CardInput): Promise<void> {
   const from = document.getElementById("card-from");
   const verify = document.getElementById("card-verify") as HTMLButtonElement | null;
   const safety = document.getElementById("card-safety");
+  const succession = document.getElementById("card-succession");
 
-  if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety) {
+  if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety || !succession) {
     // No card in this document. Opening without one is the old behaviour and
     // is better than refusing to open at all.
     return Promise.resolve();
@@ -132,6 +138,24 @@ export function showCard(input: CardInput): Promise<void> {
 
   from.textContent = input.from ?? "";
   from.hidden = !input.from;
+
+  /*
+   * The next version of something you already have.
+   *
+   * Said before the person opens it, because what happens to their data is
+   * the one thing about a successor they would want to know first. Adopting
+   * is a copy: the previous document keeps everything it had.
+   */
+  const next = input.succession;
+  succession.hidden = !next;
+  succession.dataset.state = next?.state ?? "";
+  succession.textContent = !next
+    ? ""
+    : next.state === "adopting"
+      ? `Replaces ${next.previous}. What you saved there comes along; the old one is kept as it was.`
+      : next.state === "refused"
+        ? `Claims to replace ${next.previous}, but ${next.why ?? "this device cannot confirm that"}. Your data stays where it is.`
+        : `Replaces ${next.previous}, which this device does not have. It starts empty.`;
 
   card.hidden = false;
   document.body.classList.add("deciding");

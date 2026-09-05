@@ -71,6 +71,24 @@
       }
     },
     {
+      "name": "valid-signed-supersedes",
+      "file": "cases/valid-signed-supersedes.dai.html",
+      "form": "viewer",
+      "summary": "Signed, and naming the document it replaces. The name is in the signed set, so it cannot be pointed elsewhere.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "valid",
+        "expiry": "none"
+      }
+    },
+    {
       "name": "valid-expiry-current",
       "file": "cases/valid-expiry-current.dai.html",
       "form": "viewer",

@@ -43,7 +43,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
 | 3.5 | iOS solved by the link | [ ] |
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
-| 4.1 | Succession | [ ] |
+| 4.1 | Succession | [x] `PENDING` — opener adopts under the same key; desktop and the scripted eval stage open |
 | 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
@@ -402,6 +402,26 @@ keeps v1 as backup, and refuses loudly if no chain reaches. Carries the
 earlier evaluation item: the three added stages — first interaction survives,
 data round-trips, regeneration is safe — and then the run at scale, which is a
 decision about spend and is not made here.
+
+Done in `PENDING`, in the opener. `supersedes` is in the signed set, present
+only when given, and the compiler fills it from `--upgrade-of` so a build that
+declared what it upgrades also says so under the signature; `--supersedes`
+names it by hand. The opener adopts the previous document's data by copy,
+before mounting, only when the successor is signed by the key pinned for the
+document it names; the previous document and its data are untouched. The
+adopted data then meets the successor's schema gate like its own would, and —
+new here — a refusal from the shell now reaches the screen: the opener never
+displayed `DAI_HOST_REFUSED` before, so a schema refusal was a blank pane.
+Spec §5.1 has the rules. The Python reader agrees on a signed case.
+
+Three tests, one per outcome: data forward through a migration with the old
+one kept; a different key refused on the card with nothing crossing over; no
+chain reaching, refused loudly, nothing lost.
+
+**Open:** the desktop, whose data lives in the file rather than a store the
+host owns, has no adoption path yet; and the scripted evaluation stage — the
+Playwright test is that stage today, and `scripts/evaluate.mjs` does not yet
+build a v2 per prompt.
 
 **Exit:** an evaluation stage builds v1, seeds it, builds v2 with
 `supersedes`, opens v2 — data present or loud refusal, never silent loss.

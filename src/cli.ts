@@ -43,7 +43,10 @@ Build options:
       --seed <path>       Start from this SQLite database
       --upgrade-of <path> The container this build replaces. Compares the schema
                           being sealed against the one that container declared,
-                          and refuses a build that moved it with no migration
+                          refuses a build that moved it with no migration, and
+                          names that container as superseded in the signed set
+      --supersedes <uuid> Name the document this replaces without having its
+                          file. A host adopts its data only under the same key
       --uuid <uuid>       Reuse a document identity instead of minting one
       --valid-until <s>   Unix seconds after which hosts should refuse it
       --dai               Write the sectioned binary container instead of the
@@ -98,6 +101,7 @@ export function parseArgs(argv: string[]): Parsed {
     "template",
     "upgrade-of",
     "publisher",
+    "supersedes",
     // dai publish
     "store",
     "base",
@@ -173,6 +177,7 @@ async function build(parsed: Parsed): Promise<number> {
     templatePath: typeof flags.template === "string" ? flags.template : undefined,
     documentUuid: typeof flags.uuid === "string" ? flags.uuid : undefined,
     publisherName: typeof flags.publisher === "string" ? flags.publisher : undefined,
+    supersedes: typeof flags.supersedes === "string" ? flags.supersedes : undefined,
     validUntil,
     verifyIntegrity: flags.verify === false ? false : undefined,
     thin: flags.thin === true,

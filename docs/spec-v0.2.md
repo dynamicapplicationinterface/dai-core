@@ -82,6 +82,7 @@ The stream inflates to one CBOR map (RFC 8949) with integer keys:
 | 8 | the raw ECDSA signature, 64 bytes, when signed |
 | 9 | entries, in archive order: `[name, 0, bytes]` carried or `[name, 1, digest]` elided |
 | 10 | `publisherName`, when the publisher signed under one |
+| 11 | `supersedes`, 16 bytes, when this document replaces another |
 
 An entry MAY be elided only when it is the sealed shell, the kit, or the
 engine and its glue — the things a host has of its own. The manifest is not
@@ -232,7 +233,8 @@ viewer form's payload.
   "signedEntries": { "<entry>": "<hex digest>" },
   "signature": "…",             // base64 COSE_Sign1 (§3.1)
   "validUntil": 1234567890,     // optional, Unix seconds
-  "publisherName": "Acme Finance" // optional; the name the publisher signs under
+  "publisherName": "Acme Finance", // optional; the name the publisher signs under
+  "supersedes": "<uuid>"          // optional; the document this one replaces (§5.1)
 }
 ```
 
@@ -280,6 +282,7 @@ algorithm, integrityPolicy, signatureAlgorithm, publicKeyFingerprint,
 entries            — a map of signed entry name to hex digest
 validUntil         — present only when set
 publisherName      — present only when set
+supersedes         — present only when set
 ```
 
 Keys MUST be sorted by their encoded bytes, lengths MUST use the shortest form
@@ -287,7 +290,8 @@ that fits, and indefinite lengths MUST NOT be used. Two encoders that agree on
 the values and disagree on the bytes produce signatures that do not verify.
 
 `validUntil` MUST be omitted entirely when unset, not encoded as null or zero.
-So MUST `publisherName` when the publisher gave none: it joined the signed set
+So MUST `supersedes` when the document replaces nothing, and so MUST
+`publisherName` when the publisher gave none: it joined the signed set
 after containers existed, and its absence is what keeps every earlier signature
 verifying. A name is a claim the key makes about itself and nothing more. A
 host MUST NOT present it as verified; what a host can establish is whether it
@@ -560,6 +564,29 @@ whose owner believes those rows were deleted.
 A save in the viewer form rewrites the entire file, and the manifest with it.
 
 ---
+
+### 5.1 Succession
+
+A document MAY name the document it replaces in `supersedes`. A host that holds
+data for the named document MAY start the new document from that data, so that
+the next version of an application is the same application with the same
+records rather than a stranger with an empty database. Three rules make that
+safe rather than a way to walk off with somebody's data:
+
+- A host MUST adopt only when the new document is signed and its key is the
+  key the host pinned for the document it names. An unsigned document, or one
+  under another key, is not honoured, and the host SHOULD say so.
+- The data is *copied*, never moved. The named document and its data stay as
+  they were, so a successor that turns out to be wrong has cost nothing.
+- The adopted data passes through the new document's schema gate (§6.3)
+  exactly as its own would: migrated where a chain reaches, refused as
+  `SCHEMA_INCOMPATIBLE` where none does. A host MUST surface that refusal.
+  Silent loss — a successor that opens empty over data it could not read —
+  is the failure this section exists to prevent.
+
+A compiler that is told which container a build upgrades MUST record it here,
+since it already holds the identity; a build that changed the schema with no
+migration to match is refused before it is signed.
 
 ## 6. SQLite
 

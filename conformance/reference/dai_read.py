@@ -469,6 +469,9 @@ def from_inline_link(link: str) -> InlineDocument:
         manifest["validUntil"] = fields[6]
     if isinstance(fields.get(10), str) and fields[10]:
         manifest["publisherName"] = fields[10]
+    if isinstance(fields.get(11), bytes) and len(fields[11]) == 16:
+        g = fields[11].hex()
+        manifest["supersedes"] = f"{g[:8]}-{g[8:12]}-{g[12:16]}-{g[16:20]}-{g[20:]}"
     raw_signature = fields.get(8)
     if public_key and isinstance(raw_signature, bytes):
         protected = cbor_encode({1: -7, 4: fingerprint.encode("ascii")})
@@ -669,6 +672,8 @@ def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str
     # container signed before names existed still verifies unchanged.
     if manifest.get("publisherName"):
         fields["publisherName"] = manifest["publisherName"]
+    if manifest.get("supersedes"):
+        fields["supersedes"] = manifest["supersedes"]
 
     payload = cbor_encode(fields)
 

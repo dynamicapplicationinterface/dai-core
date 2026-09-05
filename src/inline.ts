@@ -90,6 +90,7 @@ const L = {
   signature: 8,
   entries: 9,
   publisherName: 10,
+  supersedes: 11,
 } as const;
 
 const CARRIED = 0;
@@ -213,6 +214,7 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
   ]);
   if (manifest.validUntil !== undefined) fields.set(L.validUntil, manifest.validUntil);
   if (manifest.publisherName) fields.set(L.publisherName, manifest.publisherName);
+  if (manifest.supersedes) fields.set(L.supersedes, uuidToBytes(manifest.supersedes));
   if (publicKey && manifest.signature) {
     fields.set(L.key, compressPublicKey(fromBase64(publicKey)));
     fields.set(L.signature, parseSign1(fromBase64(manifest.signature)).signature);
@@ -289,6 +291,7 @@ export async function unpackInline(
   const required = fields.get(L.required) === 1;
   const validUntil = fields.get(L.validUntil);
   const publisherName = fields.get(L.publisherName);
+  const supersedesBytes = fields.get(L.supersedes);
   const key = fields.get(L.key);
   const signature = fields.get(L.signature);
   const entries = fields.get(L.entries);
@@ -386,6 +389,9 @@ export async function unpackInline(
     appName,
     favicon,
     ...(typeof publisherName === "string" && publisherName ? { publisherName } : {}),
+    ...(supersedesBytes instanceof Uint8Array && supersedesBytes.length === 16
+      ? { supersedes: bytesToUuid(supersedesBytes) }
+      : {}),
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy: required ? "required" : "advisory",
