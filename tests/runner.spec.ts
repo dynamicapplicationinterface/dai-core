@@ -793,6 +793,25 @@ test.describe("on a phone", () => {
  * The gesture that converts one into the other is unguessable on a phone, so
  * this app says it — once, and only once there is something worth keeping.
  */
+/**
+ * Uses the document, the way a person does: something changes and is kept.
+ *
+ * A save is the signal every application sends, kit or no kit — the kit's own
+ * `data-run` path is exercised separately, against a container built for it.
+ * Nothing is offered before this happens, which is the whole of item 1.3.
+ */
+const useIt = async (page: Page): Promise<void> => {
+  const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+  await expect(app.locator("#app")).toHaveText(/ready/, { timeout: 30_000 });
+  await app.locator("body").evaluate(async () => {
+    const dai = (window as unknown as { dai: { saveState: (b: Uint8Array) => Promise<unknown> } })
+      .dai;
+    const bytes = new Uint8Array(4096);
+    bytes.set(new TextEncoder().encode("SQLite format 3\0"), 0);
+    await dai.saveState(bytes);
+  });
+};
+
 test.describe("keeping it", () => {
   const IPHONE =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
@@ -816,6 +835,7 @@ test.describe("keeping it", () => {
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
+    await useIt(page);
 
     // Named literally. "Install" is a word for something that does not happen
     // here, and somebody following it would look for a button that is not there.
@@ -829,6 +849,8 @@ test.describe("keeping it", () => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    await useIt(page);
     await expect(page.locator("#install")).toBeVisible();
 
     await page.click("#install-dismiss");
@@ -837,6 +859,58 @@ test.describe("keeping it", () => {
     // The whole difference between a hint and a nag.
     await page.reload();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await useIt(page);
+    await expect(page.locator("#install")).toBeHidden();
+  });
+
+  test("mounting is not using: nothing is offered until somebody does something", async ({
+    page,
+  }) => {
+    /*
+     * The offer used to appear the moment a document mounted, which is in
+     * front of somebody who has not yet seen the thing work. Asking to put an
+     * unknown app on a home screen is a question a person can only answer by
+     * dismissing it.
+     *
+     * The application is fully up here — its own text is on screen, and the
+     * frame has had a second to do anything it was going to — and still
+     * nothing has been asked.
+     */
+    await pretendIphone(page);
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    await expect(app.locator("#app")).toHaveText(/ready/, { timeout: 30_000 });
+    await page.waitForTimeout(1000);
+    await expect(page.locator("#install")).toBeHidden();
+
+    // And the tab is named for the document all the same: describing it is not
+    // the same act as asking for it.
+    await expect(page).toHaveTitle(/fixture/i);
+
+    await useIt(page);
+    await expect(page.locator("#install")).toBeVisible();
+  });
+
+  test("a second open says it differently, and a third does not ask", async ({ page }) => {
+    // A third open with no answer is an answer. The menu still has it.
+    await pretendIphone(page);
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    await useIt(page);
+    await expect(page.locator("#install-text")).toContainText("To keep");
+
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await useIt(page);
+    await expect(page.locator("#install-text")).toContainText("to your apps");
+
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await useIt(page);
     await expect(page.locator("#install")).toBeHidden();
   });
 });
@@ -918,6 +992,8 @@ test.describe("keeping it, per device", () => {
     });
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    await useIt(page);
     await expect(page.locator("#install")).toBeVisible();
     await page.click("#install-dismiss");
 
@@ -1013,5 +1089,74 @@ test.describe("host class", () => {
       const text = readFileSync(resolve(here, "..", file), "utf8");
       expect(text, file).not.toMatch(/rewrites the container in place/);
     }
+  });
+});
+
+/*
+ * The other half of "use": a control the kit runs on somebody's behalf.
+ *
+ * A save is what every application can send. `data-run` is what most of them
+ * will actually send first — a tick, an entry, a row removed — and it is the
+ * signal the item is written against. The kit posts it; the shell reports it
+ * once; the opener offers only then.
+ */
+test.describe("a control the kit runs is use too", () => {
+  test("ticking something offers to keep it; mounting did not", async ({ page }) => {
+    test.slow();
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { compileDirectory } = await import("../src/compile.js");
+
+    const source = mkdtempSync(join(tmpdir(), "dai-kit-use-"));
+    writeFileSync(
+      join(source, "schema.sql"),
+      "CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, done INTEGER NOT NULL DEFAULT 0);\n" +
+        "INSERT INTO jobs (id) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM jobs);",
+      "utf8",
+    );
+    writeFileSync(
+      join(source, "index.html"),
+      [
+        '<!doctype html><meta charset="utf-8">',
+        '<dai-rows query="SELECT id, done FROM jobs ORDER BY id">',
+        "  <template>",
+        '    <p><button id="tick" type="button" data-run="UPDATE jobs SET done = 1 - done WHERE id = :id">tick</button>',
+        '    <span id="state" data-text="done"></span></p>',
+        "  </template>",
+        "</dai-rows>",
+        '<script type="module" src="./dai-kit.js"></script>',
+      ].join("\n"),
+      "utf8",
+    );
+
+    const built = await compileDirectory({
+      sourceDir: source,
+      root: resolve(here, ".."),
+      appName: "Jobs",
+    });
+    const file = join(source, "jobs.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "userAgent", {
+        get: () =>
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148 Safari/604.1",
+      });
+    });
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+
+    const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    // Drawn, so the kit is running and the row exists to be ticked.
+    await expect(app.locator("#state")).toHaveText("0", { timeout: 30_000 });
+    await expect(page.locator("#install")).toBeHidden();
+
+    await app.locator("#tick").click();
+
+    // The statement ran — and only now is anything asked.
+    await expect(app.locator("#state")).toHaveText("1");
+    await expect(page.locator("#install")).toBeVisible();
+    await expect(page.locator("#install-text")).toContainText("Jobs");
   });
 });

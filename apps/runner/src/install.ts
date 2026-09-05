@@ -51,6 +51,8 @@ interface InstallEvent extends Event {
 export interface Identity {
   uuid: string;
   name: string;
+  /** How many times this device has opened this document, including now. */
+  opens: number;
   /** A data URL or inline SVG, as the container manifest carries it. */
   favicon?: string;
   /** Whether a copy of this document exists as a file somewhere the person can find. */
@@ -235,8 +237,14 @@ export function howToKeep(identity: Identity, prompt: boolean): { title: string;
 }
 
 export interface Keeper {
-  /** A document is open: describe it, and offer once. */
-  offer(identity: Identity): void;
+  /**
+   * A document is on screen. The page takes its name, icon and manifest, so
+   * an install from the browser's own menu gets the right ones — but nothing
+   * is offered yet.
+   */
+  describe(identity: Identity): void;
+  /** Somebody used it. Now an offer is an offer rather than an interruption. */
+  offer(): void;
   /** Somebody asked from the menu: do it, or say how. */
   keep(): void;
   /** Whether a one-tap install exists on this device right now. */
@@ -310,23 +318,41 @@ export function watchForInstall(): Keeper | null {
       return Boolean(saved);
     },
 
-    offer(identity) {
+    describe(identity) {
       current = identity;
       how.hidden = true;
-      // The page describes the document whether or not the bar is shown: an
-      // install from the browser's own menu, later, should still get the
+      bar.hidden = true;
+      // The page describes the document whether or not the bar is ever shown:
+      // an install from the browser's own menu, later, should still get the
       // right name and icon.
       void describeDocument(identity);
+    },
 
+    offer() {
+      const identity = current;
+      if (!identity) return;
       if (standalone() || dismissed(identity.uuid)) return;
 
+      /*
+       * Asked at most twice, and never on the open itself.
+       *
+       * The first time somebody uses a document is the first moment they have
+       * any reason to want it back. A third open with no answer is an answer,
+       * and the menu still has it for anybody who changes their mind.
+       */
+      if (identity.opens > 2) return;
+      const again = identity.opens > 1;
+
       if (saved) {
-        text.textContent = `Keep ${identity.name} on this device and open it like an app.`;
+        text.textContent = again
+          ? `Save ${identity.name} to your apps and open it from there.`
+          : `Keep ${identity.name} on this device and open it like an app.`;
         go.hidden = false;
       } else if (platform() === "ios") {
+        const lead = again ? `Save ${identity.name} to your apps` : `To keep ${identity.name}`;
         text.textContent = installShareStorage()
-          ? `To keep ${identity.name}: tap Share, then Add to Home Screen.`
-          : `To keep ${identity.name}: tap ⋯ for the steps — Share, Add to Home Screen, then open the file once.`;
+          ? `${lead}: tap Share, then Add to Home Screen.`
+          : `${lead}: tap ⋯ for the steps — Share, Add to Home Screen, then open the file once.`;
         go.hidden = true;
       } else {
         // A desktop browser with no install support has nothing useful to offer

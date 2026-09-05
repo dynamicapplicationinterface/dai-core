@@ -103,6 +103,21 @@ isolation probe's check ids. A container never acts on it. It is there to be
 checked: mount the probe in the host, and every claimed clause must come back
 blocked.
 
+#### `DAI_HOST_USED`
+
+Sent once, the first time somebody uses the document — a statement the kit ran
+on their behalf, or a save. A host that offers to install a document should
+wait for this: before it, an offer stands in front of a person who has not yet
+seen the thing work.
+
+```typescript
+{
+  type: "DAI_HOST_USED",
+  sessionNonce: "…",
+  payload: { bridgeVersion: 1, documentUuid: "…", timings: [ … ] }
+}
+```
+
 `hostClass` says what a save through this host does. A **viewer** keeps a
 copy of the database on the device and can export a file; it never claims to
 have written the file it was given. An **editor** writes the document in

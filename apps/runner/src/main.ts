@@ -74,6 +74,22 @@ const keeper = watchForInstall();
 
 const RESUME_KEY = "dai:resume";
 
+/**
+ * How many times this device has opened a document, counted here rather than
+ * in the library because it is about what to say to a person, not about the
+ * document. Kept beside the record of a dismissed offer, for the same reason.
+ */
+function countOpen(uuid: string): number {
+  try {
+    const next = Number(localStorage.getItem(`dai:opens:${uuid}`) ?? "0") + 1;
+    localStorage.setItem(`dai:opens:${uuid}`, String(next));
+    return next;
+  } catch {
+    // Storage refused. One open is the honest answer when nothing is remembered.
+    return 1;
+  }
+}
+
 /** The isolation probe's last report, with what this host claimed. For CI. */
 let lastIsolationReport: unknown = null;
 
@@ -288,16 +304,19 @@ async function mount(cartridge: Cartridge): Promise<void> {
   document.body.classList.add("loaded");
 
   /*
-   * Now, and not before: an offer to keep something is meaningless until there
-   * is something to keep, and on an empty chooser it reads as being asked to
-   * bookmark a file picker.
+   * Named and iconed now; offered later.
+   *
+   * The page describes the document as soon as it is on screen, so a tab, a
+   * home screen and the browser's own install menu all get the right name and
+   * icon. The offer waits for the person to use it — see DAI_HOST_USED below.
    */
   const name = cartridge.manifest.appName ?? "container";
-  keeper?.offer({
+  keeper?.describe({
     uuid: cartridge.manifest.documentUuid,
     name,
     favicon: cartridge.manifest.favicon,
     savedAsFile: arrivedAsFile,
+    opens: countOpen(cartridge.manifest.documentUuid),
   });
   title.textContent = name;
 
@@ -692,6 +711,13 @@ window.addEventListener("message", (event) => {
     if (fromMountedContainer(event, data)) {
       recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
     }
+  } else if (data.type === "DAI_HOST_USED") {
+    /*
+     * Somebody used the document: they ticked something, added something, or
+     * saved. Only now is "keep this on your device" an offer rather than an
+     * interruption in front of a person who has not yet seen it work.
+     */
+    if (fromMountedContainer(event, data)) keeper?.offer();
   } else if (data.type === "DAI_HOST_SAVE") {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.

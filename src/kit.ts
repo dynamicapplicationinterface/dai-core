@@ -158,6 +158,15 @@ function run(sql, values) {
   if (names.length === 0) db.exec(sql);
   else db.exec({ sql: sql, bind: bind });
   refresh();
+
+  // Somebody did something. The shell is told, and tells the host once: the
+  // first use is the moment an offer to keep this document stops being an
+  // interruption, and it is the number the whole thing is judged on.
+  try {
+    window.parent.postMessage({ type: 'dai:used' }, '*');
+  } catch (error) {
+    /* No parent, or one that is not listening. Neither changes the statement. */
+  }
 }
 
 /** Fills an element's [data-text] descendants from a row. */

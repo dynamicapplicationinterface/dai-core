@@ -1637,6 +1637,39 @@ async function boot(): Promise<void> {
    */
   let hostProfile: string[] | null = null;
 
+  /**
+   * Somebody used this document — a statement the kit ran on their behalf, or
+   * a save.
+   *
+   * Reported once, because once is what a host needs. Mounting is not use: an
+   * offer to keep a document nobody has touched is an interruption, and the
+   * number worth measuring is how long it took to become useful rather than
+   * how long it took to appear.
+   */
+  let useReported = false;
+  const noteUse = (): void => {
+    if (useReported) return;
+    useReported = true;
+    mark("used");
+    if (window.parent === window) return;
+    try {
+      window.parent.postMessage(
+        {
+          type: "DAI_HOST_USED",
+          sessionNonce,
+          payload: {
+            bridgeVersion: BRIDGE_VERSION,
+            documentUuid: manifest?.documentUuid ?? null,
+            timings: timingTable(),
+          },
+        },
+        "*",
+      );
+    } catch {
+      /* A parent that is not listening changes nothing about the use. */
+    }
+  };
+
   /*
    * The frame asking whether the data it just opened may be written to.
    *
@@ -1708,6 +1741,11 @@ async function boot(): Promise<void> {
         { ...(asked as Record<string, unknown>), hostProfile: hostProfile ?? [] },
         "*",
       );
+      return;
+    }
+
+    if (asked?.type === "dai:used") {
+      noteUse();
       return;
     }
 
@@ -1785,6 +1823,11 @@ async function boot(): Promise<void> {
       method?: SaveMethod;
     };
     if (request?.type !== SAVE_REQUEST) return;
+
+    // A save is use by any reading of the word: something changed, and
+    // somebody asked to keep it. It is also the only signal an application
+    // that does not use the kit will ever send.
+    noteUse();
 
     const reply = (payload: Record<string, unknown>): void =>
       (event.source as Window | null)?.postMessage({ id: request.id, ...payload }, "*");
