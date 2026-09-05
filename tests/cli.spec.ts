@@ -358,3 +358,38 @@ test.describe("dai check", () => {
     expect(report.storesDataInTheFile).toBe(false);
   });
 });
+
+/**
+ * A document published without its engine, at the command line.
+ *
+ * `dai build --thin` leaves the engine out for a host that already holds those
+ * exact bytes. `dai verify` on what it has just produced must not read as
+ * damage: a tool that tells somebody they broke a file it made for them a
+ * moment ago teaches them to ignore it.
+ */
+test.describe("verifying a document published without its engine", () => {
+  test("reads as intact, completed from the engine installed here", async () => {
+    const { thinned } = await import("../src/container.js");
+    const { parseContainer } = await import("../src/container.js");
+    const { compileDirectory } = await import("../src/compile.js");
+
+    const source = mkdtempSync(resolve(tmpdir(), "dai-cli-thin-"));
+    writeFileSync(
+      resolve(source, "index.html"),
+      '<!doctype html><meta charset="utf-8"><p>thin</p>',
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Thin" });
+
+    // Derived from the signed build rather than built again: nothing signed
+    // twice is the same file, so a second build would be a second document.
+    const file = resolve(source, "thin.dai.html");
+    writeFileSync(file, thinned(parseContainer(built.html)), "utf8");
+
+    const run = spawnSync(process.execPath, [cli, "verify", file], { encoding: "utf8" });
+
+    expect(run.stdout).toContain("intact");
+    expect(run.stdout).toMatch(/0 not matching/);
+    expect(run.status).toBe(0);
+  });
+});

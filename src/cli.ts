@@ -18,6 +18,7 @@ import {
 import { lintFiles, storesDataInFile } from "./lint.js";
 import { parseBundle, writeBundle } from "./bundle.js";
 import { auditContainer, parseContainer } from "./container.js";
+import { sha256Hex } from "./core.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 
 const USAGE = `dai — build and inspect DAI containers
@@ -362,6 +363,33 @@ async function bundle(parsed: Parsed): Promise<number> {
   return 0;
 }
 
+/**
+ * The engine this machine has, offered to a document published without one.
+ *
+ * `dai compile --thin` leaves the engine out, so `dai verify` on what it just
+ * produced would otherwise report the two entries as missing and read as
+ * damage — the tool telling somebody they broke a file it made for them a
+ * moment ago. The bytes come from the installed package, which is where the
+ * compiler took them from.
+ *
+ * Keyed on digest, so this can only complete a document whose engine is the
+ * one already on this machine, and the entry check runs over the result.
+ */
+async function installedEngine(): Promise<(digest: string) => Uint8Array | undefined> {
+  const map = new Map<string, Uint8Array>();
+  for (const file of ["sqlite3.wasm", "index.mjs"]) {
+    try {
+      const bytes = new Uint8Array(
+        readFileSync(resolve(process.cwd(), "node_modules/@sqlite.org/sqlite-wasm/dist", file)),
+      );
+      map.set(await sha256Hex(bytes), bytes);
+    } catch {
+      /* Not installed here. A document that needs it is refused, and says so. */
+    }
+  }
+  return (digest: string) => map.get(digest);
+}
+
 async function verify(parsed: Parsed): Promise<number> {
   const target = parsed.positional[0];
   if (!target) {
@@ -372,7 +400,9 @@ async function verify(parsed: Parsed): Promise<number> {
   const path = resolve(process.cwd(), target);
   // Read as bytes, not text: the sectioned form is a binary and decoding it as
   // UTF-8 would corrupt it before the reader ever saw the magic.
-  const report = await auditContainer(parseContainer(new Uint8Array(readFileSync(path))));
+  const report = await auditContainer(
+    parseContainer(new Uint8Array(readFileSync(path)), { supply: await installedEngine() }),
+  );
 
   /*
    * The same verdict, in a shape a program can branch on.

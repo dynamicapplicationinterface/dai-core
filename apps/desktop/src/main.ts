@@ -5,12 +5,19 @@
  * for silent, in-place disk persistence without browser download prompts.
  */
 
-import { ContainerError, hostShell, looksSectioned, parseContainer, verifyContainer } from "../../../src/container.js";
+import {
+  ContainerError,
+  hostShell,
+  looksSectioned,
+  parseContainer,
+  thinned,
+  verifyContainer,
+} from "../../../src/container.js";
 // The shell this host runs, shipped with this host: never the container's own.
 import HOST_TEMPLATE from "../../../dist/template.html?raw";
 import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { readContainerFile } from "../../../src/format.js";
-import { payloadFingerprint } from "../../../src/core.js";
+import { payloadFingerprint, sha256Hex, SUBSTITUTABLE_ENTRIES } from "../../../src/core.js";
 import {
   compileInBrowser,
   isNoise,
@@ -105,6 +112,61 @@ let currentFilePath: string | undefined;
  * whoever renamed it.
  */
 let currentFileIsSectioned = false;
+
+/**
+ * Whether the open file was published without its engine.
+ *
+ * Kept so a save writes back the form the file arrived in. A document
+ * completed here is complete in memory, and writing that over an 86 kB file on
+ * somebody's disk would turn it into an 830 kB one because they pressed Save.
+ * The form a file is in is the publisher's decision and the owner's, not this
+ * host's.
+ */
+let currentFileWasThin = false;
+
+/**
+ * The engine this host holds, offered to a document published without one.
+ *
+ * The same bytes the compiler puts in a container, staged into public/runtime
+ * beside the shell — so a document that leaves the opener thin opens here too,
+ * and the two hosts cannot disagree about what an engine is.
+ *
+ * Keyed on digest and never on name: the only bytes this can put into a
+ * document are bytes it already shipped, going only where the manifest says
+ * those exact bytes belong. The whole archive is verified against the manifest
+ * afterwards regardless.
+ */
+let held: Promise<Map<string, Uint8Array>> | undefined;
+
+async function heldEngine(): Promise<(digest: string) => Uint8Array | undefined> {
+  held ??= (async () => {
+    const assets = await loadRuntimeAssets();
+    const map = new Map<string, Uint8Array>();
+    for (const bytes of [assets.wasm, assets.glue]) map.set(await sha256Hex(bytes), bytes);
+    return map;
+  })().catch(() => new Map<string, Uint8Array>());
+  const map = await held;
+  return (digest: string) => map.get(digest);
+}
+
+/**
+ * Verifies a document, completing it first if it needs this host's engine.
+ *
+ * Tried plainly first: nearly every document carries its own engine, and
+ * loading a megabyte before each of them on the chance that this one does not
+ * would make the common case pay for the rare one. The refusal is how we learn.
+ */
+async function openVerified(source: string | Uint8Array) {
+  try {
+    currentFileWasThin = false;
+    return await verifyContainer(source);
+  } catch (error) {
+    if (!(error instanceof ContainerError) || error.code !== "RUNTIME_UNAVAILABLE") throw error;
+    const container = await verifyContainer(source, { supply: await heldEngine() });
+    currentFileWasThin = container.supplied.length > 0;
+    return container;
+  }
+}
 
 /**
  * Which save of this document was read, for the next one to check against.
@@ -280,7 +342,7 @@ async function openFile(file: File): Promise<void> {
 
     // Full verification, not a shape check: digests both ways, the shell
     // against its sealed copy, and the publisher signature when one is carried.
-    const container = await verifyContainer(text);
+    const container = await openVerified(text);
     const trust = await gateOnTrust(container);
 
     // A browser File has no filesystem path, so a cartridge chosen here cannot
@@ -361,7 +423,7 @@ async function openCartridgeByPath(path: string): Promise<void> {
     statusEl.textContent = `Loading ${path}...`;
     const source = await readCartridgeSource(path);
 
-    const container = await verifyContainer(source);
+    const container = await openVerified(source);
     const trust = await gateOnTrust(container);
 
     await mountHtml(
@@ -618,7 +680,15 @@ ${refusal.detail}` : ""),
           })
         : invokeTauri("save_cartridge", {
             path: filePath,
-            html,
+            /*
+             * Written back in the form it arrived in.
+             *
+             * A document published without its engine is complete in memory
+             * here, because this host put the engine in to run it. Writing that
+             * over the file would turn an 86 kB document into an 830 kB one
+             * because somebody pressed Save, and nothing asked them.
+             */
+            html: currentFileWasThin ? thinned(parseContainer(html)) : html,
             backup: !backedUp.has(filePath),
           }).then(() => {
             backedUp.add(filePath);
@@ -738,7 +808,7 @@ async function openViaNativeDialog(): Promise<void> {
 
     // The same gate the runner uses. A cartridge refused there must not open
     // here: one reader, one verdict.
-    const container = await verifyContainer(source);
+    const container = await openVerified(source);
     const trust = await gateOnTrust(container);
 
     await mountHtml(
