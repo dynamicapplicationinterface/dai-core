@@ -57,6 +57,22 @@ export interface Identity {
   favicon?: string;
   /** Whether a copy of this document exists as a file somewhere the person can find. */
   savedAsFile?: boolean;
+  /**
+   * The link this document arrived by, when it arrived by one (backlog 3.5).
+   *
+   * A home-screen icon has to launch into something. `?doc=<uuid>` finds a
+   * document this device already keeps, which is the right answer once it does
+   * — and it is nothing at all on a device that has been reset, or where
+   * storage was evicted, or where somebody added the icon and opened it for
+   * the first time a week later. The link is the document: it names where the
+   * bytes are and carries the key in its fragment, so an icon built from one
+   * can fetch the document again and then go on working offline.
+   *
+   * That is what "iOS, solved by the link" means. Not a special case for iOS —
+   * the same icon behaves the same everywhere; iOS is only where the failure
+   * was loudest, because it is the platform with no other way in.
+   */
+  link?: string;
 }
 
 /** Where the page puts a document's icon so the worker can serve it by address. */
@@ -66,8 +82,19 @@ function iconAddress(uuid: string): string {
   return new URL(`./doc-icons/${uuid}.png`, location.href).href;
 }
 
-/** The address an icon for this document launches into. */
-export function launchAddress(identity: Pick<Identity, "uuid" | "name">): string {
+/**
+ * The address an icon for this document launches into.
+ *
+ * The link when there is one, because a link works on a device that has never
+ * held this document; `?doc=<uuid>` otherwise, which is the honest answer for
+ * a document that arrived as a file and exists nowhere else.
+ *
+ * The key rides in the fragment, and a fragment in a `start_url` is kept by
+ * the browser and never sent to a server — the same property that makes the
+ * link private makes it safe to put on a home screen.
+ */
+export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link?: string }): string {
+  if (identity.link) return identity.link;
   const url = new URL("./", location.href);
   url.searchParams.set("doc", identity.uuid);
   url.searchParams.set("name", identity.name);

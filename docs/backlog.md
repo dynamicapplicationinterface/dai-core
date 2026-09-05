@@ -41,7 +41,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
 | 3.3 | Unfurl without the blob | [x] `a7a0be8` + this — static half and edge half |
 | 3.4 | Stripped fragment degrades to a sentence | [~] `c4be316` — sentence done; no-key variant is a decision |
-| 3.5 | iOS solved by the link | [ ] |
+| 3.5 | iOS solved by the link | [~] the icon launches into the link; the device test is yours |
 | 3.6 | Second-use integrations only | [x] the rule is a test now |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
 | 4.2 | "Modify this app" | [~] output carries `supersedes`; the card affordance is a decision |
@@ -497,12 +497,26 @@ how it says so on the card, before any of it is written.
 
 ### 3.5 iOS, solved by the link
 
-The per-document install manifest (closed, in `edd236c`) uses the reference
-link as `start_url`; the home-screen app fetches on first launch, then runs
-offline. Replaces the one-time hand-in.
+**Built.** The per-document manifest's `start_url` is now the link the
+document arrived by, when it arrived by one — the whole link, key included.
 
-**Exit:** an iOS device test: the home-screen icon opens the document with no
-manual step.
+The icon used to launch into `?doc=<uuid>`, which finds a document this device
+already keeps. That is the right answer once it does, and nothing at all on a
+device that has been reset, had its storage evicted, or where somebody added
+the icon and opened it a week later: the icon opens on an empty chooser. A
+link is the document — it says where the bytes are and carries the key in its
+fragment — so an icon built from one fetches it again and then runs offline.
+The fragment is kept by the browser and never sent to a server, so the
+property that makes a link private is the one that makes it safe on a home
+screen. A document that arrived as a file still gets `?doc=`, which is the
+honest answer when there is no link to point at.
+
+Tested both ways in `tests/reference-link.spec.ts`.
+
+**Exit not met, and cannot be met here:** an iOS device test needs an iOS
+device. Everything above is the mechanism it would exercise; what is left is
+somebody holding a phone, or a device lab — the same decision 5.1 is waiting
+on.
 
 ### 3.6 Second-use integrations only — closed
 

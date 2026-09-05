@@ -1,10 +1,11 @@
-import { createReadStream, existsSync, mkdtempSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { openFile } from "./open.js";
 import { ContainerError, verifyContainer } from "../src/container.js";
 import { openFromStore, publish, referenceFrom, sealForStore, type Sidecar } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
@@ -294,5 +295,103 @@ test.describe("a link with the fragment stripped", () => {
     } finally {
       await new Promise<void>((done) => a.server.close(() => done()));
     }
+  });
+});
+
+/**
+ * The icon a home screen gets, for a document that arrived by link (3.5).
+ *
+ * An icon has to launch into something. `?doc=<uuid>` finds a document this
+ * device already keeps — the right answer once it does, and nothing at all on
+ * a device that has been reset, had its storage evicted, or where somebody
+ * added the icon and opened it a week later. That icon opens on an empty
+ * chooser, which is the failure iOS made loudest because it is the platform
+ * with no other way in.
+ *
+ * A link is the document: it says where the bytes are and carries the key in
+ * its fragment, so an icon built from one fetches it again and then runs
+ * offline. The fragment is kept by the browser and never sent to a server, so
+ * the property that makes the link private is the one that makes it safe on a
+ * home screen.
+ */
+test.describe("the home-screen icon for a document that came by link", () => {
+  test("launches into the link, fragment and all", async ({ page }) => {
+    test.slow();
+
+    const built = await chart();
+    const root = mkdtempSync(join(tmpdir(), "dai-store-"));
+    const a = await serve(root, []);
+    try {
+      const { sealed } = await publish(built.html, fsStore({ root, baseUrl: a.origin }), RUNNER_URL);
+      const link =
+        `${RUNNER_URL}#h=${sealed.hash}` +
+        `&u=${encodeURIComponent(`${a.origin}/${sealed.hash}`)}&k=${sealed.key}`;
+
+      await page.goto(link);
+      await page.locator("#card-open").click({ timeout: 60_000 });
+      await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+
+      // The page describes the document asynchronously — it renders an icon
+      // and puts it in a cache first — so wait for it rather than racing it.
+      await page.waitForFunction(
+        () =>
+          document.querySelector('link[rel="manifest"]')?.getAttribute("href")?.startsWith("data:"),
+        undefined,
+        { timeout: 60_000 },
+      );
+
+      const manifest = await page.evaluate(() => {
+        const tag = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
+        const href = tag?.getAttribute("href") ?? "";
+        return href.startsWith("data:")
+          ? (JSON.parse(decodeURIComponent(href.slice(href.indexOf(",") + 1))) as {
+              start_url: string;
+              id: string;
+            })
+          : null;
+      });
+
+      expect(manifest, "a document on screen should describe itself").toBeTruthy();
+      // The whole link, key included — not ?doc=, which needs this device to
+      // already hold the document.
+      expect(manifest!.start_url).toContain(`k=${sealed.key}`);
+      expect(manifest!.start_url).toContain(`h=${sealed.hash}`);
+      expect(manifest!.start_url).not.toContain("?doc=");
+      expect(manifest!.id).toContain(built.manifest.documentUuid);
+    } finally {
+      await new Promise<void>((done) => a.server.close(() => done()));
+    }
+  });
+
+  test("a document that came as a file gets the icon a file can have", async ({ page }) => {
+    test.slow();
+    const built = await chart();
+    const root = mkdtempSync(join(tmpdir(), "dai-file-"));
+    const file = join(root, "chart.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await openFile(page, file);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+
+    await page.waitForFunction(
+      () =>
+        document.querySelector('link[rel="manifest"]')?.getAttribute("href")?.startsWith("data:"),
+      undefined,
+      { timeout: 60_000 },
+    );
+
+    const start = await page.evaluate(() => {
+      const href = document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? "";
+      return href.startsWith("data:")
+        ? (JSON.parse(decodeURIComponent(href.slice(href.indexOf(",") + 1))) as { start_url: string })
+            .start_url
+        : "";
+    });
+
+    // No link to point at, so the honest answer: the document this device
+    // keeps, by its identity.
+    expect(start).toContain("doc=");
+    expect(start).not.toContain("k=");
   });
 });

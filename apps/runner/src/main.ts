@@ -341,6 +341,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
     name,
     favicon: cartridge.manifest.favicon,
     savedAsFile: arrivedAsFile,
+    link: arrivedByLink,
     opens: countOpen(cartridge.manifest.documentUuid),
   });
   title.textContent = name;
@@ -468,6 +469,18 @@ async function collectSharedContainer(): Promise<File | null> {
  * Screen" working and the new icon having nothing to open.
  */
 let arrivedAsFile = true;
+
+/**
+ * The link this document arrived by, when it arrived by one (backlog 3.5).
+ *
+ * Kept so a home-screen icon can launch into it. An icon built from
+ * `?doc=<uuid>` finds a document this device already keeps and finds nothing
+ * on a device that has been reset or had its storage evicted — which is the
+ * icon that opens on an empty chooser a week after somebody added it. A link
+ * names where the bytes are and carries the key in its fragment, so an icon
+ * built from one can fetch the document again and then run offline.
+ */
+let arrivedByLink: string | undefined;
 
 /**
  * Where a document came from, which decides whether it is shown a card first.
@@ -1063,6 +1076,9 @@ fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   if (file) {
     arrivedAsFile = true;
+    // A file arrived by no link. Cleared rather than left, or the next
+    // document would be given an icon pointing at the last one.
+    arrivedByLink = undefined;
     void ingest(file);
   }
 });
@@ -1197,6 +1213,8 @@ async function openFromLink(carried: string): Promise<void> {
 
   slot.classList.remove("busy");
   arrivedAsFile = false;
+  // The document is in this address. An icon made from it needs nothing else.
+  arrivedByLink = location.href;
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
         from: "From the link you followed. Nothing is uploaded — it runs on this device.",
   });
@@ -1262,6 +1280,8 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
 
   slot.classList.remove("busy");
   arrivedAsFile = false;
+  // The address as it stands, fragment included: that is the document.
+  arrivedByLink = location.href;
   const store = reference.url ? where : "this project's store";
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
     from: `From ${store}, sealed so it could not be read there. Nothing is uploaded — it runs on this device.`,
