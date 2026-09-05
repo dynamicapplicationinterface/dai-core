@@ -147,3 +147,167 @@ export async function verifySign1(
   const sign1 = parseSign1(envelope);
   return verify(sign1.signature, sigStructure(sign1.protectedBytes, payload));
 }
+
+/*
+ * Countersignatures (RFC 9338), spec §9.4.
+ *
+ * A second party signs the same payload: a generator, a provider, a release
+ * signer. The slot is the unprotected header, label 11, so adding or removing
+ * one changes no signed byte and no digest. What is signed is the version 2
+ * structure, which binds the countersignature to the publisher's protected
+ * header and the publisher's signature as well as the payload — a
+ * countersignature cannot be lifted onto a different signature over the same
+ * bytes.
+ */
+
+/** RFC 9338 §3: header label for a COSE_Countersignature (version 2). */
+export const HEADER_COUNTERSIGNATURE = 11;
+
+export interface Countersignature {
+  protectedBytes: Uint8Array;
+  signature: Uint8Array;
+  kid?: Uint8Array;
+}
+
+/** The bytes a countersigner signs (RFC 9338 §3.3). */
+export function countersignStructure(
+  bodyProtected: Uint8Array,
+  signProtected: Uint8Array,
+  payload: Uint8Array,
+  bodySignature: Uint8Array,
+): Uint8Array {
+  return encode([
+    "CounterSignatureV2",
+    bodyProtected,
+    signProtected,
+    new Uint8Array(0),
+    payload,
+    [bodySignature],
+  ]);
+}
+
+/** The countersigner's protected header: alg and a kid that names the key. */
+export function countersignerHeader(kid: Uint8Array): Uint8Array {
+  return encode(
+    new Map<CborValue, CborValue>([
+      [HEADER_ALG, ALG_ES256],
+      [HEADER_KID, kid],
+    ]),
+  );
+}
+
+/**
+ * Adds a countersignature to an envelope and returns the new envelope.
+ *
+ * The payload is a parameter because the envelope is detached: the signer
+ * has to be handed the bytes the publisher signed, and sign the same ones.
+ */
+export async function countersign(
+  envelope: Uint8Array,
+  payload: Uint8Array,
+  kid: Uint8Array,
+  sign: (bytes: Uint8Array) => Promise<Uint8Array>,
+): Promise<Uint8Array> {
+  const value = decode(envelope);
+  if (!Array.isArray(value) || value.length !== 4) throw new CoseError("Not a COSE_Sign1.");
+  const [bodyProtected, unprotected, carried, bodySignature] = value;
+  if (
+    !(bodyProtected instanceof Uint8Array) ||
+    !(unprotected instanceof Map) ||
+    !(bodySignature instanceof Uint8Array)
+  ) {
+    throw new CoseError("Not a COSE_Sign1.");
+  }
+
+  const signProtected = countersignerHeader(kid);
+  const signature = await sign(
+    countersignStructure(bodyProtected, signProtected, payload, bodySignature),
+  );
+  const entry: CborValue = [signProtected, new Map<CborValue, CborValue>(), signature];
+
+  const existing = unprotected.get(HEADER_COUNTERSIGNATURE);
+  const next = new Map<CborValue, CborValue>(unprotected);
+  if (existing === undefined) next.set(HEADER_COUNTERSIGNATURE, entry);
+  else if (Array.isArray(existing) && existing.length > 0 && Array.isArray(existing[0])) {
+    next.set(HEADER_COUNTERSIGNATURE, [...(existing as CborValue[]), entry]);
+  } else next.set(HEADER_COUNTERSIGNATURE, [existing as CborValue, entry]);
+
+  return encode([bodyProtected, next, carried ?? null, bodySignature]);
+}
+
+/** The countersignatures an envelope carries, unverified. */
+export function readCountersignatures(envelope: Uint8Array): Countersignature[] {
+  const value = decode(envelope);
+  if (!Array.isArray(value) || value.length !== 4 || !(value[1] instanceof Map)) return [];
+  const slot = value[1].get(HEADER_COUNTERSIGNATURE);
+  if (slot === undefined) return [];
+  // One countersignature is an array of three; several are an array of those.
+  const list = Array.isArray(slot) && slot.length > 0 && Array.isArray(slot[0]) ? slot : [slot];
+
+  const out: Countersignature[] = [];
+  for (const item of list) {
+    if (!Array.isArray(item) || item.length !== 3) continue;
+    const [protectedBytes, , signature] = item;
+    if (!(protectedBytes instanceof Uint8Array) || !(signature instanceof Uint8Array)) continue;
+    let kid: Uint8Array | undefined;
+    try {
+      const header = decode(protectedBytes);
+      const k = header instanceof Map ? header.get(HEADER_KID) : undefined;
+      if (k instanceof Uint8Array) kid = k;
+    } catch {
+      /* An unreadable header is reported as a countersignature with no kid. */
+    }
+    out.push({ protectedBytes, signature, kid });
+  }
+  return out;
+}
+
+export type CountersignatureVerdict = { kid: string; status: "valid" | "invalid" | "unheld" };
+
+/**
+ * Verifies each countersignature against a key the caller holds for its kid.
+ *
+ * `held` maps a kid, as hex, to a verifier for that key. A countersignature
+ * whose kid is not held is `unheld`: treated as absent, never as verified and
+ * never as a refusal (§9.4). One whose header lacks alg ES256 or a kid, or
+ * whose signature fails, is `invalid`.
+ */
+export async function verifyCountersignatures(
+  envelope: Uint8Array,
+  payload: Uint8Array,
+  held: (
+    kidHex: string,
+  ) => ((signature: Uint8Array, bytes: Uint8Array) => Promise<boolean>) | undefined,
+): Promise<CountersignatureVerdict[]> {
+  const value = decode(envelope);
+  if (!Array.isArray(value) || value.length !== 4) return [];
+  const [bodyProtected, , , bodySignature] = value;
+  if (!(bodyProtected instanceof Uint8Array) || !(bodySignature instanceof Uint8Array)) return [];
+
+  const out: CountersignatureVerdict[] = [];
+  for (const cs of readCountersignatures(envelope)) {
+    const kidHex = cs.kid ? [...cs.kid].map((b) => b.toString(16).padStart(2, "0")).join("") : "";
+    let alg: unknown;
+    try {
+      const header = decode(cs.protectedBytes);
+      alg = header instanceof Map ? header.get(HEADER_ALG) : undefined;
+    } catch {
+      alg = undefined;
+    }
+    if (!cs.kid || alg !== ALG_ES256) {
+      out.push({ kid: kidHex, status: "invalid" });
+      continue;
+    }
+    const verify = held(kidHex);
+    if (!verify) {
+      out.push({ kid: kidHex, status: "unheld" });
+      continue;
+    }
+    const ok = await verify(
+      cs.signature,
+      countersignStructure(bodyProtected, cs.protectedBytes, payload, bodySignature),
+    );
+    out.push({ kid: kidHex, status: ok ? "valid" : "invalid" });
+  }
+  return out;
+}

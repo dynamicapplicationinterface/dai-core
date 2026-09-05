@@ -19,7 +19,7 @@
  * Run: node scripts/build-conformance.mjs
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { unzipSync, zipSync } from "fflate";
@@ -693,6 +693,77 @@ writeFileSync(
 );
 
 console.log(`${written.length} cases written to conformance/cases.json`);
+
+/*
+ * Countersignature vectors (spec §9.4).
+ *
+ * A second key, generated once and kept beside the suite's signing key, signs
+ * the same payload as a countersigner. The vector says which kid the reader
+ * must find, what it must conclude when it holds that key, and what when it
+ * holds none — "unheld", never a refusal.
+ */
+{
+  const { countersign, countersignerHeader } = await import("../dist/cose.js");
+  const { signedBytes, signedViewOf, fromBase64, toBase64, sha256Hex } = await import("../dist/core.js");
+  const csKeyPath = join(suite, "countersign-key.pem");
+  let csPem;
+  if (existsSync(csKeyPath)) {
+    csPem = readFileSync(csKeyPath, "utf8");
+  } else {
+    const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString("base64");
+    csPem = `-----BEGIN PRIVATE KEY-----\n${pkcs8.replace(/(.{64})/g, "$1\n")}\n-----END PRIVATE KEY-----\n`;
+    writeFileSync(csKeyPath, csPem, "utf8");
+  }
+  const der = Buffer.from(csPem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""), "base64");
+  const privateKey = await crypto.subtle.importKey("pkcs8", der, { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+  const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+  const publicKey = await crypto.subtle.importKey("jwk", { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, ext: true }, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]);
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", publicKey));
+  const kidText = (await sha256Hex(spki)).slice(0, 16);
+  const kid = new TextEncoder().encode(kidText);
+  const kidHex = [...kid].map((b) => b.toString(16).padStart(2, "0")).join("");
+  void countersignerHeader;
+
+  const built = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+  const payload = signedBytes(signedViewOf(built.manifest));
+  const envelope = await countersign(fromBase64(built.manifest.signature), payload, kid, async (bytes) =>
+    new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, bytes)),
+  );
+  const archive = archiveOf(built.html);
+  const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+  manifest.signature = toBase64(envelope);
+  archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+  const file = "cases/countersignature-valid.dai.html";
+  writeFileSync(join(suite, file), repack(built.html, archive));
+
+  writeFileSync(
+    join(suite, "countersign-vectors.json"),
+    JSON.stringify(
+      {
+        suiteVersion: 1,
+        generatedBy: "scripts/build-conformance.mjs",
+        vectors: [
+          {
+            name: "countersignature-valid, key held",
+            file,
+            heldKeys: { [kidHex]: Buffer.from(spki).toString("base64") },
+            expect: [{ kid: kidHex, status: "valid" }],
+          },
+          {
+            name: "countersignature-valid, key not held",
+            file,
+            heldKeys: {},
+            expect: [{ kid: kidHex, status: "unheld" }],
+          },
+        ],
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  console.log("countersignature vectors written to conformance/countersign-vectors.json");
+}
 
 /*
  * The same documents, carried in links (§1.1).

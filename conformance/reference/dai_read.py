@@ -717,51 +717,12 @@ def _key_from_shell(shell_text: str | None) -> str | None:
     return found.group(1) if found and found.group(1) else None
 
 
-def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str, str]:
-    """Verify the manifest's signature with a base64 SPKI key, or say why not."""
-    signature = manifest.get("signature")
-    if not signature:
-        return "unsigned", ""
-
+def _signed_payload(manifest: dict) -> bytes:
+    """The detached payload of §3.1 (and §9.3 for version 3), rebuilt from the
+    manifest. One code path: the publisher's Sig_structure and every
+    countersigner's Countersign_structure (§9.4) carry these same bytes."""
     version = manifest.get("manifestVersion")
     signed_entries: dict[str, str] = manifest.get("signedEntries", {})
-
-    if version == 3:
-        # §9.2, both mandatory changes. Checked before the key, because they are
-        # facts about the manifest that hold whether or not anyone can verify
-        # the signature: a version 3 signed set that lists the shell is wrong
-        # in itself.
-        if CONTAINER_ENTRY in signed_entries:
-            return "invalid", "SIGNED_SET_MISMATCH"
-        # `hashes` MAY be present and MAY omit signed entries; where both list
-        # an entry they MUST agree.
-        for name, digest in signed_entries.items():
-            if name in hashes and hashes[name] != digest:
-                return "invalid", "SIGNED_SET_MISMATCH"
-
-    if not key:
-        # Signed, but nothing here can check it. Not the same as unsigned, and
-        # reporting it as such would launder a claim nobody verified.
-        return "unverifiable", "SIGNATURE_UNVERIFIABLE"
-
-    if version != 3:
-        # Version 2, unchanged. Reconciled before verifying, per §3.1: otherwise
-        # a signature could be validated over digests other than the ones just
-        # checked.
-        for name, digest in signed_entries.items():
-            if hashes.get(name) != digest:
-                return "invalid", "SIGNED_SET_MISMATCH"
-        # WAS A GAP, and a serious one. The rule above is one direction. `hashes`
-        # is outside the signature, so an entry added to the archive and to
-        # `hashes` with a matching digest passed integrity and passed signature
-        # without touching the signed set — and runtime/schema.json, added that
-        # way, has its migration SQL executed by a host under the pinned
-        # publisher's badge. Every digested entry except the database must be in
-        # the signed set. Now S3.1, and restated as a version 2 rule in §9.1.
-        for name in hashes:
-            if name != DATABASE_ENTRY and name not in signed_entries:
-                return "invalid", "SIGNED_SET_MISMATCH"
-
     fields: dict[str, Any] = {
         "manifestVersion": manifest["manifestVersion"],
         "documentUuid": manifest["documentUuid"],
@@ -807,24 +768,185 @@ def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str
         }
         fields["generator"] = signed_generator
 
-    payload = cbor_encode(fields)
+    return cbor_encode(fields)
 
-    envelope = cbor_decode(base64.b64decode(signature))
-    # §9.4: tag 18 around the envelope is the same envelope. Any other tag is a
-    # signature format this reader does not implement.
+
+def _parse_envelope(signature_b64: str):
+    """The four parts of the COSE_Sign1 envelope, or a refusal code, or None.
+
+    §9.4: tag 18 around the envelope is the same envelope. Any other tag is a
+    signature format this reader does not implement.
+    """
+    try:
+        envelope = cbor_decode(base64.b64decode(signature_b64))
+    except (ContainerError, ValueError):
+        return None
     if isinstance(envelope, Tagged):
         if envelope.tag != COSE_SIGN1_TAG:
-            return "invalid", "SIGNATURE_UNSUPPORTED"
+            return "SIGNATURE_UNSUPPORTED"
         envelope = envelope.value
     if not isinstance(envelope, list) or len(envelope) != 4:
-        return "invalid", "UNVERIFIED_SIGNATURE"
+        return None
     protected, unprotected, carried, raw_signature = envelope
-    if not isinstance(unprotected, dict):
+    if not isinstance(protected, bytes) or not isinstance(unprotected, dict) or not isinstance(raw_signature, bytes):
+        return None
+    return protected, unprotected, carried, raw_signature
+
+
+def countersignatures(manifest: dict, key_b64: str | None, held_keys: dict[bytes, str]) -> list[dict[str, str]]:
+    """Report on the countersignatures in the manifest's envelope (§9.4).
+
+    `held_keys` maps a kid (bytes) to a base64 SPKI the host already holds (a
+    root list's `countersigners`, §9.6). Each countersignature is verified over
+    RFC 9338 §3.3's version 2 structure:
+
+        ["CounterSignatureV2", body_protected, sign_protected, h'',
+         payload, [publisher signature]]
+
+    Returns one {"kid", "status"} per countersignature: "valid", "invalid", or
+    "unheld" when no key is held for the kid — §9.4: treated as absent, never
+    verified, never a refusal. Nothing here changes verify()'s verdict.
+
+    SPEC GAP: §9.4 does not say whether a countersignature is reported when
+    the publisher's own signature does not verify (or cannot be, with no key
+    in the shell). The Countersign_structure covers the publisher's signature
+    bytes, so a countersignature can be cryptographically valid over an
+    invalid publisher signature. This reader verifies them independently and
+    takes `key_b64` only so a caller can pass what it has; a host that wants
+    to show a countersignature only under a valid publisher signature gates
+    on verify() first. The document should say which.
+
+    SPEC GAP: §9.4 does not say what a reader does with a label 11 value that
+    is neither a 3-element array nor an array of them, nor with a kid that is
+    not a byte string. This reader reports each such entry "invalid" with an
+    empty kid, and a malformed slot as a whole as one "invalid" entry, so the
+    person sees that something claimed to countersign and did not.
+    """
+    del key_b64  # see the first SPEC GAP above
+    signature = manifest.get("signature")
+    if not signature:
+        return []
+    parsed = _parse_envelope(signature)
+    if parsed is None or isinstance(parsed, str):
+        return []
+    body_protected, unprotected, _carried, publisher_signature = parsed
+
+    slot = unprotected.get(COUNTERSIGNATURE_LABEL)
+    if slot is None:
+        return []
+    # One COSE_Countersignature is [bstr, map, bstr]; an array of them is a
+    # list whose first element is itself a list. RFC 9338 leaves the two
+    # distinguishable by shape, and so does §9.4.
+    if isinstance(slot, list) and len(slot) == 3 and isinstance(slot[0], bytes):
+        entries = [slot]
+    elif isinstance(slot, list):
+        entries = slot
+    else:
+        return [{"kid": "", "status": "invalid"}]
+
+    try:
+        payload = _signed_payload(manifest)
+    except (KeyError, ContainerError):
+        # A manifest so broken it has no signed bytes has nothing to
+        # countersign; verify() has already refused it on its own grounds.
+        return [{"kid": "", "status": "invalid"} for _ in entries]
+
+    results = []
+    for entry in entries:
+        if not (isinstance(entry, list) and len(entry) == 3 and isinstance(entry[0], bytes)
+                and isinstance(entry[1], dict) and isinstance(entry[2], bytes)):
+            results.append({"kid": "", "status": "invalid"})
+            continue
+        sign_protected, _sign_unprotected, counter_signature = entry
+        try:
+            header = cbor_decode(sign_protected)
+        except ContainerError:
+            header = None
+        kid = header.get(4) if isinstance(header, dict) else None
+        kid_hex = kid.hex() if isinstance(kid, bytes) else ""
+        # §9.4: the countersigner's protected header MUST carry alg and kid.
+        # Either missing, and this is not a countersignature this version
+        # defines. ES256 is the only algorithm it requires.
+        if not isinstance(header, dict) or header.get(1) != -7 or not isinstance(kid, bytes):
+            results.append({"kid": kid_hex, "status": "invalid"})
+            continue
+        held = held_keys.get(kid)
+        if held is None:
+            results.append({"kid": kid_hex, "status": "unheld"})
+            continue
+        structure = cbor_encode([
+            "CounterSignatureV2",
+            body_protected,
+            sign_protected,
+            b"",
+            payload,
+            [publisher_signature],
+        ])
+        try:
+            good = verify_es256(base64.b64decode(held), counter_signature, structure)
+        except ValueError:
+            good = False
+        results.append({"kid": kid_hex, "status": "valid" if good else "invalid"})
+    return results
+
+
+def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str, str]:
+    """Verify the manifest's signature with a base64 SPKI key, or say why not."""
+    signature = manifest.get("signature")
+    if not signature:
+        return "unsigned", ""
+
+    version = manifest.get("manifestVersion")
+    signed_entries: dict[str, str] = manifest.get("signedEntries", {})
+
+    if version == 3:
+        # §9.2, both mandatory changes. Checked before the key, because they are
+        # facts about the manifest that hold whether or not anyone can verify
+        # the signature: a version 3 signed set that lists the shell is wrong
+        # in itself.
+        if CONTAINER_ENTRY in signed_entries:
+            return "invalid", "SIGNED_SET_MISMATCH"
+        # `hashes` MAY be present and MAY omit signed entries; where both list
+        # an entry they MUST agree.
+        for name, digest in signed_entries.items():
+            if name in hashes and hashes[name] != digest:
+                return "invalid", "SIGNED_SET_MISMATCH"
+
+    if not key:
+        # Signed, but nothing here can check it. Not the same as unsigned, and
+        # reporting it as such would launder a claim nobody verified.
+        return "unverifiable", "SIGNATURE_UNVERIFIABLE"
+
+    if version != 3:
+        # Version 2, unchanged. Reconciled before verifying, per §3.1: otherwise
+        # a signature could be validated over digests other than the ones just
+        # checked.
+        for name, digest in signed_entries.items():
+            if hashes.get(name) != digest:
+                return "invalid", "SIGNED_SET_MISMATCH"
+        # WAS A GAP, and a serious one. The rule above is one direction. `hashes`
+        # is outside the signature, so an entry added to the archive and to
+        # `hashes` with a matching digest passed integrity and passed signature
+        # without touching the signed set — and runtime/schema.json, added that
+        # way, has its migration SQL executed by a host under the pinned
+        # publisher's badge. Every digested entry except the database must be in
+        # the signed set. Now S3.1, and restated as a version 2 rule in §9.1.
+        for name in hashes:
+            if name != DATABASE_ENTRY and name not in signed_entries:
+                return "invalid", "SIGNED_SET_MISMATCH"
+
+    payload = _signed_payload(manifest)
+
+    parsed = _parse_envelope(signature)
+    if parsed is None:
         return "invalid", "UNVERIFIED_SIGNATURE"
+    if isinstance(parsed, str):
+        return "invalid", parsed
+    protected, unprotected, carried, raw_signature = parsed
     # §9.4: the unprotected header MAY carry label 11, a countersignature or an
-    # array of them. Not verified here yet; one this reader cannot verify is
-    # treated as absent, never as a refusal, so its presence changes nothing.
-    _countersignatures = unprotected.get(COUNTERSIGNATURE_LABEL)
+    # array of them. Never verified here: one this reader cannot verify is
+    # treated as absent, never as a refusal, so its presence changes no
+    # verdict. `countersignatures()` reports on them separately.
     if carried is not None:
         # The payload is detached. A second copy inside the envelope is one that
         # can disagree with the manifest, and it would be the one the signature

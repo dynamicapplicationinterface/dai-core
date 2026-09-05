@@ -12,7 +12,7 @@
  */
 import { unzipSync, zipSync } from "fflate";
 import { isRefusalCode, type RefusalCode } from "./refusals.js";
-import { verifySign1 } from "./cose.js";
+import { verifyCountersignatures, verifySign1, type CountersignatureVerdict } from "./cose.js";
 import {
   MAGIC,
   SECTION,
@@ -1097,4 +1097,44 @@ export function refatten(container: ParsedContainer): string {
     PAYLOAD_TAG_RE,
     (_match, open: string, close: string) => open + payload + close,
   );
+}
+
+/**
+ * Who else signed this document, against keys this host holds (spec §9.4).
+ *
+ * `heldKeys` maps a countersigner's kid (hex) to its base64 SPKI — from a
+ * root list, or from whatever the host was provisioned with. A kid the host
+ * does not hold is reported `unheld`, which a host shows as nothing at all.
+ * Never a refusal: the publisher's signature has already been checked by the
+ * time this is asked, and a second party's absence changes nothing about it.
+ */
+export async function countersignaturesOf(
+  container: ParsedContainer,
+  heldKeys: Record<string, string>,
+): Promise<CountersignatureVerdict[]> {
+  const manifest = container.manifest;
+  if (!manifest.signature) return [];
+  const payload = signedBytes(signedViewOf(manifest));
+  const envelope = fromBase64(manifest.signature);
+
+  const importKey = async (spki: string) =>
+    crypto.subtle.importKey("spki", fromBase64(spki), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+
+  return verifyCountersignatures(envelope, payload, (kidHex) => {
+    const spki = heldKeys[kidHex];
+    if (!spki) return undefined;
+    return async (signature, bytes) => {
+      try {
+        const key = await importKey(spki);
+        return crypto.subtle.verify(
+          { name: "ECDSA", hash: "SHA-256" },
+          key,
+          signature as unknown as ArrayBuffer,
+          bytes as unknown as ArrayBuffer,
+        );
+      } catch {
+        return false;
+      }
+    };
+  });
 }

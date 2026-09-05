@@ -1,0 +1,30 @@
+{
+  "suiteVersion": 1,
+  "generatedBy": "scripts/build-conformance.mjs",
+  "vectors": [
+    {
+      "name": "countersignature-valid, key held",
+      "file": "cases/countersignature-valid.dai.html",
+      "heldKeys": {
+        "33303935386332313866393333616536": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAtuwVEhCbRQBZCeNyoPMARx0aZ2nvW/2Sr1nKajKAqN3FaCp4hJMMxPZU988S33MHC+VlUGxmeodAYUF5qrH1Q=="
+      },
+      "expect": [
+        {
+          "kid": "33303935386332313866393333616536",
+          "status": "valid"
+        }
+      ]
+    },
+    {
+      "name": "countersignature-valid, key not held",
+      "file": "cases/countersignature-valid.dai.html",
+      "heldKeys": {},
+      "expect": [
+        {
+          "kid": "33303935386332313866393333616536",
+          "status": "unheld"
+        }
+      ]
+    }
+  ]
+}

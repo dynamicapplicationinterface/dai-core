@@ -959,6 +959,14 @@ never as a refusal. A countersignature that verifies against a held key is
 reported to the person as what it is: a second party who signed the same
 document. Its meaning is that party's to define.
 
+A host reports countersignatures only on a document whose publisher signature
+verified; a document that fails §7 is refused before anybody asks who else
+signed it. A label 11 value that is not a three-element array or an array of
+them, or a countersignature whose `kid` is not a byte string, is reported as
+one invalid countersignature with an empty kid. Wherever this document writes a
+kid as text — root lists, vectors, reports — it is the kid's bytes in lowercase
+hex.
+
 Because it is in the unprotected header, adding or removing a countersignature
 changes no signed byte and no digest. The manifest's `signature` field is the
 base64 of the whole envelope, countersignatures included.
@@ -1061,7 +1069,7 @@ without a first sighting, and roots for §9.4 and §9.5. The file is JSON:
     { "spki": "<base64 SPKI>", "name": "Acme Finance", "org": "Acme Corp" }
   ],
   "countersigners": [
-    { "kid": "<base64 kid bytes>", "spki": "<base64 SPKI>", "name": "Acme release signer" }
+    { "kid": "<kid bytes, lowercase hex>", "spki": "<base64 SPKI>", "name": "Acme release signer" }
   ],
   "sigstore": [
     { "name": "Acme Fulcio", "fulcioRoots": ["<PEM>"], "rekorKeys": ["<base64 SPKI>"] }
