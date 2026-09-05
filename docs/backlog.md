@@ -26,7 +26,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 0.1 | Signed set closed | [x] `f60466d` |
 | 0.2 | The host owns the runtime | [x] `7f6ec7c` — bootloader; the engine follows with 2.1 |
 | 0.3 | The shell binds its frame's messages | [x] `870c1e5` — **Phase 0 closed** |
-| 1.1 | Launch card with backed claims | [ ] |
+| 1.1 | Launch card with backed claims | [x] `f625dcc` |
 | 1.2 | One card for every carrier | [ ] |
 | 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [ ] |
@@ -81,20 +81,14 @@ to the host origin, OPFS, IndexedDB or Tauri IPC, and a test asserts each.
 
 ## Phase 1 — The launch surface
 
-### 1.1 A launch card, with claims the host can back
-
-Name, icon, publisher (or "unsigned"), then a short list of ✓ claims. A ✓ may
-be shown only when the host's declared class and profile back it — the host
-profile (closed, 11) is what backs it, and the probe is what proves the
-profile.
-
-**Exit:** a host failing any §4 probe clause cannot render the matching ✓; a
-test asserts the DOM.
-
 ### 1.2 One card for every carrier and both hosts
 
 Link, file, share attachment and assistant hand-off all land on the same
 screen.
+
+The card exists (1.1) and the link and share paths land on it. What is left
+is the rest of the carriers — the file picker, `launchQueue`, and the two the
+links in Phase 2 add — and holding the screen identical across all of them.
 
 **Exit:** snapshot tests show an identical card from `?open=`, `#a=`,
 `/d/<id>`, the file picker and `launchQueue`.
@@ -345,6 +339,10 @@ Kept so the reasoning stays with the record.
 - **9. Two host classes, and the site says which is which** — `834e504`.
 - **10. The recipe teaches the schema, every door declares it, the kit
   survives a colon** — `c1b04b8`. `upgradeOf` is the plumbing 4.2 needs.
+- **1.1 A launch card, with claims the host can back** — `f625dcc`. Name,
+  icon, publisher and four ticks, drawn after verification; each tick names
+  the §4 clauses behind it and vanishes with any of them. The claims table is
+  in `src/host-profile.ts`; the link and share paths land on it.
 - **1.3 Install after use, not on open** — `a7df929`. `dai:used` from the
   kit and from a save, relayed once as `DAI_HOST_USED`; `describe` at mount,
   `offer` on first use; asked at most twice. The shell marks `used` in its
