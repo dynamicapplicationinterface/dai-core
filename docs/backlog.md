@@ -48,7 +48,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [ ] |
-| 5.1 | The north star, measured | [ ] |
+| 5.1 | The north star, measured | [~] the walk is measured; a device for CI is a decision |
 | 5.2 | Propagation without a beacon | [ ] relay side |
 | v3 | manifestVersion 3: spec | [x] `9adbfb8` |
 | v3 | readers accept 3, refuse others by name | [x] `00af8e6` — opener, website and desktop v0.2.0 |
@@ -645,11 +645,23 @@ and open on device B.
 ### 5.1 The north star, measured
 
 Tap → first successful `data-run`, cold and warm, on a mid-range Android over
-cellular, from the opener's existing timing table (`?timing`,
-`performance.md`). Targets: warm under 1 s, cold under 3 s, inline-link cold
-under 1.5 s.
+cellular. Targets: warm under 1 s, cold under 3 s, inline-link cold under
+1.5 s.
 
-**Exit:** CI publishes the number per release from a real device.
+**The walk is measured.** `npm run measure` opens every carrier — inline cold
+and warm, reference cold and warm, and a file for comparison — with a fresh
+browser profile for each cold open, and stops the clock when the application
+inside the container says it is interactive rather than when this app has
+handed it over. The numbers and what they already say are in
+`docs/performance.md`; the short version is that the reference link beats the
+inline one, and warm barely beats cold, so the wait is work and not transfer.
+
+**Still a decision — the device.** Everything above runs headless on whoever
+invokes it, which makes it a floor rather than the number. Publishing the
+number per release means CI reaching a real mid-range Android on a real
+network, and every way of doing that is a recurring cost. That is a decision
+about spend, not an engineering step, and it is the only thing between here
+and the exit.
 
 ### 5.2 Propagation without a beacon
 

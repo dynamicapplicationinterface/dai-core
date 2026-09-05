@@ -83,6 +83,7 @@
     "try": "node scripts/try-container.mjs",
     "evaluate": "node scripts/evaluate.mjs",
     "deploys": "node scripts/check-deploys.mjs",
+    "measure": "node scripts/measure.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json",
     "prepublishOnly": "npm run build",

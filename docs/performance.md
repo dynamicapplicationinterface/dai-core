@@ -22,6 +22,39 @@ sectioned     604 KB    189 ms    verified  63  prepared  76  ...   boot 33  dec
 runner reports the same breakdown on whatever device it is running on when the
 address carries `?timing`.
 
+## Tap to usable, per carrier
+
+The table above is the file path on a desktop. The number the project is
+actually judged on is the link path, and `npm run measure` walks it: a fresh
+browser profile for every cold open — no OPFS, no IndexedDB, no HTTP cache —
+because "cold" measured in a warm profile is the number that flatters, and a
+person sent a link gets the other one.
+
+```
+                 tap → usable   inside the container
+inline cold          423 ms     boot 32  decoded 37  unzipped 38  digests 40  frame 40  interactive 72
+inline warm          386 ms     boot 46  decoded 52  unzipped 53  digests 56  frame 57  interactive 99
+reference cold       314 ms     boot 36  decoded 41  unzipped 42  digests 44  frame 45  interactive 71
+reference warm       238 ms     boot 36  decoded 41  unzipped 41  digests 43  frame 44  interactive 80
+file                 327 ms     boot 41  decoded 47  unzipped 47  digests 49  frame 50  interactive 69
+```
+
+The clock starts at the tap and stops when the application inside the container
+says it is interactive — not when this app has handed the document over, which
+is our half of the wait and would be the flattering mark to stop at.
+
+These are a floor and not the target: headless, on a development machine, with
+the store on localhost. What they are good for is a figure per carrier that
+moves when the code moves. The target — under a second warm, under three cold,
+on a mid-range Android over cellular — needs that phone, and publishing the
+number per release needs one that CI can reach.
+
+Two things the table already says. The reference link is *faster* than the
+inline one, because a 32 kB fragment is decompressed on the main thread while a
+fetch is not, and because the store's copy is not base64. And warm is not much
+faster than cold, which says the wait is work rather than transfer — the same
+thing the desktop table said, from the other end.
+
 ## What that settled
 
 **The costs everyone suspected are not the costs.** Decoding base64 is 3 ms.
