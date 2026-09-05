@@ -179,7 +179,9 @@ test("a document crosses from one origin to another and runs", async ({ page, co
   );
 
   const runner = await opened;
-  // Not a download, not a file picker: the document is simply running.
+  // Not a download, not a file picker. A document this device has not met
+  // lands on the card whatever brought it (1.2), and one press runs it.
+  await runner.locator("#card-open").click({ timeout: 30_000 });
   await expect(runner.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
   await expect(runner.locator("#cartridge")).toBeVisible();
   // Named by the manifest inside the document, not by the name the sending

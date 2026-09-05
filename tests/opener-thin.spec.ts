@@ -6,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { SUBSTITUTABLE_ENTRIES } from "../src/core.js";
 import { parseContainer, thinned } from "../src/container.js";
+import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const KEY = resolve(repo, "conformance", "signing-key.pem");
@@ -88,7 +89,7 @@ test.describe("a document published without its engine, in the opener", () => {
     });
 
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "Thin.dai.html",
       mimeType: "text/html",
       buffer: Buffer.from(thin, "utf8"),
@@ -126,7 +127,7 @@ test.describe("a document published without its engine, in the opener", () => {
     await page.route("**/runtime/sqlite3.*", (route) => route.abort());
 
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "Thin.dai.html",
       mimeType: "text/html",
       buffer: Buffer.from(thin, "utf8"),

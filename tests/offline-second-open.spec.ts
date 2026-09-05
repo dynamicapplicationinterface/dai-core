@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -35,7 +36,7 @@ test.describe("opening a document you already have, with no network", () => {
     await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, {
       timeout: 60_000,
     });
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "chore-chart.dai.html",
       mimeType: "text/html",
       buffer: Buffer.from(built.html, "utf8"),

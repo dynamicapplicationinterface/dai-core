@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { HOST_SHELL_META, hostShell, parseContainer } from "../src/container.js";
+import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -67,7 +68,7 @@ test.describe("a hostile publisher shell", () => {
 
     await page.goto(RUNNER_URL);
     await page.evaluate(() => localStorage.removeItem("hostile-shell"));
-    await page.setInputFiles("#file", out);
+    await openFile(page, out);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     const outer = page.frameLocator("#cartridge");

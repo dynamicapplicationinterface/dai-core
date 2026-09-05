@@ -421,8 +421,7 @@ async function openFromUrl(address: string): Promise<void> {
   const name = url.pathname.split("/").pop() || "container.dai";
   slot.classList.remove("busy");
   await ingest(new File([bytes], name, { type: "text/html" }), {
-    confirm: true,
-    from: `From ${url.hostname}. Nothing is uploaded — it runs on this device.`,
+        from: `From ${url.hostname}. Nothing is uploaded — it runs on this device.`,
   });
 }
 
@@ -466,9 +465,9 @@ let arrivedAsFile = true;
  * from a stranger. A link and a share are. Item 1.2 is where every carrier
  * lands on the same screen; this is the half that exists to be landed on.
  */
-type Carrier = { confirm: false } | { confirm: true; from: string };
+type Carrier = { from?: string };
 
-async function ingest(file: File, carrier: Carrier = { confirm: false }): Promise<void> {
+async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
 
@@ -499,13 +498,27 @@ async function ingest(file: File, carrier: Carrier = { confirm: false }): Promis
     }
 
     /*
-     * The card, for a document that arrived from somebody else.
+     * The card, for a document this device has not met before.
+     *
+     * Keyed on familiarity, not on carrier. It used to be shown for a link and
+     * a share and not for a file the person picked, on the theory that picking
+     * is an explicit act — but the question the card answers is "what is this
+     * thing", and that question is the same whether it came by mail or by a
+     * file chooser. So: a document not yet in this device's library, or one
+     * whose key was not seen before, gets the card however it arrived. A
+     * document already kept here under the same key opens directly, which is
+     * what the third open behaving like an app means.
      *
      * Shown after verification, so every word on it — the name, the icon, the
      * publisher — is a checked fact rather than a claim the file made about
      * itself. Nothing mounts until it is asked for.
      */
-    if (carrier.confirm) {
+    const familiar =
+      verdict.status === "trusted" &&
+      (await listCartridgesFromLibrary()).some(
+        (item) => item.documentUuid === cartridge.manifest.documentUuid,
+      );
+    if (!familiar) {
       slot.classList.remove("busy");
       say("");
       await showCard({
@@ -514,7 +527,7 @@ async function ingest(file: File, carrier: Carrier = { confirm: false }): Promis
         signature: cartridge.signature,
         fingerprint: cartridge.publicKeyFingerprint,
         trust: verdict.status === "trusted" ? "known" : "first",
-        from: carrier.from,
+        from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
         applied: ISOLATION_CLAUSES,
       });
       slot.classList.add("busy");
@@ -935,8 +948,7 @@ async function openFromLink(carried: string): Promise<void> {
   slot.classList.remove("busy");
   arrivedAsFile = false;
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
-    confirm: true,
-    from: "From the link you followed. Nothing is uploaded — it runs on this device.",
+        from: "From the link you followed. Nothing is uploaded — it runs on this device.",
   });
 }
 
@@ -975,8 +987,7 @@ async function start(): Promise<void> {
     const collected = await collectSharedContainer();
     if (collected) {
       await ingest(collected, {
-        confirm: true,
-        from: "Shared to this app. Nothing is uploaded — it runs on this device.",
+                from: "Shared to this app. Nothing is uploaded — it runs on this device.",
       });
       return;
     }
@@ -1028,7 +1039,9 @@ async function start(): Promise<void> {
       window.opener as Window,
       ({ name, bytes }) => {
         arrivedAsFile = false;
-        void ingest(new File([bytes as BlobPart], name, { type: "text/html" }));
+        void ingest(new File([bytes as BlobPart], name, { type: "text/html" }), {
+          from: "From the page that just built it. Nothing is uploaded — it runs on this device.",
+        });
       },
       { allows: mayHandOver, window },
     );

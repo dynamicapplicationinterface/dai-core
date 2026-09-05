@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
+import { openFile } from "./open.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTAINER = resolve(here, "fixture/fixture.dai.html");
@@ -115,7 +116,7 @@ test.describe("cartridge ingestion", () => {
     await page.goto(RUNNER_URL);
     await expect(page.locator("#cartridge")).toBeHidden();
 
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
 
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await expect(page.locator("#cartridge")).toBeVisible();
@@ -146,7 +147,7 @@ test.describe("cartridge ingestion", () => {
     const sectioned = resolve(here, "..", "conformance", "cases", "sectioned-valid.dai");
 
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", sectioned);
+    await openFile(page, sectioned);
 
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
@@ -173,7 +174,7 @@ test.describe("cartridge ingestion", () => {
 
   test("reports the publisher fingerprint it verified", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
 
     // The fixture is signed, so the runner must say so rather than staying mute
     // about provenance. It is no longer on the bar: provenance is a question
@@ -215,7 +216,7 @@ test.describe("cartridge ingestion", () => {
         open + Buffer.from(zipSync(archive, { level: 9 })).toString("base64") + close,
     );
 
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "tampered.dai.html",
       mimeType: "text/html",
       buffer: Buffer.from(tampered, "utf8"),
@@ -240,7 +241,7 @@ test.describe("cartridge ingestion", () => {
     );
     expect(tampered).not.toBe(original);
 
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "reshelled.dai.html",
       mimeType: "text/html",
       buffer: Buffer.from(tampered, "utf8"),
@@ -254,7 +255,7 @@ test.describe("cartridge ingestion", () => {
   test("refuses a file that is not a container at all", async ({ page }) => {
     await page.goto(RUNNER_URL);
 
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "notes.html",
       mimeType: "text/html",
       buffer: Buffer.from("<!doctype html><body>just a page", "utf8"),
@@ -412,7 +413,7 @@ test.describe("cartridge ingestion", () => {
      * answer counts.
      */
     await page.goto(`${RUNNER_URL}?timing`);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     // Waiting for the phase, not for the table. The handshake carries an
@@ -447,7 +448,7 @@ test.describe("cartridge ingestion", () => {
      * cartridge and the database; all it lacked was which one was open.
      */
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     await page.reload();
@@ -460,7 +461,7 @@ test.describe("cartridge ingestion", () => {
     // Ejecting is how somebody says they are done with it. Reopening what they
     // just closed would make the button useless.
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     await menu(page, "#eject");
@@ -477,7 +478,7 @@ test.describe("cartridge ingestion", () => {
      * between visits.
      */
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     await page.evaluate(async () => {
@@ -521,7 +522,7 @@ test.describe("cartridge ingestion", () => {
 
   test("ejects cleanly and can load another container", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     await menu(page, "#eject");
@@ -529,7 +530,7 @@ test.describe("cartridge ingestion", () => {
     await expect(page.locator("#slot")).toBeVisible();
 
     // The input is cleared on eject, so re-choosing the same file still fires.
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
   });
 });
@@ -550,7 +551,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
 
   test("establishes DAI_HOST_HANDSHAKE on container boot", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const container = page.frameLocator("#cartridge");
@@ -571,7 +572,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     });
 
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const appFrame = await getInnerAppFrame(page);
@@ -589,7 +590,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
 
   test("persists state reload across cartridge eject and remount", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const appFrame = await getInnerAppFrame(page);
@@ -610,7 +611,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Re-ingest same container
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     // Verify reloaded container mounts the OPFS database
@@ -632,7 +633,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
       delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
     });
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const appFrame = await getInnerAppFrame(page);
@@ -661,7 +662,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Re-ingest exported container file into runner
-    await page.setInputFiles("#file", {
+    await openFile(page, {
       name: "exported.dai.html",
       mimeType: "text/html",
       buffer: Buffer.from(exportedContent, "utf8"),
@@ -701,7 +702,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
 
   test("persists imported cartridges in library tray and cleans up OPFS database upon deletion", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     // Save database state
@@ -762,7 +763,7 @@ test.describe("on a phone", () => {
 
   test("the chrome is one line and the page does not scroll", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const layout = await page.evaluate(() => ({
@@ -781,7 +782,7 @@ test.describe("on a phone", () => {
 
   test("the words on screen are not the words of the people who built it", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await page.click("#more");
 
     const sheet = await page.locator("#sheet").innerText();
@@ -839,7 +840,7 @@ test.describe("keeping it", () => {
   test("iOS is told the gesture, because iOS has no prompt to fire", async ({ page }) => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
 
@@ -854,7 +855,7 @@ test.describe("keeping it", () => {
   test("dismissing it means it is not asked again", async ({ page }) => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
     await expect(page.locator("#install")).toBeVisible();
@@ -884,7 +885,7 @@ test.describe("keeping it", () => {
      */
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
@@ -904,7 +905,7 @@ test.describe("keeping it", () => {
     // A third open with no answer is an answer. The menu still has it.
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
     await expect(page.locator("#install-text")).toContainText("To keep");
@@ -947,7 +948,7 @@ test.describe("keeping it, per device", () => {
       delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
     });
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const download = page.waitForEvent("download");
@@ -958,7 +959,7 @@ test.describe("keeping it, per device", () => {
 
   test("the menu always has a way to keep it, with steps for this device", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await page.click("#more");
     await page.click("#keep");
@@ -969,7 +970,7 @@ test.describe("keeping it, per device", () => {
 
   test("an icon for one document opens that document", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     const uuid = await page.evaluate(
       () => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid,
@@ -997,7 +998,7 @@ test.describe("keeping it, per device", () => {
       });
     });
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
     await expect(page.locator("#install")).toBeVisible();
@@ -1021,7 +1022,7 @@ test.describe("keeping it, per device", () => {
 test.describe("saves take turns", () => {
   test("two saves at once both land, and the later one is what is kept", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     await expect(app.locator("#app")).toHaveText(/ready/);
@@ -1068,7 +1069,7 @@ test.describe("saves take turns", () => {
 test.describe("host class", () => {
   test("the opener declares itself a viewer, and a save says it kept a copy", async ({ page }) => {
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", CONTAINER);
+    await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     await expect(app.locator("#app")).toHaveText(/ready/);
@@ -1150,7 +1151,7 @@ test.describe("a control the kit runs is use too", () => {
       });
     });
     await page.goto(RUNNER_URL);
-    await page.setInputFiles("#file", file);
+    await openFile(page, file);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");

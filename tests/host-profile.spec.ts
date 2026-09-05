@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { ISOLATION_CLAUSES, verifyClaim } from "../src/host-profile.js";
+import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const probe = resolve(repo, "conformance", "isolation-probe.dai.html");
@@ -47,7 +48,7 @@ test.describe("the opener's claim, checked by the probe", () => {
 
   test("every clause the opener claims, the probe finds blocked", async ({ page }) => {
     await page.goto("http://localhost:5175/");
-    await page.setInputFiles("#file", probe);
+    await openFile(page, probe);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     // The shell passes the report up with the claim attached; the opener keeps

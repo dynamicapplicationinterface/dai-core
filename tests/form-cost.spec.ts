@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -73,7 +74,7 @@ async function open(page: import("@playwright/test").Page, file: string): Promis
   });
   await page.reload();
 
-  await page.setInputFiles("#file", file);
+  await openFile(page, file);
   await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
   const collected = await page.waitForFunction(

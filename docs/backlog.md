@@ -27,7 +27,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 0.2 | The host owns the runtime | [x] `7f6ec7c` — bootloader; the engine follows with 2.1 |
 | 0.3 | The shell binds its frame's messages | [x] `870c1e5` — **Phase 0 closed** |
 | 1.1 | Launch card with backed claims | [x] `f625dcc` |
-| 1.2 | One card for every carrier | [ ] decided: card keyed on familiarity |
+| 1.2 | One card for every carrier | [x] `PENDING` — `/d/<id>` joins when 2.3 lands |
 | 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [x] `0f9f72d` — the unfurl inherits it with 3.3 |
 | 1.5 | Look inside | [ ] |
@@ -100,6 +100,13 @@ links in Phase 2 add — and holding the screen identical across all of them.
 - Same UUID with a different key, a verification failure, a schema refusal, or
   a superseding document (4.1): the card returns, showing what changed. Those
   are trust-state changes and deserve the screen.
+
+Done in `PENDING`. One rule in one place: a document is familiar when its key
+was seen before *and* it is in this device's library; anything else gets the
+card, however it arrived — file picker, link, share and the website's handoff
+included. The mismatch case still refuses outright rather than returning on
+the card; that becomes the Conflict state in 4.3. `/d/<id>` joins when 2.3
+exists.
 
 **Exit:** snapshot tests show an identical card from `?open=`, `#a=`,
 `/d/<id>`, the file picker and `launchQueue` on first sighting; a second open

@@ -4,6 +4,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { ISOLATION_CLAUSES, verifyClaim } from "../src/host-profile.js";
+import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(repo, "apps/runner/dist");
@@ -72,7 +73,7 @@ test.describe("the opener on a host that does nothing", () => {
     test.slow();
 
     await page.goto(origin);
-    await page.setInputFiles("#file", probe);
+    await openFile(page, probe);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
     const handle = await page.waitForFunction(
@@ -110,7 +111,7 @@ test.describe("the opener on a host that does nothing", () => {
     });
 
     await page.goto(origin);
-    await page.setInputFiles("#file", probe);
+    await openFile(page, probe);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await page.waitForFunction(
       () =>

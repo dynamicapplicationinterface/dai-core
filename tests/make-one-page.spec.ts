@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openFile } from "./open.js";
 
 const PAGE = "http://localhost:5176/make-one";
 
@@ -274,7 +275,7 @@ test.describe("what the make-one page hands over actually runs", () => {
 
     const opener = await context.newPage();
     await opener.goto("http://localhost:5175/");
-    await opener.setInputFiles("#file", { name: "beach-trip.dai.html", mimeType: "text/html", buffer: Buffer.from(html) });
+    await openFile(opener, { name: "beach-trip.dai.html", mimeType: "text/html", buffer: Buffer.from(html) });
     await expect(opener.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     const app = opener.frameLocator("#cartridge").frameLocator("#dai-app");
