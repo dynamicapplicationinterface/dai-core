@@ -310,6 +310,21 @@ async function createApp(
     `Wrote ${outputPath}\n` +
       `${formatBytes(Buffer.byteLength(result.html))}, ${result.entryCount} entries, ${result.engine}\n` +
       `document ${result.documentUuid}\n` +
+      /*
+       * What this replaces, said out loud (backlog 4.2).
+       *
+       * A second version built with `upgradeOf` names the document it
+       * supersedes in its signed set, and a host that holds that document
+       * brings its data across under the same publisher key. That is the
+       * difference between an improved app and a stranger with a similar
+       * name, and it is invisible unless the tool that made it says so — an
+       * assistant reporting "made a new app" when it made a successor is the
+       * one sentence that would make somebody expect their data to be gone.
+       */
+      (result.manifest.supersedes
+        ? `replaces ${result.manifest.supersedes} — a host that has it brings its data across, ` +
+          `under the same key, and keeps the old one as it was\n`
+        : "") +
       `${
         result.publicKeyFingerprint
           ? `signed ${result.publicKeyFingerprint}`

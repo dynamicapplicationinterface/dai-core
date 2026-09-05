@@ -44,7 +44,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.5 | iOS solved by the link | [ ] |
 | 3.6 | Second-use integrations only | [x] the rule is a test now |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
-| 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
+| 4.2 | "Modify this app" | [~] output carries `supersedes`; the card affordance is a decision |
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [ ] |
@@ -563,8 +563,20 @@ An affordance on the card that hands the bundle back to an assistant with
 `upgradeOf` set (closed, 10), so the improved version is a successor rather
 than a stranger.
 
-**Exit:** MCP `create` with `upgradeOf` refuses a schema move without a
-migration (done); its output carries `supersedes`.
+**Exit, both halves met.** MCP `create` with `upgradeOf` refuses a schema move
+with no migration (`c1b04b8`), and its output now names what the build
+replaces, in the words the host will act on: *"replaces &lt;uuid&gt; — a host
+that has it brings its data across, under the same key, and keeps the old one
+as it was."* The CLI says the same, shorter. This is not cosmetic: an
+assistant reporting "made a new app" when it made a successor is the one
+sentence that makes somebody expect their data to be gone. Tested in
+`tests/mcp.spec.ts` — a successor says it, a first version does not.
+
+**Still a decision — the affordance itself.** Getting the bundle from the card
+back to an assistant means picking how: the clipboard, a file the person
+re-attaches, or a `dai bundle` the MCP server reads from disk. Each implies a
+different thing about where the assistant is running and what it can reach,
+and one of them has to be chosen before any of it is written.
 
 ### 4.3 A publisher who is somebody
 

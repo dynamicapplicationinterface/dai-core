@@ -352,6 +352,30 @@ test.describe("rebuilding an app that already exists", () => {
       upgradeOf: "notes.dai.html",
     });
     expect(second.isError).toBe(false);
+
+    /*
+     * And it says what it replaced (backlog 4.2).
+     *
+     * The successor names the document it supersedes in its signed set, and a
+     * host that holds that document brings its data across. An assistant that
+     * reported "made a new app" would leave somebody expecting their notes to
+     * be gone — so the report has to carry it, in the same words the host
+     * will act on.
+     */
+    const first = await call(root, "create_dai_app", {
+      files: v1,
+      appName: "Notes",
+      outputPath: "notes-again.dai.html",
+    });
+    const firstUuid = /document ([0-9a-f-]{36})/.exec(first.text)?.[1];
+    expect(firstUuid).toBeTruthy();
+
+    const said2 = second.text;
+    expect(said2).toContain("replaces ");
+    expect(said2).toMatch(/replaces [0-9a-f-]{36}/);
+    expect(said2).toContain("brings its data across");
+    // A first version replaces nothing, and says nothing about replacing.
+    expect(first.text).not.toContain("replaces ");
   });
 
   test("the tool tells the model to pass the previous file", () => {

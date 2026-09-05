@@ -222,6 +222,9 @@ async function build(parsed: Parsed): Promise<number> {
     `${out}\n` +
       `  ${result.entryCount} entries, ${result.engine}\n` +
       `  document ${result.documentUuid}\n` +
+      // What it replaces, when it replaces something (4.2). A successor that
+      // does not say so reads as a stranger with a similar name.
+      (result.manifest.supersedes ? `  replaces ${result.manifest.supersedes}\n` : "") +
       `  ${
         result.publicKeyFingerprint
           ? `signed ${result.publicKeyFingerprint}`
