@@ -8,6 +8,7 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
+import { decodeInline, inlineFrom } from "../../../src/link.js";
 import { hostShell } from "../../../src/container.js";
 // The shell this host runs, shipped with this host: never the container's own.
 import HOST_TEMPLATE from "../../../dist/template.html?raw";
@@ -889,6 +890,65 @@ launch?.setConsumer((params: LaunchParams) => {
  * the library on screen with the reason, rather than an app that silently
  * stopped being the one they had.
  */
+/**
+ * Opens the document a link carries.
+ *
+ * Everything after the `#` stays in the browser: a fragment is never sent to
+ * a server, not to this origin and not into any log. So a link built this way
+ * carries the whole document and depends on nothing — no store to be down, no
+ * address to expire, nothing to fetch. It is also the only carrier that works
+ * with the network switched off.
+ */
+async function openFromLink(carried: string): Promise<void> {
+  slot.classList.add("busy");
+  say("Unpacking the document from the link…");
+
+  let html: string;
+  try {
+    html = await decodeInline(carried);
+  } catch {
+    slot.classList.remove("busy");
+    /*
+     * Almost always a link cut in transit, and worth saying so.
+     *
+     * Chat clients linkify up to a length and mail wraps long lines, so a link
+     * that carries a document is a link that can arrive half-present. The
+     * reading somebody reaches on their own is that this opener is broken.
+     */
+    say(
+      "This link is damaged. It was probably shortened or wrapped on the way here. " +
+        "Ask whoever sent it to send the file instead.",
+      true,
+    );
+    return;
+  }
+
+  slot.classList.remove("busy");
+  arrivedAsFile = false;
+  await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
+    confirm: true,
+    from: "From the link you followed. Nothing is uploaded — it runs on this device.",
+  });
+}
+
+/*
+ * A link pasted into a tab this app is already open in.
+ *
+ * Adding a fragment to the address a page is already on is a same-document
+ * navigation: nothing reloads and no script runs again, so without this the
+ * paste does nothing at all and the person is looking at an empty chooser
+ * with their link in the address bar.
+ *
+ * Only while nothing is open. A document already running has state somebody
+ * made, and replacing it because an address changed would be this app throwing
+ * away work nobody asked it to throw away.
+ */
+window.addEventListener("hashchange", () => {
+  if (loaded) return;
+  const carried = inlineFrom(location.hash);
+  if (carried) void openFromLink(carried);
+});
+
 async function start(): Promise<void> {
   await refreshLibrary();
 
@@ -926,6 +986,18 @@ async function start(): Promise<void> {
    * The document is read and verified here exactly as a chosen file is. Where
    * bytes arrived from says nothing about what they are.
    */
+
+  /*
+   * The document is in the link. Read before anything else here, because it is
+   * the most explicit instruction an address can carry: somebody followed a
+   * link with a document in it. See openFromLink.
+   */
+  const carried = inlineFrom(location.hash);
+  if (carried) {
+    await openFromLink(carried);
+    return;
+  }
+
   if (location.hash === "#handoff" && !window.opener) {
     /*
      * Opened for a handoff, and the page that opened us is not reachable.

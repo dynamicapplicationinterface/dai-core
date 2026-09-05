@@ -40,12 +40,41 @@ const PRECACHE = [
   "./runtime/sqlite3.mjs",
 ];
 
+/**
+ * The app's own bundle, whose name nobody here can know.
+ *
+ * Vite writes hashed filenames, so they cannot be listed above, and leaving
+ * them to the runtime cache does not work: on a first visit the page's scripts
+ * are fetched before this worker controls anything, so they are never cached,
+ * and the first time somebody is offline the app fails to load with the shell
+ * served perfectly from cache. That is how it failed — the HTML arrived, the
+ * JavaScript did not, and the page sat empty with nothing to say.
+ *
+ * So the names are read from the document that references them. This makes the
+ * worker independent of the build's naming, which is the same reason it is not
+ * generated.
+ */
+async function appAssets() {
+  const html = await (await fetch("./index.html", { cache: "reload" })).text();
+  const found = new Set();
+  for (const match of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    const url = match[1];
+    // Same-origin build output only. An absolute URL is somebody else's server
+    // and has no business in this cache.
+    if (url.startsWith("./assets/") || url.startsWith("/assets/")) found.add(url);
+  }
+  return [...found];
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      // Individually, so one missing entry cannot fail the whole install.
-      .then((cache) => Promise.allSettled(PRECACHE.map((url) => cache.add(url))))
+      .then(async (cache) => {
+        const urls = [...PRECACHE, ...(await appAssets().catch(() => []))];
+        // Individually, so one missing entry cannot fail the whole install.
+        await Promise.allSettled(urls.map((url) => cache.add(url)));
+      })
       .then(() => self.skipWaiting()),
   );
 });
@@ -127,20 +156,36 @@ self.addEventListener("fetch", (event) => {
   if (isShell) {
     event.respondWith(
       fromNetwork().catch(() =>
-        caches.match(request).then((hit) => hit || caches.match("./index.html")),
+        caches
+          .match(request)
+          .then((hit) => hit || caches.match(url.pathname))
+          .then((hit) => hit || caches.match("./index.html")),
       ),
     );
     return;
   }
 
-  // Everything else — hashed assets, icons, the manifest — is fine from the
-  // cache, because a new shell names new assets and never the old ones.
+  /*
+   * Everything else — hashed assets, icons, the engine — is fine from the
+   * cache, because a new shell names new assets and never the old ones.
+   *
+   * Matched by URL as well as by request. A reload carries `cache: "reload"`
+   * down into every subresource it asks for, and a request in that mode does
+   * not match a stored entry; the symptom was the whole app failing to load
+   * offline with its own bundle sitting in the cache, and a hand-written
+   * fetch for the identical URL answering perfectly from the same worker.
+   * Matching the URL is what a cache is for here: these names carry a content
+   * hash, so the same name is the same bytes.
+   */
   event.respondWith(
-    caches.match(request).then((hit) => {
-      if (hit) return hit;
-      return fromNetwork().catch(() => {
-        throw new Error("offline and not cached");
-      });
-    }),
+    caches
+      .match(request)
+      .then((hit) => hit || caches.match(url.pathname))
+      .then((hit) => {
+        if (hit) return hit;
+        return fromNetwork().catch(() => {
+          throw new Error("offline and not cached");
+        });
+      }),
   );
 });
