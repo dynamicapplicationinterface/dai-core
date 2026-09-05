@@ -164,3 +164,60 @@ test.describe("the doors that hand a document over", () => {
     expect(said.trim().split("\n").pop()).toMatch(/^https:\/\/opendai\.app\/#a=/);
   });
 });
+
+/**
+ * Every share path carries the link to this document (backlog 2.6).
+ *
+ * The message a shared document travels in used to name the opener's address.
+ * That told a recipient where to go and nothing about what they had: they
+ * still had to find the attachment and hand it over. A link to the document
+ * is the whole thing.
+ */
+test.describe("the share sheet", () => {
+  test("the message carries a link that opens this document", async ({ page }) => {
+    test.slow();
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "examples/packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+
+    await page.goto("http://localhost:5175/");
+    // Stand in for the share sheet, which a test cannot open, and keep what it
+    // was handed. Installed before the page scripts run.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __shared?: { title?: string; text?: string }; navigator: Navigator };
+      // A phone: the share sheet is the save path there, and a desktop is sent
+      // to a file picker instead. See apps/runner/src/platform.ts.
+      Object.defineProperty(w.navigator, "userAgent", {
+        value: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+        configurable: true,
+      });
+      Object.defineProperty(w.navigator, "canShare", { value: () => true, configurable: true });
+      Object.defineProperty(w.navigator, "share", {
+        value: async (data: { title?: string; text?: string }) => {
+          w.__shared = data;
+        },
+        configurable: true,
+      });
+    });
+    await page.reload();
+    await page.setInputFiles("#file", { name: "trip.dai.html", mimeType: "text/html", buffer: Buffer.from(built.html) });
+    await page.locator("#card-open").click({ timeout: 60_000 });
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+
+    await page.evaluate(() =>
+      (window as unknown as { __runner: { exportContainer: () => Promise<void> } }).__runner.exportContainer(),
+    );
+    const shared = await page.evaluate(() => (window as unknown as { __shared?: { text?: string } }).__shared);
+
+    // A link to the document, not an address to visit.
+    expect(shared?.text).toContain("#a=");
+    expect(shared?.text).toContain("Tap to open it");
+    expect(shared?.text).not.toMatch(/Open it at opendai\.app/);
+
+    // And it is this document: the fragment decodes back to what was opened.
+    const value = /#a=([A-Za-z0-9_-]+)/.exec(shared!.text!)![1]!;
+    expect(await decodeInline(value, HOST, engine)).toBe(built.html);
+  });
+});

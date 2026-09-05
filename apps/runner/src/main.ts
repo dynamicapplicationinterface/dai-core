@@ -8,7 +8,8 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
-import { decodeInline, INLINE_CAP, inlineFrom, inlineLink } from "../../../src/link.js";
+import { decodeInline, INLINE_CAP, inlineFrom } from "../../../src/link.js";
+import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
 import { openFromStore, referenceFrom } from "../../../src/store.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
@@ -684,14 +685,27 @@ async function exportContainer(): Promise<void> {
     // will not take a file directly is why the download below exists, and two
     // implementations of "can this device take a file" would eventually
     // disagree about the device somebody is holding.
+    /*
+     * The message carries a link to *this* document (backlog 2.6).
+     *
+     * It used to name the opener's address, which told a recipient where to go
+     * and nothing about what they had: they still had to find the attachment
+     * and hand it over themselves. A link to the document is the whole thing —
+     * tap it and it opens — and the file travels beside it for the person who
+     * would rather keep one. Above the cap there is no link, and the sentence
+     * falls back to the address, which is what it always was.
+     */
+    const shareLink = await linkForDocument(html);
     const handed = await handOff(
       navigator,
       file,
       name,
       // What a recipient with nothing installed needs, in the only place it
       // can reach them: the message the file arrives in.
-      `${name} — ${STANDING_LINE} This one holds its app and its data in one ` +
-        `file. Open it at ${OPENER}`,
+      shareLink
+        ? `${name} — ${STANDING_LINE} Tap to open it:\n${shareLink}`
+        : `${name} — ${STANDING_LINE} This one holds its app and its data in one ` +
+            `file. Open it at ${OPENER}`,
     );
     // Dismissed rather than failed: offering a download after somebody
     // declined to save would be the app arguing with them.
@@ -947,15 +961,28 @@ const linkButton = document.getElementById("link") as HTMLButtonElement;
  * sender is told rather than handed a link that a chat client will cut; what
  * to do instead is the reference link, item 2.3.
  */
+/**
+ * The link for a document, as this opener can make one.
+ *
+ * Inline only: an opener holds no credentials for a store, so a document too
+ * large for a fragment has no link from here and the person is told to send
+ * the file. The decision itself is `linkFor` in the core, so this host, the
+ * command line and the MCP server all answer the same way.
+ */
+async function linkForDocument(html: string): Promise<string | undefined> {
+  const handoff = await linkFor(html, {
+    opener: location.origin + location.pathname,
+    host: { template: HOST_TEMPLATE, runtime: HOST_RUNTIME },
+  });
+  return handoff.kind === "inline" ? handoff.link : undefined;
+}
+
 async function copyLink(): Promise<void> {
   if (!loaded) return;
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
 
-  const link = await inlineLink(current.html, location.origin + location.pathname, {
-    template: HOST_TEMPLATE,
-    runtime: HOST_RUNTIME,
-  });
+  const link = await linkForDocument(current.html);
   if (!link) {
     say(
       `This document is too big to put in a link (the limit is ${Math.round(INLINE_CAP / 1024)} KB). ` +
