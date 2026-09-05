@@ -272,11 +272,13 @@ itself and has `presignPut` for a browser. The opener opens both link forms and
 checks the hash before it imports the key. `dai publish` is the sender. Spec
 §1.1 has the grammar.
 
-**Yours, before `/d/<id>` works in production:** create the R2 bucket with
-public reads and CORS `*`, run `node scripts/check-store.mjs <one blob url>`,
-and set `STORE_BASE` in the opener. The browser sender needs a presigning route
-with the bucket's credentials, which does not exist until the bucket does. TTL
-on unopened blobs is a bucket lifecycle rule, not code.
+The bucket exists: `dai-store` on R2, public reads at its r2.dev address,
+CORS from `infra/r2-cors.json`, and `check-store.mjs` says ready. `STORE_BASE`
+points at it, so `/d/<id>` links resolve. Still open: a custom domain (the
+r2.dev address is meant for development and is rate-limited), S3 API
+credentials for the bucket so `dai publish` and a presigning route can write
+to it, and a lifecycle rule for unopened blobs. Uploads today go through
+`wrangler r2 object put`.
 
 **Exit:** the same link resolves from two different hosts; a tampered blob is
 refused by hash before the signature is checked; the store's logs contain no

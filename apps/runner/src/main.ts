@@ -1027,11 +1027,12 @@ async function openFromLink(carried: string): Promise<void> {
 /**
  * Where `/d/<id>` links resolve: this project's store.
  *
- * Not yet stood up. Until the bucket exists, every `/d/` link is refused with
- * the sentence below and the any-host form (`#h=&u=&k=`) is the one that
- * works. Set when the bucket does.
+ * An R2 bucket serving ciphertext under content hashes, public for GET with
+ * CORS open, checked by scripts/check-store.mjs. This is the bucket's
+ * development address; a custom domain would change only this line. The
+ * any-host form (`#h=&u=&k=`) never touches it.
  */
-const STORE_BASE: string | undefined = undefined;
+const STORE_BASE: string | undefined = "https://pub-ff38a45eca704d8f98b86753c34be0d4.r2.dev/";
 
 /**
  * Opens a document a reference link names.
