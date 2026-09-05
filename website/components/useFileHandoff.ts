@@ -11,7 +11,11 @@ import { canHandOff, handOff } from '../../src/handoff.js';
 export function useFileHandoff(
   file: Ref<File | null>,
   title: Ref<string> | string,
-  text?: string,
+  /**
+   * The message the file travels in. A ref because it carries a link to *this*
+   * document (backlog 2.6), which is not known until the document is built.
+   */
+  text?: Ref<string> | string,
 ) {
   const shareError = ref('');
 
@@ -26,7 +30,7 @@ export function useFileHandoff(
       navigator,
       value,
       typeof title === 'string' ? title : title.value,
-      text,
+      typeof text === 'string' || text === undefined ? text : text.value,
     );
     shareError.value = result.error ?? '';
   }

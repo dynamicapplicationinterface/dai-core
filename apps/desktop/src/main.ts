@@ -1091,7 +1091,7 @@ mintBtn.addEventListener("click", async () => {
       return;
     }
 
-    mintStatus.textContent = "Packaging, compiling and signing...";
+    mintStatus.textContent = "Packaging and compiling...";
     runtimeAssets ??= await loadRuntimeAssets();
 
     const built = await compileInBrowser({

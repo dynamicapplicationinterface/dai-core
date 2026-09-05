@@ -862,7 +862,11 @@ Stated plainly, because a specification that omits its limits is worse than one
 that has them.
 
 **Who a publisher is.** A signature proves the file has not changed since it was
-signed by whoever holds the key it carries. It does not say who that is: a
+signed by whoever holds the key it carries. A key nobody keeps is therefore not
+an identity: a compiler that mints one per build and discards it produces a
+signature that distinguishes no one from no one, and makes the publisher's own
+next version unpinnable under §9.6. A compiler that cannot offer a key its
+holder keeps MUST build unsigned, and a host MUST report that as unsigned. It does not say who that is: a
 container is self-contained, so an attacker can substitute the key and re-sign.
 Identity requires something from outside the file — a key pinned on first use, a
 directory, a transparency log. Version 3 (§9) gives a container a place to

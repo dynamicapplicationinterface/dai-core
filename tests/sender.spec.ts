@@ -221,3 +221,79 @@ test.describe("the share sheet", () => {
     expect(await decodeInline(value, HOST, engine)).toBe(built.html);
   });
 });
+
+/**
+ * The page most people make a document on (backlog 2.5, the website's half).
+ *
+ * It built a file and left the sending to the person: an attachment, or a tab
+ * handed over. The link is the carrier that works when the person you are
+ * sending to is holding a phone, so the page offers one.
+ */
+test.describe("Make one", () => {
+  test("offers a link for what it just built, and the link opens it", async ({ page, context }) => {
+    test.slow();
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("http://localhost:5176/make-one");
+
+    // Build the first example, as somebody would.
+    await page.locator("button", { hasText: /beach trip|make it|^Make/i }).first().click();
+    await expect(page.locator("text=Copy a link")).toBeVisible({ timeout: 120_000 });
+
+    // The number said on screen is the link's own size, not the file's.
+    const note = await page.locator(".link-note").innerText();
+    expect(note).toMatch(/\d+(\.\d+)? KB/);
+    expect(note).not.toMatch(/8\d\d KB/);
+
+    await page.locator("button", { hasText: "Copy a link" }).click();
+    await expect(page.locator("button", { hasText: "Link copied" })).toBeVisible();
+
+    const link = await page.evaluate(() => navigator.clipboard.readText());
+    expect(link).toMatch(/#a=/);
+
+    // And it is this document: the fragment decodes to a container that verifies.
+    const { verifyContainer } = await import("../src/container.js");
+    const value = /#a=([A-Za-z0-9_-]+)/.exec(link)![1]!;
+    const html = await decodeInline(value, HOST, engine);
+    const opened = await verifyContainer(html);
+    // Unsigned, and labelled so. A page has nowhere to keep a key, and one it
+    // mints and discards signs nothing anybody can check — see src/browser.ts.
+    expect(opened.signature).toBe("unsigned");
+    expect(opened.manifest.signature).toBeUndefined();
+  });
+});
+
+/**
+ * What a page can and cannot say about who made a document.
+ *
+ * A page has nowhere to keep a key. It once signed with one it minted and
+ * discarded, which said a key made these bytes and named nobody — and cost
+ * more than it was worth, because a host pins the key a document is first seen
+ * with, so the publisher's own second version arrived under a different key
+ * and read as an impersonation.
+ */
+test.describe("a document built in a page", () => {
+  test("is unsigned, and the card says so", async ({ page }) => {
+    test.slow();
+    const { compileInBrowser } = await import("../src/browser.js");
+    const built = await compileInBrowser({
+      files: { "index.html": '<!doctype html><meta charset="utf-8"><p>made in a page</p>' },
+      appName: "Made here",
+      assets: {
+        template: HOST.template,
+        runtime: HOST.runtime,
+        wasm: new Uint8Array(0),
+        glue: new Uint8Array(0),
+      },
+    });
+
+    expect(built.manifest.signature).toBeUndefined();
+    expect(built.manifest.publicKeyFingerprint).toBeUndefined();
+
+    await page.goto("http://localhost:5175/");
+    await page.setInputFiles("#file", { name: "made.dai.html", mimeType: "text/html", buffer: Buffer.from(built.html) });
+    await expect(page.locator("#card-publisher")).toHaveAttribute("data-state", "unsigned", { timeout: 60_000 });
+    await expect(page.locator("#card-publisher")).toHaveText("Not signed — anyone could have made this.");
+    // No safety number, because there is no key anybody holds to compare.
+    await expect(page.locator("#card-verify")).toBeHidden();
+  });
+});

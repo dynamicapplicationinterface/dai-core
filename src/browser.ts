@@ -3,13 +3,13 @@
  *
  * The counterpart to compile.ts. That one resolves assets on a filesystem for
  * the plugin, the command line and an MCP server; this one fetches them over
- * HTTP for a page, and mints a throwaway identity because a browser has nowhere
- * safe to keep a real one. Both then hand off to the same `buildContainer`.
+ * HTTP for a page. It signs nothing: a browser has nowhere to keep a key, and
+ * a key nobody keeps is not an identity. Both hand off to `buildContainer`.
  *
  * Two front ends already needed this and each grew its own copy: the same
- * asset fetch, the same key generation, the same PEM assembly, written twice
- * within an hour of each other. That is how one engine quietly becomes several,
- * so it lives here now and `tests/one-engine.spec.ts` keeps it that way.
+ * asset fetch, written twice within an hour of each other. That is how one
+ * engine quietly becomes several, so it lives here now and
+ * `tests/one-engine.spec.ts` keeps it that way.
  */
 import { unzipSync } from "fflate";
 import { buildContainer, type BuildContainerResult } from "./core.js";
@@ -50,33 +50,27 @@ export async function loadRuntimeAssets(baseUrl = "/runtime"): Promise<RuntimeAs
   return { template, runtime, wasm, glue };
 }
 
-/**
- * Mints a signing identity that exists only for this build.
+/*
+ * There is deliberately no key minted here.
  *
- * What it proves is worth being exact about: the container has not been altered
- * since it was made. It does not prove who made it — nobody has ever seen this
- * key before and nobody will see it again. Publisher identity needs a key its
- * holder keeps, which is a thing a web page cannot offer.
+ * A page once signed what it built with a key it generated and discarded, on
+ * the reasoning that a browser has nowhere to keep one. That signature was
+ * worth nothing and cost something. Worth nothing, because a signature says a
+ * key made these bytes and anybody altering a container can substitute a key
+ * and re-sign (§8) — a key nobody has ever held and nobody will hold again
+ * distinguishes no one from no one. Cost something, because a host pins the
+ * key a document was first seen with: the honest publisher had thrown it away,
+ * so their own second version arrived under a different key and read as an
+ * impersonation, and the card offered a safety number for a key nobody could
+ * read back.
+ *
+ * So a container built in a page is unsigned, and says so. It is still
+ * self-consistent — every entry is digested and the shell is compared with its
+ * sealed copy — and a host reports it as what it is: not signed, anyone could
+ * have made this. A publisher who wants to be somebody signs with a key they
+ * keep, through the command line or the desktop app, and `signingKey` below is
+ * how a caller that has one passes it.
  */
-export async function mintSigningKey(): Promise<string> {
-  if (!globalThis.crypto?.subtle) {
-    throw new Error(
-      "WebCrypto is unavailable, so nothing can be signed here. This page must " +
-        "be served over HTTPS or from localhost.",
-    );
-  }
-
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
-    "sign",
-    "verify",
-  ]);
-
-  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
-  let binary = "";
-  for (const byte of pkcs8) binary += String.fromCharCode(byte);
-
-  return `-----BEGIN PRIVATE KEY-----\n${btoa(binary)}\n-----END PRIVATE KEY-----`;
-}
 
 /**
  * Reads an archive a person dropped in.
@@ -145,8 +139,14 @@ export interface BrowserBuildInput {
   assets?: RuntimeAssets;
   /** Where the runtime assets are served from. */
   baseUrl?: string;
-  /** Skip signing. The container is then editable by anyone. */
-  unsigned?: boolean;
+  /**
+   * A PKCS#8 PEM key to sign with, for a caller that holds one.
+   *
+   * A page has nowhere to keep a key, so a page passes nothing and the
+   * container is unsigned. See the note above: a key minted and discarded is
+   * not an identity, and pretending otherwise is worse than saying nothing.
+   */
+  signingKey?: string;
 }
 
 /** Compiles a container in the page, with nothing sent anywhere. */
@@ -168,6 +168,6 @@ export async function compileInBrowser(
     appName: input.appName,
     wasm: assets.wasm,
     glue: assets.glue,
-    signingKey: input.unsigned ? undefined : await mintSigningKey(),
+    signingKey: input.signingKey,
   });
 }

@@ -22,6 +22,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, loadRuntimeAssets } from '../../src/browser.js';
+import { linkFor } from '../../src/sender.js';
 import { handOffToOpener } from '../../src/handoff-tab.js';
 import { IDEAS, PROMPT } from './prompt.js';
 
@@ -120,6 +121,7 @@ function choose(choice: Choice): void {
   stage.value = 0;
   buildState.value = 'idle';
   builtFile.value = null;
+  builtLink.value = '';
   builtBytes.value = null;
   downloadUrl.value = '';
   openState.value = 'idle';
@@ -192,6 +194,33 @@ const builtBytes = ref<Uint8Array | null>(null);
 const openState = ref<'idle' | 'opening' | 'failed'>('idle');
 const openError = ref('');
 
+/**
+ * The link for what was just built (backlog 2.5).
+ *
+ * The page has produced a file since it was written, and left the sending to
+ * the person: an attachment, or a tab handed over. A link is the carrier that
+ * works when the person you are sending to is holding a phone, so the page
+ * offers one — and these examples are small, so it is always an inline link,
+ * which needs no server and cannot expire.
+ */
+const builtLink = ref('');
+/** Separate from the prompt's own copied flag: two buttons, two states. */
+const linkCopied = ref(false);
+
+async function copyLink(): Promise<void> {
+  if (!builtLink.value) return;
+  try {
+    await navigator.clipboard.writeText(builtLink.value);
+    linkCopied.value = true;
+    setTimeout(() => {
+      linkCopied.value = false;
+    }, 2000);
+  } catch {
+    // No clipboard permission: select it by hand rather than lose it.
+    window.prompt('Copy this link', builtLink.value);
+  }
+}
+
 /*
  * The deployed opener, unless this page is itself local — otherwise a
  * development build hands its document to production, which works and proves
@@ -236,8 +265,13 @@ const { canShareFile, share: shareBuilt, shareError } = useFileHandoff(
   downloadName,
   // Carried into whatever the sheet sends this to. Somebody who is handed a
   // file and has nothing installed gets a document their system cannot name;
-  // the message it arrives in is the one place an answer fits.
-  'A DAI document — the app and its data in one file. Open it at opendai.app',
+  // the message it arrives in is the one place an answer fits — and the best
+  // answer is a link to this document rather than an address to visit.
+  computed(() =>
+    builtLink.value
+      ? `${chosen.value.title} — send an app like you send a document. Tap to open it:\n${builtLink.value}`
+      : 'A DAI document — the app and its data in one file. Open it at opendai.app',
+  ),
 );
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -268,6 +302,14 @@ async function build(): Promise<void> {
     builtFile.value = new File([blob], downloadName.value, { type: 'text/html' });
     downloadUrl.value = URL.createObjectURL(blob);
     fileSize.value = blob.size;
+
+    // The same decision the command line and the opener make, from the same
+    // place: inline when it fits, and nothing when it does not.
+    const handoff = await linkFor(built.html, {
+      opener: OPENER,
+      host: { template: assets.template, runtime: assets.runtime },
+    });
+    builtLink.value = handoff.kind === 'inline' ? handoff.link : '';
 
     stage.value = 3;
     buildState.value = 'done';
@@ -420,6 +462,9 @@ async function build(): Promise<void> {
             <button type="button" class="primary big" :disabled="openState === 'opening'" @click="openInOpener">
               {{ openState === 'opening' ? 'Opening…' : 'Open it now' }}
             </button>
+            <button v-if="builtLink" type="button" class="download secondary" @click="copyLink">
+              {{ linkCopied ? 'Link copied' : 'Copy a link' }}
+            </button>
             <button v-if="canShareFile" type="button" class="download secondary" @click="shareBuilt">
               Save {{ downloadName }}
             </button>
@@ -434,6 +479,12 @@ async function build(): Promise<void> {
           </div>
           <p v-if="openState === 'failed'" class="bad">{{ openError }}</p>
           <p v-if="shareError" class="bad">{{ shareError }}</p>
+
+          <p v-if="builtLink" class="after link-note">
+            The link carries the whole app — <strong>{{ Math.round(builtLink.length / 1024 * 10) / 10 }} KB</strong> of
+            address, no server behind it. Send it in a message and whoever taps it
+            has the app. Nothing about it can expire.
+          </p>
 
           <p class="after">
             It opens in a new tab and runs there. Add something, and it's saved on this
