@@ -75,6 +75,16 @@ Verify options:
                           than a person. The exit code is unchanged: 0 intact,
                           1 refused
 
+Publish options:
+      --store <dir>       Where to write the sealed document
+      --base <url>        The URL that directory is served under
+      --opener <url>      Where the links point
+      --unfurl            Let a link preview show this document's name and
+                          publisher. Off by default: a script has no one to ask,
+                          and a name in a preview is cached by every chat server
+                          that sees the link
+      --icon <path.png>   A 512x512 PNG for that preview, under 100 KB
+
 Examples:
   dai build ./dist
   dai build ./dist -o tasks.dai.html -n "My Tasks" -k signing-key.pem
@@ -110,6 +120,7 @@ export function parseArgs(argv: string[]): Parsed {
     // dai publish
     "store",
     "base",
+    "icon",
   ]);
 
   const positional: string[] = [];
@@ -463,7 +474,7 @@ async function publishCommand(parsed: Parsed): Promise<number> {
     process.stderr.write("dai publish needs a file and a store. Try: dai publish tasks.dai.html --store ./store\n");
     return 2;
   }
-  const { publish } = await import("./store.js");
+  const { ICON_CAP, publish } = await import("./store.js");
   const { fsStore } = await import("./store-fs.js");
 
   const html = readFileSync(resolve(process.cwd(), target), "utf8");
@@ -473,13 +484,32 @@ async function publishCommand(parsed: Parsed): Promise<number> {
     baseUrl: typeof parsed.flags.base === "string" ? parsed.flags.base : undefined,
   });
 
-  const { sealed, href, links } = await publish(html, store, opener);
+  const unfurl = parsed.flags.unfurl === true;
+  if (typeof parsed.flags.icon === "string" && !unfurl) {
+    process.stderr.write("--icon does nothing without --unfurl, which is what turns the preview on.\n");
+    return 2;
+  }
+  const icon =
+    unfurl && typeof parsed.flags.icon === "string"
+      ? { png: new Uint8Array(readFileSync(resolve(process.cwd(), parsed.flags.icon))) }
+      : undefined;
+  if (icon && icon.png.length > ICON_CAP) {
+    process.stderr.write(`--icon must be under ${ICON_CAP / 1024} KB; a preview icon is a caption, not an asset.\n`);
+    return 2;
+  }
+
+  const { sealed, href, links } = await publish(html, store, opener, { preview: unfurl, icon });
 
   if (parsed.flags.json) {
     process.stdout.write(JSON.stringify({ hash: sealed.hash, size: sealed.blob.length, href, links }, null, 2) + "\n");
     return 0;
   }
   process.stdout.write(
+    (sealed.sidecar.preview
+      ? `preview  "${sealed.sidecar.preview.name}" is what a link preview will show
+`
+      : `preview  off. The link previews as a DAI app and nothing more; --unfurl names it
+`) +
     `sealed   ${sealed.blob.length} bytes as ${sealed.hash}
 ` +
       `stored   ${href}

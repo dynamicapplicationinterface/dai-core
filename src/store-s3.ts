@@ -26,7 +26,7 @@
  * one signed URL good for a few minutes, and PUTs the blob straight to the
  * bucket. No body passes through a function with a size limit.
  */
-import { admit, type Sidecar, type Store } from "./store.js";
+import { admit, type PreviewIcon, type Sidecar, type Store } from "./store.js";
 
 export interface S3StoreOptions {
   /** e.g. https://<account>.r2.cloudflarestorage.com */
@@ -190,13 +190,14 @@ export function s3Store(options: S3StoreOptions, fetchImpl: typeof fetch = fetch
   };
 
   return {
-    async put(hash, ciphertext, sidecar: Sidecar) {
-      await admit(hash, ciphertext, sidecar);
+    async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
+      await admit(hash, ciphertext, sidecar, icon);
       const key = hash.toLowerCase();
       const existing = await this.head(publicHref(key));
       if (!existing.exists) {
         await putObject(key, ciphertext, OBJECT_HEADERS["content-type"]);
         await putObject(key + ".json", new TextEncoder().encode(JSON.stringify(sidecar)), "application/json");
+        if (icon) await putObject(key + ".png", icon.png, "image/png");
       }
       return publicHref(key);
     },

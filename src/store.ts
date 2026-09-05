@@ -30,6 +30,7 @@
  * hash, decrypts, and verifies what it finds exactly as it would a file.
  */
 import { ContainerError, parseContainer, thinned, verifyManifestSignature } from "./container.js";
+import type { Preview } from "./unfurl.js";
 import { fromBase64, sha256Hex, toBase64, type ContainerManifest } from "./core.js";
 
 /** What a DAI relay will hold. A general file host this is not. */
@@ -50,14 +51,30 @@ export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u" } as const;
  */
 export interface Sidecar {
   documentUuid: string;
-  appName: string;
-  favicon?: string;
   /** The manifest, for the store to verify the signature over. */
   manifest: ContainerManifest;
   /** Base64 SPKI, when signed. */
   publicKey?: string;
   /** The ciphertext's length, which `put` checks against what it was handed. */
   size: number;
+  /**
+   * What a link preview may show, when the sender said so (§3.3).
+   *
+   * Separate from everything above, and absent by default, because it is the
+   * only part of a sidecar written to be served to strangers: a chat client
+   * fetching `/d/<id>` gets this and nothing else. The manifest beside it is
+   * what the store checks a document by, and carries the application's name
+   * as it always has — so "no preview" means no name in a preview, not a name
+   * nobody can read. A store operator can read the manifest; that is what a
+   * store is, and an organisation that cannot accept it runs its own.
+   */
+  preview?: Preview;
+}
+
+/** The icon a preview shows, stored beside the blob as `<hash>.png`. */
+export interface PreviewIcon {
+  /** PNG bytes. 512×512 is what every client wants; larger is refused. */
+  png: Uint8Array;
 }
 
 export interface Store {
@@ -66,13 +83,15 @@ export interface Store {
    * the blob can be read from. Idempotent: a second put of the same hash is
    * the same object.
    */
-  put(hash: string, ciphertext: Uint8Array, sidecar: Sidecar): Promise<string>;
+  put(hash: string, ciphertext: Uint8Array, sidecar: Sidecar, icon?: PreviewIcon): Promise<string>;
   get(href: string): Promise<Uint8Array>;
   head(href: string): Promise<{ exists: boolean; size: number }>;
 }
 
 /** A document sealed for a store: what `put` is handed, and what a link names. */
 export interface Sealed {
+  /** The preview icon, when one was given, for the store to write beside it. */
+  icon?: PreviewIcon;
   /** SHA-256 of the blob, hex. The address and the check. */
   hash: string;
   /** IV || ciphertext || tag. What the store holds. */
@@ -99,7 +118,17 @@ function fromBase64Url(value: string): Uint8Array {
  * store holds nothing it can read and two seals of one document are two
  * different blobs.
  */
-export async function sealForStore(html: string): Promise<Sealed> {
+export interface SealOptions {
+  /**
+   * What a link preview may show. Absent means none, and none is the default
+   * everywhere a person is not looking at the preview as they consent to it.
+   */
+  preview?: boolean;
+  /** A PNG for the preview, from a caller that can make one. */
+  icon?: PreviewIcon;
+}
+
+export async function sealForStore(html: string, options: SealOptions = {}): Promise<Sealed> {
   const container = parseContainer(html);
   const thin = new TextEncoder().encode(thinned(container));
 
@@ -125,13 +154,23 @@ export async function sealForStore(html: string): Promise<Sealed> {
     hash: await sha256Hex(blob),
     blob,
     key: toBase64Url(rawKey),
+    icon: options.icon,
     sidecar: {
       documentUuid: container.manifest.documentUuid,
-      appName: container.manifest.appName,
-      ...(container.manifest.favicon ? { favicon: container.manifest.favicon } : {}),
       manifest: container.manifest,
       ...(container.publicKey ? { publicKey: container.publicKey } : {}),
       size: blob.length,
+      ...(options.preview
+        ? {
+            preview: {
+              name: container.manifest.appName,
+              ...(container.manifest.publisherName
+                ? { publisherName: container.manifest.publisherName }
+                : {}),
+              ...(options.icon ? { icon: true } : {}),
+            },
+          }
+        : {}),
     },
   };
 }
@@ -189,7 +228,15 @@ export async function openFromStore(blob: Uint8Array, hash: string, key: string)
  * the size the sidecar says, before it writes a byte. Called by every adapter,
  * so the rule is written once.
  */
-export async function admit(hash: string, ciphertext: Uint8Array, sidecar: Sidecar): Promise<void> {
+/** The largest PNG a store will serve as a preview icon. A caption, not an asset. */
+export const ICON_CAP = 100 * 1024;
+
+export async function admit(
+  hash: string,
+  ciphertext: Uint8Array,
+  sidecar: Sidecar,
+  icon?: PreviewIcon,
+): Promise<void> {
   if (ciphertext.length > STORE_CAP) {
     throw new ContainerError("STORE_REFUSED", `A store holds at most ${STORE_CAP / 1024 / 1024} MB.`);
   }
@@ -202,6 +249,26 @@ export async function admit(hash: string, ciphertext: Uint8Array, sidecar: Sidec
   if ((await sha256Hex(ciphertext)) !== hash.toLowerCase()) {
     throw new ContainerError("STORE_REFUSED", "The blob does not hash to the name it is being stored under.");
   }
+  if (sidecar.preview) {
+    // Checked because this is the one part a store hands to anyone who asks.
+    // A name is somebody's text; a store that took an unbounded one would be
+    // holding a payload rather than a caption.
+    if (typeof sidecar.preview.name !== "string" || sidecar.preview.name.length > 200) {
+      throw new ContainerError("STORE_REFUSED", "A preview name must be text, and under 200 characters.");
+    }
+    if (sidecar.preview.publisherName && sidecar.preview.publisherName.length > 200) {
+      throw new ContainerError("STORE_REFUSED", "A preview publisher name must be under 200 characters.");
+    }
+  }
+  if (icon && icon.png.length > ICON_CAP) {
+    throw new ContainerError("STORE_REFUSED", `A preview icon must be under ${ICON_CAP / 1024} KB.`);
+  }
+  if (icon && !sidecar.preview) {
+    // An icon with nothing that claims one is a file the store would serve
+    // and nothing would ever reference.
+    throw new ContainerError("STORE_REFUSED", "An icon without a preview is a file nothing points at.");
+  }
+
   const manifest = sidecar.manifest;
   if (
     !manifest ||
@@ -282,8 +349,9 @@ export async function publish(
   html: string,
   store: Store,
   opener: string,
+  options: SealOptions = {},
 ): Promise<{ sealed: Sealed; href: string; links: { known: string; anyHost: string } }> {
-  const sealed = await sealForStore(html);
-  const href = await store.put(sealed.hash, sealed.blob, sealed.sidecar);
+  const sealed = await sealForStore(html, options);
+  const href = await store.put(sealed.hash, sealed.blob, sealed.sidecar, sealed.icon);
   return { sealed, href, links: referenceLinks(opener, sealed, href) };
 }

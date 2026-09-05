@@ -39,6 +39,13 @@ export interface SenderOptions {
    * one.
    */
   store?: Store;
+  /**
+   * Whether a link may show the document's name in a chat preview (§3.3).
+   *
+   * Reaches a reference link only: an inline link names no store, so there is
+   * nothing for a preview to read and nothing to consent to.
+   */
+  preview?: boolean;
 }
 
 export type Handoff =
@@ -70,7 +77,9 @@ export async function linkFor(html: string, options: SenderOptions): Promise<Han
     };
   }
 
-  const { href, links } = await publish(html, options.store, opener);
+  const { href, links } = await publish(html, options.store, opener, {
+    preview: options.preview === true,
+  });
   return { kind: "reference", link: links.known, anyHost: links.anyHost, bytes: links.known.length, href };
 }
 

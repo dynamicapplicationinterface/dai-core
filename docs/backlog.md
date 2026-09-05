@@ -39,7 +39,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.6 | Every share path carries the link | [x] `abc0a59` |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
-| 3.3 | Unfurl without the blob | [ ] |
+| 3.3 | Unfurl without the blob | [x] `a7a0be8` + this — static half and edge half |
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
 | 3.5 | iOS solved by the link | [ ] |
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
@@ -423,13 +423,43 @@ copy of the directory.
 **Exit:** the opener's build output served from a plain static host passes
 the full conformance and probe suites.
 
-### 3.3 Unfurl without the blob
+### 3.3 Unfurl without the blob — closed
 
-`/d/<id>` serves name, icon and the standard line from a sender-consented
-sidecar; never the ciphertext.
+Two halves, and the first is the one that matters.
 
-**Exit:** a chat preview shows name and icon; a GET on the unfurl route never
-returns ciphertext.
+**Static.** `/d/<id>` is the opener, served where the link points. One rewrite
+to `/`, a `<base href="/">` so relative URLs still resolve, and the opener
+reads the id from `location.pathname`. No forwarding page, no UA sniffing, no
+function. A mirror on a plain static host serves the same build and the link
+opens — tested, in `tests/static-opener.spec.ts`.
+
+**Edge.** `apps/runner/middleware.ts` reads the sidecar — never the blob —
+and fills a `<!--DAI_PREVIEW-->` placeholder with the name, publisher and icon
+the sender consented to. Absent or expired: the generic tags stand, status
+200, `no-store`. Present: `immutable`, because a content-addressed id names
+bytes that cannot change. The key is in the fragment and a fragment is never
+sent to a server, so there is nothing at the edge to leak.
+
+**Consent, decided where intent is visible.** The sidecar is split so that
+"off" is real — no preview object, nothing to serve. `dai publish` is off
+unless `--unfurl`, because a script has no one to ask. MCP `create_dai_app`
+takes `preview`, default on, and a server sets `DAI_PREVIEW_DEFAULT=off` to
+invert that for an organisation. The interactive share sheet — on by default,
+with the preview rendered beside the toggle — waits on the browser sender.
+
+Worth knowing, and worth saying in the docs: iMessage and WhatsApp build
+previews on the sender's device; Slack, Teams and Discord fetch server-side
+and cache. "Off" therefore means off before the first send, not after.
+
+**Exit met:** `tests/unfurl.spec.ts` — four crawler user agents get the tags,
+no ciphertext, 200; a browser open of `/d/<id>#h=&k=` mounts with the fragment
+intact; a plain static host serves it with no preview and no error; an id the
+store never held is 200, generic, `no-store`.
+
+**Not yet verified:** whether Vercel bundles a middleware that imports from
+outside its project root. If it does not, the edge half is inert and the
+static half still carries every link — which is why it was built in that
+order. Check on the first deploy.
 
 ### 3.4 A stripped fragment degrades to a sentence
 

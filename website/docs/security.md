@@ -41,6 +41,46 @@ DAI distinguishes clearly between **Integrity** and **Authenticity**:
 
 ---
 
+## What a Link Reveals
+
+A document too large to travel inside the link itself is sealed and put in a
+store, and the link that opens it is `<opener>/d/<id>#h=…&k=…`.
+
+- **The key is in the fragment.** Everything after `#` is never sent to a
+  server — not to the store, not to the opener, not to whatever chat service
+  carried the link. The store holds ciphertext it cannot read, and the opener
+  is a static page that decrypts on the device.
+- **The id is a hash.** It names bytes and nothing else. It is not an account,
+  a session, or a name.
+- **Anyone holding the whole link can open the document.** That is the point
+  of a link, and it is the property to think about before sending one: a link
+  is the capability. Forwarding it forwards the document.
+
+### Link previews are consented, and are not a trust signal
+
+A chat client fetches a link before anybody taps it. What it can see is
+whatever the sender chose to put in the store's sidecar: a name, a publisher
+name, an icon. Nothing else — the middleware that answers a preview request
+reads the sidecar and never the ciphertext.
+
+That name is a claim the sender made, in exactly the way a document's own
+`appName` is a claim the document makes. It has not been verified by anything
+and it is not shown as though it had been. Verification happens after the
+document arrives, on the device, and what it produces is the card.
+
+Consent is asked where intent is visible. An interactive share shows the
+preview beside the toggle that turns it off. `dai publish` shows no preview
+unless `--unfurl` is passed, because a script has no one to ask. An MCP server
+can invert its default with `DAI_PREVIEW_DEFAULT=off`. And "off" is real: with
+no preview the sidecar has no preview object, so there is nothing to serve.
+
+One thing worth knowing before you decide: iMessage and WhatsApp build
+previews on the sender's device, while Slack, Teams and Discord fetch them
+server-side and cache the result. Turning a preview off is a decision that has
+to be made before the first send, not after.
+
+---
+
 ## Why Organizational Identity Must Never Flow Inward
 
 In enterprise environments, hosts often manage user credentials, tenant IDs, employee badges, and organization licenses.

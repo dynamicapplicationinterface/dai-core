@@ -84,6 +84,14 @@ const TOOLS = [
             "Optional PKCS#8 PEM private key to sign with. Without one the container is " +
             "still tamper-evident but carries no publisher identity.",
         },
+        preview: {
+          type: "boolean",
+          description:
+            "Whether a link to this app may show its name and publisher in a chat preview. " +
+            "Defaults to true, because a link somebody is about to send should say what it " +
+            "is. Pass false for anything the person would not want named in a message before " +
+            "they have sent it.",
+        },
         upgradeOf: {
           type: "string",
           description:
@@ -270,6 +278,20 @@ async function createApp(
   const warnings = findings.filter((finding) => !fatal.includes(finding));
 
   /*
+   * Whether a link may say what this app is called (§3.3).
+   *
+   * On by default: the assistant is making something for a person to send, and
+   * a preview is what makes a sent link legible to whoever receives it — and
+   * off is one parameter away. A server deployed where that default is wrong
+   * sets DAI_PREVIEW_DEFAULT=off, and then a caller has to ask for a preview
+   * rather than remember to refuse one.
+   */
+  const preview =
+    typeof params.preview === "boolean"
+      ? params.preview
+      : process.env.DAI_PREVIEW_DEFAULT !== "off";
+
+  /*
    * The link, last (backlog 2.5).
    *
    * A file is the thing; a link is how it reaches somebody with a phone. The
@@ -281,6 +303,7 @@ async function createApp(
     opener: process.env.DAI_OPENER,
     host: senderHost(),
     store: await storeFromEnvironment(),
+    preview,
   });
 
   return text(

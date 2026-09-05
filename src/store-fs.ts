@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { admit, type Sidecar, type Store } from "./store.js";
+import { admit, type PreviewIcon, type Sidecar, type Store } from "./store.js";
 
 export interface FsStoreOptions {
   /** Where the files go. Created if absent. */
@@ -37,9 +37,10 @@ export function fsStore(options: FsStoreOptions): Store {
   };
 
   return {
-    async put(hash, ciphertext, sidecar: Sidecar) {
-      await admit(hash, ciphertext, sidecar);
+    async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
+      await admit(hash, ciphertext, sidecar, icon);
       const path = join(root, hash.toLowerCase());
+      if (icon) writeFileSync(path + ".png", icon.png);
       // Content-addressed, so a second put is the same bytes and nothing to do.
       if (!existsSync(path)) {
         writeFileSync(path, ciphertext);
