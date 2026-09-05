@@ -394,6 +394,18 @@ function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void
  * It does not establish who that is: a container is self-contained, so an
  * attacker can substitute the key and re-sign. See docs/backlog.md.
  */
+/**
+ * The signature check on its own, for a party that holds a manifest and a key
+ * and no container: a store deciding whether what it is handed is a DAI
+ * document. Throws the reader's own refusals.
+ */
+export async function verifyManifestSignature(
+  manifest: ContainerManifest,
+  publicKey: string,
+): Promise<void> {
+  await checkSignature(manifest, publicKey, manifest.documentUuid);
+}
+
 async function checkSignature(
   manifest: ContainerManifest,
   publicKey: string,

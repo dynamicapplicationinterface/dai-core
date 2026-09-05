@@ -33,7 +33,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` grammar, `6c23954` compact carrier — a chore chart is 2.8 kB |
-| 2.3 | Reference link and dumb store | [ ] decided: R2 behind a three-call Store |
+| 2.3 | Reference link and dumb store | [x] `PENDING` — interface, two adapters, opener; the bucket is yours |
 | 2.4 | Carriers in the specification | [~] `5606a87` `6c23954` — the Python reader verifies signed links; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
@@ -263,6 +263,20 @@ through its S3-compatible API. No Worker, no proprietary client SDK.
 A Vercel Blob adapter, if ever wanted, is a third adapter behind the same
 interface and never the reference one. `@vercel/blob` is not imported in
 dai-core.
+
+Done in `PENDING`, to the extent it can be without a bucket. `src/store.ts` is
+the interface, the sealing (AES-256-GCM, thin form, fresh key per seal), the
+link grammar and `admit()` — the one place a store decides what it will hold.
+`store-fs.ts` and `store-s3.ts` are the two adapters; the S3 one signs SigV4
+itself and has `presignPut` for a browser. The opener opens both link forms and
+checks the hash before it imports the key. `dai publish` is the sender. Spec
+§1.1 has the grammar.
+
+**Yours, before `/d/<id>` works in production:** create the R2 bucket with
+public reads and CORS `*`, run `node scripts/check-store.mjs <one blob url>`,
+and set `STORE_BASE` in the opener. The browser sender needs a presigning route
+with the bucket's credentials, which does not exist until the bucket does. TTL
+on unopened blobs is a bucket lifecycle rule, not code.
 
 **Exit:** the same link resolves from two different hosts; a tampered blob is
 refused by hash before the signature is checked; the store's logs contain no

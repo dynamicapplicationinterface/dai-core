@@ -29,6 +29,8 @@ Usage:
                                       Check source before building it
   dai bundle <directory>              Write the source as one pasteable file
   dai verify <file> [--json]          Check a container and report what it finds
+  dai publish <file> --store <dir>    Seal a container into a store and print
+                                      the links that open it
 
 Build options:
   -o, --out <path>        Where to write the container
@@ -92,6 +94,10 @@ export function parseArgs(argv: string[]): Parsed {
     "valid-until",
     "template",
     "upgrade-of",
+    // dai publish
+    "store",
+    "base",
+    "opener",
   ]);
 
   const positional: string[] = [];
@@ -390,6 +396,51 @@ async function installedEngine(): Promise<(digest: string) => Uint8Array | undef
   return (digest: string) => map.get(digest);
 }
 
+/**
+ * Seals a container into a store and prints the links.
+ *
+ * The store here is a directory: the machine running this is its own relay,
+ * and whatever serves that directory serves the documents. `--base` says the
+ * URL the directory appears under, so the any-host link is one somebody else
+ * can follow; without it the link names a file: URL, which only this machine
+ * can. `--opener` is where the links point, opendai.app by default.
+ */
+async function publishCommand(parsed: Parsed): Promise<number> {
+  const target = parsed.positional[0];
+  const dir = parsed.flags.store;
+  if (!target || typeof dir !== "string") {
+    process.stderr.write("dai publish needs a file and a store. Try: dai publish tasks.dai.html --store ./store\n");
+    return 2;
+  }
+  const { publish } = await import("./store.js");
+  const { fsStore } = await import("./store-fs.js");
+
+  const html = readFileSync(resolve(process.cwd(), target), "utf8");
+  const opener = typeof parsed.flags.opener === "string" ? parsed.flags.opener : "https://opendai.app";
+  const store = fsStore({
+    root: resolve(process.cwd(), dir),
+    baseUrl: typeof parsed.flags.base === "string" ? parsed.flags.base : undefined,
+  });
+
+  const { sealed, href, links } = await publish(html, store, opener);
+
+  if (parsed.flags.json) {
+    process.stdout.write(JSON.stringify({ hash: sealed.hash, size: sealed.blob.length, href, links }, null, 2) + "\n");
+    return 0;
+  }
+  process.stdout.write(
+    `sealed   ${sealed.blob.length} bytes as ${sealed.hash}
+` +
+      `stored   ${href}
+` +
+      `link     ${links.anyHost}
+` +
+      `         (the key is in the part after #, which is never sent anywhere)
+`,
+  );
+  return 0;
+}
+
 async function verify(parsed: Parsed): Promise<number> {
   const target = parsed.positional[0];
   if (!target) {
@@ -499,6 +550,8 @@ export async function run(argv: string[]): Promise<number> {
         return await bundle(parsed);
       case "verify":
         return await verify(parsed);
+      case "publish":
+        return await publishCommand(parsed);
       default:
         process.stderr.write(`Unknown command: ${parsed.command}\n\n${USAGE}`);
         return 2;

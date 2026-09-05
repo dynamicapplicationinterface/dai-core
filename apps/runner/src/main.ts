@@ -10,6 +10,7 @@ import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "
 import { refatten } from "../../../src/container.js";
 import { decodeInline, INLINE_CAP, inlineFrom, inlineLink } from "../../../src/link.js";
 import { heldEngine } from "./engine.js";
+import { openFromStore, referenceFrom } from "../../../src/store.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -1007,6 +1008,71 @@ async function openFromLink(carried: string): Promise<void> {
   });
 }
 
+/**
+ * Where `/d/<id>` links resolve: this project's store.
+ *
+ * Not yet stood up. Until the bucket exists, every `/d/` link is refused with
+ * the sentence below and the any-host form (`#h=&u=&k=`) is the one that
+ * works. Set when the bucket does.
+ */
+const STORE_BASE: string | undefined = undefined;
+
+/**
+ * Opens a document a reference link names.
+ *
+ * The store knows nothing and is trusted with nothing. What comes back is
+ * hashed against the link before the key is so much as imported, then
+ * decrypted, and then it is a container verified exactly as a chosen file is.
+ * The fragment — the hash and the key — was never sent to the store or to
+ * this origin, which is what makes the store dumb rather than merely
+ * well-behaved.
+ */
+async function openFromReference(reference: { hash: string; key: string; url?: string }): Promise<void> {
+  const href = reference.url ?? (STORE_BASE ? `${STORE_BASE}${reference.hash}` : undefined);
+  if (!href) {
+    say(
+      "This link points at a store this app does not have an address for yet. " +
+        "Ask whoever sent it for the file, or for a link that says where the document is.",
+      true,
+    );
+    return;
+  }
+
+  slot.classList.add("busy");
+  const where = new URL(href).hostname;
+  say(`Fetching from ${where}…`);
+
+  let blob: Uint8Array;
+  try {
+    const response = await fetch(href, { mode: "cors", credentials: "omit" });
+    if (!response.ok) throw new Error(String(response.status));
+    blob = new Uint8Array(await response.arrayBuffer());
+  } catch {
+    slot.classList.remove("busy");
+    say(
+      `Could not read the document from ${where}. Either it is unreachable, it has been removed, ` +
+        `or it does not allow other sites to read its files.`,
+      true,
+    );
+    return;
+  }
+
+  let html: string;
+  try {
+    html = await openFromStore(blob, reference.hash, reference.key);
+  } catch (error) {
+    slot.classList.remove("busy");
+    say(error instanceof ContainerError ? error.message : "This link could not be opened.", true);
+    return;
+  }
+
+  slot.classList.remove("busy");
+  arrivedAsFile = false;
+  await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
+    from: `From ${where}, sealed so that ${where} cannot read it. Nothing is uploaded — it runs on this device.`,
+  });
+}
+
 /*
  * A link pasted into a tab this app is already open in.
  *
@@ -1070,6 +1136,14 @@ async function start(): Promise<void> {
   const carried = inlineFrom(location.hash);
   if (carried) {
     await openFromLink(carried);
+    return;
+  }
+
+  // A document kept somewhere dumb, named by its hash, with the key in the
+  // fragment. See openFromReference.
+  const reference = referenceFrom(location.pathname, location.search, location.hash);
+  if (reference) {
+    await openFromReference(reference);
     return;
   }
 

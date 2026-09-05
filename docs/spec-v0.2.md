@@ -108,9 +108,35 @@ cap, because a link cut in transit arrives as a document that will not open and
 nothing to say why. No cap is normative: what truncates a long link is
 everything between the two people, not the format.
 
-**The reference link.** Reserved. An address that names a document rather than
-carrying it, for documents too large for the fragment. The grammar is not
-frozen here and no implementation should assume one.
+**The reference link.** An address that names a document rather than carrying
+it, for documents too large for the fragment:
+
+```
+<opener>/d/<id>#h=<sha256>&k=<key>
+<opener>/#h=<sha256>&u=<url>&k=<key>
+```
+
+The document is sealed with AES-256-GCM under a fresh 256-bit key. The stored
+blob is the 12-byte IV followed by the ciphertext and tag; `h` is the SHA-256
+of that blob, hex; `k` is the key, base64url without padding; `id` is `h`. The
+first form names a store the opener knows; the second names any URL, so a
+store needs nothing from anyone but a bucket that serves files. Both keep the
+key in the fragment, which a browser never sends, so the store holds
+ciphertext it cannot read under a name it cannot connect to a link.
+
+A reader MUST compare the blob's digest with `h` before importing the key, and
+MUST refuse a mismatch as `BLOB_MISMATCH` without decrypting. A key that does
+not open the blob is `BLOB_UNDECRYPTABLE`. What decrypts is a container in the
+viewer form, and MUST be verified by §7 as though it were a file.
+
+A store is three operations — `put(hash, blob, sidecar)`, `get(href)`,
+`head(href)` — and a conforming store holds only what it can check is a
+document: the sidecar's manifest signature verifies under the key it names,
+and the blob is the size the sidecar states. A blob is at most 5 MB. Beside
+each blob the store keeps a sidecar in the clear — manifest, name, icon — for
+the parts of the world that cannot open the document and only need to know
+what it is called. A store MUST serve blobs with `Access-Control-Allow-Origin:
+*`, an immutable `Cache-Control`, and `Content-Type: application/octet-stream`.
 
 Nothing about a carrier is recorded in a document. A document that travelled as
 a link and a document that arrived as a file are the same bytes and the same

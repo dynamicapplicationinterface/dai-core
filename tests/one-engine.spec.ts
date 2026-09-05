@@ -40,6 +40,11 @@ const ENGINE_FILES = [
   // from it: zipping, digesting and re-forming the signature envelope are its
   // job, and it is the one place that job is done. A wrapper calls it.
   "src/inline.ts",
+  // Sealing a document for a store — the key, the cipher, the hash that names
+  // the blob — is format, and admitting one to a store verifies a signature.
+  // The S3 adapter signs its own requests. All of it is done here or nowhere.
+  "src/store.ts",
+  "src/store-s3.ts",
 ];
 
 /** What it means to be doing the container's own work. */

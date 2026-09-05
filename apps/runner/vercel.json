@@ -4,6 +4,9 @@
   "buildCommand": "cd ../.. && npm run build && npm run build:runner",
   "outputDirectory": "dist",
   "cleanUrls": true,
+  "rewrites": [
+    { "source": "/d/:id", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",

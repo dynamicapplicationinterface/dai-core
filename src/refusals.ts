@@ -39,6 +39,11 @@ export const REFUSALS = {
     means: "The link leaves out an entry expecting this host's copy to match the sealed digest, and it does not.",
   },
 
+  // ---- a blob a link named, from a store
+  BLOB_MISMATCH: { recoverable: false, means: "The store returned bytes that do not hash to what the link names." },
+  BLOB_UNDECRYPTABLE: { recoverable: false, means: "The link's key does not open the blob: the link was cut or edited." },
+  STORE_REFUSED: { recoverable: false, means: "A store declined to hold this: not a DAI document, too large, or the sidecar disagrees." },
+
   // ---- modified
   DIGEST_MISMATCH: { recoverable: false, means: "An entry does not match its digest, is missing, or is unlisted." },
   SECTION_MISMATCH: { recoverable: false, means: "The manifest or application section does not match its digest." },
