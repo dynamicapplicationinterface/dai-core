@@ -1014,3 +1014,42 @@ test.describe("what the signature covers", () => {
     });
   }
 });
+
+/**
+ * The same inputs make the same file.
+ *
+ * `roadmap.md` has claimed since the beginning that an unsigned container
+ * built twice from identical inputs is byte-identical, and it was not: a zip
+ * records a modification time per entry and fflate wrote the clock, so two
+ * builds differed by a few bytes with nothing to show for it. Nobody noticed
+ * because nobody compared two builds a second apart.
+ *
+ * It matters beyond tidiness. A thin container is re-fattened by putting the
+ * engine back and rebuilding the payload, and "the same file as the fat build"
+ * is only a checkable claim if building twice is the same file at all.
+ */
+test.describe("building twice", () => {
+  const twice = async (): Promise<[string, string]> => {
+    const fixed = {
+      documentUuid: "11111111-2222-3333-4444-555555555555",
+      now: () => new Date(0),
+    };
+    const files = () => ({
+      "index.html": new TextEncoder().encode("<!doctype html><p>hi"),
+      "app.js": new TextEncoder().encode("console.log(1)"),
+    });
+    const shell = { template: CONTAINER_TEMPLATE, runtime: RUNTIME_SOURCE };
+    const first = await buildContainer({ files: files(), appName: "Twice", ...shell, ...fixed });
+    // Across a clock second, which is what used to change the bytes. A DOS
+    // timestamp has two-second granularity, so a shorter wait proved nothing.
+    await new Promise((wait) => setTimeout(wait, 2200));
+    const second = await buildContainer({ files: files(), appName: "Twice", ...shell, ...fixed });
+    return [first.html, second.html];
+  };
+
+  test("an unsigned container built twice from identical inputs is the same file", async () => {
+    test.slow();
+    const [first, second] = await twice();
+    expect(second).toBe(first);
+  });
+});

@@ -42,6 +42,24 @@ export const MANIFEST_ENTRY = "runtime/manifest.json";
 export const DEFAULT_FAVICON =
   'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Crect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%230f172a%22/%3E%3Cpath d=%22M30 25 L70 25 L70 40 L45 40 L45 60 L70 60 L70 75 L30 75 Z%22 fill=%22%233b82f6%22/%3E%3Ccircle cx=%2275%22 cy=%2270%22 r=%228%22 fill=%22%2310b981%22/%3E%3C/svg%3E';
 
+/**
+ * The timestamp every zip entry carries, so a payload is the same bytes twice.
+ *
+ * A zip records a modification time per entry, and fflate writes the clock
+ * when it is not told otherwise — so two builds of identical inputs differed,
+ * a few bytes apart, for no reason anybody could see. That made "an unsigned
+ * container built twice from identical inputs is byte-identical" untrue, and
+ * it would have made a re-fattened thin container merely equivalent to the
+ * build it came from rather than the same file.
+ *
+ * Built from local components rather than an instant, because the format
+ * stores local year, month, day, hour, minute and second: any fixed instant
+ * reads back differently in a different timezone, and these read back as
+ * themselves everywhere. Noon on the second day is clear of every daylight
+ * transition, and of the 1980 floor the format imposes.
+ */
+export const ZIP_EPOCH = new Date(1980, 0, 2, 12, 0, 0);
+
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
@@ -430,7 +448,7 @@ export async function buildContainer(
     JSON.stringify(manifest, null, 2) + "\n",
   );
 
-  const zipped = zipSync(archive as Zippable, { level: compressionLevel });
+  const zipped = zipSync(archive as Zippable, { level: compressionLevel, mtime: ZIP_EPOCH });
   // Base64 contains no `<`, so it cannot terminate the payload script tag.
   const payload = toBase64(zipped);
   const html = shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
@@ -604,7 +622,7 @@ export async function toSectionedContainer(
     manifest: new TextEncoder().encode(
       JSON.stringify({ ...built.manifest, hashes }, null, 2) + "\n",
     ),
-    payload: zipSync(payload, { level: 9 }),
+    payload: zipSync(payload, { level: 9, mtime: ZIP_EPOCH }),
     data: built.archive[sqliteEntry] ?? new Uint8Array(0),
   });
 }

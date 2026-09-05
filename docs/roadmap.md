@@ -260,9 +260,12 @@ Ordered by how much they hurt today.
    `dai-core/core`, but the only way to drive it is a Vite plugin. A `dai build`
    that takes a directory and emits a cartridge removes the framework from the
    critical path and makes the format usable from any toolchain.
-7. **Reproducible builds by default.** `documentUuid` and `now` are already
+7. **Reproducible builds by default.** **Done.** `documentUuid` and `now` are
    injectable, and an unsigned container built twice from identical inputs is
-   byte-identical.
+   byte-identical. It was not, quietly: every zip entry carried the clock, so
+   two builds of the same inputs differed by a few bytes for no reason anybody
+   could see. Entries now carry a fixed timestamp, built from local components
+   so it reads back the same in any timezone.
 
    A **signed** container is not, and cannot be made so: ECDSA draws a fresh
    nonce for every signature, so signing the same bytes twice yields two

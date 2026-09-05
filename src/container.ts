@@ -20,7 +20,7 @@ import {
   sectionBytes,
   verifyContainerFile,
 } from "./format.js";
-import { CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON } from "./core.js";
+import { CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -230,7 +230,7 @@ function parseSectioned(bytes: Uint8Array): ParsedContainer {
   const html = sealedShell.replace(
     PAYLOAD_TAG_RE,
     (_match, open: string, close: string) =>
-      open + toBase64(zipSync(archive, { level: 0 })) + close,
+      open + toBase64(zipSync(archive, { level: 0, mtime: ZIP_EPOCH })) + close,
   );
 
   return {
@@ -760,7 +760,7 @@ export function replacePayload(
   container: ParsedContainer,
   archive: Record<string, Uint8Array>,
 ): string {
-  const payload = toBase64(zipSync(archive, { level: 9 }));
+  const payload = toBase64(zipSync(archive, { level: 9, mtime: ZIP_EPOCH }));
   return container.html.replace(
     PAYLOAD_TAG_RE,
     (_match, open: string, close: string) => open + payload + close,
@@ -791,7 +791,7 @@ export async function resealContainer(
   );
   next[MANIFEST_ENTRY] = manifestBytes;
 
-  const payload = toBase64(zipSync(next, { level: 9 }));
+  const payload = toBase64(zipSync(next, { level: 9, mtime: ZIP_EPOCH }));
   const html = container.html.replace(
     PAYLOAD_TAG_RE,
     (_match, open: string, close: string) => open + payload + close,
@@ -851,7 +851,7 @@ export async function hostShell(
     nonce: await nonceFor(container.manifest.documentUuid),
   });
 
-  const payload = toBase64(zipSync(archive, { level: 0 }));
+  const payload = toBase64(zipSync(archive, { level: 0, mtime: ZIP_EPOCH }));
   return shell
     .replace(PAYLOAD_TAG_RE, (_match, open: string, close: string) => open + payload + close)
     .replace(/<meta charset[^>]*>/i, (tag) => tag + "\n  " + HOST_SHELL_META);
