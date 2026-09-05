@@ -20,7 +20,7 @@ import {
   sectionBytes,
   verifyContainerFile,
 } from "./format.js";
-import { CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH } from "./core.js";
+import { CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -56,6 +56,13 @@ export interface ParsedContainer {
   manifest: ContainerManifest;
   /** `required` or `advisory`, read from the shell rather than the manifest. */
   integrityPolicy: string;
+  /**
+   * Entries the manifest covers whose bytes a host put back (§6.1), and ones
+   * still absent (§6.2). A container with anything in `absent` cannot run
+   * here, whatever else checks out.
+   */
+  supplied: string[];
+  absent: string[];
   /** The publisher key the shell carries, if any. Base64 SPKI. */
   publicKey?: string;
   /** Present when the manifest names one. Only meaningful once verified. */
@@ -94,7 +101,63 @@ function metaContent(html: string, name: string): string | undefined {
  * Never use it to decide whether to mount: it proves only that the bytes are
  * shaped like a container.
  */
-export function parseContainer(source: string | Uint8Array): ParsedContainer {
+
+/**
+ * Bytes a host already holds, offered to a container that was published
+ * without them.
+ *
+ * Keyed on digest rather than on name, which is the whole safety of it: a
+ * host can only ever hand back bytes it already had, and only where the
+ * manifest says those exact bytes belong. Substitution can therefore change
+ * nothing about what runs, and §7's entry check is run over the result as
+ * though every byte had arrived in the file.
+ */
+export type Supplier = (digest: string) => Uint8Array | undefined;
+
+export interface ParseOptions {
+  supply?: Supplier;
+}
+
+/**
+ * Fills in what a host can, and records what is still missing.
+ *
+ * A thin container is one published without its engine, for a host that has
+ * that engine already. Nothing marks it as such: the manifest is complete, and
+ * what tells a reader is which entries are listed and not present. Only the
+ * engine and its glue may be absent — anything else missing is a container
+ * somebody took an entry out of, and is reported as the damage it is.
+ */
+function fillFromHost(
+  archive: Record<string, Uint8Array>,
+  manifest: ContainerManifest,
+  supply: Supplier | undefined,
+): { supplied: string[]; absent: string[] } {
+  const supplied: string[] = [];
+  const absent: string[] = [];
+
+  for (const [name, digest] of Object.entries(manifest.hashes ?? {})) {
+    if (name in archive) continue;
+    if (!(SUBSTITUTABLE_ENTRIES as readonly string[]).includes(name)) continue;
+
+    const bytes = supply?.(digest);
+    if (bytes) {
+      // Put in unchecked on purpose: the entry check hashes everything in the
+      // archive against the manifest a moment later, so a host that hands back
+      // the wrong bytes is caught there rather than trusted here.
+      archive[name] = bytes;
+      supplied.push(name);
+    } else {
+      absent.push(name);
+    }
+  }
+
+  return { supplied, absent };
+}
+
+export function parseContainer(
+  source: string | Uint8Array,
+  options: ParseOptions = {},
+): ParsedContainer {
   // Bytes are decoded as UTF-8, because a container is an HTML document however
   // it was read — from a file handle, an ArrayBuffer, or a native host. Every
   // caller was writing this line itself.
@@ -106,7 +169,7 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
   // The sectioned form is recognised by its leading magic, which is why the
   // magic is there. A container that arrived as bytes could be either, and
   // guessing from a file extension would be guessing.
-  if (typeof source !== "string" && looksSectioned(source)) return parseSectioned(source);
+  if (typeof source !== "string" && looksSectioned(source)) return parseSectioned(source, options);
 
   const html = typeof source === "string" ? source : new TextDecoder().decode(source);
 
@@ -140,6 +203,8 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
 
   const publicKey = metaContent(html, "dai-public-key") || undefined;
 
+  const filled = fillFromHost(archive, manifest, options.supply);
+
   return {
     html,
     archive,
@@ -148,6 +213,7 @@ export function parseContainer(source: string | Uint8Array): ParsedContainer {
     publicKey,
     publicKeyFingerprint: manifest.publicKeyFingerprint,
     database: archive[SQLITE_ENTRY] ?? new Uint8Array(0),
+    ...filled,
   };
 }
 
@@ -173,7 +239,7 @@ export function looksSectioned(bytes: Uint8Array): boolean {
  * a container be saved by somebody holding no key; a digest in the manifest
  * would go stale on the first save and could not be corrected.
  */
-function parseSectioned(bytes: Uint8Array): ParsedContainer {
+function parseSectioned(bytes: Uint8Array, options: ParseOptions = {}): ParsedContainer {
   const file = readContainerFile(bytes);
 
   const manifestBytes = sectionBytes(bytes, file, SECTION.MANIFEST);
@@ -233,6 +299,8 @@ function parseSectioned(bytes: Uint8Array): ParsedContainer {
       open + toBase64(zipSync(archive, { level: 0, mtime: ZIP_EPOCH })) + close,
   );
 
+  const filled = fillFromHost(archive, manifest, options.supply);
+
   return {
     html,
     archive,
@@ -242,6 +310,7 @@ function parseSectioned(bytes: Uint8Array): ParsedContainer {
     publicKeyFingerprint: manifest.publicKeyFingerprint,
     database: sectionBytes(bytes, file, SECTION.DATA) ?? new Uint8Array(0),
     sectioned: { bytes },
+    ...filled,
   };
 }
 
@@ -626,8 +695,11 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
  * show it rather than replacing it with "failed to load", which leaves a user
  * unable to tell a corrupted download from a file that was never a container.
  */
-export async function verifyContainer(source: string | Uint8Array): Promise<VerifiedContainer> {
-  const parsed = parseContainer(source);
+export async function verifyContainer(
+  source: string | Uint8Array,
+  options: ParseOptions = {},
+): Promise<VerifiedContainer> {
+  const parsed = parseContainer(source, options);
   const report = await auditContainer(parsed);
 
   // One implementation of what checking means, presented two ways: a report for
@@ -687,6 +759,24 @@ export async function verifyContainer(source: string | Uint8Array): Promise<Veri
           `it has no ${report.sections.missing.map(sectionName).join(" and no ")}`,
       );
     }
+  }
+
+  /*
+   * Published without its engine, for a host that has one — and this is not
+   * that host.
+   *
+   * Ahead of the entry check on purpose: to that check an absent entry is an
+   * altered container, and this is not one. Nothing here has been tampered
+   * with; it was built to be completed by whoever opens it, and the completing
+   * is what this reader cannot do.
+   */
+  if (parsed.absent.length > 0) {
+    throw new ContainerError(
+      "RUNTIME_UNAVAILABLE",
+      `This document was published without its engine, for a host that already has ` +
+        `that exact copy — and this one does not have ${parsed.absent.join(" or ")}. ` +
+        `Ask whoever sent it for the complete file.`,
+    );
   }
 
   const broken = report.entries.filter((entry) => entry.status !== "ok");
@@ -855,4 +945,76 @@ export async function hostShell(
   return shell
     .replace(PAYLOAD_TAG_RE, (_match, open: string, close: string) => open + payload + close)
     .replace(/<meta charset[^>]*>/i, (tag) => tag + "\n  " + HOST_SHELL_META);
+}
+
+/**
+ * Takes out what a host can put back: the inverse of {@link refatten}.
+ *
+ * A thin container is not a second build. It is this build with the engine
+ * left out, which is why the two forms carry one signature — deriving it here
+ * rather than signing twice is what makes that true rather than nearly true.
+ * ECDSA draws a fresh nonce for every signature, so two builds of identical
+ * inputs are never the same file, and a thin form produced by building again
+ * would be a different document wearing the same name.
+ */
+export function thinned(container: ParsedContainer): string {
+  const order = [...Object.keys(container.manifest.hashes ?? {}), MANIFEST_ENTRY];
+  const archive: Record<string, Uint8Array> = {};
+  for (const name of order) {
+    if ((SUBSTITUTABLE_ENTRIES as readonly string[]).includes(name)) continue;
+    const bytes = container.archive[name];
+    if (bytes) archive[name] = bytes;
+  }
+
+  const payload = toBase64(zipSync(archive, { level: 9, mtime: ZIP_EPOCH }));
+  return container.html.replace(
+    PAYLOAD_TAG_RE,
+    (_match, open: string, close: string) => open + payload + close,
+  );
+}
+
+/**
+ * Puts back what a thin container was published without.
+ *
+ * The result is the file the complete build produced, byte for byte — not an
+ * equivalent one. That is the claim worth making, because it is what says a
+ * thin container is the same document rather than a lesser edition of it, and
+ * it is checkable: build both, fatten the thin one, compare.
+ *
+ * The zip has to be rebuilt in the order the compiler wrote it, and the
+ * manifest is what remembers that order — `hashes` is filled entry by entry as
+ * the archive is assembled, so its keys are the archive's order with the
+ * manifest, which cannot hash itself, absent from the end. Nothing else in the
+ * file records this.
+ *
+ * The compression level is the compiler's default. A build that changed it and
+ * went thin could not be fattened back to the same bytes, which is why the
+ * option to do both does not exist.
+ */
+export function refatten(container: ParsedContainer): string {
+  if (container.absent.length > 0) {
+    throw new ContainerError(
+      "RUNTIME_UNAVAILABLE",
+      `This document is still missing ${container.absent.join(" and ")}, so it cannot be ` +
+        `completed here.`,
+    );
+  }
+
+  const order = [...Object.keys(container.manifest.hashes ?? {}), MANIFEST_ENTRY];
+  const archive: Record<string, Uint8Array> = {};
+  for (const name of order) {
+    const bytes = container.archive[name];
+    if (bytes) archive[name] = bytes;
+  }
+  // Anything the manifest never listed, in the order it was found. There should
+  // be none; a container carrying one would have been refused already.
+  for (const [name, bytes] of Object.entries(container.archive)) {
+    if (!(name in archive)) archive[name] = bytes;
+  }
+
+  const payload = toBase64(zipSync(archive, { level: 9, mtime: ZIP_EPOCH }));
+  return container.html.replace(
+    PAYLOAD_TAG_RE,
+    (_match, open: string, close: string) => open + payload + close,
+  );
 }

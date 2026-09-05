@@ -65,6 +65,14 @@ export interface CompileOptions {
   upgradeOf?: string;
   sqliteWasmPath?: string;
   sqliteGluePath?: string;
+  /**
+   * Leave the engine out, for a host that already holds it (spec §6.2).
+   *
+   * The manifest still covers every entry and the signature is the same, so
+   * the thin and complete forms are one build. It runs only where a host can
+   * supply those exact bytes, and is refused by name where none can.
+   */
+  thin?: boolean;
   /** Overrides the shell. Defaults to the one shipped with this package. */
   templatePath?: string;
   documentUuid?: string;
@@ -216,6 +224,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     documentUuid: options.documentUuid,
     validUntil: options.validUntil,
     verifyIntegrity: options.verifyIntegrity,
+    thin: options.thin,
     compressionLevel: options.compressionLevel,
     appEntryPrefix: options.appEntryPrefix ?? DEFAULT_APP_PREFIX,
     schema: declared,

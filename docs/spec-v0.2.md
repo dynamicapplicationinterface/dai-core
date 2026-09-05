@@ -486,31 +486,64 @@ A host MUST NOT substitute an entry whose digest it does not hold, MUST NOT
 treat a substitution as satisfying the entry check in §7, and MUST verify the
 container exactly as though it had loaded every byte.
 
-No host does this yet, and measurement says it is not where the time goes: the
-engine is compiled after the application is on screen, because an application
-asks for its database once it has painted. The permission is recorded because it
-is the decision a native runner needs before it is built, not because it is
-urgent. See [performance.md](performance.md).
+Substitution is not a saving in time — measurement says the engine is compiled
+after the application is on screen, because an application asks for its
+database once it has painted. It is a saving in what has to travel, which is
+what §6.2 is built on: a container that need not carry an engine can be small
+enough to be a link. See [performance.md](performance.md).
 
-### 6.2 The thin profile
+### 6.2 Containers published without an engine
 
-> **Not implemented.** Nothing emits a thin container and no host can supply an
-> engine to one, so this section describes an intention rather than a format.
-> It is written here because the rule above is the decision that permits it, and
-> a reader deciding whether to build a host should know which half exists. Do
-> not implement against this section until it says otherwise.
+A container MAY be published without the engine and its glue, for a host that
+already holds those exact bytes. Nothing else may be left out.
 
-A container MAY omit the engine and declare `integrityPolicy` unchanged but
-`profile: "requires-runner"` in its manifest. Such a container runs only where a
-host supplies a matching engine, and a host MUST refuse it when it cannot.
+The manifest does not change. Every entry is listed with its digest, including
+the ones whose bytes are absent, and the signature is the one the complete
+build carries — the two forms are one build, not two, and a reader can check
+that by completing one and comparing it with the other. Only bytes are absent.
 
-This exists for distribution inside an organisation, where the runner is
-guaranteed and the saving is real. It is not the default and MUST NOT be
-presented as one: a `requires-runner` container is not portable in the sense the
-rest of this document means, and the difference has to be visible to whoever is
-handed one.
+The entries that MAY be absent are exactly:
 
----
+```
+runtime/sqlite3.wasm
+runtime/sqlite3.mjs
+```
+
+**By name, and no others.** A reader has to be able to tell a container
+published this way from one somebody removed an entry from, and the names are
+all it has: nothing marks the form, because a mark would be a claim the file
+makes about itself and this is a fact about the file. An entry absent from the
+archive and listed in the manifest is a container to be completed when it is
+one of those two, and damage otherwise — reported as `DIGEST_MISMATCH` like any
+other missing entry. A build that renames its engine cannot use this form.
+
+A host completing a container:
+
+- MUST match on digest, never on name. The bytes it supplies are bytes it
+  already held, and it puts them only where the manifest says those exact bytes
+  belong, so completing one can change nothing about what runs.
+- MUST then verify the container by §7 exactly as though every byte had
+  arrived in the file. A supplied entry satisfies nothing on its own; it is
+  hashed against the manifest with everything else.
+- MUST refuse with `RUNTIME_UNAVAILABLE` when it cannot supply what is absent,
+  and MUST NOT report that as modification. Nothing was modified: the file
+  arrived as published, and this host is not one it can run on.
+
+This is not the default and MUST NOT be presented as one. A container published
+this way is not portable in the sense the rest of this document means, and the
+difference has to be visible to whoever is handed one.
+
+#### Completing one
+
+A host MAY write out the complete form, and the result MUST be the file the
+complete build produced, byte for byte. Two things make that reachable: zip
+entries carry a fixed timestamp rather than the clock (§2), and the order the
+compiler wrote them in is recoverable from the manifest — `hashes` is filled
+entry by entry as the archive is assembled, so its keys are the archive's
+order, with the manifest, which cannot hash itself, absent from the end.
+
+The compression level is the compiler's default. A build that changes it
+cannot use this form, because the bytes could not be reproduced.
 
 ### 6.3 Declared schemas
 

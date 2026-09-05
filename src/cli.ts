@@ -44,6 +44,10 @@ Build options:
                           polyglot HTML. Passed by mail gateways that
                           quarantine .html, and saved without rewriting the
                           whole file.
+      --thin              Leave the engine out, for a host that already holds
+                          that exact copy. The manifest still covers it and the
+                          signature is unchanged, so it is the same build — it
+                          simply will not open where no host can supply one.
       --no-verify         Build a container that does not demand verification
       --quiet             Print only the output path
 
@@ -159,6 +163,7 @@ async function build(parsed: Parsed): Promise<number> {
     documentUuid: typeof flags.uuid === "string" ? flags.uuid : undefined,
     validUntil,
     verifyIntegrity: flags.verify === false ? false : undefined,
+    thin: flags.thin === true,
     sectioned: flags.dai === true,
   });
 

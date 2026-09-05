@@ -60,6 +60,23 @@ export const DEFAULT_FAVICON =
  */
 export const ZIP_EPOCH = new Date(1980, 0, 2, 12, 0, 0);
 
+/**
+ * The entries a container may be built without, for a host to supply.
+ *
+ * The engine and its glue, and nothing else. They are the largest thing in a
+ * container by an order of magnitude, they are identical across every
+ * container built from the same compiler, and §6.1 already permits a host to
+ * use its own copy of a runtime entry whose digest it holds. Everything else
+ * is what makes this document this document.
+ *
+ * By name, deliberately. A build that renames its engine cannot be thin,
+ * because a reader has to be able to tell a container published without its
+ * engine from one somebody stripped an entry out of, and the names are all it
+ * has to go on. The names are the compiler's defaults.
+ */
+export const SUBSTITUTABLE_ENTRIES = [DEFAULT_WASM_ENTRY, DEFAULT_GLUE_ENTRY] as const;
+
+
 const PAYLOAD_PLACEHOLDER = "<!--DAI_PAYLOAD-->";
 const RUNTIME_PLACEHOLDER = "<!--DAI_RUNTIME-->";
 const APP_NAME_PLACEHOLDER = "<!--DAI_APP_NAME-->";
@@ -125,6 +142,15 @@ export interface BuildContainerInput {
   appName: string;
   /** Custom favicon Data URL or SVG text. Defaults to clean DAI SVG icon. */
   favicon?: string;
+  /**
+   * Leave the engine out, for a host that already has it (§6.2).
+   *
+   * The manifest still covers it: every digest is there and the signature is
+   * the same one the complete build carries, so the two forms are one build.
+   * Only the bytes are absent, and only a host holding those exact bytes can
+   * put them back.
+   */
+  thin?: boolean;
   /** Seed database. Absent means an empty document. */
   sqlite?: Uint8Array;
   /**
@@ -172,6 +198,8 @@ export interface BuildContainerInput {
 }
 
 export interface BuildContainerResult {
+  /** Entries the manifest covers whose bytes were not packaged (§6.2). */
+  elided?: string[];
   /** The finished container document. */
   html: string;
   /** Uncompressed archive entries, as they were sealed. */
@@ -448,14 +476,32 @@ export async function buildContainer(
     JSON.stringify(manifest, null, 2) + "\n",
   );
 
-  const zipped = zipSync(archive as Zippable, { level: compressionLevel, mtime: ZIP_EPOCH });
+  /*
+   * Elided after the digests, never before.
+   *
+   * `hashes` and `signedEntries` are taken over the whole document, so a thin
+   * container makes exactly the same claims as the complete one and carries
+   * exactly the same signature. What changes is which bytes travel.
+   */
+  const elided = input.thin
+    ? SUBSTITUTABLE_ENTRIES.filter((name) => name in archive)
+    : [];
+  const packaged: Record<string, Uint8Array> = {};
+  for (const [name, bytes] of Object.entries(archive)) {
+    if (!elided.includes(name as (typeof SUBSTITUTABLE_ENTRIES)[number])) packaged[name] = bytes;
+  }
+
+  const zipped = zipSync(packaged as Zippable, { level: compressionLevel, mtime: ZIP_EPOCH });
   // Base64 contains no `<`, so it cannot terminate the payload script tag.
   const payload = toBase64(zipped);
   const html = shell.replace(PAYLOAD_TAG_RE, (_match, open: string) => open + payload);
 
   return {
     html,
+    // Complete, whatever travelled: this is what the document is made of, and
+    // a caller re-fattening a thin build needs the bytes that were left out.
     archive,
+    elided,
     zipped,
     manifest,
     documentUuid,
@@ -615,6 +661,7 @@ export async function toSectionedContainer(
   const payload: Zippable = {};
   for (const [name, bytes] of Object.entries(built.archive)) {
     if (name === MANIFEST_ENTRY || name === sqliteEntry) continue;
+    if (built.elided?.includes(name)) continue;
     payload[name] = bytes;
   }
 

@@ -26,6 +26,10 @@ export const REFUSALS = {
   UNSUPPORTED_ALGORITHM: { recoverable: false, means: "A digest algorithm this reader does not implement." },
   UNSUPPORTED_CRYPTO: { recoverable: false, means: "No WebCrypto: not a secure context." },
   SECTION_MISSING: { recoverable: false, means: "A required section is absent; the file is incomplete." },
+  RUNTIME_UNAVAILABLE: {
+    recoverable: false,
+    means: "Published without its engine, for a host that already holds those exact bytes. This one does not.",
+  },
 
   // ---- modified
   DIGEST_MISMATCH: { recoverable: false, means: "An entry does not match its digest, is missing, or is unlisted." },
