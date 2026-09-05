@@ -17,6 +17,44 @@ parallel after it; 3 follows 2; 4 and 5 follow 1. Critical path:
 
     0.2 → 0.3 → { 1.1, 1.3 } ‖ { 2.1 → 2.2, 2.3 → 2.5 } → 3.1 → 3.3 → 3.5 → 4.1 → 4.3
 
+## Scoreboard
+
+One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
+
+| | Item | State |
+|---|---|---|
+| 0.1 | Signed set closed | [x] `f60466d` |
+| 0.2 | The host owns the runtime | [~] |
+| 0.3 | The shell binds its frame's messages | [ ] host side `7cd469c`; shell side open |
+| 1.1 | Launch card with backed claims | [ ] |
+| 1.2 | One card for every carrier | [ ] |
+| 1.3 | Install after use | [ ] |
+| 1.4 | One sentence everywhere | [ ] |
+| 1.5 | Look inside | [ ] |
+| 2.1 | Thin profile | [ ] |
+| 2.2 | Inline link | [ ] |
+| 2.3 | Reference link and dumb store | [ ] |
+| 2.4 | Carriers in the specification | [ ] |
+| 2.5 | The sender's last line is the link | [ ] |
+| 2.6 | Every share path carries the link | [ ] |
+| 3.1 | Engine once, offline forever | [ ] |
+| 3.2 | Mirrorable static opener | [ ] |
+| 3.3 | Unfurl without the blob | [ ] |
+| 3.4 | Stripped fragment degrades to a sentence | [ ] |
+| 3.5 | iOS solved by the link | [ ] |
+| 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
+| 4.1 | Succession | [ ] |
+| 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
+| 4.3 | A publisher who is somebody | [ ] |
+| 4.4 | The wedge | [ ] not engineering |
+| 4.5 | Attachments in the document | [ ] |
+| 5.1 | The north star, measured | [ ] |
+| 5.2 | Propagation without a beacon | [ ] relay side |
+| — | Media type registered | [ ] |
+| — | Desktop window shows the document's icon | [ ] |
+| — | Packing list date editable | [ ] |
+| — | dai-core 0.2.0 published | [ ] yours |
+
 ---
 
 ## Phase 0 — Make "open from a stranger" true
