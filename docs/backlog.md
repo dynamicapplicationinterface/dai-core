@@ -33,7 +33,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` grammar, `6c23954` compact carrier — a chore chart is 2.8 kB |
-| 2.3 | Reference link and dumb store | [x] `PENDING` — interface, two adapters, opener; the bucket is yours |
+| 2.3 | Reference link and dumb store | [x] `bca1061` — interface, two adapters, opener; the bucket is yours |
 | 2.4 | Carriers in the specification | [~] `5606a87` `6c23954` — the Python reader verifies signed links; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
@@ -264,7 +264,7 @@ A Vercel Blob adapter, if ever wanted, is a third adapter behind the same
 interface and never the reference one. `@vercel/blob` is not imported in
 dai-core.
 
-Done in `PENDING`, to the extent it can be without a bucket. `src/store.ts` is
+Done in `bca1061`, to the extent it can be without a bucket. `src/store.ts` is
 the interface, the sealing (AES-256-GCM, thin form, fresh key per seal), the
 link grammar and `admit()` — the one place a store decides what it will hold.
 `store-fs.ts` and `store-s3.ts` are the two adapters; the S3 one signs SigV4
