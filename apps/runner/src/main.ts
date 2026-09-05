@@ -15,6 +15,7 @@ import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 import { describeSelf, watchForInstall } from "./install.js";
+import { hideCard, showCard } from "./card.js";
 import { platform } from "./platform.js";
 import { checkTrust, forgetTrust } from "../../../src/trust.js";
 import {
@@ -154,6 +155,7 @@ function eject(): void {
   handshakeEstablished = false;
   document.body.classList.remove("loaded");
   installBar.hidden = true;
+  hideCard();
   describeSelf();
   sheet.hidden = true;
   title.textContent = "";
@@ -361,27 +363,18 @@ async function openFromUrl(address: string): Promise<void> {
   }
 
   /*
-   * A click, first.
+   * The fetch runs; the card is the click.
    *
    * A link used to fetch and mount with no step in between, so any page could
    * put a full-screen application — one asking for a password, say — in front
-   * of somebody who had merely followed a link. The handoff from the website
-   * checks where it came from; a URL checks nothing. So the address is shown,
-   * with the host it will read from, and nothing is fetched until asked.
+   * of somebody who had merely followed a link. That is still refused: nothing
+   * mounts until the card below is asked. What changed is which click it is.
+   * A button naming a hostname was the most that could be said before the
+   * bytes arrived; the card is shown after they have been read and verified,
+   * and says what the thing is called, who signed it and what it will not be
+   * able to do. Reading a URL with no credentials, which is what any page can
+   * already cause, buys a screen that is worth looking at.
    */
-  await new Promise<void>((proceed) => {
-    say(`Open a document from ${url.hostname}?`);
-    const button = document.createElement("button");
-    button.id = "open-link";
-    button.type = "button";
-    button.textContent = `Open it from ${url.hostname}`;
-    button.addEventListener("click", () => {
-      button.remove();
-      proceed();
-    });
-    report.appendChild(button);
-  });
-
   slot.classList.add("busy");
   say(`Fetching ${url.hostname}…`);
 
@@ -416,7 +409,10 @@ async function openFromUrl(address: string): Promise<void> {
   const bytes = new Uint8Array(await response.arrayBuffer());
   const name = url.pathname.split("/").pop() || "container.dai";
   slot.classList.remove("busy");
-  await ingest(new File([bytes], name, { type: "text/html" }));
+  await ingest(new File([bytes], name, { type: "text/html" }), {
+    confirm: true,
+    from: `From ${url.hostname}. Nothing is uploaded — it runs on this device.`,
+  });
 }
 
 /**
@@ -451,7 +447,17 @@ async function collectSharedContainer(): Promise<File | null> {
  */
 let arrivedAsFile = true;
 
-async function ingest(file: File): Promise<void> {
+/**
+ * Where a document came from, which decides whether it is shown a card first.
+ *
+ * A file somebody picked out of their own storage, or one they have just built
+ * and handed over from a page they were already on, is not a document arriving
+ * from a stranger. A link and a share are. Item 1.2 is where every carrier
+ * lands on the same screen; this is the half that exists to be landed on.
+ */
+type Carrier = { confirm: false } | { confirm: true; from: string };
+
+async function ingest(file: File, carrier: Carrier = { confirm: false }): Promise<void> {
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
 
@@ -479,6 +485,28 @@ async function ingest(file: File): Promise<void> {
       say(verdict.message, true);
       slot.classList.remove("busy");
       return;
+    }
+
+    /*
+     * The card, for a document that arrived from somebody else.
+     *
+     * Shown after verification, so every word on it — the name, the icon, the
+     * publisher — is a checked fact rather than a claim the file made about
+     * itself. Nothing mounts until it is asked for.
+     */
+    if (carrier.confirm) {
+      slot.classList.remove("busy");
+      say("");
+      await showCard({
+        name: cartridge.manifest.appName ?? "container",
+        favicon: cartridge.manifest.favicon,
+        signature: cartridge.signature,
+        fingerprint: cartridge.publicKeyFingerprint,
+        trust: verdict.status === "trusted" ? "known" : "first",
+        from: carrier.from,
+        applied: ISOLATION_CLAUSES,
+      });
+      slot.classList.add("busy");
     }
 
     // If an OPFS database exists for this documentUuid, mount the latest database.
@@ -858,7 +886,10 @@ async function start(): Promise<void> {
   if (parameters.has("shared")) {
     const collected = await collectSharedContainer();
     if (collected) {
-      await ingest(collected);
+      await ingest(collected, {
+        confirm: true,
+        from: "Shared to this app. Nothing is uploaded — it runs on this device.",
+      });
       return;
     }
     say("Nothing arrived from the share. Try opening the file instead.", true);
@@ -976,6 +1007,10 @@ Object.defineProperty(window, "__runner", {
     deleteApp,
     refreshLibrary,
     listLibrary: listCartridgesFromLibrary,
+    // The card is a pure renderer over what it is handed. Exposed so a test
+    // can draw it with a weaker profile than this host has, which is the only
+    // way to check that a sentence disappears when its clause does.
+    showCard,
   },
 });
 

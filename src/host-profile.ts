@@ -58,3 +58,43 @@ export function verifyClaim(claimed: readonly string[], results: readonly ProbeR
     .map((result) => result.id);
   return { ok: broken.length === 0 && unchecked.length === 0, broken, unclaimed, unchecked };
 }
+
+/**
+ * What a person is told on a launch card, and the clauses that make it true.
+ *
+ * A tick is not this host's opinion of itself. Each one names the §4 clauses
+ * it rests on, and a host may show it only while it applies all of them — the
+ * same list it declares to every container, which the probe checks. Take a
+ * clause away and the sentence it backed disappears. A host may say less than
+ * it does, and never more.
+ *
+ * These are all statements about the host, not about the document: what no
+ * document running here will be able to do. Nothing can be said about a
+ * particular document's behaviour before it has run, so nothing is.
+ */
+export interface Claim {
+  id: string;
+  /** The sentence, as somebody reads it. */
+  says: string;
+  needs: readonly IsolationClause[];
+}
+
+export const CLAIMS: readonly Claim[] = [
+  { id: "offline", says: "Can't go online", needs: ["network", "socket"] },
+  {
+    id: "contained",
+    says: "Can't see your other tabs, files or apps",
+    needs: ["origin", "shell", "storage"],
+  },
+  { id: "windows", says: "Can't open windows or take you somewhere else", needs: ["popup"] },
+  {
+    id: "sealed",
+    says: "Runs only what was sealed inside it",
+    needs: ["inline", "handler", "evaluation"],
+  },
+];
+
+/** The claims a host holding these clauses may display, and no others. */
+export function claimsFor(applied: readonly string[]): Claim[] {
+  return CLAIMS.filter((claim) => claim.needs.every((need) => applied.includes(need)));
+}

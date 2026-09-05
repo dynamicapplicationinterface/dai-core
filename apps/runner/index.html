@@ -238,6 +238,65 @@
       }
       body:not(.loaded) #cartridge { display: none; }
       body.loaded #slot { display: none; }
+
+      /* The card owns the screen while it is up: nothing else is a decision. */
+      body.deciding #slot { display: none; }
+      #card {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        overflow: auto;
+      }
+      #card[hidden] { display: none; }
+      .card-panel {
+        width: 100%;
+        max-width: 22rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 26px 22px 22px;
+        border-radius: 20px;
+        background: #1f2937;
+        border: 1px solid #374151;
+        text-align: center;
+      }
+      #card-icon { border-radius: 16px; background: #111827; }
+      #card-icon[hidden] { display: none; }
+      #card-name { margin: 2px 0 0; font-size: 21px; font-weight: 650; }
+      #card-publisher { margin: 0; font-size: 13px; line-height: 1.45; color: #9ca3af; }
+      #card-publisher[data-state="unsigned"] { color: #fbbf24; }
+      #card-claims {
+        margin: 8px 0 4px;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-self: stretch;
+        text-align: left;
+        font-size: 14px;
+        color: #d1d5db;
+      }
+      #card-claims li { display: flex; gap: 9px; align-items: baseline; }
+      #card-claims li::before { content: "✓"; color: #34d399; font-weight: 700; }
+      #card-open {
+        margin-top: 6px;
+        align-self: stretch;
+        padding: 13px 20px;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 600;
+        border: 0;
+        border-radius: 12px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+      }
+      #card-from { margin: 2px 0 0; font-size: 12.5px; color: #6b7280; }
+      #card-from[hidden] { display: none; }
     </style>
   </head>
 
@@ -293,6 +352,21 @@
         <div id="report"></div>
         <div id="library"></div>
       </div>
+      <!--
+        The launch card. See apps/runner/src/card.ts: what somebody is about to
+        open, before it opens, with ticks that name the clauses backing them.
+      -->
+      <div id="card" hidden>
+        <div class="card-panel">
+          <img id="card-icon" alt="" width="72" height="72" />
+          <h2 id="card-name"></h2>
+          <p id="card-publisher"></p>
+          <ul id="card-claims"></ul>
+          <button id="card-open" type="button">Open it</button>
+          <p id="card-from" hidden></p>
+        </div>
+      </div>
+
       <iframe
         id="cartridge"
         title="Running container"

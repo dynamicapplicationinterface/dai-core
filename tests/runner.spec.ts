@@ -290,6 +290,9 @@ test.describe("cartridge ingestion", () => {
     expect(landed).toContain("shared=1");
 
     await page.goto(`${RUNNER_URL}?shared=1`);
+    // A document shared in came from somebody else, so it lands on the card
+    // before it runs. See tests/launch-card.spec.ts for what is on it.
+    await page.click("#card-open");
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await expect(page.locator("#cartridge")).toBeVisible();
   });
@@ -310,6 +313,7 @@ test.describe("cartridge ingestion", () => {
     }, html);
 
     await page.goto(`${RUNNER_URL}?shared=1`);
+    await page.click("#card-open");
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     await page.goto(`${RUNNER_URL}?shared=1`);
@@ -345,12 +349,14 @@ test.describe("cartridge ingestion", () => {
 
     await page.goto(`${RUNNER_URL}?open=${encodeURIComponent(url)}`);
 
-    // Nothing is fetched until asked: a link can put a page in front of
-    // somebody, and only a click puts an application there.
-    await expect(page.locator("#open-link")).toBeVisible();
-    await expect(page.locator("#open-link")).toContainText("localhost");
+    // Nothing mounts until asked: a link can put a page in front of somebody,
+    // and only a click puts an application there. The asking is the card,
+    // which can say what the document is because the bytes have been read and
+    // verified by the time it is drawn.
+    await expect(page.locator("#card")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#card-from")).toContainText("localhost");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
-    await page.click("#open-link");
+    await page.click("#card-open");
 
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await expect(page.locator("#cartridge")).toBeVisible();
@@ -363,8 +369,9 @@ test.describe("cartridge ingestion", () => {
       readFileSync(CONTAINER, "utf8").replace("<head>", "<head><!-- altered -->"),
     );
 
+    // No card: a container that does not verify never becomes a document to
+    // decide about, and the refusal is what is on screen instead.
     await page.goto(`${RUNNER_URL}?open=${encodeURIComponent(url)}`);
-    await page.click("#open-link");
 
     await expect(page.locator("#report")).toContainText(/could not be opened|does not match/i, {
       timeout: 30_000,
@@ -382,7 +389,6 @@ test.describe("cartridge ingestion", () => {
     await page.route("https://blocked.test/**", (route) => route.abort("failed"));
 
     await page.goto(`${RUNNER_URL}?open=${encodeURIComponent("https://blocked.test/x.dai.html")}`);
-    await page.click("#open-link");
 
     await expect(page.locator("#report")).toContainText(/does not allow other sites/i, {
       timeout: 30_000,

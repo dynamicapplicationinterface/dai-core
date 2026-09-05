@@ -95,7 +95,7 @@ function remember(uuid: string): void {
 }
 
 /** The manifest's favicon as something an <img> can load. */
-function faviconUrl(favicon: string | undefined): string | null {
+export function faviconUrl(favicon: string | undefined): string | null {
   if (!favicon) return null;
   if (favicon.startsWith("data:")) return favicon;
   if (favicon.trim().startsWith("<svg")) return "data:image/svg+xml," + encodeURIComponent(favicon);
