@@ -13,6 +13,10 @@ This makes it feel like a document instead of a download.
 
 <a class="dl" href="https://github.com/dynamicapplicationinterface/dai-core/releases">Download for Windows and macOS</a>
 
+Version 0.2.0 and later read every current document. An older copy will refuse a
+newer file by name and tell you to update, rather than failing in a way you have
+to guess at.
+
 ## What it adds
 
 **Files become documents.** `.dai` gets its own icon and opens on double-click,
@@ -27,10 +31,11 @@ written to a temporary file and swapped in, so a crash mid-save cannot leave
 you with half a document. In a browser tab, saving means downloading a new copy
 and tidying up the old one yourself.
 
-**It remembers who signed what.** The first time you open a document from
-someone, it records their key. If a later file claims to be from them but was
-signed by somebody else, it refuses and says so. Nothing to configure — it
-just notices.
+**It remembers who signed what.** It records the key each publisher signs with,
+so a second document from someone you have opened before is recognised as
+theirs, and one that claims to be from them under a different key is refused
+and says so. A name spelled to look like one you know is caught too. Nothing to
+configure — it just notices.
 
 ## It builds them too
 
@@ -38,9 +43,15 @@ just notices.
   <img src="/shots/desktop-create.png" alt="The create dialog, with a folder dropped in" />
 </div>
 
-Drop in the folder or zip your assistant gave you and it compiles and signs on
-your machine. **No terminal, no npm, no configuration file** — and nothing is
+Drop in the folder or zip your assistant gave you and it compiles on your
+machine. **No terminal, no npm, no configuration file** — and nothing is
 uploaded, because there is nothing to upload to.
+
+What it builds is unsigned, and will say so when anyone opens it. Signing needs
+a key you keep, and choosing where that key lives is a decision this window does
+not yet ask you to make; the [command line](/docs/quickstart) does. An unsigned
+document is still whole — every part of it is fingerprinted, and a host checks
+those before it runs anything — it simply carries no claim about who made it.
 
 It runs the same checks as everywhere else, so code that would open blank is
 refused with the reason, rather than turned into a file that quietly does

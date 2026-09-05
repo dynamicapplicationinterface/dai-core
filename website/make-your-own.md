@@ -8,9 +8,8 @@ You do not need to know how to write code. You need an assistant to write it,
 and somewhere to turn what it writes into a file. That is this page.
 
 Nothing you paste here is uploaded. The whole thing is compiled in your
-browser — there is no server behind this page, which is the same reason the
-file you get can be trusted: **we never see your app, and neither does anyone
-else.**
+browser — there is no server behind this page: **we never see your app, and
+neither does anyone else.**
 
 <MakeYourOwn />
 
@@ -30,10 +29,16 @@ there is usually literal about what is missing.
 
 ## When you outgrow this page
 
-This builds one HTML file with a key that is thrown away afterwards. That is
-right for something personal, and not enough for something you publish, where
-people need to know that *you* made it and not somebody who altered it later.
-For that you want a signing key you keep, which means the
+What this builds is unsigned, and whoever opens it will be told so plainly. That
+is right for something personal: the file is whole, every part of it is
+fingerprinted, and a host checks that before it runs anything. What it carries
+no claim about is who made it.
+
+A page cannot fix that. Signing needs a key you keep, and a web page has nowhere
+to keep one — a key made for a single build and thrown away signs nothing anyone
+can check, and would make your own next version look like somebody else's. So
+when you publish something, and people need to know that *you* made it and not
+somebody who altered it later, use a key of your own through the
 [command line tool](/docs/quickstart).
 
 Nothing changes about the file itself — the format is the same either way.

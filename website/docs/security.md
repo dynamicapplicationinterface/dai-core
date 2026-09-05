@@ -17,9 +17,13 @@ DAI distinguishes clearly between **Integrity** and **Authenticity**:
 - **Enforcement in the Shell:** The policy `<meta name="dai-integrity" content="required">` lives in the HTML shell outside the archive.
 
 ### 2. Authenticity (External Assurance)
-- **ECDSA P-256 / SHA-256:** Application bytecode, static assets, runtime glue, and the sealed shell are signed at compile time.
+- **ECDSA P-256 / SHA-256:** Application bytecode, static assets and runtime glue are signed at compile time, in a COSE_Sign1 envelope over a deterministic CBOR view of the manifest. From `manifestVersion` 3 the sealed shell is deliberately *outside* the signed set — it is checked against its own digest and against the live document, so a host that supplies its own shell can still verify a signature — and `signedEntries` is the sole authority for what the archive may contain.
 - **Limitations of In-File Cryptography:** A container is fully self-contained. An attacker can replace the public key in the shell and re-sign the payload with their own private key. Therefore, **a signature alone does not prove publisher identity**.
-- **Trust Anchors:** Authenticity is only established when the host compares `publicKeyFingerprint` against an **out-of-band trust anchor** (e.g., enterprise directory, package registry, or published fingerprint).
+- **Trust Anchors:** Authenticity is only established from outside the file. A conforming host has three sources, and must distinguish three states — *known*, *new* and *conflict* — while never presenting any of them as "verified":
+  1. **What the device has seen.** The publisher's key is pinned across documents, with the name it signs under and a count of its documents. A key the device knows is *known*; one it does not is *new*, with a safety number the two parties can compare out of band.
+  2. **A name collision.** A name that matches one already pinned under a different key is *conflict*, compared on the UTS #39 confusable skeleton and by a mixed-script rule, so a look-alike spelling does not pass as a familiar name.
+  3. **A third party vouching.** An optional Sigstore bundle binds the signing key to an OpenID identity, verified entirely offline against roots the host already holds. A host that holds no matching root treats the binding as absent — never as verified, and never as a reason to refuse.
+- **Provisioned trust.** An organisation may ship a root list naming publisher keys to treat as known, its own Fulcio and Rekor roots, and countersigner keys.
 
 ---
 

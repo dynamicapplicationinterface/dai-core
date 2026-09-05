@@ -142,21 +142,48 @@ Reports whether the host successfully persisted the container:
 
 When a cartridge halts before mounting, it emits one of the following standard refusal reason codes:
 
-| Reason Code | Category | Meaning |
+Every name a conforming implementation may refuse with, from the registry in
+`src/refusals.ts` — which is the source, and which a test holds this table
+against, so the two cannot drift. *Recoverable* says whether the person's work
+is still in hand, as with a lost race or a busy lock, rather than a file that is
+not what it claims.
+
+| Reason Code | Recoverable | Meaning |
 | :--- | :--- | :--- |
-| `NO_PAYLOAD` | Packaging | No `#dai-payload` element found. File is not a DAI container. |
-| `PAYLOAD_UNREADABLE` | Archive | The payload base64 string failed to decode or unzip. |
-| `MANIFEST_UNREADABLE` | Schema | The `runtime/manifest.json` entry is not valid JSON. |
-| `MANIFEST_MISSING` | Integrity | Verification is required but no manifest is present in archive. |
-| `UNSUPPORTED_ALGORITHM` | Crypto | The manifest specifies a hashing algorithm other than SHA-256. |
-| `UNSUPPORTED_CRYPTO` | Environment | Browser `crypto.subtle` is unavailable (insecure context). |
-| `DIGEST_MISMATCH` | Integrity | One or more entry SHA-256 digests do not match the manifest. |
-| `SIGNATURE_UNVERIFIABLE` | Authenticity | A publisher key is present but no signature block was provided. |
-| `UNVERIFIED_SIGNATURE` | Authenticity | The ECDSA signature does not verify against the embedded key. |
-| `NO_APPLICATION` | Runtime | Verification passed, but the entry point (`app/index.html`) is missing. |
-| `KEY_EXPIRED` | Expiration | The manifest carries a `validUntil` timestamp that has elapsed. |
-| `MOUNT_TIMEOUT` | Lifecycle | The inner sandboxed application failed to report ready within 5000ms. |
-| `BOOT_FAILED` | Runtime | An unhandled exception occurred in the bootloader. |
+| `NO_PAYLOAD` | no | No payload: probably not a container at all. |
+| `PAYLOAD_UNREADABLE` | no | The payload did not decode or unzip. |
+| `MANIFEST_MISSING` | no | No manifest, so nothing can be verified. |
+| `MANIFEST_UNREADABLE` | no | The manifest is not valid JSON. |
+| `UNSUPPORTED_ALGORITHM` | no | A digest algorithm this reader does not implement. |
+| `UNSUPPORTED_CRYPTO` | no | No WebCrypto: not a secure context. |
+| `SECTION_MISSING` | no | A required section is absent; the file is incomplete. |
+| `UNSUPPORTED_MANIFEST_VERSION` | no | A manifestVersion this reader does not know. The file is not damaged; the host needs updating. |
+| `RUNTIME_UNAVAILABLE` | no | Published without its engine, for a host that already holds those exact bytes. This one does not. |
+| `LINK_DAMAGED` | no | The link does not decode: probably cut or wrapped in transit. |
+| `LINK_UNSUPPORTED` | no | The link names a carrier version or dictionary this reader does not have. |
+| `LINK_UNRECONSTRUCTABLE` | no | The link leaves out an entry expecting this host's copy to match the sealed digest, and it does not. |
+| `BLOB_MISMATCH` | no | The store returned bytes that do not hash to what the link names. |
+| `BLOB_UNDECRYPTABLE` | no | The link's key does not open the blob: the link was cut or edited. |
+| `STORE_REFUSED` | no | A store declined to hold this: not a DAI document, too large, or the sidecar disagrees. |
+| `DIGEST_MISMATCH` | no | An entry does not match its digest, is missing, or is unlisted. |
+| `SECTION_MISMATCH` | no | The manifest or application section does not match its digest. |
+| `DATA_DAMAGED` | no | Only the database disagrees with its record: an interrupted save. The application is intact. |
+| `SHELL_MISSING` | no | No sealed copy of the shell, so the bootloader cannot be checked. |
+| `SHELL_MISMATCH` | no | The shell does not match the sealed copy inside it. |
+| `SIGNATURE_UNVERIFIABLE` | no | A publisher key is present but there is nothing usable to check. |
+| `SIGNATURE_UNSUPPORTED` | no | A signature format this reader does not implement. |
+| `SIGNED_SET_MISMATCH` | no | The signed list and the digest list disagree, in either direction. |
+| `UNVERIFIED_SIGNATURE` | no | The signature does not verify against the key the file carries. |
+| `KEY_EXPIRED` | no | The container's expiry has passed. |
+| `PUBLISHER_MISMATCH` | no | Signed by a different key than this host pinned for the document. |
+| `NO_APPLICATION` | no | Verified, but there is no index.html to run. |
+| `SCHEMA_INCOMPATIBLE` | no | The data's shape is not one the application declared, and no migration reaches it. |
+| `SCHEMA_AHEAD` | yes | The data is newer than the application. Do not migrate backwards; offer read-only or an update. |
+| `GENERATION_CONFLICT` | yes | Another window saved first. The work in hand is still in hand. |
+| `LOCK_UNAVAILABLE` | yes | Another program is saving this document right now. |
+| `MOUNT_TIMEOUT` | no | The application never reported that it started. |
+| `BOOT_FAILED` | no | The bootloader threw. |
+| `HOST_REFUSED` | no | The host declined for a reason of its own; see the message. |
 
 ### Codes Deliberately Excluded from Cartridges
 

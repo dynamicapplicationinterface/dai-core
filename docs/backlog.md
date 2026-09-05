@@ -61,6 +61,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | — | Packing list date editable | [x] `30a83aa` |
 | — | dai-core 0.2.0 published | [ ] yours |
 | — | QR for a reference link | [ ] only useful once a store is ordinary; see 2.5 |
+| — | Desktop signs with a key it keeps | [ ] it builds unsigned today; the page says so |
 | — | Trusted Types | [x] `eec29fe` — on for kit-only apps; advice for the rest |
 
 ---
@@ -581,6 +582,12 @@ a relay, not to this repository.
 ---
 
 ## Small, undisputed, cheap
+
+- The desktop window builds unsigned, because `compileInBrowser` no longer
+  mints a key. It is the one host that *could* keep one — it has a filesystem
+  and a config directory — so it should offer to, and to reuse the same key
+  next time, which is what makes a publisher pinnable across documents. Until
+  then `/desktop` says plainly that it does not.
 
 - Register the media type; serve `.dai` as it. Independent of everything.
 - The desktop window shows the document's own icon, not the host's.
