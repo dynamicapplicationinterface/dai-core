@@ -1,6 +1,6 @@
 {
   "name": "dai-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Compile a web app into a single air-gapped .dai.html file that holds its own SQLite database, runs from a double-click with nothing installed, and is tamper-evident. Command line, MCP server and Vite plugin.",
   "keywords": [
     "dai",
