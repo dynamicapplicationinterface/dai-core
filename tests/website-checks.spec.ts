@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildContainer } from "../src/core.js";
-import { lintSource } from "../src/lint.js";
+import { breaking, lintSource } from "../src/lint.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -17,7 +17,8 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * tests can simply call them — and `one-engine.spec.ts` is what keeps the
  * component from growing its own set again.
  */
-const flags = (source: string): boolean => lintSource(source).length > 0;
+// Flagged means it will not work; a warning is advice, not a flag.
+const flags = (source: string): boolean => breaking(lintSource(source)).length > 0;
 
 test.describe("what the paste page warns about", () => {
   // Each of these works on an ordinary web page and fails silently inside a

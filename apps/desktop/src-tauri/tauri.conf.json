@@ -45,7 +45,7 @@
         "name": "DAI Cartridge",
         "description": "DAI air-gapped application container",
         "role": "Editor",
-        "mimeType": "text/html"
+        "mimeType": "application/vnd.dai"
       }
     ]
   }

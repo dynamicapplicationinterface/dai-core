@@ -16,7 +16,7 @@
 import { computed, ref } from 'vue';
 import { useFileHandoff } from './useFileHandoff.js';
 import { compileInBrowser, isNoise, stripCommonPrefix, unpackZip } from '../../src/browser.js';
-import { lintFiles, storesDataInFile, type Finding } from '../../src/lint.js';
+import { breaking, lintFiles, storesDataInFile, type Finding } from '../../src/lint.js';
 import { RECIPE_AS_PROMPT as PROMPT } from '../../src/recipe.js';
 import { handOffToOpener } from '../../src/handoff-tab.js';
 
@@ -84,7 +84,9 @@ const readable = computed<Record<string, string>>(() => {
   return out;
 });
 
-const findings = computed<(Finding & { file: string })[]>(() => lintFiles(readable.value));
+// What breaks. Advisory findings — a DOM sink Trusted Types would refuse —
+// do not stop a build and are not shown here; `dai check` names them.
+const findings = computed<(Finding & { file: string })[]>(() => breaking(lintFiles(readable.value)));
 
 // Separated because these two break an app outright, while the rest only
 // degrade one — worth saying first, and worth saying differently.

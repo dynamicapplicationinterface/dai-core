@@ -27,7 +27,7 @@
       "headers": [
         {
           "key": "Content-Type",
-          "value": "application/octet-stream"
+          "value": "application/vnd.dai"
         },
         {
           "key": "Content-Disposition",
