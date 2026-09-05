@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>A window that is not the frame</title>
+<!--
+  A host, in the ordinary sense: it frames a container's shell, so it holds a
+  handle to that shell and to the application frame inside it.
+
+  That is exactly the position a page is in when it opens a container in a tab
+  it keeps, or embeds one. It exists here to post messages the shell should
+  refuse, because until the source checks went in the shell acted on every one
+  of them as though the application had spoken.
+
+  It answers no handshake, so the container never enters host mode: a forged
+  save takes the shell's own save path, which replies to whoever asked.
+-->
+<iframe
+  id="shell"
+  src="./container.dai.html"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+  style="width: 100%; height: 80vh; border: 0"
+></iframe>
+<script>
+  // Everything this window is told, in order. The test reads it.
+  window.seen = [];
+  window.addEventListener("message", (event) => {
+    window.seen.push(event.data);
+  });
+
+  const shell = () => document.getElementById("shell").contentWindow;
+
+  /** Post to the shell, as a window that is not its frame. */
+  window.forgeToShell = (data) => shell().postMessage(data, "*");
+
+  /** Post to the application, as a window that is not its shell. */
+  window.forgeToApp = (data) => shell().frames[0].postMessage(data, "*");
+</script>

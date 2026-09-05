@@ -881,6 +881,10 @@ function bridgeMain(): void {
 
     return new Promise<void>((resolve, reject) => {
       const onReply = (event: MessageEvent): void => {
+        // From the shell, or from nobody. A verdict saying this data is safe to
+        // write to is the one answer an application must not accept from a
+        // window that merely knows how to shape a message.
+        if (event.source !== window.parent) return;
         const data = event.data as Any;
         if (!data || data.type !== "dai:schema-verdict" || data.id !== id) return;
         window.removeEventListener("message", onReply);
@@ -948,6 +952,9 @@ function bridgeMain(): void {
     new Promise((resolve, reject) => {
       const id = Math.random().toString(36).slice(2);
       const done = (event: MessageEvent): void => {
+        // From the shell, or from nobody. Otherwise a third window can tell an
+        // application its work was saved when nothing was written.
+        if (event.source !== window.parent) return;
         const data = event.data as Any;
         if (!data || data.id !== id) return;
         window.removeEventListener("message", done);
@@ -972,6 +979,8 @@ function bridgeMain(): void {
   const appModeListeners = new Set<(active: boolean) => void>();
 
   window.addEventListener("message", (event: MessageEvent) => {
+    // Pushed from the shell, which is the only window that knows.
+    if (event.source !== window.parent) return;
     const data = event.data as Any;
     if (!data || data.type !== "dai:appmode") return;
     appMode = !!data.active;
@@ -1647,8 +1656,44 @@ async function boot(): Promise<void> {
   })();
 
   window.addEventListener("message", (event) => {
+    if ((event.data as { type?: string })?.type === "DAI_HOST_HANDSHAKE_ACK") {
+      // From the window this container is embedded in, carrying the value this
+      // container invented. Neither check proves the sender is honest; together
+      // they establish that it is the same party the handshake was sent to,
+      // which is all that was ever missing here.
+      const ack = event.data as { payload?: { sessionNonce?: string; hostClass?: string } };
+      if (event.source !== window.parent) return;
+      if (ack.payload?.sessionNonce !== sessionNonce) return;
+      hostAvailable = true;
+      // A host that does not say is taken for a viewer: claiming an in-place
+      // save that did not happen is the failure this exists to prevent.
+      hostClass = ack.payload?.hostClass === "editor" ? "editor" : "viewer";
+      const applied = (ack.payload as { applied?: unknown })?.applied;
+      hostProfile = Array.isArray(applied) ? applied.filter((id) => typeof id === "string") : [];
+      (window as unknown as Record<string, unknown>).__DAI_HOST_PROFILE__ = hostProfile;
+      return;
+    }
+
+    /*
+     * Everything below this line is the application talking to its own shell,
+     * and is acted on only when it came from the frame this shell mounted.
+     *
+     * The frame is not the only window that can reach this one. A page that
+     * opens a container — in a tab it keeps a handle to, or through a host it
+     * frames — can post whatever it likes here, and until now four of these
+     * messages were acted on without asking who sent them: a save it never
+     * asked for, a verdict on whether somebody's data may be written to, a
+     * claim that the application is on screen, and an isolation report saying
+     * every boundary held. Each was a sentence this shell would repeat to its
+     * host as though the application had said it.
+     *
+     * `dai:timing` had the check from the beginning, which is why the shape of
+     * it was already here to copy.
+     */
+    if (event.source !== frame.contentWindow) return;
+
     const reported = event.data as { type?: string; phase?: string; took?: number };
-    if (reported?.type === "dai:timing" && event.source === frame.contentWindow) {
+    if (reported?.type === "dai:timing") {
       // Measured inside the frame, which is the only side that can time it.
       mark(String(reported.phase), Number(reported.took));
       return;
@@ -1730,24 +1775,6 @@ async function boot(): Promise<void> {
       // about anything and the stall notice must not appear behind it.
       stopWatching();
       document.body.classList.add("dai-mounted");
-      return;
-    }
-
-    if ((event.data as { type?: string })?.type === "DAI_HOST_HANDSHAKE_ACK") {
-      // From the window this container is embedded in, carrying the value this
-      // container invented. Neither check proves the sender is honest; together
-      // they establish that it is the same party the handshake was sent to,
-      // which is all that was ever missing here.
-      const ack = event.data as { payload?: { sessionNonce?: string; hostClass?: string } };
-      if (event.source !== window.parent) return;
-      if (ack.payload?.sessionNonce !== sessionNonce) return;
-      hostAvailable = true;
-      // A host that does not say is taken for a viewer: claiming an in-place
-      // save that did not happen is the failure this exists to prevent.
-      hostClass = ack.payload?.hostClass === "editor" ? "editor" : "viewer";
-      const applied = (ack.payload as { applied?: unknown })?.applied;
-      hostProfile = Array.isArray(applied) ? applied.filter((id) => typeof id === "string") : [];
-      (window as unknown as Record<string, unknown>).__DAI_HOST_PROFILE__ = hostProfile;
       return;
     }
 

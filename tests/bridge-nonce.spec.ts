@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -52,6 +52,33 @@ const hostPage = (containerUrl: string, echo: "correct" | "wrong" | "none") => `
   });
 </script>`;
 
+/**
+ * Asks for a save from inside the application.
+ *
+ * These tests used to post `dai:save` at the shell from the host page. That is
+ * a window forging a message the application alone may send, and the shell now
+ * ignores it — which would leave the two negative cases below passing because
+ * the message never arrived rather than because the nonce was wrong. A test
+ * that cannot fail for its stated reason is worse than no test.
+ */
+const saveFromApp = async (browser: Page): Promise<void> => {
+  await browser
+    .frameLocator("#frame")
+    .frameLocator("#dai-app")
+    .locator("body")
+    .evaluate(async () => {
+      const app = window as unknown as {
+        dai?: { saveState: (bytes: unknown, options: unknown) => Promise<unknown> };
+      };
+      for (let i = 0; i < 200 && !app.dai; i++) {
+        await new Promise((settle) => setTimeout(settle, 50));
+      }
+      // Not awaited: these fixture hosts never acknowledge a save, so the
+      // promise the application is holding never settles.
+      void app.dai!.saveState(null, { method: "auto" });
+    });
+};
+
 const page = (echo: "correct" | "wrong" | "none"): string => {
   const dir = mkdtempSync(join(tmpdir(), "dai-bridge-"));
   const file = join(dir, "host.html");
@@ -91,20 +118,29 @@ test.describe("the handshake nonce", () => {
       () => (window as unknown as { handshakeNonce: string }).handshakeNonce,
     )) as string;
 
-    const save = await browser.evaluate(async (expected: string) => {
-      const frame = (document.getElementById("frame") as HTMLIFrameElement).contentWindow!;
-      return await new Promise<{ carried: boolean }>((resolve) => {
-        window.addEventListener("message", function onSave(event: MessageEvent) {
-          const data = event.data as { type?: string; sessionNonce?: string };
-          if (data?.type !== "DAI_HOST_SAVE") return;
-          window.removeEventListener("message", onSave);
-          resolve({ carried: data.sessionNonce === expected });
-        });
-        frame.postMessage({ type: "dai:save", id: "test" }, "*");
+    // Armed before the application is asked, so nothing is missed in between.
+    await browser.evaluate(() => {
+      (window as unknown as { savedNonce: string | null }).savedNonce = null;
+      window.addEventListener("message", function onSave(event: MessageEvent) {
+        const data = event.data as { type?: string; sessionNonce?: string };
+        if (data?.type !== "DAI_HOST_SAVE") return;
+        window.removeEventListener("message", onSave);
+        (window as unknown as { savedNonce: string | null }).savedNonce = data.sessionNonce ?? "";
       });
-    }, nonce);
+    });
 
-    expect(save.carried).toBe(true);
+    await saveFromApp(browser);
+    await browser.waitForFunction(
+      () => (window as unknown as { savedNonce: string | null }).savedNonce !== null,
+      undefined,
+      { timeout: 30_000 },
+    );
+
+    expect(
+      await browser.evaluate(
+        () => (window as unknown as { savedNonce: string | null }).savedNonce,
+      ),
+    ).toBe(nonce);
   });
 
   test("an acknowledgement echoing the wrong value is not a host", async ({ page: browser }) => {
@@ -120,21 +156,22 @@ test.describe("the handshake nonce", () => {
       { timeout: 30_000 },
     );
 
-    const posted = await browser.evaluate(async () => {
-      const frame = (document.getElementById("frame") as HTMLIFrameElement).contentWindow!;
-      return await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), 3000);
-        window.addEventListener("message", function onSave(event: MessageEvent) {
-          if ((event.data as { type?: string })?.type !== "DAI_HOST_SAVE") return;
-          window.removeEventListener("message", onSave);
-          clearTimeout(timer);
-          resolve(true);
-        });
-        frame.postMessage({ type: "dai:save", id: "test" }, "*");
+    await browser.evaluate(() => {
+      (window as unknown as { posted: boolean }).posted = false;
+      window.addEventListener("message", (event: MessageEvent) => {
+        if ((event.data as { type?: string })?.type !== "DAI_HOST_SAVE") return;
+        (window as unknown as { posted: boolean }).posted = true;
       });
     });
 
-    expect(posted).toBe(false);
+    // The application asks, and is answered by its own container rather than
+    // by a window whose acknowledgement did not check out.
+    await saveFromApp(browser);
+    await browser.waitForTimeout(3000);
+
+    expect(await browser.evaluate(() => (window as unknown as { posted: boolean }).posted)).toBe(
+      false,
+    );
   });
 
   test("an acknowledgement with no value at all is not a host either", async ({ page: browser }) => {
@@ -148,21 +185,22 @@ test.describe("the handshake nonce", () => {
       { timeout: 30_000 },
     );
 
-    const posted = await browser.evaluate(async () => {
-      const frame = (document.getElementById("frame") as HTMLIFrameElement).contentWindow!;
-      return await new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), 3000);
-        window.addEventListener("message", function onSave(event: MessageEvent) {
-          if ((event.data as { type?: string })?.type !== "DAI_HOST_SAVE") return;
-          window.removeEventListener("message", onSave);
-          clearTimeout(timer);
-          resolve(true);
-        });
-        frame.postMessage({ type: "dai:save", id: "test" }, "*");
+    await browser.evaluate(() => {
+      (window as unknown as { posted: boolean }).posted = false;
+      window.addEventListener("message", (event: MessageEvent) => {
+        if ((event.data as { type?: string })?.type !== "DAI_HOST_SAVE") return;
+        (window as unknown as { posted: boolean }).posted = true;
       });
     });
 
-    expect(posted).toBe(false);
+    // The application asks, and is answered by its own container rather than
+    // by a window whose acknowledgement did not check out.
+    await saveFromApp(browser);
+    await browser.waitForTimeout(3000);
+
+    expect(await browser.evaluate(() => (window as unknown as { posted: boolean }).posted)).toBe(
+      false,
+    );
   });
 
   test("a refusal reaches the host, and carries the value too", async ({ page: browser }) => {

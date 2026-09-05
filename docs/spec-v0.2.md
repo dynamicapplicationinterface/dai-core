@@ -352,6 +352,16 @@ The loader MUST verify that the payload arrived from its parent, and MUST stop
 accepting payloads once one has been handled. Otherwise any window holding a
 reference to the frame can replace a running application's document.
 
+More generally, **every message either side acts on MUST be bound to the window
+it can only have come from.** A shell MUST ignore anything but
+`DAI_HOST_HANDSHAKE_ACK` unless `event.source` is the frame it mounted, and
+MUST ignore that one unless the source is its own parent. An application MUST
+ignore a schema verdict, a save result or a host-state push whose source is not
+its parent. A page that opens a container keeps a handle to it and to the
+frames inside it; without these checks it can ask for a save nobody requested,
+answer a question about whether somebody's data may be overwritten, or report
+that boundaries held when it never tested them.
+
 The shell MUST answer only one hello. The buffers are transferred and therefore
 detached after the first reply.
 
