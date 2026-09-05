@@ -27,13 +27,13 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 0.2 | The host owns the runtime | [x] `7f6ec7c` — bootloader; the engine follows with 2.1 |
 | 0.3 | The shell binds its frame's messages | [x] `870c1e5` — **Phase 0 closed** |
 | 1.1 | Launch card with backed claims | [x] `f625dcc` |
-| 1.2 | One card for every carrier | [ ] |
+| 1.2 | One card for every carrier | [ ] decided: card keyed on familiarity |
 | 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [x] `0f9f72d` — the unfurl inherits it with 3.3 |
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
-| 2.2 | Inline link | [x] `8b66364` — the cap is a decision, see below |
-| 2.3 | Reference link and dumb store | [ ] |
+| 2.2 | Inline link | [~] `8b66364` carrier; compact payload decided and next |
+| 2.3 | Reference link and dumb store | [ ] decided: R2 behind a three-call Store |
 | 2.4 | Carriers in the specification | [~] `5606a87` — carriers and the inline grammar; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
@@ -45,7 +45,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
 | 4.1 | Succession | [ ] |
 | 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
-| 4.3 | A publisher who is somebody | [ ] |
+| 4.3 | A publisher who is somebody | [ ] decided: three states, key pinned across documents |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [ ] |
 | 5.1 | The north star, measured | [ ] |
@@ -90,8 +90,20 @@ The card exists (1.1) and the link and share paths land on it. What is left
 is the rest of the carriers — the file picker, `launchQueue`, and the two the
 links in Phase 2 add — and holding the screen identical across all of them.
 
+**Decided 5 September:** the card is keyed on familiarity, not carrier.
+
+- First sighting of a document (UUID and pinned publisher key not in the
+  library): launch card, however it arrived — link, share, `launchQueue`, or a
+  file the person picked themselves.
+- Document already in the library under the same publisher key: no card. It
+  opens directly. That is what "third time behaves like an app" (1.3) means.
+- Same UUID with a different key, a verification failure, a schema refusal, or
+  a superseding document (4.1): the card returns, showing what changed. Those
+  are trust-state changes and deserve the screen.
+
 **Exit:** snapshot tests show an identical card from `?open=`, `#a=`,
-`/d/<id>`, the file picker and `launchQueue`.
+`/d/<id>`, the file picker and `launchQueue` on first sighting; a second open
+of a library document from any carrier renders no card.
 
 ### 1.4 One sentence everywhere
 
@@ -167,6 +179,36 @@ choice is not the code's to make:
   spec change, not a setting.
 - Build 2.3, and let anything too big become a reference link.
 
+**Decided 5 September:** keep 32 KB. Do not raise it — Slack truncates at
+40,000 characters, WhatsApp at 65,536, Safari near 80,000. Make apps fit by
+taking the non-app bytes out of the carrier; the app is about 9 kB and the
+link is 115 KB because it carries the runtime.
+
+1. Elide the sealed shell without a signed-format change. The opener rebuilds
+   the shell from (template version, bootloader version, UUID, appName,
+   favicon), hashes it, checks it against the signed digest, then discards it
+   and runs its own host-owned runtime. Exact-digest rule (§6.1), compatible
+   with existing containers. The shell leaves the signed set at the next
+   `manifestVersion` bump, not before.
+2. Elide `app/dai-kit.js` the same way: listed by digest, bytes omitted; the
+   opener substitutes from a table of kit versions keyed by digest. Unknown
+   digest: refuse cleanly and fall back to the reference link.
+3. Inline carrier payload is the COSE signed payload (CBOR) + signature (64 B)
+   + compressed P-256 point (33 B) + the carried file bytes. The JSON manifest
+   and `hashes` do not travel; carried entries' digests are recomputed, the
+   manifest rebuilt, then verified. Only elided entries' digests travel (32 B
+   each, binary).
+4. Carried files concatenated in the bundle format and deflated as one stream.
+   No zip framing.
+5. DEFLATE with a preset dictionary (RFC 1950 FDICT): about 32 kB built from
+   the kit source, the recipe's canonical app and common CSS/SQL, versioned by
+   digest, shipped in the opener. Carrier header:
+   `#a=<1-byte carrier version><4-byte dictionary id><base64url>`. Unknown
+   dictionary id: refuse cleanly, never garble.
+6. Then measure the chore chart. Expected 3–4 KB as a link. Above 32 KB the
+   sender falls back to the reference link. Per-channel caps in the sender
+   when the channel is known (QR ~2.5 KB, Slack 35 KB, WhatsApp 60 KB).
+
 ### 2.3 The reference link, and a dumb store
 
 `https://<opener>/d/<id>#h=<sha256>&k=<key>` — content-addressed, encrypted
@@ -174,6 +216,35 @@ end to end, the key in the fragment; an any-host variant `#h=&u=&k=`; a store
 interface of `put`, `get`, `head` and nothing more, so the relay is a
 commodity and an enterprise hosts its own in an afternoon. Subsumes the
 earlier "one tool contract, two transports": the store is this store.
+
+**Decided 5 September:** store-agnostic interface first, R2 as the first host
+through its S3-compatible API. No Worker, no proprietary client SDK.
+
+1. A `Store` interface in dai-core with exactly three calls:
+   `put(hash, ciphertext, sidecar) -> href`, `get(href) -> bytes`,
+   `head(href) -> { exists, size }`. Content-addressed by SHA-256 of the
+   ciphertext. Ciphertext only; the key never leaves the URL fragment.
+2. Two adapters: a filesystem adapter (local MCP and tests, no account) and a
+   generic S3-compatible adapter, pointed at a Cloudflare R2 bucket for
+   production. That adapter is also the enterprise self-host reference —
+   MinIO, S3, B2 and GCS all speak it.
+3. Browser uploads use presigned PUT URLs from the S3 adapter. No serverless
+   body-size limit.
+4. The opener knows nothing about the store: it fetches a CORS-readable URL,
+   verifies the hash, then decrypts. The bucket serves
+   `Access-Control-Allow-Origin: *`, `Cache-Control: immutable` and the
+   correct `Content-Type`; the conformance suite asserts those production
+   headers as it already does the opener's.
+5. The sidecar (manifest in the clear, name, icon) is a separate object under
+   the same hash. `put()` validates the manifest signature and that the
+   ciphertext length matches the declared size — a DAI relay, not a general
+   file host. Size cap 5 MB, TTL on unopened blobs.
+6. The unfurl route (`/d/<id>` → OG name and icon from the sidecar, never the
+   blob) lives on Vercel beside the opener; it is off the runtime path.
+
+A Vercel Blob adapter, if ever wanted, is a third adapter behind the same
+interface and never the reference one. `@vercel/blob` is not imported in
+dai-core.
 
 **Exit:** the same link resolves from two different hosts; a tampered blob is
 refused by hash before the signature is checked; the store's logs contain no
@@ -316,8 +387,28 @@ Publisher display name and `publisherKeyId` in the signed view; TOFU pins the
 publisher key across documents, not only the document UUID. This was on the
 undecided list; the loop decides it.
 
-**Exit:** a second document from a pinned publisher shows "known publisher";
-a new key under a known name is a mismatch.
+**Decided 5 September:** pin the publisher *key* across documents (SPKI →
+name, first seen, document count). `publisherName` travels in the signed set.
+The card shows the name in one of three states — never a bare fingerprint,
+never the word "verified":
+
+- **Known:** key pinned, name matches. "Acme Finance · you've opened 3 of
+  their apps." The only state with positive styling.
+- **New:** key unknown and the name collides with no pinned name. "Acme
+  Finance · first time you've seen this publisher." Neutral, with a Verify
+  affordance showing a short safety number and QR to compare with the sender
+  over another channel.
+- **Conflict:** key unknown, but the name — NFKC, case-folded, whitespace and
+  punctuation stripped, basic confusables mapped — matches a name pinned
+  under a different key. "Claims to be Acme Finance, but the Acme Finance you
+  know uses a different key. Treat as a stranger." Red, and no install offer
+  on this open.
+
+Same key with a changed name is Known with "renamed from X"; the pinned name
+updates after the person proceeds.
+
+**Exit:** three snapshot tests, one per state; the Conflict test uses a
+confusable-character variant of a pinned name and must render red.
 
 ### 4.4 The wedge
 
