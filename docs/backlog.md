@@ -31,7 +31,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [ ] |
 | 1.5 | Look inside | [ ] |
-| 2.1 | Thin profile | [ ] |
+| 2.1 | Thin profile | [~] `ba5a8e1` — the format; the opener supplying is next |
 | 2.2 | Inline link | [ ] |
 | 2.3 | Reference link and dumb store | [ ] |
 | 2.4 | Carriers in the specification | [ ] |
@@ -115,12 +115,19 @@ never mounts.
 
 ### 2.1 The thin profile
 
-Reverses the "not implemented" note in spec §6.2. The manifest is complete
-and signed; the engine bytes are elided; a host supplies them on exact digest
-match per §6.1; export re-fattens with the same signature.
+The format half is done in `ba5a8e1`: spec §6.2 is a format rather than an
+intention, the compiler emits it (`--thin`), `thinned` and `refatten` are
+inverses over a signed build, a reader takes a supplier keyed on digest, and a
+host that cannot supply refuses with `RUNTIME_UNAVAILABLE` rather than calling
+it damage. "One build, two forms" means derived, not rebuilt: ECDSA draws a
+fresh nonce, so nothing signed twice is the same file.
 
-**Exit:** thin and fat forms of one build verify to the same signature; a thin
-container exported from the opener is byte-identical to the fat build.
+What is left is the opener: holding a copy of the engine, supplying it to a
+thin container, and exporting the complete form. That is also most of 3.1,
+which is the same engine cached and precached.
+
+**Exit:** a thin container opened in the opener runs, and the copy it exports
+is byte-identical to the complete build.
 
 ### 2.2 The inline link
 
@@ -339,6 +346,10 @@ Kept so the reasoning stays with the record.
 - **9. Two host classes, and the site says which is which** — `834e504`.
 - **10. The recipe teaches the schema, every door declares it, the kit
   survives a colon** — `c1b04b8`. `upgradeOf` is the plumbing 4.2 needs.
+- **Reproducible builds** — `841beb6`. Every zip a container is made of
+  carries a fixed timestamp, so the same inputs make the same file. A
+  prerequisite for 2.1's byte-identity, and `roadmap.md` had claimed it since
+  the beginning while it was false.
 - **1.1 A launch card, with claims the host can back** — `f625dcc`. Name,
   icon, publisher and four ticks, drawn after verification; each tick names
   the §4 clauses behind it and vanishes with any of them. The claims table is
