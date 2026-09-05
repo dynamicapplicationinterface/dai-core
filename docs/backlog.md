@@ -37,7 +37,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.4 | Carriers in the specification | [ ] |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
-| 3.1 | Engine once, offline forever | [~] `1b31ea1` `8b66364` — offline works; the fetch count is unproven |
+| 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `PENDING` |
 | 3.2 | Mirrorable static opener | [ ] |
 | 3.3 | Unfurl without the blob | [ ] |
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
@@ -208,12 +208,19 @@ document.
 Brotli, content-hashed URL, `immutable`, service-worker precache on first
 visit; mount-before-engine kept.
 
-The precache half came with `1b31ea1` — the opener holds an engine now, so it
-precaches one. What is left is the compression, the immutable URL, and the
-measurement.
+Done across `1b31ea1` (the opener holds an engine, so it precaches one),
+`8b66364` (two worker bugs that made offline not actually work) and
+`PENDING` (the proof).
 
-**Exit:** the second open of any app makes zero network requests; a test
-counts fetches.
+**Exit:** the second open of any app makes zero network requests. Proven by
+switching the network off rather than by counting fetches: a request served
+from the worker's cache and a request that reached a server look alike from
+outside, and a count would pass on a machine with a warm HTTP cache.
+
+**Left as polish, not blocking:** brotli and a content-hashed `immutable` URL
+for the engine. Both only touch the *first* visit now; the second needs no
+network at all. A hashed name is what would make `immutable` safe on it, since
+the bytes change when the dependency does.
 
 ### 3.2 A mirrorable static opener
 
