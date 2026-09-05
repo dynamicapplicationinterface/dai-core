@@ -35,7 +35,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.2 | Inline link | [x] `8b66364` grammar, `6c23954` compact carrier — a chore chart is 2.8 kB |
 | 2.3 | Reference link and dumb store | [x] `bca1061` — interface, two adapters, opener; the bucket is yours |
 | 2.4 | Carriers in the specification | [~] `5606a87` `6c23954` — the Python reader verifies signed links; CDDL and vectors open |
-| 2.5 | The sender's last line is the link | [ ] |
+| 2.5 | The sender's last line is the link | [x] `PENDING` — link done; QR is its own item |
 | 2.6 | Every share path carries the link | [ ] |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
@@ -60,6 +60,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | — | Desktop window shows the document's icon | [ ] |
 | — | Packing list date editable | [x] `30a83aa` |
 | — | dai-core 0.2.0 published | [ ] yours |
+| — | QR for a reference link | [ ] only useful once a store is ordinary; see 2.5 |
 | — | Trusted Types | [x] `eec29fe` — on for kit-only apps; advice for the rest |
 
 ---
@@ -347,6 +348,19 @@ carriers and agrees with the reference on every conformance case.
 
 MCP `create_dai_app` returns `{ file, link, qr }`; the assistant's last line
 is the link.
+
+Done in `PENDING`, without the QR. `src/sender.ts` is the one decision: inline
+whenever the document fits, because that link depends on nothing; a store only
+for what does not; and where neither is possible, a sentence about this
+document rather than a link that will be cut in transit. Both doors end with
+it — `dai build` (with `--no-link` and `--opener`) and `create_dai_app`, which
+takes a store from `DAI_STORE_DIR` and `DAI_STORE_BASE`.
+
+**The QR is a separate item, and smaller than it sounds.** A QR holds 2,953
+bytes at the very limit of version 40, and an inline link for a real app is
+2.8 kB — a code that large is 177 modules square and phones do not reliably
+scan it. So a QR is for reference links, which are about 120 characters, and
+is worth building only once a store is the ordinary path.
 
 **Exit:** the MCP test sees an inline link for a small app and a reference
 link when a store is configured.

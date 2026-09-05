@@ -20,11 +20,13 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { compileDirectory, CompileError, formatBytes, sanitizeFileName } from "./compile.js";
+import { compileDirectory, CompileError, formatBytes, packagedAsset, sanitizeFileName } from "./compile.js";
 import { SchemaError } from "./schema.js";
 import { auditContainer, parseContainer } from "./container.js";
 import { advisory, breaking, lintFiles } from "./lint.js";
 import { RECIPE } from "./recipe.js";
+import { lastLine, linkFor, type Host } from "./sender.js";
+import type { Store } from "./store.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -127,6 +129,31 @@ const TOOLS = [
     },
   },
 ];
+
+/**
+ * The store this server publishes to, when one is configured.
+ *
+ * A filesystem store is the honest default for a server running on somebody's
+ * machine: the directory is theirs, whatever serves it is theirs, and nothing
+ * about it belongs to this project. `DAI_STORE_DIR` names the directory and
+ * `DAI_STORE_BASE` the URL it appears under; without the second, links name a
+ * `file:` URL only this machine can follow, which is right for a local test
+ * and useless to send, and is said so.
+ */
+async function storeFromEnvironment(): Promise<Store | undefined> {
+  const dir = process.env.DAI_STORE_DIR;
+  if (!dir) return undefined;
+  const { fsStore } = await import("./store-fs.js");
+  return fsStore({ root: dir, baseUrl: process.env.DAI_STORE_BASE });
+}
+
+/** The shell this server can rebuild, so a link may leave it out. */
+function senderHost(): Host {
+  return {
+    template: readFileSync(packagedAsset("template.html"), "utf8"),
+    runtime: readFileSync(packagedAsset("dai-runtime.js"), "utf8"),
+  };
+}
 
 export interface ServerOptions {
   /**
@@ -242,6 +269,20 @@ async function createApp(
 
   const warnings = findings.filter((finding) => !fatal.includes(finding));
 
+  /*
+   * The link, last (backlog 2.5).
+   *
+   * A file is the thing; a link is how it reaches somebody with a phone. The
+   * assistant's last line is therefore the link, because the last line is what
+   * a person copies — and when there cannot be one, the last line says why in
+   * a sentence they can act on.
+   */
+  const handoff = await linkFor(result.html, {
+    opener: process.env.DAI_OPENER,
+    host: senderHost(),
+    store: await storeFromEnvironment(),
+  });
+
   return text(
     `Wrote ${outputPath}\n` +
       `${formatBytes(Buffer.byteLength(result.html))}, ${result.entryCount} entries, ${result.engine}\n` +
@@ -254,7 +295,8 @@ async function createApp(
       `Tell the user they can open this file by double-clicking it. It runs in any browser ` +
       `with nothing installed, works offline, and can be sent to other people as it is.` +
       (warnings.length > 0 ? `\n\nWorth fixing:\n${describe(warnings)}` : "") +
-      (result.warnings.length > 0 ? `\n\n${result.warnings.join("\n")}` : ""),
+      (result.warnings.length > 0 ? `\n\n${result.warnings.join("\n")}` : "") +
+      `\n\n${lastLine(handoff)}`,
   );
 }
 

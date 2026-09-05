@@ -13,6 +13,7 @@ import {
   compileDirectory,
   CompileError,
   formatBytes,
+  packagedAsset,
   sanitizeFileName,
 } from "./compile.js";
 import { advisory, breaking, lintFiles, storesDataInFile } from "./lint.js";
@@ -49,6 +50,8 @@ Build options:
                           file. A host adopts its data only under the same key
       --uuid <uuid>       Reuse a document identity instead of minting one
       --valid-until <s>   Unix seconds after which hosts should refuse it
+      --no-link           Do not print a link for the document
+      --opener <url>      Where links point (default https://opendai.app)
       --dai               Write the sectioned binary container instead of the
                           polyglot HTML. Passed by mail gateways that
                           quarantine .html, and saved without rewriting the
@@ -102,10 +105,11 @@ export function parseArgs(argv: string[]): Parsed {
     "upgrade-of",
     "publisher",
     "supersedes",
+    // dai build and dai publish both point links somewhere
+    "opener",
     // dai publish
     "store",
     "base",
-    "opener",
   ]);
 
   const positional: string[] = [];
@@ -214,6 +218,25 @@ async function build(parsed: Parsed): Promise<number> {
       }\n` +
       `  ${formatBytes(Buffer.byteLength(result.html))}\n`,
   );
+
+  /*
+   * And the link, last, because the last line is what somebody copies.
+   *
+   * `--no-link` for a build in a script, where a line of URL is noise. No
+   * store is configured here — `dai publish` is the door for that — so a
+   * document too large for a fragment says so rather than pretending.
+   */
+  if (flags.link !== false) {
+    const { lastLine, linkFor } = await import("./sender.js");
+    const handoff = await linkFor(result.html, {
+      opener: typeof flags.opener === "string" ? flags.opener : undefined,
+      host: {
+        template: readFileSync(packagedAsset("template.html"), "utf8"),
+        runtime: readFileSync(packagedAsset("dai-runtime.js"), "utf8"),
+      },
+    });
+    process.stdout.write(`\n${lastLine(handoff)}\n`);
+  }
 
   return 0;
 }

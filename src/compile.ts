@@ -132,7 +132,7 @@ export class CompileError extends Error {
  * dist/, and a lookup that only checked the first place failed with "run npm
  * run build" for someone who had.
  */
-function packagedAsset(name: string): string {
+export function packagedAsset(name: string): string {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     resolve(here, name),
