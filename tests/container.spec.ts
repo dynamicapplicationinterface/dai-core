@@ -527,7 +527,11 @@ test.describe("publisher signature", () => {
     expect(manifest.signedEntries["runtime/sqlite3.wasm"]).toBe(
       manifest.hashes["runtime/sqlite3.wasm"],
     );
-    expect(manifest.signedEntries["runtime/container.html"]).toBeTruthy();
+    // Version 3 (spec §9.2): the shell is an unsigned, self-attesting part. It
+    // stays in the archive and in `hashes`, and leaves the signed set.
+    expect(manifest.manifestVersion).toBe(3);
+    expect(manifest.signedEntries["runtime/container.html"]).toBeUndefined();
+    expect(manifest.hashes["runtime/container.html"]).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test("reports a valid signature to the application", async ({ page }) => {

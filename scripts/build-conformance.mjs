@@ -259,6 +259,46 @@ define(
 );
 
 define(
+  "version-3-signed-entries-edited",
+  "A version 3 signed digest edited. signedEntries is the authority (§9.2), so the archive now fails against it: the entry mismatches, and the refusal is the entry check's.",
+  {
+    mount: false,
+    ok: false,
+    code: "DIGEST_MISMATCH",
+    entries: { mismatched: ["app/app.js"], missing: [], unlisted: [] },
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    manifest.signedEntries["app/app.js"] = "0".repeat(64);
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "version-3-signed-entries-edited.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "version-3-entry-smuggled",
+  "A version 3 container with an entry added to the archive and to hashes but not to signedEntries. Unlisted by the authority: refused (§9.2).",
+  {
+    mount: false,
+    ok: false,
+    code: "DIGEST_MISMATCH",
+    entries: { mismatched: [], missing: [], unlisted: ["runtime/schema.json"] },
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    const injected = bytes(JSON.stringify({ digest: "0".repeat(64), migrations: [] }));
+    archive["runtime/schema.json"] = injected;
+    manifest.hashes["runtime/schema.json"] = createHash("sha256").update(injected).digest("hex");
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "version-3-entry-smuggled.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
   "valid-expiry-current",
   "Carries an expiry that has not passed. Accepted, and the expiry is reported.",
   {
@@ -414,7 +454,7 @@ define(
     expiry: "none",
   },
   async () => {
-    const { html } = await buildContainer(base({ signingKey: KEY }));
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 2 }));
     const archive = archiveOf(html);
     const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
     // The entry still hashes to what `hashes` claims, so every file checks out;
@@ -428,8 +468,25 @@ define(
 );
 
 define(
+  "version-2-signed",
+  "A version 2 container, still verified after the compiler moved to 3 (§9.1). The shell is in its signed set, as version 2 had it.",
+  {
+    mount: true,
+    ok: true,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "valid",
+    expiry: "none",
+  },
+  async () => ({
+    file: "version-2-signed.dai.html",
+    body: (await buildContainer(base({ signingKey: KEY, manifestVersion: 2 }))).html,
+  }),
+);
+
+define(
   "signed-extra-entry",
-  "An entry added alongside a matching digest, with the signed list untouched.",
+  "A version 2 container with an entry added alongside a matching digest, the signed list untouched. Version 2 stays verified; it does not keep the hole.",
   {
     mount: false,
     code: "SIGNED_SET_MISMATCH",
@@ -440,7 +497,7 @@ define(
     expiry: "none",
   },
   async () => {
-    const { html } = await buildContainer(base({ signingKey: KEY }));
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 2 }));
     const archive = archiveOf(html);
     const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
     // Every file checks out, including the new one: it is listed in `hashes`
@@ -468,7 +525,7 @@ define(
     expiry: "none",
   },
   async () => {
-    const { html } = await buildContainer(base({ signingKey: KEY }));
+    const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 2 }));
     const archive = archiveOf(html);
     const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
     // The same trick, aimed at the one unsigned entry a host executes:

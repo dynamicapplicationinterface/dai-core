@@ -28,7 +28,12 @@ import { writeContainerFile } from "./format.js";
  * so a reader can say "older format" instead of guessing from a value it does
  * not recognise.
  */
-export const MANIFEST_VERSION = 2;
+/**
+ * What the compiler writes. Version 3 (spec §9): the shell out of the signed
+ * set, signedEntries the authority. Every reader accepts 2 and 3; a host that
+ * predates version 3 refuses a version 3 file by name and says to update.
+ */
+export const MANIFEST_VERSION = 3;
 
 export const DEFAULT_APP_PREFIX = "app";
 export const DEFAULT_SQLITE_ENTRY = "document.sqlite";

@@ -148,6 +148,42 @@
       }
     },
     {
+      "name": "version-3-signed-entries-edited",
+      "file": "cases/version-3-signed-entries-edited.dai.html",
+      "form": "viewer",
+      "summary": "A version 3 signed digest edited. signedEntries is the authority (§9.2), so the archive now fails against it: the entry mismatches, and the refusal is the entry check's.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "code": "DIGEST_MISMATCH",
+        "entries": {
+          "mismatched": [
+            "app/app.js"
+          ],
+          "missing": [],
+          "unlisted": []
+        }
+      }
+    },
+    {
+      "name": "version-3-entry-smuggled",
+      "file": "cases/version-3-entry-smuggled.dai.html",
+      "form": "viewer",
+      "summary": "A version 3 container with an entry added to the archive and to hashes but not to signedEntries. Unlisted by the authority: refused (§9.2).",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "code": "DIGEST_MISMATCH",
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": [
+            "runtime/schema.json"
+          ]
+        }
+      }
+    },
+    {
       "name": "valid-expiry-current",
       "file": "cases/valid-expiry-current.dai.html",
       "form": "viewer",
@@ -305,10 +341,28 @@
       }
     },
     {
+      "name": "version-2-signed",
+      "file": "cases/version-2-signed.dai.html",
+      "form": "viewer",
+      "summary": "A version 2 container, still verified after the compiler moved to 3 (§9.1). The shell is in its signed set, as version 2 had it.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "valid",
+        "expiry": "none"
+      }
+    },
+    {
       "name": "signed-extra-entry",
       "file": "cases/signed-extra-entry.dai.html",
       "form": "viewer",
-      "summary": "An entry added alongside a matching digest, with the signed list untouched.",
+      "summary": "A version 2 container with an entry added alongside a matching digest, the signed list untouched. Version 2 stays verified; it does not keep the hole.",
       "expect": {
         "mount": false,
         "code": "SIGNED_SET_MISMATCH",
