@@ -34,7 +34,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` — the cap is a decision, see below |
 | 2.3 | Reference link and dumb store | [ ] |
-| 2.4 | Carriers in the specification | [~] `PENDING` — carriers and the inline grammar; CDDL and vectors open |
+| 2.4 | Carriers in the specification | [~] `5606a87` — carriers and the inline grammar; CDDL and vectors open |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
@@ -187,7 +187,7 @@ implementability: CDDL and frozen byte vectors for the signed payload, the
 footer, the bridge envelope and the fragment; the Python reader finished to a
 full verifier that opens all three carriers with no dai-core source reuse.
 
-Half done in `PENDING`. Spec §1.1 defines carrier beside form — file, inline
+Half done in `5606a87`. Spec §1.1 defines carrier beside form — file, inline
 link, reference link reserved — and freezes the inline fragment grammar:
 base64url without padding over gzip, in the fragment and nowhere else. The
 Python reader, which shares no code with ours, opens that carrier from the
