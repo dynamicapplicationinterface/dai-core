@@ -32,12 +32,12 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.4 | One sentence everywhere | [ ] |
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
-| 2.2 | Inline link | [ ] |
+| 2.2 | Inline link | [x] `8b66364` — the cap is a decision, see below |
 | 2.3 | Reference link and dumb store | [ ] |
 | 2.4 | Carriers in the specification | [ ] |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
-| 3.1 | Engine once, offline forever | [~] `1b31ea1` precached; the fetch count is unproven |
+| 3.1 | Engine once, offline forever | [~] `1b31ea1` `8b66364` — offline works; the fetch count is unproven |
 | 3.2 | Mirrorable static opener | [ ] |
 | 3.3 | Unfurl without the blob | [ ] |
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
@@ -137,8 +137,29 @@ rather than by watching a page paint.
 `https://<opener>/#a=<base64url thin container>`, capped near 32 KB; the
 sender falls back to a reference link above it.
 
+Done in `8b66364`. `src/link.ts` is the carrier — gzip through the browser's
+own compression streams, base64url over the core's base64 — and the opener
+opens one before it reads anything else in the address, including when a link
+is pasted into a tab it is already open in.
+
 **Exit:** a chore-chart-sized app opens from the link with the network
-disabled, once the opener is cached.
+disabled, once the opener is cached. It does, thin, with the engine served
+from the opener's own cache.
+
+**Open, and yours:** the cap does not fit a real app. A thin chore chart is
+86 kB and 64 kB compressed into a link — twice the 32 KB the sender stops at,
+and the same is true of all three examples we ship. So the receiving half is
+built and there is no sender UI, because a link cut in transit arrives as a
+document that will not open and nothing to say why. Three ways out, and the
+choice is not the code's to make:
+
+- Raise the cap. Browsers take far more; what truncates a long link is chat
+  clients, mail wrapping, and QR codes. Somebody has to decide how much of
+  that we are willing to lose.
+- Elide the sealed shell as well as the engine. It is 48 kB of the 86 kB, and
+  a host never runs it — but it is signed, so this is a format change and a
+  spec change, not a setting.
+- Build 2.3, and let anything too big become a reference link.
 
 ### 2.3 The reference link, and a dumb store
 
