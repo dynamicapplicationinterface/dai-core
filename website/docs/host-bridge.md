@@ -91,10 +91,17 @@ Informs the cartridge that an active host runner is present:
   payload: {
     bridgeVersion: 1,
     sessionNonce: "…",        // the value the container sent, echoed
-    hostClass: "viewer"       // or "editor"; see the specification §4
+    hostClass: "viewer",      // or "editor"; see the specification §4
+    applied: ["origin", "shell", "popup", "network", "socket",
+              "evaluation", "inline", "handler", "storage"]
   }
 }
 ```
+
+`applied` is the host's claim about which §4 clauses it holds, named by the
+isolation probe's check ids. A container never acts on it. It is there to be
+checked: mount the probe in the host, and every claimed clause must come back
+blocked.
 
 `hostClass` says what a save through this host does. A **viewer** keeps a
 copy of the database on the device and can export a file; it never claims to

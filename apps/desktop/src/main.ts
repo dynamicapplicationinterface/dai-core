@@ -18,6 +18,7 @@ import {
 } from "../../../src/browser.js";
 import { lintFiles } from "../../../src/lint.js";
 import { checkTrust, type TrustVerdict } from "./trust.js";
+import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 
 
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
@@ -523,7 +524,16 @@ ${refusal.detail}` : ""),
       {
         type: "DAI_HOST_HANDSHAKE_ACK",
         // An editor: saves go back into the file on disk, under a lock.
-        payload: { bridgeVersion: HOST_BRIDGE_VERSION, sessionNonce: mountedNonce, hostClass: "editor" },
+        payload: {
+          bridgeVersion: HOST_BRIDGE_VERSION,
+          sessionNonce: mountedNonce,
+          hostClass: "editor",
+          // The same claim as the browser opener: the sealed shell applies the
+          // frame, and this webview adds nothing the probe can see. What the
+          // webview must add beyond the probe — WebRTC, DNS prefetch — is
+          // not claimed here, because it is not yet done.
+          applied: ISOLATION_CLAUSES,
+        },
       },
       "*",
     );

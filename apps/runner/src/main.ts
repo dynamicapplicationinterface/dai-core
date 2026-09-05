@@ -9,6 +9,7 @@
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
+import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 import { describeSelf, watchForInstall } from "./install.js";
 import { platform } from "./platform.js";
 import { checkTrust, forgetTrust } from "../../../src/trust.js";
@@ -68,6 +69,9 @@ const installBar = document.getElementById("install") as HTMLElement;
 const keeper = watchForInstall();
 
 const RESUME_KEY = "dai:resume";
+
+/** The isolation probe's last report, with what this host claimed. For CI. */
+let lastIsolationReport: unknown = null;
 
 /*
  * Who may hand this app a document directly.
@@ -635,6 +639,12 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
 
+  if (data.type === "dai:isolation-report") {
+    // Kept for the harness that holds this host's claim against the probe.
+    if (event.source === cartridgeFrame.contentWindow) lastIsolationReport = data;
+    return;
+  }
+
   if (data.type === "DAI_HOST_HANDSHAKE") {
     // The frame this runner mounted, and no other window.
     if (event.source !== cartridgeFrame.contentWindow) return;
@@ -659,7 +669,9 @@ window.addEventListener("message", (event) => {
         type: "DAI_HOST_HANDSHAKE_ACK",
         // A viewer: this host keeps a copy on the device and can export. It
         // cannot write the file it was given in place, and it says so.
-        payload: { sessionNonce: mountedNonce, hostClass: "viewer" },
+        // What this host applies, by the probe's own ids. A claim, checked in
+        // CI by mounting the probe here; see src/host-profile.ts.
+        payload: { sessionNonce: mountedNonce, hostClass: "viewer", applied: ISOLATION_CLAUSES },
       },
       "*",
     );
@@ -915,6 +927,9 @@ Object.defineProperty(window, "__runner", {
   value: {
     get loaded() {
       return loaded;
+    },
+    get isolationReport() {
+      return lastIsolationReport;
     },
     get handshakeEstablished() {
       return handshakeEstablished;

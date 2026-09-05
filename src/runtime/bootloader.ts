@@ -1621,6 +1621,12 @@ async function boot(): Promise<void> {
    * which, on every save, so it can say "saved" or "saved a copy" honestly.
    */
   let hostClass: "viewer" | "editor" | null = null;
+  /**
+   * The §4 clauses the host said it applied, by the probe's ids. Recorded so
+   * a harness can hold the claim against what the probe finds; never acted
+   * on, because a host's word about itself is exactly what cannot be trusted.
+   */
+  let hostProfile: string[] | null = null;
 
   /*
    * The frame asking whether the data it just opened may be written to.
@@ -1649,6 +1655,17 @@ async function boot(): Promise<void> {
     }
 
     const asked = event.data as { type?: string; id?: string; actual?: string | null };
+    // The probe's findings, passed up to whoever hosts this shell. An
+    // isolated frame can address only this window; a host running the probe
+    // in CI needs to see the report, alongside what it claimed.
+    if (asked?.type === "dai:isolation-report" && window.parent !== window) {
+      window.parent.postMessage(
+        { ...(asked as Record<string, unknown>), hostProfile: hostProfile ?? [] },
+        "*",
+      );
+      return;
+    }
+
     if (asked?.type === "dai:schema" && declaredSchema) {
       const verdict = compatibility({
         expected: declaredSchema.digest,
@@ -1728,6 +1745,9 @@ async function boot(): Promise<void> {
       // A host that does not say is taken for a viewer: claiming an in-place
       // save that did not happen is the failure this exists to prevent.
       hostClass = ack.payload?.hostClass === "editor" ? "editor" : "viewer";
+      const applied = (ack.payload as { applied?: unknown })?.applied;
+      hostProfile = Array.isArray(applied) ? applied.filter((id) => typeof id === "string") : [];
+      (window as unknown as Record<string, unknown>).__DAI_HOST_PROFILE__ = hostProfile;
       return;
     }
 

@@ -576,7 +576,8 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
       return dai.saveState(new Uint8Array([0x44, 0x41, 0x49, 0x5f, 0x54, 0x45, 0x53, 0x54]));
     });
 
-    expect(saveResult).toEqual({ saved: true, method: "host" });
+    // A viewer kept a copy; it did not write the file. It says so.
+    expect(saveResult).toEqual({ saved: true, method: "host", inPlace: false });
     expect(downloadTriggered).toBe(false);
   });
 
@@ -595,7 +596,8 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
       return dai.saveState(new Uint8Array(bytes));
     }, testBytes);
 
-    expect(saveResult).toEqual({ saved: true, method: "host" });
+    // A viewer kept a copy; it did not write the file. It says so.
+    expect(saveResult).toEqual({ saved: true, method: "host", inPlace: false });
 
     // Eject cartridge
     await menu(page, "#eject");

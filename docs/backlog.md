@@ -15,16 +15,6 @@ disagreed, it is in the last section, undecided on purpose.
 
 Numbering continues from the security items, which are closed below.
 
-### 11. The host says what it applied, and the probe checks
-
-A misconfigured host is silently insecure. The specification should name the
-flags a host applies, the handshake should carry them, and the isolation probe
-should be what proves the claim rather than the host's own word.
-
-**Exit:** a host profile in the handshake; the probe reaches "blocked" on every
-§4 clause under both hosts in CI; a host that claims a flag it did not apply
-fails CI.
-
 ### 12. The evaluation measures the things that actually fail
 
 Four stages score checked, built, mounted, usable. What breaks at scale is
@@ -132,6 +122,11 @@ Kept so the reasoning stays with the record.
   the MCP tool's `upgradeOf` refusing a moved schema as tool output; the kit
   walking statements past literals, comments and `::`; the three examples
   declaring theirs.
+- **11. The host says what it applied, and the probe checks** — the commit
+  following `2167a27`. `applied` on the handshake, by the probe's nine clause
+  ids; the shell passes the probe's report up with the claim attached; a
+  checker fails a claimed clause the probe finds open; CI mounts the probe in
+  the opener.
 
 - **The five gates from the first review** — honest CI, opaque-origin frame,
   no `'unsafe-inline'`, the whole manifest signed, saves that write only the

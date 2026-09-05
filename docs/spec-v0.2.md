@@ -315,6 +315,19 @@ A host MUST NOT treat a failed request as evidence of a boundary. A request
 fails identically when the policy blocked it and when there was no network; only
 a violation report distinguishes them.
 
+A host MUST say what it applied. The handshake acknowledgement (§4.5) carries
+`applied`: the list of §4 clauses the host holds, named by the probe's check
+ids — `origin`, `shell`, `popup`, `network`, `socket`, `evaluation`, `inline`,
+`handler`, `storage`. The claim is not evidence and MUST NOT be acted on by
+the container; it exists to be checked. A conforming host mounts the probe in
+itself and every clause it claimed comes back blocked. A host that claims a
+clause the probe finds open, or a clause the probe cannot check, is not
+conforming. A host MAY hold more than it claims.
+
+The shell MUST pass the probe's report up to the window that hosts it, with
+the host's claim attached, so a harness outside the container can hold the one
+against the other.
+
 ### 4.4 Mounting
 
 Because the frame has no shared origin, the payload is handed to it as bytes.
