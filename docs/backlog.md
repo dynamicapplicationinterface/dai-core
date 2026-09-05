@@ -463,10 +463,24 @@ order. Check on the first deploy.
 
 ### 3.4 A stripped fragment degrades to a sentence
 
-"Ask the sender for the key", never a blank page; an enterprise-internal
-no-key variant.
+**Done.** `strippedReference()` tells a link that names a document and cannot
+open one apart from a URL that was never a reference at all, and the opener
+says which half is missing. The key travels after the `#` and never reaches a
+server, so nothing here can recover it — the only honest sentence points at
+the person who sent the link. Both halves are covered: a path or `?d=` with no
+key, and a key with nothing to open. Tested at the unit level and in the
+browser, in `tests/reference-link.spec.ts`.
 
-**Exit:** a test with the fragment removed renders the recovery message.
+**Exit met:** a link with the fragment removed renders the recovery message,
+not the empty chooser.
+
+**Still a decision — the no-key variant.** Inside a perimeter, a store that is
+already access-controlled could hold documents unencrypted, and then a link
+with no `k` would simply open. That is a real deployment and a real weakening:
+it moves confidentiality from "the server cannot read this" to "the server is
+trusted not to", and every link then works for anyone who reaches the store.
+It needs a decision about whether the opener will read such a link at all, and
+how it says so on the card, before any of it is written.
 
 ### 3.5 iOS, solved by the link
 

@@ -11,7 +11,7 @@ import { refatten } from "../../../src/container.js";
 import { decodeInline, INLINE_CAP, inlineFrom } from "../../../src/link.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
-import { openFromStore, referenceFrom } from "../../../src/store.js";
+import { openFromStore, referenceFrom, strippedReference } from "../../../src/store.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { confusables } from "./confusables.js";
 import { verifyIdentity } from "../../../src/identity.js";
@@ -1325,6 +1325,33 @@ async function start(): Promise<void> {
   const reference = referenceFrom(location.pathname, location.search, location.hash);
   if (reference) {
     await openFromReference(reference);
+    return;
+  }
+
+  /*
+   * A link that names a document and cannot open one (backlog 3.4).
+   *
+   * The key lives after the `#`, which is exactly the part that does not
+   * survive being retyped, screenshotted, wrapped by a link shortener, or
+   * pasted out of a tool that strips fragments. What arrives is a URL that
+   * looks right and opens nothing.
+   *
+   * Nothing here can recover it. The key was never sent to a server — that is
+   * the whole design — so there is no one to ask but the person who sent it.
+   * What this page owes somebody is that sentence, rather than the empty
+   * chooser, which reads as a broken app and sends them nowhere.
+   */
+  const stripped = strippedReference(location.pathname, location.search, location.hash);
+  if (stripped) {
+    say(
+      stripped.missing === "key"
+        ? "This link names a document but is missing the part that opens it. The key " +
+            "travels after the # and never reaches any server, so it cannot be looked up " +
+            "here — ask whoever sent it to send the whole link again, or to send the file."
+        : "This link carries a key but does not say which document it opens. Ask whoever " +
+            "sent it for the whole link.",
+      true,
+    );
     return;
   }
 

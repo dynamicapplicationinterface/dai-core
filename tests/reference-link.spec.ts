@@ -242,3 +242,57 @@ test.describe("a reference link, opened", () => {
     }
   });
 });
+
+/**
+ * A link that names a document and cannot open one (backlog 3.4).
+ *
+ * The key is after the `#`, which is the half that does not survive being
+ * retyped, screenshotted, shortened, or pasted through a tool that strips
+ * fragments. Nothing can recover it — it was never sent to a server — so what
+ * the opener owes is a sentence, not the empty chooser.
+ */
+test.describe("a link with the fragment stripped", () => {
+  test("is told apart from a link that was never a reference at all", async () => {
+    const { strippedReference } = await import("../src/store.js");
+    const id = "a".repeat(64);
+    const key = "A".repeat(43);
+
+    expect(strippedReference(`/d/${id}`, "", "")).toEqual({ named: id, missing: "key" });
+    expect(strippedReference("/", "?d=" + id, "")).toEqual({ named: id, missing: "key" });
+    expect(strippedReference("/", "", `#h=${id}`)).toEqual({ named: id, missing: "key" });
+    expect(strippedReference("/", "", `#k=${key}`)).toEqual({ missing: "document" });
+
+    // A whole link is not a stripped one, and the opener opens it.
+    expect(strippedReference(`/d/${id}`, "", `#h=${id}&k=${key}`)).toBeUndefined();
+    // Nothing here was ever a reference link.
+    expect(strippedReference("/", "", "")).toBeUndefined();
+    expect(strippedReference("/", "", "#handoff")).toBeUndefined();
+    expect(strippedReference("/d/nope", "", "")).toBeUndefined();
+  });
+
+  test("says what is missing and who can fix it, instead of a blank chooser", async ({ page }) => {
+    test.slow();
+    const built = await chart();
+    const root = mkdtempSync(join(tmpdir(), "dai-store-"));
+    const a = await serve(root, []);
+    try {
+      const { sealed } = await publish(built.html, fsStore({ root, baseUrl: a.origin }), RUNNER_URL);
+
+      // The whole link, minus everything after the #: what a screenshot, a
+      // link wrapper, or a retype leaves behind.
+      await page.goto(`${RUNNER_URL}?d=${sealed.hash}`);
+      const said = page.locator("#report");
+      await expect(said).toContainText("missing the part that opens it");
+      await expect(said).toContainText("ask whoever sent it");
+      await expect(said).toHaveClass(/error/);
+      // Not the empty chooser dressed up as a working app.
+      await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+      // A key with nothing to open is the other half of the same mistake.
+      await page.goto(`${RUNNER_URL}#k=${sealed.key}`);
+      await expect(said).toContainText("does not say which document");
+    } finally {
+      await new Promise<void>((done) => a.server.close(() => done()));
+    }
+  });
+});

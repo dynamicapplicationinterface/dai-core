@@ -343,6 +343,45 @@ export function referenceFrom(pathname: string, search: string, hash: string): R
 }
 
 /**
+ * What a link is missing, when it names a document but cannot open one.
+ *
+ * A reference link is a path and a fragment, and only the path survives being
+ * copied by hand, retyped from a screenshot, shortened by a link wrapper, or
+ * pasted out of a tool that strips fragments. The result is a URL that names a
+ * real document and cannot open it — and the failure mode nobody should ever
+ * see is the blank chooser, which looks exactly like a broken app.
+ *
+ * `undefined` here means the URL was never a reference link at all. A value
+ * means it was one, and says which half is gone, so the opener can say a
+ * sentence somebody can act on instead of nothing.
+ */
+export type StrippedReference =
+  /** A document is named, and the key that opens it is not here. */
+  | { named: string; missing: "key" }
+  /** A key is here, and nothing says which document it opens. */
+  | { named?: undefined; missing: "document" };
+
+export function strippedReference(
+  pathname: string,
+  search: string,
+  hash: string,
+): StrippedReference | undefined {
+  // A whole link is not a stripped one.
+  if (referenceFrom(pathname, search, hash)) return undefined;
+
+  const fragment = new URLSearchParams(hash.replace(/^#/, ""));
+  const h = fragment.get(REFERENCE_KEYS.hash);
+  const k = fragment.get(REFERENCE_KEYS.key);
+  const id =
+    /\/d\/([0-9a-f]{64})\/?$/i.exec(pathname)?.[1] ?? new URLSearchParams(search).get("d") ?? undefined;
+
+  const named = (id ?? h ?? undefined)?.toLowerCase();
+  if (named && /^[0-9a-f]{64}$/.test(named) && !k) return { named, missing: "key" };
+  if (k && !named) return { missing: "document" };
+  return undefined;
+}
+
+/**
  * Seals, stores, and returns the links. The whole sender in one call.
  */
 export async function publish(
