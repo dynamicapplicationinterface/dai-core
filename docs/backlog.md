@@ -51,16 +51,16 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 5.1 | The north star, measured | [ ] |
 | 5.2 | Propagation without a beacon | [ ] relay side |
 | v3 | manifestVersion 3: spec | [x] `9adbfb8` |
-| v3 | readers accept 3, refuse others by name | [x] `00af8e6` — opener and website live; desktop needs a release |
+| v3 | readers accept 3, refuse others by name | [x] `00af8e6` — opener, website and desktop v0.2.0 |
 | v3 | countersignature slot | [x] `35cf65e` |
 | v3 | confusables, two rules, two stores, root lists | [x] `5fcd4b0` |
 | v3 | identity: Sigstore bundle, offline | [x] `6925a25` |
-| v3 | compiler default flips to 3 | [ ] on a branch until the desktop reader ships |
+| v3 | compiler default flips to 3 | [x] `f8b8f8e` — after desktop v0.2.0 shipped the reader |
 | — | Media type registered | [ ] `docs/media-type-registration.md` drafted; the form is yours to submit |
 | — | Desktop window shows the document's icon | [ ] |
 | — | Packing list date editable | [x] `30a83aa` |
 | — | dai-core 0.2.0 published | [ ] yours |
-| — | Trusted Types | [ ] the control strict-dynamic stood in for |
+| — | Trusted Types | [x] `eec29fe` — on for kit-only apps; advice for the rest |
 
 ---
 
@@ -88,10 +88,11 @@ as `UNSUPPORTED_MANIFEST_VERSION` before any compiler writes one.
 - **Vectors:** 24 cases, 7 trust steps, 5 identity vectors, 2 countersignature
   vectors, all agreed by both readers.
 
-**Left:** the default flip to 3, which waits on a desktop release carrying
-the version 3 reader (installers do not auto-update, and a version 3 file must
-never land on a host that cannot read it); `hostLabel` UI beyond a prompt; a
-QR for the safety number; CDDL and byte vectors for 2.4.
+**The flip landed** in `f8b8f8e`, after desktop v0.2.0 shipped the reader and
+its installers were published. Every compiler writes version 3 now; version 2
+is read and stays in the suite as a regression. **Left:** `hostLabel` UI beyond
+a prompt; a QR for the safety number; CDDL and byte vectors for 2.4; a real
+Sigstore signing flow at build time.
 
 ## Phase 0 — Make "open from a stranger" true
 
