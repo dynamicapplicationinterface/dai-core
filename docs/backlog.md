@@ -28,7 +28,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 0.3 | The shell binds its frame's messages | [x] `870c1e5` — **Phase 0 closed** |
 | 1.1 | Launch card with backed claims | [ ] |
 | 1.2 | One card for every carrier | [ ] |
-| 1.3 | Install after use | [ ] |
+| 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [ ] |
 | 1.5 | Look inside | [ ] |
 | 2.1 | Thin profile | [ ] |
@@ -98,14 +98,6 @@ screen.
 
 **Exit:** snapshot tests show an identical card from `?open=`, `#a=`,
 `/d/<id>`, the file picker and `launchQueue`.
-
-### 1.3 Install after use, not on open
-
-`keeper.offer()` runs at mount today. It moves to the first successful
-`data-run`; the second open offers "Save to my apps"; the third behaves like
-an app.
-
-**Exit:** the install prompt never appears before a `data-run` succeeds.
 
 ### 1.4 One sentence everywhere
 
@@ -353,6 +345,10 @@ Kept so the reasoning stays with the record.
 - **9. Two host classes, and the site says which is which** — `834e504`.
 - **10. The recipe teaches the schema, every door declares it, the kit
   survives a colon** — `c1b04b8`. `upgradeOf` is the plumbing 4.2 needs.
+- **1.3 Install after use, not on open** — `a7df929`. `dai:used` from the
+  kit and from a save, relayed once as `DAI_HOST_USED`; `describe` at mount,
+  `offer` on first use; asked at most twice. The shell marks `used` in its
+  timing table, which is the number 5.1 needs.
 - **0.3 The shell binds its frame's messages** — `870c1e5`. One guard over
   the shell's listener; the frame's three listeners bound to the parent; the
   rule in spec §4.4. **Phase 0 is closed.**
