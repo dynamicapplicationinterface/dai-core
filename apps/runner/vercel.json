@@ -5,7 +5,7 @@
   "outputDirectory": "dist",
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/d/:id", "destination": "/index.html" }
+    { "source": "/d/:id", "destination": "/" }
   ],
   "headers": [
     {
