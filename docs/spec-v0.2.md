@@ -215,6 +215,10 @@ report a container as verified on that basis alone; §7 defines verification.
 
 ## 3. The manifest
 
+This section describes `manifestVersion: 2`. Version 3 changes what the
+signature covers and adds fields; the differences are in §9, which wins for
+version 3.
+
 JSON, UTF-8, in §1 of the sectioned form and at `runtime/manifest.json` in the
 viewer form's payload.
 
@@ -756,6 +760,10 @@ until all of them pass.
 6. **Signature.** When the shell carries a publisher key, the signature verifies
    over §3.1.
 
+For `manifestVersion: 3`, step 3 takes its list from `signedEntries` when the
+container is signed, and the shell is exempt from it; see §9.2. A version a
+reader does not know is refused before step 1 (§9.1).
+
 A host MUST report a refusal with a reason a person can act on, and SHOULD
 report it to whatever is hosting it, not only to the screen. A container that
 refuses inside a frame shows its reason to nobody.
@@ -830,7 +838,9 @@ that has them.
 signed by whoever holds the key it carries. It does not say who that is: a
 container is self-contained, so an attacker can substitute the key and re-sign.
 Identity requires something from outside the file — a key pinned on first use, a
-directory, a transparency log.
+directory, a transparency log. Version 3 (§9) gives a container a place to
+carry such a proof and a host the rules for what it may say about one; it does
+not change this limit.
 
 **A malicious application.** The sandbox bounds the damage; it does not make the
 code benign. An application can still present a form that asks for a password
@@ -845,3 +855,239 @@ and store the answer in its own database.
 rewritten, because that check would run inside the code an attacker replaced.
 Only a separate reader holding the sealed copy can find it, and that finding
 belongs to the host.
+
+---
+
+## 9. manifestVersion 3
+
+One deliberate change to the identity model, made before a second independent
+implementation exists, so that no reader ever has to carry two. Everything in
+this section is normative for `manifestVersion: 3`. Where it differs from the
+sections above, this section wins for version 3; the sections above remain the
+description of version 2.
+
+### 9.1 Versions a reader accepts
+
+A reader MUST accept `manifestVersion` 2 and 3, and MUST refuse any other value
+with `UNSUPPORTED_MANIFEST_VERSION` and a message telling the person to update
+the host — not a generic failure, because the file is not damaged and the
+person can do something about it.
+
+A version 2 container is verified by the rules of §7 with one correction that
+was always a reader bug and never a format rule: every digested entry other
+than `document.sqlite` MUST be in `signedEntries` when a signature is present
+(§3.1). "Version 2 remains verified" does not mean "version 2 keeps the hole".
+
+### 9.2 The signed set
+
+Two mandatory changes. A compiler MUST apply both to emit version 3; a reader
+MUST require both of a version 3 container.
+
+**The shell leaves the signed set.** `signedEntries` MUST NOT contain
+`runtime/container.html`. The sealed shell stays in the archive and in
+`hashes`, and §7 step 4 still compares the live shell with it: that is an
+integrity check on an unsigned part, which is what the shell always was — the
+viewer form's top document is self-attesting (§8) whether or not a digest of it
+was signed. What changes is that a host with its own shell (§4.4) no longer
+has to reproduce the publisher's byte for byte to verify a signature, and a
+compiler's template can change without every signature it ever made becoming
+uncheckable.
+
+**`signedEntries` is the sole authority.** When a container is signed, a reader
+MUST take the set of entries and their digests from `signedEntries`, and MUST
+refuse with `DIGEST_MISMATCH` any archive entry that is neither listed there
+nor one of the three exemptions: `document.sqlite`, `runtime/manifest.json`,
+and `runtime/container.html`. `hashes` MAY be present; where it lists an entry
+that `signedEntries` also lists, the two MUST agree, and a disagreement is
+`SIGNED_SET_MISMATCH`. When a container is unsigned, `hashes` is the list, as
+in version 2.
+
+### 9.3 Fields
+
+All of the following are OPTIONAL. A version 3 manifest carrying none of them
+is valid; only §9.2 is required to emit version 3.
+
+| field | in the signed set | meaning |
+|---|---|---|
+| `publisherName` | yes | The name the publisher signs under. A claim the key makes about itself; a host MUST NOT present it as verified. |
+| `supersedes` | yes | The document this one replaces (§5.1). Honoured only under the same key. |
+| `generator` | yes | `{ "tool": string, "model"?: string, "provider"?: string }`. What produced the application. Asserted, never verified, and never the prompt. |
+| `identity` | **no** | A Sigstore bundle binding the signing key to an identity (§9.5). Outside the signed set because its transparency-log entry records the signature, which covers the manifest; a field that contains a proof of the signature cannot itself be signed by it. |
+
+The signed bytes (§3.1) gain the signed fields in this order after `entries`,
+each present only when set: `validUntil`, `publisherName`, `supersedes`,
+`generator` (a CBOR map with the keys `tool`, `model`, `provider`, each present
+only when set). A field that is absent from the manifest MUST be absent from
+the signed bytes; a reader that encodes an absent one as null or the empty
+string rebuilds different bytes and rejects every signature ever made.
+
+### 9.4 The envelope, and who else may sign
+
+The signature is an **untagged** `COSE_Sign1` (RFC 9052 §4.2), detached
+payload. A writer MUST NOT emit CBOR tag 18 around it. A reader MUST accept an
+envelope with tag 18 as well, because standard COSE libraries emit one and a
+reader that refused it would refuse a correct signature over a correct
+container.
+
+A countersignature slot exists whether or not anything is in it. The
+`COSE_Sign1` unprotected header MAY carry label **11** (`countersignature`,
+RFC 9338 §3) holding one `COSE_Countersignature` or an array of them. Each is
+computed over the version 2 countersignature structure of RFC 9338 §3.3:
+
+```
+Countersign_structure = [
+  context:        "CounterSignatureV2",
+  body_protected: <the publisher's protected header bytes>,
+  sign_protected: <the countersigner's protected header bytes>,
+  external_aad:   h'',
+  payload:        <the signed bytes of §3.1>,
+  other_fields:   [ <the publisher's signature bytes> ]
+]
+```
+
+The countersigner's protected header MUST carry `alg` (ES256 is the only
+algorithm this version requires) and `kid`, a byte string naming the key. A
+host verifies a countersignature only against keys it already holds (§9.6,
+roots); one it cannot verify is treated as absent — never as verified, and
+never as a refusal. A countersignature that verifies against a held key is
+reported to the person as what it is: a second party who signed the same
+document. Its meaning is that party's to define.
+
+Because it is in the unprotected header, adding or removing a countersignature
+changes no signed byte and no digest. The manifest's `signature` field is the
+base64 of the whole envelope, countersignatures included.
+
+### 9.5 Identity
+
+A signature proves a key. `identity` binds the key to a name somebody else
+vouched for, in a way an offline reader can check.
+
+The principle: the publisher is online at build time; the recipient may be
+offline at open time. Every network-dependent step therefore happens at build,
+and the artifact carries a proof that verifies against a root the host already
+holds. A host MUST NOT fetch anything to verify an identity, and MUST hold its
+trust roots in the host itself, refreshed with the host.
+
+`identity` is a Sigstore bundle (the `application/vnd.dev.sigstore.bundle`
+JSON form, version 0.3 or later), obtained at build by signing in to an OpenID
+provider, having a Fulcio instance issue a short-lived certificate binding that
+identity to **the publisher's own signing key**, and logging the manifest
+signature to a Rekor instance. The bundle carries the certificate chain, the
+log entry with its signed timestamp, and nothing about the document that is
+not already in the manifest.
+
+A host holding a root for the bundle's Fulcio and Rekor MUST check, offline:
+
+1. the certificate chains to a Fulcio root the host holds;
+2. the certificate's subject public key equals the manifest's key (the SPKI
+   in the shell, §3);
+3. the log entry's signed timestamp verifies against a Rekor key the host
+   holds, and its time lies within the certificate's validity;
+4. the logged signature equals the manifest's `signature` bytes.
+
+Any failure, and a bundle whose roots the host does not hold, MUST be treated
+as **absent**: the document is then trusted by continuity alone (§9.6), and the
+host MUST NOT show the identity. Identity never causes a refusal; a document
+with a broken binding is a document with no binding.
+
+The identity a host shows is the certificate's subject identity (a GitHub
+handle, an email, an issuer-scoped claim), and the host SHOULD show the issuer
+beside it. Three roots are anticipated and all use this one verifier: the
+public Sigstore instance, whose log is public — a publisher choosing it is
+choosing to be listed, and SHOULD use a handle rather than an email; a
+self-hosted Fulcio and Rekor, whose roots arrive by the root list of §9.6; and
+a countersigner of §9.4 whose key the host holds.
+
+The inline carrier (§1.1) omits `identity` and countersignatures. A bundle is
+most of a small link's budget, and continuity carries the binding forward: once
+a key is bound on this device, every later document under it shows the
+identity by being KNOWN.
+
+### 9.6 What a host remembers, and what it may say
+
+A conforming host keeps two stores.
+
+**Documents:** `documentUuid → SPKI` (or "unsigned"), recorded on first
+sighting and never replaced by opening a file (§4.5 rollback and generation
+need it, and so does `supersedes`).
+
+**Keys:** `SPKI → { firstSeen, documentCount, lastAssertedName, hostLabel,
+identity? }`. `hostLabel` is a name the person gave this key on this device.
+It is local, MUST NOT be exported or carried in any document, and MUST take
+precedence over `lastAssertedName` wherever a name is displayed.
+
+A host MUST distinguish three trust states for a signed document, and MUST NOT
+present any of them with the word "verified":
+
+- **KNOWN** — the key is in the key store, or in a root list (below).
+- **NEW** — the key is unseen and the asserted name collides with nothing.
+- **CONFLICT** — either the document's UUID is in the document store under a
+  different key, or the key is unseen and the asserted name collides with a
+  name in the key store, a host label, or a root list entry. A host MUST show a
+  conflict as a warning and MUST NOT offer to install, pin, or adopt data on
+  that open.
+
+A name collides when either rule fires:
+
+1. **Mixed script.** After NFKC and case folding, any single whitespace-
+   separated token of the asserted name contains letters from more than one
+   script (Latin and Cyrillic, Latin and Greek, and so on) is a conflict by
+   itself. No table is needed; a name that needs two alphabets to spell one
+   word is not a name.
+2. **Skeleton match.** `skeleton(name)` equals `skeleton(other)` for any name
+   the host holds, where `skeleton` is NFKC → case fold → remove whitespace and
+   punctuation (Unicode categories Z and P) → the UTS #39 §4 confusable
+   skeleton, computed with Unicode 16.0 data or later.
+
+A host SHOULD store the skeleton beside each name at pin time, so a first
+sighting is one comparison per stored name, and recompute them when its table
+changes. The conformance vectors of §9.7 are normative; the table is not, and a
+host MAY use newer Unicode data.
+
+**Root lists.** An organisation MAY provision keys a host is to treat as KNOWN
+without a first sighting, and roots for §9.4 and §9.5. The file is JSON:
+
+```json
+{
+  "formatVersion": 1,
+  "name": "Acme Corp publishers",
+  "publishers": [
+    { "spki": "<base64 SPKI>", "name": "Acme Finance", "org": "Acme Corp" }
+  ],
+  "countersigners": [
+    { "kid": "<base64 kid bytes>", "spki": "<base64 SPKI>", "name": "Acme release signer" }
+  ],
+  "sigstore": [
+    { "name": "Acme Fulcio", "fulcioRoots": ["<PEM>"], "rekorKeys": ["<base64 SPKI>"] }
+  ]
+}
+```
+
+How a host obtains a root list — MDM, a config directory, a setting — is
+outside this specification. A root list entry's `name` is a host label for
+that key.
+
+### 9.7 Conformance
+
+The suite gains, in addition to the version 2 cases, which remain:
+
+- **version-3-minimal** — a version 3 container with no optional field;
+  mounts.
+- **version-3-shell-unsigned** — `signedEntries` omitting the shell, as
+  required; mounts. And **version-3-shell-listed** — a version 3 container
+  whose `signedEntries` lists the shell; refused, `SIGNED_SET_MISMATCH`.
+- **version-2-signed-extra-entry** — an entry added to a version 2 container
+  and to `hashes` but not to `signedEntries`; refused, `SIGNED_SET_MISMATCH`.
+- **version-4** — `manifestVersion: 4`; refused,
+  `UNSUPPORTED_MANIFEST_VERSION`.
+- **envelope-tagged** — the same valid signature wrapped in tag 18; verifies.
+- **countersignature-valid** — a countersignature under the suite's second
+  key; reported present and valid when that key is held, absent when it is not.
+- **trust-vectors.json** — sequences of containers with the state a host MUST
+  reach after each: same key, second document → KNOWN; Cyrillic а inside a
+  Latin name → CONFLICT (mixed script); whole-script Cyrillic "Acme" against a
+  pinned Latin "Acme" → CONFLICT (skeleton); a fullwidth variant → CONFLICT
+  (NFKC); an all-CJK name against every pinned name → NEW.
+- **identity-vectors.json** — a bundle that verifies against the suite's test
+  root → identity shown; timestamp outside the certificate window, certificate
+  key not the manifest's key, root not held → absent, never a refusal.
