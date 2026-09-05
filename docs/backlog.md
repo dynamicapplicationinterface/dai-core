@@ -40,7 +40,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
 | 3.3 | Unfurl without the blob | [x] `a7a0be8` + this — static half and edge half |
-| 3.4 | Stripped fragment degrades to a sentence | [ ] |
+| 3.4 | Stripped fragment degrades to a sentence | [~] `c4be316` — sentence done; no-key variant is a decision |
 | 3.5 | iOS solved by the link | [ ] |
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
