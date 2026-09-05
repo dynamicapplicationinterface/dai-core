@@ -36,6 +36,10 @@ const ENGINE_FILES = [
   // browser, desktop, MCP — declares identically; a door computing it for
   // itself is exactly the drift this test exists to stop.
   "src/schema.ts",
+  // The compact inline carrier packs a container into a link and rebuilds one
+  // from it: zipping, digesting and re-forming the signature envelope are its
+  // job, and it is the one place that job is done. A wrapper calls it.
+  "src/inline.ts",
 ];
 
 /** What it means to be doing the container's own work. */

@@ -1,0 +1,1183 @@
+nt-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.person {
+  --c: var(--maya);
+  --c-soft: var(--maya-soft);
+  padding: 14px 14px 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+
+.person.leo { --c: var(--leo); --c-soft: var(--leo-soft); }
+
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.avatar {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--c);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.count {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+dai-rows { display: flex; flex-direction: column; }
+
+.chore {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.chore input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+.box {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.star { display: none; }
+
+.chore:has(.star:not([hidden])) .box {
+  border-color: var(--c);
+  background: var(--c);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.2 4.2L19 7'/%3E%3C/svg%3E");
+  background-size: 16px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.chore:has(.star:not([hidden])) .what { color: var(--muted); text-decoration: line-through; }
+
+.chore:has(.star:not([hidden])) .star {
+  display: inline;
+  color: #f2b01e;
+  font-size: 15px;
+}
+
+dai-form { display: flex; gap: 8px; }
+
+dai-form input,
+dai-form select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+}
+
+dai-form select { flex: 0 0 auto; }
+
+/* Green, not ink: on the front page this sits inside a black phone frame, and
+   a black button at the bottom edge disappeared into it. */
+dai-form button,
+dai-save {
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  border-radius: 10px;
+  background: var(--leo);
+  color: #fff;
+  cursor: pointer;
+}
+
+footer { display: flex; justify-content: flex-end; }
+
+dai-save { display: inline-block; padding: 12px 22px; }
+
+/*
+ * On a laptop, a card rather than a full-bleed page.
+ *
+ * Phones are the shape this was drawn for; on a wide screen the same layout
+ * stretched edge to edge and read as unfinished. Past a phone's width the
+ * page becomes a card on a quieter ground, at the width it was designed at.
+ */
+@media (min-width: 720px) {
+  html, body { background: #e6eee7; }
+  main {
+    margin: 40px auto;
+    padding: 32px 32px 36px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 24px 60px -20px rgb(0 0 0 / 0.18);
+  }
+}
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chores</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <!--
+    Two children, one week, and who has done what. Made for the website's front
+    page, so a parent looks at it and sees their own kitchen wall.
+
+    No JavaScript of its own: the kit does the wiring, and the schema and the
+    starting data are SQL in the document.
+  -->
+  <script type="application/sql">
+      -- seed rows; the tables are declared in schema.sql
+    INSERT OR IGNORE INTO chores (id, who, what, done) VALUES
+      (1, 'Maya', 'Feed the cat', 1),
+      (2, 'Maya', 'Empty the dishwasher', 1),
+      (3, 'Maya', 'Tidy room', 0),
+      (4, 'Maya', 'Water the plants', 0),
+      (5, 'Leo', 'Take out recycling', 1),
+      (6, 'Leo', 'Set the table', 0),
+      (7, 'Leo', 'Fold laundry', 0);
+  
+    </script>
+
+  <main>
+    <header>
+      <p class="eyebrow">This week</p>
+      <h1>Chores</h1>
+    </header>
+
+    <section class="person maya">
+      <h2>
+        <span class="avatar">M</span>
+        Maya
+        <span class="count">
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Maya' AND done = 1"></dai-value>
+          of
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Maya'"></dai-value>
+        </span>
+      </h2>
+      <dai-rows query="SELECT id, what, done FROM chores WHERE who = 'Maya' ORDER BY done, id">
+        <template>
+          <label class="chore">
+            <input type="checkbox" data-run="UPDATE chores SET done = 1 - done WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="star" data-when="done">★</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section class="person leo">
+      <h2>
+        <span class="avatar">L</span>
+        Leo
+        <span class="count">
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Leo' AND done = 1"></dai-value>
+          of
+          <dai-value query="SELECT count(*) FROM chores WHERE who = 'Leo'"></dai-value>
+        </span>
+      </h2>
+      <dai-rows query="SELECT id, what, done FROM chores WHERE who = 'Leo' ORDER BY done, id">
+        <template>
+          <label class="chore">
+            <input type="checkbox" data-run="UPDATE chores SET done = 1 - done WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="star" data-when="done">★</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <dai-form run="INSERT INTO chores (who, what) VALUES (:who, :what)">
+      <select name="who" aria-label="Who">
+        <option>Maya</option>
+        <option>Leo</option>
+      </select>
+      <input name="what" placeholder="Add a chore" required maxlength="80" />
+      <button>Add</button>
+    </dai-form>
+
+    <footer>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./dai-kit.js"></script>
+</body>
+</html>
+
+CREATE TABLE IF NOT EXISTS dinners (
+        id INTEGER PRIMARY KEY,
+        day TEXT NOT NULL,
+        what TEXT NOT NULL
+      );
+CREATE TABLE IF NOT EXISTS groceries (
+        id INTEGER PRIMARY KEY,
+        item TEXT NOT NULL,
+        got INTEGER NOT NULL DEFAULT 0
+      );
+
+/*
+ * Warm, like a kitchen. Deliberately not the site's blue: the point of the
+ * front page is that each of these files is somebody else's, so each has its
+ * own colour.
+ */
+:root {
+  --paper: #fff8f1;
+  --ink: #2b211a;
+  --muted: #8a7466;
+  --line: #ecdcd0;
+  --accent: #d9663c;
+  --accent-soft: #fbe9e0;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+header { display: flex; flex-direction: column; gap: 2px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+h2 {
+  margin: 0 0 10px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.count { font-size: 13px; font-weight: 500; color: var(--muted); }
+
+/* ---- the week --------------------------------------------------------- */
+
+.week dai-rows {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.day {
+  display: grid;
+  grid-template-columns: 44px 1fr 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 8px 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.day:last-child { border-bottom: 0; }
+
+.dow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.meal { font-size: 16px; }
+
+.x {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.x:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* ---- the list --------------------------------------------------------- */
+
+.shop dai-rows { display: flex; flex-direction: column; gap: 6px; }
+
+.item {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.item input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+.check {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.got { display: none; }
+
+/* A bought item, keyed off the mark the kit shows for it. */
+.item:has(.got:not([hidden])) .check {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.item:has(.got:not([hidden])) .name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.dai-empty { margin: 0; padding: 14px; color: var(--muted); text-align: center; }
+
+/* ---- forms ------------------------------------------------------------ */
+
+dai-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+dai-form input,
+dai-form select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+}
+
+dai-form select { flex: 0 0 auto; }
+
+dai-form button,
+dai-save {
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+footer { display: flex; justify-content: flex-end; }
+
+dai-save { display: inline-block; padding: 12px 22px; }
+
+/*
+ * On a laptop, a card rather than a full-bleed page.
+ *
+ * Phones are the shape this was drawn for; on a wide screen the same layout
+ * stretched edge to edge and read as unfinished. Past a phone's width the
+ * page becomes a card on a quieter ground, at the width it was designed at.
+ */
+@media (min-width: 720px) {
+  html, body { background: #f3e6da; }
+  main {
+    margin: 40px auto;
+    padding: 32px 32px 36px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 24px 60px -20px rgb(0 0 0 / 0.18);
+  }
+}
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>This week</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <!--
+      A week of dinners and the shopping they need. Written for the website's
+      front page: somebody who would never call themselves technical should
+      look at this and see their own fridge door.
+
+      No JavaScript of its own. The kit does the wiring, and the schema and
+      starting data are SQL in the document.
+    -->
+    <script type="application/sql">
+      -- seed rows; the tables are declared in schema.sql
+      INSERT OR IGNORE INTO dinners (id, day, what) VALUES
+        (1, 'Mon', 'Chicken tacos'),
+        (2, 'Tue', 'Pasta with the good tomatoes'),
+        (3, 'Wed', 'Leftovers night'),
+        (4, 'Thu', 'Salmon and rice'),
+        (5, 'Fri', 'Pizza — kids choose'),
+        (6, 'Sat', 'Grandma''s'),
+        (7, 'Sun', 'Roast');
+      INSERT OR IGNORE INTO groceries (id, item, got) VALUES
+        (1, 'Tortillas', 1),
+        (2, 'Chicken thighs', 1),
+        (3, 'Limes', 0),
+        (4, 'Salmon', 0),
+        (5, 'Jasmine rice', 0),
+        (6, 'Pizza dough', 0),
+        (7, 'Mozzarella', 0);
+    
+    </script>
+
+    <main>
+      <header>
+        <p class="eyebrow">Dinners</p>
+        <h1>This week</h1>
+      </header>
+
+      <section class="week">
+        <dai-rows query="SELECT id, day, what FROM dinners ORDER BY id">
+          <template>
+            <div class="day">
+              <span class="dow" data-text="day"></span>
+              <span class="meal" data-text="what"></span>
+              <button class="x" aria-label="Remove" data-run="DELETE FROM dinners WHERE id = :id">×</button>
+            </div>
+          </template>
+        </dai-rows>
+
+        <dai-form run="INSERT INTO dinners (day, what) VALUES (:day, :what)">
+          <select name="day" aria-label="Day">
+            <option>Mon</option><option>Tue</option><option>Wed</option><option>Thu</option>
+            <option>Fri</option><option>Sat</option><option>Sun</option>
+          </select>
+          <input name="what" placeholder="Add a dinner" required maxlength="80" />
+          <button>Add</button>
+        </dai-form>
+      </section>
+
+      <section class="shop">
+        <h2>
+          To buy
+          <span class="count">
+            <dai-value query="SELECT count(*) FROM groceries WHERE got = 0"></dai-value> left
+          </span>
+        </h2>
+
+        <dai-rows
+          query="SELECT id, item, got FROM groceries ORDER BY got, id"
+          empty="Nothing to buy. Nice."
+        >
+          <template>
+            <label class="item">
+              <input type="checkbox" data-run="UPDATE groceries SET got = 1 - got WHERE id = :id" />
+              <span class="check" aria-hidden="true"></span>
+              <span class="name" data-text="item"></span>
+              <span class="got" data-when="got">✓</span>
+            </label>
+          </template>
+        </dai-rows>
+
+        <dai-form run="INSERT INTO groceries (item) VALUES (:item)">
+          <input name="item" placeholder="Add to the list" required maxlength="80" />
+          <button>Add</button>
+        </dai-form>
+      </section>
+
+      <footer>
+        <dai-save>Save</dai-save>
+      </footer>
+    </main>
+
+    <script type="module" src="./dai-kit.js"></script>
+  </body>
+</html>
+
+CREATE TABLE IF NOT EXISTS items (
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      what TEXT NOT NULL,
+      packed INTEGER NOT NULL DEFAULT 0
+    );
+
+CREATE TABLE IF NOT EXISTS trip (
+      id INTEGER PRIMARY KEY,
+      dates TEXT NOT NULL
+    );
+
+/* Sea and sand. */
+:root {
+  --paper: #f2f8fb;
+  --ink: #12283a;
+  --muted: #6b8494;
+  --line: #d6e5ee;
+  --accent: #0e7fb0;
+  --sand: #f5d9a8;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+
+body {
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+header { display: flex; flex-direction: column; gap: 4px; }
+
+.eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+/*
+ * The dates are a control, and read as the line they replaced until touched.
+ * A form field sitting above the title would say "fill this in" to somebody
+ * who came here to pack a bag.
+ */
+input.eyebrow {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+input.eyebrow:hover {
+  border-bottom-color: var(--accent);
+}
+
+input.eyebrow:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.progress {
+  margin: 6px 0 0;
+  display: inline-block;
+  align-self: flex-start;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--sand);
+  color: #6b4b12;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+dai-rows {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.item:first-child { border-top: 0; }
+
+.item input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+.box {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+}
+
+.in {
+  display: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.item:has(.in:not([hidden])) .box {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.item:has(.in:not([hidden])) .what { color: var(--muted); }
+.item:has(.in:not([hidden])) .in { display: inline; }
+
+dai-form { display: flex; gap: 8px; }
+
+dai-form input,
+dai-form select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+}
+
+dai-form select { flex: 0 0 auto; }
+
+dai-form button,
+dai-save {
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+footer { display: flex; justify-content: flex-end; }
+
+dai-save { display: inline-block; padding: 12px 22px; }
+
+/*
+ * On a laptop, a card rather than a full-bleed page.
+ *
+ * Phones are the shape this was drawn for; on a wide screen the same layout
+ * stretched edge to edge and read as unfinished. Past a phone's width the
+ * page becomes a card on a quieter ground, at the width it was designed at.
+ */
+@media (min-width: 720px) {
+  html, body { background: #e3eef5; }
+  main {
+    margin: 40px auto;
+    padding: 32px 32px 36px;
+    background: var(--paper);
+    border-radius: 24px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 24px 60px -20px rgb(0 0 0 / 0.18);
+  }
+}
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Beach trip</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <!--
+    A packing list for one trip. Made for the website's front page: somebody
+    should look at this and think of the trip they have coming up.
+
+    No JavaScript of its own; the kit does the wiring, and the schema and
+    starting data are SQL in the document.
+  -->
+  <script type="application/sql">
+      -- seed rows; the tables are declared in schema.sql
+    INSERT OR IGNORE INTO items (id, kind, what, packed) VALUES
+      (1, 'Beach', 'Sunscreen', 1),
+      (2, 'Beach', 'Towels ×4', 1),
+      (3, 'Beach', 'Bucket and spade', 0),
+      (4, 'Beach', 'Umbrella', 0),
+      (5, 'Clothes', 'Swimsuits', 1),
+      (6, 'Clothes', 'Hats', 0),
+      (7, 'Clothes', 'Sandals', 0),
+      (8, 'Kids', 'Floaties', 1),
+      (9, 'Kids', 'Snacks for the car', 0),
+      (10, 'Kids', 'Bear', 0);
+
+    INSERT OR IGNORE INTO trip (id, dates) VALUES (1, 'Sat 14 - Sun 22');
+  
+    </script>
+
+  <main>
+    <header>
+      <!--
+        The dates, which are the one thing on this page that is about a
+        particular trip rather than about packing. Typed over, not decoration:
+        a list somebody cannot date is a list about somebody else's holiday.
+      -->
+      <dai-rows query="SELECT id, dates FROM trip WHERE id = 1">
+        <template>
+          <input
+            class="eyebrow"
+            aria-label="When the trip is"
+            data-text="dates"
+            data-run="UPDATE trip SET dates = :typed WHERE id = 1"
+          />
+        </template>
+      </dai-rows>
+      <h1>Beach trip</h1>
+      <p class="progress">
+        <dai-value query="SELECT count(*) FROM items WHERE packed = 1"></dai-value>
+        of
+        <dai-value query="SELECT count(*) FROM items"></dai-value>
+        packed
+      </p>
+    </header>
+
+    <section>
+      <h2>Beach</h2>
+      <dai-rows query="SELECT id, what, packed FROM items WHERE kind = 'Beach' ORDER BY packed, id">
+        <template>
+          <label class="item">
+            <input type="checkbox" data-run="UPDATE items SET packed = 1 - packed WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="in" data-when="packed">packed</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section>
+      <h2>Clothes</h2>
+      <dai-rows query="SELECT id, what, packed FROM items WHERE kind = 'Clothes' ORDER BY packed, id">
+        <template>
+          <label class="item">
+            <input type="checkbox" data-run="UPDATE items SET packed = 1 - packed WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="in" data-when="packed">packed</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <section>
+      <h2>Kids</h2>
+      <dai-rows query="SELECT id, what, packed FROM items WHERE kind = 'Kids' ORDER BY packed, id">
+        <template>
+          <label class="item">
+            <input type="checkbox" data-run="UPDATE items SET packed = 1 - packed WHERE id = :id" />
+            <span class="box" aria-hidden="true"></span>
+            <span class="what" data-text="what"></span>
+            <span class="in" data-when="packed">packed</span>
+          </label>
+        </template>
+      </dai-rows>
+    </section>
+
+    <dai-form run="INSERT INTO items (kind, what) VALUES (:kind, :what)">
+      <select name="kind" aria-label="Group">
+        <option>Beach</option>
+        <option>Clothes</option>
+        <option>Kids</option>
+      </select>
+      <input name="what" placeholder="Don't forget…" required maxlength="80" />
+      <button>Add</button>
+    </dai-form>
+
+    <footer>
+      <dai-save>Save</dai-save>
+    </footer>
+  </main>
+
+  <script type="module" src="./dai-kit.js"></script>
+</body>
+</html>
+
+/**
+ * dai-kit — four elements, so an application can be HTML and SQL.
+ *
+ * Shipped inside every container. Reference it with:
+ *   <script type="module" src="./dai-kit.js"></script>
+ */
+const db = await window.dai.openDatabase();
+
+/*
+ * The schema, run before anything reads.
+ *
+ * An unknown script type is not executed by the browser and not governed by the
+ * policy — the same reason the container carries its payload that way — so this
+ * is SQL sitting in the document rather than JavaScript that runs it. Without
+ * it every application needs a script whose only job is CREATE TABLE, which has
+ * to run before the elements draw and silently does not when somebody puts the
+ * tags in the other order. That is the wiring this kit exists to remove, and
+ * leaving one strand of it in place would be leaving the trap.
+ */
+for (const block of document.querySelectorAll('script[type="application/sql"]')) {
+  db.exec(block.textContent);
+}
+
+/** Everything that reads from the database, so a change can redraw them all. */
+const views = new Set();
+
+/** Re-runs every query on the page. Called after anything writes. */
+function refresh() {
+  for (const view of views) view.draw();
+}
+
+/**
+ * Reads :name parameters out of a statement.
+ *
+ * Bound, never interpolated: there is deliberately no way to build a statement
+ * out of a value here.
+ */
+function parametersIn(sql) {
+  // Walked rather than matched with one regular expression, because a colon
+  // inside a string literal is not a parameter: strftime('%H:%M') was read
+  // as two bindings and threw on the first tap, in the first application a
+  // model wrote with this kit — a medicine log, which is all times.
+  const names = [];
+  const isStart = (c) => /[a-zA-Z_]/.test(c);
+  const isPart = (c) => /[a-zA-Z0-9_]/.test(c);
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql[i];
+    if (c === "'" || c === '"' || c === String.fromCharCode(96)) {
+      // A literal or a quoted identifier, to its matching quote; a doubled
+      // quote inside is an escaped quote, not the end.
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === c) {
+          if (sql[j + 1] === c) { j += 2; continue; }
+          break;
+        }
+        j++;
+      }
+      i = j + 1;
+      continue;
+    }
+    if (c === "-" && sql[i + 1] === "-") {
+      const end = sql.indexOf(String.fromCharCode(10), i);
+      i = end < 0 ? sql.length : end + 1;
+      continue;
+    }
+    if (c === "/" && sql[i + 1] === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end < 0 ? sql.length : end + 2;
+      continue;
+    }
+    if (c === ":" && sql[i + 1] !== ":" && sql[i - 1] !== ":" && isStart(sql[i + 1] || "")) {
+      let j = i + 2;
+      while (j < sql.length && isPart(sql[j])) j++;
+      const name = sql.slice(i + 1, j);
+      if (!names.includes(name)) names.push(name);
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return names;
+}
+
+/** Runs a statement, binding each :name from the values it was given. */
+function run(sql, values) {
+  const names = parametersIn(sql);
+  const bind = {};
+  for (const name of names) {
+    if (!(name in values)) {
+      throw new Error('dai-kit: nothing to bind for :' + name + ' in ' + sql);
+    }
+    bind[':' + name] = values[name];
+  }
+  if (names.length === 0) db.exec(sql);
+  else db.exec({ sql: sql, bind: bind });
+  refresh();
+
+  // Somebody did something. The shell is told, and tells the host once: the
+  // first use is the moment an offer to keep this document stops being an
+  // interruption, and it is the number the whole thing is judged on.
+  try {
+    window.parent.postMessage({ type: 'dai:used' }, '*');
+  } catch (error) {
+    /* No parent, or one that is not listening. Neither changes the statement. */
+  }
+}
+
+/** Fills an element's [data-text] descendants from a row. */
+function fill(element, row) {
+  const targets = element.querySelectorAll('[data-text]');
+  for (const target of targets) {
+    const column = target.getAttribute('data-text');
+    const value = row[column];
+    const text = value === null || value === undefined ? '' : String(value);
+
+    /*
+     * A control shows its value; everything else shows its text.
+     *
+     * Setting textContent on an input puts the text somewhere nobody can see
+     * and leaves the box empty, which is the whole of what somebody looking at
+     * it would call broken. This is the reading half of :typed — one attribute
+     * fills the box and sends back what was typed into it.
+     */
+    if ('value' in target && target.tagName !== 'OPTION') target.value = text;
+    // textContent rather than innerHTML, always: a value in the database is
+    // somebody's text and must not become markup.
+    else target.textContent = text;
+  }
+
+  const conditionals = element.querySelectorAll('[data-when]');
+  for (const target of conditionals) {
+    target.hidden = !row[target.getAttribute('data-when')];
+  }
+}
+
+/** Wires every [data-run] inside a rendered row or the page. */
+function wire(element, values) {
+  const triggers = element.querySelectorAll('[data-run]');
+  for (const trigger of triggers) {
+    const sql = trigger.getAttribute('data-run');
+    const event = trigger.tagName === 'INPUT' || trigger.tagName === 'SELECT' ? 'change' : 'click';
+    trigger.addEventListener(event, (e) => {
+      if (trigger.tagName === 'BUTTON') e.preventDefault();
+      const withOwn = Object.assign({}, values);
+
+      /*
+       * What somebody typed into this control, as :typed.
+       *
+       * Without it there is no way for an application to change a value in
+       * place — only to add a row and to toggle one — because a data-run
+       * carried the row it was drawn from and the attributes written into the
+       * document, and never the thing in front of the person. A packing list
+       * could tick an item off and could not change the dates of the trip.
+       *
+       * Named :typed rather than :value so it cannot quietly shadow a column
+       * called value in the row this was drawn from. A checkbox is left out:
+       * its value is the string "on" whether it is ticked or not, and the
+       * useful thing about one is already how a toggle is written.
+       */
+      if (trigger.type !== 'checkbox' && 'value' in trigger) withOwn.typed = trigger.value;
+
+      for (const attribute of trigger.attributes) {
+        if (attribute.name.startsWith('data-') && attribute.name !== 'data-run') {
+          withOwn[attribute.name.slice(5)] = attribute.value;
+        }
+      }
+      run(sql, withOwn);
+    });
+  }
+}
+
+/** A row per result, from a template. */
+class DaiRows extends HTMLElement {
+  connectedCallback() {
+    this.template = this.querySelector('template');
+    views.add(this);
+    this.draw();
+  }
+
+  disconnectedCallback() {
+    views.delete(this);
+  }
+
+  draw() {
+    if (!this.template) return;
+    const rows = db.selectObjects(this.getAttribute('query'));
+
+    const empty = this.getAttribute('empty');
+    while (this.lastChild && this.lastChild !== this.template) this.removeChild(this.lastChild);
+
+    if (rows.length === 0 && empty) {
+      const message = document.createElement('p');
+      message.className = 'dai-empty';
+      message.textContent = empty;
+      this.appendChild(message);
+      return;
+    }
+
+    for (const row of rows) {
+      const copy = this.template.content.cloneNode(true);
+      const holder = document.createElement('div');
+      holder.appendChild(copy);
+      fill(holder, row);
+      wire(holder, row);
+      while (holder.firstChild) this.appendChild(holder.firstChild);
+    }
+  }
+}
+
+/** One number or one string, from the first column of the first row. */
+class DaiValue extends HTMLElement {
+  connectedCallback() {
+    views.add(this);
+    this.draw();
+  }
+
+  disconnectedCallback() {
+    views.delete(this);
+  }
+
+  draw() {
+    const rows = db.selectObjects(this.getAttribute('query'));
+    const row = rows[0];
+    const value = row ? row[Object.keys(row)[0]] : '';
+    this.textContent = value === null || value === undefined ? '' : String(value);
+  }
+}
+
+/** A form whose fields become the parameters of one statement. */
+class DaiForm extends HTMLElement {
+  connectedCallback() {
+    this.addEventListener('submit', (event) => event.preventDefault());
+
+    const submit = () => {
+      const values = {};
+      const fields = this.querySelectorAll('[name]');
+      for (const field of fields) {
+        values[field.getAttribute('name')] =
+          field.type === 'checkbox' ? (field.checked ? 1 : 0) : field.value;
+      }
+
+      for (const field of fields) {
+        if (field.required && !String(values[field.getAttribute('name')]).trim()) {
+          field.focus();
+          return;
+        }
+      }
+
+      run(this.getAttribute('run'), values);
+
+      for (const field of fields) {
+        if (field.type !== 'checkbox') field.value = '';
+      }
+    };
+
+    const button = this.querySelector('button');
+    if (button) button.addEventListener('click', submit);
+
+    for (const field of this.querySelectorAll('input')) {
+      field.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submit();
+        }
+      });
+    }
+  }
+}
+
+/** Writes the database back into the file. */
+class DaiSave extends HTMLElement {
+  connectedCallback() {
+    if (!this.textContent.trim()) this.textContent = 'Save';
+    this.setAttribute('role', 'button');
+    this.setAttribute('tabindex', '0');
+
+    const save = async () => {
+      const before = this.textContent;
+      this.textContent = 'Saving…';
+      const result = await window.dai.saveDatabase(db);
+      this.textContent = result.saved ? 'Saved' : before;
+      if (result.saved) setTimeout(() => { this.textContent = before; }, 1500);
+    };
+
+    this.addEventListener('click', save);
+    this.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') save();
+    });
+  }
+}
+
+customElements.define('dai-rows', DaiRows);
+customElements.define('dai-value', DaiValue);
+customElements.define('dai-form', DaiForm);
+customElements.define('dai-save', DaiSave);
+
+// Anything outside these four is ordinary JavaScript against window.dai, which
+// is still there. This is a shortcut, not a framework.
+window.daiKit = { db: db, run: run, refresh: refresh };

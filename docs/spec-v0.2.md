@@ -54,15 +54,49 @@ needs nothing but the file.
 **The inline link.** The document in the address itself:
 
 ```
-<opener>/#a=<base64url of gzip of the document>
+<opener>/#a=<base64url( version | dictionary-id | deflate )>
 ```
 
 `a` for the application, in the fragment and nowhere else. The fragment is the
 whole of it, which is the point: a fragment is not sent to a server, so a
 document carried this way is in the link and in no log, on no host, and behind
-nothing that can expire. The value MUST be base64url (RFC 4648 §5) without
-padding, over a gzip stream (RFC 1952) of the document's bytes. gzip because a
-browser can undo it without being sent a decompressor first.
+nothing that can expire.
+
+The value is base64url (RFC 4648 §5) without padding over three parts: one byte
+of carrier version, currently `1`; four bytes identifying the preset
+dictionary; and a raw DEFLATE stream (RFC 1951) compressed against that
+dictionary. A reader MUST refuse a version or a dictionary id it does not hold,
+by name, rather than inflate against the wrong one.
+
+The stream inflates to one CBOR map (RFC 8949) with integer keys:
+
+| key | value |
+|---|---|
+| 1 | `documentUuid`, 16 bytes |
+| 2 | `appName` |
+| 3 | `favicon` |
+| 4 | `createdAt` |
+| 5 | 1 for `integrityPolicy: required`, 0 for advisory |
+| 6 | `validUntil`, when set |
+| 7 | the publisher key as a compressed P-256 point (SEC 1 §2.3.3), 33 bytes, when signed |
+| 8 | the raw ECDSA signature, 64 bytes, when signed |
+| 9 | entries, in archive order: `[name, 0, bytes]` carried or `[name, 1, digest]` elided |
+
+An entry MAY be elided only when it is the sealed shell, the kit, or the
+engine and its glue — the things a host has of its own. The manifest is not
+carried: a reader recomputes the digest of every carried entry, takes the
+digest of every elided one from the link, rebuilds the manifest and the COSE
+envelope (protected header `alg: ES256`, `kid` the key's fingerprint) and
+verifies by §7. Each elided entry MUST be rebuilt by the host and MUST match
+the digest the link named before it is used for anything; a mismatch is
+`LINK_UNRECONSTRUCTABLE` and the document does not run. Nothing a link says
+about its bytes is believed: the digests are recomputed and the signature is
+checked over them.
+
+A sender MUST NOT elide an entry it cannot itself rebuild to the sealed digest,
+so a link is never made that the same software could not open. When sender and
+receiver hold the same host, the unpacked file is byte for byte the one the
+complete build produced.
 
 A reader MUST refuse a fragment it cannot decode rather than acting on part of
 one, and SHOULD say that the link was probably cut in transit — chat clients

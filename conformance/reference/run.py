@@ -13,7 +13,6 @@ Exits non-zero on the first disagreement, and prints what it expected.
 from __future__ import annotations
 
 import base64
-import gzip
 import json
 import sys
 import zipfile
@@ -21,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dai_read import ContainerError, from_inline_link, verify  # noqa: E402
+from dai_read import ContainerError, verify, verify_link  # noqa: E402
 
 SUITE = Path(__file__).resolve().parents[1]
 
@@ -87,35 +86,56 @@ def main() -> int:
             failures.append((case["name"], "; ".join(wrong)))
         print(f"{'ok' if not wrong else 'FAILED':>7}  {case['name']}")
 
-    # The carrier, checked against the same cases (§1.1).
-    #
-    # A carrier is not a form: a document that travelled in a link is the same
-    # document as the file, and the way to say that in a test is to send every
-    # case through the link and require the identical verdict. Anything that
-    # made a link a slightly different document would show up here as a case
-    # that reads differently depending on how it arrived.
-    for case in manifest["cases"]:
-        data = (SUITE / case["file"]).read_bytes()
-        link = "https://opener.example/#a=" + base64.urlsafe_b64encode(
-            gzip.compress(data)
-        ).decode("ascii").rstrip("=")
+    # The carrier (§1.1), from links the conformance build packed with the
+    # reference implementation. A carrier is not a form: the same document in a
+    # link has to reach the same verdict on everything a reader can check
+    # without a host — the signature over the recomputed digests above all.
+    links_file = SUITE / "inline-links.json"
+    if links_file.exists():
+        for case in json.loads(links_file.read_text(encoding="utf-8"))["links"]:
+            name = f"{case['name']} — carried in a link"
+            try:
+                report = verify_link(case["link"], NOW)
+                wrong = [
+                    f"{key}: expected {value!r}, read {getattr(report, key)!r}"
+                    for key, value in case["expect"].items()
+                    if getattr(report, key) != value
+                ]
+            except ContainerError as error:
+                wrong = [f"refused: {error}"]
+            if wrong:
+                failures.append((name, "; ".join(wrong)))
+            print(f"{'ok' if not wrong else 'FAILED':>7}  {name}")
 
-        name = f"{case['name']} — carried in a link"
-        out = from_inline_link(link)
-        if out != data:
-            failures.append((name, "the link did not give back the document put into it"))
-        print(f"{'ok' if out == data else 'FAILED':>7}  {name}")
+        first = json.loads(links_file.read_text(encoding="utf-8"))["links"][0]["link"]
 
-    # And a link cut in transit is refused rather than acted on in part.
-    cut = "https://opener.example/#a=" + base64.urlsafe_b64encode(
-        gzip.compress(b"a document")
-    ).decode("ascii").rstrip("=")[:6]
-    try:
-        from_inline_link(cut)
-        failures.append(("a link cut in transit", "was read rather than refused"))
-        print(f"{'FAILED':>7}  a link cut in transit is refused")
-    except ContainerError:
-        print(f"{'ok':>7}  a link cut in transit is refused")
+        # Cut in transit: refused, never read in part.
+        try:
+            verify_link(first[: len(first) * 2 // 3], NOW)
+            failures.append(("a link cut in transit", "was read rather than refused"))
+            print(f"{'FAILED':>7}  a link cut in transit is refused")
+        except ContainerError as error:
+            ok = "LINK_DAMAGED" in str(error)
+            if not ok:
+                failures.append(("a link cut in transit", f"refused for the wrong reason: {error}"))
+            print(f"{'ok' if ok else 'FAILED':>7}  a link cut in transit is refused")
+
+        # A dictionary this reader does not hold: refused by name, never inflated.
+        head, value = first.split("#a=", 1)
+        raw = bytearray(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)))
+        raw[1] ^= 0xFF
+        foreign = head + "#a=" + base64.urlsafe_b64encode(bytes(raw)).decode("ascii").rstrip("=")
+        try:
+            verify_link(foreign, NOW)
+            failures.append(("a link naming another dictionary", "was read rather than refused"))
+            print(f"{'FAILED':>7}  a link naming another dictionary is refused")
+        except ContainerError as error:
+            ok = "LINK_UNSUPPORTED" in str(error)
+            if not ok:
+                failures.append(("a link naming another dictionary", f"refused for the wrong reason: {error}"))
+            print(f"{'ok' if ok else 'FAILED':>7}  a link naming another dictionary is refused")
+    else:
+        print(f"{'skip':>7}  no conformance/inline-links.json; run `npm run conformance`")
 
     print()
     if failures:

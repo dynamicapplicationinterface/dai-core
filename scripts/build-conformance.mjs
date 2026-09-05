@@ -561,6 +561,36 @@ writeFileSync(
 console.log(`${written.length} cases written to conformance/cases.json`);
 
 /*
+ * The same documents, carried in links (§1.1).
+ *
+ * Only the intact viewer-form cases: a link is made from a document a reader
+ * has already verified, and the sender refuses to pack a damaged one. The
+ * damaged cases for the carrier are made by damaging a link, which the Python
+ * runner does itself.
+ */
+const { packInline } = await import("../dist/inline.js");
+const host = {
+  template: readFileSync(join(repo, "dist/template.html"), "utf8"),
+  runtime: readFileSync(join(repo, "dist/dai-runtime.js"), "utf8"),
+};
+const links = [];
+for (const entry of written) {
+  if (entry.form !== "viewer" || entry.expect.parses === false || entry.expect.ok !== true) continue;
+  const html = readFileSync(join(suite, entry.file), "utf8");
+  const value = await packInline(parseContainer(html), host);
+  links.push({
+    name: entry.name,
+    link: `https://opener.example/#a=${value}`,
+    expect: { ok: true, signature: entry.expect.signature, shell: "elided" },
+  });
+}
+writeFileSync(
+  join(suite, "inline-links.json"),
+  JSON.stringify({ suiteVersion: 1, generatedBy: "scripts/build-conformance.mjs", links }, null, 2) + "\n",
+);
+console.log(`${links.length} links written to conformance/inline-links.json`);
+
+/*
  * The isolation probe.
  *
  * Not a case: §4 describes a host, and no file can carry a verdict about one.

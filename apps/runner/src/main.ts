@@ -8,7 +8,8 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
-import { decodeInline, inlineFrom } from "../../../src/link.js";
+import { decodeInline, INLINE_CAP, inlineFrom, inlineLink } from "../../../src/link.js";
+import { heldEngine } from "./engine.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -857,6 +858,48 @@ ejectButton.addEventListener("click", () => {
   closeSheet();
   eject();
 });
+const linkButton = document.getElementById("link") as HTMLButtonElement;
+
+/**
+ * The document as a link, on the clipboard.
+ *
+ * The compact carrier sends the application and rebuilds the runtime on the
+ * other side, so a small app is a few kilobytes of address. Above the cap the
+ * sender is told rather than handed a link that a chat client will cut; what
+ * to do instead is the reference link, item 2.3.
+ */
+async function copyLink(): Promise<void> {
+  if (!loaded) return;
+  const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+  const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
+
+  const link = await inlineLink(current.html, location.origin + location.pathname, {
+    template: HOST_TEMPLATE,
+    runtime: HOST_RUNTIME,
+  });
+  if (!link) {
+    say(
+      `This document is too big to put in a link (the limit is ${Math.round(INLINE_CAP / 1024)} KB). ` +
+        `Save a copy and send the file instead.`,
+      true,
+    );
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    say(`Link copied — ${(link.length / 1024).toFixed(1)} KB. Anyone who opens it gets this document.`);
+  } catch {
+    // No clipboard permission: the link is still worth having, so it goes in
+    // the report where it can be selected by hand.
+    say(link);
+  }
+}
+
+linkButton.addEventListener("click", () => {
+  sheet.hidden = true;
+  void copyLink();
+});
+
 exportButton.addEventListener("click", () => {
   closeSheet();
   void exportContainer();
@@ -927,19 +970,31 @@ async function openFromLink(carried: string): Promise<void> {
 
   let html: string;
   try {
-    html = await decodeInline(carried);
-  } catch {
+    /*
+     * The link carries the application; this host supplies the rest. The
+     * shell is rebuilt from this host's own template and bootloader, the kit
+     * from its source, the engine from what it holds — and every one of them is
+     * checked against the digest the link named before anything is trusted.
+     * What comes out is an ordinary container, verified below like any file.
+     */
+    html = await decodeInline(
+      carried,
+      { template: HOST_TEMPLATE, runtime: HOST_RUNTIME },
+      await heldEngine(),
+    );
+  } catch (error) {
     slot.classList.remove("busy");
     /*
-     * Almost always a link cut in transit, and worth saying so.
-     *
-     * Chat clients linkify up to a length and mail wraps long lines, so a link
-     * that carries a document is a link that can arrive half-present. The
-     * reading somebody reaches on their own is that this opener is broken.
+     * Said in the reader's own words, which name the cause: cut in transit,
+     * made by another version, or leaving out something this host's copy of
+     * does not match. The reading somebody reaches on their own is that this
+     * opener is broken, so the cause is the most useful thing on screen.
      */
     say(
-      "This link is damaged. It was probably shortened or wrapped on the way here. " +
-        "Ask whoever sent it to send the file instead.",
+      error instanceof ContainerError
+        ? `${error.message} Ask whoever sent it to send the file instead.`
+        : "This link is damaged. It was probably shortened or wrapped on the way here. " +
+            "Ask whoever sent it to send the file instead.",
       true,
     );
     return;

@@ -4,11 +4,27 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
-import { parseContainer, thinned } from "../src/container.js";
+import { readFileSync } from "node:fs";
 import { INLINE_CAP, decodeInline, encodeInline, inlineFrom, inlineLink } from "../src/link.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
+
+/** The same host the opener ships: what the sender may leave out is what this can rebuild. */
+const engine = await (async () => {
+  const { sha256Hex } = await import("../src/core.js");
+  const held = new Map<string, Uint8Array>();
+  for (const file of ["sqlite3.wasm", "index.mjs"]) {
+    const bytes = new Uint8Array(readFileSync(resolve(repo, "node_modules/@sqlite.org/sqlite-wasm/dist", file)));
+    held.set(await sha256Hex(bytes), bytes);
+  }
+  return (digest: string) => held.get(digest);
+})();
+
+const HOST = {
+  template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+  runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+};
 
 /**
  * A document carried in the address bar.
@@ -21,13 +37,20 @@ const RUNNER_URL = "http://localhost:5175/";
  */
 test.describe("a document in the link", () => {
   test("goes out and comes back exactly", async () => {
-    const html = '<!doctype html><meta charset="utf-8"><p>hello — ünïcode</p>';
-    const value = await encodeInline(html);
+    // A real document, because the carrier sends the document's parts and
+    // rebuilds the host's: there is nothing to rebuild around a bare page.
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "examples/packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+    const value = await encodeInline(built.html, HOST);
 
     // base64url, so nothing in it needs escaping in an address and nothing is
     // lost to a client that trims a trailing `=`.
     expect(value).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(await decodeInline(value)).toBe(html);
+    // The same file, not an equivalent one.
+    expect(await decodeInline(value, HOST, engine)).toBe(built.html);
   });
 
   test("the fragment is read only when it carries a document", () => {
@@ -41,17 +64,24 @@ test.describe("a document in the link", () => {
   });
 
   test("the sender is stopped rather than handed a truncated document", async () => {
-    // Long enough to pass the cap after compression. A link cut in transit —
-    // by a chat client, by mail wrapping — arrives as a document that will not
-    // open and nothing to say why, so the sender is told instead.
-    const noise = Array.from({ length: 4000 }, () => crypto.randomUUID()).join("");
-    const big = "<!doctype html><p>" + noise + "</p>";
-    expect(await inlineLink(big, RUNNER_URL)).toBeUndefined();
+    // A document that cannot be made small: a megabyte of noise in a file the
+    // host has no copy of. A link cut in transit arrives as a document that
+    // will not open and nothing to say why, so the sender is told instead.
+    const source = mkdtempSync(join(tmpdir(), "dai-big-"));
+    writeFileSync(join(source, "index.html"), '<!doctype html><meta charset="utf-8"><p>big</p>', "utf8");
+    writeFileSync(join(source, "noise.bin"), (await import("node:crypto")).randomBytes(200_000));
+    const big = await compileDirectory({ sourceDir: source, root: repo, appName: "Big" });
+    expect(await inlineLink(big.html, RUNNER_URL, HOST)).toBeUndefined();
 
-    const small = "<!doctype html><p>small</p>";
-    const link = await inlineLink(small, "https://opendai.app/");
-    expect(link).toBe(`https://opendai.app/#a=${await encodeInline(small)}`);
-    expect(link!.length).toBeLessThan(INLINE_CAP + 64);
+    const small = await compileDirectory({
+      sourceDir: resolve(repo, "examples/packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+    const link = await inlineLink(small.html, "https://opendai.app/", HOST);
+    expect(link).toBe(`https://opendai.app/#a=${await encodeInline(small.html, HOST)}`);
+    // The whole point of the compact carrier: a real app in a few kilobytes.
+    expect(link!.length).toBeLessThan(4 * 1024);
   });
 
   test("a real app opens from a link with the network switched off", async ({ page, context }) => {
@@ -71,7 +101,7 @@ test.describe("a document in the link", () => {
       root: repo,
       appName: "Chore chart",
     });
-    const value = await encodeInline(thinned(parseContainer(built.html)));
+    const value = await encodeInline(built.html, HOST);
 
     // Warm the opener and its worker, which is the one thing that does have to
     // have happened once. Everything after this is from the cache.
@@ -106,7 +136,12 @@ test.describe("a document in the link", () => {
   });
 
   test("a link cut in transit says so, rather than failing silently", async ({ page }) => {
-    const value = await encodeInline('<!doctype html><p>a document</p>'.repeat(50));
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "examples/packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+    const value = await encodeInline(built.html, HOST);
 
     await page.goto(`${RUNNER_URL}#a=${value.slice(0, Math.floor(value.length / 2))}`);
     await page.reload();
@@ -132,7 +167,7 @@ test.describe("a document in the link", () => {
       "utf8",
     );
     const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Pasted" });
-    const value = await encodeInline(thinned(parseContainer(built.html)));
+    const value = await encodeInline(built.html, HOST);
 
     await page.goto(RUNNER_URL);
     await expect(page.locator("#card")).toBeHidden();

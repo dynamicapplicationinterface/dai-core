@@ -68,7 +68,11 @@ test.describe("the card, keyed on familiarity", () => {
     // A second device, which is a second context: nothing carried over.
     const { readFileSync } = await import("node:fs");
     const { encodeInline } = await import("../src/link.js");
-    const value = await encodeInline(readFileSync(CONTAINER, "utf8"));
+    const repo = resolve(here, "..");
+    const value = await encodeInline(readFileSync(CONTAINER, "utf8"), {
+      template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+      runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+    });
     const byLink = await browser.newContext();
     const two = await byLink.newPage();
     // A fresh navigation with the fragment already in it, so the script runs

@@ -1,0 +1,33 @@
+{
+  "suiteVersion": 1,
+  "generatedBy": "scripts/build-conformance.mjs",
+  "links": [
+    {
+      "name": "valid-unsigned",
+      "link": "https://opener.example/#a=AfGfjpFbxhhgr8rywL_T8fIsHmbWFzrGjEzZwEQFCpVE4GwXcyVjFKFLslWNjHBfkw2UhF-UDWRDrrUAYyAPcls16NQVyGZOkAqIDHTfO5JAEVi_EZgNvmUbpN_I2CDN0NwoEciGXn0NvR4bKOBrDNwfaargYw6nTAwUfIDn3kApMyAFFIRS5kAlQA1AKgrNBuMkC6M0M4QNyZlFycCeQjLYPeamINXJlWA2xJ0gpgWaGYYGSZYWhggzoBd0s1RIGBkYmekaGAJRiIGBFRjpAYMuipWRs7U5D9jr0AeXgXqgJZ4MEVlo2zhR92qWlqTpWtjBblJFRCJsc6VNgR1kOgiyLBFyFxB8KR1wTRy0qaQH2pPSnAWyHLTbMquYIUIKuIYJmPhgbUJgyxY0nAlceG3NBXElYl0nY4TCwpplDg-vRt0JqI2axWPsXLP2-dXGGAvNPffsznOWcdzyaM6Hd_KAIynAmozBobkMmEZBi4b0EStMQV4EmvZp3ppjq1_8u_po0UK-aNnESRPDg4R6_pza_aG2T85ti-IDAA",
+      "expect": {
+        "ok": true,
+        "signature": "unsigned",
+        "shell": "elided"
+      }
+    },
+    {
+      "name": "valid-signed",
+      "link": "https://opener.example/#a=AfGfjpFbwRhgr8rywL_T8fIsHmbWFzrGjEzZwEQFCpVE4GwXcyVjFKFLslWNjHBfkw2UhF-UDWRDrrUAYyAPcls16NQVyGZOkAqIDHTfO5JAEVi_EZgNvmUbpN_I2CDN0NwoEciGXn0NvR4bKOBrDNwfaargYw6nTAwUfIDn3kApMyAFFIRS5kAlQA1AKgrNBuMkC6M0M4QNyZlFycCeQjLYPeamINXJlWA2xJ0gpgWaGYYGSZYWhggzoBd0s1RIGBkYmekaGAJRiIGBFRjpAYMuipWRPUKR2dCoOUXsY2vkk_8_s8SuWvbYHwrrK3t0Y9vG_x8XM0z-JMkR4fDBjS_T3HfnR4HaizfcuQNSHjT-_fy1Q2nxs9sit3SO5qz_0_DvTbzXk6cCOZ9rcsRusWmXbNLj-rFeb_fT1Sadm3TXc7Y25wE7N_rgolYPtJKUISILbbco6pbQ0pI0XQs72IWtiLQC28NpU2AHmXWCrH6EXDkEX7EHXHoHbZHpgba-NGeBLAdt6swqZoiQAi6VAqZxWNMT2IAGjZoC13dbc0FciVg-yhihsLBmmcPDq1F3AmqjZvEYO9esfX61McZCc889u_OcZRy3PJrz4X1J4IANsMJkcGguA2YF0NokfcRCVpAXgaZp5866dP1SloVv8cfzB4Umnrv_59rJaNbSiE9rHT_tkXVnAAA",
+      "expect": {
+        "ok": true,
+        "signature": "valid",
+        "shell": "elided"
+      }
+    },
+    {
+      "name": "valid-expiry-current",
+      "link": "https://opener.example/#a=AfGfjpFbzhhgr8rywL_T8fIsHmbWFzrGjEzZwEQFCpVE4GwXcyVjFKFLslWNjHBfkw2UhF-UDWRDrrUAYyAPcls16NQVyGZOkAqIDHTfO5JAEVi_EZgNvmUbpN_I2CDN0NwoEciGXn0NvR4bKOBrDNwfaargYw6nTAwUfIDn3kApMyAFFIRS5kAlQA1AKgrNBuMkC6M0M4QNyZlFycCeQjLYPeamINXJlWA2xJ0gpgWaGYYGSZYWhggzoBd0s1RIGBkYmekaGAJRiIGBFRjpAYMuipWRTepLWzgDZ2tzHrDvoQ8uCfVACz0ZIrLQNnOi7tgsLUnTtbCD3aeKiErYFkubAjvIpBBkcSLkRiD4gjrgyjhog0kPtDOlOQtkOWjPZVYxQ4QUcCUTMAnCWobA9i1oUBO4_NqaC-JKxOpOxgiFhTXLHB5ejboTUBs1i8fYuWbt86uNMRaae-7Znecs47jl0ZwP7-oBx1OA9RmDQ3MZMKWClg7pI9aZgrwINO3TvDXHVr_4d_XRooV80bKJkyaGBwn1_Dm1-0Ntn5zbFsUHAA",
+      "expect": {
+        "ok": true,
+        "signature": "unsigned",
+        "shell": "elided"
+      }
+    }
+  ]
+}

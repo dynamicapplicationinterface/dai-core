@@ -31,6 +31,14 @@ export const REFUSALS = {
     means: "Published without its engine, for a host that already holds those exact bytes. This one does not.",
   },
 
+  // ---- a link, rather than a file
+  LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },
+  LINK_UNSUPPORTED: { recoverable: false, means: "The link names a carrier version or dictionary this reader does not have." },
+  LINK_UNRECONSTRUCTABLE: {
+    recoverable: false,
+    means: "The link leaves out an entry expecting this host's copy to match the sealed digest, and it does not.",
+  },
+
   // ---- modified
   DIGEST_MISMATCH: { recoverable: false, means: "An entry does not match its digest, is missing, or is unlisted." },
   SECTION_MISMATCH: { recoverable: false, means: "The manifest or application section does not match its digest." },

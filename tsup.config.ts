@@ -3,7 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig([
   // The Vite plugin itself (Node).
   {
-    entry: ["src/index.ts", "src/core.ts", "src/container.ts", "src/link.ts", "src/compile.ts", "src/cli.ts", "src/bin.ts", "src/browser.ts", "src/lint.ts", "src/recipe.ts", "src/format.ts", "src/cbor.ts", "src/cose.ts", "src/mcp.ts", "src/mcp-bin.ts"],
+    entry: ["src/index.ts", "src/core.ts", "src/container.ts", "src/link.ts", "src/inline.ts", "src/p256.ts", "src/kit.ts", "src/compile.ts", "src/cli.ts", "src/bin.ts", "src/browser.ts", "src/lint.ts", "src/recipe.ts", "src/format.ts", "src/cbor.ts", "src/cose.ts", "src/mcp.ts", "src/mcp-bin.ts"],
     format: ["esm", "cjs"],
     outExtension: ({ format }) => ({ js: format === "cjs" ? ".cjs" : ".js" }),
     dts: true,

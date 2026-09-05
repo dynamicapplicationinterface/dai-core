@@ -25,12 +25,13 @@ document has a list of what it must not drop again.
 from __future__ import annotations
 
 import base64
-import gzip
 import hashlib
 import json
 import re
 import struct
 import zipfile
+import zlib
+from pathlib import Path
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
@@ -336,37 +337,175 @@ def _read_viewer(text: str) -> tuple[dict[str, bytes], str]:
 
 
 INLINE_RE = re.compile(r"[#&]a=([A-Za-z0-9_-]+)")
+CARRIER_VERSION = 1
+DICTIONARY_PATH = Path(__file__).resolve().parents[1] / "inline-dictionary.bin"
+
+# P-256, for recovering a key sent as a compressed point (SEC 1 §2.3.3).
+_P = 0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF
+_B = 0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+_SPKI_PREFIX = bytes.fromhex("3059301306072a8648ce3d020106082a8648ce3d030107034200")
+
+SHELL_ENTRY = "runtime/container.html"
+KIT_ENTRY = "app/dai-kit.js"
+ENGINE_ENTRIES = ("runtime/sqlite3.wasm", "runtime/sqlite3.mjs")
+MAY_BE_ELIDED = (SHELL_ENTRY, KIT_ENTRY) + ENGINE_ENTRIES
 
 
-def from_inline_link(link: str) -> bytes:
+def decompress_point(point: bytes) -> bytes:
+    """A 33-byte compressed P-256 point to the 91-byte SubjectPublicKeyInfo.
+
+    y² = x³ − 3x + b, and the prime is 3 mod 4, so y = (y²)^((p+1)/4). The tag
+    byte picks which of the two roots.
+    """
+    if len(point) != 33 or point[0] not in (2, 3):
+        raise ContainerError("This link carries a publisher key that is not a P-256 point.")
+    x = int.from_bytes(point[1:], "big")
+    if x >= _P:
+        raise ContainerError("This link carries a publisher key that is not a P-256 point.")
+    rhs = (pow(x, 3, _P) - 3 * x + _B) % _P
+    y = pow(rhs, (_P + 1) // 4, _P)
+    if (y * y) % _P != rhs:
+        raise ContainerError("This link carries a publisher key that is not on the curve.")
+    if (y & 1) != (point[0] == 3):
+        y = _P - y
+    return _SPKI_PREFIX + b"\x04" + x.to_bytes(32, "big") + y.to_bytes(32, "big")
+
+
+@dataclass
+class InlineDocument:
+    """What a link carries, before any host has rebuilt what it left out."""
+
+    manifest: dict[str, Any]
+    carried: dict[str, bytes]
+    elided: dict[str, str]
+    public_key: str | None
+
+
+def from_inline_link(link: str) -> InlineDocument:
     """Take a document out of an inline link (§1.1).
 
-    A carrier, not a form: what comes back is the document's own bytes, and the
-    caller verifies it exactly as it would a file. Where bytes came from says
-    nothing about what they are.
+    A carrier, not a form: the reader recomputes every carried entry's digest,
+    takes every elided one's from the link, and rebuilds the manifest and the
+    signature envelope — so nothing the link says about its bytes is believed,
+    and the signature is checked over what actually arrived.
 
-    Written from the specification like the rest of this file, and it needed
-    nothing the document did not give: base64url without padding, over a gzip
-    stream, in the fragment.
+    Written from the specification like the rest of this file. It needed one
+    thing the document did not have at first: the CBOR map's key table, which
+    is now in §1.1.
     """
     found = INLINE_RE.search(link)
     if not found:
         raise ContainerError("This link carries no document.")
-
     value = found.group(1)
-    # base64url without padding (RFC 4648 section 5). Python wants the padding
-    # back, and refusing to guess it would refuse every conforming link.
-    padded = value + "=" * (-len(value) % 4)
     try:
-        packed = base64.urlsafe_b64decode(padded)
-        return gzip.decompress(packed)
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except Exception as broken:
+        raise ContainerError("This link is damaged.") from broken
+    if len(raw) < 6:
+        raise ContainerError("LINK_DAMAGED: This link is too short to carry a document.")
+    if raw[0] != CARRIER_VERSION:
+        raise ContainerError(f"LINK_UNSUPPORTED: carrier version {raw[0]}.")
+
+    dictionary = DICTIONARY_PATH.read_bytes()
+    if raw[1:5] != hashlib.sha256(dictionary).digest()[:4]:
+        raise ContainerError("LINK_UNSUPPORTED: this link names a dictionary this reader does not hold.")
+
+    try:
+        inflater = zlib.decompressobj(-15, zdict=dictionary)
+        inflated = inflater.decompress(raw[5:]) + inflater.flush()
+        fields = cbor_decode(inflated)
     except Exception as broken:
         # Refused rather than acted on in part: a link that carries a document
         # can arrive half-present, because chat clients linkify up to a length
         # and mail wraps long lines.
         raise ContainerError(
-            "This link is damaged. It was probably shortened or wrapped on the way here."
+            "LINK_DAMAGED: This link is damaged. It was probably shortened or wrapped on the way here."
         ) from broken
+
+    if not isinstance(fields, dict) or not isinstance(fields.get(9), list):
+        raise ContainerError("LINK_DAMAGED: This link does not describe a document.")
+
+    uuid_bytes = fields.get(1)
+    if not isinstance(uuid_bytes, bytes) or len(uuid_bytes) != 16:
+        raise ContainerError("LINK_DAMAGED: This link does not describe a document.")
+    h = uuid_bytes.hex()
+    uuid = f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:]}"
+
+    public_key = None
+    fingerprint = ""
+    point = fields.get(7)
+    if isinstance(point, bytes):
+        spki = decompress_point(point)
+        public_key = base64.b64encode(spki).decode("ascii")
+        fingerprint = hashlib.sha256(spki).hexdigest()[:16]
+
+    carried: dict[str, bytes] = {}
+    elided: dict[str, str] = {}
+    hashes: dict[str, str] = {}
+    for entry in fields[9]:
+        if not (isinstance(entry, list) and len(entry) == 3 and isinstance(entry[0], str) and isinstance(entry[2], bytes)):
+            raise ContainerError("LINK_DAMAGED: This link does not describe a document.")
+        name, flag, payload = entry
+        if flag == 0:
+            carried[name] = payload
+            hashes[name] = sha256_hex(payload)
+        elif flag == 1 and len(payload) == 32 and name in MAY_BE_ELIDED:
+            elided[name] = payload.hex()
+            hashes[name] = payload.hex()
+        else:
+            raise ContainerError(f"LINK_DAMAGED: This link leaves out {name}, which a link may not leave out.")
+
+    manifest: dict[str, Any] = {
+        "manifestVersion": 2,
+        "documentUuid": uuid,
+        "appName": fields.get(2, ""),
+        "favicon": fields.get(3, ""),
+        "createdAt": fields.get(4, ""),
+        "algorithm": "SHA-256",
+        "integrityPolicy": "required" if fields.get(5) == 1 else "advisory",
+        "hashes": hashes,
+    }
+    if isinstance(fields.get(6), int):
+        manifest["validUntil"] = fields[6]
+    raw_signature = fields.get(8)
+    if public_key and isinstance(raw_signature, bytes):
+        protected = cbor_encode({1: -7, 4: fingerprint.encode("ascii")})
+        envelope = cbor_encode([protected, {}, None, raw_signature])
+        manifest["signatureAlgorithm"] = "COSE-ES256"
+        manifest["publicKeyFingerprint"] = fingerprint
+        manifest["signedEntries"] = {n: d for n, d in hashes.items() if n != DATABASE_ENTRY}
+        manifest["signature"] = base64.b64encode(envelope).decode("ascii")
+
+    return InlineDocument(manifest, carried, elided, public_key)
+
+
+def verify_link(link: str, now: int) -> Report:
+    """Decide what a reader can about a document carried in a link.
+
+    Everything that is the document's is checked here: the carried bytes
+    against digests that were recomputed from them, and the signature over the
+    whole signed view including the elided digests. What cannot be checked
+    here is what a host rebuilds — the shell, the kit, the engine — because
+    this reader holds none of them; `report.shell` says `elided` and a host
+    that runs it must rebuild each and match the digest first.
+    """
+    document = from_inline_link(link)
+    report = Report()
+    report.shell = "elided" if SHELL_ENTRY in document.elided else "absent"
+
+    manifest = document.manifest
+    signature, code = _check_signature(manifest, document.public_key, manifest["hashes"])
+    report.signature = signature
+
+    valid_until = manifest.get("validUntil")
+    if isinstance(valid_until, int):
+        report.expiry = "expired" if now > valid_until else "current"
+
+    report.ok = report.shell == "elided" and report.expiry != "expired" and signature in ("valid", "unsigned")
+    report.mount = False  # never from here: a host has to rebuild what was left out
+    if not report.ok:
+        report.code = "SHELL_MISSING" if report.shell != "elided" else ("KEY_EXPIRED" if report.expiry == "expired" else code or "UNVERIFIED_SIGNATURE")
+    return report
 
 
 def verify(data: bytes, now: int) -> Report:
@@ -422,7 +561,7 @@ def verify(data: bytes, now: int) -> Report:
         report.expiry = "expired" if now > valid_until else "current"
 
     # 6. Signature, over §3.1.
-    report.signature, signature_code = _check_signature(manifest, shell_text, hashes)
+    report.signature, signature_code = _check_signature(manifest, _key_from_shell(shell_text), hashes)
 
     section_failure = bool(
         report.sections
@@ -469,14 +608,17 @@ def verify(data: bytes, now: int) -> Report:
     return report
 
 
-def _check_signature(manifest: dict, shell_text: str | None, hashes: dict) -> tuple[str, str]:
+def _key_from_shell(shell_text: str | None) -> str | None:
     # WAS A GAP: §7 step 6 said the signature is checked "when the shell carries
     # a publisher key" and never said where, or in what encoding. Now §3.
-    key = None
-    if shell_text:
-        found = re.search(META_RE.format("dai-public-key"), shell_text, re.IGNORECASE)
-        key = found.group(1) if found and found.group(1) else None
+    if not shell_text:
+        return None
+    found = re.search(META_RE.format("dai-public-key"), shell_text, re.IGNORECASE)
+    return found.group(1) if found and found.group(1) else None
 
+
+def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str, str]:
+    """Verify the manifest's signature with a base64 SPKI key, or say why not."""
     signature = manifest.get("signature")
     if not signature:
         return "unsigned", ""
