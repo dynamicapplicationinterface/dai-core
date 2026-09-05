@@ -34,7 +34,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [x] `8b66364` grammar, `6c23954` compact carrier — a chore chart is 2.8 kB |
 | 2.3 | Reference link and dumb store | [x] `bca1061` — interface, two adapters, opener; the bucket is yours |
-| 2.4 | Carriers in the specification | [x] `5606a87` `6c23954` `PENDING` |
+| 2.4 | Carriers in the specification | [x] `5606a87` `6c23954` `1a33b86` |
 | 2.5 | The sender's last line is the link | [x] `8ce30f3` — link done; QR is its own item |
 | 2.6 | Every share path carries the link | [x] `abc0a59` |
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
@@ -336,7 +336,7 @@ Python reader, which shares no code with ours, opens that carrier from the
 specification alone and reaches the identical verdict on all 17 conformance
 cases sent through a link, and refuses one cut in transit.
 
-The reference link's grammar was frozen with 2.3, and `PENDING` adds the rest:
+The reference link's grammar was frozen with 2.3, and `1a33b86` adds the rest:
 `docs/cddl.md` is CDDL for every structure in the format that is not plain
 JSON — the signed payload, the COSE envelope and its countersignature slot,
 the inline carrier map, the sectioned header and footer, and the bridge
