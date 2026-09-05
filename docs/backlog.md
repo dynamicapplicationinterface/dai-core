@@ -42,7 +42,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.3 | Unfurl without the blob | [x] `a7a0be8` + this — static half and edge half |
 | 3.4 | Stripped fragment degrades to a sentence | [~] `c4be316` — sentence done; no-key variant is a decision |
 | 3.5 | iOS solved by the link | [ ] |
-| 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
+| 3.6 | Second-use integrations only | [x] the rule is a test now |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
 | 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
@@ -504,13 +504,22 @@ offline. Replaces the one-time hand-in.
 **Exit:** an iOS device test: the home-screen icon opens the document with no
 manual step.
 
-### 3.6 Second-use integrations only
+### 3.6 Second-use integrations only — closed
 
 `share_target`, `file_handlers` and the desktop file association exist and
-stay; none is the first-use path.
+stay. None of them is how anybody gets in. A person who was sent a document
+and is told to install something before they can read it has been handed a
+chore, and the whole claim of the format is that the thing you were sent
+already works.
 
-**Exit:** the docs and the card never reference an install step before first
-run.
+The rule is about ordering, and ordering is exactly what drifts — one helpful
+sentence at a time, each reasonable on its own. So it is a test:
+`tests/second-use.spec.ts` holds that the integrations are still offered, that
+nothing on the first screen or on the card asks anybody to install anything,
+and that on the page somebody lands on holding a file they cannot read, the
+instruction that needs nothing comes before every offer to install something.
+
+**Exit met.**
 
 ---
 
