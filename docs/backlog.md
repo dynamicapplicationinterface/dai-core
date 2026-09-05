@@ -31,13 +31,13 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 1.3 | Install after use | [x] `a7df929` |
 | 1.4 | One sentence everywhere | [ ] |
 | 1.5 | Look inside | [ ] |
-| 2.1 | Thin profile | [~] `ba5a8e1` — the format; the opener supplying is next |
+| 2.1 | Thin profile | [x] `ba5a8e1` format, `1b31ea1` opener |
 | 2.2 | Inline link | [ ] |
 | 2.3 | Reference link and dumb store | [ ] |
 | 2.4 | Carriers in the specification | [ ] |
 | 2.5 | The sender's last line is the link | [ ] |
 | 2.6 | Every share path carries the link | [ ] |
-| 3.1 | Engine once, offline forever | [ ] |
+| 3.1 | Engine once, offline forever | [~] `1b31ea1` precached; the fetch count is unproven |
 | 3.2 | Mirrorable static opener | [ ] |
 | 3.3 | Unfurl without the blob | [ ] |
 | 3.4 | Stripped fragment degrades to a sentence | [ ] |
@@ -122,12 +122,15 @@ host that cannot supply refuses with `RUNTIME_UNAVAILABLE` rather than calling
 it damage. "One build, two forms" means derived, not rebuilt: ECDSA draws a
 fresh nonce, so nothing signed twice is the same file.
 
-What is left is the opener: holding a copy of the engine, supplying it to a
-thin container, and exporting the complete form. That is also most of 3.1,
-which is the same engine cached and precached.
+The opener half is done in `1b31ea1`: the engine is staged onto the opener's
+own origin, offered by digest the first time a document arrives without one,
+and put back when somebody saves a copy — so a copy leaves complete, on a
+machine that has never seen the site.
 
 **Exit:** a thin container opened in the opener runs, and the copy it exports
-is byte-identical to the complete build.
+is byte-identical to the complete build. Both asserted in
+`tests/opener-thin.spec.ts`, the first by reading a row back out of SQLite
+rather than by watching a page paint.
 
 ### 2.2 The inline link
 
@@ -183,6 +186,10 @@ document.
 
 Brotli, content-hashed URL, `immutable`, service-worker precache on first
 visit; mount-before-engine kept.
+
+The precache half came with `1b31ea1` — the opener holds an engine now, so it
+precaches one. What is left is the compression, the immutable URL, and the
+measurement.
 
 **Exit:** the second open of any app makes zero network requests; a test
 counts fetches.
