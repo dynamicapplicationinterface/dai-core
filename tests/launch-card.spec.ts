@@ -139,11 +139,15 @@ test.describe("the card a link lands on", () => {
     await page.goto(link());
     await expect(page.locator("#card")).toBeVisible({ timeout: 30_000 });
 
+    // Signed by a key this device has not seen, under no name: anonymous.
+    // Not a fingerprint on screen — nobody compares those — but a state, and
+    // a safety number two people can read to each other (4.3).
     const publisher = page.locator("#card-publisher");
     expect(fingerprint).toMatch(/^[0-9a-f]{16}$/);
-    await expect(publisher).toHaveAttribute("data-state", "first");
-    await expect(publisher).toContainText(fingerprint.slice(0, 8));
-    await expect(publisher).toContainText("first time you have opened this");
+    await expect(publisher).toHaveAttribute("data-state", "anonymous");
+    await expect(publisher).toContainText("first time you've seen this key");
+    await page.locator("#card-verify").click();
+    await expect(page.locator("#card-safety")).toContainText(/Safety number \d{5}/);
   });
 });
 
@@ -163,8 +167,7 @@ test.describe("a tick this host cannot back is not printed", () => {
         .__runner;
       void runner.showCard({
         name: "Beach trip",
-        signature: "unsigned",
-        trust: "first",
+        publisher: { state: "unsigned" },
         applied: clauses,
       });
     }, applied);

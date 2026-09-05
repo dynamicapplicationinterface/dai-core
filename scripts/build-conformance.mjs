@@ -125,6 +125,45 @@ define(
 );
 
 define(
+  "valid-signed-named",
+  "Signed under a publisher name. The name is in the signed set, so it verifies with the rest.",
+  {
+    mount: true,
+    ok: true,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "valid",
+    expiry: "none",
+  },
+  async () => ({
+    file: "valid-signed-named.dai.html",
+    body: (await buildContainer(base({ signingKey: KEY, publisherName: "Acme Finance" }))).html,
+  }),
+);
+
+define(
+  "signed-name-changed",
+  "The publisher name edited after signing. A name is a claim the key made, and another name is another claim.",
+  {
+    mount: false,
+    ok: false,
+    signature: "invalid",
+    code: "UNVERIFIED_SIGNATURE",
+  },
+  async () => {
+    const { html } = await buildContainer(base({ signingKey: KEY, publisherName: "Acme Finance" }));
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    // Every entry still matches its digest and the signed set is untouched;
+    // only the name has changed. A verifier that left the name out of the
+    // signed view would accept "Acme Bank" on Acme Finance's signature.
+    manifest.publisherName = "Acme Bank";
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "signed-name-changed.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
   "valid-expiry-current",
   "Carries an expiry that has not passed. Accepted, and the expiry is reported.",
   {

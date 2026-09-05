@@ -143,6 +143,98 @@ fn forget_pinned_key(app: tauri::AppHandle, document_uuid: String) -> Result<(),
     write_registry(&app, &registry)
 }
 
+/// A publisher this host has seen sign something (4.3).
+///
+/// The key is the identity and the name is what it calls itself. Kept apart
+/// from the per-document pins because it answers a different question: not
+/// "is this the key this document had" but "have I seen this key before, and
+/// under what name". The decision is in `src/publisher.ts`, shared with the
+/// opener; this file only keeps the records.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PublisherPin {
+    public_key: String,
+    name: String,
+    folded: String,
+    /// Unix milliseconds, matching the opener's records.
+    first_seen: u64,
+    documents: Vec<String>,
+}
+
+type Publishers = HashMap<String, PublisherPin>;
+
+fn publishers_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("No config directory available: {}", e))?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
+    Ok(dir.join("publishers.json"))
+}
+
+fn read_publishers(app: &tauri::AppHandle) -> Result<Publishers, String> {
+    let path = publishers_path(app)?;
+    if !path.is_file() {
+        return Ok(Publishers::new());
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "The publisher registry at {} is unreadable ({}). Refusing to continue rather than treating every publisher as new.",
+            path.display(),
+            e
+        )
+    })
+}
+
+fn write_publishers(app: &tauri::AppHandle, publishers: &Publishers) -> Result<(), String> {
+    let path = publishers_path(app)?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory.", path.display()))?;
+    let staging = directory.join(".publishers.json.tmp");
+    let json = serde_json::to_string_pretty(publishers)
+        .map_err(|e| format!("Failed to serialize the publisher registry: {}", e))?;
+    {
+        let mut file = File::create(&staging)
+            .map_err(|e| format!("Failed to stage {}: {}", staging.display(), e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", staging.display(), e))?;
+        file.sync_all()
+            .map_err(|e| format!("Failed to flush {}: {}", staging.display(), e))?;
+    }
+    fs::rename(&staging, &path).map_err(|e| {
+        let _ = fs::remove_file(&staging);
+        format!("Failed to replace {}: {}", path.display(), e)
+    })
+}
+
+#[tauri::command]
+fn get_publisher(app: tauri::AppHandle, public_key: String) -> Result<Option<PublisherPin>, String> {
+    Ok(read_publishers(&app)?.get(&public_key).cloned())
+}
+
+#[tauri::command]
+fn find_publishers(app: tauri::AppHandle, folded: String) -> Result<Vec<PublisherPin>, String> {
+    Ok(read_publishers(&app)?
+        .values()
+        .filter(|p| p.folded == folded)
+        .cloned()
+        .collect())
+}
+
+/// Writes or replaces the record for a key. Unlike a document pin, a publisher
+/// record is meant to change: the document count grows and a name may be
+/// renamed, both after the person has proceeded.
+#[tauri::command]
+fn save_publisher(app: tauri::AppHandle, pin: PublisherPin) -> Result<(), String> {
+    let mut publishers = read_publishers(&app)?;
+    publishers.insert(pin.public_key.clone(), pin);
+    write_publishers(&app, &publishers)
+}
+
 #[tauri::command]
 fn read_cartridge(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("Failed to read cartridge file {}: {}", path, e))
@@ -441,7 +533,10 @@ pub fn run() {
             get_opened_file,
             get_pinned_key,
             pin_key,
-            forget_pinned_key
+            forget_pinned_key,
+            get_publisher,
+            find_publishers,
+            save_publisher
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

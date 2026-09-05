@@ -81,6 +81,7 @@ The stream inflates to one CBOR map (RFC 8949) with integer keys:
 | 7 | the publisher key as a compressed P-256 point (SEC 1 §2.3.3), 33 bytes, when signed |
 | 8 | the raw ECDSA signature, 64 bytes, when signed |
 | 9 | entries, in archive order: `[name, 0, bytes]` carried or `[name, 1, digest]` elided |
+| 10 | `publisherName`, when the publisher signed under one |
 
 An entry MAY be elided only when it is the sealed shell, the kit, or the
 engine and its glue — the things a host has of its own. The manifest is not
@@ -230,7 +231,8 @@ viewer form's payload.
   "publicKeyFingerprint": "…",
   "signedEntries": { "<entry>": "<hex digest>" },
   "signature": "…",             // base64 COSE_Sign1 (§3.1)
-  "validUntil": 1234567890      // optional, Unix seconds
+  "validUntil": 1234567890,     // optional, Unix seconds
+  "publisherName": "Acme Finance" // optional; the name the publisher signs under
 }
 ```
 
@@ -277,6 +279,7 @@ manifestVersion, documentUuid, appName, favicon, createdAt,
 algorithm, integrityPolicy, signatureAlgorithm, publicKeyFingerprint,
 entries            — a map of signed entry name to hex digest
 validUntil         — present only when set
+publisherName      — present only when set
 ```
 
 Keys MUST be sorted by their encoded bytes, lengths MUST use the shortest form
@@ -284,6 +287,11 @@ that fits, and indefinite lengths MUST NOT be used. Two encoders that agree on
 the values and disagree on the bytes produce signatures that do not verify.
 
 `validUntil` MUST be omitted entirely when unset, not encoded as null or zero.
+So MUST `publisherName` when the publisher gave none: it joined the signed set
+after containers existed, and its absence is what keeps every earlier signature
+verifying. A name is a claim the key makes about itself and nothing more. A
+host MUST NOT present it as verified; what a host can establish is whether it
+has seen this key before, and under what name — which is how a host shows it.
 
 Every other field in that list is always present in the payload. Where the
 manifest omits an optional one — `favicon`, `signatureAlgorithm`,

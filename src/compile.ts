@@ -76,6 +76,8 @@ export interface CompileOptions {
   /** Overrides the shell. Defaults to the one shipped with this package. */
   templatePath?: string;
   documentUuid?: string;
+  /** The name the publisher signs under (4.3). */
+  publisherName?: string;
   validUntil?: number;
   verifyIntegrity?: boolean;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -222,6 +224,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     glue: gluePath ? new Uint8Array(readFileSync(gluePath)) : undefined,
     signingKey: options.signingKey ? readSigningKey(root, options.signingKey) : undefined,
     documentUuid: options.documentUuid,
+    publisherName: options.publisherName,
     validUntil: options.validUntil,
     verifyIntegrity: options.verifyIntegrity,
     thin: options.thin,

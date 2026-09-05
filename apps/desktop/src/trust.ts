@@ -69,3 +69,23 @@ export async function checkTrust(
 export async function forgetTrust(invoke: Invoke, documentUuid: string): Promise<void> {
   await drop(storeFor(invoke), documentUuid);
 }
+
+import type { PublisherPin, PublisherStore } from "../../../src/publisher.js";
+
+/**
+ * Publishers, kept by the Rust side (4.3). The decision is shared with the
+ * opener in `src/publisher.ts`; this is only where this host keeps records.
+ */
+export function publisherStoreFor(invoke: Invoke): PublisherStore {
+  return {
+    async byKey(publicKey) {
+      return (await invoke<PublisherPin | null>("get_publisher", { publicKey })) ?? null;
+    },
+    async byFoldedName(folded) {
+      return invoke<PublisherPin[]>("find_publishers", { folded });
+    },
+    async save(pin) {
+      await invoke<void>("save_publisher", { pin });
+    },
+  };
+}

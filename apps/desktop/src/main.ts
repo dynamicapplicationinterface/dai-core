@@ -27,7 +27,8 @@ import {
   type RuntimeAssets,
 } from "../../../src/browser.js";
 import { lintFiles } from "../../../src/lint.js";
-import { checkTrust, type TrustVerdict } from "./trust.js";
+import { checkTrust, publisherStoreFor, type TrustVerdict } from "./trust.js";
+import { publisherState, recordPublisher } from "../../../src/publisher.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 
 
@@ -343,7 +344,7 @@ async function openFile(file: File): Promise<void> {
     // Full verification, not a shape check: digests both ways, the shell
     // against its sealed copy, and the publisher signature when one is carried.
     const container = await openVerified(text);
-    const trust = await gateOnTrust(container);
+    const trust = (await gateOnTrust(container)) + (await describePublisher(container));
 
     // A browser File has no filesystem path, so a cartridge chosen here cannot
     // be saved back in place — there is nothing to overwrite. Passing the bare
@@ -424,7 +425,7 @@ async function openCartridgeByPath(path: string): Promise<void> {
     const source = await readCartridgeSource(path);
 
     const container = await openVerified(source);
-    const trust = await gateOnTrust(container);
+    const trust = (await gateOnTrust(container)) + (await describePublisher(container));
 
     await mountHtml(
       container.html,
@@ -729,6 +730,31 @@ ${refusal.detail}` : ""),
  * whoever signed it last time, which is exactly what a warning-only path would
  * let a user click through.
  */
+/**
+ * Who signed it, as far as this machine has seen, in a sentence for the status
+ * line (4.3). This host has no card; the sentence is where the state goes.
+ */
+async function describePublisher(container: Awaited<ReturnType<typeof verifyContainer>>): Promise<string> {
+  if (!isTauri()) return "";
+  const store = publisherStoreFor(invokeTauri);
+  const who = await publisherState(store, container);
+  await recordPublisher(store, container);
+  switch (who.state) {
+    case "known":
+      return who.renamedFrom
+        ? ` ${who.name} (renamed from ${who.renamedFrom}), ${who.count} of their documents opened here.`
+        : ` ${who.name}, ${who.count} of their documents opened here.`;
+    case "new":
+      return ` ${who.name}: the first time this publisher has been seen here. Safety number ${who.safetyNumber}.`;
+    case "conflict":
+      return ` Claims to be ${who.claimed}, but the ${who.knownAs} known here uses a different key. Treat as a stranger.`;
+    case "anonymous":
+      return ` Signed under no name; first time this key has been seen here.`;
+    default:
+      return "";
+  }
+}
+
 async function gateOnTrust(container: Awaited<ReturnType<typeof verifyContainer>>): Promise<string> {
   // Only meaningful in the host; the registry lives in Rust.
   if (!isTauri()) {
@@ -809,7 +835,7 @@ async function openViaNativeDialog(): Promise<void> {
     // The same gate the runner uses. A cartridge refused there must not open
     // here: one reader, one verdict.
     const container = await openVerified(source);
-    const trust = await gateOnTrust(container);
+    const trust = (await gateOnTrust(container)) + (await describePublisher(container));
 
     await mountHtml(
       container.html,

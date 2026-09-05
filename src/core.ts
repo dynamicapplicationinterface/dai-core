@@ -111,6 +111,13 @@ export interface ContainerManifest {
   documentUuid: string;
   appName: string;
   favicon?: string;
+  /**
+   * Who signs it, by the name they sign under. Covered by the signature, so a
+   * name cannot be changed without the key that chose it; not verified against
+   * anything in the world, which is why a host shows it in states rather than
+   * as fact. Absent when the publisher gave none.
+   */
+  publisherName?: string;
   createdAt: string;
   algorithm: "SHA-256";
   integrityPolicy: "required" | "advisory";
@@ -142,6 +149,8 @@ export interface BuildContainerInput {
   appName: string;
   /** Custom favicon Data URL or SVG text. Defaults to clean DAI SVG icon. */
   favicon?: string;
+  /** The name the publisher signs under. Goes into the signed set when given. */
+  publisherName?: string;
   /**
    * Leave the engine out, for a host that already has it (§6.2).
    *
@@ -433,11 +442,13 @@ export async function buildContainer(
   // Built before the manifest, because the manifest carries the signature and
   // cannot therefore be an input to it. Every field here ends up in the
   // manifest unchanged, and a verifier rebuilds this same view from it.
+  const publisherName = input.publisherName?.trim() || undefined;
   const signedView: SignedView = {
     manifestVersion: MANIFEST_VERSION,
     documentUuid,
     appName,
     favicon,
+    publisherName,
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy,
@@ -456,6 +467,7 @@ export async function buildContainer(
     documentUuid,
     appName,
     favicon,
+    ...(publisherName ? { publisherName } : {}),
     createdAt,
     algorithm: "SHA-256",
     // Informational only: the shell decides whether this is enforced.
@@ -573,6 +585,8 @@ export interface SignedView {
   documentUuid: string;
   appName: string;
   favicon: string;
+  /** Present only when the publisher signs under a name. */
+  publisherName?: string;
   createdAt: string;
   algorithm: string;
   integrityPolicy: string;
@@ -686,6 +700,7 @@ export function signedViewOf(manifest: {
   documentUuid: string;
   appName: string;
   favicon?: string;
+  publisherName?: string;
   createdAt: string;
   algorithm: string;
   integrityPolicy: string;
@@ -699,6 +714,7 @@ export function signedViewOf(manifest: {
     documentUuid: manifest.documentUuid,
     appName: manifest.appName,
     favicon: manifest.favicon ?? "",
+    publisherName: manifest.publisherName,
     createdAt: manifest.createdAt,
     algorithm: manifest.algorithm,
     integrityPolicy: manifest.integrityPolicy,
@@ -734,6 +750,9 @@ export function signedBytes(view: SignedView): Uint8Array {
   // Absent rather than null, so a perpetual document does not describe an
   // expiry it does not have.
   if (view.validUntil !== undefined) fields.set("validUntil", view.validUntil);
+  // Likewise the publisher's name: present only when one was signed under, so
+  // every container signed before names existed still verifies unchanged.
+  if (view.publisherName) fields.set("publisherName", view.publisherName);
 
   return cborEncode(fields);
 }

@@ -41,6 +41,36 @@
       }
     },
     {
+      "name": "valid-signed-named",
+      "file": "cases/valid-signed-named.dai.html",
+      "form": "viewer",
+      "summary": "Signed under a publisher name. The name is in the signed set, so it verifies with the rest.",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "valid",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "signed-name-changed",
+      "file": "cases/signed-name-changed.dai.html",
+      "form": "viewer",
+      "summary": "The publisher name edited after signing. A name is a claim the key made, and another name is another claim.",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "signature": "invalid",
+        "code": "UNVERIFIED_SIGNATURE"
+      }
+    },
+    {
       "name": "valid-expiry-current",
       "file": "cases/valid-expiry-current.dai.html",
       "form": "viewer",

@@ -11,6 +11,7 @@ import { refatten } from "../../../src/container.js";
 import { decodeInline, INLINE_CAP, inlineFrom, inlineLink } from "../../../src/link.js";
 import { heldEngine } from "./engine.js";
 import { openFromStore, referenceFrom } from "../../../src/store.js";
+import { publisherState, recordPublisher } from "../../../src/publisher.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -38,6 +39,7 @@ import {
   loadDatabaseFromOpfs,
   saveCartridgeToLibrary,
   trustStore,
+  publisherStore,
   saveDatabaseToOpfs,
   type LibraryItem,
 } from "./opfs.js";
@@ -85,6 +87,8 @@ function say(message: string, isError = false): void {
  */
 const installBar = document.getElementById("install") as HTMLElement;
 const keeper = watchForInstall();
+/** Set for one open when the card called the publisher a conflict (4.3). */
+let installSuppressed = false;
 
 const RESUME_KEY = "dai:resume";
 
@@ -261,6 +265,8 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
       slot.classList.remove("busy");
       return;
     }
+
+    await recordPublisher(publisherStore(), cartridge);
 
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
     if (opfsDb && opfsDb.byteLength > 0) {
@@ -515,8 +521,17 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * publisher — is a checked fact rather than a claim the file made about
      * itself. Nothing mounts until it is asked for.
      */
+    /*
+     * And whose it is, as far as this device has seen (4.3). Decided before
+     * the card, shown on it, and recorded only after the person proceeds — so
+     * a conflict that was refused never becomes a pin.
+     */
+    const who = await publisherState(publisherStore(), cartridge);
+    installSuppressed = who.state === "conflict";
+
     const familiar =
       verdict.status === "trusted" &&
+      who.state !== "conflict" &&
       (await listCartridgesFromLibrary()).some(
         (item) => item.documentUuid === cartridge.manifest.documentUuid,
       );
@@ -526,14 +541,13 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       await showCard({
         name: cartridge.manifest.appName ?? "container",
         favicon: cartridge.manifest.favicon,
-        signature: cartridge.signature,
-        fingerprint: cartridge.publicKeyFingerprint,
-        trust: verdict.status === "trusted" ? "known" : "first",
+        publisher: who,
         from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
         applied: ISOLATION_CLAUSES,
       });
       slot.classList.add("busy");
     }
+    await recordPublisher(publisherStore(), cartridge);
 
     // If an OPFS database exists for this documentUuid, mount the latest database.
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
@@ -789,7 +803,9 @@ window.addEventListener("message", (event) => {
      * saved. Only now is "keep this on your device" an offer rather than an
      * interruption in front of a person who has not yet seen it work.
      */
-    if (fromMountedContainer(event, data)) keeper?.offer();
+    // Not offered on an open the card called a conflict: a stranger wearing a
+    // known name does not get an icon on the home screen out of it.
+    if (fromMountedContainer(event, data) && !installSuppressed) keeper?.offer();
   } else if (data.type === "DAI_HOST_SAVE") {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.

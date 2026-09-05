@@ -467,6 +467,8 @@ def from_inline_link(link: str) -> InlineDocument:
     }
     if isinstance(fields.get(6), int):
         manifest["validUntil"] = fields[6]
+    if isinstance(fields.get(10), str) and fields[10]:
+        manifest["publisherName"] = fields[10]
     raw_signature = fields.get(8)
     if public_key and isinstance(raw_signature, bytes):
         protected = cbor_encode({1: -7, 4: fingerprint.encode("ascii")})
@@ -663,6 +665,10 @@ def _check_signature(manifest: dict, key: str | None, hashes: dict) -> tuple[str
     }
     if manifest.get("validUntil") is not None:
         fields["validUntil"] = manifest["validUntil"]
+    # Present only when the publisher signed under a name (§3.1), so every
+    # container signed before names existed still verifies unchanged.
+    if manifest.get("publisherName"):
+        fields["publisherName"] = manifest["publisherName"]
 
     payload = cbor_encode(fields)
 

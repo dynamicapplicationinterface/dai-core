@@ -89,6 +89,7 @@ const L = {
   key: 7,
   signature: 8,
   entries: 9,
+  publisherName: 10,
 } as const;
 
 const CARRIED = 0;
@@ -211,6 +212,7 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
     [L.entries, entries],
   ]);
   if (manifest.validUntil !== undefined) fields.set(L.validUntil, manifest.validUntil);
+  if (manifest.publisherName) fields.set(L.publisherName, manifest.publisherName);
   if (publicKey && manifest.signature) {
     fields.set(L.key, compressPublicKey(fromBase64(publicKey)));
     fields.set(L.signature, parseSign1(fromBase64(manifest.signature)).signature);
@@ -286,6 +288,7 @@ export async function unpackInline(
   const createdAt = fields.get(L.createdAt);
   const required = fields.get(L.required) === 1;
   const validUntil = fields.get(L.validUntil);
+  const publisherName = fields.get(L.publisherName);
   const key = fields.get(L.key);
   const signature = fields.get(L.signature);
   const entries = fields.get(L.entries);
@@ -382,6 +385,7 @@ export async function unpackInline(
     documentUuid: uuid,
     appName,
     favicon,
+    ...(typeof publisherName === "string" && publisherName ? { publisherName } : {}),
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy: required ? "required" : "advisory",

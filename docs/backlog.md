@@ -45,7 +45,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.6 | Second-use integrations only | [ ] integrations exist; the rule is open |
 | 4.1 | Succession | [ ] |
 | 4.2 | "Modify this app" | [ ] `upgradeOf` half done `c1b04b8` |
-| 4.3 | A publisher who is somebody | [ ] decided: three states, key pinned across documents |
+| 4.3 | A publisher who is somebody | [x] `PENDING` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [ ] |
 | 5.1 | The north star, measured | [ ] |
@@ -438,6 +438,22 @@ never the word "verified":
 
 Same key with a changed name is Known with "renamed from X"; the pinned name
 updates after the person proceeds.
+
+Done in `PENDING`. `publisherName` is in the signed set, present only when
+given, so every container signed before names existed verifies unchanged —
+and the Python reader agrees on two new conformance cases, one signed under a
+name and one with the name edited afterwards. `src/publisher.ts` is the one
+decision: the key is pinned across documents with the name it signs under and
+the documents opened under it; names are folded (NFKC, case, punctuation,
+lookalikes) before a collision is looked for. The opener shows the three
+states on the card with the Verify affordance revealing a safety number; the
+desktop says the same in its status line. A conflict gets no install offer on
+that open. A fourth state, `anonymous` — signed, under no name, key never
+seen — exists because the fixture and every pre-4.3 signed document are that.
+
+**Not built:** the QR. The safety number is the same number both sides see
+and is what a QR would carry; rendering one needs an encoder this project
+does not have, and the number is readable over a call today.
 
 **Exit:** three snapshot tests, one per state; the Conflict test uses a
 confusable-character variant of a pinned name and must render red.

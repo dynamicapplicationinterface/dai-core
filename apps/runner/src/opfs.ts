@@ -9,8 +9,11 @@ const DB_STORE = "sqlite_databases";
 const LIB_STORE = "cartridges";
 /** Which key each document was first opened with. */
 const PIN_STORE = "pins";
+/** Publishers this device has seen sign something, by key (4.3). */
+const PUB_STORE = "publishers";
 
 import type { PinnedKey, TrustStore } from "../../../src/trust.js";
+import type { PublisherPin, PublisherStore } from "../../../src/publisher.js";
 
 export interface LibraryItem {
   documentUuid: string;
@@ -22,7 +25,7 @@ export interface LibraryItem {
 
 function openIdb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 3);
+    const request = indexedDB.open(IDB_NAME, 4);
     request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(DB_STORE)) {
@@ -37,6 +40,13 @@ function openIdb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(LIB_STORE)) {
         db.createObjectStore(LIB_STORE, { keyPath: "documentUuid" });
+      }
+      // Version 4 adds publishers: the key, the name it signs under, and the
+      // documents opened under it. Indexed on the folded name, so "is this
+      // name one I know under another key" is one lookup.
+      if (!db.objectStoreNames.contains(PUB_STORE)) {
+        const publishers = db.createObjectStore(PUB_STORE, { keyPath: "publicKey" });
+        publishers.createIndex("folded", "folded", { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -250,6 +260,48 @@ export function trustStore(): TrustStore {
       await new Promise<void>((resolve, reject) => {
         const write = db.transaction(PIN_STORE, "readwrite");
         write.objectStore(PIN_STORE).delete(documentUuid);
+        write.oncomplete = () => resolve();
+        write.onerror = () => reject(write.error);
+      });
+    },
+  };
+}
+
+/**
+ * Publishers, by key.
+ *
+ * The decision about what a name means lives in `src/publisher.ts` and is
+ * shared with the desktop; this is only where this host keeps the records.
+ */
+export function publisherStore(): PublisherStore {
+  return {
+    async byKey(publicKey) {
+      const db = await openIdb();
+      return new Promise((resolve, reject) => {
+        const request = db.transaction(PUB_STORE, "readonly").objectStore(PUB_STORE).get(publicKey);
+        request.onsuccess = () => resolve((request.result as PublisherPin | undefined) ?? null);
+        request.onerror = () => reject(request.error);
+      });
+    },
+
+    async byFoldedName(folded) {
+      const db = await openIdb();
+      return new Promise((resolve, reject) => {
+        const request = db
+          .transaction(PUB_STORE, "readonly")
+          .objectStore(PUB_STORE)
+          .index("folded")
+          .getAll(folded);
+        request.onsuccess = () => resolve((request.result as PublisherPin[]) ?? []);
+        request.onerror = () => reject(request.error);
+      });
+    },
+
+    async save(pin) {
+      const db = await openIdb();
+      await new Promise<void>((resolve, reject) => {
+        const write = db.transaction(PUB_STORE, "readwrite");
+        write.objectStore(PUB_STORE).put(pin);
         write.oncomplete = () => resolve();
         write.onerror = () => reject(write.error);
       });

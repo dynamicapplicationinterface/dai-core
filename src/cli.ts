@@ -37,6 +37,9 @@ Build options:
                           (default: <name>.dai.html beside the source)
   -n, --name <name>       Application name, shown as the window title
   -k, --key <path|pem>    Sign with this ECDSA P-256 private key
+      --publisher <name>  The name you sign under. Goes into the signed set,
+                          and is what an opener shows as known, new or in
+                          conflict with a name it already trusts
       --seed <path>       Start from this SQLite database
       --upgrade-of <path> The container this build replaces. Compares the schema
                           being sealed against the one that container declared,
@@ -94,6 +97,7 @@ export function parseArgs(argv: string[]): Parsed {
     "valid-until",
     "template",
     "upgrade-of",
+    "publisher",
     // dai publish
     "store",
     "base",
@@ -168,6 +172,7 @@ async function build(parsed: Parsed): Promise<number> {
     upgradeOf: typeof flags["upgrade-of"] === "string" ? flags["upgrade-of"] : undefined,
     templatePath: typeof flags.template === "string" ? flags.template : undefined,
     documentUuid: typeof flags.uuid === "string" ? flags.uuid : undefined,
+    publisherName: typeof flags.publisher === "string" ? flags.publisher : undefined,
     validUntil,
     verifyIntegrity: flags.verify === false ? false : undefined,
     thin: flags.thin === true,
