@@ -25,7 +25,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 |---|---|---|
 | 0.1 | Signed set closed | [x] `f60466d` |
 | 0.2 | The host owns the runtime | [x] `7f6ec7c` — bootloader; the engine follows with 2.1 |
-| 0.3 | The shell binds its frame's messages | [ ] host side `7cd469c`; shell side open |
+| 0.3 | The shell binds its frame's messages | [x] `870c1e5` — **Phase 0 closed** |
 | 1.1 | Launch card with backed claims | [ ] |
 | 1.2 | One card for every carrier | [ ] |
 | 1.3 | Install after use | [ ] |
@@ -76,16 +76,6 @@ to protect.
 **Exit:** a container built with a custom `--template` runs in the opener
 under the opener's bootloader; a hostile-shell probe container gets no access
 to the host origin, OPFS, IndexedDB or Tauri IPC, and a test asserts each.
-
-### 0.3 The shell binds its frame's messages
-
-The host-side bridge is bound to source, nonce and request id (closed, 4).
-The shell's own listener for the frame is not: `dai:schema` and the save
-request accept any window; the timing and hello handlers check
-`event.source`. `?open=` consent is closed (3).
-
-**Exit:** a third window posting `dai:save` or `dai:schema` is ignored; a test
-asserts it.
 
 ---
 
@@ -363,6 +353,9 @@ Kept so the reasoning stays with the record.
 - **9. Two host classes, and the site says which is which** — `834e504`.
 - **10. The recipe teaches the schema, every door declares it, the kit
   survives a colon** — `c1b04b8`. `upgradeOf` is the plumbing 4.2 needs.
+- **0.3 The shell binds its frame's messages** — `870c1e5`. One guard over
+  the shell's listener; the frame's three listeners bound to the parent; the
+  rule in spec §4.4. **Phase 0 is closed.**
 - **11. The host says what it applied, and the probe checks** — `5f0c68c`.
   What 1.1's ✓ claims are backed by.
 - **The five gates from the first review** — see `roadmap-to-1.0.md`.
