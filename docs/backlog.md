@@ -24,7 +24,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | | Item | State |
 |---|---|---|
 | 0.1 | Signed set closed | [x] `f60466d` |
-| 0.2 | The host owns the runtime | [~] |
+| 0.2 | The host owns the runtime | [x] `7f6ec7c` — bootloader; the engine follows with 2.1 |
 | 0.3 | The shell binds its frame's messages | [ ] host side `7cd469c`; shell side open |
 | 1.1 | Launch card with backed claims | [ ] |
 | 1.2 | One card for every carrier | [ ] |
