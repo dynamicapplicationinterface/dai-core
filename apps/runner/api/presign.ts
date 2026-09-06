@@ -36,7 +36,21 @@
  */
 import { presignPut } from "../../../src/store-s3.js";
 
-export const config = { runtime: "nodejs" };
+/*
+ * The edge runtime, and it has to be.
+ *
+ * This handler is written the way the platform's edge functions are: it takes
+ * a `Request` and returns a `Response`. Vercel's Node runtime expects the
+ * other shape — `(req, res)`, ending the response by calling a method on it —
+ * and a fetch-style handler there never ends anything. The symptom is not an
+ * error: the request simply hangs until the gateway gives up, with nothing in
+ * the logs, which is how this was first shipped.
+ *
+ * Nothing here wants Node anyway. The signing is WebCrypto, which the edge has,
+ * and `src/store-s3.ts` imports nothing from `node:` — the same reason the
+ * middleware beside this file already runs there.
+ */
+export const config = { runtime: "edge" };
 
 /** The largest object this will hand out a URL for. Same cap as the store. */
 const MAX_BYTES = Number(process.env.DAI_PRESIGN_MAX_BYTES ?? 5 * 1024 * 1024);
