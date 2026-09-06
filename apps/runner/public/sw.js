@@ -21,7 +21,7 @@
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v4";
+const CACHE = "dai-runner-v5";
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
@@ -128,7 +128,19 @@ async function describedAs(response, url) {
   const icon = addressed ? attr(addressed.src) : null;
 
   let html = await response.text();
+  /*
+   * The first paint is the document's, not the opener's. Without this the
+   * page shows "DAI Opener" and the chooser for as long as it takes the
+   * script to read the address and mount — a flash of the wrong app on
+   * every launch from an icon. The header gets the name and icon here, and
+   * `launching` hides the chooser until the script either mounts the
+   * document or finds it is not held and takes the class off.
+   */
   html = html
+    .replace(/<body(\s[^>]*)?>/, (tag, rest) => `<body class="launching"${rest ?? ""}>`)
+    .replace(/<span id="title"><\/span>/, `<span id="title">${name}</span>`)
+    .replace(/<img id="title-icon"([^>]*?)\s*hidden\s*\/?>/, (tag, rest) =>
+      icon ? `<img id="title-icon"${rest} src="${icon}" />` : tag)
     .replace(/<link\s+rel="manifest"\s+href="[^"]*"\s*\/?>/, `<link rel="manifest" href="${attr(manifestAddress)}" />`)
     .replace(/<meta\s+name="apple-mobile-web-app-title"\s+content="[^"]*"\s*\/?>/, `<meta name="apple-mobile-web-app-title" content="${name}" />`)
     .replace(/<title>[^<]*<\/title>/, `<title>${name}</title>`);
@@ -230,15 +242,31 @@ self.addEventListener("fetch", (event) => {
     request.mode === "navigate" || url.pathname === "/" || url.pathname.endsWith("/index.html");
 
   if (isShell) {
+    /*
+     * From the cache at once, and the network in the background.
+     *
+     * This was network-first: whatever is deployed now, and the cache only
+     * when the network fails. Correct, and slow in exactly the place it
+     * shows — a home-screen icon launching a document this device already
+     * holds waited on a round trip (or, offline, on the failure) before
+     * painting anything. Now a cached shell answers immediately and the
+     * network's copy replaces it in the cache for next time, so the shell
+     * is at most one launch behind a deploy; a new worker taking over
+     * reloads an idle page anyway (see main.ts).
+     */
     event.respondWith(
-      fromNetwork()
-        .catch(() =>
-          caches
-            .match(request)
-            .then((hit) => hit || caches.match(url.pathname))
-            .then((hit) => hit || caches.match("./index.html")),
-        )
-        .then((response) => describedAs(response, url)),
+      (async () => {
+        const cached =
+          (await caches.match(request)) ||
+          (await caches.match(url.pathname)) ||
+          (await caches.match("./index.html"));
+        const network = fromNetwork();
+        if (cached) {
+          event.waitUntil(network.catch(() => {}));
+          return describedAs(cached, url);
+        }
+        return describedAs(await network, url);
+      })(),
     );
     return;
   }

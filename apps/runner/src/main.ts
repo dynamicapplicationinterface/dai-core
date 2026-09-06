@@ -176,6 +176,7 @@ function eject(): void {
   loaded = undefined;
   handshakeEstablished = false;
   document.body.classList.remove("loaded");
+  document.body.classList.remove("launching");
   keeper?.clear();
   hideCard();
   describeSelf();
@@ -1541,6 +1542,9 @@ async function start(): Promise<void> {
       await launchFromLibrary(held);
       return;
     }
+    // Painted as launching into it by the worker, and it is not here: the
+    // chooser, or a card for what the link carries, is the honest screen.
+    document.body.classList.remove("launching");
   }
 
   const carried = inlineFrom(location.hash);

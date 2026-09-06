@@ -84,13 +84,18 @@
       header h1 { font-size: 15px; margin: 0; font-weight: 600; }
       header .spacer { flex: 1; }
 
-      body.loaded header {
+      body.loaded header,
+      body.launching header {
         padding: 0 6px 0 14px;
         min-height: 44px;
         gap: 6px;
       }
       body.loaded header h1,
-      body.loaded #open { display: none; }
+      body.loaded #open,
+      body.launching header h1,
+      body.launching #open { display: none; }
+      /* Launching into a document: its header, and no chooser underneath. */
+      body.launching #slot { visibility: hidden; }
 
       /* The document's name, and nothing else that is not a control. */
       #title {
@@ -100,7 +105,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      body:not(.loaded) #title { display: none; }
+      body:not(.loaded):not(.launching) #title { display: none; }
 
       #more {
         width: 36px;
@@ -225,7 +230,7 @@
 
       /* The document's own icon beside its name, so the header reads as the document. */
       #title-icon { border-radius: 7px; background: #111827; flex: 0 0 auto; }
-      #title-icon[hidden], body:not(.loaded) #title-icon { display: none; }
+      #title-icon[hidden], body:not(.loaded):not(.launching) #title-icon { display: none; }
 
       /* The one filled control while a document is open. */
       #keep-cta {

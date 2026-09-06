@@ -140,6 +140,10 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     const html = await fresh.evaluate(async (address) => (await fetch(address)).text(), manifest.body.start_url);
     expect(html).toContain(`<title>${name}</title>`);
     expect(html).toContain(`<meta name="apple-mobile-web-app-title" content="${name}" />`);
+    // And the first paint is the document's: its name in the header, the
+    // chooser hidden, before any script runs. No flash of the opener.
+    expect(html).toContain('<body class="launching"');
+    expect(html).toContain(`<span id="title">${name}</span>`);
     expect(html).toContain(`/doc-manifests/${uuid}.webmanifest`);
     expect(html).toContain("/doc-icons/");
 

@@ -286,10 +286,17 @@ test.describe("cartridge ingestion", () => {
       const form = new FormData();
       form.append("container", new File([body], "shared.dai.html", { type: "text/html" }));
       const response = await fetch("./shared", { method: "POST", body: form });
-      return response.url;
+      // What proves the worker took the file is the file, parked where the
+      // page collects it. (Not `response.url` or `redirected`: the worker
+      // answers the POST with a redirect, and the shell that answers the
+      // redirected GET now comes from the cache, whose stored URL is the
+      // bare page — so the browser reports no redirect. The address bar of
+      // a real navigation is the request's regardless.)
+      const parked = await (await caches.open("dai-shared-v1")).match("./shared-container");
+      return { ok: response.ok, parked: Boolean(parked), name: parked?.headers.get("x-dai-name") };
     }, html);
 
-    expect(landed).toContain("shared=1");
+    expect(landed).toEqual({ ok: true, parked: true, name: "shared.dai.html" });
 
     await page.goto(`${RUNNER_URL}?shared=1`);
     // A document shared in came from somebody else, so it lands on the card
