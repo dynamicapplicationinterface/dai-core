@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
-import { openFile } from "./open.js";
+import { openFile, ejectFrom } from "./open.js";
 import { ContainerError, verifyContainer } from "../src/container.js";
 import { openFromStore, publish, referenceFrom, sealForStore, type Sidecar } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
@@ -202,8 +202,7 @@ test.describe("a reference link, opened", () => {
       await page.locator("#card-open").click({ timeout: 60_000 });
       await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
       await expect(page.locator("#title")).toContainText("Chore chart");
-      await page.click("#more");
-      await page.locator("#eject").click();
+      await ejectFrom(page);
 
       // Second host, same document: kept here now, under the same key, so it
       // opens with no card — the 1.2 rule holding across a carrier the

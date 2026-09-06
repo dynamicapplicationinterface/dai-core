@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { parseContainer } from "../src/container.js";
-import { openFile } from "./open.js";
+import { openFile, ejectFrom } from "./open.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTAINER = resolve(here, "fixture/fixture.dai.html");
@@ -89,8 +89,8 @@ test.describe("runner shell", () => {
     await page.reload();
 
     await expect(page.locator("#open")).toBeVisible();
-    // The name a person sees, which is deliberately not the name the code uses.
-    expect(await page.title()).toBe("DAI Opener");
+    // Nothing on screen names a reader; the tab is just the product's name.
+    expect(await page.title()).toBe("DAI");
 
     await context.setOffline(false);
   });
@@ -181,7 +181,7 @@ test.describe("cartridge ingestion", () => {
     // about provenance. It is no longer on the bar: provenance is a question
     // somebody asks, not a label they read past, so it lives one tap away.
     await page.click("#more");
-    await expect(page.locator("#sheet-note")).toContainText("signed");
+    await expect(page.locator("#sheet-note")).toContainText(/signed/i);
 
     const state = await page.evaluate(() => {
       const runner = (window as unknown as { __runner: { loaded: unknown } }).__runner;
@@ -561,7 +561,7 @@ test.describe("cartridge ingestion", () => {
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
-    await menu(page, "#eject");
+    await ejectFrom(page);
     await page.reload();
 
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
@@ -622,7 +622,7 @@ test.describe("cartridge ingestion", () => {
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
-    await menu(page, "#eject");
+    await ejectFrom(page);
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
     await expect(page.locator("#slot")).toBeVisible();
 
@@ -704,7 +704,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     expect(saveResult).toEqual({ saved: true, method: "host", inPlace: false });
 
     // Eject cartridge
-    await menu(page, "#eject");
+    await ejectFrom(page);
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Re-ingest same container
@@ -755,7 +755,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     const exportedContent = readFileSync(path!, "utf8");
 
     // Eject existing cartridge
-    await menu(page, "#eject");
+    await ejectFrom(page);
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     // Re-ingest exported container file into runner
@@ -767,7 +767,7 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
 
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await page.click("#more");
-    await expect(page.locator("#sheet-note")).toContainText("signed");
+    await expect(page.locator("#sheet-note")).toContainText(/signed/i);
     await page.keyboard.press("Escape");
 
     // Verify exported container mounts, passes signature check, and loads updated database
@@ -810,27 +810,24 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
     });
 
     // Eject to return to home screen
-    await menu(page, "#eject");
+    await ejectFrom(page);
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
-    // Verify library tray renders the imported cartridge card
-    await expect(page.locator("#library")).toBeVisible();
-    await expect(page.locator("#library .tray-item")).toBeVisible();
-    await expect(page.locator("#library .tray-title")).toContainText("fixture");
+    // No list of documents is drawn: the library is plumbing. What a person
+    // has is an icon, and the icon's address opens the document from here.
+    await expect(page.locator("#library")).toHaveCount(0);
+    const uuid = (await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("dai:opens:"))))!.slice("dai:opens:".length);
+    await page.goto(`${RUNNER_URL}?doc=${uuid}`);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
-    // Launch app directly from library tray "Run" button
-    await page.click("#library .tray-item button:has-text('Run')");
-    await expect(page.locator("body")).toHaveClass(/loaded/);
-
-    // Eject back to home screen
-    await menu(page, "#eject");
+    // Remove from this device: the one destructive act, confirmed, at the
+    // bottom of the document's own menu.
+    page.once("dialog", (dialog) => void dialog.accept());
+    await menu(page, "#remove");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
-
-    // Delete app from tray
-    await page.click("#library .tray-item .btn-del");
-
-    // Verify library tray item is removed
-    await expect(page.locator("#library .tray-item")).toBeHidden();
+    await page.goto(`${RUNNER_URL}?doc=${uuid}`);
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+    await expect(page.locator("#slot")).toContainText("This icon is for");
 
     // Verify OPFS/library is empty
     const libItems = await page.evaluate(async () => {
@@ -1081,7 +1078,7 @@ test.describe("keeping it, per device", () => {
     const uuid = await page.evaluate(
       () => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid,
     );
-    await menu(page, "#eject");
+    await ejectFrom(page);
 
     // Closed, and reopened by the address an installed icon launches with.
     await page.goto(`${RUNNER_URL}?doc=${uuid}&name=Fixture`);

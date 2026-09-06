@@ -83,6 +83,8 @@ export interface CardInput {
    * Absent when there is nothing to look inside of.
    */
   inspect?: { file: File; playground: string };
+  /** Offered when the document is signed by a key worth naming: the host's own naming UI. */
+  onNamePublisher?: () => void;
 }
 
 /** " with github.com", from an issuer URL, or nothing. */
@@ -265,6 +267,12 @@ export function showCard(input: CardInput): Promise<void> {
     verify.hidden = true;
   };
   verify.addEventListener("click", reveal, { once: true });
+
+  const namer = document.getElementById("card-name-publisher") as HTMLButtonElement | null;
+  if (namer) {
+    namer.hidden = !input.onNamePublisher;
+    namer.onclick = input.onNamePublisher ?? null;
+  }
 
   claims.replaceChildren();
   for (const claim of claimsFor(input.applied)) {

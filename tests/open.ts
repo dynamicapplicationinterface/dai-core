@@ -25,3 +25,15 @@ export async function openFile(
   const open = page.locator("#card-open");
   if (await open.isVisible()) await open.click();
 }
+
+/**
+ * Puts the open document down, the way closing an app does.
+ *
+ * There is no "Close this document" any more — a person closes an app by
+ * leaving it — so tests that need the empty screen between steps ask the
+ * page directly.
+ */
+export async function ejectFrom(page: Page): Promise<void> {
+  await page.evaluate(() => (window as unknown as { __runner: { eject: () => void } }).__runner.eject());
+  await page.locator("body:not(.loaded)").waitFor({ timeout: 30_000 });
+}

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { ejectFrom } from "./open.js";
 import { compileDirectory } from "../src/compile.js";
 import { toBase64 } from "../src/core.js";
 
@@ -88,8 +89,7 @@ function inside(page: Page) {
 }
 
 async function close(page: Page): Promise<void> {
-  await page.click("#more");
-  await page.locator("#eject").click();
+  await ejectFrom(page);
   await expect(page.locator("body")).not.toHaveClass(/loaded/);
 }
 

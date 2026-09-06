@@ -70,12 +70,18 @@ opens that document, so three documents kept are three icons.
 
 On Android and desktop Chrome the installed app shares the opener's storage,
 and the document is simply there. **On iOS it is not.** A home-screen app on
-iOS gets storage of its own, separate from Safari, so the new icon launches an
-opener that has never seen the document. The honest instruction there is three
-steps — save a copy to Files, add to Home Screen, open the file once from the
-new icon — and the opener says exactly that. The launch address carries the
-document's name, so a new icon with nothing in its library asks for that file
-by name instead of showing an empty chooser. After that one open, it stays.
+iOS gets storage of its own, separate from Safari, so the new icon launches
+with nothing. So the icon's address carries the document: the link it came
+by, or the inline link the opener makes for it when it fits one — and the
+icon opens the document on the first tap, keeps it, and opens its own copy
+from then on, offline. Only a document too large for a link and never sent
+as one still asks for the file once, by name.
+
+There is no reader to see in any of this. A person has apps, each its own
+icon; the page they run in exists only while a document is open, and then it
+is the document's — its icon and name, one action that keeps it, and its
+menu. Nothing lists other documents; a document arrives from a message or a
+file, the way documents do.
 
 ## What did not change
 

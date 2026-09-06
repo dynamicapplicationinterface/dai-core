@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ejectFrom } from "./open.js";
 import { compileDirectory } from "../src/compile.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,8 +89,7 @@ test.describe("trust is pinned by opening, not by looking", () => {
 
     // And from here the stranger's copy is what reads as the impersonation,
     // which is the way round it should be.
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
     await page.setInputFiles("#file", theirs);
     await expect(page.locator("#report")).toContainText(/different publisher/, { timeout: 60_000 });
     await expect(page.locator("#card-open")).toBeHidden();
@@ -97,20 +97,20 @@ test.describe("trust is pinned by opening, not by looking", () => {
 
   test("a document kept in the library is still checked on every launch", async ({ page }) => {
     test.slow();
-    const { theirs, ours } = await twoCopies();
+    const { theirs, ours, uuid } = await twoCopies();
 
     // Opened once, so it is kept and pinned.
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", ours);
     await page.locator("#card-open").click({ timeout: 60_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
 
     // The stranger's copy is refused, and nothing about the kept one changes.
     await page.setInputFiles("#file", theirs);
     await expect(page.locator("#report")).toContainText(/different publisher/, { timeout: 60_000 });
-    await page.locator("#library button", { hasText: "Run" }).first().click();
+    // Launched the way an icon launches it: by its id.
+    await page.goto(`${RUNNER_URL}?doc=${uuid}`);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
   });
 });

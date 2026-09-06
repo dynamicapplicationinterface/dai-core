@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { generateKeyPairSync } from "node:crypto";
-import { openFile } from "./open.js";
+import { openFile, ejectFrom } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -61,8 +61,7 @@ test.describe("the opener remembers who signed a document", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     // Closing lives behind the menu now; see the opener redesign.
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
     await openFile(page, impostor);
 
     await expect(page.locator("#report")).toContainText(/different publisher/i, {
@@ -84,8 +83,7 @@ test.describe("the opener remembers who signed a document", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     // Closing lives behind the menu now; see the opener redesign.
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
     await openFile(page, again);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
   });
@@ -108,8 +106,7 @@ test.describe("the opener remembers who signed a document", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     // Closing lives behind the menu now; see the opener redesign.
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
     await openFile(page, bare);
 
     await expect(page.locator("#report")).toContainText(/not signed at all/i, { timeout: 30_000 });

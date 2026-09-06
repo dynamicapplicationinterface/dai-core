@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ejectFrom } from "./open.js";
 import { compileDirectory } from "../src/compile.js";
 import { verifyContainer } from "../src/container.js";
 import { toBase64 } from "../src/core.js";
@@ -216,6 +217,18 @@ test.describe("what an organisation and a person add", () => {
 });
 
 test.describe("the three states, on the card", () => {
+/** A design token's colour, as the page resolves it in the scheme the test runs in. */
+async function token(page: import("@playwright/test").Page, name: string): Promise<string> {
+  return page.evaluate((n) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${n})`;
+    document.body.appendChild(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  }, name);
+}
+
   test("new is neutral with a way to verify, known is the only good state, conflict is red", async ({ page }) => {
     test.slow();
     const acme = await pem();
@@ -228,33 +241,31 @@ test.describe("the three states, on the card", () => {
     await expect(publisher).toHaveAttribute("data-state", "new", { timeout: 60_000 });
     await expect(publisher).toHaveText("Acme Finance · first time you've seen this publisher");
     // Neutral: no positive colour.
-    expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(209, 213, 219)");
+    expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe(await token(page, "--text-2"));
     // The verify affordance reveals a number two people can read to each other.
     await expect(page.locator("#card-safety")).toBeHidden();
     await page.locator("#card-verify").click();
     await expect(page.locator("#card-safety")).toContainText(/Safety number \d{5} \d{5} \d{5} \d{5} \d{5} \d{5}/);
     await page.locator("#card-open").click();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
 
     // KNOWN. A second document from the same key.
     await page.setInputFiles("#file", (await signed(acme, "Acme Finance", "Payroll")).file);
     await expect(publisher).toHaveAttribute("data-state", "known", { timeout: 60_000 });
     await expect(publisher).toHaveText("Acme Finance · you've opened 1 of their apps before");
-    expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(52, 211, 153)");
+    expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe(await token(page, "--ok"));
     await expect(page.locator("#card-verify")).toBeHidden();
     await page.locator("#card-open").click();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
 
     // CONFLICT. A key never seen here, using the name with a Cyrillic а.
     await page.setInputFiles("#file", (await signed(stranger, "Acme Finаnce", "Ledger")).file);
     await expect(publisher).toHaveAttribute("data-state", "conflict", { timeout: 60_000 });
     await expect(publisher).toContainText("Claims to be Acme Finаnce");
     await expect(publisher).toContainText("Treat as a stranger.");
-    expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(248, 113, 113)");
+    expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe(await token(page, "--bad"));
     // Never the word "verified", in any state.
     expect(await page.locator("#card").innerText()).not.toMatch(/verified/i);
   });

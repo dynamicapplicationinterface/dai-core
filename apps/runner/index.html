@@ -31,7 +31,7 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>DAI Opener</title>
+    <title>DAI</title>
 
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="manifest" href="./manifest.webmanifest" />
@@ -138,8 +138,9 @@
         border-bottom: 1px solid var(--line);
         flex: 0 0 auto;
       }
-      header h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
       header .spacer { flex: 1; }
+      /* No document, no header: the empty screen carries its own one control. */
+      body:not(.loaded):not(.launching) header { display: none; }
 
       body.loaded header,
       body.launching header {
@@ -147,9 +148,7 @@
         min-height: 44px;
         gap: 6px;
       }
-      body.loaded header h1,
       body.loaded #open,
-      body.launching header h1,
       body.launching #open { display: none; }
       /* Launching into a document: its header, and no chooser underneath. */
       body.launching #slot { visibility: hidden; }
@@ -214,11 +213,16 @@
         color: var(--text);
       }
       .sheet-panel button:hover { background: var(--surface-2); }
-      .sheet-note {
-        margin: 4px 4px 8px;
-        font-size: 12px;
-        color: var(--muted);
-      }
+      .sheet-head { display: flex; align-items: center; gap: 12px; padding: 4px 6px 10px; }
+      #sheet-icon { border-radius: 10px; background: var(--surface-2); flex: 0 0 auto; }
+      #sheet-icon[hidden] { display: none; }
+      .sheet-head-text { min-width: 0; }
+      .sheet-name { margin: 0; font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .sheet-note { margin: 0; font-size: 12.5px; color: var(--muted); }
+      .sheet-note[data-state="known"] { color: var(--ok); }
+      .sheet-note[data-state="unsigned"] { color: var(--warn); }
+      .sheet-rule { height: 1px; margin: 4px 6px; background: var(--line); }
+      .sheet-panel button.danger { color: var(--bad); }
       button {
         font: inherit;
         font-size: 13px;
@@ -245,6 +249,16 @@
         text-align: center;
       }
       #slot p { margin: 0; color: var(--muted); max-width: 34ch; }
+      #slot #open {
+        padding: 12px 28px;
+        font-size: 16px;
+        font-weight: 700;
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: var(--on-accent);
+      }
+      #slot #open:hover { background: var(--accent-press); }
       /* Quieter than the instruction above it: the answer to a question only
          some people arrive with. */
       #slot p.hint { font-size: 13px; color: var(--faint); }
@@ -259,30 +273,6 @@
         max-width: 60ch;
       }
       #report.error { color: var(--bad); }
-
-      #library {
-        width: 100%;
-        max-width: 500px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        margin-top: 12px;
-      }
-      .tray-item {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 14px;
-        background: var(--surface);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        text-align: left;
-      }
-      .tray-info { flex: 1; overflow: hidden; }
-      .tray-title { font-weight: 600; color: var(--text); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .tray-sub { font-size: 12px; color: var(--muted); }
-      .tray-actions { display: flex; gap: 6px; }
-      .btn-del { color: var(--bad); }
 
       /* ------------------------------------------------------- keeping it */
 
@@ -526,6 +516,18 @@
         cursor: pointer;
       }
       #card-verify[hidden], #card-safety[hidden] { display: none; }
+      #card-name-publisher {
+        align-self: flex-start;
+        padding: 0;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+        cursor: pointer;
+      }
+      #card-name-publisher[hidden] { display: none; }
       #card-safety {
         margin: 0;
         font-size: 12.5px;
@@ -570,12 +572,20 @@
   </head>
 
   <body>
+    <!--
+      There is no reader to see.
+
+      An app is the thing somebody has; this page is the capsule it arrives
+      in. So the header exists only while a document is open, and then it is
+      the document's: icon, name, the one action that keeps it, and its menu.
+      Nothing on screen names the opener, and nothing offers to open a
+      different document from inside this one — a document arrives from a
+      message or a file, the way documents do.
+    -->
     <header>
-      <h1>DAI Opener</h1>
       <img id="title-icon" alt="" width="26" height="26" hidden />
       <span id="title"></span>
       <span class="spacer"></span>
-      <button id="open" type="button">Open a file</button>
       <!--
         The one action, where the thumb already is.
 
@@ -625,9 +635,16 @@
     <div id="sheet" hidden role="dialog" aria-modal="true" aria-label="Document">
       <div class="sheet-panel">
         <div class="sheet-grip"></div>
-        <p class="sheet-note" id="sheet-note"></p>
-        <button id="export" type="button">Save a copy</button>
-        <button id="link" type="button">Copy a link</button>
+        <!-- The document, in the card's own vocabulary: icon, name, who signed it. -->
+        <div class="sheet-head">
+          <img id="sheet-icon" alt="" width="44" height="44" hidden />
+          <div class="sheet-head-text">
+            <p class="sheet-name" id="sheet-name"></p>
+            <p class="sheet-note" id="sheet-note"></p>
+          </div>
+        </div>
+        <button id="export" type="button">Save a copy…</button>
+        <button id="link" type="button">Copy link</button>
         <!--
           Modify this app (backlog 4.2).
 
@@ -636,10 +653,14 @@
           a stranger. Pasted into an assistant, it is everything needed to
           change one thing and keep the person's data.
         -->
-        <button id="modify" type="button">Modify this app…</button>
-        <button id="label" type="button">Call this publisher…</button>
-        <button id="open-another" type="button">Open a different file</button>
-        <button id="eject" type="button">Close this document</button>
+        <button id="modify" type="button">Change something…</button>
+        <div class="sheet-rule"></div>
+        <!--
+          The one destructive act, in red, at the bottom, where a phone puts it.
+          It replaces the library's delete: this device forgets the document,
+          its data and its trust pin. A copy saved or sent is not touched.
+        -->
+        <button id="remove" type="button" class="danger">Remove from this device</button>
       </div>
     </div>
 
@@ -669,12 +690,12 @@
           Open a document somebody sent you. Nothing is uploaded — it opens and
           runs here, on this device.
         </p>
+        <button id="open" type="button">Open a file</button>
         <p class="hint">
           Not sure what you have?
           <a href="https://www.dynamicapplicationinterface.io/open">What is a .dai file?</a>
         </p>
         <div id="report"></div>
-        <div id="library"></div>
       </div>
       <!--
         The launch card. See apps/runner/src/card.ts: what somebody is about to
@@ -699,6 +720,8 @@
           <p id="card-publisher"></p>
           <p id="card-identity" hidden></p>
           <button id="card-verify" type="button" hidden>Verify</button>
+          <!-- A name for this signing key, on this device — offered here, where who signed it is in view. -->
+          <button id="card-name-publisher" type="button" hidden>Name this publisher…</button>
           <p id="card-safety" hidden></p>
           <ul id="card-claims"></ul>
           <p id="card-succession" hidden></p>

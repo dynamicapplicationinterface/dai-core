@@ -361,7 +361,7 @@ function keepHere(identity: Identity & { link?: string }): boolean {
 
 /** The opener as itself again, once nothing is open. */
 export function describeSelf(): void {
-  document.title = "DAI Opener";
+  document.title = "DAI";
   headTag("meta", 'name="apple-mobile-web-app-title"').setAttribute("content", "DAI");
   headTag("link", 'rel="apple-touch-icon"').setAttribute("href", "./icons/apple-touch-icon.png");
   headTag("link", 'rel="icon"').setAttribute("href", "./favicon.svg");

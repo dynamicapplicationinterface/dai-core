@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { ejectFrom } from "./open.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTAINER = resolve(here, "fixture/fixture.dai.html");
@@ -39,8 +40,7 @@ test.describe("the card, keyed on familiarity", () => {
 
     // Closed and chosen again: now a document this device keeps, under the
     // key it was first seen with.
-    await page.click("#more");
-    await page.locator("#eject").click();
+    await ejectFrom(page);
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
 
     await page.setInputFiles("#file", CONTAINER);

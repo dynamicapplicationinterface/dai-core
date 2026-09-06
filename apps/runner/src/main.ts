@@ -51,7 +51,6 @@ import {
 } from "./opfs.js";
 
 const openButton = document.getElementById("open") as HTMLButtonElement;
-const ejectButton = document.getElementById("eject") as HTMLButtonElement;
 const exportButton = document.getElementById("export") as HTMLButtonElement;
 const fileInput = document.getElementById("file") as HTMLInputElement;
 const cartridgeFrame = document.getElementById("cartridge") as HTMLIFrameElement;
@@ -207,70 +206,16 @@ function eject(): void {
   void refreshLibrary();
 }
 
+/**
+ * The library is plumbing, not a screen.
+ *
+ * It holds what this device has opened so an icon can launch it and a link
+ * can open offline; nothing lists it. A person has apps, each its own icon,
+ * and a document arrives from a message or a file — not from a list inside
+ * another document. What used to render here is gone; the storage stays.
+ */
 async function refreshLibrary(): Promise<void> {
-  if (!libraryEl) return;
-  const items = await listCartridgesFromLibrary();
-  if (items.length === 0) {
-    libraryEl.innerHTML = "";
-    return;
-  }
-
-  libraryEl.innerHTML = "";
-  const header = document.createElement("div");
-  header.style.fontSize = "13px";
-  header.style.fontWeight = "600";
-  header.style.color = "#9ca3af";
-  header.style.textAlign = "left";
-  header.style.marginBottom = "4px";
-  header.textContent = "Recent Cartridges";
-  libraryEl.appendChild(header);
-
-  for (const item of items) {
-    const card = document.createElement("div");
-    card.className = "tray-item";
-
-    const info = document.createElement("div");
-    info.className = "tray-info";
-
-    const title = document.createElement("div");
-    title.className = "tray-title";
-    title.textContent = item.appName;
-
-    const sub = document.createElement("div");
-    sub.className = "tray-sub";
-    const sigText = item.publicKeyFingerprint
-      ? `signed ${item.publicKeyFingerprint.slice(0, 8)}`
-      : "unsigned";
-    sub.textContent = `${sigText} · ${item.documentUuid.slice(0, 8)}…`;
-
-    info.appendChild(title);
-    info.appendChild(sub);
-
-    const actions = document.createElement("div");
-    actions.className = "tray-actions";
-
-    const runBtn = document.createElement("button");
-    runBtn.type = "button";
-    runBtn.textContent = "Run";
-    runBtn.addEventListener("click", () => void launchFromLibrary(item));
-
-    const delBtn = document.createElement("button");
-    delBtn.type = "button";
-    delBtn.className = "btn-del";
-    delBtn.textContent = "Delete";
-    delBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void deleteApp(item.documentUuid);
-    });
-
-    actions.appendChild(runBtn);
-    actions.appendChild(delBtn);
-
-    card.appendChild(info);
-    card.appendChild(actions);
-
-    libraryEl.appendChild(card);
-  }
+  /* Nothing to draw. */
 }
 
 async function launchFromLibrary(item: LibraryItem): Promise<void> {
@@ -392,9 +337,20 @@ async function mount(cartridge: Cartridge): Promise<void> {
    * fingerprint is. It is worth being able to find, and it is not worth a fifth
    * of a phone screen in front of somebody opening their first document.
    */
+  const sheetName = document.getElementById("sheet-name");
+  const sheetIcon = document.getElementById("sheet-icon") as HTMLImageElement | null;
+  if (sheetName) sheetName.textContent = name;
+  if (sheetIcon) {
+    const url = faviconUrl(cartridge.manifest.favicon);
+    sheetIcon.hidden = !url;
+    if (url) sheetIcon.src = url;
+  }
   sheetNote.textContent = cartridge.publicKeyFingerprint
-    ? `${name} — signed by ${cartridge.publicKeyFingerprint.slice(0, 8)}`
-    : `${name} — not signed`;
+    ? `Signed by ${cartridge.publicKeyFingerprint.slice(0, 8)}`
+    : "Not signed";
+  sheetNote.dataset.state = cartridge.publicKeyFingerprint ? "signed" : "unsigned";
+  // A phone sends; a computer saves. The menu says which.
+  exportButton.textContent = platform() === "desktop" ? "Save a copy…" : "Send a copy…";
 }
 
 /**
@@ -684,6 +640,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         applied: ISOLATION_CLAUSES,
         clear: arrivedInClear,
         inspect: { file, playground: PLAYGROUND },
+        // A key worth naming: one this device may see again. Never for an
+        // unsigned document, a test key, or a name in dispute.
+        onNamePublisher:
+          cartridge.publicKey && (who.state === "known" || who.state === "new" || who.state === "anonymous")
+            ? () => void namePublisher(cartridge.publicKey!)
+            : undefined,
       });
       slot.classList.add("busy");
     }
@@ -1097,9 +1059,21 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeSheet();
 });
 
-ejectButton.addEventListener("click", () => {
+/**
+ * Remove from this device: the one destructive act, and the honest
+ * replacement for a library's delete. This device forgets the document, its
+ * data and its trust pin. A copy saved or sent is untouched, and the
+ * question says so.
+ */
+document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
-  eject();
+  if (!loaded) return;
+  const name = loaded.manifest.appName ?? "this document";
+  const sure = window.confirm(
+    `Remove ${name} from this device?\n\nIts data on this device is deleted. A copy you saved or sent is not affected.`,
+  );
+  if (!sure) return;
+  void deleteApp(loaded.manifest.documentUuid);
 });
 const linkButton = document.getElementById("link") as HTMLButtonElement;
 
@@ -1136,11 +1110,10 @@ async function copyLink(): Promise<void> {
 
   const link = await linkForDocument(current.html);
   if (!link) {
-    say(
-      `This document is too big to put in a link (the limit is ${Math.round(INLINE_CAP / 1024)} KB). ` +
-        `Save a copy and send the file instead.`,
-      true,
-    );
+    // Too big for an address: the file is the link. Rather than a dead end
+    // naming another menu item, this goes straight to sending the copy.
+    say(`This document is too big to put in a link (the limit is ${Math.round(INLINE_CAP / 1024)} KB), so here it is as a file.`);
+    await exportContainer();
     return;
   }
   try {
@@ -1238,31 +1211,22 @@ modifyButton?.addEventListener("click", () => {
   void copySourceForAssistant();
 });
 
-const labelButton = document.getElementById("label") as HTMLButtonElement;
-
 /**
- * "Call this publisher…": a name the person gives a key, on this device.
+ * "Name this publisher…": a name the person gives a key, on this device.
  *
  * Local, never exported, shown before anything a document asserts — and from
- * then on a stranger's name is compared against it too (spec §9.6). The UI is
- * the host's, and this host's is the smallest that works: a prompt.
+ * then on a stranger's name is compared against it too (spec §9.6). Offered
+ * on the card, where who signed it is in view, rather than in an app's menu
+ * where it read as vocabulary from somewhere else. The UI is the host's, and
+ * this host's is the smallest that works: a prompt.
  */
-async function namePublisher(): Promise<void> {
-  if (!loaded?.publicKey) {
-    say("This document is not signed, so there is no publisher to name.", true);
-    return;
-  }
-  const current = await publisherStore().byKey(loaded.publicKey);
+async function namePublisher(publicKey: string): Promise<void> {
+  const current = await publisherStore().byKey(publicKey);
   const label = window.prompt("What do you call this publisher?", current?.hostLabel ?? current?.name ?? "");
   if (label === null) return;
-  await labelPublisher(publisherStore(), loaded.publicKey, label, await confusables());
+  await labelPublisher(publisherStore(), publicKey, label, await confusables());
   say(label.trim() ? `This publisher is "${label.trim()}" on this device.` : "Label removed.");
 }
-
-labelButton.addEventListener("click", () => {
-  sheet.hidden = true;
-  void namePublisher();
-});
 
 linkButton.addEventListener("click", () => {
   sheet.hidden = true;
@@ -1272,10 +1236,6 @@ linkButton.addEventListener("click", () => {
 exportButton.addEventListener("click", () => {
   closeSheet();
   void exportContainer();
-});
-document.getElementById("open-another")?.addEventListener("click", () => {
-  closeSheet();
-  fileInput.click();
 });
 
 fileInput.addEventListener("change", () => {
