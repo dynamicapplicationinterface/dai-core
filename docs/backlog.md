@@ -744,6 +744,32 @@ about other people's documents.
 
 ---
 
+## Known red, and not from anything here
+
+Eight tests fail on this machine on every run, in webkit and firefox only.
+They were failing before any of the September work and they fail on a clean
+checkout with everything stashed — checked, rather than assumed, because
+"pre-existing" is what somebody says about a failure they caused.
+
+    firefox  identity.spec           a held root puts the identity on the card
+    firefox  sender.spec             Make one offers a link, and the link opens it
+    webkit   identity.spec           a held root puts the identity on the card
+    webkit   inline-link.spec        a real app opens from a link, network off
+    webkit   offline-second-open     comes back on its own, engine and all
+    webkit   opener-thin.spec        a host with no engine refuses it
+    webkit   runner.spec             two saves at once both land
+    webkit   sender.spec             Make one offers a link, and the link opens it
+
+Chromium is green throughout. Two of them — both `Make one` — are
+`grantPermissions(["clipboard-read"])`, which only chromium implements, so
+those are the harness rather than the code. The other six are worth an
+afternoon with a webkit build; none is a claim this project makes on the
+platform anybody has been asked to use it on.
+
+Recorded here so the next session does not spend an hour rediscovering it.
+
+---
+
 ## Not doing
 
 - Native phone apps as a prerequisite for first use.
