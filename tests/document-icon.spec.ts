@@ -82,8 +82,7 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     // and puts it in a cache first.
     await page
       .waitForFunction(
-        () =>
-          document.querySelector('link[rel="manifest"]')?.getAttribute("href")?.startsWith("data:"),
+        () => /doc-manifests|^data:/.test(document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? ""),
         undefined,
         { timeout: 60_000 },
       )
@@ -98,5 +97,55 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     const after = await page.getAttribute('link[rel="apple-touch-icon"]', "href");
     expect(after, "the document's icon should have replaced the opener's").not.toBe(before);
     expect(after).toMatch(/doc-icons|^blob:/);
+  });
+
+  /*
+   * What a phone test found: iOS names a home-screen icon from the manifest
+   * the page linked when it loaded, and nothing set afterwards. So the
+   * worker has to serve the document's manifest at a real address and link
+   * it into the shell at load whenever the address names the document.
+   */
+  test("at the document's own address, the page loads already describing it", async ({ page, context }) => {
+    test.slow();
+    await page.goto(RUNNER_URL);
+    await openFile(page, CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    const uuid = await page.evaluate(
+      () => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid,
+    );
+    const name = await page.title();
+
+    // The manifest is a real file the worker serves, and it launches into
+    // this document.
+    await page.waitForFunction(
+      () => (document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? "").includes("doc-manifests"),
+      undefined,
+      { timeout: 60_000 },
+    );
+    await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, { timeout: 60_000 });
+    const manifest = await page.evaluate(async (id) => {
+      const r = await fetch(`/doc-manifests/${id}.webmanifest`);
+      return { status: r.status, body: (await r.json()) as { name: string; start_url: string; icons: { src: string }[] } };
+    }, uuid);
+    expect(manifest.status).toBe(200);
+    expect(manifest.body.name).toBe(name);
+    expect(manifest.body.start_url).toContain(`doc=${uuid}`);
+    expect(manifest.body.icons[0]!.src).toContain("doc-icons");
+
+    // A fresh load at that address: the HTML itself — before any script runs
+    // — carries the document's name, icon and manifest.
+    const fresh = await context.newPage();
+    await fresh.goto(RUNNER_URL);
+    await fresh.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, { timeout: 60_000 });
+    const html = await fresh.evaluate(async (address) => (await fetch(address)).text(), manifest.body.start_url);
+    expect(html).toContain(`<title>${name}</title>`);
+    expect(html).toContain(`<meta name="apple-mobile-web-app-title" content="${name}" />`);
+    expect(html).toContain(`/doc-manifests/${uuid}.webmanifest`);
+    expect(html).toContain("/doc-icons/");
+
+    // And the page opens the document itself, not the library.
+    await fresh.goto(manifest.body.start_url);
+    await expect(fresh.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(fresh).toHaveTitle(name);
   });
 });

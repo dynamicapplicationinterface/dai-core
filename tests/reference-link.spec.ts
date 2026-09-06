@@ -325,6 +325,21 @@ test.describe("a link with the fragment stripped", () => {
  * the property that makes the link private is the one that makes it safe on a
  * home screen.
  */
+/** The document's manifest, as the worker serves it, once the page has written it. */
+async function readManifest(page: import("@playwright/test").Page): Promise<{ start_url: string; id: string } | null> {
+  await page.waitForFunction(
+    () => (document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? "").includes("doc-manifests"),
+    undefined,
+    { timeout: 60_000 },
+  );
+  await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, { timeout: 60_000 });
+  return page.evaluate(async () => {
+    const href = document.querySelector('link[rel="manifest"]')!.getAttribute("href")!;
+    const response = await fetch(href);
+    return response.ok ? ((await response.json()) as { start_url: string; id: string }) : null;
+  });
+}
+
 test.describe("the home-screen icon for a document that came by link", () => {
   test("launches into the link, fragment and all", async ({ page }) => {
     test.slow();
@@ -344,30 +359,17 @@ test.describe("the home-screen icon for a document that came by link", () => {
 
       // The page describes the document asynchronously — it renders an icon
       // and puts it in a cache first — so wait for it rather than racing it.
-      await page.waitForFunction(
-        () =>
-          document.querySelector('link[rel="manifest"]')?.getAttribute("href")?.startsWith("data:"),
-        undefined,
-        { timeout: 60_000 },
-      );
-
-      const manifest = await page.evaluate(() => {
-        const tag = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
-        const href = tag?.getAttribute("href") ?? "";
-        return href.startsWith("data:")
-          ? (JSON.parse(decodeURIComponent(href.slice(href.indexOf(",") + 1))) as {
-              start_url: string;
-              id: string;
-            })
-          : null;
-      });
+      // The manifest is a real file the worker serves: iOS reads the one the
+      // page linked at load, and will not read a data: URL.
+      const manifest = await readManifest(page);
 
       expect(manifest, "a document on screen should describe itself").toBeTruthy();
-      // The whole link, key included — not ?doc=, which needs this device to
-      // already hold the document.
+      // The whole link, key included, so a device that has never held the
+      // document can fetch it — and the document's id beside it, so one that
+      // has opens its own copy without asking the store.
       expect(manifest!.start_url).toContain(`k=${sealed.key}`);
       expect(manifest!.start_url).toContain(`h=${sealed.hash}`);
-      expect(manifest!.start_url).not.toContain("?doc=");
+      expect(manifest!.start_url).toContain(`doc=${built.manifest.documentUuid}`);
       expect(manifest!.id).toContain(built.manifest.documentUuid);
     } finally {
       await new Promise<void>((done) => a.server.close(() => done()));
@@ -385,20 +387,7 @@ test.describe("the home-screen icon for a document that came by link", () => {
     await openFile(page, file);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
-    await page.waitForFunction(
-      () =>
-        document.querySelector('link[rel="manifest"]')?.getAttribute("href")?.startsWith("data:"),
-      undefined,
-      { timeout: 60_000 },
-    );
-
-    const start = await page.evaluate(() => {
-      const href = document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? "";
-      return href.startsWith("data:")
-        ? (JSON.parse(decodeURIComponent(href.slice(href.indexOf(",") + 1))) as { start_url: string })
-            .start_url
-        : "";
-    });
+    const start = (await readManifest(page))!.start_url;
 
     // No link to point at, so the honest answer: the document this device
     // keeps, by its identity.

@@ -21,7 +21,7 @@
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v3";
+const CACHE = "dai-runner-v4";
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
@@ -90,6 +90,51 @@ self.addEventListener("activate", (event) => {
       .then(() => self.clients.claim()),
   );
 });
+
+/**
+ * The shell, introducing itself as the document it is about to open.
+ *
+ * iOS takes a home-screen icon's name, picture and launch address from the
+ * web app manifest the page linked when it *loaded* — a phone test showed
+ * that a manifest swapped in later, or one at a data: URL, is not read, and
+ * the icon came out as the opener's. So when a navigation names a document
+ * this page has described (`?doc=<uuid>`) and the page has put that
+ * document's manifest in the cache, the shell goes out with that manifest
+ * linked, that icon, that title. The cached copy of the shell is never the
+ * rewritten one; this happens on the way out.
+ */
+async function describedAs(response, url) {
+  const uuid = url.searchParams.get("doc");
+  if (!uuid || !/^[0-9a-f-]{36}$/i.test(uuid) || !response || !response.ok) return response;
+  const type = response.headers.get("content-type") || "";
+  if (!type.includes("text/html")) return response;
+
+  const manifestAddress = new URL(`/doc-manifests/${uuid}.webmanifest`, self.location.origin).href;
+  const hit = await caches.match(manifestAddress);
+  if (!hit) return response;
+  let manifest;
+  try {
+    manifest = await hit.json();
+  } catch {
+    return response;
+  }
+  const attr = (value) =>
+    String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const name = attr(manifest.name);
+  const icon = manifest.icons && manifest.icons[0] ? attr(manifest.icons[0].src) : null;
+
+  let html = await response.text();
+  html = html
+    .replace(/<link\s+rel="manifest"\s+href="[^"]*"\s*\/?>/, `<link rel="manifest" href="${attr(manifestAddress)}" />`)
+    .replace(/<meta\s+name="apple-mobile-web-app-title"\s+content="[^"]*"\s*\/?>/, `<meta name="apple-mobile-web-app-title" content="${name}" />`)
+    .replace(/<title>[^<]*<\/title>/, `<title>${name}</title>`);
+  if (icon) {
+    html = html.replace(/<link\s+rel="apple-touch-icon"\s+href="[^"]*"\s*\/?>/, `<link rel="apple-touch-icon" href="${icon}" />`);
+  }
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(html, { status: 200, headers });
+}
 
 /**
  * Where a shared container waits between the share sheet and the page.
@@ -182,12 +227,14 @@ self.addEventListener("fetch", (event) => {
 
   if (isShell) {
     event.respondWith(
-      fromNetwork().catch(() =>
-        caches
-          .match(request)
-          .then((hit) => hit || caches.match(url.pathname))
-          .then((hit) => hit || caches.match("./index.html")),
-      ),
+      fromNetwork()
+        .catch(() =>
+          caches
+            .match(request)
+            .then((hit) => hit || caches.match(url.pathname))
+            .then((hit) => hit || caches.match("./index.html")),
+        )
+        .then((response) => describedAs(response, url)),
     );
     return;
   }

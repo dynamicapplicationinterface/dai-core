@@ -1503,6 +1503,26 @@ async function start(): Promise<void> {
    * the most explicit instruction an address can carry: somebody followed a
    * link with a document in it. See openFromLink.
    */
+  /*
+   * An icon for one document, held here: the copy on this device, first.
+   *
+   * A home-screen icon launches with the document's id in the address and,
+   * when the document came by a link, the link beside it. If this opener
+   * has the document, that is what opens — offline, without a store — and
+   * the link is only for an opener that has never seen it (an iOS
+   * home-screen app gets storage of its own, and starts with nothing).
+   */
+  const wanted = parameters.get("doc");
+  if (wanted) {
+    const held = (await listCartridgesFromLibrary()).find(
+      (candidate) => candidate.documentUuid === wanted,
+    );
+    if (held) {
+      await launchFromLibrary(held);
+      return;
+    }
+  }
+
   const carried = inlineFrom(location.hash);
   if (carried) {
     await openFromLink(carried);
@@ -1591,15 +1611,10 @@ async function start(): Promise<void> {
    * of its own and has never seen the file; the address carries the name so
    * this can ask for exactly that file rather than showing an empty chooser.
    */
-  const wanted = parameters.get("doc");
   if (wanted) {
-    const item = (await listCartridgesFromLibrary()).find(
-      (candidate) => candidate.documentUuid === wanted,
-    );
-    if (item) {
-      await launchFromLibrary(item);
-      return;
-    }
+    // Not held here, and no link to follow (a document that arrived as a
+    // file exists nowhere else): the address carries the name so this can
+    // ask for exactly that file rather than showing an empty chooser.
     const name = parameters.get("name") ?? "your document";
     say(
       `This icon is for ${name}. Open ${name} from your files once — tap Open a file ` +

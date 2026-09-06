@@ -927,19 +927,36 @@ test.describe("keeping it", () => {
     await expect(page.locator("#install")).toBeHidden();
   });
 
-  test("iOS is told the gesture, because iOS has no prompt to fire", async ({ page }) => {
+  test("iOS is walked to the document's own address, then told the gesture", async ({ page }) => {
+    test.slow();
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
 
+    /*
+     * A phone test showed why this is two steps. iOS names a home-screen
+     * icon from the manifest the page linked when it loaded, so on a page
+     * that loaded as the opener, Share would install the opener. The offer
+     * first moves the page to the document's own address — one tap — and
+     * only there says Share.
+     */
+    await expect(page.locator("#install")).toBeVisible();
+    await expect(page.locator("#install-text")).toContainText(/keep/i);
+    await expect(page.locator("#install-go")).toBeVisible();
+    await page.locator("#install-go").click();
+
+    await page.waitForURL(/[?&]doc=/, { timeout: 60_000 });
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     // Named literally. "Install" is a word for something that does not happen
     // here, and somebody following it would look for a button that is not there.
-    await expect(page.locator("#install")).toBeVisible();
+    await expect(page.locator("#install")).toBeVisible({ timeout: 60_000 });
     await expect(page.locator("#install-text")).toContainText("Share");
     await expect(page.locator("#install-text")).toContainText("Add to Home Screen");
     await expect(page.locator("#install-go")).toBeHidden();
+    // And the page was loaded as the document: what iOS reads is already there.
+    expect(await page.getAttribute('link[rel="manifest"]', "href")).toContain("doc-manifests");
   });
 
   test("dismissing it means it is not asked again", async ({ page }) => {

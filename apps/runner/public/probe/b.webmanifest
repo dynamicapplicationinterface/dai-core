@@ -1,2 +1,0 @@
-{ "name": "BMANIFEST", "short_name": "BMANIFEST", "start_url": "/probe/b.html?from=bmanifest#k=frommanifest", "display": "standalone",
-  "icons": [{ "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }] }

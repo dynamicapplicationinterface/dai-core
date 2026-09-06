@@ -1,2 +1,0 @@
-{ "name": "LOADMANIFEST", "short_name": "LOADMANIFEST", "start_url": "/probe/a.html?from=loadmanifest", "display": "standalone",
-  "icons": [{ "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }] }

@@ -75,12 +75,33 @@ export interface Identity {
   link?: string;
 }
 
-/** Where the page puts a document's icon so the worker can serve it by address. */
+/**
+ * Where the page puts a document's icon and manifest so the worker can serve
+ * them by address.
+ *
+ * Addresses, not data: URLs, and at the origin's root rather than relative to
+ * wherever the page happens to be — a page at /d/<id> and a page at / must
+ * name the same file, because the worker looks it up for both.
+ *
+ * A phone test settled what these have to be. iOS reads the *manifest* for a
+ * home-screen icon's name, icon and launch address, and it reads the one the
+ * page linked when it loaded: a manifest swapped in afterwards, or one at a
+ * data: URL, is not consulted. So the manifest is a real file the worker
+ * serves, and the worker links it into the page at load (see sw.js) when the
+ * address names a document.
+ */
 const ICON_CACHE = "dai-doc-icons";
 
 function iconAddress(uuid: string): string {
-  return new URL(`./doc-icons/${uuid}.png`, location.href).href;
+  return new URL(`/doc-icons/${uuid}.png`, location.origin).href;
 }
+
+export function manifestAddress(uuid: string): string {
+  return new URL(`/doc-manifests/${uuid}.webmanifest`, location.origin).href;
+}
+
+/** Set before the page reloads at a document's own address, so the steps are shown after. */
+const KEEP_AFTER_RELOAD = "dai:keep-after-reload";
 
 /**
  * The address an icon for this document launches into.
@@ -94,8 +115,15 @@ function iconAddress(uuid: string): string {
  * link private makes it safe to put on a home screen.
  */
 export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link?: string }): string {
-  if (identity.link) return identity.link;
-  const url = new URL("./", location.href);
+  if (identity.link) {
+    // The link, and the document's id beside it: an opener that already holds
+    // this document opens its own copy — offline, and without asking the
+    // store again — and one that does not follows the link.
+    const url = new URL(identity.link);
+    url.searchParams.set("doc", identity.uuid);
+    return url.href;
+  }
+  const url = new URL("/", location.origin);
   url.searchParams.set("doc", identity.uuid);
   url.searchParams.set("name", identity.name);
   return url.href;
@@ -259,7 +287,7 @@ export async function describeDocument(identity: Identity): Promise<void> {
     name: identity.name,
     short_name: identity.name.length > 12 ? identity.name.slice(0, 12) : identity.name,
     start_url: start,
-    scope: new URL("./", location.href).href,
+    scope: new URL("/", location.origin).href,
     display: "standalone",
     background_color: "#111827",
     theme_color: "#111827",
@@ -273,10 +301,48 @@ export async function describeDocument(identity: Identity): Promise<void> {
           { src: new URL("./icons/icon-512.png", location.href).href, sizes: "512x512", type: "image/png" },
         ],
   };
-  headTag("link", 'rel="manifest"').setAttribute(
-    "href",
-    "data:application/manifest+json," + encodeURIComponent(JSON.stringify(manifest)),
-  );
+  // A real address, served by the worker from the same cache as the icon.
+  // Chrome reads it fresh at install; iOS reads it at the next load of a page
+  // that links it, which `keepHere` arranges.
+  const address = manifestAddress(identity.uuid);
+  try {
+    const cache = await caches.open(ICON_CACHE);
+    await cache.put(
+      address,
+      new Response(JSON.stringify(manifest), { headers: { "content-type": "application/manifest+json" } }),
+    );
+    headTag("link", 'rel="manifest"').setAttribute("href", address);
+  } catch {
+    headTag("link", 'rel="manifest"').setAttribute(
+      "href",
+      "data:application/manifest+json," + encodeURIComponent(JSON.stringify(manifest)),
+    );
+  }
+}
+
+/**
+ * Puts the page at the document's own address before the person is told to
+ * tap Share.
+ *
+ * iOS takes a home-screen icon's name, picture and launch address from the
+ * manifest the page linked *when it loaded*. A document that arrived by
+ * handoff or from a file was loaded as the opener, so the icon would be the
+ * opener's — which is what the first phone test produced. Reloading at
+ * `?doc=<uuid>` (with the link beside it, when there is one) has the worker
+ * link the document's manifest at load, and the document opens from this
+ * device's own copy. Returns true when it navigated; the steps are shown
+ * after the reload instead.
+ */
+function keepHere(identity: Identity & { link?: string }): boolean {
+  const target = launchAddress(identity);
+  if (location.href === target) return false;
+  try {
+    sessionStorage.setItem(KEEP_AFTER_RELOAD, identity.uuid);
+  } catch {
+    /* No session storage: the steps are still in the menu. */
+  }
+  location.assign(target);
+  return true;
 }
 
 /** The opener as itself again, once nothing is open. */
@@ -372,7 +438,8 @@ export function watchForInstall(): Keeper | null {
 
   go.addEventListener("click", () => {
     hide();
-    install();
+    if (install()) return;
+    if (current && platform() === "ios") keepHere(current);
   });
 
   /** Writes the steps for this device into the menu. */
@@ -409,6 +476,24 @@ export function watchForInstall(): Keeper | null {
       // an install from the browser's own menu, later, should still get the
       // right name and icon.
       void describeDocument(identity);
+
+      // Back from the reload `keepHere` asked for: now the page was loaded
+      // with this document's manifest, and the steps are worth showing.
+      let pending: string | null = null;
+      try {
+        pending = sessionStorage.getItem(KEEP_AFTER_RELOAD);
+        if (pending) sessionStorage.removeItem(KEEP_AFTER_RELOAD);
+      } catch {
+        /* Nothing pending. */
+      }
+      if (pending === identity.uuid) {
+        explain();
+        if (platform() === "ios") {
+          text.textContent = `Now tap Share, then Add to Home Screen — ${identity.name} will be the icon.`;
+          go.hidden = true;
+          bar.hidden = false;
+        }
+      }
     },
 
     offer() {
@@ -433,10 +518,18 @@ export function watchForInstall(): Keeper | null {
         go.hidden = false;
       } else if (platform() === "ios") {
         const lead = again ? `Save ${identity.name} to your apps` : `To keep ${identity.name}`;
-        text.textContent = installShareStorage()
-          ? `${lead}: tap Share, then Add to Home Screen.`
-          : `${lead}: tap ⋯ for the steps — Share, Add to Home Screen, then open the file once.`;
-        go.hidden = true;
+        if (location.href !== launchAddress(identity)) {
+          // Not yet at the document's own address, so Share would install the
+          // opener. One tap moves the page there; the next line says Share.
+          text.textContent = `${lead} on your Home Screen.`;
+          go.textContent = "Keep it";
+          go.hidden = false;
+        } else {
+          text.textContent = installShareStorage()
+            ? `${lead}: tap Share, then Add to Home Screen.`
+            : `${lead}: tap ⋯ for the steps — Share, Add to Home Screen, then open the file once.`;
+          go.hidden = true;
+        }
       } else {
         // A desktop browser with no install support has nothing useful to offer
         // unprompted; the menu still says how.
@@ -447,6 +540,7 @@ export function watchForInstall(): Keeper | null {
 
     keep() {
       if (install()) return;
+      if (current && platform() === "ios" && keepHere(current)) return;
       explain();
     },
   };
