@@ -36,6 +36,16 @@ export type { Host } from "./inline.js";
  */
 export const INLINE_CAP = 32 * 1024;
 
+/**
+ * The cap for an address nothing linkifies: a home-screen icon's launch
+ * address, read by the operating system out of a manifest and never pasted
+ * into a chat. What limits it is the browser's own URL handling, which on
+ * every current engine is measured in megabytes. A phone test settled that
+ * the fragment survives Add to Home Screen; this is the size at which an
+ * icon still carries its document rather than asking for the file.
+ */
+export const LAUNCH_CAP = 1024 * 1024;
+
 /** The fragment key. `#a=` for the application itself, carried in the link. */
 export const INLINE_KEY = "a";
 
@@ -70,9 +80,10 @@ export async function inlineLink(
   html: string,
   opener: string,
   host: Host,
+  cap: number = INLINE_CAP,
 ): Promise<string | undefined> {
   const value = await encodeInline(html, host);
-  if (value.length > INLINE_CAP) return undefined;
+  if (value.length > cap) return undefined;
   return `${opener.replace(/[#?].*$/, "").replace(/\/$/, "")}/#${INLINE_KEY}=${value}`;
 }
 

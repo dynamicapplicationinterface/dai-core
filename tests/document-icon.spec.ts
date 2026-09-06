@@ -158,6 +158,50 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     expect(manifest.body.icons[0]!.src).toMatch(/^data:image\/png;base64,/);
   });
 
+  test("a document too big for a chat link still fits in its icon", async ({ browser, page }) => {
+    /*
+     * The first custom app somebody kept was bigger than a chat link allows,
+     * and its icon landed on "open the file once". An icon's address is read
+     * by the operating system, not a chat, so it has its own cap.
+     */
+    test.slow();
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { compileDirectory } = await import("../src/compile.js");
+    const { INLINE_CAP } = await import("../src/link.js");
+    // Random bytes defeat the carrier's compression, so this stays big.
+    const filler = Buffer.from(crypto.getRandomValues(new Uint8Array(60 * 1024))).toString("base64");
+    const dir = mkdtempSync(join(tmpdir(), "dai-bigicon-"));
+    writeFileSync(join(dir, "index.html"), `<!doctype html><meta charset="utf-8"><p>big</p><!-- ${filler} -->`, "utf8");
+    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Big one" });
+    const file = join(dir, "big.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await openFile(page, file);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.waitForFunction(
+      () => (document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? "").includes("doc-manifests"),
+      undefined,
+      { timeout: 60_000 },
+    );
+    await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, { timeout: 60_000 });
+    const start = await page.evaluate(async () => {
+      const href = document.querySelector('link[rel="manifest"]')!.getAttribute("href")!;
+      return ((await (await fetch(href)).json()) as { start_url: string }).start_url;
+    });
+    expect(start).toContain("#a=");
+    expect(start.length).toBeGreaterThan(INLINE_CAP);
+
+    const empty = await browser.newContext();
+    const launched = await empty.newPage();
+    await launched.goto(start);
+    await expect(launched.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(launched).toHaveTitle("Big one");
+    await empty.close();
+  });
+
   test("an icon opens its document on a device that holds nothing, without asking again", async ({ browser, page }) => {
     /*
      * An iOS home-screen app starts with storage of its own and nothing in

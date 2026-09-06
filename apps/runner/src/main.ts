@@ -8,7 +8,7 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
-import { decodeInline, INLINE_CAP, inlineFrom } from "../../../src/link.js";
+import { decodeInline, INLINE_CAP, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
 import { openFromStore, referenceFrom, strippedReference } from "../../../src/store.js";
@@ -319,7 +319,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
    * an icon for a handed-off document opening on the empty chooser. A link
    * that carries the document carries it there too.
    */
-  const link = arrivedByLink ?? (await linkForDocument(cartridge.html));
+  const link = arrivedByLink ?? (await launchLinkForDocument(cartridge.html));
   keeper?.describe({
     uuid: cartridge.manifest.documentUuid,
     name,
@@ -1101,6 +1101,19 @@ async function linkForDocument(html: string): Promise<string | undefined> {
     host: { template: HOST_TEMPLATE, runtime: HOST_RUNTIME },
   });
   return handoff.kind === "inline" ? handoff.link : undefined;
+}
+
+/**
+ * The address an icon launches with, for a document that came as a file.
+ *
+ * Not the chat link: that one is capped where linkifiers cut, and a custom
+ * app a person had made — the first thing anybody keeps — is bigger than a
+ * chat allows and was landing its icon on "open the file once". An icon's
+ * address is read by the operating system, so it carries the whole document
+ * up to a cap the browser sets, not a chat.
+ */
+async function launchLinkForDocument(html: string): Promise<string | undefined> {
+  return inlineLink(html, location.origin + "/", { template: HOST_TEMPLATE, runtime: HOST_RUNTIME }, LAUNCH_CAP);
 }
 
 async function copyLink(): Promise<void> {
