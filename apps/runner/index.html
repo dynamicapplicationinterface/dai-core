@@ -297,7 +297,7 @@
         gap: 6px;
         padding: 7px 13px;
         border-radius: 999px;
-        border-color: var(--accent);
+        border: 0;
         background: var(--accent);
         color: var(--on-accent);
         font-weight: 600;
@@ -305,7 +305,7 @@
         white-space: nowrap;
         flex: 0 0 auto;
       }
-      #keep-cta:hover { background: var(--accent-press); border-color: var(--accent-press); }
+      #keep-cta:hover { background: var(--accent-press); }
       #keep-cta svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
       #keep-cta[hidden], body:not(.loaded) #keep-cta { display: none; }
       /* Once, after the first use: the eye goes to it and nothing interrupts. */
@@ -469,8 +469,11 @@
       }
       #card-open:hover { background: var(--accent-press); }
       /* Focused on arrival so a keyboard can press it; a ring only when a keyboard is what got here. */
-      #card-open:focus { outline: none; }
-      #card-open:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+      /* No ring: WebKit treats a script's focus() as keyboard focus and drew a
+         black stroke around the one control on the card. A soft accent halo
+         for a real keyboard user; nothing for a thumb. */
+      #card-open:focus, #keep-cta:focus, #keep-done:focus { outline: none; }
+      #card-open:focus-visible, #keep-cta:focus-visible, #keep-done:focus-visible { box-shadow: 0 0 0 4px rgb(0 122 255 / 0.28); }
 
       /* The facts row: what a store page shows in a strip, this shows about the file. */
       #card-facts {
