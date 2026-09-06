@@ -134,31 +134,72 @@ async function sign(
   return { url, headers: { ...all, authorization } };
 }
 
+/** What a presigned PUT permits, and what the uploader has to send. */
+export interface PresignedPut {
+  url: string;
+  /**
+   * The headers the upload must carry, exactly. Every one of them is inside
+   * the signature, so a body that is a different length, a different content
+   * type or a different SHA-256 from what was declared is refused by the
+   * bucket itself, without this project's code being in the path.
+   */
+  headers: Record<string, string>;
+}
+
 /**
  * A URL a browser can PUT to for a few minutes, with no secret in the page.
  *
  * Presigned rather than proxied: a function that relays the body has a body
  * size limit, and a document is allowed to be five megabytes.
+ *
+ * What the signature binds, and why each is there:
+ *
+ * - `content-length` — the size the caller declared. Without it the cap on
+ *   the presign endpoint is advice: a request declaring a kilobyte could put
+ *   gigabytes under the URL it was given. Verified against production before
+ *   this was added.
+ * - `x-amz-content-sha256` — the digest of the body, as a real value rather
+ *   than `UNSIGNED-PAYLOAD`. The key an object is stored under *is* a SHA-256,
+ *   and nothing else in the path checks that the bytes hash to it: the store's
+ *   own admission runs in the uploader's browser, which is to say it runs at
+ *   the uploader's discretion. Binding the digest here makes the name true.
+ * - `cache-control` — content-addressed objects are immutable, and an object
+ *   uploaded without saying so is refetched on every open.
+ * - `content-type` and `host`, as before.
  */
 export async function presignPut(
   options: S3StoreOptions,
   key: string,
   contentType: string,
+  body: { size: number; sha256: string },
   expiresSeconds = 300,
   now = new Date(),
-): Promise<string> {
+): Promise<PresignedPut> {
   const endpoint = new URL(options.endpoint);
   const host = options.pathStyle === false ? `${options.bucket}.${endpoint.host}` : endpoint.host;
   const path = (options.pathStyle === false ? "" : `/${options.bucket}`) + "/" + key.split("/").map(rfc3986).join("/");
   const { date, time } = stamp(now);
   const scope = `${date}/${options.region}/s3/aws4_request`;
 
+  // Sorted by name, which SigV4 requires of both the header list and the
+  // canonical header block.
+  const signedHeaders: Record<string, string> = {
+    "cache-control": OBJECT_HEADERS["cache-control"],
+    "content-length": String(body.size),
+    "content-type": contentType,
+    host,
+    "x-amz-content-sha256": body.sha256.toLowerCase(),
+  };
+  const names = Object.keys(signedHeaders).sort();
+  const canonicalHeaders = names.map((name) => `${name}:${signedHeaders[name]!.trim()}\n`).join("");
+  const signedHeaderList = names.join(";");
+
   const query: Record<string, string> = {
     "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
     "X-Amz-Credential": `${options.accessKeyId}/${scope}`,
     "X-Amz-Date": time,
     "X-Amz-Expires": String(expiresSeconds),
-    "X-Amz-SignedHeaders": "content-type;host",
+    "X-Amz-SignedHeaders": signedHeaderList,
   };
   const canonicalQuery = Object.keys(query)
     .sort()
@@ -168,9 +209,11 @@ export async function presignPut(
     "PUT",
     path,
     canonicalQuery,
-    `content-type:${contentType}\nhost:${host}\n`,
-    "content-type;host",
-    "UNSIGNED-PAYLOAD",
+    canonicalHeaders,
+    signedHeaderList,
+    // The payload hash in the canonical request is the same declared digest.
+    // A body that does not hash to it fails the bucket's own check.
+    body.sha256.toLowerCase(),
   ].join("\n");
   const stringToSign = ["AWS4-HMAC-SHA256", time, scope, await sha256(canonicalRequest)].join("\n");
 
@@ -180,7 +223,12 @@ export async function presignPut(
   signingKey = await hmac(signingKey, "aws4_request");
   const signature = hex(await hmac(signingKey, stringToSign));
 
-  return `${endpoint.protocol}//${host}${path}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  // `host` is set by the browser and must not be sent by hand.
+  const { host: _host, ...toSend } = signedHeaders;
+  return {
+    url: `${endpoint.protocol}//${host}${path}?${canonicalQuery}&X-Amz-Signature=${signature}`,
+    headers: toSend,
+  };
 }
 
 /** The headers every stored object carries. Content-addressed, so immutable is true. */

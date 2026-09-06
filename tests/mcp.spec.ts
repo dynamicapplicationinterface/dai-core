@@ -236,6 +236,31 @@ test.describe("the boundary", () => {
     expect(result.isError).toBe(true);
     expect(result.text).toMatch(/outside/i);
   });
+
+  /*
+   * The two ways out that `..` does not cover.
+   *
+   * `path.relative` from one Windows drive to another returns the absolute
+   * target, which starts with a letter and not with `..`, and resolving it
+   * against the root hands it straight back — so `D:\anything` and
+   * `\\server\share\anything` both walked through a check that was looking
+   * for dots. A model-driven outputPath could write to any drive. Found in
+   * review, reproduced with the function verbatim, closed by refusing an
+   * absolute relative path by name.
+   */
+  test("refuses another drive and a UNC path, not only a dotted escape", async () => {
+    test.skip(process.platform !== "win32", "drive letters and UNC paths are Windows");
+    const root = workspace();
+    for (const outputPath of ["D:\\escaped.dai.html", "\\\\localhost\\c$\\escaped.dai.html"]) {
+      const result = await call(root, "create_dai_app", {
+        files: { "index.html": APP },
+        appName: "Escape",
+        outputPath,
+      });
+      expect(result.isError, outputPath).toBe(true);
+      expect(result.text, outputPath).toMatch(/outside/i);
+    }
+  });
 });
 
 test.describe("verify_dai_app", () => {

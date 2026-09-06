@@ -36,7 +36,7 @@ import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 import { describeSelf, watchForInstall } from "./install.js";
 import { hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
-import { checkTrust, forgetTrust } from "../../../src/trust.js";
+import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
   deleteDatabaseFromOpfs,
@@ -446,7 +446,7 @@ async function openFromUrl(address: string): Promise<void> {
  * Removed as it is read: a file left here would be opened again by the next
  * launch, which is somebody's document reappearing without being asked for.
  */
-async function collectSharedContainer(): Promise<File | null> {
+async function collectSharedContainer(): Promise<{ file: File; from: string } | null> {
   try {
     const cache = await caches.open("dai-shared-v1");
     const response = await cache.match("./shared-container");
@@ -455,9 +455,29 @@ async function collectSharedContainer(): Promise<File | null> {
     const name = decodeURIComponent(response.headers.get("x-dai-name") ?? "shared.dai");
     const bytes = await response.arrayBuffer();
     await cache.delete("./shared-container");
-    return new File([bytes], name, {
-      type: response.headers.get("content-type") ?? "application/octet-stream",
-    });
+
+    /*
+     * Who posted it, as far as the worker could tell.
+     *
+     * A share from the device arrives with no referrer; a form on another
+     * website arrives with that site's origin. The card says which, because
+     * "shared to this app" describes something the person did, and a web page
+     * posting a file into this app is not that. A page can withhold its
+     * referrer, so this is a label rather than a gate — the gate is the card,
+     * and the key is not recorded until the person presses Open.
+     */
+    const referrer = response.headers.get("x-dai-referrer") ?? "";
+    const from =
+      referrer && referrer !== location.origin
+        ? `Posted into this app by ${referrer}. Nothing is uploaded — it runs on this device.`
+        : "Shared to this app. Nothing is uploaded — it runs on this device.";
+
+    return {
+      file: new File([bytes], name, {
+        type: response.headers.get("content-type") ?? "application/octet-stream",
+      }),
+      from,
+    };
   } catch {
     return null;
   }
@@ -526,7 +546,17 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * address that serves an update is an address that can serve an
      * impersonation.
      */
-    const verdict = await checkTrust(trustStore(), cartridge);
+    /*
+     * Looked at, not yet recorded.
+     *
+     * The pin is made after the person presses Open — the same rule the
+     * publisher record already follows, and for the same reason. Made here,
+     * on arrival, it was a pin nobody agreed to: a link loaded and closed
+     * without a tap left the document's identity bound to whatever key that
+     * link carried, and the genuine document then read as an impersonation,
+     * with nothing in the library to delete and so no way to undo it.
+     */
+    const verdict = await trustVerdict(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
       say(verdict.message, true);
       slot.classList.remove("busy");
@@ -605,6 +635,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       });
       slot.classList.add("busy");
     }
+    // Agreed to, whether by pressing Open or by having kept it before. Only
+    // now is a first sighting worth remembering.
+    if (verdict.status === "unknown") await pinTrust(trustStore(), cartridge);
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     if (succession?.inherit) {
@@ -1424,9 +1457,7 @@ async function start(): Promise<void> {
   if (parameters.has("shared")) {
     const collected = await collectSharedContainer();
     if (collected) {
-      await ingest(collected, {
-                from: "Shared to this app. Nothing is uploaded — it runs on this device.",
-      });
+      await ingest(collected.file, { from: collected.from });
       return;
     }
     say("Nothing arrived from the share. Try opening the file instead.", true);

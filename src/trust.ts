@@ -57,33 +57,56 @@ export type TrustVerdict =
   | { status: "mismatch"; message: string; expected?: string; received?: string };
 
 /**
- * Decides whether a verified container may be mounted, recording the key on a
- * first sighting.
+ * What a host sees before it has decided anything: the verdicts above, or
+ * `unknown` for a document this host has never met, which the host may pin
+ * once the person has agreed to open it — and not before.
+ */
+export type TrustLook = TrustVerdict | { status: "unknown"; fingerprint?: string };
+
+/** The key a container presents, for comparison with a pin. */
+function presentedKey(container: VerifiedContainer): string | null {
+  // The full key rather than the fingerprint: a truncation is a weaker thing to
+  // compare than the key itself, for no saving.
+  return container.signature === "valid" ? (container.publicKey ?? null) : null;
+}
+
+/**
+ * Records the key a document was first seen with. Idempotent: a store keeps
+ * its first pin and ignores a second.
+ *
+ * Called after consent, not before. A pin made when a link was merely followed
+ * is a pin nobody agreed to, and a review found what that allows: a link
+ * carrying a stranger's copy of a document, loaded and closed without a tap,
+ * would leave the real document reading as an impersonation ever after — with
+ * nothing in the library to delete, and so no way to undo it.
+ */
+export async function pinTrust(store: TrustStore, container: VerifiedContainer): Promise<void> {
+  await store.pin(container.manifest.documentUuid, {
+    publicKey: presentedKey(container),
+    fingerprint: container.publicKeyFingerprint ?? null,
+    appName: container.manifest.appName ?? null,
+    firstSeen: Date.now(),
+  });
+}
+
+/**
+ * Compares a verified container with what this host remembers, and writes
+ * nothing.
  *
  * Runs *after* verification, never instead of it. A container whose signature
  * does not check out has already been refused; this answers the different
  * question of whether the key that checked out is the one this host expects.
  */
-export async function checkTrust(
+export async function trustVerdict(
   store: TrustStore,
   container: VerifiedContainer,
-): Promise<TrustVerdict> {
+): Promise<TrustLook> {
   const uuid = container.manifest.documentUuid;
-  // The full key rather than the fingerprint: a truncation is a weaker thing to
-  // compare than the key itself, for no saving.
-  const presented = container.signature === "valid" ? (container.publicKey ?? null) : null;
+  const presented = presentedKey(container);
 
   const pinned = await store.get(uuid);
 
-  if (!pinned) {
-    await store.pin(uuid, {
-      publicKey: presented,
-      fingerprint: container.publicKeyFingerprint ?? null,
-      appName: container.manifest.appName ?? null,
-      firstSeen: Date.now(),
-    });
-    return { status: "pinned", fingerprint: container.publicKeyFingerprint };
-  }
+  if (!pinned) return { status: "unknown", fingerprint: container.publicKeyFingerprint };
 
   if (pinned.publicKey === presented) {
     return {
@@ -127,6 +150,24 @@ export async function checkTrust(
     expected: pinned.fingerprint ?? undefined,
     received: container.publicKeyFingerprint,
   };
+}
+
+/**
+ * Looks, and pins a first sighting on the spot.
+ *
+ * For a host where the look and the consent are the same act — the desktop
+ * app, which opens what it was handed; the opener's library, whose entries
+ * were agreed to when they were kept. A host that shows a card first should
+ * call `trustVerdict` and `pinTrust` separately, with the card in between.
+ */
+export async function checkTrust(
+  store: TrustStore,
+  container: VerifiedContainer,
+): Promise<TrustVerdict> {
+  const look = await trustVerdict(store, container);
+  if (look.status !== "unknown") return look;
+  await pinTrust(store, container);
+  return { status: "pinned", fingerprint: look.fingerprint };
 }
 
 /** Drops a pin so the next open trusts afresh. For a deliberate key rotation. */

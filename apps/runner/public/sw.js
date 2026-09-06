@@ -106,6 +106,29 @@ self.addEventListener("fetch", (event) => {
   const target = new URL(request.url);
 
   if (request.method === "POST" && target.pathname.endsWith("/shared")) {
+    /*
+     * Anyone can post here, and the worker cannot tell who.
+     *
+     * A plain cross-site form needs no permission to POST a file to this
+     * address and navigate the person in to collect it. The header that would
+     * say so — Sec-Fetch-Site — is attached by the browser *after* a worker
+     * has seen the request, so a check on it here runs against nothing; a
+     * test proved that by posting from another origin straight through one.
+     * What a worker does see is the referrer, which a page can withhold.
+     *
+     * So this does not gate. It records the referrer for the page to label
+     * the card with, and the real protection is that the opener no longer
+     * records a document's key until the person presses Open: a file posted
+     * in by a stranger's website gets a card that says where it came from,
+     * and nothing else happens unless they choose it.
+     */
+    const origin = (() => {
+      try {
+        return request.referrer ? new URL(request.referrer).origin : "";
+      } catch {
+        return "";
+      }
+    })();
     event.respondWith(
       (async () => {
         try {
@@ -121,6 +144,7 @@ self.addEventListener("fetch", (event) => {
                 headers: {
                   "content-type": file.type || "application/octet-stream",
                   "x-dai-name": encodeURIComponent(file.name || "shared.dai"),
+                  "x-dai-referrer": origin,
                 },
               }),
             );

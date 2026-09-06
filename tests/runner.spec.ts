@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
+import { parseContainer } from "../src/container.js";
 import { openFile } from "./open.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -296,6 +297,95 @@ test.describe("cartridge ingestion", () => {
     await page.click("#card-open");
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await expect(page.locator("#cartridge")).toBeVisible();
+  });
+
+  test("a container another site posts into it is labelled, and pins nothing until opened", async ({
+    page,
+  }) => {
+    /*
+     * The share target is a POST endpoint, and a plain cross-site form can
+     * POST to it with no permission from anyone, then navigate the person in
+     * to collect it. A worker cannot refuse that: the header that would say
+     * where a request came from is attached after the worker has seen it —
+     * the first version of this test posted straight through a check on it.
+     *
+     * So the properties held here are the ones that can be: the card says
+     * where the file came from, in words that do not claim the person shared
+     * it; and the document's key is not recorded until they press Open, so a
+     * stranger's copy loaded and closed leaves no trace that would make the
+     * genuine document read as an impersonation later.
+     */
+    await page.goto(RUNNER_URL);
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, {
+      timeout: 30_000,
+    });
+
+    // Another site: the website's origin, a different port and so a different
+    // origin. A form submitted from here is a navigation into the opener's
+    // scope, which its worker intercepts exactly as it does a share from the OS.
+    await page.goto("http://localhost:5176/");
+    const html = readFileSync(CONTAINER, "utf8");
+    await Promise.all([
+      page.waitForURL(/shared=1/, { timeout: 30_000 }),
+      page.evaluate(
+        ({ body, target }: { body: string; target: string }) => {
+          const form = document.createElement("form");
+          form.method = "POST";
+          form.enctype = "multipart/form-data";
+          form.action = target;
+          const input = document.createElement("input");
+          input.type = "file";
+          input.name = "container";
+          const files = new DataTransfer();
+          files.items.add(new File([body], "shared.dai.html", { type: "text/html" }));
+          input.files = files.files;
+          form.appendChild(input);
+          document.body.appendChild(form);
+          form.submit();
+        },
+        { body: html, target: `${RUNNER_URL}shared` },
+      ),
+    ]);
+
+    // On the card, and the card says who posted it — not "shared to this app".
+    await expect(page.locator("#card-open")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#card-from")).toContainText("Posted into this app by http://localhost:5176");
+    await expect(page.locator("#card-from")).not.toContainText("Shared to this app");
+
+    // Nothing recorded yet: the pin waits for the person.
+    const uuid = parseContainer(html).manifest.documentUuid;
+    const pinnedBefore = await page.evaluate(
+      (id) =>
+        new Promise<boolean>((resolve) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const db = open.result;
+            const get = db.transaction("pins", "readonly").objectStore("pins").get(id);
+            get.onsuccess = () => resolve(get.result !== undefined);
+            get.onerror = () => resolve(false);
+          };
+          open.onerror = () => resolve(false);
+        }),
+      uuid,
+    );
+    expect(pinnedBefore, "a document that was only shown must not be pinned").toBe(false);
+
+    await page.click("#card-open");
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    const pinnedAfter = await page.evaluate(
+      (id) =>
+        new Promise<boolean>((resolve) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const get = open.result.transaction("pins", "readonly").objectStore("pins").get(id);
+            get.onsuccess = () => resolve(get.result !== undefined);
+            get.onerror = () => resolve(false);
+          };
+          open.onerror = () => resolve(false);
+        }),
+      uuid,
+    );
+    expect(pinnedAfter, "pressing Open is what records the key").toBe(true);
   });
 
   test("does not reopen a shared container on the next launch", async ({ page }) => {

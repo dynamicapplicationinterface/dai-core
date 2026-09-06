@@ -35,6 +35,7 @@
  * is narrower and it should stay narrow.
  */
 import { presignPut } from "../../../src/store-s3.js";
+import { ICON_CAP } from "../../../src/store.js";
 
 /*
  * The edge runtime, and it has to be.
@@ -150,7 +151,7 @@ export default async function handler(request: Request): Promise<Response> {
     );
   }
 
-  let body: { hash?: unknown; size?: unknown; kind?: unknown };
+  let body: { hash?: unknown; size?: unknown; kind?: unknown; sha256?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -160,21 +161,6 @@ export default async function handler(request: Request): Promise<Response> {
   const hash = typeof body.hash === "string" ? body.hash.toLowerCase() : "";
   if (!/^[0-9a-f]{64}$/.test(hash)) {
     return json({ error: "hash must be 64 hex characters: the SHA-256 of what you are storing." }, 400);
-  }
-
-  const size = typeof body.size === "number" ? body.size : NaN;
-  if (!Number.isFinite(size) || size <= 0) {
-    return json({ error: "size must be the number of bytes you are about to upload." }, 400);
-  }
-  if (size > MAX_BYTES) {
-    return json(
-      {
-        error:
-          `That is ${(size / 1024 / 1024).toFixed(1)} MB and the limit is ` +
-          `${MAX_BYTES / 1024 / 1024} MB. Send the file itself instead.`,
-      },
-      413,
-    );
   }
 
   /*
@@ -190,6 +176,58 @@ export default async function handler(request: Request): Promise<Response> {
   const contentType =
     kind === "sidecar" ? "application/json" : kind === "icon" ? "image/png" : "application/octet-stream";
 
+  /*
+   * The size, and the digest, both signed into the URL.
+   *
+   * Neither was, and a review checked what that meant against production: a
+   * request declaring one kilobyte was granted a URL, sixty-four kilobytes
+   * went through it, and the object now sits under a name that is not its
+   * hash. The cap was advice and the address was a fiction.
+   *
+   * So both are bound by the bucket rather than trusted from the caller. The
+   * size goes into the signature as `content-length`; a body of any other
+   * length is refused by the store. The digest goes in as
+   * `x-amz-content-sha256`; a body that does not hash to it is refused the
+   * same way. For the blob the digest *is* the key, so it is not asked for:
+   * the name and the content are one claim. For the sidecar and the icon the
+   * caller declares it, and the store holds them to it.
+   */
+  const size = typeof body.size === "number" ? body.size : NaN;
+  if (!Number.isFinite(size) || size <= 0 || !Number.isInteger(size)) {
+    return json({ error: "size must be the number of bytes you are about to upload." }, 400);
+  }
+  // A caption, not an asset: the same cap the store's own admission applies.
+  const cap = kind === "icon" ? ICON_CAP : MAX_BYTES;
+  if (size > cap) {
+    return json(
+      {
+        error:
+          kind === "icon"
+            ? `A preview icon must be under ${ICON_CAP / 1024} KB, and that is ${(size / 1024).toFixed(0)} KB.`
+            : `That is ${(size / 1024 / 1024).toFixed(1)} MB and the limit is ` +
+              `${MAX_BYTES / 1024 / 1024} MB. Send the file itself instead.`,
+      },
+      413,
+    );
+  }
+
+  let sha256: string;
+  if (kind === "blob") {
+    if (typeof body.sha256 === "string" && body.sha256.toLowerCase() !== hash) {
+      return json({ error: "For the document itself, sha256 must equal hash: the name is the digest." }, 400);
+    }
+    sha256 = hash;
+  } else {
+    const declared = typeof body.sha256 === "string" ? body.sha256.toLowerCase() : "";
+    if (!/^[0-9a-f]{64}$/.test(declared)) {
+      return json(
+        { error: `sha256 must be the SHA-256 of the ${kind} you are about to upload, as 64 hex characters.` },
+        400,
+      );
+    }
+    sha256 = declared;
+  }
+
   const address =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     request.headers.get("x-real-ip") ??
@@ -198,19 +236,23 @@ export default async function handler(request: Request): Promise<Response> {
     return json({ error: "Too many uploads from here in the last hour." }, 429);
   }
 
-  const url = await presignPut(
+  const signed = await presignPut(
     { endpoint, bucket, region: process.env.DAI_STORE_REGION ?? "auto", accessKeyId, secretAccessKey, publicBase, pathStyle: true },
     key,
     contentType,
+    { size, sha256 },
     EXPIRES_SECONDS,
   );
 
   return json(
     {
-      url,
-      // What the caller must send, so a signature mismatch is not a mystery.
+      url: signed.url,
+      // What the caller must send, exactly: every one of these is inside the
+      // signature, so a mismatch is refused by the bucket rather than by us.
+      // A browser sets content-length itself from the body and ignores one
+      // set by hand, which is fine — the body was declared at this size.
       method: "PUT",
-      headers: { "content-type": contentType },
+      headers: signed.headers,
       expiresIn: EXPIRES_SECONDS,
       // Where it will be readable once written. Public, no credential.
       href: new URL(key, publicBase.endsWith("/") ? publicBase : publicBase + "/").href,

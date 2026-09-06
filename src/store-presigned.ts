@@ -13,6 +13,7 @@
  * credential in the request, which is why the opener can be a static page that
  * anybody mirrors.
  */
+import { sha256Hex } from "./core.js";
 import { admit, type PreviewIcon, type Sidecar, type Store } from "./store.js";
 
 export interface PresignedStoreOptions {
@@ -38,11 +39,20 @@ export function presignedStore(options: PresignedStoreOptions): Store {
   const doFetch = options.fetchImpl ?? fetch;
   const publicBase = options.publicBase.endsWith("/") ? options.publicBase : options.publicBase + "/";
 
-  const mint = async (hash: string, size: number, kind: "blob" | "sidecar" | "icon"): Promise<Minted> => {
+  /*
+   * Asks for a URL bound to exactly these bytes.
+   *
+   * The size and the digest travel with the request and come back inside the
+   * signature, so what is uploaded is what was declared or the bucket refuses
+   * it. Computed here from the bytes themselves rather than taken from the
+   * caller: a store that trusted a client's word about its own upload would
+   * be a file host with extra steps, which is what the endpoint used to be.
+   */
+  const mint = async (hash: string, bytes: Uint8Array, kind: "blob" | "sidecar" | "icon"): Promise<Minted> => {
     const response = await doFetch(options.presignUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hash, size, kind }),
+      body: JSON.stringify({ hash, size: bytes.length, kind, sha256: await sha256Hex(bytes) }),
     });
 
     if (!response.ok) {
@@ -60,9 +70,13 @@ export function presignedStore(options: PresignedStoreOptions): Store {
   };
 
   const put = async (bytes: Uint8Array, minted: Minted): Promise<void> => {
+    // Every signed header except content-length, which a browser refuses to
+    // let a page set and computes from the body itself. The body is the bytes
+    // the size was declared from, so the two agree.
+    const { "content-length": _length, ...headers } = minted.headers;
     const response = await doFetch(minted.url, {
       method: minted.method,
-      headers: minted.headers,
+      headers,
       body: bytes as never,
     });
     if (!response.ok) {
@@ -80,13 +94,13 @@ export function presignedStore(options: PresignedStoreOptions): Store {
       // not consume an upload slot to find that out.
       await admit(hash, ciphertext, sidecar, icon);
 
-      const blob = await mint(hash, ciphertext.length, "blob");
+      const blob = await mint(hash, ciphertext, "blob");
       await put(ciphertext, blob);
 
       const sidecarBytes = new TextEncoder().encode(JSON.stringify(sidecar));
-      await put(sidecarBytes, await mint(hash, sidecarBytes.length, "sidecar"));
+      await put(sidecarBytes, await mint(hash, sidecarBytes, "sidecar"));
 
-      if (icon) await put(icon.png, await mint(hash, icon.png.length, "icon"));
+      if (icon) await put(icon.png, await mint(hash, icon.png, "icon"));
 
       return blob.href;
     },

@@ -18,8 +18,8 @@
  * not justify putting an SDK into everyone's dependency tree. The subset is
  * exactly: initialize, tools/list, tools/call, and ping.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { compileDirectory, CompileError, formatBytes, packagedAsset, sanitizeFileName } from "./compile.js";
 import { SchemaError } from "./schema.js";
 import { applicationFiles, auditContainer, looksSectioned, parseContainer } from "./container.js";
@@ -206,11 +206,27 @@ export interface ServerOptions {
   root: string;
 }
 
-/** Refused because it would escape the root. */
+/**
+ * Refused because it would escape the root.
+ *
+ * Three ways out, and the first two were open. `path.relative` between two
+ * Windows drives — `C:\root` and `D:\evil` — returns the absolute target,
+ * which does not start with `..`, and resolving it against the root gives it
+ * back unchanged; the same for a UNC path. So the check that looked for `..`
+ * let a model write to any drive on the machine. The absolute case is now
+ * refused by name. The third way is a symlink inside the root pointing out
+ * of it, which is closed by comparing real paths where the target exists.
+ */
 function withinRoot(root: string, target: string): string {
   const absolute = resolve(root, target);
   const rel = relative(root, absolute);
-  if (rel.startsWith("..") || resolve(root, rel) !== absolute) {
+  const escapes = rel.startsWith("..") || isAbsolute(rel) || resolve(root, rel) !== absolute;
+  const realRoot = existsSync(root) ? realpathSync.native(root) : root;
+  const realTarget = existsSync(absolute) ? realpathSync.native(absolute) : undefined;
+  const escapesByLink =
+    realTarget !== undefined &&
+    (relative(realRoot, realTarget).startsWith("..") || isAbsolute(relative(realRoot, realTarget)));
+  if (escapes || escapesByLink) {
     throw new CompileError(
       `Refusing to touch ${absolute}: it is outside ${root}, which this server is limited to.`,
     );

@@ -112,7 +112,13 @@ test.describe("a document sealed for a store", () => {
   test("a wrong key is refused as the key's fault, not the store's", async () => {
     const built = await chart();
     const sealed = await sealForStore(built.html);
-    const wrong = sealed.key.slice(0, -1) + (sealed.key.endsWith("A") ? "B" : "A");
+    /*
+     * The first character, not the last. A 32-byte key is 43 base64url
+     * characters, and the last one carries two key bits and four of padding:
+     * flipping it from A to B changed only padding, decoded to the same key,
+     * decrypted successfully, and failed this test for one key in sixteen.
+     */
+    const wrong = (sealed.key.startsWith("A") ? "B" : "A") + sealed.key.slice(1);
 
     const refusal = await openFromStore(sealed.blob, sealed.hash, wrong).catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(ContainerError);
