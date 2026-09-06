@@ -115,10 +115,39 @@ export default async function handler(request: Request): Promise<Response> {
   const secretAccessKey = process.env.DAI_STORE_SECRET_ACCESS_KEY;
   const publicBase = process.env.DAI_STORE_PUBLIC_BASE;
 
-  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey || !publicBase) {
-    // Said plainly, because the alternative is a signed URL that 403s later
-    // and a person told their document failed to upload.
-    return json({ error: "This deployment has no store configured." }, 503);
+  /*
+   * Which ones are missing, by name.
+   *
+   * Names only, never values — a diagnostic endpoint that echoed a secret
+   * would be a worse bug than the one it is helping to find. But "no store
+   * configured" on its own sends somebody to check six variables across two
+   * projects with no way to tell which is wrong, and one of these is
+   * genuinely easy to get wrong: on Vercel, a variable marked Sensitive is
+   * write-only and is not exposed to the edge runtime, so a correctly-typed
+   * secret can be present in the dashboard and absent here.
+   */
+  const missing = Object.entries({
+    DAI_STORE_ENDPOINT: endpoint,
+    DAI_STORE_BUCKET: bucket,
+    DAI_STORE_ACCESS_KEY_ID: accessKeyId,
+    DAI_STORE_SECRET_ACCESS_KEY: secretAccessKey,
+    DAI_STORE_PUBLIC_BASE: publicBase,
+  })
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  if (missing.length > 0) {
+    return json(
+      {
+        error: "This deployment has no store configured.",
+        missing,
+        hint:
+          "These names are not visible to this function. On Vercel, check they are set on " +
+          "the project that serves this domain, for this environment — and that they are " +
+          "not marked Sensitive, which withholds the value from the edge runtime.",
+      },
+      503,
+    );
   }
 
   let body: { hash?: unknown; size?: unknown; kind?: unknown };
