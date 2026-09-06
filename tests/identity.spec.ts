@@ -14,6 +14,7 @@ const sigstore = await import(pathToFileURL(resolve(repo, "scripts/lib/sigstore-
   testSigstore: (name?: string) => Promise<{
     root: { name: string; fulcioRoots: string[]; rekorKeys: string[] };
     issue: (o: Record<string, unknown>) => Promise<unknown>;
+    certificateFor: (o: Record<string, unknown>) => Promise<Uint8Array>;
   }>;
 };
 
@@ -102,6 +103,48 @@ test.describe("a Sigstore bundle, verified against a held root", () => {
     // A real bundle, for a real signature by this key — over a different document.
     const bundle = await issue({ subjectSpki: key, identity: "chris@example.com", signatureB64: other.signature });
     expect(await verifyIdentity(bundle, key, signature, [root])).toMatchObject({ status: "absent", reason: /different signature/ });
+  });
+
+  test("a chain through an issuing intermediate is shown, as public Sigstore chains", async () => {
+    const { key, signature } = await signedBuild();
+    const { root, issue } = await sigstore.testSigstore();
+    const bundle = await issue({ subjectSpki: key, identity: "https://github.com/chrisb", signatureB64: signature, intermediate: "ca" });
+    expect(await verifyIdentity(bundle, key, signature, [root])).toMatchObject({ status: "shown", identity: "https://github.com/chrisb" });
+  });
+
+  /*
+   * The forgery a review found. Anyone can get a genuine certificate for
+   * their own key from a held Fulcio. That key can then sign a further
+   * certificate naming anyone, for any key — and every hop's signature
+   * verifies. What stops it is that a leaf is not an issuer: basicConstraints
+   * says so, and the chain walk now reads it.
+   */
+  test("a certificate issued by a stranger's genuine leaf is absent", async () => {
+    const { key, signature } = await signedBuild();
+    const { root, issue } = await sigstore.testSigstore();
+    const bundle = await issue({ subjectSpki: key, identity: "https://github.com/chrisb", signatureB64: signature, intermediate: "leaf" });
+    expect(await verifyIdentity(bundle, key, signature, [root])).toMatchObject({ status: "absent", reason: /does not chain/ });
+  });
+
+  /*
+   * The other half of the same finding. A log entry records the signature
+   * and the certificate it was made under, together. Presenting that entry
+   * beside a different certificate for the same key — one naming somebody
+   * else — must not show the other name.
+   */
+  test("a log entry made under a different certificate for the same key is absent", async () => {
+    const { key, signature } = await signedBuild();
+    const { root, issue, certificateFor } = await sigstore.testSigstore();
+    const theirs = await certificateFor({ subjectSpki: key, identity: "https://github.com/someone-else" });
+    const bundle = await issue({ subjectSpki: key, identity: "https://github.com/chrisb", signatureB64: signature, loggedCertificate: theirs });
+    expect(await verifyIdentity(bundle, key, signature, [root])).toMatchObject({ status: "absent", reason: /different certificate/ });
+  });
+
+  test("a log entry that does not record the signer is absent", async () => {
+    const { key, signature } = await signedBuild();
+    const { root, issue } = await sigstore.testSigstore();
+    const bundle = await issue({ subjectSpki: key, identity: "https://github.com/chrisb", signatureB64: signature, unloggedCertificate: true });
+    expect(await verifyIdentity(bundle, key, signature, [root])).toMatchObject({ status: "absent", reason: /different certificate/ });
   });
 
   test("garbage is absent", async () => {

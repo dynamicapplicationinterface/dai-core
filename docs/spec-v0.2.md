@@ -1040,12 +1040,28 @@ rfc822Name or a URI), and the issuer is Fulcio's extension
 
 A host holding a root for the bundle's Fulcio and Rekor MUST check, offline:
 
-1. the certificate chains to a Fulcio root the host holds;
+1. the certificate chains to a Fulcio root the host holds, and every
+   certificate in the chain that issued the one below it carries
+   basicConstraints `cA` TRUE and, where it carries a keyUsage, `keyCertSign`
+   (a held root is an issuer by being held; the chain's own copy of it, if
+   any, is not consulted);
 2. the certificate's subject public key equals the manifest's key (the SPKI
    in the shell, §3);
 3. the log entry's signed timestamp verifies against a Rekor key the host
    holds, and its time lies within the certificate's validity;
-4. the logged signature equals the manifest's `signature` bytes.
+4. the logged signature equals the manifest's `signature` bytes;
+5. the signer the log entry recorded — `spec.signature.publicKey.content`
+   inside the decoded `canonicalizedBody`, the base64 of a PEM certificate
+   or, for an entry logged under a bare key, a PEM public key — is the leaf
+   certificate presented, byte for byte, or that leaf's subject public key.
+   An entry that records no signer fails this check.
+
+Checks 1 and 5 are what stop a name being shown that no Fulcio vouched for.
+Without 1, a publisher holding any genuine leaf could issue a further
+certificate under any name and present the two as a chain. Without 5, a
+genuine log entry made under one certificate could be presented beside
+another certificate for the same key, and the name shown would be the other
+certificate's.
 
 Any failure, and a bundle whose roots the host does not hold, MUST be treated
 as **absent**: the document is then trusted by continuity alone (§9.6), and the

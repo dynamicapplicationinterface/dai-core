@@ -88,8 +88,22 @@ const OID_SAN = "2.5.29.17";
 const OID_FULCIO_ISSUER_V2 = "1.3.6.1.4.1.57264.1.8";
 /** Fulcio: the OIDC issuer, raw (the deprecated v1 form, 1.3.6.1.4.1.57264.1.1). */
 const OID_FULCIO_ISSUER_V1 = "1.3.6.1.4.1.57264.1.1";
+const OID_BASIC_CONSTRAINTS = "2.5.29.19";
+const OID_KEY_USAGE = "2.5.29.15";
 
 export interface Certificate {
+  /** The whole certificate, DER, as it arrived. */
+  der: Uint8Array;
+  /**
+   * basicConstraints cA. A certificate may only issue others when this is set;
+   * a leaf — every Fulcio identity certificate — has it false or absent.
+   */
+  isCa: boolean;
+  /**
+   * keyUsage keyCertSign, when a keyUsage extension is present. Undefined
+   * when there is none, which for an issuer is read as permitted.
+   */
+  keyCertSign?: boolean;
   /** The to-be-signed body, exactly as signed. */
   tbs: Uint8Array;
   /** SubjectPublicKeyInfo, DER. */
@@ -132,6 +146,8 @@ export function parseCertificate(der: Uint8Array): Certificate {
 
   const identities: string[] = [];
   let issuer: string | undefined;
+  let isCa = false;
+  let keyCertSign: boolean | undefined;
   const extensionsWrapper = tbs.slice(at + 6).find((t) => t.tag === 0xa3);
   if (extensionsWrapper) {
     const extensions = children(extensionsWrapper)[0];
@@ -151,11 +167,24 @@ export function parseCertificate(der: Uint8Array): Certificate {
         issuer = new TextDecoder().decode(s.value);
       } else if (oid === OID_FULCIO_ISSUER_V1 && issuer === undefined) {
         issuer = new TextDecoder().decode(octets.value);
+      } else if (oid === OID_BASIC_CONSTRAINTS) {
+        // SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER OPTIONAL }
+        const seq = read(octets.value, 0);
+        const flag = children(seq).find((c) => c.tag === 0x01);
+        isCa = flag !== undefined && flag.value.length === 1 && flag.value[0] !== 0;
+      } else if (oid === OID_KEY_USAGE) {
+        // BIT STRING; bit 5, counted from the most significant bit of the
+        // first content byte, is keyCertSign.
+        const bits = read(octets.value, 0);
+        keyCertSign = bits.tag === 0x03 && bits.value.length >= 2 && (bits.value[1]! & 0x04) !== 0;
       }
     }
   }
 
   return {
+    der,
+    isCa,
+    keyCertSign,
     tbs: tbsTlv.raw,
     spki: spki.raw,
     notBefore: timeOf(nb),
@@ -221,12 +250,33 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
+ * Whether a certificate is allowed to have issued another.
+ *
+ * A signature that verifies says the key signed it; it does not say the key
+ * was permitted to. Every Fulcio identity certificate is signed by the Fulcio
+ * key and could sign a further certificate with the key it binds — and a
+ * publisher who did that would present a "chain" from any name they liked,
+ * through their own leaf, to a root the host holds. What separates a leaf
+ * from an issuer is basicConstraints cA, and keyUsage keyCertSign where a
+ * keyUsage is present. A held root is an issuer by being held.
+ */
+export function mayIssue(cert: Certificate): boolean {
+  return cert.isCa && cert.keyCertSign !== false;
+}
+
+/** Whether `child` was signed by `parent`, and `parent` was allowed to sign it. */
+async function issuedBy(child: Certificate, parent: Certificate): Promise<boolean> {
+  return mayIssue(parent) && (await signedBy(child, parent));
+}
+
+/**
  * Walks a chain from a leaf to one of the roots the host holds.
  *
  * `chain` is the leaf first, then any intermediates, as a bundle carries them.
- * Returns the leaf when it chains to a held root, and `undefined` otherwise.
- * A root is matched by its key: a root the host holds is a root by that fact,
- * so the chain's own copy of the root, if any, is ignored.
+ * Returns true when the leaf chains to a held root through certificates that
+ * were each permitted to issue the one below. A root is matched by its key: a
+ * root the host holds is a root by that fact, so the chain's own copy of the
+ * root, if any, is ignored.
  */
 export async function chainsToRoot(
   chain: Certificate[],
@@ -238,9 +288,9 @@ export async function chainsToRoot(
     // Does this certificate's signer sit among the roots?
     for (const root of roots) {
       if (await signedBy(cert, root)) {
-        // Every hop below it must be signed by the one above.
+        // Every hop below it must be issued by the one above.
         for (let j = i; j > 0; j--) {
-          if (!(await signedBy(chain[j - 1]!, chain[j]!))) return false;
+          if (!(await issuedBy(chain[j - 1]!, chain[j]!))) return false;
         }
         return true;
       }
@@ -248,12 +298,17 @@ export async function chainsToRoot(
     // Or is this certificate itself one of the roots by key?
     if (roots.some((root) => equalBytes(root.spki, cert.spki)) && i > 0) {
       for (let j = i; j > 0; j--) {
-        if (!(await signedBy(chain[j - 1]!, chain[j]!))) return false;
+        if (!(await issuedBy(chain[j - 1]!, chain[j]!))) return false;
       }
       return true;
     }
   }
   return false;
+}
+
+/** Byte equality, for comparing a certificate with the one a log recorded. */
+export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return equalBytes(a, b);
 }
 
 /** PEM to DER, for roots that arrive as text. */

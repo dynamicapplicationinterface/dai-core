@@ -903,7 +903,7 @@ console.log(`${written.length} cases written to conformance/cases.json`);
  */
 {
   const { testSigstore } = await import("./lib/sigstore-test.mjs");
-  const { root, issue } = await testSigstore("Conformance Sigstore");
+  const { root, issue, certificateFor } = await testSigstore("Conformance Sigstore");
   const other = await testSigstore("Some other Sigstore");
   const built = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
   const parsedKey = parseContainer(built.html).publicKey;
@@ -918,6 +918,16 @@ console.log(`${written.length} cases written to conformance/cases.json`);
     { name: "identity-wrong-key", bundle: await issue({ subjectSpki: strangerSpki, identity: "https://github.com/conformance", signatureB64: signature }), expect: { status: "absent" } },
     { name: "identity-unheld-root", bundle: await other.issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature }), expect: { status: "absent" } },
     { name: "identity-other-signature", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: (await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }))).manifest.signature }), expect: { status: "absent" } },
+    // Through an issuing intermediate, as public Sigstore chains: shown.
+    { name: "identity-ca-intermediate", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature, intermediate: "ca" }), expect: { status: "shown", identity: "https://github.com/conformance", issuer: "https://accounts.example" } },
+    // Through a stranger's genuine leaf certificate acting as issuer: a leaf
+    // may not issue, so the chain does not reach the root.
+    { name: "identity-non-ca-issuer", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature, intermediate: "leaf" }), expect: { status: "absent" } },
+    // A genuine log entry, made under one certificate, presented with another
+    // for the same key: the log did not see the certificate shown.
+    { name: "identity-other-certificate", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature, loggedCertificate: await certificateFor({ subjectSpki: parsedKey, identity: "https://github.com/someone-else" }) }), expect: { status: "absent" } },
+    // A log entry that does not record what signed cannot vouch for a name.
+    { name: "identity-unlogged-certificate", bundle: await issue({ subjectSpki: parsedKey, identity: "https://github.com/conformance", signatureB64: signature, unloggedCertificate: true }), expect: { status: "absent" } },
   ];
   const vectors = [];
   for (const v of variants) {

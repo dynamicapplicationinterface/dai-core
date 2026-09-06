@@ -16,14 +16,23 @@
  *   2. its key is the manifest's key;
  *   3. the log entry's signed timestamp verifies against a Rekor key the host
  *      holds and lies within the certificate's validity;
- *   4. the logged signature is the manifest's signature.
+ *   4. the logged signature is the manifest's signature;
+ *   5. the certificate the log recorded is the certificate presented.
  *
  * Any failure, and any root the host does not hold, means ABSENT. Identity
  * never refuses a document; a document with a broken binding is a document
  * with no binding, trusted by continuity alone.
+ *
+ * The fifth check closes a gap a review found. Rekor records the signature
+ * and the certificate together; without comparing the certificate, a bundle
+ * could pair a genuine log entry — a real signing, by this key, under some
+ * identity — with any other certificate for the same key, and the name shown
+ * would be whatever that other certificate said. Together with the chain walk
+ * refusing a non-CA issuer (x509.ts), the name shown is one a held Fulcio
+ * issued, and one the log saw at the moment of signing.
  */
 import { fromBase64, sha256Hex, toBase64 } from "./core.js";
-import { chainsToRoot, parseCertificate, pemToDer, type Certificate } from "./x509.js";
+import { chainsToRoot, parseCertificate, pemToDer, sameBytes, type Certificate } from "./x509.js";
 
 /** What a host holds to check identities against (§9.6, root lists: `sigstore`). */
 export interface SigstoreRoot {
@@ -98,6 +107,29 @@ async function asRaw(signature: Uint8Array): Promise<Uint8Array> {
   if (signature.length === 64) return signature;
   const { derSignatureToRaw } = await import("./x509.js");
   return derSignatureToRaw(signature);
+}
+
+/**
+ * Whether what a log entry recorded as the signer is `leaf`. A certificate
+ * must match byte for byte; a bare public key must be the leaf's key. Nothing
+ * recorded is a mismatch: an entry that does not say what signed cannot vouch
+ * for a name.
+ */
+function loggedCertificateMatches(content: string | undefined, leaf: Certificate): boolean {
+  if (!content) return false;
+  let pem: string;
+  try {
+    pem = new TextDecoder().decode(fromBase64(content));
+  } catch {
+    return false;
+  }
+  try {
+    if (/-----BEGIN CERTIFICATE-----/.test(pem)) return sameBytes(pemToDer(pem), leaf.der);
+    if (/-----BEGIN PUBLIC KEY-----/.test(pem)) return sameBytes(pemToDer(pem), leaf.spki);
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 /**
@@ -192,7 +224,7 @@ export async function verifyIdentity(
   if (!timestampOk) return { status: "absent", reason: "the log entry's timestamp does not verify against a Rekor key this host holds" };
 
   // 4. The logged signature is this manifest's signature.
-  let logged: { spec?: { signature?: { content?: string } } };
+  let logged: { spec?: { signature?: { content?: string; publicKey?: { content?: string } } } };
   try {
     logged = JSON.parse(new TextDecoder().decode(fromBase64(body)));
   } catch {
@@ -201,6 +233,13 @@ export async function verifyIdentity(
   const loggedSignature = logged.spec?.signature?.content ?? b.messageSignature?.signature;
   if (!loggedSignature || loggedSignature !== manifestSignature) {
     return { status: "absent", reason: "the log entry records a different signature from this document's" };
+  }
+
+  // 5. The certificate the log recorded is the one presented. A hashedrekord
+  //    carries it as `spec.signature.publicKey.content`: base64 of a PEM
+  //    certificate, or of a PEM public key for an entry logged without one.
+  if (!loggedCertificateMatches(logged.spec?.signature?.publicKey?.content, leaf)) {
+    return { status: "absent", reason: "the log entry records a different certificate from the one presented" };
   }
 
   const identity = leaf.identities[0];

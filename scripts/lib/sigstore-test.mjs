@@ -112,7 +112,13 @@ const pem = (der) => `-----BEGIN CERTIFICATE-----\n${b64(der).replace(/(.{64})/g
 async function certificate({ subjectSpki, subjectName, issuerName, issuerKey, notBefore, notAfter, identity, oidcIssuer, isCa, serial }) {
   const extensions = [];
   if (isCa) {
+    // basicConstraints (critical) cA TRUE; keyUsage (critical) keyCertSign, cRLSign.
     extensions.push(seq(oid("2.5.29.19"), tlv(0x01, Uint8Array.from([0xff])), tlv(0x04, seq(tlv(0x01, Uint8Array.from([0xff]))))));
+    extensions.push(seq(oid("2.5.29.15"), tlv(0x01, Uint8Array.from([0xff])), tlv(0x04, tlv(0x03, Uint8Array.from([0x01, 0x06])))));
+  } else {
+    // What Fulcio writes on a leaf: basicConstraints cA FALSE, keyUsage digitalSignature.
+    extensions.push(seq(oid("2.5.29.19"), tlv(0x01, Uint8Array.from([0xff])), tlv(0x04, seq())));
+    extensions.push(seq(oid("2.5.29.15"), tlv(0x01, Uint8Array.from([0xff])), tlv(0x04, tlv(0x03, Uint8Array.from([0x07, 0x80])))));
   }
   if (identity) {
     const generalName = identity.includes("@") ? ia5(0x81, identity) : ia5(0x86, identity);
@@ -169,22 +175,63 @@ export async function testSigstore(rootName = "Test Sigstore") {
   /**
    * Issues a bundle binding `identity` to `subjectSpki` (base64) and logging
    * `signatureB64` at `integratedTime`. Knobs for each way §9.5 can fail.
+   *
+   * `intermediate`: "ca" puts a proper issuing certificate between root and
+   * leaf, as public Sigstore does; "leaf" makes the issuer an ordinary
+   * identity certificate for a stranger — a real one, signed by the root —
+   * which is the forgery the CA check refuses. `loggedCertificate` replaces
+   * what the log records as the signer (DER); `unloggedCertificate` omits it.
    */
-  async function issue({ subjectSpki, identity, oidcIssuer = "https://accounts.example", signatureB64, integratedTime, certWindow, wrongLogKey = false }) {
+  async function issue({
+    subjectSpki,
+    identity,
+    oidcIssuer = "https://accounts.example",
+    signatureB64,
+    integratedTime,
+    certWindow,
+    wrongLogKey = false,
+    intermediate,
+    loggedCertificate,
+    unloggedCertificate = false,
+  }) {
     const t = integratedTime ?? now;
     const [nb, na] = certWindow ?? [t - 300, t + 300];
+    let issuerName = "test fulcio root";
+    let issuerKey = fulcio.privateKey;
+    const chain = [];
+    if (intermediate) {
+      const key = await ecdsaKey();
+      const der = await certificate({
+        subjectSpki: await spkiOf(key.publicKey),
+        subjectName: intermediate === "ca" ? "test fulcio intermediate" : "sigstore-intermediate",
+        issuerName: "test fulcio root",
+        issuerKey: fulcio.privateKey,
+        notBefore: now - 3600,
+        notAfter: now + 365 * 86400,
+        isCa: intermediate === "ca",
+        identity: intermediate === "ca" ? undefined : "https://github.com/stranger",
+        oidcIssuer: intermediate === "ca" ? undefined : oidcIssuer,
+        serial: Math.floor(Math.random() * 1e9),
+      });
+      chain.push(der);
+      issuerName = intermediate === "ca" ? "test fulcio intermediate" : "sigstore-intermediate";
+      issuerKey = key.privateKey;
+    }
     const leaf = await certificate({
       subjectSpki: Buffer.from(subjectSpki, "base64"),
       subjectName: "sigstore-intermediate", // Fulcio leaves carry an empty subject; the name is irrelevant to the reader
-      issuerName: "test fulcio root",
-      issuerKey: fulcio.privateKey,
+      issuerName,
+      issuerKey,
       notBefore: nb,
       notAfter: na,
       identity,
       oidcIssuer,
       serial: Math.floor(Math.random() * 1e9),
     });
-    const body = b64(encoder.encode(JSON.stringify({ apiVersion: "0.0.1", kind: "hashedrekord", spec: { signature: { content: signatureB64 } } })));
+    const recorded = loggedCertificate ?? leaf;
+    const signature = { content: signatureB64 };
+    if (!unloggedCertificate) signature.publicKey = { content: b64(encoder.encode(pem(recorded))) };
+    const body = b64(encoder.encode(JSON.stringify({ apiVersion: "0.0.1", kind: "hashedrekord", spec: { signature } })));
     const logIndex = 42;
     const logIdHex = Buffer.from(rekorKeyId, "base64").toString("hex");
     const signedOver = encoder.encode(canonicalJson({ body, integratedTime: t, logID: logIdHex, logIndex }));
@@ -193,7 +240,9 @@ export async function testSigstore(rootName = "Test Sigstore") {
     return {
       mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
       verificationMaterial: {
-        certificate: { rawBytes: b64(leaf) },
+        ...(chain.length
+          ? { x509CertificateChain: { certificates: [leaf, ...chain].map((c) => ({ rawBytes: b64(c) })) } }
+          : { certificate: { rawBytes: b64(leaf) } }),
         tlogEntries: [
           {
             logIndex: String(logIndex),
@@ -209,5 +258,20 @@ export async function testSigstore(rootName = "Test Sigstore") {
     };
   }
 
-  return { root, issue };
+  /** A certificate for `subjectSpki` (base64) under `identity`, DER — to be logged in someone else's entry. */
+  async function certificateFor({ subjectSpki, identity, oidcIssuer = "https://accounts.example" }) {
+    return certificate({
+      subjectSpki: Buffer.from(subjectSpki, "base64"),
+      subjectName: "sigstore-intermediate",
+      issuerName: "test fulcio root",
+      issuerKey: fulcio.privateKey,
+      notBefore: now - 300,
+      notAfter: now + 300,
+      identity,
+      oidcIssuer,
+      serial: Math.floor(Math.random() * 1e9),
+    });
+  }
+
+  return { root, issue, certificateFor };
 }

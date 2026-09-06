@@ -85,9 +85,10 @@ as `UNSUPPORTED_MANIFEST_VERSION` before any compiler writes one.
   (`document`, `mixed-script`, `skeleton`); one content-hashed UTS #39 table
   every host loads; host labels shown first; root lists for organisations.
 - **Identity:** Sigstore bundle verified offline against held Fulcio and Rekor
-  roots; four checks; absent on any failure. A test Fulcio and Rekor mint the
+  roots; five checks (chain through CA issuers only, key, timestamp, logged
+  signature, logged signer); absent on any failure. A test Fulcio and Rekor mint the
   vectors.
-- **Vectors:** 24 cases, 7 trust steps, 5 identity vectors, 2 countersignature
+- **Vectors:** 24 cases, 7 trust steps, 9 identity vectors, 2 countersignature
   vectors, all agreed by both readers.
 
 **The flip landed** in `f8b8f8e`, after desktop v0.2.0 shipped the reader and

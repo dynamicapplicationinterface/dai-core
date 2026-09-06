@@ -5,10 +5,10 @@
     {
       "name": "Conformance Sigstore",
       "fulcioRoots": [
-        "-----BEGIN CERTIFICATE-----\nMIIBOjCB4qADAgECAgEBMAoGCCqGSM49BAMCMBsxGTAXBgNVBAMMEHRlc3QgZnVs\nY2lvIHJvb3QwIhgPMjAyNjA5MDYwMDA5NDNaGA8yMDM2MDkwMzAxMDk0M1owGzEZ\nMBcGA1UEAwwQdGVzdCBmdWxjaW8gcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEH\nA0IABBYrw5DrcUHsQEmFAIMKujmP4JYiiYxlY90qCGWjfXWAnds2NwA284y00iIb\npKTE0Rc1lcWBDgg+ulNjHlt76WyjEzARMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZI\nzj0EAwIDRwAwRAIgMhn2RM73ybB6Iiiqo5dQwTWc3pwTkYzgxVi2Y98UOOYCIADL\n2HxJz5k0qCVfIAu2czCSL02WK7c17C933ajPQO/7\n-----END CERTIFICATE-----\n"
+        "-----BEGIN CERTIFICATE-----\nMIIBSzCB8qADAgECAgEBMAoGCCqGSM49BAMCMBsxGTAXBgNVBAMMEHRlc3QgZnVs\nY2lvIHJvb3QwIhgPMjAyNjA5MDYxMDU4MTRaGA8yMDM2MDkwMzExNTgxNFowGzEZ\nMBcGA1UEAwwQdGVzdCBmdWxjaW8gcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEH\nA0IABGkI7XHWjmpunD9mE9qoZE99uQb17ocQIrPr+oWSO+Zn3hjFs4/R6SZyp45n\n6kB2vDTtG8JpB4dD5fw0CVlH0BGjIzAhMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0P\nAQH/BAQDAgEGMAoGCCqGSM49BAMCA0gAMEUCIFTtVAWVDh9VlYa1+2NXip1AN5lx\nqRCZXfhstDjBFHfAAiEAyPt/iHihhzJ5q2TMaz/rf5hQ6h8GkE83R0jzB8zZ/2w=\n\n-----END CERTIFICATE-----\n"
       ],
       "rekorKeys": [
-        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEzl7ITuq8aBinm+6dKHeJlOUC3inNHRliMbchh33rtpVXYduiB4O7lOn/jTCReFgDz6+c2fMx0rcQFbMSTen3oQ=="
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElkDLSfjczkZZacsq6CyRs2ERmQ9Dbmecs0Z7ewKZcIPlePyFADEl8WWGr9H/n7YaY8VbhMJaGSjMLNUus1meCQ=="
       ]
     }
   ],
@@ -46,6 +46,36 @@
     {
       "name": "identity-other-signature",
       "file": "cases/identity-other-signature.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    },
+    {
+      "name": "identity-ca-intermediate",
+      "file": "cases/identity-ca-intermediate.dai.html",
+      "expect": {
+        "status": "shown",
+        "identity": "https://github.com/conformance",
+        "issuer": "https://accounts.example"
+      }
+    },
+    {
+      "name": "identity-non-ca-issuer",
+      "file": "cases/identity-non-ca-issuer.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    },
+    {
+      "name": "identity-other-certificate",
+      "file": "cases/identity-other-certificate.dai.html",
+      "expect": {
+        "status": "absent"
+      }
+    },
+    {
+      "name": "identity-unlogged-certificate",
+      "file": "cases/identity-unlogged-certificate.dai.html",
       "expect": {
         "status": "absent"
       }

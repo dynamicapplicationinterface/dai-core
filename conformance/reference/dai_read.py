@@ -1171,6 +1171,8 @@ def _oid_bytes(dotted: str) -> bytes:
 
 
 OID_SAN = _oid_bytes("2.5.29.17")
+OID_BASIC_CONSTRAINTS = _oid_bytes("2.5.29.19")
+OID_KEY_USAGE = _oid_bytes("2.5.29.15")
 OID_FULCIO_ISSUER_V2 = _oid_bytes("1.3.6.1.4.1.57264.1.8")
 OID_FULCIO_ISSUER_V1 = _oid_bytes("1.3.6.1.4.1.57264.1.1")
 OID_ECDSA_SHA256 = _oid_bytes("1.2.840.10045.4.3.2")
@@ -1199,6 +1201,7 @@ def _der_time(tag: int, content: bytes) -> int:
 
 @dataclass
 class Certificate:
+    der: bytes  # the whole certificate, as it arrived
     tbs: bytes
     spki: bytes
     not_before: int
@@ -1206,6 +1209,13 @@ class Certificate:
     names: list[str]
     issuer: str | None
     signature: bytes  # raw r||s, 64 bytes, for verify_es256
+    is_ca: bool  # basicConstraints cA
+    key_cert_sign: bool | None  # keyUsage keyCertSign; None when there is no keyUsage
+
+    def may_issue(self) -> bool:
+        """Whether this certificate was permitted to issue another. A leaf —
+        every Fulcio identity certificate — was not, whatever its key signed."""
+        return self.is_ca and self.key_cert_sign is not False
 
 
 def _ecdsa_der_to_raw(signature: bytes) -> bytes:
@@ -1254,6 +1264,8 @@ def parse_certificate(der: bytes) -> Certificate:
     names: list[str] = []
     issuer: str | None = None
     issuer_v1: str | None = None
+    is_ca = False
+    key_cert_sign: bool | None = None
     for tag, body, _ in fields[6:]:
         if tag != 0xA3:  # [3] EXPLICIT extensions
             continue
@@ -1280,7 +1292,17 @@ def parse_certificate(der: bytes) -> Certificate:
                     issuer = inner_body.decode("utf-8")
             elif oid == OID_FULCIO_ISSUER_V1:
                 issuer_v1 = value.decode("utf-8")
-    return Certificate(tbs_whole, spki, not_before, not_after, names, issuer or issuer_v1, signature)
+            elif oid == OID_BASIC_CONSTRAINTS:
+                # SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER OPTIONAL }
+                bc_tag, bc_body, _ = _der_item(value)
+                if bc_tag == 0x30:
+                    flag = next((b for t, b, _ in _der_children(bc_body) if t == 0x01), None)
+                    is_ca = flag is not None and len(flag) == 1 and flag[0] != 0
+            elif oid == OID_KEY_USAGE:
+                # BIT STRING; bit 5 from the most significant bit of the first content byte is keyCertSign.
+                ku_tag, ku_body, _ = _der_item(value)
+                key_cert_sign = ku_tag == 0x03 and len(ku_body) >= 2 and (ku_body[1] & 0x04) != 0
+    return Certificate(der, tbs_whole, spki, not_before, not_after, names, issuer or issuer_v1, signature, is_ca, key_cert_sign)
 
 
 def certificate_signed_by(cert: Certificate, signer_spki: bytes) -> bool:
@@ -1297,8 +1319,30 @@ def _canonical_json(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
+def _issued_by(child: Certificate, parent: Certificate) -> bool:
+    """Signed by `parent`, and `parent` was allowed to sign it. A verifying
+    signature says the key signed; basicConstraints says whether it may."""
+    return parent.may_issue() and certificate_signed_by(child, parent.spki)
+
+
+def _logged_signer_matches(content: Any, leaf: Certificate) -> bool:
+    """Whether what a hashedrekord recorded as the signer is `leaf`: a PEM
+    certificate byte for byte, or a PEM public key equal to the leaf's."""
+    if not isinstance(content, str):
+        return False
+    try:
+        pem = base64.b64decode(content).decode("utf-8")
+        if "-----BEGIN CERTIFICATE-----" in pem:
+            return _pem_to_der(pem) == leaf.der
+        if "-----BEGIN PUBLIC KEY-----" in pem:
+            return _pem_to_der(pem) == leaf.spki
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return False
+
+
 def verify_identity(bundle: Any, manifest_key_b64: str | None, manifest_signature_b64: str | None, roots: list[dict]) -> dict[str, Any]:
-    """§9.5's four checks, in order, offline. Never raises: any failure, and any
+    """§9.5's five checks, in order, offline. Never raises: any failure, and any
     bundle whose roots are not held, is {"status": "absent", "reason"}.
 
     `roots` is a §9.6 `sigstore` list: [{name, fulcioRoots: [PEM], rekorKeys: [b64 SPKI]}].
@@ -1333,7 +1377,9 @@ def _verify_identity(bundle, manifest_key_b64, manifest_signature_b64, roots) ->
 
     # 1. The certificate chains to a Fulcio root the host holds. Walked leaf-
     #    first: each link is signed either by a held root's key or by the next
-    #    certificate in the chain.
+    #    certificate in the chain — and that next certificate must have been
+    #    permitted to issue it. Any genuine leaf's key can sign a further
+    #    certificate; what makes it not a chain is that a leaf is not a CA.
     root_name = None
     root_keys: list[tuple[str, bytes]] = []
     for root in roots:
@@ -1344,7 +1390,7 @@ def _verify_identity(bundle, manifest_key_b64, manifest_signature_b64, roots) ->
         if found is not None:
             root_name = found
             break
-        if index + 1 >= len(chain) or not certificate_signed_by(link, chain[index + 1].spki):
+        if index + 1 >= len(chain) or not _issued_by(link, chain[index + 1]):
             break
     if root_name is None:
         return {"status": "absent", "reason": "certificate does not chain to a held Fulcio root"}
@@ -1390,6 +1436,7 @@ def _verify_identity(bundle, manifest_key_b64, manifest_signature_b64, roots) ->
 
     # 4. The logged signature is the manifest's signature bytes.
     logged = None
+    body: Any = None
     try:
         body = json.loads(base64.b64decode(body_b64))
         logged = body["spec"]["signature"]["content"]
@@ -1397,6 +1444,17 @@ def _verify_identity(bundle, manifest_key_b64, manifest_signature_b64, roots) ->
         logged = bundle.get("messageSignature", {}).get("signature")
     if not isinstance(logged, str) or base64.b64decode(logged) != base64.b64decode(manifest_signature_b64):
         return {"status": "absent", "reason": "logged signature is not the manifest's signature"}
+
+    # 5. The signer the log recorded is the certificate presented. A log entry
+    #    made under one certificate must not be shown beside another for the
+    #    same key, or the name shown is whatever that other certificate says.
+    signer = None
+    try:
+        signer = body["spec"]["signature"]["publicKey"]["content"]
+    except (KeyError, TypeError):
+        signer = None
+    if not _logged_signer_matches(signer, leaf):
+        return {"status": "absent", "reason": "logged signer is not the certificate presented"}
 
     if not leaf.names:
         return {"status": "absent", "reason": "certificate carries no subject alternative name"}
