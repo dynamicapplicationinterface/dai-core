@@ -102,6 +102,16 @@ async function close(page: Page): Promise<void> {
  * offer at all: only under the key this device pinned for the document being
  * replaced.
  */
+/**
+ * Under a host every write is saved as it happens, shortly after the last
+ * one; there is no Save to press (the kit's hides itself). This waits for
+ * that save to land before the document is put down.
+ */
+async function settled(page: import("@playwright/test").Page): Promise<void> {
+  await expect(inside(page).locator("#save")).toBeHidden();
+  await page.waitForTimeout(1500);
+}
+
 test.describe("a document that replaces another", () => {
   test("carries the data forward through a migration, and keeps the old one", async ({ page }) => {
     test.slow();
@@ -115,8 +125,7 @@ test.describe("a document that replaces another", () => {
     await inside(page).locator("#body").fill("buy milk");
     await inside(page).locator("#add").click();
     await expect(inside(page).locator("#count")).toHaveText("1", { timeout: 30_000 });
-    await inside(page).locator("#save").click();
-    await expect(inside(page).locator("#save")).toHaveText("Saved", { timeout: 30_000 });
+    await settled(page);
     await close(page);
 
     // v2, built as the upgrade of v1: the compiler names v1 as superseded and
@@ -159,8 +168,7 @@ test.describe("a document that replaces another", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await inside(page).locator("#body").fill("secret");
     await inside(page).locator("#add").click();
-    await inside(page).locator("#save").click();
-    await expect(inside(page).locator("#save")).toHaveText("Saved", { timeout: 30_000 });
+    await settled(page);
     await close(page);
 
     // Signed by somebody else, claiming to be the next version.
@@ -186,8 +194,7 @@ test.describe("a document that replaces another", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await inside(page).locator("#body").fill("keep me");
     await inside(page).locator("#add").click();
-    await inside(page).locator("#save").click();
-    await expect(inside(page).locator("#save")).toHaveText("Saved", { timeout: 30_000 });
+    await settled(page);
     await close(page);
 
     // The compiler would refuse this build with --upgrade-of, because the

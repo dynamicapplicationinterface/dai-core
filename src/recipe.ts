@@ -34,35 +34,14 @@ The container declares its permitted connections as none, so anything fetched by
 - No remote images. Use inline SVG, a data: URI, or an emoji.
 - No fetch, XMLHttpRequest, WebSocket, EventSource, or sendBeacon.
 
-STORAGE — use SQLite, not browser storage
-localStorage, sessionStorage and IndexedDB belong to the browser rather than to the file, so data kept there does not travel with it: send the document to somebody and it arrives empty. The container provides a real SQLite database that lives inside the file.
+DATA — the four layers, in the order they run
+Every DAI app's data is a SQLite database that lives inside the file. There are exactly four places
+data comes from, and each has one job. Get these right and the app keeps a person's data across
+opens, across devices, and across the versions you make later.
 
-  const db = await window.dai.openDatabase();
-
-  db.exec(\`
-    CREATE TABLE IF NOT EXISTS notes (
-      id      INTEGER PRIMARY KEY,
-      body    TEXT NOT NULL,
-      done    INTEGER NOT NULL DEFAULT 0,
-      created TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  \`);
-
-  // Parameters are bound, never interpolated.
-  db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: ["Buy milk"] });
-
-  const rows = db.selectObjects("SELECT * FROM notes ORDER BY id");
-
-  // Writes the database back into the file. Nothing is persisted until this runs.
-  const result = await window.dai.saveDatabase(db);
-  if (!result.saved) { /* the person cancelled, or the file is not writable here */ }
-
-Pass bind only when there are parameters: an empty array is read as parameters promised and not supplied, and throws.
-
-Use SQL for the work — joins, aggregates, ORDER BY — rather than loading everything and filtering in JavaScript. It is a real database.
-
-THE SCHEMA — declare it once, in schema.sql
-Put every CREATE TABLE in a file named schema.sql, each with IF NOT EXISTS. It is run first when the file opens, and its shape is recorded with the file. Do not repeat the CREATE TABLE statements anywhere else.
+1. schema.sql — the tables. Every CREATE TABLE, each with IF NOT EXISTS, in one file named schema.sql.
+   It runs first, before anything else, and its shape is recorded with the file. Nowhere else may
+   create a table. Do not put CREATE TABLE in index.html or in JavaScript.
 
   --- file: schema.sql
   CREATE TABLE IF NOT EXISTS notes (
@@ -72,18 +51,52 @@ Put every CREATE TABLE in a file named schema.sql, each with IF NOT EXISTS. It i
     created TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-This is what protects the person's data when you change the app later. If a later version changes a table, add a migration — one file, named with the next number, holding the ALTER statements that move the old shape to the new — and update schema.sql to match:
+2. Seed rows — a few examples on first open, so the app is not an empty shell. Idempotent, so a
+   second open adds nothing. In a <script type="application/sql"> block in index.html, or in
+   JavaScript; never in schema.sql.
+
+  <script type="application/sql">
+    INSERT INTO notes (body) SELECT 'Try editing this' WHERE NOT EXISTS (SELECT 1 FROM notes);
+  </script>
+
+3. Writes — everything the person does goes into the database at the moment they do it: a tick, a
+   new row, an edit, a reorder. Never keep the state of the app in a JavaScript variable and write it
+   "later". On load, read the database and draw from it; after a write, read again and redraw. The
+   database is the state.
+
+4. Saving — automatic. Under the app that opens these files, every write is saved as it happens;
+   there is nothing to press. Do NOT build a Save button, a "saved" indicator, or a dirty flag. The
+   kit's <dai-save> exists for one case — a file opened straight in a browser with no host, where
+   saving takes a tap — and it hides itself everywhere else, so include it once, at the bottom, and
+   forget about it. If you write JavaScript against window.dai directly, the same applies: write to
+   the database and stop. window.dai.saveDatabase(db) still exists, for the no-host case, and
+   calling it under a host is harmless.
+
+STORAGE — use SQLite, not browser storage
+localStorage, sessionStorage and IndexedDB belong to the browser rather than to the file, so data kept there does not travel with it: send the document to somebody and it arrives empty. Cookies, the Cache API and the File System API are the same. The database is the only place that travels.
+
+  const db = await window.dai.openDatabase();
+
+  // Parameters are bound, never interpolated.
+  db.exec({ sql: "INSERT INTO notes (body) VALUES (?)", bind: ["Buy milk"] });
+  db.exec({ sql: "UPDATE notes SET done = :done WHERE id = :id", bind: { ":done": 1, ":id": 3 } });
+
+  // Reads: the SQL, then the parameters. (The {sql, bind} form works here too.)
+  const rows = db.selectObjects("SELECT * FROM notes ORDER BY id");
+  const one  = db.selectObjects("SELECT * FROM notes WHERE id = ?", [3]);
+  const count = db.selectValue("SELECT count(*) FROM notes WHERE done = 0");
+
+Pass bind only when there are parameters: an empty array is read as parameters promised and not supplied, and throws.
+
+Use SQL for the work — joins, aggregates, ORDER BY — rather than loading everything and filtering in JavaScript. It is a real database.
+
+CHANGING THE APP LATER — migrations
+The schema's shape is what protects the person's data when you change the app. If a later version changes a table, add a migration — one file, named with the next number, holding the ALTER statements that move the old shape to the new — and update schema.sql to match:
 
   --- file: migrations/002-add-priority.sql
   ALTER TABLE notes ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
 
-A version whose schema moved without a migration is refused at build. Do not work around that by dropping tables: the old file holds a month of somebody's entries.
-
-SEED DATA
-Insert a few example rows on first run, so the app is not an empty shell when somebody opens it. Make it idempotent, so it does nothing on the second open:
-
-  INSERT INTO notes (body) SELECT 'Try editing this' WHERE NOT EXISTS (SELECT 1 FROM notes);
-  INSERT INTO notes (body) SELECT 'Add one of your own' WHERE (SELECT count(*) FROM notes) = 1;
+A version whose schema moved without a migration is refused at build. Do not work around that by dropping tables: the old file holds a month of somebody's entries. Adding a table needs no migration; only a changed one does.
 
 TIMES
 Store times as SQLite text in UTC (datetime('now')), and show them the way a person reads them: format with strftime and prefer words — "today", "2 hours ago" — over raw timestamps. Never show 2026-09-04 15:01:27 to a person.
@@ -112,7 +125,7 @@ Every container carries dai-kit.js. It gives you four elements, so most of an ap
     </template>
   </dai-rows>
 
-  <dai-save>Save</dai-save>
+  <dai-save>Save</dai-save>   <!-- hides itself under a host; see DATA, 4 -->
 
   <script type="module" src="./dai-kit.js"></script>
 
@@ -158,7 +171,16 @@ One fence around everything, not one per file: the file markers begin with three
 Every file starts with a line reading "--- file: " and its path, at the start of the line. Everything after that line belongs to that file until the next one. If a line inside a file would itself start with "--- file:", put a backslash in front of it.
 
 FINALLY
-Make it look finished: real spacing, a considered empty state, keyboard support, and a dark mode via prefers-color-scheme. It is a document somebody will keep.`;
+Make it look finished: real spacing, a considered empty state, keyboard support, and a dark mode via prefers-color-scheme. It is a document somebody will keep.
+
+BEFORE YOU ANSWER, CHECK
+- Every table is in schema.sql, with IF NOT EXISTS, and nowhere else.
+- Seed rows are idempotent (WHERE NOT EXISTS).
+- Every user action writes to the database immediately, and the screen is drawn from the database.
+- No Save button, no dirty flag, no localStorage. One <dai-save> at the bottom, or none.
+- No URL is fetched. No CDN. Every <script> with await is type="module".
+- icon.svg exists; index.html has a <meta name="description"> line.
+- The files are handed over as a tool call or as ONE fenced bundle, in the shape above.`;
 
 /** One line each, for a reader who wants the surface rather than the argument. */
 export const API: { call: string; does: string }[] = [
@@ -168,10 +190,15 @@ export const API: { call: string; does: string }[] = [
     call: "db.exec({ sql, bind })",
     does: "Runs a statement with bound parameters. Omit bind when there are none.",
   },
-  { call: "db.selectObjects(sql)", does: "Returns rows as plain objects." },
+  { call: "db.selectObjects(sql, bind?)", does: "Returns rows as plain objects. bind is an array for ? or an object for :name." },
+  { call: "db.selectValue(sql, bind?)", does: "The first column of the first row — a count, a setting, a total." },
+  {
+    call: "window.dai.autosaves",
+    does: "True under a host: every write is saved as it happens, and nothing needs pressing.",
+  },
   {
     call: "await window.dai.saveDatabase(db)",
-    does: "Writes the database back into the file. Returns { saved, method }.",
+    does: "Saves now. Needed only where there is no host (a file opened straight in a browser). Returns { saved, method }.",
   },
   { call: "window.dai.exportDatabase(db)", does: "The database as bytes, without saving." },
   { call: "window.dai.documentUuid", does: "This document's identity." },

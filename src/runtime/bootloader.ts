@@ -892,6 +892,103 @@ function bridgeMain(): void {
    */
   const declaresSchema = Boolean(host.schema);
 
+  /*
+   * Saved as it happens.
+   *
+   * An application used to have to call saveDatabase, and so to build a Save
+   * button, and so to have a person who forgot to press it. In a host every
+   * write is saved: the handle an application gets has its exec wrapped to
+   * schedule a save shortly after the last write, and a page going away
+   * flushes what is pending. Without a host — a file opened straight in a
+   * browser — a save needs a gesture the browser insists on, so nothing is
+   * scheduled and the kit shows its Save.
+   */
+  const autosaves = Boolean(host.hosted);
+  let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let autosaveDb: Any | null = null;
+  const AUTOSAVE_DELAY_MS = 800;
+  const flushAutosave = (): Promise<unknown> | undefined => {
+    if (autosaveTimer !== undefined) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = undefined;
+    }
+    if (!autosaveDb) return undefined;
+    const db = autosaveDb;
+    autosaveDb = null;
+    return saveState(exportDatabase(db), { method: "auto" }).catch(() => undefined);
+  };
+  const scheduleAutosave = (db: Any): void => {
+    if (!autosaves) return;
+    autosaveDb = db;
+    if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = undefined;
+      void flushAutosave();
+    }, AUTOSAVE_DELAY_MS);
+  };
+  /*
+   * The SQL the document carries, run by the runtime and not by luck.
+   *
+   * The compiler injects schema.sql into index.html as a script of type
+   * application/sql, and the recipe promises it "runs first when the file
+   * opens". It did — when the app loaded the kit, which is what ran it. An
+   * app written against window.dai alone got its database with no tables in
+   * it and failed on its first read; a person's first custom app did exactly
+   * that. So the runtime runs every application/sql block once, schema block
+   * first, then the rest in document order (seed rows, idempotent by the
+   * recipe's rule), and marks each so the kit does not run it twice.
+   */
+  const runDocumentSql = (db: Any): void => {
+    const blocks = Array.from(
+      document.querySelectorAll('script[type="application/sql"]'),
+    ) as HTMLScriptElement[];
+    const ordered = [
+      ...blocks.filter((b) => b.getAttribute("data-dai") === "schema"),
+      ...blocks.filter((b) => b.getAttribute("data-dai") !== "schema"),
+    ];
+    for (const block of ordered) {
+      if (block.getAttribute("data-dai-ran") === "1") continue;
+      const sql = (block.textContent || "").trim();
+      block.setAttribute("data-dai-ran", "1");
+      if (sql) db.exec(sql);
+    }
+  };
+
+  /*
+   * The select helpers take (sql, bind), positionally. exec takes {sql, bind}.
+   * A model that has seen the second writes the first the same way — a
+   * person's first custom app did, and its first read threw "Missing SQL
+   * argument". Both forms are accepted on every read helper, because the
+   * shape of an argument is not a thing to lose somebody's app over.
+   */
+  const lenient = (db: Any): void => {
+    for (const name of ["selectObjects", "selectArrays", "selectValues", "selectValue", "selectArray", "selectObject"]) {
+      if (typeof db[name] !== "function") continue;
+      const original = db[name].bind(db);
+      db[name] = (sql: Any, bind?: Any, ...rest: Any[]): Any => {
+        if (sql && typeof sql === "object" && !Array.isArray(sql) && typeof sql.sql === "string") {
+          return original(sql.sql, bind === undefined ? sql.bind : bind, ...rest);
+        }
+        return original(sql, bind, ...rest);
+      };
+    }
+  };
+
+  const watched = (db: Any): Any => {
+    lenient(db);
+    if (!autosaves || typeof db.exec !== "function") return db;
+    const exec = db.exec.bind(db);
+    db.exec = (...args: Any[]): Any => {
+      const result = exec(...args);
+      scheduleAutosave(db);
+      return result;
+    };
+    return db;
+  };
+  window.addEventListener("pagehide", () => {
+    void flushAutosave();
+  });
+
   const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
     initSqlite().then((api2) => {
       const db = new api2.oo1.DB() as Any;
@@ -1110,18 +1207,28 @@ function bridgeMain(): void {
      */
     openDatabase: (options?: { pageSize?: number }): Promise<Any> =>
       openDatabase(options).then((db: Any) => {
-        if (!declaresSchema) return db;
+        if (!declaresSchema) {
+          runDocumentSql(db);
+          return watched(db);
+        }
         // Closed before the error propagates: an application asking for a
         // handle to data it cannot account for does not get one, which is the
-        // only protection left at this point.
+        // only protection left at this point. Reconciled first, then the
+        // schema: a migration alters what is there, and CREATE IF NOT EXISTS
+        // then fills in what is not.
         return reconcileSchema(db).then(
-          () => db,
+          () => {
+            runDocumentSql(db);
+            return watched(db);
+          },
           (error: Error) => {
             db.close();
             throw error;
           },
         );
       }),
+    /** Whether every write is saved as it happens. True under a host. */
+    autosaves: autosaves,
     /** Page size declared by a serialized database, read from its header. */
     pageSizeOf: (bytes: Uint8Array) => {
       if (bytes.byteLength < 20) return 0;
@@ -1132,7 +1239,13 @@ function bridgeMain(): void {
       return raw === 1 ? 65536 : raw;
     },
     exportDatabase: exportDatabase,
-    saveDatabase: (db: Any, options?: Any) => saveState(exportDatabase(db), options),
+    saveDatabase: (db: Any, options?: Any) => {
+      // An explicit save supersedes a pending automatic one.
+      if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+      autosaveTimer = undefined;
+      autosaveDb = null;
+      return saveState(exportDatabase(db), options);
+    },
     saveState: saveState,
   };
 
@@ -1404,6 +1517,7 @@ function frameLoader(): void {
       // frame has the database and no account of what wrote it, and opens
       // whatever it is handed — which is the failure this exists to prevent.
       schema: (data.schema as string | null) ?? null,
+      hosted: Boolean(data.hosted),
     };
 
     /*
@@ -1682,6 +1796,10 @@ async function boot(): Promise<void> {
     // Carried across as text: the frame decides whether the data it is about
     // to be handed matches the code that is about to run over it.
     schema: files[SCHEMA_ENTRY] ? new TextDecoder().decode(files[SCHEMA_ENTRY]) : null,
+    // Whether a host holds this document. With one, every write is saved as
+    // it happens (see the frame's autosave); without one — a file opened
+    // straight in a browser — a save needs a gesture, and the kit shows one.
+    hosted: window.parent !== window,
     syntheticOrigin: SYNTHETIC_ORIGIN,
     // So the loader can stamp the import map and the application's own inline
     // scripts; the frame inherits this document's policy.

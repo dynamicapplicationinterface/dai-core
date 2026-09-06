@@ -1267,5 +1267,17 @@ test.describe("a control the kit runs is use too", () => {
     await expect(app.locator("#state")).toHaveText("1");
     await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);
     await expect(page.locator("#title")).toContainText("Jobs");
+
+    /*
+     * And it is saved, with nothing pressed. Under a host every write is
+     * saved as it happens; an app that had to build a Save button had a
+     * person who forgot to press it. The kit's own Save is not on screen.
+     */
+    await expect(app.locator("dai-save")).toBeHidden();
+    await page.waitForTimeout(1500);
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    const again = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    await expect(again.locator("#state")).toHaveText("1", { timeout: 30_000 });
   });
 });

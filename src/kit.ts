@@ -87,6 +87,11 @@ const db = await window.dai.openDatabase();
  * leaving one strand of it in place would be leaving the trap.
  */
 for (const block of document.querySelectorAll('script[type="application/sql"]')) {
+  // The runtime runs these when the database opens and marks each one; a
+  // container from before it did leaves them unmarked, and the kit still runs
+  // those. Never twice.
+  if (block.getAttribute('data-dai-ran') === '1') continue;
+  block.setAttribute('data-dai-ran', '1');
   db.exec(block.textContent);
 }
 
@@ -463,9 +468,20 @@ class DaiAttach extends HTMLElement {
   }
 }
 
-/** Writes the database back into the file. */
+/**
+ * Writes the database back into the file — where that takes a gesture.
+ *
+ * Under a host every write is already saved as it happens, and a Save button
+ * beside that is a question with no good answer; the element removes itself.
+ * It stays for a file opened straight in a browser, where the browser insists
+ * a write to disk begins with a tap.
+ */
 class DaiSave extends HTMLElement {
   connectedCallback() {
+    if (window.dai.autosaves) {
+      this.hidden = true;
+      return;
+    }
     if (!this.textContent.trim()) this.textContent = 'Save';
     this.setAttribute('role', 'button');
     this.setAttribute('tabindex', '0');
