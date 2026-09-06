@@ -211,9 +211,18 @@ export async function presignPut(
     canonicalQuery,
     canonicalHeaders,
     signedHeaderList,
-    // The payload hash in the canonical request is the same declared digest.
-    // A body that does not hash to it fails the bucket's own check.
-    body.sha256.toLowerCase(),
+    /*
+     * UNSIGNED-PAYLOAD here, and the digest in the header above.
+     *
+     * A presigned URL is signed before the body exists, so the specification
+     * fixes the hashed-payload slot of the canonical request at this literal
+     * for query-string authentication; the first version put the real digest
+     * here and every upload, honest or not, came back SignatureDoesNotMatch.
+     * The binding is the `x-amz-content-sha256` header: it is inside the
+     * signature, so it cannot be changed, and the bucket checks the body
+     * against it.
+     */
+    "UNSIGNED-PAYLOAD",
   ].join("\n");
   const stringToSign = ["AWS4-HMAC-SHA256", time, scope, await sha256(canonicalRequest)].join("\n");
 
