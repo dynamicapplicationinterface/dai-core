@@ -126,8 +126,10 @@ Every container carries dai-kit.js. It gives you four elements, so most of an ap
   on the device the file arrives at.
 - Anything the kit cannot express is ordinary JavaScript against window.dai, which is still there.
 
-AN ICON
+AN ICON, AND ONE LINE
 Include a file named icon.svg: a simple, bold mark for this app on a square canvas (viewBox="0 0 100 100"), with a filled background and no text smaller than a third of the canvas. It becomes the app's icon on a phone's home screen and in a browser tab, so it should read at 48 pixels. No external references inside it — a self-contained SVG only.
+
+In the <head> of index.html, put one line about the app in <meta name="description" content="…">: what it is for, in under 60 characters, the way a store page puts a line under an app's name ("A packing list for the beach trip"). It is shown under the name when somebody is deciding whether to open it, so write it for them, not for a search engine.
 
 HOW TO HAND IT OVER
 If you can attach files, a zip of the files is best. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
@@ -138,6 +140,7 @@ name: Reading list
 
 --- file: index.html
 <!doctype html>
+<meta name="description" content="Books to read, and the ones you did">
 …
 
 --- file: schema.sql

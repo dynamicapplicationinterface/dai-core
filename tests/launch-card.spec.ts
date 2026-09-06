@@ -209,3 +209,36 @@ test.describe("a tick this host cannot back is not printed", () => {
     expect(await draw(page, [])).toEqual([]);
   });
 });
+
+/**
+ * The card in the shape a phone introduces an app: icon, name, the app's own
+ * line, and the facts — publisher, size — in a strip. The line comes from the
+ * application's <meta name="description">, which the recipe asks for; it is
+ * shown as text and never as markup.
+ */
+test.describe("the card reads like a store page", () => {
+  test("shows the app's own line and the facts", async ({ page }) => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { compileDirectory } = await import("../src/compile.js");
+    const dir = mkdtempSync(join(tmpdir(), "dai-card-"));
+    writeFileSync(
+      join(dir, "index.html"),
+      '<!doctype html><meta charset="utf-8"><meta name="description" content="Books to read, and the ones <b>you</b> did"><p>x</p>',
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: dir, root: resolve(here, ".."), appName: "Reading list" });
+    const file = join(dir, "reading.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("#card-tagline")).toHaveText("Books to read, and the ones <b>you</b> did");
+    expect(await page.locator("#card-tagline b").count()).toBe(0);
+    await expect(page.locator("#fact-publisher")).toHaveText("Unsigned");
+    await expect(page.locator("#fact-size")).toHaveText(/\d+ KB/);
+    await expect(page.locator("#card-open")).toHaveText("Open");
+  });
+});

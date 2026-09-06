@@ -29,6 +29,10 @@ export interface CardInput {
   name: string;
   /** The manifest's icon: a data URL or inline SVG. */
   favicon?: string;
+  /** One line about the app, from its own <meta name="description">. */
+  tagline?: string;
+  /** The file's size in bytes, for the facts row. */
+  size?: number;
   /**
    * Who signed it, as far as this device has seen. Never a bare fingerprint
    * and never the word "verified": a name in one of the states
@@ -82,6 +86,44 @@ export interface CardInput {
 }
 
 /** " with github.com", from an issuer URL, or nothing. */
+/**
+ * What the app says about itself, from its own index.html: the one line a
+ * store page puts under the name. Read from the signed application, never
+ * from anything outside the file; shown as text, never as markup.
+ */
+export function describeApp(indexHtml: string | undefined): { tagline?: string } {
+  if (!indexHtml) return {};
+  const head = indexHtml.slice(0, 20_000);
+  const meta = /<meta\s+(?:[^>]*?\s)?name=["']description["'][^>]*?content=["']([^"']{1,200})["']/i.exec(head)
+    ?? /<meta\s+(?:[^>]*?\s)?content=["']([^"']{1,200})["'][^>]*?name=["']description["']/i.exec(head);
+  const tagline = meta?.[1]?.replace(/\s+/g, " ").trim();
+  return tagline ? { tagline } : {};
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** The publisher, in one or two words, for the facts row. */
+function publisherFact(who: PublisherState): string {
+  switch (who.state) {
+    case "unsigned":
+      return "Unsigned";
+    case "test-key":
+      return "Test key";
+    case "anonymous":
+      return "Anonymous";
+    case "known":
+      return who.name;
+    case "new":
+      return who.name;
+    case "conflict":
+      return "Disputed";
+  }
+}
+
 function issuerHost(issuer?: string): string {
   if (!issuer) return "";
   try {
@@ -124,6 +166,19 @@ export function showCard(input: CardInput): Promise<void> {
   }
 
   name.textContent = input.name;
+
+  const tagline = document.getElementById("card-tagline");
+  if (tagline) {
+    tagline.textContent = input.tagline ?? "";
+    tagline.hidden = !input.tagline;
+  }
+  const factPublisher = document.getElementById("fact-publisher");
+  if (factPublisher) {
+    factPublisher.textContent = publisherFact(input.publisher);
+    factPublisher.dataset.state = input.publisher.state;
+  }
+  const factSize = document.getElementById("fact-size");
+  if (factSize) factSize.textContent = input.size !== undefined ? formatSize(input.size) : "—";
 
   const url = faviconUrl(input.favicon);
   if (url) {

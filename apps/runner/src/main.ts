@@ -34,7 +34,7 @@ import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 import { describeSelf, faviconUrl, watchForInstall } from "./install.js";
-import { hideCard, showCard, type CardInput } from "./card.js";
+import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
@@ -162,6 +162,12 @@ function forgetOpen(): void {
   } catch {
     /* As above. */
   }
+}
+
+/** The application's own index.html, as text, when the archive carries one. */
+function indexHtmlOf(cartridge: Cartridge): string | undefined {
+  const bytes = cartridge.archive["app/index.html"];
+  return bytes ? new TextDecoder().decode(bytes) : undefined;
 }
 
 /** The launch screen's icon and name, for the moment between the tap and the app. */
@@ -669,6 +675,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       await showCard({
         name: cartridge.manifest.appName ?? "container",
         favicon: cartridge.manifest.favicon,
+        ...describeApp(indexHtmlOf(cartridge)),
+        size: file.size,
         publisher: who,
         identity: identity?.status === "shown" ? identity : undefined,
         from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
