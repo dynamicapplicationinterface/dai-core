@@ -98,3 +98,72 @@ test.describe("the handoff's headers", () => {
     expect(coopOf("website/vercel.json")).toMatch(/^(same-origin-allow-popups|unsafe-none)$/);
   });
 });
+
+/**
+ * The opener's Content-Security-Policy.
+ *
+ * The opener origin holds every document a person has opened and their trust
+ * pins, so it is the one origin where a second line of defence matters, and
+ * for a long time it sent none: no CSP, no frame-ancestors, framable by any
+ * page for clickjacking. This pins what it sends now — and, as importantly,
+ * what it must not.
+ *
+ * It must not send `script-src` or `default-src`. A document runs in a frame
+ * whose URL is `blob:`, and a blob document inherits the policy of the page
+ * that made it. The shell in that frame runs one inline script under a nonce
+ * minted per mount, which a static header cannot name — so a `script-src`
+ * here would be inherited by the shell, fail to match its nonce, and stop
+ * every document from running. Every fetch directive that *is* sent is a
+ * superset of what the shell's own <meta> policy allows, so the inherited copy
+ * narrows nothing there and the shell's policy stays the one that binds.
+ */
+test.describe("the opener's policy", () => {
+  const csp = (): Record<string, string> => {
+    const value = (JSON.parse(readFileSync(join(repo, "apps/runner/vercel.json"), "utf8")) as { headers: Rule[] }).headers
+      .find((rule) => rule.source === "/(.*)")
+      ?.headers.find((header) => header.key === "Content-Security-Policy")?.value;
+    expect(value).toBeDefined();
+    return Object.fromEntries(
+      value!.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+        const [name, ...rest] = d.split(/\s+/);
+        return [name!, rest.join(" ")];
+      }),
+    );
+  };
+
+  test("cannot be framed by another origin", () => {
+    expect(csp()["frame-ancestors"]).toBe("'self'");
+  });
+
+  test("sends no script-src and no default-src, because a blob: frame inherits them", () => {
+    const policy = csp();
+    expect(policy["script-src"]).toBeUndefined();
+    expect(policy["default-src"]).toBeUndefined();
+  });
+
+  test("closes what it can without touching the shell", () => {
+    const policy = csp();
+    expect(policy["object-src"]).toBe("'none'");
+    expect(policy["base-uri"]).toBe("'self'");
+    expect(policy["form-action"]).toBe("'self'");
+    // Documents come from stores at other origins, over TLS — or from the
+    // person's own machine. Never plain http to anywhere else.
+    expect(policy["connect-src"]).toMatch(/https:/);
+    expect(policy["connect-src"].replace(/http:\/\/(localhost|127\.0\.0\.1):\*/g, "")).not.toMatch(/http:/);
+  });
+
+  test("is a superset of the shell's own policy, directive for directive", () => {
+    const header = csp();
+    const shell = readFileSync(join(repo, "src/template.html"), "utf8")
+      .match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)![1]!;
+    for (const directive of shell.split(";").map((d) => d.trim()).filter(Boolean)) {
+      const [name, ...sources] = directive.split(/\s+/);
+      if (!(name! in header)) continue; // not sent: nothing inherited, nothing narrowed
+      if (name === "connect-src" || name === "form-action" || name === "base-uri") continue; // the shell is stricter, by design
+      for (const source of sources) {
+        if (source === "'none'" || source.startsWith("'nonce-")) continue;
+        expect(header[name!], `${name} must allow ${source} or the shell loses it`).toContain(source);
+      }
+    }
+  });
+});
