@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { compileDirectory, CompileError, formatBytes, packagedAsset, sanitizeFileName } from "./compile.js";
 import { SchemaError } from "./schema.js";
-import { applicationFiles, auditContainer, looksSectioned, parseContainer } from "./container.js";
+import { auditContainer, authoredFiles, looksSectioned, parseContainer } from "./container.js";
 import { writeBundle } from "./bundle.js";
 import { SCHEMA_ENTRY } from "./core.js";
 import { advisory, breaking, lintFiles } from "./lint.js";
@@ -430,7 +430,7 @@ async function getSource(options: ServerOptions, params: Record<string, unknown>
   const decoder = new TextDecoder();
   const files: Record<string, string> = {};
   const binary: string[] = [];
-  for (const [name, content] of Object.entries(applicationFiles(container.archive))) {
+  for (const [name, content] of Object.entries(authoredFiles(container.archive))) {
     // Text only. A bundle is text, and a font or a photograph handed to a
     // model as mojibake is worse than one it is simply told about.
     const decoded = decoder.decode(content);

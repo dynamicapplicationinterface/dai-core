@@ -425,10 +425,15 @@ test.describe("rebuilding an app that already exists", () => {
     const source = await call(root, "get_dai_source", { path: "notes.dai.html" });
     expect(source.isError).toBe(false);
 
-    // The application's own files, and not the host's megabyte of engine.
+    // The application's own files, and not the host's megabyte of engine —
+    // nor the compiler's additions: the kit it ships, and the schema block it
+    // injects into index.html from schema.sql. A paste that carried both was
+    // twice the size it should have been, and none of the extra was authored.
     expect(source.text).toContain("dai bundle v1");
     expect(source.text).toContain("--- file: index.html");
     expect(source.text).not.toContain("sqlite3.wasm");
+    expect(source.text).not.toContain("--- file: dai-kit.js");
+    expect(source.text).not.toContain('data-dai="schema"');
 
     // The identity, in the header, where a reader of the bundle finds it.
     expect(source.text).toContain(`document: ${uuid}`);

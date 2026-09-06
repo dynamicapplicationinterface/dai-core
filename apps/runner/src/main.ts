@@ -24,7 +24,7 @@ import { verifyIdentity } from "../../../src/identity.js";
  * recognise. Three copies of a sentence drift; this is the sentence.
  */
 const STANDING_LINE = "Send an app like you send a document.";
-import { applicationFiles, hostShell } from "../../../src/container.js";
+import { applicationFiles, authoredFiles, hostShell } from "../../../src/container.js";
 import { writeBundle } from "../../../src/bundle.js";
 import { SCHEMA_ENTRY } from "../../../src/core.js";
 // The shell this host runs, shipped with this host: never the container's own.
@@ -1166,7 +1166,7 @@ async function copySourceForAssistant(): Promise<void> {
   const files: Record<string, string> = {};
   const decoder = new TextDecoder();
   const binary: string[] = [];
-  for (const [name, bytes] of Object.entries(applicationFiles(loaded.archive))) {
+  for (const [name, bytes] of Object.entries(authoredFiles(loaded.archive))) {
     const decoded = decoder.decode(bytes);
     // A bundle is text. A font pasted as mojibake is worse than one the
     // assistant is simply told about.

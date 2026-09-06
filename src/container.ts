@@ -980,6 +980,35 @@ export async function resealContainer(
 /** The meta a host-built shell carries, so it can be told from a sealed one. */
 export const HOST_SHELL_META = '<meta name="dai-shell" content="host">';
 
+/**
+ * The application's files as somebody wrote them — for handing back to the
+ * person, or to an assistant, as a bundle.
+ *
+ * The compiler adds two things to what it is given, and a bundle that carries
+ * them back is wrong twice over. dai-kit.js is the runtime's own kit, four
+ * hundred lines nobody authored, and an assistant handed it edits it. The
+ * schema block in index.html is injected from schema.sql at build; carried
+ * back beside schema.sql, the next build injects it again. A review of a
+ * "Change something" paste found both — the bundle was twice the size it
+ * should have been, and none of the extra was the person's.
+ */
+export function authoredFiles(archive: Record<string, Uint8Array>): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
+  const all = applicationFiles(archive);
+  const hasSchemaFile = "schema.sql" in all;
+  for (const [name, bytes] of Object.entries(all)) {
+    if (name === "dai-kit.js") continue;
+    if (name === "index.html" && hasSchemaFile) {
+      const text = new TextDecoder().decode(bytes);
+      const stripped = text.replace(/\n?<script type="application\/sql" data-dai="schema">[\s\S]*?<\/script>/, "");
+      out[name] = new TextEncoder().encode(stripped);
+      continue;
+    }
+    out[name] = bytes;
+  }
+  return out;
+}
+
 /** The application's files, as the compiler saw them: the `app/` entries, prefix stripped. */
 export function applicationFiles(archive: Record<string, Uint8Array>): Record<string, Uint8Array> {
   const out: Record<string, Uint8Array> = {};
