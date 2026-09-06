@@ -130,12 +130,49 @@ export function faviconUrl(favicon: string | undefined): string | null {
 }
 
 /**
+ * An SVG with a size, because WebKit will not draw one without.
+ *
+ * An icon written the way icons are written — `viewBox` and no `width` or
+ * `height` — has no intrinsic size. Chromium infers one from the viewBox and
+ * draws it; WebKit treats it as zero by zero, and `drawImage` puts nothing on
+ * the canvas. There is no error: the image loads, the draw succeeds, the PNG
+ * comes out blank or the blob comes back null.
+ *
+ * The visible consequence was on a phone, and was not obviously about icons at
+ * all: a document added to the home screen got the opener's icon instead of its
+ * own, because the rasterisation quietly produced nothing to use.
+ *
+ * So the size is written in before the image is ever loaded. Only for markup
+ * this function can see and understand — a `data:` URL that is already a PNG is
+ * passed through untouched.
+ */
+function svgWithSize(favicon: string, size: number): string | undefined {
+  const markup = favicon.trim().startsWith("<svg")
+    ? favicon
+    : favicon.startsWith("data:image/svg+xml,")
+      ? decodeURIComponent(favicon.slice("data:image/svg+xml,".length))
+      : undefined;
+  if (!markup) return undefined;
+
+  const open = /<svg[^>]*>/i.exec(markup);
+  if (!open) return undefined;
+
+  // Already sized: leave it exactly as the author wrote it.
+  if (/\swidth\s*=/i.test(open[0]) && /\sheight\s*=/i.test(open[0])) return markup;
+
+  const sized = open[0].replace(/<svg/i, `<svg width="${size}" height="${size}"`);
+  return markup.replace(open[0], sized);
+}
+
+/**
  * The document's icon as a PNG, because a home screen will not take an SVG.
  * Null when the image will not load; the caller then keeps this app's own
  * icon rather than showing a broken one.
  */
 async function iconPng(favicon: string | undefined, size: number): Promise<Blob | null> {
-  const url = faviconUrl(favicon);
+  // Sized first, or WebKit draws nothing. See svgWithSize.
+  const sized = favicon ? svgWithSize(favicon, size) : undefined;
+  const url = faviconUrl(sized ?? favicon);
   if (!url) return null;
 
   const image = new Image();
@@ -152,6 +189,25 @@ async function iconPng(favicon: string | undefined, size: number): Promise<Blob 
   const context = canvas.getContext("2d");
   if (!context) return null;
   context.drawImage(image, 0, 0, size, size);
+
+  /*
+   * A blank canvas is a failure, not an icon.
+   *
+   * When the draw puts nothing down — the case above, and anything else that
+   * silently produces an empty image — the honest answer is null, so the
+   * caller keeps this app's own icon rather than installing an invisible one.
+   * Checked by looking, because every API involved reported success.
+   */
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  let drawn = false;
+  for (let at = 3; at < pixels.length; at += 4) {
+    if (pixels[at] !== 0) {
+      drawn = true;
+      break;
+    }
+  }
+  if (!drawn) return null;
+
   return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
 }
 
