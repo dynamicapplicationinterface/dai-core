@@ -122,13 +122,13 @@ test.describe("a crawler fetching /d/<id>", () => {
     });
     await new Promise<void>((ok) => store!.listen(0, "127.0.0.1", ok));
     storeOrigin = `http://127.0.0.1:${(store!.address() as { port: number }).port}`;
-    process.env.DAI_STORE_BASE = storeOrigin + "/";
+    process.env.DAI_STORE_PUBLIC_BASE = storeOrigin + "/";
   });
 
   test.afterAll(async () => {
     await new Promise<void>((done) => opener?.close(() => done()));
     await new Promise<void>((done) => store?.close(() => done()));
-    delete process.env.DAI_STORE_BASE;
+    delete process.env.DAI_STORE_PUBLIC_BASE;
   });
 
   async function seal(preview: boolean) {

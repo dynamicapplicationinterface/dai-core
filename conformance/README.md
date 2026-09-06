@@ -16,11 +16,32 @@ and it is a question with an answer, which is the whole point.
 | `cases.json` | Every case: the file, which form it is, what it is, and the verdict |
 | `cases/` | The containers themselves |
 | `signing-key.pem` | The key the signed cases were signed with |
+| `countersign-key.pem` | The second key, for the countersignature cases |
+| `trust-publisher-a-key.pem`, `trust-publisher-b-key.pem` | Two stand-in publishers, for the trust vectors only |
 
-The key is committed on purpose. It signs documents that exist to be checked;
-publishing it is what lets anyone rebuild the suite. Do not use it for anything
-else, and do not treat a container signed by it as trustworthy — it is trusted
-by nobody, which is exactly its job.
+Every key here is committed on purpose. They sign documents that exist to be
+checked, and publishing them is what lets anyone rebuild the suite and get the
+same bytes.
+
+**`signing-key.pem` and `countersign-key.pem` are declared test keys.** They are
+listed by public key in `src/test-keys.ts`, and that has two consequences a
+reader of this suite has to implement:
+
+- **A host must label a container signed with one.** Not "signed", not a
+  publisher name, and never pinned as a publisher: everybody has this key, so
+  the signature proves only that whoever built the container had a file out of
+  this repository. That is evidence-shaped and is not evidence, which makes it
+  more dangerous than no signature at all. The state is `test-key` and the
+  words are "treat as unsigned".
+- **A writer must refuse to sign with one**, unless it is explicitly told
+  otherwise — `--allow-test-key` on the command line, `allowTestKey` in the
+  API. The suite's own generator passes it, and nothing else should.
+
+**The two `trust-publisher-*` keys are not declared test keys**, deliberately.
+The trust vectors exercise known / new / conflict, which is a question about
+publisher keys — and a key every reader is required to report as a test key
+could not play that part. They stand in for two publishers in those vectors and
+are for nothing else.
 
 ## Running it
 

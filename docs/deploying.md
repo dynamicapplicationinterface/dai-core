@@ -81,42 +81,80 @@ Two details:
   redirects across origins tends to bounce out into a browser tab. Which is the
   argument for doing this while that is nobody.
 
-## Store credentials, and why nothing deployed has one
+## Store credentials
 
 The write credential for the bucket is the only secret this project has. It
-lives in `.env.local`, beside the repository, ignored by git. `.env.example` is
-committed, holds every name and no values, and is what tells you what to fill
-in:
+exists in exactly three places:
+
+1. **Vercel environment variables** on the **opener** project — production and
+   preview separate — for the presign endpoint.
+2. **GitHub Actions secrets**, for anything CI publishes.
+3. **`.env.local`** on a developer's machine, ignored by git.
+
+`.env.example` is committed, holds every name and no values, and is what tells
+you what to fill in:
 
     cp .env.example .env.local
-    # then DAI_S3_ENDPOINT, DAI_S3_BUCKET, DAI_S3_ACCESS_KEY_ID,
-    # DAI_S3_SECRET_ACCESS_KEY, DAI_S3_PUBLIC_BASE
 
-A real environment variable beats the file, so CI and a shell export behave the
-way anybody would expect. Set some of the five and not all of them and
-publishing refuses outright — silently falling back to a local directory
-because one name was misspelled is how somebody hands out a `file:` link
-believing they published something.
+### In Vercel
 
-**Nothing deployed needs any of this, and that is a property worth keeping.**
+Opener project → **Settings → Environment Variables**. The website project
+needs none of these; it has no presign endpoint.
 
-| | reads a store | needs a credential |
+| Name | Sensitive | Environments |
 |---|---|---|
-| the opener | a blob, over HTTPS, from a public URL | no |
+| `DAI_STORE_ENDPOINT` | no | Production, Preview |
+| `DAI_STORE_BUCKET` | no | Production, Preview |
+| `DAI_STORE_REGION` | no | Production, Preview |
+| `DAI_STORE_PUBLIC_BASE` | no | Production, Preview |
+| `DAI_STORE_ACCESS_KEY_ID` | **yes** | one value per environment |
+| `DAI_STORE_SECRET_ACCESS_KEY` | **yes** | one value per environment |
+| `DAI_PRESIGN_PER_HOUR` | no | optional |
+| `DAI_PRESIGN_MAX_BYTES` | no | optional |
+
+The two credential rows are added **twice**: once scoped to Production with the
+production token, once to Preview with the preview token. Different tokens, so
+a preview deployment — which any pull request can produce — cannot write to the
+production bucket. Leave Development unticked; that is what `.env.local` is.
+
+Mark both as **Sensitive**. Vercel then refuses to display the value again
+after saving, which is the behaviour you want for something you can rotate but
+should never need to read.
+
+### The R2 token
+
+One per environment, scoped to the single bucket, **Object Read & Write** only.
+Not account-wide, and not admin. A token that can only write objects to
+`dai-store` is a token whose loss costs the contents of `dai-store` — which is
+ciphertext — and nothing else.
+
+### Nothing else holds it
+
+| | reads a store | needs a secret |
+|---|---|---|
+| the opener page | a blob, over HTTPS, public URL | no |
 | the edge middleware | a sidecar, the same way | no |
-| `dai publish` / the MCP server | writes | **yes** |
+| the desktop app | a blob, the same way | no |
+| **`/api/presign`** | mints a signed PUT URL | **yes** |
+| `dai publish` / MCP | writes directly | **yes**, from `.env.local` |
 
-The opener runs in a browser on a device belonging to whoever was sent a link,
-so anything it held would be readable by them. The middleware builds a preview
-out of a public object; there is nothing there to authenticate. Only publishing
-is a write, and publishing happens on the machine of the person doing it.
+The opener and the desktop app upload by asking `/api/presign` for a URL they
+may PUT to for five minutes, for one key and one content type. The bytes go
+device → bucket and never pass through a machine this project runs. Reads are
+public throughout, which is what lets the opener be a static page anybody can
+mirror.
 
-So a credential should never appear in Vercel's environment, in a browser
-bundle, or inside a container. If one ever has to, the design has changed in a
-way that needs arguing about rather than configuring around —
-`tests/credentials.spec.ts` fails if the opener or the middleware so much as
-mentions one, checks that `.env*` is ignored while `.env.example` is not, and
-scans every tracked file for a committed key.
+`tests/credentials.spec.ts` holds the parts that can be checked mechanically:
+`.env*` ignored while `.env.example` is not, the example complete and
+valueless, a real environment variable beating the file, a part-configured
+store refusing rather than falling back, no committed key in any tracked file,
+and the opener's own code never mentioning a credential.
+
+### Turn on secret-scanning push protection
+
+GitHub → repository **Settings → Code security** → *Push protection*. It
+rejects a push that contains something shaped like a credential, which is the
+one control here that works when everything above has already been ignored.
 
 ## Caching, and the part that must not be cached
 

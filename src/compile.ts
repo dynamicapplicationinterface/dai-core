@@ -51,6 +51,11 @@ export interface CompileOptions {
   appName?: string;
   /** PEM text, or a path to a PEM file. */
   signingKey?: string;
+  /**
+   * Sign with a key published in the DAI source. Refused otherwise; see
+   * `src/test-keys.ts` for why. Only the conformance suite has a reason.
+   */
+  allowTestKey?: boolean;
   /** Seed database to ship inside the container. */
   sqlitePath?: string;
   /**
@@ -234,6 +239,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     wasm: wasmPath ? new Uint8Array(readFileSync(wasmPath)) : undefined,
     glue: gluePath ? new Uint8Array(readFileSync(gluePath)) : undefined,
     signingKey: options.signingKey ? readSigningKey(root, options.signingKey) : undefined,
+    allowTestKey: options.allowTestKey,
     documentUuid: options.documentUuid,
     publisherName: options.publisherName,
     supersedes: options.supersedes ?? previous?.documentUuid,

@@ -34,7 +34,10 @@ export const config = {
  * away, links do not.
  */
 function storeBase(): string {
-  return process.env.DAI_STORE_BASE ?? "https://store.opendai.app/";
+  // The same name the presign endpoint reads, because it is the same fact:
+  // where the public reads this bucket. Two names for one thing is how a
+  // deployment ends up half-configured with both of them set to something.
+  return process.env.DAI_STORE_PUBLIC_BASE ?? "https://store.opendai.app/";
 }
 
 export default async function middleware(request: Request): Promise<Response> {

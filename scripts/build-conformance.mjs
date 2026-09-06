@@ -65,6 +65,15 @@ const base = (overrides = {}) => ({
   appName: "Conformance",
   documentUuid: UUID,
   now: NOW,
+  /*
+   * This suite is the one thing that may sign with the published key.
+   *
+   * The key is committed so anybody can regenerate these cases and get the
+   * same bytes; the compiler refuses it everywhere else, because a signature
+   * anybody can make is evidence-shaped and is not evidence. See
+   * src/test-keys.ts.
+   */
+  allowTestKey: true,
   ...overrides,
 });
 
@@ -832,20 +841,34 @@ console.log(`${written.length} cases written to conformance/cases.json`);
  * must not collide.
  */
 {
-  const csPem = readFileSync(join(suite, "countersign-key.pem"), "utf8");
+  /*
+   * Two keys that stand in for publishers, and are not the published test key.
+   *
+   * These vectors exist to exercise known / new / conflict, which is a
+   * question about publisher keys. The suite's own signing key cannot play
+   * that part: it is on the published-test-key list, so every reader is
+   * required to report it as a test key and none of these steps would reach
+   * the state it is checking (see src/test-keys.ts).
+   *
+   * So the vectors get their own pair. They are committed like everything else
+   * here — the point of a conformance suite is that anybody can reproduce it —
+   * and they are for these vectors and nothing else.
+   */
+  const publisherA = readFileSync(join(suite, "trust-publisher-a-key.pem"), "utf8");
+  const publisherB = readFileSync(join(suite, "trust-publisher-b-key.pem"), "utf8");
   const steps = [
-    { name: "first", key: KEY, publisherName: "Ace Space", expect: { state: "new" }, record: true },
-    { name: "second", key: KEY, publisherName: "Ace Space", expect: { state: "known", count: 1 }, record: true },
+    { name: "first", key: publisherA, publisherName: "Ace Space", expect: { state: "new" }, record: true },
+    { name: "second", key: publisherA, publisherName: "Ace Space", expect: { state: "known", count: 1 }, record: true },
     // Rule 1: one word, two alphabets. A Cyrillic а inside a Latin word.
-    { name: "mixed-script", key: csPem, publisherName: "Ace Spаce", expect: { state: "conflict", rule: "mixed-script" }, record: false },
+    { name: "mixed-script", key: publisherB, publisherName: "Ace Spаce", expect: { state: "conflict", rule: "mixed-script" }, record: false },
     // Rule 2: whole-script Cyrillic, every letter a UTS #39 prototype of a Latin one.
-    { name: "cyrillic-skeleton", key: csPem, publisherName: "Асе Ѕрасе", expect: { state: "conflict", rule: "skeleton", knownAs: "Ace Space" }, record: false },
+    { name: "cyrillic-skeleton", key: publisherB, publisherName: "Асе Ѕрасе", expect: { state: "conflict", rule: "skeleton", knownAs: "Ace Space" }, record: false },
     // NFKC: fullwidth Latin.
-    { name: "fullwidth", key: csPem, publisherName: "Ａｃｅ Ｓｐａｃｅ", expect: { state: "conflict", rule: "skeleton", knownAs: "Ace Space" }, record: false },
+    { name: "fullwidth", key: publisherB, publisherName: "Ａｃｅ Ｓｐａｃｅ", expect: { state: "conflict", rule: "skeleton", knownAs: "Ace Space" }, record: false },
     // An all-CJK name must collide with nothing.
-    { name: "cjk-no-collision", key: csPem, publisherName: "株式会社アクメ", expect: { state: "new" }, record: true },
+    { name: "cjk-no-collision", key: publisherB, publisherName: "株式会社アクメ", expect: { state: "new" }, record: true },
     // Rule 3: a document this host has under one key, arriving under another.
-    { name: "same-document-other-key", key: csPem, publisherName: "Northwind", uuidOf: "first", expect: { state: "conflict", rule: "document" }, record: false },
+    { name: "same-document-other-key", key: publisherB, publisherName: "Northwind", uuidOf: "first", expect: { state: "conflict", rule: "document" }, record: false },
   ];
   // Every step is its own document. The suite's fixed UUID would make every
   // step the same document under two keys, which is rule 3's conflict — the

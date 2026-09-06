@@ -60,6 +60,10 @@ Build options:
                           that exact copy. The manifest still covers it and the
                           signature is unchanged, so it is the same build — it
                           simply will not open where no host can supply one.
+      --allow-test-key    Sign with a key that is published in the DAI source.
+                          Refused otherwise, because everybody has that key and
+                          a signature anybody can make is not evidence — only
+                          the conformance suite has a reason to pass this
       --no-verify         Build a container that does not demand verification
       --quiet             Print only the output path
 
@@ -202,6 +206,7 @@ async function build(parsed: Parsed): Promise<number> {
     validUntil,
     verifyIntegrity: flags.verify === false ? false : undefined,
     thin: flags.thin === true,
+    allowTestKey: flags["allow-test-key"] === true,
     sectioned: flags.dai === true,
   });
 
@@ -496,7 +501,7 @@ async function publishCommand(parsed: Parsed): Promise<number> {
     process.stderr.write(
       "dai publish needs a file, and somewhere to put it.\n" +
         "  --store ./dir     a directory this machine serves\n" +
-        "  or set DAI_S3_* in .env.local (see .env.example)\n",
+        "  or set DAI_STORE_* in .env.local (see .env.example)\n",
     );
     return 2;
   }

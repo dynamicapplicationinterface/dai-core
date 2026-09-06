@@ -151,6 +151,21 @@ export function showCard(input: CardInput): Promise<void> {
     case "unsigned":
       publisher.textContent = "Not signed — anyone could have made this.";
       break;
+    /*
+     * Signed with a key this project publishes.
+     *
+     * Worse than unsigned, and said so. Unsigned is honest: nobody claimed
+     * anything. This is a signature anybody could have produced, which looks
+     * like a claim and is not one — so it gets the conflict styling, not the
+     * neutral kind, and the sentence says what the key is rather than showing
+     * a fingerprint somebody might go and compare.
+     */
+    case "test-key":
+      publisher.textContent =
+        `Signed with a test key that is published in the DAI source — ${who.which}. ` +
+        `Anyone can produce this signature, so it says nothing about who made this. ` +
+        `Treat it as unsigned.`;
+      break;
     case "anonymous":
       publisher.textContent = "Signed, under no name — the first time you've seen this key.";
       verify.hidden = false;

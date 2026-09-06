@@ -772,6 +772,10 @@ async function describePublisher(container: Awaited<ReturnType<typeof verifyCont
       return ` Claims to be ${who.claimed}, but the ${who.knownAs} known here uses a different key. Treat as a stranger.`;
     case "anonymous":
       return ` Signed under no name; first time this key has been seen here.`;
+    // A key published in the DAI source: anybody can make this signature, so
+    // it says nothing about who made the document. Named, not fingerprinted.
+    case "test-key":
+      return ` Signed with a published test key (${who.which}). Anyone can produce this signature. Treat as unsigned.`;
     default:
       return "";
   }

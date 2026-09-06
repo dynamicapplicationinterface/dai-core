@@ -1,0 +1,113 @@
+/**
+ * A store for somewhere that cannot hold a key: a browser, or a desktop app.
+ *
+ * Both of these run on somebody else's device. A bucket credential in either
+ * would be a credential belonging to whoever holds the device, so neither gets
+ * one. Instead they ask an endpoint for permission to write one object — a URL
+ * signed for one key, one content type, and a few minutes — and PUT to it.
+ *
+ * The bytes never pass through that endpoint. It answers a question about
+ * whether this upload may happen; the upload itself goes device to bucket.
+ *
+ * Reads need none of this. A blob is fetched from a public URL with no
+ * credential in the request, which is why the opener can be a static page that
+ * anybody mirrors.
+ */
+import { admit, type PreviewIcon, type Sidecar, type Store } from "./store.js";
+
+export interface PresignedStoreOptions {
+  /**
+   * The endpoint that mints URLs. Usually `/api/presign` on the opener's own
+   * origin.
+   */
+  presignUrl: string;
+  /** Where the public reads the bucket, for the href a link points at. */
+  publicBase: string;
+  /** For a caller with its own fetch — a desktop app, or a test. */
+  fetchImpl?: typeof fetch;
+}
+
+interface Minted {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  href: string;
+}
+
+export function presignedStore(options: PresignedStoreOptions): Store {
+  const doFetch = options.fetchImpl ?? fetch;
+  const publicBase = options.publicBase.endsWith("/") ? options.publicBase : options.publicBase + "/";
+
+  const mint = async (hash: string, size: number, kind: "blob" | "sidecar" | "icon"): Promise<Minted> => {
+    const response = await doFetch(options.presignUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hash, size, kind }),
+    });
+
+    if (!response.ok) {
+      // The endpoint's own sentence, because it knows why — too large, too
+      // many, nothing configured — and inventing a second one here would
+      // produce two explanations for one refusal.
+      const said = await response
+        .json()
+        .then((body) => (body as { error?: string }).error)
+        .catch(() => undefined);
+      throw new Error(said ?? `The store refused this upload (HTTP ${response.status}).`);
+    }
+
+    return (await response.json()) as Minted;
+  };
+
+  const put = async (bytes: Uint8Array, minted: Minted): Promise<void> => {
+    const response = await doFetch(minted.url, {
+      method: minted.method,
+      headers: minted.headers,
+      body: bytes as never,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `The upload was signed but the store would not take it (HTTP ${response.status}). ` +
+          `A signed URL is good for a few minutes; try again.`,
+      );
+    }
+  };
+
+  return {
+    async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
+      // The same admission the server-side stores run. Checked here too, before
+      // a URL is even asked for: a document that a store would refuse should
+      // not consume an upload slot to find that out.
+      await admit(hash, ciphertext, sidecar, icon);
+
+      const blob = await mint(hash, ciphertext.length, "blob");
+      await put(ciphertext, blob);
+
+      const sidecarBytes = new TextEncoder().encode(JSON.stringify(sidecar));
+      await put(sidecarBytes, await mint(hash, sidecarBytes.length, "sidecar"));
+
+      if (icon) await put(icon.png, await mint(hash, icon.png.length, "icon"));
+
+      return blob.href;
+    },
+
+    async get(href) {
+      // Public, and deliberately not through the endpoint: a read that needed
+      // permission would be a store this project could be asked to censor.
+      const response = await doFetch(href, { mode: "cors", credentials: "omit" });
+      if (!response.ok) throw new Error(`The store returned HTTP ${response.status}.`);
+      return new Uint8Array(await response.arrayBuffer());
+    },
+
+    async head(href) {
+      const response = await doFetch(href, { method: "HEAD", mode: "cors", credentials: "omit" });
+      if (!response.ok) return { exists: false, size: 0 };
+      return { exists: true, size: Number(response.headers.get("content-length") ?? 0) };
+    },
+  };
+}
+
+/** Where a document written through `presignedStore` will be readable. */
+export function publicHrefFor(publicBase: string, hash: string): string {
+  return new URL(hash, publicBase.endsWith("/") ? publicBase : publicBase + "/").href;
+}

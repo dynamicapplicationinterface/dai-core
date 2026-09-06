@@ -16,6 +16,7 @@ import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
+import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
 
 /** Bumped when the manifest's shape changes. */
 /**
@@ -273,6 +274,19 @@ export interface BuildContainerInput {
    * only the public half needs exporting.
    */
   signingKey?: string | SigningKeyPair;
+  /**
+   * Sign with a key this project publishes anyway.
+   *
+   * Refused by default. The conformance suite's key is in the repository so
+   * that anybody can regenerate the vectors, which means everybody has it —
+   * and a signature anybody can produce is not evidence, it is
+   * evidence-shaped. Signing with it by accident is the easy mistake, because
+   * it is the key sitting right there and the one a copied command line
+   * reaches for, and the container that comes out looks signed.
+   *
+   * The flag exists because the conformance suite itself has to sign with it.
+   */
+  allowTestKey?: boolean;
   /** Reuse an existing identity instead of minting one. */
   documentUuid?: string;
   /**
@@ -481,6 +495,14 @@ export async function buildContainer(
   // signature covers the shell's own digest, so a key inside the signed set
   // could not be written before signing.
   const signing = signingKey ? await readSigningKey(signingKey) : undefined;
+  if (signing && !input.allowTestKey && isPublishedTestKey(signing.spki)) {
+    throw new Error(
+      `DAI: that is ${describeTestKey(signing.spki)}, which is published in the DAI source. ` +
+        `Everybody has it, so a signature made with it proves nothing — and a container ` +
+        `carrying one looks signed to whoever is handed it. Sign with your own key, or ` +
+        `pass allowTestKey (--allow-test-key) if you are building the conformance suite.`,
+    );
+  }
 
   const documentUuid = input.documentUuid ?? crypto.randomUUID();
   const hashes: Record<string, string> = {};

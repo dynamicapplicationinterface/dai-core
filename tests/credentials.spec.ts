@@ -68,8 +68,8 @@ test.describe("credentials, and the places they must not be", () => {
 
     const shapes: [string, RegExp][] = [
       // An assignment with something after the equals sign.
-      ["an S3 secret", /DAI_S3_SECRET_ACCESS_KEY\s*[=:]\s*['"]?[A-Za-z0-9/+_-]{16,}/],
-      ["an S3 key id", /DAI_S3_ACCESS_KEY_ID\s*[=:]\s*['"]?[A-Za-z0-9]{16,}/],
+      ["a store secret", /DAI_STORE_SECRET_ACCESS_KEY\s*[=:]\s*['"]?[A-Za-z0-9/+_-]{16,}/],
+      ["a store key id", /DAI_STORE_ACCESS_KEY_ID\s*[=:]\s*['"]?[A-Za-z0-9]{16,}/],
       ["an AWS key id", /\bAKIA[0-9A-Z]{16}\b/],
       /*
        * A whole PEM block, not the words on their own.
@@ -160,11 +160,11 @@ test.describe("credentials, and the places they must not be", () => {
     const before = { ...process.env };
     try {
       for (const name of STORE_VARIABLES) delete process.env[name];
-      process.env.DAI_S3_BUCKET = "dai-store";
-      process.env.DAI_S3_ENDPOINT = "https://example.r2.cloudflarestorage.com";
+      process.env.DAI_STORE_BUCKET = "dai-store";
+      process.env.DAI_STORE_ENDPOINT = "https://example.r2.cloudflarestorage.com";
       // and no key, no secret, no public base
 
-      await expect(storeFromEnvironment(empty)).rejects.toThrow(/Missing: .*DAI_S3_ACCESS_KEY_ID/);
+      await expect(storeFromEnvironment(empty)).rejects.toThrow(/Missing: .*DAI_STORE_ACCESS_KEY_ID/);
     } finally {
       for (const name of STORE_VARIABLES) delete process.env[name];
       Object.assign(process.env, before);

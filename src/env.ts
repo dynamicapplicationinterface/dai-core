@@ -1,32 +1,36 @@
 /**
  * Where a store's credentials come from, and where they must never go.
  *
- * ## Who actually needs them
+ * ## Who holds the secret
  *
- * Almost nothing. Three of the four programs in this project touch a store and
- * only one of them writes to it:
+ * Exactly three places, and the list is the design:
  *
- * - The **opener** reads a blob over plain HTTPS from a public URL. It holds no
- *   credentials, and it must not: it runs in a browser, on a device belonging
- *   to whoever was sent a link, and anything it held would be readable by them.
- * - The **edge middleware** reads a sidecar the same way. A preview is built
- *   from a public object; there is nothing to authenticate.
- * - The **CLI and the MCP server** publish, and publishing is a write. This is
- *   the only place a secret is needed, and it runs on the machine of the person
- *   doing the publishing.
+ * - **Vercel environment variables**, production and preview kept separate, for
+ *   the presign endpoint — the one deployed thing that has it.
+ * - **GitHub Actions secrets**, for anything CI publishes.
+ * - **`.env.local`** on a developer's machine, ignored by git.
  *
- * So credentials live on one laptop, in the environment, and travel no further.
- * Not in the repository, not in Vercel, not in a browser bundle, not in a
- * container. If a credential ever needs to exist in a deployed web service,
- * something has been designed wrong.
+ * Everything else uploads through a presigned URL and never sees a key:
+ *
+ * - The **opener** and the **desktop app** ask the presign endpoint for a URL
+ *   they may PUT to for a few minutes. They run on somebody else's device, so
+ *   anything they held would be readable by whoever holds the device.
+ * - The **edge middleware** reads a sidecar over plain HTTPS. A preview is
+ *   built from a public object; there is nothing to authenticate.
+ * - **Reads are public throughout.** A blob is fetched from a URL with no
+ *   credential anywhere in the request.
+ *
+ * The token itself is scoped to the one bucket, object read/write only, one per
+ * environment. A token that can do more than write objects to `dai-store` is a
+ * token whose loss is a bigger event than it needs to be.
  *
  * ## The file
  *
  * `.env.local`, beside the repository and ignored by git. Read here rather than
  * through a dependency, because a parser this small does not justify putting
  * one in everybody's tree — the same reason the argument parser is hand-rolled.
- * Real environment variables win over the file, so CI and a shell export behave
- * the way anybody would expect.
+ * Real environment variables win over the file, so Vercel, GitHub Actions and a
+ * shell export all behave the way anybody would expect.
  *
  * `.env.example` is committed and holds names with no values. It is the
  * documentation, and it is the thing that stays in step with the code.
@@ -38,14 +42,16 @@ import type { Store } from "./store.js";
 /** Names this project reads. Kept here so `.env.example` has one source. */
 export const STORE_VARIABLES = [
   "DAI_STORE_DIR",
+  // Where a local directory is served from. Only meaningful with DAI_STORE_DIR;
+  // the bucket's public address is DAI_STORE_PUBLIC_BASE.
   "DAI_STORE_BASE",
-  "DAI_S3_ENDPOINT",
-  "DAI_S3_BUCKET",
-  "DAI_S3_REGION",
-  "DAI_S3_ACCESS_KEY_ID",
-  "DAI_S3_SECRET_ACCESS_KEY",
-  "DAI_S3_PUBLIC_BASE",
-  "DAI_S3_ALLOW_CLEAR",
+  "DAI_STORE_ENDPOINT",
+  "DAI_STORE_BUCKET",
+  "DAI_STORE_REGION",
+  "DAI_STORE_ACCESS_KEY_ID",
+  "DAI_STORE_SECRET_ACCESS_KEY",
+  "DAI_STORE_PUBLIC_BASE",
+  "DAI_STORE_ALLOW_CLEAR",
 ] as const;
 
 /**
@@ -95,20 +101,20 @@ export function loadEnvFile(cwd: string = process.cwd()): string | undefined {
 export async function storeFromEnvironment(cwd?: string): Promise<Store | undefined> {
   loadEnvFile(cwd);
 
-  const endpoint = process.env.DAI_S3_ENDPOINT;
-  const bucket = process.env.DAI_S3_BUCKET;
-  const accessKeyId = process.env.DAI_S3_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.DAI_S3_SECRET_ACCESS_KEY;
-  const publicBase = process.env.DAI_S3_PUBLIC_BASE;
+  const endpoint = process.env.DAI_STORE_ENDPOINT;
+  const bucket = process.env.DAI_STORE_BUCKET;
+  const accessKeyId = process.env.DAI_STORE_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.DAI_STORE_SECRET_ACCESS_KEY;
+  const publicBase = process.env.DAI_STORE_PUBLIC_BASE;
 
   const anyS3 = endpoint || bucket || accessKeyId || secretAccessKey || publicBase;
   if (anyS3) {
     const missing = [
-      ["DAI_S3_ENDPOINT", endpoint],
-      ["DAI_S3_BUCKET", bucket],
-      ["DAI_S3_ACCESS_KEY_ID", accessKeyId],
-      ["DAI_S3_SECRET_ACCESS_KEY", secretAccessKey],
-      ["DAI_S3_PUBLIC_BASE", publicBase],
+      ["DAI_STORE_ENDPOINT", endpoint],
+      ["DAI_STORE_BUCKET", bucket],
+      ["DAI_STORE_ACCESS_KEY_ID", accessKeyId],
+      ["DAI_STORE_SECRET_ACCESS_KEY", secretAccessKey],
+      ["DAI_STORE_PUBLIC_BASE", publicBase],
     ]
       .filter(([, value]) => !value)
       .map(([name]) => name as string);
@@ -125,12 +131,12 @@ export async function storeFromEnvironment(cwd?: string): Promise<Store | undefi
       endpoint: endpoint!,
       bucket: bucket!,
       // R2 takes "auto"; a real S3 takes its region name.
-      region: process.env.DAI_S3_REGION ?? "auto",
+      region: process.env.DAI_STORE_REGION ?? "auto",
       accessKeyId: accessKeyId!,
       secretAccessKey: secretAccessKey!,
       publicBase: publicBase!,
       pathStyle: true,
-      allowClear: process.env.DAI_S3_ALLOW_CLEAR === "1",
+      allowClear: process.env.DAI_STORE_ALLOW_CLEAR === "1",
     });
   }
 

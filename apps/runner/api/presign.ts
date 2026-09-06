@@ -1,0 +1,177 @@
+/**
+ * The one deployed thing that holds a store credential.
+ *
+ * A browser cannot be given a bucket key. It runs on somebody else's device,
+ * and a key in a page is a key belonging to whoever was sent the link. But a
+ * browser is exactly where documents get made — the site builds them, the
+ * opener re-seals them — so something has to bridge that, and this is it: a
+ * function that checks what is being asked for, and hands back a URL that may
+ * be written to once, for a few minutes, and to one address.
+ *
+ * Presigned rather than proxied. A function that relayed the body would have a
+ * body size limit, and a document is allowed to be five megabytes; it would
+ * also mean every document passing through a machine this project runs, which
+ * is the opposite of what a store is for. The bytes go from the device to the
+ * bucket and are never seen here.
+ *
+ * ## What this checks before it signs anything
+ *
+ * The credential's whole value to an attacker is that it writes to a bucket
+ * somebody else pays for. So:
+ *
+ * - **The address is a hash.** 64 hex characters, lowercase, and nothing else.
+ *   A key this endpoint will sign for cannot be a path, cannot traverse, and
+ *   cannot collide with anything already stored under a different name.
+ * - **The size is declared and capped.** Above the cap there is no URL, and the
+ *   cap is the same one the store itself enforces.
+ * - **The rate is limited per address.** In memory, per instance — which is
+ *   weak, and honest about being weak: it stops a loop, not a botnet. The
+ *   bucket's own limits and the token's scope are what stand behind it.
+ * - **The token is scoped.** Object read/write on one bucket, one token per
+ *   environment. Losing it costs the contents of `dai-store` and nothing else.
+ *
+ * What it does not check is what is in the document, because it never sees it.
+ * The store's `admit()` runs where the sidecar is written; this endpoint's job
+ * is narrower and it should stay narrow.
+ */
+import { presignPut } from "../../../src/store-s3.js";
+
+export const config = { runtime: "nodejs" };
+
+/** The largest object this will hand out a URL for. Same cap as the store. */
+const MAX_BYTES = Number(process.env.DAI_PRESIGN_MAX_BYTES ?? 5 * 1024 * 1024);
+
+/** How many URLs one address may be given per hour. */
+const PER_HOUR = Number(process.env.DAI_PRESIGN_PER_HOUR ?? 20);
+
+/** How long a signed URL is good for. Long enough to upload, short enough to lose. */
+const EXPIRES_SECONDS = 300;
+
+/**
+ * Recent requests per address.
+ *
+ * Per instance and in memory, so it resets on a cold start and does not exist
+ * across regions. That is a real limit and is stated rather than papered over:
+ * this is a speed bump in front of a scoped token, not an access control. A
+ * shared counter would mean a database, and a database on the path of every
+ * upload is a dependency this project should not take for a speed bump.
+ */
+const seen = new Map<string, number[]>();
+
+function withinRate(address: string, now: number): boolean {
+  const hourAgo = now - 3_600_000;
+  const recent = (seen.get(address) ?? []).filter((at) => at > hourAgo);
+  if (recent.length >= PER_HOUR) {
+    seen.set(address, recent);
+    return false;
+  }
+  recent.push(now);
+  seen.set(address, recent);
+
+  // Unbounded growth is a leak in a long-lived instance.
+  if (seen.size > 10_000) {
+    for (const [key, times] of seen) {
+      if (times.every((at) => at <= hourAgo)) seen.delete(key);
+    }
+  }
+  return true;
+}
+
+function json(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      // The site and the opener are different origins from this function.
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-methods": "POST, OPTIONS",
+    },
+  });
+}
+
+export default async function handler(request: Request): Promise<Response> {
+  if (request.method === "OPTIONS") return json({}, 204);
+  if (request.method !== "POST") return json({ error: "POST only." }, 405);
+
+  const endpoint = process.env.DAI_STORE_ENDPOINT;
+  const bucket = process.env.DAI_STORE_BUCKET;
+  const accessKeyId = process.env.DAI_STORE_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.DAI_STORE_SECRET_ACCESS_KEY;
+  const publicBase = process.env.DAI_STORE_PUBLIC_BASE;
+
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey || !publicBase) {
+    // Said plainly, because the alternative is a signed URL that 403s later
+    // and a person told their document failed to upload.
+    return json({ error: "This deployment has no store configured." }, 503);
+  }
+
+  let body: { hash?: unknown; size?: unknown; kind?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: "Expected a JSON body." }, 400);
+  }
+
+  const hash = typeof body.hash === "string" ? body.hash.toLowerCase() : "";
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    return json({ error: "hash must be 64 hex characters: the SHA-256 of what you are storing." }, 400);
+  }
+
+  const size = typeof body.size === "number" ? body.size : NaN;
+  if (!Number.isFinite(size) || size <= 0) {
+    return json({ error: "size must be the number of bytes you are about to upload." }, 400);
+  }
+  if (size > MAX_BYTES) {
+    return json(
+      {
+        error:
+          `That is ${(size / 1024 / 1024).toFixed(1)} MB and the limit is ` +
+          `${MAX_BYTES / 1024 / 1024} MB. Send the file itself instead.`,
+      },
+      413,
+    );
+  }
+
+  /*
+   * Which object, of the three a document can have.
+   *
+   * The blob is the document; the sidecar is what a store checks it by and
+   * what a preview is built from; the icon is the picture in that preview.
+   * Named here rather than taken from the caller so a request cannot ask for a
+   * key of its own devising.
+   */
+  const kind = body.kind === "sidecar" ? "sidecar" : body.kind === "icon" ? "icon" : "blob";
+  const key = kind === "blob" ? hash : kind === "sidecar" ? `${hash}.json` : `${hash}.png`;
+  const contentType =
+    kind === "sidecar" ? "application/json" : kind === "icon" ? "image/png" : "application/octet-stream";
+
+  const address =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    request.headers.get("x-real-ip") ??
+    "unknown";
+  if (!withinRate(address, Date.now())) {
+    return json({ error: "Too many uploads from here in the last hour." }, 429);
+  }
+
+  const url = await presignPut(
+    { endpoint, bucket, region: process.env.DAI_STORE_REGION ?? "auto", accessKeyId, secretAccessKey, publicBase, pathStyle: true },
+    key,
+    contentType,
+    EXPIRES_SECONDS,
+  );
+
+  return json(
+    {
+      url,
+      // What the caller must send, so a signature mismatch is not a mystery.
+      method: "PUT",
+      headers: { "content-type": contentType },
+      expiresIn: EXPIRES_SECONDS,
+      // Where it will be readable once written. Public, no credential.
+      href: new URL(key, publicBase.endsWith("/") ? publicBase : publicBase + "/").href,
+    },
+    200,
+  );
+}

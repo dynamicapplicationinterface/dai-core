@@ -33,6 +33,7 @@
  */
 import type { VerifiedContainer } from "./container.js";
 import { sha256Hex } from "./core.js";
+import { describeTestKey } from "./test-keys.js";
 
 /** The UTS #39 confusable table: source character to its prototype. */
 export interface ConfusableTable {
@@ -79,6 +80,16 @@ export interface PublisherStore {
 
 export type PublisherState =
   | { state: "unsigned" }
+  /**
+   * Signed with a key this project publishes (see `src/test-keys.ts`).
+   *
+   * Everybody has it, so the signature proves only that whoever built the
+   * container had a file out of this repository. That is evidence-shaped and
+   * is not evidence, which makes it more dangerous than no signature at all —
+   * so it is its own state rather than a footnote on "known", and it is never
+   * pinned, never named, and never shown as a publisher.
+   */
+  | { state: "test-key"; which: string; fingerprint: string }
   | { state: "anonymous"; fingerprint: string; safetyNumber: string }
   | {
       state: "known";
@@ -214,6 +225,17 @@ export async function publisherState(
 
   const key = container.publicKey;
   const fingerprint = container.publicKeyFingerprint ?? "";
+
+  /*
+   * A key anybody could have, decided before anything else.
+   *
+   * Before the document store, before pinning, before any name is read: a
+   * container signed with a published test key must not be able to reach the
+   * code that would remember it as a publisher, or a later document signed
+   * with a real key under the same name would be reported as the conflict.
+   */
+  const testKey = describeTestKey(key);
+  if (testKey) return { state: "test-key", which: testKey, fingerprint };
   const claimed = container.manifest.publisherName?.trim() ?? "";
 
   // Rule 3 (§9.6): this document, under another key. Decided first, because a
