@@ -237,6 +237,8 @@
       .sheet-note[data-state="unsigned"] { color: var(--warn); }
       .sheet-rule { height: 1px; margin: 4px 6px; background: var(--line); }
       .sheet-panel button.danger { color: var(--bad); }
+      .sheet-panel button.with-glyph { display: flex; align-items: center; gap: 12px; }
+      .sheet-panel button.with-glyph svg { width: 20px; height: 20px; flex: 0 0 auto; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
       button {
         font: inherit;
         font-size: 13px;
@@ -732,7 +734,10 @@
           other person taps and is in it — not a file that opens in a viewer
           which cannot run it. The sheet behind this says what will travel.
         -->
-        <button id="send" type="button">Send…</button>
+        <button id="send" type="button" class="with-glyph">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/></svg>
+          <span>Share app</span>
+        </button>
         <button id="export" type="button">Save a copy…</button>
         <!--
           Modify this app (backlog 4.2).

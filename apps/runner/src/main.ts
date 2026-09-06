@@ -37,6 +37,7 @@ import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
 import { describeSelf, faviconUrl, iconPng, watchForInstall } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
+import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -1049,12 +1050,12 @@ window.addEventListener("message", (event) => {
 });
 
 const closeSheet = (): void => {
-  sheet.hidden = true;
+  slideClose(sheet);
 };
 
 openButton.addEventListener("click", () => fileInput.click());
 moreButton.addEventListener("click", () => {
-  sheet.hidden = false;
+  slideOpen(sheet);
 });
 // Anywhere off the panel dismisses it, which is what a sheet does everywhere
 // else on a phone.
@@ -1191,18 +1192,18 @@ async function sendDocument(): Promise<void> {
   const url = faviconUrl(loaded.manifest.favicon);
   icon.hidden = !url;
   if (url) icon.src = url;
-  titleEl.textContent = `Send ${name}`;
+  titleEl.textContent = `Share ${name}`;
   sub.textContent = fits
     ? "The whole app travels inside the link. Nothing is uploaded."
     : "Sealed with a key that only the link holds, then put in the store, which cannot read it.";
   toggle.checked = true;
   note.textContent = "Anyone with the link can open it, with what is in it now.";
-  go.textContent = canShare ? "Send" : "Copy link";
+  go.textContent = canShare ? "Share" : "Copy link";
   go.disabled = false;
-  sheetEl.hidden = false;
+  slideOpen(sheetEl);
 
   const close = (): void => {
-    sheetEl.hidden = true;
+    slideClose(sheetEl);
     go.onclick = null;
     cancel.removeEventListener("click", close);
   };
@@ -1221,7 +1222,7 @@ async function sendDocument(): Promise<void> {
       close();
       say(
         `${error instanceof Error ? error.message : "The store could not be reached."} ` +
-          `Sending the file instead — the other person will need to open it at ${OPENER}.`,
+          `Sharing the file instead — the other person will need to open it at ${OPENER}.`,
         true,
       );
       await exportContainer();
@@ -1232,7 +1233,7 @@ async function sendDocument(): Promise<void> {
     if (canShare) {
       try {
         await navigator.share({ title: name, text, url: made.link });
-        say(made.uploaded ? "Sent. The store holds a sealed copy only the link can open." : "Sent.");
+        say(made.uploaded ? "Shared. The store holds a sealed copy only the link can open." : "Shared.");
         return;
       } catch (error) {
         // Dismissed is not failed. Anything else falls through to the clipboard.

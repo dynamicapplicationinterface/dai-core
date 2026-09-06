@@ -21,7 +21,7 @@
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v6";
+const CACHE = "dai-runner-v7";
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
@@ -31,8 +31,13 @@ const CACHE = "dai-runner-v6";
 // long way, which is the trade: a megabyte once, against every thin document
 // afterwards opening offline.
 const PRECACHE = [
+  // "./" and not "./index.html": the host answers the second with a redirect
+  // to the first, and a *redirected* response stored here and later served
+  // for a navigation is one Safari refuses outright — "Response served by
+  // service worker has redirections". A phone test found it on the second
+  // link ever opened: the first came from the network, the second missed the
+  // cache and landed on the redirected fallback. See `clean` below too.
   "./",
-  "./index.html",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -90,6 +95,21 @@ self.addEventListener("activate", (event) => {
       .then(() => self.clients.claim()),
   );
 });
+
+/**
+ * A response a navigation may be answered with.
+ *
+ * A response that arrived by following a redirect carries that fact, and a
+ * browser will not let a worker answer a navigation with one. The shell's
+ * bytes are what matter; they go out in a fresh response with the same
+ * headers and no history.
+ */
+async function clean(response) {
+  if (!response || !response.redirected) return response;
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(await response.arrayBuffer(), { status: 200, headers });
+}
 
 /**
  * The shell, introducing itself as the document it is about to open.
@@ -262,13 +282,14 @@ self.addEventListener("fetch", (event) => {
         const cached =
           (await caches.match(request)) ||
           (await caches.match(url.pathname)) ||
+          (await caches.match("./")) ||
           (await caches.match("./index.html"));
         const network = fromNetwork();
         if (cached) {
           event.waitUntil(network.catch(() => {}));
-          return describedAs(cached, url);
+          return describedAs(await clean(cached), url);
         }
-        return describedAs(await network, url);
+        return describedAs(await clean(await network), url);
       })(),
     );
     return;

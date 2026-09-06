@@ -40,6 +40,7 @@
  * the text says where.
  */
 import { platform, standalone } from "./platform.js";
+import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 
 /** What Chrome hands over, and which is not in the DOM typings. */
 interface InstallEvent extends Event {
@@ -494,7 +495,7 @@ export function watchForInstall(): Keeper | null {
   });
 
   const closeSheet = () => {
-    sheet.hidden = true;
+    slideClose(sheet);
   };
   done.addEventListener("click", closeSheet);
   sheet.addEventListener("click", (event) => {
@@ -524,7 +525,7 @@ export function watchForInstall(): Keeper | null {
         return item;
       }),
     );
-    sheet.hidden = false;
+    slideOpen(sheet);
   };
 
   const keep = () => {

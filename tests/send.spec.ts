@@ -152,7 +152,7 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Sending the file instead/, { timeout: 60_000 });
+    await expect(page.locator("#report")).toContainText(/Sharing the file instead/, { timeout: 60_000 });
     expect((await download).suggestedFilename()).toMatch(/\.dai\.html$/);
   });
 });
