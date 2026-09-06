@@ -11,7 +11,8 @@ import { refatten } from "../../../src/container.js";
 import { decodeInline, INLINE_CAP, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
-import { openFromStore, referenceFrom, strippedReference } from "../../../src/store.js";
+import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } from "../../../src/store.js";
+import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { confusables } from "./confusables.js";
 import { verifyIdentity } from "../../../src/identity.js";
@@ -33,7 +34,7 @@ import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
-import { describeSelf, faviconUrl, watchForInstall } from "./install.js";
+import { describeSelf, faviconUrl, iconPng, watchForInstall } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
@@ -355,8 +356,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
     ? `Signed by ${cartridge.publicKeyFingerprint.slice(0, 8)}`
     : "Not signed";
   sheetNote.dataset.state = cartridge.publicKeyFingerprint ? "signed" : "unsigned";
-  // A phone sends; a computer saves. The menu says which.
-  exportButton.textContent = platform() === "desktop" ? "Save a copy…" : "Send a copy…";
+  exportButton.textContent = "Save a copy…";
 }
 
 /**
@@ -1081,7 +1081,6 @@ document.getElementById("remove")?.addEventListener("click", () => {
   if (!sure) return;
   void deleteApp(loaded.manifest.documentUuid);
 });
-const linkButton = document.getElementById("link") as HTMLButtonElement;
 
 /**
  * The document as a link, on the clipboard.
@@ -1122,28 +1121,137 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
   return inlineLink(html, location.origin + "/", { template: HOST_TEMPLATE, runtime: HOST_RUNTIME }, LAUNCH_CAP);
 }
 
-async function copyLink(): Promise<void> {
-  if (!loaded) return;
+/**
+ * Send: a link the other person taps and is in the app.
+ *
+ * A phone test settled what "send a copy" must not be. The file went over
+ * iMessage as an attachment, the recipient tapped it, and Quick Look — which
+ * shows HTML and never runs it — put our fallback line in front of them. A
+ * document is sent as a link. When it fits an address it travels inside the
+ * link and nothing is uploaded; when it does not, it is sealed with a fresh
+ * key and put in the store, and only the link holds the key. The store
+ * cannot read what it holds; the message preview shows the name and icon
+ * only if the person leaves that on, on the sheet where they can see it.
+ *
+ * On a phone the link goes to the share sheet, so iMessage shows the card.
+ * On a computer it goes to the clipboard. If the store cannot be reached the
+ * file is offered instead, and the person is told why.
+ */
+async function currentHtml(): Promise<string> {
+  if (!loaded) throw new Error("nothing open");
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
-
-  const link = await linkForDocument(current.html);
-  if (!link) {
-    // Too big for an address: the file is the link. Rather than a dead end
-    // naming another menu item, this goes straight to sending the copy.
-    say(`This document is too big to put in a link (the limit is ${Math.round(INLINE_CAP / 1024)} KB), so here it is as a file.`);
-    await exportContainer();
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(link);
-    say(`Link copied — ${(link.length / 1024).toFixed(1)} KB. Anyone who opens it gets this document.`);
-  } catch {
-    // No clipboard permission: the link is still worth having, so it goes in
-    // the report where it can be selected by hand.
-    say(link);
-  }
+  return current.supplied.length > 0 ? refatten(current) : current.html;
 }
+
+/** The preview icon, as a PNG under the store's cap, or none. */
+async function previewIcon(favicon: string | undefined): Promise<{ png: Uint8Array } | undefined> {
+  for (const size of [512, 256, 128]) {
+    const blob = await iconPng(favicon, size);
+    if (!blob) return undefined;
+    if (blob.size <= ICON_CAP) return { png: new Uint8Array(await blob.arrayBuffer()) };
+  }
+  return undefined;
+}
+
+/**
+ * The link for this document, made the way it has to be made: inline when it
+ * fits, otherwise through the store. Returns where it came from too, so the
+ * sheet can say whether anything left the device.
+ */
+async function linkToSend(html: string, preview: boolean): Promise<{ link: string; uploaded: boolean }> {
+  const inline = await linkForDocument(html);
+  if (inline) return { link: inline, uploaded: false };
+  if (!STORE_BASE) throw new Error("This opener has no store, so a document this large can only be sent as a file.");
+  const store = presignedStore({
+    presignUrl: new URL("/api/presign", location.origin).href,
+    publicBase: STORE_BASE,
+  });
+  const icon = preview && loaded ? await previewIcon(loaded.manifest.favicon) : undefined;
+  const { links } = await publish(html, store, location.origin + "/", { preview, icon });
+  return { link: links.known, uploaded: true };
+}
+
+async function sendDocument(): Promise<void> {
+  if (!loaded) return;
+  const name = loaded.manifest.appName ?? "this document";
+  const sheetEl = document.getElementById("send-sheet");
+  const icon = document.getElementById("send-icon") as HTMLImageElement | null;
+  const titleEl = document.getElementById("send-title");
+  const sub = document.getElementById("send-sub");
+  const toggle = document.getElementById("send-preview") as HTMLInputElement | null;
+  const note = document.getElementById("send-note");
+  const go = document.getElementById("send-go") as HTMLButtonElement | null;
+  const cancel = document.getElementById("send-cancel");
+  if (!sheetEl || !icon || !titleEl || !sub || !toggle || !note || !go || !cancel) return;
+
+  const html = await currentHtml();
+  const fits = Boolean(await linkForDocument(html));
+  const canShare = typeof navigator.share === "function";
+  const url = faviconUrl(loaded.manifest.favicon);
+  icon.hidden = !url;
+  if (url) icon.src = url;
+  titleEl.textContent = `Send ${name}`;
+  sub.textContent = fits
+    ? "The whole app travels inside the link. Nothing is uploaded."
+    : "Sealed with a key that only the link holds, then put in the store, which cannot read it.";
+  toggle.checked = true;
+  note.textContent = "Anyone with the link can open it, with what is in it now.";
+  go.textContent = canShare ? "Send" : "Copy link";
+  go.disabled = false;
+  sheetEl.hidden = false;
+
+  const close = (): void => {
+    sheetEl.hidden = true;
+    go.onclick = null;
+    cancel.removeEventListener("click", close);
+  };
+  cancel.addEventListener("click", close);
+  sheetEl.onclick = (event) => {
+    if (event.target === sheetEl) close();
+  };
+
+  go.onclick = async () => {
+    go.disabled = true;
+    go.textContent = fits ? "Preparing…" : "Sealing…";
+    let made: { link: string; uploaded: boolean };
+    try {
+      made = await linkToSend(html, toggle.checked);
+    } catch (error) {
+      close();
+      say(
+        `${error instanceof Error ? error.message : "The store could not be reached."} ` +
+          `Sending the file instead — the other person will need to open it at ${OPENER}.`,
+        true,
+      );
+      await exportContainer();
+      return;
+    }
+    close();
+    const text = `${name} — ${STANDING_LINE} Tap to open it.`;
+    if (canShare) {
+      try {
+        await navigator.share({ title: name, text, url: made.link });
+        say(made.uploaded ? "Sent. The store holds a sealed copy only the link can open." : "Sent.");
+        return;
+      } catch (error) {
+        // Dismissed is not failed. Anything else falls through to the clipboard.
+        if ((error as Error).name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(made.link);
+      say(
+        made.uploaded
+          ? "Link copied. The store holds a sealed copy only the link can open."
+          : `Link copied — ${(made.link.length / 1024).toFixed(1)} KB. Anyone who opens it gets this document.`,
+      );
+    } catch {
+      say(made.link);
+    }
+  };
+}
+
 
 const modifyButton = document.getElementById("modify") as HTMLButtonElement | null;
 
@@ -1247,9 +1355,9 @@ async function namePublisher(publicKey: string): Promise<void> {
   say(label.trim() ? `This publisher is "${label.trim()}" on this device.` : "Label removed.");
 }
 
-linkButton.addEventListener("click", () => {
-  sheet.hidden = true;
-  void copyLink();
+document.getElementById("send")?.addEventListener("click", () => {
+  closeSheet();
+  void sendDocument();
 });
 
 exportButton.addEventListener("click", () => {

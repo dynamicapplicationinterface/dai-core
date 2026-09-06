@@ -199,7 +199,7 @@ function svgWithSize(favicon: string, size: number): string | undefined {
  * Null when the image will not load; the caller then keeps this app's own
  * icon rather than showing a broken one.
  */
-async function iconPng(favicon: string | undefined, size: number): Promise<Blob | null> {
+export async function iconPng(favicon: string | undefined, size: number): Promise<Blob | null> {
   // Sized first, or WebKit draws nothing. See svgWithSize.
   const sized = favicon ? svgWithSize(favicon, size) : undefined;
   const url = faviconUrl(sized ?? favicon);

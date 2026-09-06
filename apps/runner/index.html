@@ -382,6 +382,51 @@
       }
       #keep-done:hover { background: var(--accent-press); }
 
+      #send-sheet[hidden] { display: none; }
+      #send-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: var(--scrim);
+      }
+      #send-icon { border-radius: 16px; background: var(--surface-2); margin-top: 6px; box-shadow: var(--icon-shadow); }
+      #send-icon[hidden] { display: none; }
+      #send-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+      #send-sub { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      .send-toggle {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        max-width: 24rem;
+        margin-top: 10px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: var(--surface-2);
+        font-size: 15px;
+        text-align: left;
+      }
+      .send-toggle input { width: 22px; height: 22px; accent-color: var(--accent); flex: 0 0 auto; }
+      #send-note { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--faint); max-width: 32ch; }
+      #send-go {
+        margin-top: 8px;
+        width: 100%;
+        max-width: 24rem;
+        padding: 13px 20px;
+        font-size: 16px;
+        font-weight: 600;
+        border: 0;
+        border-radius: 12px;
+        background: var(--accent);
+        color: var(--on-accent);
+      }
+      #send-go:hover { background: var(--accent-press); }
+      #send-go:disabled { opacity: 0.6; }
+      #send-cancel { border: 0; background: transparent; color: var(--accent); font-size: 15px; padding: 10px; }
+
       #cartridge {
         position: absolute;
         inset: 0;
@@ -618,6 +663,31 @@
     </header>
 
     <!--
+      Sending it.
+
+      One decision, made where the thing being decided is visible: whether the
+      message preview may show the app's name and icon. Everything else is
+      stated, not asked. Small documents travel inside the link itself; larger
+      ones are sealed with a fresh key and put in the store, and only the link
+      holds the key. Then the phone's own share sheet, or the clipboard.
+    -->
+    <div id="send-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="send-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <img id="send-icon" alt="" width="72" height="72" />
+        <h2 id="send-title"></h2>
+        <p id="send-sub"></p>
+        <label class="send-toggle">
+          <input id="send-preview" type="checkbox" checked />
+          <span>Show the name and icon in the message preview</span>
+        </label>
+        <p id="send-note"></p>
+        <button id="send-go" type="button">Send</button>
+        <button id="send-cancel" type="button" class="quiet">Not now</button>
+      </div>
+    </div>
+
+    <!--
       How to keep it, on this device.
 
       A sheet in the shape a phone already uses for a decision, with the
@@ -657,8 +727,13 @@
             <p class="sheet-note" id="sheet-note"></p>
           </div>
         </div>
+        <!--
+          Send, first. What a person means by sharing an app is a link the
+          other person taps and is in it — not a file that opens in a viewer
+          which cannot run it. The sheet behind this says what will travel.
+        -->
+        <button id="send" type="button">Send…</button>
         <button id="export" type="button">Save a copy…</button>
-        <button id="link" type="button">Copy link</button>
         <!--
           Modify this app (backlog 4.2).
 
