@@ -191,8 +191,13 @@ function fill(element, row) {
      * and leaves the box empty, which is the whole of what somebody looking at
      * it would call broken. This is the reading half of :typed — one attribute
      * fills the box and sends back what was typed into it.
+     *
+     * Named, not detected. "Has a value property" was the first test, and
+     * <li>, <button>, <progress>, <meter> and <data> all have one that shows
+     * nothing — so <li data-text="title">, the most natural line in a list,
+     * set a number on the item and left it blank. A control is one of three.
      */
-    if ('value' in target && target.tagName !== 'OPTION') target.value = text;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') target.value = text;
     // textContent rather than innerHTML, always: a value in the database is
     // somebody's text and must not become markup.
     else target.textContent = text;
@@ -250,7 +255,7 @@ function wire(element, values) {
        * its value is the string "on" whether it is ticked or not, and the
        * useful thing about one is already how a toggle is written.
        */
-      if (trigger.type !== 'checkbox' && 'value' in trigger) withOwn.typed = trigger.value;
+      if (trigger.type !== 'checkbox' && (trigger.tagName === 'INPUT' || trigger.tagName === 'TEXTAREA' || trigger.tagName === 'SELECT')) withOwn.typed = trigger.value;
 
       for (const attribute of trigger.attributes) {
         if (attribute.name.startsWith('data-') && attribute.name !== 'data-run') {

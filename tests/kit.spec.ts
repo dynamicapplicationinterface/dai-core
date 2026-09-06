@@ -284,6 +284,38 @@ test.describe("colons, and a schema from the files", () => {
     await expect(app.locator("li")).toHaveText("pill a:b");
   });
 
+  test("data-text on an element that merely has a .value shows the text", async ({ page }) => {
+    const { pathToFileURL } = await import("node:url");
+
+    // <li>, <button>, <progress>, <meter> and <data> all have a `value`
+    // property that shows nothing. A review found the kit setting it — so the
+    // most natural line in a list, `<li data-text="title">`, came out blank.
+    const file = await compiled(
+      {
+        "index.html": (
+          '<!doctype html><meta charset="utf-8">' +
+            '<ul><dai-rows query="SELECT title, done FROM jobs ORDER BY id"><template>' +
+            '<li data-text="title"></li><button data-text="title"></button><data data-text="done"></data>' +
+            '<input data-text="title">' +
+            '</template></dai-rows></ul>' +
+            '<script type="module" src="./dai-kit.js"></script>'
+        ),
+        "schema.sql":
+          "CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, title TEXT, done INTEGER);" +
+          "INSERT INTO jobs (title, done) SELECT 'Mow the lawn', 0 WHERE NOT EXISTS (SELECT 1 FROM jobs);",
+      },
+      "Values",
+    );
+
+    await page.goto(pathToFileURL(file).href);
+    const app = page.frameLocator("iframe");
+    await expect(app.locator("li")).toHaveText("Mow the lawn", { timeout: 30_000 });
+    await expect(app.locator("button")).toHaveText("Mow the lawn");
+    await expect(app.locator("data")).toHaveText("0");
+    // A control still shows its text as its value.
+    await expect(app.locator("input")).toHaveValue("Mow the lawn");
+  });
+
   test("schema.sql among the files is declared and run, through the core", async () => {
     const built = await buildContainer({
       files: {
