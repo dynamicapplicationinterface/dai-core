@@ -529,7 +529,16 @@ let arrivedInClear = false;
  * from a stranger. A link and a share are. Item 1.2 is where every carrier
  * lands on the same screen; this is the half that exists to be landed on.
  */
-type Carrier = { from?: string };
+type Carrier = {
+  from?: string;
+  /**
+   * The document this person already agreed to, by its id: an icon they made
+   * for it launches with the id beside the link, and a fresh storage — an
+   * iOS home-screen app starts with one — should open it, not ask again.
+   * Honoured only when the link turns out to carry that document.
+   */
+  consentedFor?: string;
+};
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   slot.classList.add("busy");
@@ -627,7 +636,11 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       verdict.status === "trusted" &&
       who.state !== "conflict" &&
       library.some((item) => item.documentUuid === cartridge.manifest.documentUuid);
-    if (!familiar) {
+    const consented =
+      carrier.consentedFor !== undefined &&
+      carrier.consentedFor === cartridge.manifest.documentUuid &&
+      who.state !== "conflict";
+    if (!familiar && !consented) {
       slot.classList.remove("busy");
       say("");
       await showCard({
@@ -1334,7 +1347,7 @@ async function planSuccession(
  * address to expire, nothing to fetch. It is also the only carrier that works
  * with the network switched off.
  */
-async function openFromLink(carried: string): Promise<void> {
+async function openFromLink(carried: string, consentedFor?: string): Promise<void> {
   slot.classList.add("busy");
   say("Unpacking the document from the link…");
 
@@ -1377,7 +1390,8 @@ async function openFromLink(carried: string): Promise<void> {
   // Nothing held it anywhere, so there is no store that could have read it.
   arrivedInClear = false;
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
-        from: "From the link you followed. Nothing is uploaded — it runs on this device.",
+    from: "From the link you followed. Nothing is uploaded — it runs on this device.",
+    consentedFor,
   });
 }
 
@@ -1531,7 +1545,7 @@ async function start(): Promise<void> {
 
   const carried = inlineFrom(location.hash);
   if (carried) {
-    await openFromLink(carried);
+    await openFromLink(carried, wanted ?? undefined);
     return;
   }
 

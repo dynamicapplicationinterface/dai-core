@@ -266,8 +266,19 @@ export async function describeDocument(identity: Identity): Promise<void> {
   headTag("meta", 'name="apple-mobile-web-app-title"').setAttribute("content", identity.name);
 
   let icon: string | null = null;
+  let inline: string | null = null;
   const png = await iconPng(identity.favicon, 512);
   if (png) {
+    // The bytes themselves, for the manifest. A phone test showed iOS reads
+    // the manifest through the service worker but fetches the *icons* it
+    // names outside it, so an icon at a worker-served address came back 404
+    // and the home screen showed a letter. A data: URL needs no fetch.
+    inline = await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(png);
+    });
     icon = iconAddress(identity.uuid);
     try {
       const cache = await caches.open(ICON_CACHE);
@@ -295,6 +306,7 @@ export async function describeDocument(identity: Identity): Promise<void> {
     theme_color: "#111827",
     icons: icon
       ? [
+          ...(inline ? [{ src: inline, sizes: "512x512", type: "image/png" }] : []),
           { src: icon, sizes: "512x512", type: "image/png" },
           { src: icon, sizes: "512x512", type: "image/png", purpose: "maskable" },
         ]

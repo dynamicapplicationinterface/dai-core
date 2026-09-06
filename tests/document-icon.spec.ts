@@ -130,7 +130,7 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     expect(manifest.status).toBe(200);
     expect(manifest.body.name).toBe(name);
     expect(manifest.body.start_url).toContain(`doc=${uuid}`);
-    expect(manifest.body.icons[0]!.src).toContain("doc-icons");
+    expect(manifest.body.icons.some((icon) => icon.src.includes("doc-icons"))).toBe(true);
 
     // A fresh load at that address: the HTML itself — before any script runs
     // — carries the document's name, icon and manifest.
@@ -147,5 +147,40 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     await fresh.goto(manifest.body.start_url);
     await expect(fresh.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await expect(fresh).toHaveTitle(name);
+
+    // The manifest's icon needs no fetch: iOS reads the manifest through the
+    // worker but fetches icons outside it, and a letter tile was the result.
+    expect(manifest.body.icons[0]!.src).toMatch(/^data:image\/png;base64,/);
+  });
+
+  test("an icon opens its document on a device that holds nothing, without asking again", async ({ browser, page }) => {
+    /*
+     * An iOS home-screen app starts with storage of its own and nothing in
+     * it. The icon's address carries the document (an inline link) and the
+     * id the person made the icon for; that pairing is the consent, and the
+     * card is not shown a second time.
+     */
+    test.slow();
+    await page.goto(RUNNER_URL);
+    await openFile(page, CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.waitForFunction(
+      () => (document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? "").includes("doc-manifests"),
+      undefined,
+      { timeout: 60_000 },
+    );
+    await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, { timeout: 60_000 });
+    const start = await page.evaluate(async () => {
+      const href = document.querySelector('link[rel="manifest"]')!.getAttribute("href")!;
+      return ((await (await fetch(href)).json()) as { start_url: string }).start_url;
+    });
+    expect(start).toContain("#a=");
+
+    const empty = await browser.newContext();
+    const launched = await empty.newPage();
+    await launched.goto(start);
+    await expect(launched.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(launched.locator("#card-open")).toBeHidden();
+    await empty.close();
   });
 });

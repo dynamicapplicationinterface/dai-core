@@ -121,7 +121,11 @@ async function describedAs(response, url) {
   const attr = (value) =>
     String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const name = attr(manifest.name);
-  const icon = manifest.icons && manifest.icons[0] ? attr(manifest.icons[0].src) : null;
+  // For apple-touch-icon, an address: iOS ignores a data: URL in that tag.
+  // The manifest keeps its data: icon, which is the one iOS's Add to Home
+  // Screen actually uses.
+  const addressed = (manifest.icons || []).find((entry) => entry && typeof entry.src === "string" && !entry.src.startsWith("data:"));
+  const icon = addressed ? attr(addressed.src) : null;
 
   let html = await response.text();
   html = html
