@@ -338,12 +338,21 @@ async function mount(cartridge: Cartridge): Promise<void> {
    * icon. The offer waits for the person to use it — see DAI_HOST_USED below.
    */
   const name = cartridge.manifest.appName ?? "container";
+  /*
+   * The address an icon launches into: the link it came by, or — for a
+   * document that came as a file or by handoff — the inline link this
+   * opener can make, when the document fits one. An iOS home-screen app
+   * starts with storage of its own and nothing in it; a phone test showed
+   * an icon for a handed-off document opening on the empty chooser. A link
+   * that carries the document carries it there too.
+   */
+  const link = arrivedByLink ?? (await linkForDocument(cartridge.html));
   keeper?.describe({
     uuid: cartridge.manifest.documentUuid,
     name,
     favicon: cartridge.manifest.favicon,
     savedAsFile: arrivedAsFile,
-    link: arrivedByLink,
+    link,
     opens: countOpen(cartridge.manifest.documentUuid),
   });
   title.textContent = name;
@@ -1065,7 +1074,9 @@ const linkButton = document.getElementById("link") as HTMLButtonElement;
  */
 async function linkForDocument(html: string): Promise<string | undefined> {
   const handoff = await linkFor(html, {
-    opener: location.origin + location.pathname,
+    // The opener's root, whatever path this page is at: a link made from
+    // /d/<id> is still a link to the opener, not to that document's address.
+    opener: location.origin + "/",
     host: { template: HOST_TEMPLATE, runtime: HOST_RUNTIME },
   });
   return handoff.kind === "inline" ? handoff.link : undefined;
