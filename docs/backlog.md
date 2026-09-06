@@ -44,7 +44,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.5 | iOS solved by the link | [~] the icon launches into the link; the device test is yours |
 | 3.6 | Second-use integrations only | [x] the rule is a test now |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
-| 4.2 | "Modify this app" | [~] output carries `supersedes`; the card affordance is a decision |
+| 4.2 | "Modify this app" | [x] clipboard bundle, `get_dai_source`, header carries identity |
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [x] `<dai-attach>`, blob columns, downscale, a budget |
@@ -604,11 +604,33 @@ assistant reporting "made a new app" when it made a successor is the one
 sentence that makes somebody expect their data to be gone. Tested in
 `tests/mcp.spec.ts` — a successor says it, a first version does not.
 
-**Still a decision — the affordance itself.** Getting the bundle from the card
-back to an assistant means picking how: the clipboard, a file the person
-re-attaches, or a `dai bundle` the MCP server reads from disk. Each implies a
-different thing about where the assistant is running and what it can reach,
-and one of them has to be chosen before any of it is written.
+**Decided, and built: the clipboard, plus a tool for the assistant that has
+the file.** Two routes, because there are two situations and they need
+different answers.
+
+**From the document, for a person.** "Modify this app…" in the sheet puts the
+sealed source on the clipboard in bundle form, with a sentence addressed to
+the assistant above it — they are going to paste the whole thing into a
+conversation, and the first reader is a model. The clipboard rather than a
+file because the assistant is in another tab, and a paste is the one transport
+every one of them accepts.
+
+**From the file, for an assistant.** `get_dai_source` reads the application
+back out of a container: the app's own files, never the host's engine, plus
+the identity. `create_dai_app` now takes `supersedes` as well as `upgradeOf`,
+so a rebuild works whether or not the original file is on that disk.
+
+**The header is what makes it a successor.** A bundle carries `document:` and
+`schema:`. Without them, an assistant asked to change an app it cannot read
+describes one from scratch and produces a *different* document — new identity,
+no succession, empty database — which looks right until somebody opens it and
+last month's entries are gone. That is the failure this closes, and it is why
+both routes say the uuid in words as well as in the header: a header nobody is
+told about is a header nobody uses.
+
+Tested end to end in `tests/mcp.spec.ts` (source out, bundle parsed, successor
+built from it with no path to the original) and `tests/look-inside.spec.ts`
+(the clipboard text parses and carries the identity).
 
 ### 4.3 A publisher who is somebody
 

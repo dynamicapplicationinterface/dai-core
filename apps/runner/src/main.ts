@@ -24,7 +24,9 @@ import { verifyIdentity } from "../../../src/identity.js";
  * recognise. Three copies of a sentence drift; this is the sentence.
  */
 const STANDING_LINE = "Send an app like you send a document.";
-import { hostShell } from "../../../src/container.js";
+import { applicationFiles, hostShell } from "../../../src/container.js";
+import { writeBundle } from "../../../src/bundle.js";
+import { SCHEMA_ENTRY } from "../../../src/core.js";
 // The shell this host runs, shipped with this host: never the container's own.
 import HOST_TEMPLATE from "../../../dist/template.html?raw";
 import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
@@ -1037,6 +1039,91 @@ async function copyLink(): Promise<void> {
     say(link);
   }
 }
+
+const modifyButton = document.getElementById("modify") as HTMLButtonElement | null;
+
+/**
+ * "Modify this app": the source, on the clipboard, addressed to an assistant.
+ *
+ * Backlog 4.2. Somebody has a document that works and wants one thing
+ * different about it. Without this, the only route is describing the whole
+ * application again — and what comes back is a *different* document: new
+ * identity, no succession, empty database. It looks right until they open it
+ * and last month's entries are gone.
+ *
+ * So what goes on the clipboard is the source that was sealed into this
+ * document, in the bundle form, with `document:` and `schema:` in its header —
+ * and a sentence saying what to do with them, because a header nobody is told
+ * about is a header nobody uses. The instructions are addressed to the
+ * assistant rather than to the person: they are going to paste this whole
+ * thing into a conversation, and the first reader is a model.
+ *
+ * The clipboard rather than a file, because the assistant is in another tab
+ * and a paste is the one transport every one of them accepts.
+ */
+async function copySourceForAssistant(): Promise<void> {
+  if (!loaded) return;
+
+  const files: Record<string, string> = {};
+  const decoder = new TextDecoder();
+  const binary: string[] = [];
+  for (const [name, bytes] of Object.entries(applicationFiles(loaded.archive))) {
+    const decoded = decoder.decode(bytes);
+    // A bundle is text. A font pasted as mojibake is worse than one the
+    // assistant is simply told about.
+    if (decoded.includes("\u0000")) binary.push(name);
+    else files[name] = decoded;
+  }
+
+  const schemaEntry = loaded.archive[SCHEMA_ENTRY];
+  const schema = schemaEntry
+    ? (JSON.parse(decoder.decode(schemaEntry)) as { digest?: string }).digest
+    : undefined;
+
+  const uuid = loaded.manifest.documentUuid;
+  const bundle = writeBundle(files, {
+    name: loaded.manifest.appName,
+    documentUuid: uuid,
+    schema,
+  });
+
+  const message =
+    `Here is the source of a DAI app I already use. Please change it as I describe, ` +
+    `then rebuild it as a DAI container.
+
+` +
+    `Build it as a new version of this same document, not a new app: pass ` +
+    `supersedes: "${uuid}" to create_dai_app` +
+    (schema
+      ? `, and keep the schema digest at ${schema} or include a migration for whatever you move`
+      : "") +
+    `. That is what lets my existing data come across.
+` +
+    (binary.length > 0
+      ? `
+These files are in the app but are not text, so they are not below and will be ` +
+        `lost unless you are given the original file: ${binary.join(", ")}.
+`
+      : "") +
+    `
+${bundle}`;
+
+  try {
+    await navigator.clipboard.writeText(message);
+    say(
+      `Copied the source of this app, with instructions. Paste it into your assistant and say ` +
+        `what you want changed — the new version will replace this one and keep your data.`,
+    );
+  } catch {
+    // No clipboard: the text is the point, so it goes where it can be selected.
+    say(message);
+  }
+}
+
+modifyButton?.addEventListener("click", () => {
+  closeSheet();
+  void copySourceForAssistant();
+});
 
 const labelButton = document.getElementById("label") as HTMLButtonElement;
 

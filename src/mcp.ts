@@ -22,7 +22,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { compileDirectory, CompileError, formatBytes, packagedAsset, sanitizeFileName } from "./compile.js";
 import { SchemaError } from "./schema.js";
-import { auditContainer, parseContainer } from "./container.js";
+import { applicationFiles, auditContainer, looksSectioned, parseContainer } from "./container.js";
+import { writeBundle } from "./bundle.js";
+import { SCHEMA_ENTRY } from "./core.js";
 import { advisory, breaking, lintFiles } from "./lint.js";
 import { RECIPE } from "./recipe.js";
 import { lastLine, linkFor, type Host } from "./sender.js";
@@ -92,6 +94,14 @@ const TOOLS = [
             "is. Pass false for anything the person would not want named in a message before " +
             "they have sent it.",
         },
+        supersedes: {
+          type: "string",
+          description:
+            "The uuid of the document this replaces, as `document:` in a bundle from " +
+            "get_dai_source. Use it when you are rebuilding an app whose file you do not have " +
+            "on disk. A host that holds that document adopts its data under the same publisher " +
+            "key; without it, the result is a different document and the person starts empty.",
+        },
         upgradeOf: {
           type: "string",
           description:
@@ -121,6 +131,26 @@ const TOOLS = [
         },
       },
       required: ["files"],
+    },
+  },
+  {
+    name: "get_dai_source",
+    description:
+      "Read the application source back out of an existing .dai.html or .dai, as one bundle. " +
+      "Use this whenever the person wants an app they already have changed, rather than " +
+      "writing it again from memory: you get the files that were sealed into it, plus the " +
+      "document's identity.\n\n" +
+      "The bundle header carries `document:` and `schema:`. Pass the document value back as " +
+      "`supersedes` on create_dai_app, and pass the original file as `upgradeOf` when you have " +
+      "its path. That is what makes the result the next version of their app — a host brings " +
+      "their existing data across — instead of a new app with a similar name and an empty " +
+      "database.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the container to read." },
+      },
+      required: ["path"],
     },
   },
   {
@@ -264,6 +294,9 @@ async function createApp(
         : undefined,
     upgradeOf:
       typeof params.upgradeOf === "string" ? withinRoot(options.root, params.upgradeOf) : undefined,
+    // Names the predecessor without needing its file: what a bundle carries
+    // back from get_dai_source when the original is not on this disk (4.2).
+    supersedes: typeof params.supersedes === "string" ? params.supersedes : undefined,
   });
 
   const outputPath = withinRoot(
@@ -338,6 +371,83 @@ async function createApp(
   );
 }
 
+/**
+ * The source back out of a container, as a bundle (backlog 4.2).
+ *
+ * "Modify this app" is the whole reason this exists. A person has a document
+ * that works and wants one thing different about it, and the way through used
+ * to be describing it again from scratch — which produces a new application
+ * with a new identity, no succession, and a host that will not bring their
+ * data across, because nothing the assistant was given said this was a second
+ * version of anything.
+ *
+ * So the bundle header carries the document's uuid and the digest of the
+ * schema it was built against. The uuid is what `supersedes` needs; the digest
+ * is enough to notice that a rewrite moved the data shape, which is the
+ * question that decides whether a migration is required.
+ *
+ * Only the application's own files come back. The engine, the shell and the
+ * runtime belong to the host, they are not what anybody wants to edit, and
+ * putting a megabyte of SQLite in front of a model is a way to lose the part
+ * that matters.
+ */
+async function getSource(options: ServerOptions, params: Record<string, unknown>): Promise<unknown> {
+  if (typeof params.path !== "string") {
+    return text("get_dai_source needs a path.", true);
+  }
+
+  const target = withinRoot(options.root, params.path);
+  if (!existsSync(target)) {
+    return text(`No such file: ${target}`, true);
+  }
+
+  const bytes = new Uint8Array(readFileSync(target));
+  const container = parseContainer(looksSectioned(bytes) ? bytes : new TextDecoder().decode(bytes));
+
+  const decoder = new TextDecoder();
+  const files: Record<string, string> = {};
+  const binary: string[] = [];
+  for (const [name, content] of Object.entries(applicationFiles(container.archive))) {
+    // Text only. A bundle is text, and a font or a photograph handed to a
+    // model as mojibake is worse than one it is simply told about.
+    const decoded = decoder.decode(content);
+    if (decoded.includes("\u0000")) binary.push(name);
+    else files[name] = decoded;
+  }
+
+  const schemaEntry = container.archive[SCHEMA_ENTRY];
+  const schema = schemaEntry
+    ? (JSON.parse(decoder.decode(schemaEntry)) as { digest?: string }).digest
+    : undefined;
+
+  const uuid = container.manifest.documentUuid;
+  const bundle = writeBundle(files, {
+    name: container.manifest.appName,
+    documentUuid: uuid,
+    schema,
+  });
+
+  const lines = [
+    target,
+    `${Object.keys(files).length} files, document ${uuid}`,
+    ...(binary.length > 0
+      ? [
+          `Left out because they are not text: ${binary.join(", ")}. ` +
+            "Keep them by passing the original file as upgradeOf.",
+        ]
+      : []),
+    "",
+    `When you build the changed version, pass supersedes: "${uuid}" so it replaces this ` +
+      "document instead of becoming a new one" +
+      (schema ? `, and keep the schema at ${schema} or add a migration` : "") +
+      ".",
+    "",
+    bundle,
+  ];
+
+  return text(lines.join("\n"));
+}
+
 async function verifyApp(
   options: ServerOptions,
   params: Record<string, unknown>,
@@ -390,6 +500,8 @@ async function callTool(
           (warnings.length > 0 ? `\n\nWorth fixing before it is shared:\n${describe(warnings)}` : ""),
       );
     }
+    case "get_dai_source":
+      return getSource(options, args);
     case "verify_dai_app":
       return verifyApp(options, args);
     default:

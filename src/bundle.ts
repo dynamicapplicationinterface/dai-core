@@ -40,6 +40,24 @@ export class BundleError extends Error {
 export interface Bundle {
   /** Names the application. Absent when the bundle did not say. */
   name?: string;
+  /**
+   * The document this source came out of (backlog 4.2).
+   *
+   * A bundle handed to an assistant so it can change the application has to
+   * say which document it is changing, or what comes back is a stranger with
+   * a similar name: a new identity, no succession, and a host that will not
+   * bring the person's data across. The uuid travels in the header so the
+   * answer can name it without the assistant having to be told twice.
+   */
+  documentUuid?: string;
+  /**
+   * The digest of the schema that source was built against.
+   *
+   * Enough to tell whether a rewrite moved the data shape, which is the
+   * question that decides whether a migration is required. Not enough to say
+   * what moved — that needs the schema itself, which is in the files.
+   */
+  schema?: string;
   files: Record<string, string>;
   /**
    * What was accepted that the canonical form would not have written.
@@ -192,6 +210,8 @@ export function parseBundle(text: string): Bundle {
 
   let start = 0;
   let name: string | undefined;
+  let documentUuid: string | undefined;
+  let schema: string | undefined;
 
   if ((lines[0] ?? "").trim() === MAGIC) {
     start = 1;
@@ -203,7 +223,13 @@ export function parseBundle(text: string): Bundle {
       }
       const header = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line);
       if (!header) break;
-      if (header[1]?.toLowerCase() === "name") name = header[2]?.trim() || undefined;
+      const key = header[1]?.toLowerCase();
+      const value = header[2]?.trim() || undefined;
+      if (key === "name") name = value;
+      // Unknown keys are ignored rather than refused: a bundle written by a
+      // later version has to stay readable by this one.
+      else if (key === "document") documentUuid = value;
+      else if (key === "schema") schema = value;
     }
   } else {
     warnings.push(`This bundle does not begin with "${MAGIC}".`);
@@ -236,13 +262,20 @@ export function parseBundle(text: string): Bundle {
     warnings.push("No index.html: a container built from this will open blank.");
   }
 
-  return { name, files, warnings };
+  return { name, documentUuid, schema, files, warnings };
 }
 
 /** Writes the canonical form. The only shape this project produces. */
-export function writeBundle(files: Record<string, string>, options: { name?: string } = {}): string {
+export function writeBundle(
+  files: Record<string, string>,
+  options: { name?: string; documentUuid?: string; schema?: string } = {},
+): string {
   const out: string[] = [MAGIC];
   if (options.name) out.push(`name: ${options.name}`);
+  // What this source came out of, so a rewrite of it can be a successor
+  // rather than a stranger (4.2).
+  if (options.documentUuid) out.push(`document: ${options.documentUuid}`);
+  if (options.schema) out.push(`schema: ${options.schema}`);
   out.push("");
 
   // index.html first, then the rest by name: a person reading a bundle wants

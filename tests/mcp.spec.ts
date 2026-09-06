@@ -378,6 +378,62 @@ test.describe("rebuilding an app that already exists", () => {
     expect(first.text).not.toContain("replaces ");
   });
 
+  /**
+   * Source back out, and a successor built from it (backlog 4.2).
+   *
+   * The affordance is "modify this app", and the failure it exists to stop is
+   * quiet: an assistant asked to change an app it cannot read describes one
+   * from scratch, and what comes back is a different document — new identity,
+   * no succession, empty database — that looks right until somebody opens it
+   * and their data is gone.
+   */
+  test("hands back the source, the identity, and what to do with them", async () => {
+    const root = workspace();
+    const first = await call(root, "create_dai_app", {
+      files: v1,
+      appName: "Notes",
+      outputPath: "notes.dai.html",
+    });
+    const uuid = /document ([0-9a-f-]{36})/.exec(first.text)?.[1];
+    expect(uuid).toBeTruthy();
+
+    const source = await call(root, "get_dai_source", { path: "notes.dai.html" });
+    expect(source.isError).toBe(false);
+
+    // The application's own files, and not the host's megabyte of engine.
+    expect(source.text).toContain("dai bundle v1");
+    expect(source.text).toContain("--- file: index.html");
+    expect(source.text).not.toContain("sqlite3.wasm");
+
+    // The identity, in the header, where a reader of the bundle finds it.
+    expect(source.text).toContain(`document: ${uuid}`);
+    // And said in words too, because the header alone has never been enough.
+    expect(source.text).toContain(`supersedes: "${uuid}"`);
+
+    // Round trip: the bundle parses, and carries the identity through.
+    const { parseBundle } = await import("../src/bundle.js");
+    const bundle = parseBundle(source.text.slice(source.text.indexOf("dai bundle v1")));
+    expect(bundle.documentUuid).toBe(uuid);
+    expect(bundle.files["index.html"]).toBeTruthy();
+
+    // Built again from exactly that, with no path to the original: a
+    // successor, not a stranger.
+    const second = await call(root, "create_dai_app", {
+      files: bundle.files,
+      appName: bundle.name ?? "Notes",
+      outputPath: "notes-v2.dai.html",
+      supersedes: bundle.documentUuid,
+    });
+    expect(second.isError).toBe(false);
+    expect(second.text).toContain(`replaces ${uuid}`);
+  });
+
+  test("says so plainly when there is no such container", async () => {
+    const missing = await call(workspace(), "get_dai_source", { path: "nothing.dai.html" });
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain("No such file");
+  });
+
   test("the tool tells the model to pass the previous file", () => {
     const create = TOOLS.find((tool) => tool.name === "create_dai_app")!;
     const schema = create.inputSchema as { properties: Record<string, { description: string }> };
