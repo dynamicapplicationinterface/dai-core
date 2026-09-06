@@ -144,6 +144,7 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     // chooser hidden, before any script runs. No flash of the opener.
     expect(html).toContain('<body class="launching"');
     expect(html).toContain(`<span id="title">${name}</span>`);
+    expect(html).toContain(`<p id="launch-name">${name}</p>`);
     expect(html).toContain(`/doc-manifests/${uuid}.webmanifest`);
     expect(html).toContain("/doc-icons/");
 

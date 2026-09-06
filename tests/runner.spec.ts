@@ -935,6 +935,18 @@ test.describe("keeping it", () => {
     await expect(page.locator("#keep-sheet")).toBeHidden();
   });
 
+  test("the launch screen holds until the app has drawn, then the frame fades in", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await openFile(page, CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    // Named for the document while it boots, and gone once the runtime says
+    // the app is interactive — well inside the eight-second guard.
+    await expect(page.locator("#launch-name")).toHaveText(/fixture/i);
+    await expect(page.locator("body")).not.toHaveClass(/booting/, { timeout: 7_000 });
+    await expect(page.locator("#launch")).toBeHidden();
+    await expect(page.locator("#cartridge")).toHaveCSS("opacity", "1");
+  });
+
   test("the action is in the header while a document is open, in the device's words", async ({ page }) => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);

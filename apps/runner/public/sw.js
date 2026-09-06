@@ -21,7 +21,7 @@
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v5";
+const CACHE = "dai-runner-v6";
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
@@ -139,6 +139,9 @@ async function describedAs(response, url) {
   html = html
     .replace(/<body(\s[^>]*)?>/, (tag, rest) => `<body class="launching"${rest ?? ""}>`)
     .replace(/<span id="title"><\/span>/, `<span id="title">${name}</span>`)
+    .replace(/<p id="launch-name"><\/p>/, `<p id="launch-name">${name}</p>`)
+    .replace(/<img id="launch-icon"([^>]*?)\s*hidden\s*\/?>/, (tag, rest) =>
+      icon ? `<img id="launch-icon"${rest} src="${icon}" />` : tag)
     .replace(/<img id="title-icon"([^>]*?)\s*hidden\s*\/?>/, (tag, rest) =>
       icon ? `<img id="title-icon"${rest} src="${icon}" />` : tag)
     .replace(/<link\s+rel="manifest"\s+href="[^"]*"\s*\/?>/, `<link rel="manifest" href="${attr(manifestAddress)}" />`)

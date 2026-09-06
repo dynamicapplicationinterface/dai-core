@@ -33,7 +33,7 @@ import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
-import { describeSelf, watchForInstall } from "./install.js";
+import { describeSelf, faviconUrl, watchForInstall } from "./install.js";
 import { hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
@@ -164,6 +164,20 @@ function forgetOpen(): void {
   }
 }
 
+/** The launch screen's icon and name, for the moment between the tap and the app. */
+function showLaunch(name: string, favicon: string | undefined): void {
+  const icon = document.getElementById("launch-icon") as HTMLImageElement | null;
+  const label = document.getElementById("launch-name");
+  const url = faviconUrl(favicon);
+  if (icon) {
+    icon.hidden = !url;
+    if (url) icon.src = url;
+  }
+  if (label) label.textContent = name;
+}
+
+let bootingGuard: number | undefined;
+
 function eject(): void {
   forgetOpen();
   if (mountedUrl) {
@@ -175,8 +189,8 @@ function eject(): void {
   cartridgeFrame.src = "about:blank";
   loaded = undefined;
   handshakeEstablished = false;
-  document.body.classList.remove("loaded");
-  document.body.classList.remove("launching");
+  document.body.classList.remove("loaded", "launching", "booting");
+  window.clearTimeout(bootingGuard);
   keeper?.clear();
   hideCard();
   describeSelf();
@@ -328,7 +342,15 @@ async function mount(cartridge: Cartridge): Promise<void> {
   mountedUrl = URL.createObjectURL(blob);
   cartridgeFrame.src = mountedUrl;
 
-  document.body.classList.add("loaded");
+  // The launch screen holds — the document's icon and name on a still
+  // ground — until the runtime reports the app interactive (DAI_HOST_TIMING
+  // below), and the frame fades in over it. See #launch in index.html.
+  showLaunch(cartridge.manifest.appName ?? "container", cartridge.manifest.favicon);
+  document.body.classList.remove("launching");
+  document.body.classList.add("loaded", "booting");
+  window.clearTimeout(bootingGuard);
+  // A runtime that never reports is still an app somebody wants to see.
+  bootingGuard = window.setTimeout(() => document.body.classList.remove("booting"), 8000);
 
   /*
    * Named and iconed now; offered later.
@@ -982,12 +1004,16 @@ window.addEventListener("message", (event) => {
         `Nothing has been changed or lost.`,
       true,
     );
-    document.body.classList.remove("loaded");
+    window.clearTimeout(bootingGuard);
+    document.body.classList.remove("loaded", "booting");
   } else if (data.type === "DAI_HOST_TIMING") {
     // The boot finished. The handshake went out before the application had
     // painted, so this is the message carrying the number that matters.
     if (fromMountedContainer(event, data)) {
       recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
+      // The app has drawn: the launch screen has done its job.
+      window.clearTimeout(bootingGuard);
+      document.body.classList.remove("booting");
     }
   } else if (data.type === "DAI_HOST_USED") {
     /*
