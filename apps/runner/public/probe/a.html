@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>LOADTITLE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="LOADMETA">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="manifest" href="/probe/a-load.webmanifest">
+<style>body{font:18px system-ui;padding:24px;background:#fff;color:#000}</style>
+<h1>Probe A</h1>
+<p id="s">Loaded. Wait for "changed", then Share → Add to Home Screen. Tell me the NAME the dialog offers, the URL under it, and what page opens from the icon.</p>
+<script>
+  setTimeout(() => {
+    document.title = "LIVETITLE";
+    document.querySelector('meta[name="apple-mobile-web-app-title"]').setAttribute("content", "LIVEMETA");
+    const m = { name: "LIVEMANIFEST", short_name: "LIVEMANIFEST", start_url: "/probe/a.html?from=livemanifest#k=secret", display: "standalone",
+      icons: [{ src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" }] };
+    document.querySelector('link[rel="manifest"]').setAttribute("href", "data:application/manifest+json," + encodeURIComponent(JSON.stringify(m)));
+    history.replaceState(null, "", "/probe/a.html?from=replacestate#k=secret");
+    document.getElementById("s").textContent = "changed — now Share → Add to Home Screen. Opened with: " + location.search + location.hash;
+  }, 1500);
+  document.getElementById("s").textContent += " Opened with: " + location.search + location.hash;
+</script>
