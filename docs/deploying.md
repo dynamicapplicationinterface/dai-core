@@ -81,6 +81,43 @@ Two details:
   redirects across origins tends to bounce out into a browser tab. Which is the
   argument for doing this while that is nobody.
 
+## Store credentials, and why nothing deployed has one
+
+The write credential for the bucket is the only secret this project has. It
+lives in `.env.local`, beside the repository, ignored by git. `.env.example` is
+committed, holds every name and no values, and is what tells you what to fill
+in:
+
+    cp .env.example .env.local
+    # then DAI_S3_ENDPOINT, DAI_S3_BUCKET, DAI_S3_ACCESS_KEY_ID,
+    # DAI_S3_SECRET_ACCESS_KEY, DAI_S3_PUBLIC_BASE
+
+A real environment variable beats the file, so CI and a shell export behave the
+way anybody would expect. Set some of the five and not all of them and
+publishing refuses outright — silently falling back to a local directory
+because one name was misspelled is how somebody hands out a `file:` link
+believing they published something.
+
+**Nothing deployed needs any of this, and that is a property worth keeping.**
+
+| | reads a store | needs a credential |
+|---|---|---|
+| the opener | a blob, over HTTPS, from a public URL | no |
+| the edge middleware | a sidecar, the same way | no |
+| `dai publish` / the MCP server | writes | **yes** |
+
+The opener runs in a browser on a device belonging to whoever was sent a link,
+so anything it held would be readable by them. The middleware builds a preview
+out of a public object; there is nothing there to authenticate. Only publishing
+is a write, and publishing happens on the machine of the person doing it.
+
+So a credential should never appear in Vercel's environment, in a browser
+bundle, or inside a container. If one ever has to, the design has changed in a
+way that needs arguing about rather than configuring around —
+`tests/credentials.spec.ts` fails if the opener or the middleware so much as
+mentions one, checks that `.env*` is ignored while `.env.example` is not, and
+scans every tracked file for a committed key.
+
 ## Caching, and the part that must not be cached
 
 `/assets/*` is served `immutable` for a year. Those filenames carry a hash of

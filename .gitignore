@@ -1,5 +1,13 @@
 node_modules/
 dist/
+
+# Store credentials. A write credential for a bucket, and the one kind of file
+# in this project that must never be committed. .env.example is the documented
+# shape and holds no values.
+.env
+.env.*
+!.env.example
+
 *.dai
 *.dai.html
 # The documentation site ships sample cartridges as deliberate distribution

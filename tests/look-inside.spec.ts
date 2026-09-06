@@ -70,8 +70,16 @@ test.describe("look inside, before opening", () => {
  * nobody uses.
  */
 test.describe("handing this app back to an assistant", () => {
-  test("copies the source, the identity, and what to do with them", async ({ page, context }) => {
+  test("copies the source, the identity, and what to do with them", async ({
+    page,
+    context,
+    browserName,
+  }) => {
     test.slow();
+    // Reading the clipboard back needs a permission only chromium implements.
+    // The affordance itself works everywhere — this is the assertion that
+    // cannot be made elsewhere, not the feature that cannot run there.
+    test.skip(browserName !== "chromium", "clipboard-read is chromium-only in Playwright");
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 
     await page.goto(RUNNER_URL);

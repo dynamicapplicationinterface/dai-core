@@ -479,19 +479,37 @@ async function installedEngine(): Promise<(digest: string) => Uint8Array | undef
 async function publishCommand(parsed: Parsed): Promise<number> {
   const target = parsed.positional[0];
   const dir = parsed.flags.store;
-  if (!target || typeof dir !== "string") {
-    process.stderr.write("dai publish needs a file and a store. Try: dai publish tasks.dai.html --store ./store\n");
+  const { ICON_CAP, publish } = await import("./store.js");
+  const { storeFromEnvironment } = await import("./env.js");
+
+  /*
+   * A directory named on the command line, or a store this machine is
+   * configured for.
+   *
+   * The credential for the second lives in the environment — `.env.local`
+   * beside the repository, ignored by git — and never in an argument, because
+   * an argument is in the shell history and in the process list. `src/env.ts`
+   * says why nothing deployed needs one at all.
+   */
+  const configured = typeof dir === "string" ? undefined : await storeFromEnvironment();
+  if (!target || (typeof dir !== "string" && !configured)) {
+    process.stderr.write(
+      "dai publish needs a file, and somewhere to put it.\n" +
+        "  --store ./dir     a directory this machine serves\n" +
+        "  or set DAI_S3_* in .env.local (see .env.example)\n",
+    );
     return 2;
   }
-  const { ICON_CAP, publish } = await import("./store.js");
-  const { fsStore } = await import("./store-fs.js");
 
   const html = readFileSync(resolve(process.cwd(), target), "utf8");
   const opener = typeof parsed.flags.opener === "string" ? parsed.flags.opener : "https://opendai.app";
-  const store = fsStore({
-    root: resolve(process.cwd(), dir),
-    baseUrl: typeof parsed.flags.base === "string" ? parsed.flags.base : undefined,
-  });
+  const { fsStore } = await import("./store-fs.js");
+  const store =
+    configured ??
+    fsStore({
+      root: resolve(process.cwd(), dir as string),
+      baseUrl: typeof parsed.flags.base === "string" ? parsed.flags.base : undefined,
+    });
 
   const unfurl = parsed.flags.unfurl === true;
   if (typeof parsed.flags.icon === "string" && !unfurl) {

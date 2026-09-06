@@ -29,6 +29,7 @@ import { advisory, breaking, lintFiles } from "./lint.js";
 import { RECIPE } from "./recipe.js";
 import { lastLine, linkFor, type Host } from "./sender.js";
 import type { Store } from "./store.js";
+import { storeFromEnvironment as storeFromEnv } from "./env.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -179,10 +180,10 @@ const TOOLS = [
  * and useless to send, and is said so.
  */
 async function storeFromEnvironment(): Promise<Store | undefined> {
-  const dir = process.env.DAI_STORE_DIR;
-  if (!dir) return undefined;
-  const { fsStore } = await import("./store-fs.js");
-  return fsStore({ root: dir, baseUrl: process.env.DAI_STORE_BASE });
+  // One resolver, shared with the command line, so a machine that can publish
+  // from one can publish from the other and neither invents its own rules
+  // about where a credential comes from. See `src/env.ts`.
+  return storeFromEnv();
 }
 
 /** The shell this server can rebuild, so a link may leave it out. */
