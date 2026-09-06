@@ -924,15 +924,37 @@ window.addEventListener("message", (event) => {
      * pane. It is a refusal, so it is said here, loudly, in the words the
      * shell chose, and the frame comes down.
      */
-    // The refusal carries its nonce inside the payload, unlike the other
-    // bridge messages, because it can be sent before the handshake settles.
+    /*
+     * The refusal carries its nonce inside the payload, unlike the other
+     * bridge messages, because it can be sent before the handshake settles —
+     * and most are: the shell refuses on the payload, the manifest, a digest,
+     * a signature or a missing index.html *before* it handshakes, so at that
+     * moment this host has no nonce to compare. A review found the check
+     * below demanding one anyway, which dropped every early refusal on the
+     * floor and left the person looking at a blank frame. What identifies an
+     * early refusal is the window it came from; once a handshake has given
+     * this host a nonce, a refusal must carry it.
+     */
     const refusal = (data.payload ?? {}) as {
       sessionNonce?: string;
       reason?: string;
       message?: string;
       detail?: string;
     };
-    if (!fromMountedContainer(event, refusal)) return;
+    if (event.source !== cartridgeFrame.contentWindow) return;
+    if (mountedNonce && refusal.sessionNonce !== mountedNonce) return;
+    if (refusal.reason === "MOUNT_TIMEOUT") {
+      /*
+       * Not a verdict on the document. The shell waited as long as it was
+       * prepared to and the application had not reported in; on a slow phone
+       * the boot may still be running and may yet finish. Said, so the person
+       * is not left guessing — but the frame stays up, because pulling it
+       * down under an application that then finishes mounting is the one
+       * outcome worse than waiting.
+       */
+      say(`${refusal.message ?? "The application is taking a long time to start."} It may still finish.`);
+      return;
+    }
     say(
       `${refusal.message ?? "This document could not be opened."}${refusal.detail ? ` ${refusal.detail}` : ""} ` +
         `Nothing has been changed or lost.`,

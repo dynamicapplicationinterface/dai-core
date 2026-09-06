@@ -177,8 +177,20 @@ function timingTable(): { phase: string; at: number; took: number }[] {
 }
 
 const HANDSHAKE = "dai:ready";
-/** How long the iframe has to report back before we surface a diagnostic. */
-const HANDSHAKE_TIMEOUT_MS = 5000;
+/**
+ * How long the application has to report in before the shell gives up on it.
+ *
+ * Thirty seconds, not five. Five was the first number and it was wrong for
+ * the device this format is for: on a mid-range phone the decode, unzip,
+ * digest and mount of a large container can take longer than that, and when
+ * it did the shell declared MOUNT_TIMEOUT, the host pulled the frame down —
+ * and the application finished mounting underneath the message saying it
+ * had not. A stall is *said* well before this (see `watchBoot`); this is only
+ * when it is called.
+ */
+const HANDSHAKE_TIMEOUT_MS = 30000;
+/** When the boot screen stops implying progress it cannot show. */
+const SLOW_START_MS = 5000;
 /**
  * Base for the placeholder URLs that stand in for packaged modules. Never
  * fetched: an import map in the iframe redirects every one of them to a blob.
@@ -2038,7 +2050,14 @@ async function boot(): Promise<void> {
 
   window.setTimeout(() => {
     if (ready) return;
-    refuse("MOUNT_TIMEOUT", 
+    // Still going; say so in the tone of a wait, not a verdict.
+    const detail = document.getElementById("dai-boot-detail");
+    if (detail && !detail.textContent) detail.textContent = "Still starting. This can take a while on a phone.";
+  }, SLOW_START_MS);
+
+  window.setTimeout(() => {
+    if (ready) return;
+    refuse("MOUNT_TIMEOUT",
       "The application did not finish mounting.",
       violations.length
         ? `CSP: ${violations.join("; ")}`

@@ -501,6 +501,14 @@ window.addEventListener("message", (event) => {
     // The cartridge stopped and said why. Without this the host sees only
     // silence and its watchdog guesses — and a refusal is the entry an audit
     // trail most wants, so guessing is the worst outcome available.
+    //
+    // From the frame this host mounted, and no other window: a refusal ejects
+    // the document, and that is not a thing a stranger's window may do. Most
+    // refusals arrive before the handshake, so the frame is the identity here;
+    // once a nonce is held, the refusal has to carry it.
+    if (event.source !== cartridgeFrame.contentWindow) return;
+    const carried = ((data.payload ?? {}) as { sessionNonce?: string }).sessionNonce;
+    if (mountedNonce && carried !== mountedNonce) return;
     clearBootWatchdog();
     const refusal = (data.payload ?? {}) as {
       reason?: string;
