@@ -28,7 +28,7 @@ test.describe("schema.sql without the kit", () => {
     writeFileSync(
       join(dir, "index.html"),
       [
-        '<!doctype html><meta charset="utf-8">',
+        '<!doctype html><meta charset="utf-8"><meta name="theme-color" content="#123456">',
         '<script type="application/sql">',
         "  INSERT INTO settings (key, value) SELECT 'mode', 'recommended' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'mode');",
         "</script>",
@@ -52,6 +52,8 @@ test.describe("schema.sql without the kit", () => {
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     // No kit on the page, and the first read works, seed included.
     await expect(app.locator("#out")).toHaveText("mode=recommended", { timeout: 30_000 });
+    // And the screen's edges are the app's colour, from its theme-color.
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(18, 52, 86)");
 
     // A write, saved with nothing pressed, and the seed not doubled on reopen.
     await app.locator("#bump").click();

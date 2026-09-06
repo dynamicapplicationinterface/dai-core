@@ -195,6 +195,7 @@ function eject(): void {
   loaded = undefined;
   handshakeEstablished = false;
   document.body.classList.remove("loaded", "launching", "booting");
+  document.documentElement.style.removeProperty("--app-ground");
   window.clearTimeout(bootingGuard);
   keeper?.clear();
   hideCard();
@@ -297,6 +298,11 @@ async function mount(cartridge: Cartridge): Promise<void> {
   // ground — until the runtime reports the app interactive (DAI_HOST_TIMING
   // below), and the frame fades in over it. See #launch in index.html.
   showLaunch(cartridge.manifest.appName ?? "container", cartridge.manifest.favicon);
+  // The screen's edges — the strips under the status bar and the home
+  // indicator, which an app in a frame cannot reach — in the app's own colour.
+  const { theme } = describeApp(indexHtmlOf(cartridge));
+  if (theme) document.documentElement.style.setProperty("--app-ground", theme);
+  else document.documentElement.style.removeProperty("--app-ground");
   document.body.classList.remove("launching");
   document.body.classList.add("loaded", "booting");
   window.clearTimeout(bootingGuard);

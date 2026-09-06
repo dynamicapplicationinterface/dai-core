@@ -109,8 +109,20 @@
        * result is an application that drifts up and down inside its own frame
        * while somebody is trying to tick a box.
        */
-      html, body { margin: 0; height: 100dvh; overflow: hidden; background: var(--bg); color: var(--text); }
+      html, body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
+      /*
+       * Pinned to the screen, not sized to it.
+       *
+       * This was height: 100dvh with the safe-area insets padded inside it. On
+       * a home-screen app on iOS that left a band the height of both insets
+       * at the bottom — the document painted short, in the opener's grey. A
+       * fixed body spanning the whole viewport, with the insets as padding,
+       * is what a phone's own apps do: the app frame reaches the edge, and the
+       * inset strips are painted in the app's own colour (see --app-ground).
+       */
       body {
+        position: fixed;
+        inset: 0;
         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         display: flex;
@@ -119,6 +131,8 @@
         padding-bottom: env(safe-area-inset-bottom);
         overscroll-behavior: none;
       }
+      /* While a document is open, the edges of the screen are its colour. */
+      body.loaded { background: var(--app-ground, var(--bg)); }
 
       /*
        * Two heights: a chooser before anything is open, and a single slim line

@@ -93,13 +93,19 @@ export interface CardInput {
  * store page puts under the name. Read from the signed application, never
  * from anything outside the file; shown as text, never as markup.
  */
-export function describeApp(indexHtml: string | undefined): { tagline?: string } {
+export function describeApp(indexHtml: string | undefined): { tagline?: string; theme?: string } {
   if (!indexHtml) return {};
   const head = indexHtml.slice(0, 20_000);
-  const meta = /<meta\s+(?:[^>]*?\s)?name=["']description["'][^>]*?content=["']([^"']{1,200})["']/i.exec(head)
-    ?? /<meta\s+(?:[^>]*?\s)?content=["']([^"']{1,200})["'][^>]*?name=["']description["']/i.exec(head);
-  const tagline = meta?.[1]?.replace(/\s+/g, " ").trim();
-  return tagline ? { tagline } : {};
+  const meta = (name: string): string | undefined =>
+    (new RegExp(`<meta\\s+(?:[^>]*?\\s)?name=["']${name}["'][^>]*?content=["']([^"']{1,200})["']`, "i").exec(head)
+      ?? new RegExp(`<meta\\s+(?:[^>]*?\\s)?content=["']([^"']{1,200})["'][^>]*?name=["']${name}["']`, "i").exec(head))?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim();
+  const tagline = meta("description");
+  // A colour and nothing else: it goes into a style property on this page.
+  const colour = meta("theme-color");
+  const theme = colour && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(colour) ? colour : undefined;
+  return { ...(tagline ? { tagline } : {}), ...(theme ? { theme } : {}) };
 }
 
 function formatSize(bytes: number): string {

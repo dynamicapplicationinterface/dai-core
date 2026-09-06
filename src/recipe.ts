@@ -144,6 +144,8 @@ Include a file named icon.svg: a simple, bold mark for this app on a square canv
 
 In the <head> of index.html, put one line about the app in <meta name="description" content="…">: what it is for, in under 60 characters, the way a store page puts a line under an app's name ("A packing list for the beach trip"). It is shown under the name when somebody is deciding whether to open it, so write it for them, not for a search engine.
 
+Beside it, <meta name="theme-color" content="…"> with the app's own background colour. On a phone the strips under the status bar and the home indicator are painted in it, so the app reaches the edges of the screen instead of sitting in a grey frame.
+
 HOW TO HAND IT OVER
 If you can attach files, a zip of the files is best. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
 
