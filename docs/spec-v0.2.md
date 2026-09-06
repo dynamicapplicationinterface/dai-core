@@ -134,12 +134,16 @@ not open the blob is `BLOB_UNDECRYPTABLE`. What decrypts is a container in the
 viewer form, and MUST be verified by §7 as though it were a file.
 
 A store is three operations — `put(hash, blob, sidecar)`, `get(href)`,
-`head(href)` — and a conforming store holds only what it can check is a
-document: the sidecar's manifest signature verifies under the key it names,
-and the blob is the size the sidecar states. A blob is at most 5 MB. Beside
-each blob the store keeps a sidecar in the clear — manifest, name, icon — for
-the parts of the world that cannot open the document and only need to know
-what it is called. A store MUST serve blobs with `Access-Control-Allow-Origin:
+`head(href)` — and a conforming store holds only what it can check: the blob
+hashes to the name it is stored under, and is the size the sidecar states. A
+blob is at most 5 MB. Beside each blob the store keeps a sidecar in the clear
+carrying only `size`, `clear` when the blob is unencrypted, and — when and
+only when the sender consented (§3.3) — a `preview` of name, publisher name
+and whether an icon exists. A sidecar MUST NOT carry the manifest, the
+document's identity, or the publisher's key: it is readable by anyone who has
+the link's path, which every relay the link crosses does, and a document
+shared without a preview must be a document nothing beside the blob can
+describe. A store MUST serve blobs with `Access-Control-Allow-Origin:
 *`, an immutable `Cache-Control`, and `Content-Type: application/octet-stream`.
 
 Nothing about a carrier is recorded in a document. A document that travelled as

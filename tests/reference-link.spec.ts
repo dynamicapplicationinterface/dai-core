@@ -135,13 +135,17 @@ test.describe("a document sealed for a store", () => {
     expect(await store.put(sealed.hash, sealed.blob, sealed.sidecar)).toBe(href);
     expect((await store.head(href)).exists).toBe(true);
 
-    // A sidecar whose manifest was edited: the signature no longer verifies,
-    // and a store that took it would be a file host.
-    const forged: Sidecar = {
-      ...sealed.sidecar,
-      manifest: { ...sealed.sidecar.manifest, appName: "Payroll Portal" },
-    };
-    await expect(store.put(sealed.hash, sealed.blob, forged)).rejects.toMatchObject({ code: "UNVERIFIED_SIGNATURE" });
+    // The sidecar says nothing a stranger may not read: no manifest, no
+    // identity, no key. A review found the whole manifest sitting at a public
+    // URL with the preview off — name, publisher, generating model, dates.
+    expect(Object.keys(sealed.sidecar).sort()).toEqual(["size"]);
+    const unfurled = await sealForStore(built.html, { preview: true });
+    expect(Object.keys(unfurled.sidecar).sort()).toEqual(["preview", "size"]);
+    expect(JSON.stringify(unfurled.sidecar)).not.toMatch(/documentUuid|publicKey|hashes|generator/);
+
+    // A preview that is a payload rather than a caption.
+    const stuffed: Sidecar = { ...unfurled.sidecar, preview: { name: "x".repeat(201) } };
+    await expect(store.put(sealed.hash, sealed.blob, stuffed)).rejects.toMatchObject({ code: "STORE_REFUSED" });
 
     // A size that disagrees with the blob.
     await expect(

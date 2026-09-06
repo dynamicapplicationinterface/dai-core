@@ -306,10 +306,11 @@ through its S3-compatible API. No Worker, no proprietary client SDK.
    `Access-Control-Allow-Origin: *`, `Cache-Control: immutable` and the
    correct `Content-Type`; the conformance suite asserts those production
    headers as it already does the opener's.
-5. The sidecar (manifest in the clear, name, icon) is a separate object under
-   the same hash. `put()` validates the manifest signature and that the
-   ciphertext length matches the declared size — a DAI relay, not a general
-   file host. Size cap 5 MB, TTL on unopened blobs.
+5. The sidecar (size, clear flag, and a preview only with consent) is a
+   separate object under the same hash. `put()` checks the blob hashes to its
+   name and matches the declared size — a DAI relay, not a general file host.
+   Size cap 5 MB, TTL on unopened blobs. (It once carried the manifest too;
+   the review of 6 September found that at a public URL and it was dropped.)
 6. The unfurl route (`/d/<id>` → OG name and icon from the sidecar, never the
    blob) lives on Vercel beside the opener; it is off the runtime path.
 

@@ -29,9 +29,9 @@
  * The opener never imports this file's adapters. It fetches a URL, checks a
  * hash, decrypts, and verifies what it finds exactly as it would a file.
  */
-import { ContainerError, parseContainer, thinned, verifyManifestSignature } from "./container.js";
+import { ContainerError, parseContainer, thinned } from "./container.js";
 import type { Preview } from "./unfurl.js";
-import { fromBase64, sha256Hex, toBase64, type ContainerManifest } from "./core.js";
+import { fromBase64, sha256Hex, toBase64 } from "./core.js";
 
 /** What a DAI relay will hold. A general file host this is not. */
 export const STORE_CAP = 5 * 1024 * 1024;
@@ -42,19 +42,22 @@ export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c" } as c
 /**
  * What travels beside the blob, in the clear.
  *
- * Enough for an unfurl — name, icon — and for the store to check that what it
- * is being handed is a DAI document rather than a file wearing the format's
- * name: the manifest with its signature, and the key that signature is under.
- * Nothing here is secret; all of it is also inside the ciphertext, where the
- * verifier reads it. This copy is for the parts of the world that cannot open
- * the document and only need to know what it is called.
+ * Three fields, and each one is there because something that cannot open the
+ * document needs it: the size, which the store checks before it writes; the
+ * clear flag, which the store checks against its policy; and the preview,
+ * which the edge serves to a chat client — only when the sender said so.
+ *
+ * It used to carry the whole manifest as well, so a store could verify the
+ * signature and know it held a DAI document. A review found what that cost:
+ * the sidecar is publicly readable at a URL every chat server sees, and the
+ * manifest names the application, its publisher, the model that generated it
+ * and when — with the preview switched *off*. "Off" was only stopping the
+ * edge from injecting a name; anybody with the path could read it. The check
+ * it paid for was not worth that: with presigned uploads the store never ran
+ * it, and the name a blob is stored under is its hash, which is the binding
+ * that matters. So a sidecar now says nothing a stranger may not know.
  */
 export interface Sidecar {
-  documentUuid: string;
-  /** The manifest, for the store to verify the signature over. */
-  manifest: ContainerManifest;
-  /** Base64 SPKI, when signed. */
-  publicKey?: string;
   /** The blob's length, which `put` checks against what it was handed. */
   size: number;
   /**
@@ -67,13 +70,10 @@ export interface Sidecar {
   /**
    * What a link preview may show, when the sender said so (§3.3).
    *
-   * Separate from everything above, and absent by default, because it is the
-   * only part of a sidecar written to be served to strangers: a chat client
-   * fetching `/d/<id>` gets this and nothing else. The manifest beside it is
-   * what the store checks a document by, and carries the application's name
-   * as it always has — so "no preview" means no name in a preview, not a name
-   * nobody can read. A store operator can read the manifest; that is what a
-   * store is, and an organisation that cannot accept it runs its own.
+   * Absent by default, because it is the one part of a sidecar that carries a
+   * word of the sender's: a chat client fetching `/d/<id>` gets this and
+   * nothing else, and with no preview there is nothing beside the blob that
+   * says what it is called.
    */
   preview?: Preview;
 }
@@ -174,9 +174,6 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
       clear: true,
       icon: options.icon,
       sidecar: {
-        documentUuid: container.manifest.documentUuid,
-        manifest: container.manifest,
-        ...(container.publicKey ? { publicKey: container.publicKey } : {}),
         size: thin.length,
         clear: true,
         ...(options.preview
@@ -218,9 +215,6 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
     key: toBase64Url(rawKey),
     icon: options.icon,
     sidecar: {
-      documentUuid: container.manifest.documentUuid,
-      manifest: container.manifest,
-      ...(container.publicKey ? { publicKey: container.publicKey } : {}),
       size: blob.length,
       ...(options.preview
         ? {
@@ -300,10 +294,12 @@ export async function openFromStore(blob: Uint8Array, hash: string, key: string)
  * What a store must check before it holds something.
  *
  * A store that holds anything it is handed is a file host, and this project
- * does not run one. So `put` checks that the sidecar describes a DAI document
- * whose signature verifies under the key it names, and that the ciphertext is
- * the size the sidecar says, before it writes a byte. Called by every adapter,
- * so the rule is written once.
+ * does not run one. So `put` checks that the blob hashes to the name it will
+ * be stored under, that it is the size the sidecar says and under the cap,
+ * and that what the sidecar offers a stranger is a caption and not a payload
+ * — before it writes a byte. Called by every adapter, so the rule is written
+ * once. (A presigned store does the same binding by signing the digest and
+ * length into the URL, where the bucket enforces them.)
  */
 /** The largest PNG a store will serve as a preview icon. A caption, not an asset. */
 export const ICON_CAP = 100 * 1024;
@@ -374,23 +370,6 @@ export async function admit(
     // An icon with nothing that claims one is a file the store would serve
     // and nothing would ever reference.
     throw new ContainerError("STORE_REFUSED", "An icon without a preview is a file nothing points at.");
-  }
-
-  const manifest = sidecar.manifest;
-  if (
-    !manifest ||
-    typeof manifest.documentUuid !== "string" ||
-    manifest.documentUuid !== sidecar.documentUuid ||
-    typeof manifest.hashes !== "object"
-  ) {
-    throw new ContainerError("STORE_REFUSED", "The sidecar does not describe a DAI document.");
-  }
-  if (manifest.signature || sidecar.publicKey) {
-    if (!sidecar.publicKey || !manifest.signature) {
-      throw new ContainerError("STORE_REFUSED", "The sidecar carries a key without a signature, or the reverse.");
-    }
-    // Throws the reader's own refusal when the signature does not check out.
-    await verifyManifestSignature(manifest, sidecar.publicKey);
   }
 }
 
