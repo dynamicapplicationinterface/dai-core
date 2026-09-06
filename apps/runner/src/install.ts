@@ -39,7 +39,7 @@
  * Other desktop browsers have no install of their own; their menu does, and
  * the text says where.
  */
-import { installShareStorage, platform, standalone } from "./platform.js";
+import { platform, standalone } from "./platform.js";
 
 /** What Chrome hands over, and which is not in the DOM typings. */
 interface InstallEvent extends Event {
@@ -57,6 +57,8 @@ export interface Identity {
   favicon?: string;
   /** Whether a copy of this document exists as a file somewhere the person can find. */
   savedAsFile?: boolean;
+  /** The address it came by, or one this opener made for it, when it fits one. */
+  link?: string;
   /**
    * The link this document arrived by, when it arrived by one (backlog 3.5).
    *
@@ -354,79 +356,138 @@ export function describeSelf(): void {
   headTag("link", 'rel="manifest"').setAttribute("href", "./manifest.webmanifest");
 }
 
+/** A step on the sheet: a glyph a person will recognise from their own device, and one line. */
+export interface KeepStep {
+  glyph: "share" | "add" | "menu" | "install" | "file";
+  text: string;
+}
+
 /**
- * The sentence for this device. Short, and named for the taps a person makes,
- * because "install" describes something that does not happen on most of
- * these platforms.
+ * What the sheet says on this device.
+ *
+ * The device's own words and the device's own glyphs, in the order the fingers
+ * go. A third step exists only for a document that arrived as a file and is
+ * too large to travel in its own address: an iOS home-screen app starts with
+ * empty storage, and that one has to be handed the file once.
  */
-export function howToKeep(identity: Identity, prompt: boolean): { title: string; steps: string[] } {
+export function howToKeep(identity: Identity, prompt: boolean): { title: string; sub: string; steps: KeepStep[] } {
   const name = identity.name;
+  const sub = "It opens like an app, works without a connection, and stays on this device.";
   switch (platform()) {
     case "ios":
       return {
-        title: `Keep ${name} on your Home Screen`,
+        title: `Add ${name} to your Home Screen`,
+        sub,
         steps: [
-          ...(identity.savedAsFile ? [] : ["Tap ⋯ and Save a copy, then Save to Files."]),
-          "Tap Share, then Add to Home Screen.",
-          `Open the new icon once and choose ${name} from Files. After that it stays.`,
+          { glyph: "share", text: "Tap the Share button" },
+          { glyph: "add", text: "Tap Add to Home Screen" },
+          ...(identity.link ? [] : [{ glyph: "file" as const, text: `Open the new icon once and choose ${name} from Files` }]),
         ],
       };
     case "android":
-      return prompt
-        ? { title: `Keep ${name} on your home screen`, steps: [] }
-        : { title: `Keep ${name} on your home screen`, steps: ["Tap ⋮ in your browser, then Add to Home screen."] };
+      return {
+        title: `Add ${name} to your home screen`,
+        sub,
+        steps: prompt
+          ? []
+          : [
+              { glyph: "menu", text: "Tap ⋮ in your browser" },
+              { glyph: "add", text: "Tap Add to Home screen" },
+            ],
+      };
     default:
-      return prompt
-        ? { title: `Keep ${name} on this computer`, steps: [] }
-        : {
-            title: `Keep ${name} on this computer`,
-            steps: ["Use your browser's menu: look for Install, Add to Dock, or Create shortcut."],
-          };
+      return {
+        title: `Keep ${name} on this computer`,
+        sub,
+        steps: prompt
+          ? []
+          : [
+              { glyph: "menu", text: "Open your browser's menu" },
+              { glyph: "install", text: "Choose Install, Add to Dock, or Create shortcut" },
+            ],
+      };
   }
+}
+
+/** The one word on the button, in the vocabulary of the device it is on. */
+function ctaLabel(prompt: boolean): string {
+  if (prompt) return "Install";
+  return platform() === "ios" || platform() === "android" ? "Add to Home Screen" : "Keep";
+}
+
+const GLYPHS: Record<KeepStep["glyph"], string> = {
+  share: '<path d="M12 3v12M8 7l4-4 4 4M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/>',
+  add: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 9v6M9 12h6"/>',
+  menu: '<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>',
+  install: '<path d="M12 4v10M8 10l4 4 4-4M5 19h14"/>',
+  file: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+};
+
+function glyph(kind: KeepStep["glyph"]): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = GLYPHS[kind];
+  return svg;
 }
 
 export interface Keeper {
   /**
-   * A document is on screen. The page takes its name, icon and manifest, so
-   * an install from the browser's own menu gets the right ones — but nothing
-   * is offered yet.
+   * A document is on screen. The page takes its name, icon and manifest, the
+   * header shows the document and the one action that keeps it — but nothing
+   * is asked.
    */
   describe(identity: Identity): void;
-  /** Somebody used it. Now an offer is an offer rather than an interruption. */
+  /** Somebody used it. The action draws the eye, once. */
   offer(): void;
-  /** Somebody asked from the menu: do it, or say how. */
+  /** Somebody tapped the action: do it, or show how. */
   keep(): void;
+  /** No document on screen: the header is the opener's again. */
+  clear(): void;
   /** Whether a one-tap install exists on this device right now. */
   readonly canPrompt: boolean;
 }
 
 /**
- * Wires the offer and the menu item up. Call once at start-up.
+ * Wires the header action and the sheet. Call once at start-up.
+ *
+ * One control, in the header, for as long as a document is open — the way an
+ * app puts its one important action where the thumb already is — and a sheet
+ * that shows the gesture in the device's own glyphs when the browser has no
+ * prompt of its own. No banner, nothing to dismiss: a control is not a
+ * question. The only moment it raises its voice is after the first use, when
+ * it pulses once.
  */
 export function watchForInstall(): Keeper | null {
-  const bar = document.getElementById("install");
-  const text = document.getElementById("install-text");
-  const go = document.getElementById("install-go") as HTMLButtonElement | null;
-  const dismiss = document.getElementById("install-dismiss");
-  const how = document.getElementById("keep-how");
-  if (!bar || !text || !go || !dismiss || !how) return null;
+  const cta = document.getElementById("keep-cta") as HTMLButtonElement | null;
+  const label = document.getElementById("keep-cta-label");
+  const titleIcon = document.getElementById("title-icon") as HTMLImageElement | null;
+  const sheet = document.getElementById("keep-sheet");
+  const sheetIcon = document.getElementById("keep-icon") as HTMLImageElement | null;
+  const sheetTitle = document.getElementById("keep-title");
+  const sheetSub = document.getElementById("keep-sub");
+  const sheetSteps = document.getElementById("keep-steps");
+  const done = document.getElementById("keep-done");
+  if (!cta || !label || !titleIcon || !sheet || !sheetIcon || !sheetTitle || !sheetSub || !sheetSteps || !done) return null;
 
   let saved: InstallEvent | null = null;
-  let current: Identity | null = null;
+  let current: (Identity & { link?: string }) | null = null;
 
   window.addEventListener("beforeinstallprompt", (event) => {
-    // Kept rather than allowed to fire on its own, so it arrives after somebody
-    // has seen their document work rather than on top of it loading.
+    // Kept rather than allowed to fire on its own, so it arrives from the
+    // button rather than on top of the document loading.
     event.preventDefault();
     saved = event as InstallEvent;
+    label.textContent = ctaLabel(true);
   });
 
-  const hide = () => {
-    bar.hidden = true;
-    if (current) remember(current.uuid);
+  const closeSheet = () => {
+    sheet.hidden = true;
   };
-
-  dismiss.addEventListener("click", hide);
+  done.addEventListener("click", closeSheet);
+  sheet.addEventListener("click", (event) => {
+    if (event.target === sheet) closeSheet();
+  });
 
   const install = () => {
     const prompt = saved;
@@ -436,32 +497,32 @@ export function watchForInstall(): Keeper | null {
     return true;
   };
 
-  go.addEventListener("click", () => {
-    hide();
-    if (install()) return;
-    if (current && platform() === "ios") keepHere(current);
-  });
-
-  /** Writes the steps for this device into the menu. */
-  const explain = () => {
-    how.replaceChildren();
-    if (!current) return;
-    const guide = howToKeep(current, Boolean(saved));
-    const title = document.createElement("p");
-    title.className = "keep-title";
-    title.textContent = guide.title;
-    how.appendChild(title);
-    if (guide.steps.length) {
-      const list = document.createElement("ol");
-      for (const step of guide.steps) {
+  const showSheet = (identity: Identity & { link?: string }) => {
+    const guide = howToKeep(identity, Boolean(saved));
+    sheetIcon.src = faviconUrl(identity.favicon) ?? new URL("/icons/icon-192.png", location.origin).href;
+    sheetTitle.textContent = guide.title;
+    sheetSub.textContent = guide.sub;
+    sheetSteps.replaceChildren(
+      ...guide.steps.map((step) => {
         const item = document.createElement("li");
-        item.textContent = step;
-        list.appendChild(item);
-      }
-      how.appendChild(list);
-    }
-    how.hidden = false;
+        item.appendChild(glyph(step.glyph));
+        const text = document.createElement("span");
+        text.textContent = step.text;
+        item.appendChild(text);
+        return item;
+      }),
+    );
+    sheet.hidden = false;
   };
+
+  const keep = () => {
+    if (!current) return;
+    if (install()) return;
+    if (platform() === "ios" && keepHere(current)) return;
+    showSheet(current);
+  };
+  cta.addEventListener("click", keep);
+  cta.addEventListener("animationend", () => cta.classList.remove("nudge"));
 
   return {
     get canPrompt() {
@@ -470,15 +531,20 @@ export function watchForInstall(): Keeper | null {
 
     describe(identity) {
       current = identity;
-      how.hidden = true;
-      bar.hidden = true;
-      // The page describes the document whether or not the bar is ever shown:
-      // an install from the browser's own menu, later, should still get the
-      // right name and icon.
+      closeSheet();
+      label.textContent = ctaLabel(Boolean(saved));
+      // Already an app on this device: nothing to add.
+      cta.hidden = standalone();
+      const icon = faviconUrl(identity.favicon);
+      titleIcon.hidden = !icon;
+      if (icon) titleIcon.src = icon;
+      // The page describes the document whether or not the sheet is ever
+      // shown: an install from the browser's own menu, later, should still
+      // get the right name and icon.
       void describeDocument(identity);
 
-      // Back from the reload `keepHere` asked for: now the page was loaded
-      // with this document's manifest, and the steps are worth showing.
+      // Back from the reload `keepHere` asked for: the page was loaded with
+      // this document's manifest, and the gesture is worth showing now.
       let pending: string | null = null;
       try {
         pending = sessionStorage.getItem(KEEP_AFTER_RELOAD);
@@ -486,62 +552,26 @@ export function watchForInstall(): Keeper | null {
       } catch {
         /* Nothing pending. */
       }
-      if (pending === identity.uuid) {
-        explain();
-        if (platform() === "ios") {
-          text.textContent = `Now tap Share, then Add to Home Screen — ${identity.name} will be the icon.`;
-          go.hidden = true;
-          bar.hidden = false;
-        }
-      }
+      if (pending === identity.uuid && !standalone()) showSheet(identity);
     },
 
     offer() {
       const identity = current;
-      if (!identity) return;
-      if (standalone() || dismissed(identity.uuid)) return;
-
-      /*
-       * Asked at most twice, and never on the open itself.
-       *
-       * The first time somebody uses a document is the first moment they have
-       * any reason to want it back. A third open with no answer is an answer,
-       * and the menu still has it for anybody who changes their mind.
-       */
-      if (identity.opens > 2) return;
-      const again = identity.opens > 1;
-
-      if (saved) {
-        text.textContent = again
-          ? `Save ${identity.name} to your apps and open it from there.`
-          : `Keep ${identity.name} on this device and open it like an app.`;
-        go.hidden = false;
-      } else if (platform() === "ios") {
-        const lead = again ? `Save ${identity.name} to your apps` : `To keep ${identity.name}`;
-        if (location.href !== launchAddress(identity)) {
-          // Not yet at the document's own address, so Share would install the
-          // opener. One tap moves the page there; the next line says Share.
-          text.textContent = `${lead} on your Home Screen.`;
-          go.textContent = "Keep it";
-          go.hidden = false;
-        } else {
-          text.textContent = installShareStorage()
-            ? `${lead}: tap Share, then Add to Home Screen.`
-            : `${lead}: tap ⋯ for the steps — Share, Add to Home Screen, then open the file once.`;
-          go.hidden = true;
-        }
-      } else {
-        // A desktop browser with no install support has nothing useful to offer
-        // unprompted; the menu still says how.
-        return;
-      }
-      bar.hidden = false;
+      if (!identity || standalone() || dismissed(identity.uuid)) return;
+      // Once per document, after the first use: the first moment somebody
+      // has any reason to want it back.
+      remember(identity.uuid);
+      cta.classList.add("nudge");
     },
 
-    keep() {
-      if (install()) return;
-      if (current && platform() === "ios" && keepHere(current)) return;
-      explain();
+    keep,
+
+    clear() {
+      current = null;
+      cta.hidden = true;
+      cta.classList.remove("nudge");
+      titleIcon.hidden = true;
+      closeSheet();
     },
   };
 }

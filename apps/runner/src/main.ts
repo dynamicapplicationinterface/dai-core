@@ -91,7 +91,6 @@ function say(message: string, isError = false): void {
  * Cleared by ejecting, because ejecting is how somebody says they are done
  * with it.
  */
-const installBar = document.getElementById("install") as HTMLElement;
 const keeper = watchForInstall();
 /** Set for one open when the card called the publisher a conflict (4.3). */
 let installSuppressed = false;
@@ -177,7 +176,7 @@ function eject(): void {
   loaded = undefined;
   handshakeEstablished = false;
   document.body.classList.remove("loaded");
-  installBar.hidden = true;
+  keeper?.clear();
   hideCard();
   describeSelf();
   sheet.hidden = true;
@@ -1225,10 +1224,6 @@ linkButton.addEventListener("click", () => {
 exportButton.addEventListener("click", () => {
   closeSheet();
   void exportContainer();
-});
-document.getElementById("keep")?.addEventListener("click", () => {
-  // Stays in the sheet: the steps are written into it.
-  keeper?.keep();
 });
 document.getElementById("open-another")?.addEventListener("click", () => {
   closeSheet();

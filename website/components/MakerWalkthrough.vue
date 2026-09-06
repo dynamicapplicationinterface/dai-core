@@ -34,12 +34,15 @@ import { IDEAS, PROMPT } from './prompt.js';
 import PACKING_HTML from '../../examples/packing-list/index.html?raw';
 import PACKING_CSS from '../../examples/packing-list/app.css?raw';
 import PACKING_SQL from '../../examples/packing-list/schema.sql?raw';
+import PACKING_ICON from '../../examples/packing-list/icon.svg?raw';
 import CHORES_HTML from '../../examples/chore-chart/index.html?raw';
 import CHORES_CSS from '../../examples/chore-chart/app.css?raw';
 import CHORES_SQL from '../../examples/chore-chart/schema.sql?raw';
+import CHORES_ICON from '../../examples/chore-chart/icon.svg?raw';
 import DINNERS_HTML from '../../examples/meal-plan/index.html?raw';
 import DINNERS_CSS from '../../examples/meal-plan/app.css?raw';
 import DINNERS_SQL from '../../examples/meal-plan/schema.sql?raw';
+import DINNERS_ICON from '../../examples/meal-plan/icon.svg?raw';
 
 interface Choice {
   id: string;
@@ -68,6 +71,8 @@ const CHOICES: Choice[] = [
       // The tables, declared once. The compiler runs it first and records
       // its shape, so a later version cannot quietly change it.
       { name: 'schema.sql', source: PACKING_SQL },
+      // The app's own icon: what a home screen shows, and what the card shows first.
+      { name: 'icon.svg', source: PACKING_ICON },
     ],
   },
   {
@@ -84,6 +89,8 @@ const CHOICES: Choice[] = [
       // The tables, declared once. The compiler runs it first and records
       // its shape, so a later version cannot quietly change it.
       { name: 'schema.sql', source: CHORES_SQL },
+      // The app's own icon: what a home screen shows, and what the card shows first.
+      { name: 'icon.svg', source: CHORES_ICON },
     ],
   },
   {
@@ -100,6 +107,8 @@ const CHOICES: Choice[] = [
       // The tables, declared once. The compiler runs it first and records
       // its shape, so a later version cannot quietly change it.
       { name: 'schema.sql', source: DINNERS_SQL },
+      // The app's own icon: what a home screen shows, and what the card shows first.
+      { name: 'icon.svg', source: DINNERS_ICON },
     ],
   },
 ];

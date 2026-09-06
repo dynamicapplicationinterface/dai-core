@@ -221,40 +221,99 @@
       .btn-del { background: #7f1d1d; border-color: #991b1b; color: #fecaca; }
       .btn-del:hover { background: #991b1b; }
 
-      /* Sits over the running app, out of the way of its own chrome. */
-      #install {
+      /* ------------------------------------------------------- keeping it */
+
+      /* The document's own icon beside its name, so the header reads as the document. */
+      #title-icon { border-radius: 7px; background: #111827; flex: 0 0 auto; }
+      #title-icon[hidden], body:not(.loaded) #title-icon { display: none; }
+
+      /* The one filled control while a document is open. */
+      #keep-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 13px;
+        border-radius: 999px;
+        border-color: #2563eb;
+        background: #2563eb;
+        color: #fff;
+        font-weight: 600;
+        font-size: 13px;
+        white-space: nowrap;
+        flex: 0 0 auto;
+      }
+      #keep-cta:hover { background: #1d4ed8; border-color: #1d4ed8; }
+      #keep-cta svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      #keep-cta[hidden], body:not(.loaded) #keep-cta { display: none; }
+      /* Once, after the first use: the eye goes to it and nothing interrupts. */
+      @keyframes keep-nudge {
+        0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgb(37 99 235 / 0.5); }
+        40% { transform: scale(1.06); box-shadow: 0 0 0 8px rgb(37 99 235 / 0); }
+      }
+      #keep-cta.nudge { animation: keep-nudge 900ms ease-out 2; }
+      @media (prefers-reduced-motion: reduce) { #keep-cta.nudge { animation: none; } }
+      /* On a narrow screen the name gives way to the action, not the reverse. */
+      @media (max-width: 380px) { #keep-cta { padding: 7px 11px; font-size: 12.5px; } }
+
+      #keep-sheet[hidden] { display: none; }
+      #keep-sheet {
         position: fixed;
-        left: 10px;
-        right: 10px;
-        bottom: calc(10px + env(safe-area-inset-bottom));
-        z-index: 5;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: rgba(3, 7, 18, 0.6);
+      }
+      .keep-panel {
+        background: #111827;
+        border-top: 1px solid #1f2937;
+        border-radius: 20px 20px 0 0;
+        padding: 10px 22px calc(18px + env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 8px;
+      }
+      #keep-icon { border-radius: 16px; background: #1f2937; margin-top: 6px; }
+      #keep-title { margin: 6px 0 0; font-size: 20px; font-weight: 650; text-wrap: balance; }
+      #keep-sub { margin: 0; font-size: 14px; line-height: 1.45; color: #9ca3af; max-width: 30ch; }
+      #keep-steps {
+        list-style: none;
+        margin: 10px 0 4px;
+        padding: 0;
+        width: 100%;
+        max-width: 24rem;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        text-align: left;
+      }
+      #keep-steps:empty { display: none; }
+      #keep-steps li {
         display: flex;
         align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
+        gap: 14px;
         padding: 12px 14px;
-        border-radius: 14px;
+        border-radius: 12px;
         background: #1f2937;
-        border: 1px solid #374151;
-        box-shadow: 0 8px 30px rgb(0 0 0 / 0.4);
+        font-size: 15px;
       }
-      #install[hidden] { display: none; }
-      #keep-how { margin: 4px 0 8px; padding: 12px 14px; border-radius: 12px; background: #111827; font-size: 14px; line-height: 1.45; }
-      #keep-how[hidden] { display: none; }
-      #keep-how .keep-title { margin: 0 0 6px; font-weight: 600; }
-      #keep-how ol { margin: 0; padding-left: 20px; }
-      #keep-how li + li { margin-top: 4px; }
-      #install p { margin: 0; flex: 1 1 180px; font-size: 13px; line-height: 1.4; }
-      #install button {
-        font: inherit;
-        font-size: 13px;
-        padding: 7px 12px;
-        border-radius: 8px;
-        border: 1px solid #374151;
-        background: transparent;
-        color: #e5e7eb;
+      #keep-steps svg { width: 22px; height: 22px; flex: 0 0 auto; fill: none; stroke: #60a5fa; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      #keep-done {
+        margin-top: 8px;
+        width: 100%;
+        max-width: 24rem;
+        padding: 13px 20px;
+        font-size: 16px;
+        font-weight: 600;
+        border: 0;
+        border-radius: 12px;
+        background: #2563eb;
+        color: #fff;
       }
-      #install #install-go { background: #2563eb; border-color: #2563eb; color: #fff; }
+      #keep-done:hover { background: #1d4ed8; }
 
       #cartridge {
         position: absolute;
@@ -363,11 +422,47 @@
   <body>
     <header>
       <h1>DAI Opener</h1>
+      <img id="title-icon" alt="" width="26" height="26" hidden />
       <span id="title"></span>
       <span class="spacer"></span>
       <button id="open" type="button">Open a file</button>
+      <!--
+        The one action, where the thumb already is.
+
+        A document somebody has just watched run is, to them, a web page. The
+        thing that makes it theirs — an icon that opens it, offline, with its
+        own name — is a gesture no browser will show them. So it is the one
+        filled control on the screen while a document is open, in the words
+        the device uses, and it stays there; a control is not a question, so
+        there is nothing to dismiss. See install.ts for what it does per device.
+      -->
+      <button id="keep-cta" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 9v6M9 12h6"/></svg>
+        <span id="keep-cta-label">Add to Home Screen</span>
+      </button>
       <button id="more" type="button" aria-label="More" aria-haspopup="dialog">&#8943;</button>
     </header>
+
+    <!--
+      How to keep it, on this device.
+
+      A sheet in the shape a phone already uses for a decision, with the
+      device's own glyphs for the gesture: what the Share button looks like,
+      what Add to Home Screen looks like. It appears from the header action
+      when the browser has no install prompt to fire — and on iOS only after
+      the page has been put at the document's own address, which is what
+      Add to Home Screen reads.
+    -->
+    <div id="keep-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="keep-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <img id="keep-icon" alt="" width="72" height="72" />
+        <h2 id="keep-title"></h2>
+        <p id="keep-sub"></p>
+        <ol id="keep-steps"></ol>
+        <button id="keep-done" type="button">Done</button>
+      </div>
+    </div>
 
     <!--
       Everything that is not the document.
@@ -393,13 +488,6 @@
         -->
         <button id="modify" type="button">Modify this app…</button>
         <button id="label" type="button">Call this publisher…</button>
-        <!--
-          Always here, not only in a bar that can be dismissed. The bar says it
-          once; this is where somebody finds it again, and where the steps for
-          this particular device are spelled out.
-        -->
-        <button id="keep" type="button">Keep on this device</button>
-        <div id="keep-how" hidden></div>
         <button id="open-another" type="button">Open a different file</button>
         <button id="eject" type="button">Close this document</button>
       </div>
@@ -471,24 +559,6 @@
         allow="fullscreen"
       ></iframe>
     </main>
-
-    <!--
-      The step that turns a tab into an app.
-
-      Somebody who has just watched their document run has no idea that this is
-      keepable. On a phone the browser will never tell them, and the gesture
-      that does it — Share, then Add to Home Screen — is buried and unguessable.
-      Saying it once, at the only moment it makes sense, is the difference
-      between a thing somebody tried and a thing somebody has.
-
-      Only honest because the opener reopens what was last open: a home screen
-      icon lands in their document rather than on an empty chooser.
-    -->
-    <div id="install" hidden>
-      <p id="install-text"></p>
-      <button id="install-go" type="button" hidden>Add to Home Screen</button>
-      <button id="install-dismiss" type="button" aria-label="Dismiss">Not now</button>
-    </div>
 
     <!-- Kept out of the layout; the header button drives it. -->
     <!--

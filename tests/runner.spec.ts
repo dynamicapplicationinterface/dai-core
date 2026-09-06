@@ -924,71 +924,62 @@ test.describe("keeping it", () => {
     await page.goto(RUNNER_URL);
     // On an empty chooser this would be asking somebody to bookmark a file
     // picker.
-    await expect(page.locator("#install")).toBeHidden();
+    await expect(page.locator("#keep-cta")).toBeHidden();
+    await expect(page.locator("#keep-sheet")).toBeHidden();
   });
 
-  test("iOS is walked to the document's own address, then told the gesture", async ({ page }) => {
+  test("the action is in the header while a document is open, in the device's words", async ({ page }) => {
+    await pretendIphone(page);
+    await page.goto(RUNNER_URL);
+    await openFile(page, CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/);
+    // Named literally. "Install" is a word for something that does not happen
+    // here, and somebody following it would look for a button that is not there.
+    await expect(page.locator("#keep-cta")).toBeVisible();
+    await expect(page.locator("#keep-cta")).toHaveText(/Add to Home Screen/);
+    // A control, not a question: nothing to dismiss, and no sheet unasked.
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+  });
+
+  test("iOS is walked to the document's own address, then shown the gesture", async ({ page }) => {
     test.slow();
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
-    await useIt(page);
 
     /*
      * A phone test showed why this is two steps. iOS names a home-screen
      * icon from the manifest the page linked when it loaded, so on a page
-     * that loaded as the opener, Share would install the opener. The offer
-     * first moves the page to the document's own address — one tap — and
-     * only there says Share.
+     * that loaded as the opener, Share would install the opener. The action
+     * first moves the page to the document's own address, and only there
+     * shows the gesture.
      */
-    await expect(page.locator("#install")).toBeVisible();
-    await expect(page.locator("#install-text")).toContainText(/keep/i);
-    await expect(page.locator("#install-go")).toBeVisible();
-    await page.locator("#install-go").click();
-
+    await page.locator("#keep-cta").click();
     await page.waitForURL(/[?&]doc=/, { timeout: 60_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
-    // Named literally. "Install" is a word for something that does not happen
-    // here, and somebody following it would look for a button that is not there.
-    await expect(page.locator("#install")).toBeVisible({ timeout: 60_000 });
-    await expect(page.locator("#install-text")).toContainText("Share");
-    await expect(page.locator("#install-text")).toContainText("Add to Home Screen");
-    await expect(page.locator("#install-go")).toBeHidden();
+    await expect(page.locator("#keep-sheet")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("#keep-title")).toContainText(/Add .* to your Home Screen/);
+    await expect(page.locator("#keep-steps")).toContainText("Share");
+    await expect(page.locator("#keep-steps")).toContainText("Add to Home Screen");
     // And the page was loaded as the document: what iOS reads is already there.
     expect(await page.getAttribute('link[rel="manifest"]', "href")).toContain("doc-manifests");
+
+    await page.locator("#keep-done").click();
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+    // Already there: a second tap shows the gesture again without a reload.
+    await page.locator("#keep-cta").click();
+    await expect(page.locator("#keep-sheet")).toBeVisible();
   });
 
-  test("dismissing it means it is not asked again", async ({ page }) => {
-    await pretendIphone(page);
-    await page.goto(RUNNER_URL);
-    await openFile(page, CONTAINER);
-    await expect(page.locator("body")).toHaveClass(/loaded/);
-    await useIt(page);
-    await expect(page.locator("#install")).toBeVisible();
-
-    await page.click("#install-dismiss");
-    await expect(page.locator("#install")).toBeHidden();
-
-    // The whole difference between a hint and a nag.
-    await page.reload();
-    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
-    await useIt(page);
-    await expect(page.locator("#install")).toBeHidden();
-  });
-
-  test("mounting is not using: nothing is offered until somebody does something", async ({
+  test("mounting is not using: the action draws the eye only after somebody does something, and once", async ({
     page,
   }) => {
     /*
      * The offer used to appear the moment a document mounted, which is in
-     * front of somebody who has not yet seen the thing work. Asking to put an
-     * unknown app on a home screen is a question a person can only answer by
-     * dismissing it.
-     *
-     * The application is fully up here — its own text is on screen, and the
-     * frame has had a second to do anything it was going to — and still
-     * nothing has been asked.
+     * front of somebody who has not yet seen the thing work. Now nothing is
+     * asked at all; what changes after the first use is that the action
+     * pulses once, so the eye finds it, and never again for this document.
      */
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
@@ -998,34 +989,22 @@ test.describe("keeping it", () => {
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     await expect(app.locator("#app")).toHaveText(/ready/, { timeout: 30_000 });
     await page.waitForTimeout(1000);
-    await expect(page.locator("#install")).toBeHidden();
+    await expect(page.locator("#keep-cta")).not.toHaveClass(/nudge/);
+    await expect(page.locator("#keep-sheet")).toBeHidden();
 
     // And the tab is named for the document all the same: describing it is not
     // the same act as asking for it.
     await expect(page).toHaveTitle(/fixture/i);
 
     await useIt(page);
-    await expect(page.locator("#install")).toBeVisible();
-  });
+    await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);
 
-  test("a second open says it differently, and a third does not ask", async ({ page }) => {
-    // A third open with no answer is an answer. The menu still has it.
-    await pretendIphone(page);
-    await page.goto(RUNNER_URL);
-    await openFile(page, CONTAINER);
-    await expect(page.locator("body")).toHaveClass(/loaded/);
-    await useIt(page);
-    await expect(page.locator("#install-text")).toContainText("To keep");
-
+    // The whole difference between a hint and a nag.
     await page.reload();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
     await useIt(page);
-    await expect(page.locator("#install-text")).toContainText("to your apps");
-
-    await page.reload();
-    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
-    await useIt(page);
-    await expect(page.locator("#install")).toBeHidden();
+    await page.waitForTimeout(500);
+    await expect(page.locator("#keep-cta")).not.toHaveClass(/nudge/);
   });
 });
 
@@ -1064,15 +1043,16 @@ test.describe("keeping it, per device", () => {
     expect(await page.evaluate(() => (window as unknown as { __shared?: boolean }).__shared)).toBeFalsy();
   });
 
-  test("the menu always has a way to keep it, with steps for this device", async ({ page }) => {
+  test("on a computer the action shows the steps for this browser", async ({ page }) => {
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
-    await page.click("#more");
-    await page.click("#keep");
+    await expect(page.locator("#keep-cta")).toHaveText(/Keep/);
+    await page.click("#keep-cta");
     // No install prompt in a test browser, so the steps appear instead.
-    await expect(page.locator("#keep-how")).toBeVisible();
-    await expect(page.locator("#keep-how")).toContainText(/Keep .* on this computer/);
+    await expect(page.locator("#keep-sheet")).toBeVisible();
+    await expect(page.locator("#keep-title")).toContainText(/Keep .* on this computer/);
+    await expect(page.locator("#keep-steps")).toContainText(/Install/);
   });
 
   test("an icon for one document opens that document", async ({ page }) => {
@@ -1108,8 +1088,7 @@ test.describe("keeping it, per device", () => {
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
-    await expect(page.locator("#install")).toBeVisible();
-    await page.click("#install-dismiss");
+    await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);
 
     // A different document is a different offer.
     await page.evaluate(() => localStorage.removeItem("dai:resume"));
@@ -1264,13 +1243,13 @@ test.describe("a control the kit runs is use too", () => {
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
     // Drawn, so the kit is running and the row exists to be ticked.
     await expect(app.locator("#state")).toHaveText("0", { timeout: 30_000 });
-    await expect(page.locator("#install")).toBeHidden();
+    await expect(page.locator("#keep-cta")).not.toHaveClass(/nudge/);
 
     await app.locator("#tick").click();
 
     // The statement ran — and only now is anything asked.
     await expect(app.locator("#state")).toHaveText("1");
-    await expect(page.locator("#install")).toBeVisible();
-    await expect(page.locator("#install-text")).toContainText("Jobs");
+    await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);
+    await expect(page.locator("#title")).toContainText("Jobs");
   });
 });
