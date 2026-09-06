@@ -73,6 +73,21 @@ jobs:
 
             A file built with this app is the same file the command line
             builds, and opens on a machine that has never seen this installer.
+
+            ### Tap to usable
+
+            <!--
+              Backlog 5.1. Measured by hand on one real mid-range Android over
+              cellular, because there is no device farm and a rented phone is
+              a worse proxy than the one somebody holds. The procedure —
+              device named, storage cleared between cold runs, wi-fi off, five
+              runs, median — is in docs/performance.md. Fill this in before
+              publishing the draft; a release that misses the targets still
+              ships, with the number here.
+            -->
+            _Not measured for this release yet._ Device, Android version,
+            carrier, cold and warm medians go here — see `docs/performance.md`
+            for how the number is taken.
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           args: ${{ matrix.args }}

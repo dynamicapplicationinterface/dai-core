@@ -55,6 +55,38 @@ fetch is not, and because the store's copy is not base64. And warm is not much
 faster than cold, which says the wait is work rather than transfer — the same
 thing the desktop table said, from the other end.
 
+## The number per release, from a real phone
+
+No cloud device lab. Renting a device farm to run this would be a recurring
+cost for a number that changes a few times a year, and a rented mid-range
+Android is a worse proxy for the thing being measured than one phone somebody
+actually holds.
+
+So it is measured by hand, once per release, on one real mid-range Android over
+cellular, and the number goes in the release notes. Five lines of process,
+because a measurement nobody can repeat is an anecdote:
+
+1. **The phone.** One device, kept for this, mid-range and a few years old —
+   not a current flagship. Name it in the release notes with its Android
+   version; a number without the device it came from says nothing.
+2. **Cold means cold.** Clear the browser's storage for the opener between
+   runs: site data, cache, and the home-screen icon if one was added. On
+   cellular, not on wi-fi, with wi-fi actually switched off rather than merely
+   unused.
+3. **The walk.** Tap a reference link to the chore chart, press the card, stop
+   at the first interaction the app responds to. Then the same link again,
+   without clearing anything, for the warm number.
+4. **Five runs each, report the median.** The best of five is the number that
+   flatters; the median is the number a person gets.
+5. **Write it down.** Device, Android version, carrier, date, cold and warm,
+   in the release notes for that version. `?timing` in the address prints the
+   same breakdown `npm run measure` does, so the phase table comes with it.
+
+The targets remain warm under 1 s, cold under 3 s, inline-link cold under
+1.5 s. A release that misses them ships anyway with the number in the notes —
+the point of measuring is to know, and a target that quietly blocks a release
+is a target somebody will stop measuring.
+
 ## What that settled
 
 **The costs everyone suspected are not the costs.** Decoding base64 is 3 ms.

@@ -48,7 +48,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 4.3 | A publisher who is somebody | [x] `6ae143b` — known / new / conflict on the card; QR deferred |
 | 4.4 | The wedge | [ ] not engineering |
 | 4.5 | Attachments in the document | [x] `<dai-attach>`, blob columns, downscale, a budget |
-| 5.1 | The north star, measured | [~] the walk is measured; a device for CI is a decision |
+| 5.1 | The north star, measured | [x] `npm run measure` locally; one real phone per release |
 | 5.2 | Propagation without a beacon | [~] the opener's half is a test; the dashboard is the relay's |
 | v3 | manifestVersion 3: spec | [x] `9adbfb8` |
 | v3 | readers accept 3, refuse others by name | [x] `00af8e6` — opener, website and desktop v0.2.0 |
@@ -734,12 +734,21 @@ handed it over. The numbers and what they already say are in
 `docs/performance.md`; the short version is that the reference link beats the
 inline one, and warm barely beats cold, so the wait is work and not transfer.
 
-**Still a decision — the device.** Everything above runs headless on whoever
-invokes it, which makes it a floor rather than the number. Publishing the
-number per release means CI reaching a real mid-range Android on a real
-network, and every way of doing that is a recurring cost. That is a decision
-about spend, not an engineering step, and it is the only thing between here
-and the exit.
+**Decided: no cloud devices in CI.** Renting a device farm is a recurring cost
+for a number that changes a few times a year, and a rented mid-range Android
+is a worse proxy for the thing being measured than one phone somebody actually
+holds.
+
+So the number is taken by hand, once per release, on one real mid-range
+Android over cellular, and recorded in that release's notes. The procedure is
+written out in `docs/performance.md` — device named, storage cleared between
+cold runs, wi-fi off, five runs, median reported — because a measurement
+nobody can repeat is an anecdote. `npm run measure` stays the fast local
+signal that says whether a change moved anything before the phone is picked
+up.
+
+A release that misses the targets ships anyway, with the number in the notes.
+A target that quietly blocks a release is a target somebody stops measuring.
 
 ### 5.2 Propagation without a beacon
 
