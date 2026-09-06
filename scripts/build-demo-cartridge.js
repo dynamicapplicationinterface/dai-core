@@ -152,8 +152,9 @@ const result = await buildContainer({
   template,
   runtime,
   appName: "DAI Demo App",
-  privateKey: keyPair.privateKey,
-  publicKey: keyPair.publicKey,
+  // The pair form of signingKey; the old privateKey/publicKey names were
+  // silently ignored and the "verified sample" shipped unsigned.
+  signingKey: keyPair,
 });
 
 const outputPath = resolve(root, "demo.dai.html");
