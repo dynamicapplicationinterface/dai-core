@@ -804,11 +804,13 @@ about other people's documents.
 
 ## Known red, and not from anything here
 
-Eight tests fail on this machine on every run, in webkit and firefox only.
+Nine tests fail on this machine on every run — eight in webkit and firefox,
+and one in chromium.
 They were failing before any of the September work and they fail on a clean
 checkout with everything stashed — checked, rather than assumed, because
 "pre-existing" is what somebody says about a failure they caused.
 
+    chromium sender.spec             Make one offers a link, and the link opens it
     firefox  identity.spec           a held root puts the identity on the card
     firefox  sender.spec             Make one offers a link, and the link opens it
     webkit   identity.spec           a held root puts the identity on the card
@@ -818,7 +820,14 @@ checkout with everything stashed — checked, rather than assumed, because
     webkit   runner.spec             two saves at once both land
     webkit   sender.spec             Make one offers a link, and the link opens it
 
-Chromium is green throughout. Two of them — both `Make one` — are
+The chromium `Make one` failure is a shell-elision mismatch: the inline link
+leaves out `runtime/container.html` expecting the opener to rebuild the same
+one, and the opener's differs. Checked against a clean stash — it fails there
+too, so it is not from the September work — but unlike the rest of this list it
+is a real disagreement between two of our own builds rather than a browser
+capability, and it is the one here worth an afternoon first.
+
+The rest: two of them — both `Make one` on other browsers — are
 `grantPermissions(["clipboard-read"])`, which only chromium implements, so
 those are the harness rather than the code. The other six are worth an
 afternoon with a webkit build; none is a claim this project makes on the

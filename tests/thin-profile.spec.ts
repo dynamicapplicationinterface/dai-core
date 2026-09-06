@@ -43,6 +43,7 @@ async function build(thin: boolean) {
     root: repo,
     appName: "Thin",
     signingKey: KEY,
+    allowTestKey: true,
     // One identity and one clock, so the only difference between the two
     // builds is the thing being tested.
     documentUuid: "9f1d2c3b-4a5e-6f70-8192-a3b4c5d6e7f8",

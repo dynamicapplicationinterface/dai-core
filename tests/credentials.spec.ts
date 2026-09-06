@@ -94,7 +94,15 @@ test.describe("credentials, and the places they must not be", () => {
      * having one. Both are documented as public in conformance/README.md and
      * are used for nothing else.
      */
-    const published = new Set(["conformance/signing-key.pem", "conformance/countersign-key.pem"]);
+    const published = new Set([
+      "conformance/signing-key.pem",
+      "conformance/countersign-key.pem",
+      // The trust vectors' two stand-in publishers. Committed for the same
+      // reason and, unlike the two above, deliberately not on the declared
+      // test-key list — see conformance/README.md.
+      "conformance/trust-publisher-a-key.pem",
+      "conformance/trust-publisher-b-key.pem",
+    ]);
 
     const found: string[] = [];
     for (const path of tracked) {

@@ -28,6 +28,7 @@ const older = async (): Promise<string> => {
     runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
     appName: "Older",
     signingKey: readFileSync(resolve(repo, "conformance/signing-key.pem"), "utf8"),
+    allowTestKey: true,
   });
 
   const parts = PAYLOAD_RE.exec(built.html)!;

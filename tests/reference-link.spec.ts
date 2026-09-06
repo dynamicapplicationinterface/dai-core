@@ -53,6 +53,7 @@ async function chart(signed = true) {
     root: repo,
     appName: "Chore chart",
     signingKey: signed ? KEY : undefined,
+    allowTestKey: true,
   });
 }
 

@@ -21,6 +21,7 @@ async function build(options: { manifestVersion?: 2 | 3; signed?: boolean; gener
     root: repo,
     appName: "Three",
     signingKey: options.signed === false ? undefined : KEY,
+    allowTestKey: true,
     manifestVersion: options.manifestVersion,
     generator: options.generator,
   });

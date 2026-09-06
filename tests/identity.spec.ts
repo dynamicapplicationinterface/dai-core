@@ -20,7 +20,15 @@ const sigstore = await import(pathToFileURL(resolve(repo, "scripts/lib/sigstore-
 async function signedBuild() {
   const source = mkdtempSync(join(tmpdir(), "dai-id-"));
   writeFileSync(join(source, "index.html"), '<!doctype html><meta charset="utf-8"><p>id</p>', "utf8");
-  const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Identified", signingKey: KEY, manifestVersion: 3 });
+  const built = await compileDirectory({
+    sourceDir: source,
+    root: repo,
+    appName: "Identified",
+    signingKey: KEY,
+    // See tests/test-key.spec.ts: the published key is refused unless asked for.
+    allowTestKey: true,
+    manifestVersion: 3,
+  });
   const verified = await verifyContainer(built.html);
   return { built, key: verified.publicKey!, signature: built.manifest.signature! };
 }

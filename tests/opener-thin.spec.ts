@@ -49,6 +49,7 @@ async function complete() {
     root: repo,
     appName: "Thin",
     signingKey: KEY,
+    allowTestKey: true,
     documentUuid: "3c7e91a2-5b4d-4f18-9a26-0d5e8c1b7f43",
   });
 }

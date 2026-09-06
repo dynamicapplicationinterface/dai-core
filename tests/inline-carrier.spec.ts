@@ -35,6 +35,7 @@ async function example(name: string, signed = false) {
     root: repo,
     appName: name,
     signingKey: signed ? KEY : undefined,
+    allowTestKey: true,
   });
 }
 
