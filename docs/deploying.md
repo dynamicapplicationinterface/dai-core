@@ -101,34 +101,34 @@ you what to fill in:
 Opener project → **Settings → Environment Variables**. The website project
 needs none of these; it has no presign endpoint.
 
-| Name | Environments |
-|---|---|
-| `DAI_STORE_ENDPOINT` | Production, Preview |
-| `DAI_STORE_BUCKET` | Production, Preview |
-| `DAI_STORE_REGION` | Production, Preview |
-| `DAI_STORE_PUBLIC_BASE` | Production, Preview |
-| `DAI_STORE_ACCESS_KEY_ID` | one value per environment |
-| `DAI_STORE_SECRET_ACCESS_KEY` | one value per environment |
-| `DAI_PRESIGN_PER_HOUR` | optional |
-| `DAI_PRESIGN_MAX_BYTES` | optional |
+| Name | Type | Environments |
+|---|---|---|
+| `DAI_STORE_ENDPOINT` | Config | Production, Preview |
+| `DAI_STORE_BUCKET` | Config | Production, Preview |
+| `DAI_STORE_REGION` | Config | Production, Preview |
+| `DAI_STORE_PUBLIC_BASE` | Config | Production, Preview |
+| `DAI_STORE_ACCESS_KEY_ID` | **Secret** | one value per environment |
+| `DAI_STORE_SECRET_ACCESS_KEY` | **Secret** | one value per environment |
+| `DAI_PRESIGN_PER_HOUR` | Config | optional |
+| `DAI_PRESIGN_MAX_BYTES` | Config | optional |
 
 The two credential rows are added **twice**: once scoped to Production with the
 production token, once to Preview with the preview token. Different tokens, so
 a preview deployment — which any pull request can produce — cannot write to the
 production bucket. Leave Development unticked; that is what `.env.local` is.
 
-**Do not mark them Sensitive.** It is the obvious thing to reach for and it
-does not work here: a Sensitive variable on Vercel is write-only, and its value
-is not exposed to the edge runtime — which is where `/api/presign` runs, and
-has to run, because the handler is written in the fetch style the edge expects.
-The symptom is a correctly-entered secret that is present in the dashboard and
-absent to the function, and a `503` that looks like the variable was never set.
-This cost an evening; the endpoint now answers a 503 with the missing names and
-a hint saying exactly this.
+Create the two credential rows as **Secret** — "you can't reveal this value
+after saving". Secret variables reach the edge runtime, where `/api/presign`
+runs, so there is nothing to trade away: keep write-only. The four
+configuration rows are **Config**, readable by anyone with project access,
+which is what you want when a store is misconfigured and somebody has to see
+what the endpoint is actually pointed at.
 
-What limits the damage is not the dashboard flag. It is the token: scoped to
-one bucket, object read/write only, one per environment. That is doing the real
-work, and it is why giving up write-only here costs little.
+**Names are case-sensitive.** `dai_store_endpoint` is a different variable from
+`DAI_STORE_ENDPOINT`, and the function sees nothing — which presents as a `503`
+that reads exactly like a variable nobody ever set. That, not the Secret/Config
+choice, is what a misconfigured deployment here almost always turns out to be.
+The endpoint answers a 503 with the missing names for this reason.
 
 ### The R2 token
 
