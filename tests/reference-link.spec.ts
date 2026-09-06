@@ -395,3 +395,114 @@ test.describe("the home-screen icon for a document that came by link", () => {
     expect(start).not.toContain("k=");
   });
 });
+
+/**
+ * A store that holds documents it can read (backlog 3.4, decided).
+ *
+ * Off everywhere by default and off on the public relay permanently. It exists
+ * for one deployment: a store inside a perimeter that already controls who
+ * reaches it, where the operator would rather hold documents they can read
+ * than hold keys they cannot lose.
+ *
+ * Three things make that safe to offer at all. The store has to be configured
+ * for it, so the choice is made once by whoever runs it and never by whoever
+ * is uploading. The link says so explicitly, so a link that merely lost its
+ * fragment can never be mistaken for one claiming plaintext. And the card says
+ * so to the person opening it, who made none of these choices.
+ */
+test.describe("a document a store was allowed to read", () => {
+  test("a store refuses it unless its operator turned that on", async () => {
+    const built = await chart();
+    const root = mkdtempSync(join(tmpdir(), "dai-clear-"));
+
+    // The default, and what the public relay is.
+    await expect(
+      publish(built.html, fsStore({ root }), RUNNER_URL, { clear: true }),
+    ).rejects.toMatchObject({ code: "STORE_REFUSED" });
+
+    // A store whose operator decided otherwise.
+    const { sealed, links } = await publish(
+      built.html,
+      fsStore({ root, allowClear: true }),
+      RUNNER_URL,
+      { clear: true },
+    );
+
+    // No key, because there is nothing to unlock; and the link says which it
+    // is rather than leaving it to be inferred from an absence.
+    expect(sealed.key).toBe("");
+    expect(links.known).toContain("&c=1");
+    expect(links.known).not.toContain("k=");
+
+    // The bytes are the document. The hash still names them, so what it is has
+    // still been checked — only who can read it has changed.
+    expect(new TextDecoder().decode(sealed.blob)).toContain("dai-payload");
+  });
+
+  test("the grammar tells a clear link from a damaged one", async () => {
+    const { referenceFrom, strippedReference } = await import("../src/store.js");
+    const id = "a".repeat(64);
+    const key = "A".repeat(43);
+
+    // Said outright: opened, and flagged.
+    expect(referenceFrom(`/d/${id}`, "", `#h=${id}&c=1`)).toEqual({ hash: id, key: "", clear: true });
+    expect(strippedReference(`/d/${id}`, "", `#h=${id}&c=1`)).toBeUndefined();
+
+    // Merely missing: still damaged, still caught before any fetch. This is
+    // the case that must never be read as "not encrypted".
+    expect(referenceFrom(`/d/${id}`, "", `#h=${id}`)).toBeUndefined();
+    expect(strippedReference(`/d/${id}`, "", `#h=${id}`)).toEqual({ named: id, missing: "key" });
+
+    // Both at once is a link nobody could have meant.
+    expect(referenceFrom(`/d/${id}`, "", `#h=${id}&k=${key}&c=1`)).toBeUndefined();
+  });
+
+  test("the card says so, to the person who did not choose it", async ({ page }) => {
+    test.slow();
+    const built = await chart();
+    const root = mkdtempSync(join(tmpdir(), "dai-clear-open-"));
+    const a = await serve(root, []);
+    try {
+      const { sealed } = await publish(
+        built.html,
+        fsStore({ root, baseUrl: a.origin, allowClear: true }),
+        RUNNER_URL,
+        { clear: true },
+      );
+      const link =
+        `${RUNNER_URL}#h=${sealed.hash}` +
+        `&u=${encodeURIComponent(`${a.origin}/${sealed.hash}`)}&c=1`;
+
+      await page.goto(link);
+      const said = page.locator("#card-clear");
+      await expect(said).toBeVisible({ timeout: 60_000 });
+      await expect(said).toContainText("without encryption");
+      await expect(said).toContainText("could read it");
+
+      // It still opens, and it is still the document it says it is.
+      await page.locator("#card-open").click();
+      await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+      await expect(page.locator("#title")).toContainText("Chore chart");
+    } finally {
+      await new Promise<void>((done) => a.server.close(() => done()));
+    }
+  });
+
+  test("an ordinary encrypted document says nothing about encryption", async ({ page }) => {
+    test.slow();
+    const built = await chart();
+    const root = mkdtempSync(join(tmpdir(), "dai-sealed-"));
+    const a = await serve(root, []);
+    try {
+      const { sealed } = await publish(built.html, fsStore({ root, baseUrl: a.origin }), RUNNER_URL);
+      await page.goto(
+        `${RUNNER_URL}#h=${sealed.hash}&u=${encodeURIComponent(`${a.origin}/${sealed.hash}`)}&k=${sealed.key}`,
+      );
+      await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+      // The normal case is silent. A notice on every card is a notice nobody reads.
+      await expect(page.locator("#card-clear")).toBeHidden();
+    } finally {
+      await new Promise<void>((done) => a.server.close(() => done()));
+    }
+  });
+});

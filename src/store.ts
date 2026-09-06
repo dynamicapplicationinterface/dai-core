@@ -37,7 +37,7 @@ import { fromBase64, sha256Hex, toBase64, type ContainerManifest } from "./core.
 export const STORE_CAP = 5 * 1024 * 1024;
 
 /** The fragment keys. `h` for the hash, `k` for the key, `u` for an any-host URL. */
-export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u" } as const;
+export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c" } as const;
 
 /**
  * What travels beside the blob, in the clear.
@@ -55,8 +55,15 @@ export interface Sidecar {
   manifest: ContainerManifest;
   /** Base64 SPKI, when signed. */
   publicKey?: string;
-  /** The ciphertext's length, which `put` checks against what it was handed. */
+  /** The blob's length, which `put` checks against what it was handed. */
   size: number;
+  /**
+   * Held in the clear, on a store whose policy allows it.
+   *
+   * In the sidecar as well as in the link so a store can see what it is being
+   * asked to hold, and refuse it before writing rather than after.
+   */
+  clear?: boolean;
   /**
    * What a link preview may show, when the sender said so (§3.3).
    *
@@ -96,8 +103,10 @@ export interface Sealed {
   hash: string;
   /** IV || ciphertext || tag. What the store holds. */
   blob: Uint8Array;
-  /** 32 bytes, base64url. Goes in the fragment and nowhere else. */
+  /** 32 bytes, base64url. Goes in the fragment and nowhere else. Empty when clear. */
   key: string;
+  /** Stored without encryption, by a store whose policy allows it. */
+  clear?: boolean;
   sidecar: Sidecar;
 }
 
@@ -126,11 +135,64 @@ export interface SealOptions {
   preview?: boolean;
   /** A PNG for the preview, from a caller that can make one. */
   icon?: PreviewIcon;
+  /**
+   * Store the document without encrypting it.
+   *
+   * Off everywhere by default, and refused outright by a store that has not
+   * been configured to allow it. It exists for one deployment: a store inside
+   * a perimeter that is already access-controlled, where the operator would
+   * rather hold documents they can read than hold keys they cannot lose.
+   *
+   * It is a real weakening and is not presented as anything else. Encrypted,
+   * the store *cannot* read a document; in the clear, the store is *trusted
+   * not to*, and so is every proxy, log and backup between here and it. The
+   * opener says so on the card, in those words, because the person opening it
+   * did not make this choice and would otherwise have no way to know it was
+   * made.
+   */
+  clear?: boolean;
 }
 
 export async function sealForStore(html: string, options: SealOptions = {}): Promise<Sealed> {
   const container = parseContainer(html);
   const thin = new TextEncoder().encode(thinned(container));
+
+  if (options.clear) {
+    // No key, because there is nothing to unlock. The hash still names the
+    // bytes, so the document is still verified on arrival exactly as any
+    // other is — what is given up is confidentiality, not integrity.
+    if (thin.length > STORE_CAP) {
+      throw new ContainerError(
+        "STORE_REFUSED",
+        `This document is ${(thin.length / 1024 / 1024).toFixed(1)} MB, and a store holds at most ${STORE_CAP / 1024 / 1024} MB.`,
+      );
+    }
+    return {
+      hash: await sha256Hex(thin),
+      blob: thin,
+      key: "",
+      clear: true,
+      icon: options.icon,
+      sidecar: {
+        documentUuid: container.manifest.documentUuid,
+        manifest: container.manifest,
+        ...(container.publicKey ? { publicKey: container.publicKey } : {}),
+        size: thin.length,
+        clear: true,
+        ...(options.preview
+          ? {
+              preview: {
+                name: container.manifest.appName,
+                ...(container.manifest.publisherName
+                  ? { publisherName: container.manifest.publisherName }
+                  : {}),
+                ...(options.icon ? { icon: true } : {}),
+              },
+            }
+          : {}),
+      },
+    };
+  }
 
   const rawKey = crypto.getRandomValues(new Uint8Array(32));
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -191,6 +253,21 @@ export async function openFromStore(blob: Uint8Array, hash: string, key: string)
       "What the store returned is not what this link names. The store has been changed, or the link has.",
     );
   }
+
+  /*
+   * No key, because the sender said there is none.
+   *
+   * The hash has already matched, so this is the document the link names and
+   * nothing has changed on the way. What is absent is confidentiality: the
+   * store could read this, and so could anything between. The opener says so
+   * on the card — this function's job is only to notice.
+   *
+   * Reached only for a link that says `c=1`. A link that has merely lost its
+   * key never arrives here; it is caught before the fetch, by
+   * `strippedReference`, and told what is missing.
+   */
+  if (key === "") return new TextDecoder().decode(blob);
+
   if (blob.length < 12 + 16) {
     throw new ContainerError("BLOB_MISMATCH", "What the store returned is too short to be a sealed document.");
   }
@@ -231,12 +308,42 @@ export async function openFromStore(blob: Uint8Array, hash: string, key: string)
 /** The largest PNG a store will serve as a preview icon. A caption, not an asset. */
 export const ICON_CAP = 100 * 1024;
 
+/**
+ * What a store will and will not hold.
+ *
+ * One flag today, and it is the one that matters: whether this store accepts
+ * documents that are not encrypted. Off unless an operator turns it on, and
+ * off on the public relay permanently — a store that can read what it holds is
+ * a different promise from the one this project makes, and the default has to
+ * be the promise.
+ */
+export interface StorePolicy {
+  /**
+   * Accept documents held in the clear.
+   *
+   * For a store inside a perimeter that is already access-controlled, where
+   * the operator would rather hold documents they can read than hold keys
+   * they cannot lose. That is a legitimate trade and it is somebody's to make
+   * — but it is made by whoever runs the store, once, in configuration, and
+   * never by whoever happens to be uploading.
+   */
+  allowClear?: boolean;
+}
+
 export async function admit(
   hash: string,
   ciphertext: Uint8Array,
   sidecar: Sidecar,
   icon?: PreviewIcon,
+  policy: StorePolicy = {},
 ): Promise<void> {
+  if (sidecar.clear && !policy.allowClear) {
+    throw new ContainerError(
+      "STORE_REFUSED",
+      "This store holds encrypted documents only. A store that accepts documents in the clear " +
+        "has to be configured to, because it is choosing to be able to read them.",
+    );
+  }
   if (ciphertext.length > STORE_CAP) {
     throw new ContainerError("STORE_REFUSED", `A store holds at most ${STORE_CAP / 1024 / 1024} MB.`);
   }
@@ -290,21 +397,36 @@ export async function admit(
 /** The two links for a sealed document that a store has taken. */
 export function referenceLinks(
   opener: string,
-  sealed: Pick<Sealed, "hash" | "key">,
+  sealed: Pick<Sealed, "hash" | "key" | "clear">,
   href: string,
 ): { known: string; anyHost: string } {
   const base = opener.replace(/[#?].*$/, "").replace(/\/$/, "");
-  const { hash, key, url } = REFERENCE_KEYS;
+  const { hash, key, url, clear } = REFERENCE_KEYS;
+
+  /*
+   * A document held in the clear carries `c=1` instead of a key.
+   *
+   * Said rather than implied. If the absence of a key meant "this one is not
+   * encrypted", then a link that merely lost its fragment on the way would
+   * become a link claiming plaintext, and the opener would go and fetch it —
+   * turning a recoverable mistake into a network request and a wrong sentence.
+   * So clear carriage is a statement the sender makes, and a link with neither
+   * `k` nor `c` is a damaged link, which is what §3.4 says about it.
+   */
+  const secret = sealed.clear ? `${clear}=1` : `${key}=${sealed.key}`;
   return {
-    known: `${base}/d/${sealed.hash}#${hash}=${sealed.hash}&${key}=${sealed.key}`,
-    anyHost: `${base}/#${hash}=${sealed.hash}&${url}=${encodeURIComponent(href)}&${key}=${sealed.key}`,
+    known: `${base}/d/${sealed.hash}#${hash}=${sealed.hash}&${secret}`,
+    anyHost: `${base}/#${hash}=${sealed.hash}&${url}=${encodeURIComponent(href)}&${secret}`,
   };
 }
 
 /** What a reference link names, read from an address. */
 export interface Reference {
   hash: string;
+  /** Empty when the document is held in the clear. */
   key: string;
+  /** The sender said this one is not encrypted. The card says so too. */
+  clear?: boolean;
   /** Where the blob is. Absent for `/d/<id>`, which names the opener's own store. */
   url?: string;
 }
@@ -319,14 +441,19 @@ export function referenceFrom(pathname: string, search: string, hash: string): R
   const fragment = new URLSearchParams(hash.replace(/^#/, ""));
   const h = fragment.get(REFERENCE_KEYS.hash);
   const k = fragment.get(REFERENCE_KEYS.key);
-  if (!h || !k || !/^[0-9a-f]{64}$/i.test(h) || !/^[A-Za-z0-9_-]{43}$/.test(k)) return undefined;
+  // Clear carriage is stated, never inferred from a missing key: see
+  // `referenceLinks`. A link may say one or the other and never both.
+  const clear = fragment.get(REFERENCE_KEYS.clear) === "1";
+  if (!h || !/^[0-9a-f]{64}$/i.test(h)) return undefined;
+  if (clear && k) return undefined;
+  if (!clear && (!k || !/^[A-Za-z0-9_-]{43}$/.test(k))) return undefined;
 
   const u = fragment.get(REFERENCE_KEYS.url);
   if (u) {
     try {
       const url = new URL(u);
       if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
-      return { hash: h.toLowerCase(), key: k, url: url.href };
+      return { hash: h.toLowerCase(), key: k ?? "", ...(clear ? { clear } : {}), url: url.href };
     } catch {
       return undefined;
     }
@@ -339,7 +466,7 @@ export function referenceFrom(pathname: string, search: string, hash: string): R
   const byQuery = new URLSearchParams(search).get("d");
   const id = byPath ?? byQuery;
   if (id && id.toLowerCase() !== h.toLowerCase()) return undefined;
-  return { hash: h.toLowerCase(), key: k };
+  return { hash: h.toLowerCase(), key: k ?? "", ...(clear ? { clear } : {}) };
 }
 
 /**
@@ -374,6 +501,10 @@ export function strippedReference(
   const k = fragment.get(REFERENCE_KEYS.key);
   const id =
     /\/d\/([0-9a-f]{64})\/?$/i.exec(pathname)?.[1] ?? new URLSearchParams(search).get("d") ?? undefined;
+
+  // A link that says it is clear is not a link that lost its key. It is
+  // refused above for other reasons if at all, and never described as damaged.
+  if (fragment.get(REFERENCE_KEYS.clear) === "1") return undefined;
 
   const named = (id ?? h ?? undefined)?.toLowerCase();
   if (named && /^[0-9a-f]{64}$/.test(named) && !k) return { named, missing: "key" };

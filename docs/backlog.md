@@ -40,7 +40,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.1 | Engine once, offline forever | [x] `1b31ea1` `8b66364` `fd2723f` |
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
 | 3.3 | Unfurl without the blob | [x] `a7a0be8` + this — static half and edge half |
-| 3.4 | Stripped fragment degrades to a sentence | [~] `c4be316` — sentence done; no-key variant is a decision |
+| 3.4 | Stripped fragment degrades to a sentence | [x] `c4be316` sentence; no-key variant is a store policy |
 | 3.5 | iOS solved by the link | [~] the icon launches into the link; the device test is yours |
 | 3.6 | Second-use integrations only | [x] the rule is a test now |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
@@ -487,13 +487,31 @@ browser, in `tests/reference-link.spec.ts`.
 **Exit met:** a link with the fragment removed renders the recovery message,
 not the empty chooser.
 
-**Still a decision — the no-key variant.** Inside a perimeter, a store that is
-already access-controlled could hold documents unencrypted, and then a link
-with no `k` would simply open. That is a real deployment and a real weakening:
-it moves confidentiality from "the server cannot read this" to "the server is
-trusted not to", and every link then works for anyone who reaches the store.
-It needs a decision about whether the opener will read such a link at all, and
-how it says so on the card, before any of it is written.
+**Decided, and built: the no-key variant is a store policy.** Off everywhere
+by default and off on the public relay permanently; allowed on a store whose
+operator turns it on. It is a real weakening and is not dressed up as anything
+else — encrypted, a store *cannot* read a document; in the clear, it is
+*trusted not to*, and so is every proxy, log and backup between.
+
+Three things carry it:
+
+- **The store decides, once.** `admit()` refuses a clear document unless the
+  store was configured with `allowClear`. The choice belongs to whoever runs
+  the store, not to whoever happens to be uploading.
+- **The link says so.** Clear carriage is `c=1`, not an absent `k`. If absence
+  meant plaintext, a link that lost its fragment would become a link claiming
+  plaintext, and the opener would fetch it — turning §3.4's recoverable
+  mistake into a network request and a wrong sentence. A link with neither is
+  damaged, and still gets the sentence.
+- **The card says so.** "Shared without encryption. The store this came from
+  could read it, and so could anything that carried it. What it is has still
+  been checked." Not styled as damage: the document is verified byte for byte
+  and a perimeter store is a legitimate deployment. What is gone is
+  confidentiality, and only that is what it says. An ordinary document says
+  nothing, because a notice on every card is a notice nobody reads.
+
+Four tests in `tests/reference-link.spec.ts` cover the refusal, the grammar,
+the card, and the silence of the ordinary case.
 
 ### 3.5 iOS, solved by the link
 

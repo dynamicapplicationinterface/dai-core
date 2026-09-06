@@ -50,6 +50,19 @@ export interface CardInput {
   /** The §4 clauses this host applies. */
   applied: readonly string[];
   /**
+   * The document was fetched from a store that held it unencrypted.
+   *
+   * Said on the card because the person reading it did not make this choice
+   * and has no other way to learn it was made. Every other link in this format
+   * is opened by a key that never reaches a server; this one was not, which
+   * means the store could read it, and so could anything that carried it.
+   *
+   * Not styled as damage — a self-hosted store inside a perimeter is a
+   * legitimate deployment, and the document is still verified byte for byte.
+   * What is gone is confidentiality, and only that is what this says.
+   */
+  clear?: boolean;
+  /**
    * Looking inside, before running it (backlog 1.5).
    *
    * The card says what this document claims and what this host will not let
@@ -102,6 +115,7 @@ export function showCard(input: CardInput): Promise<void> {
   const succession = document.getElementById("card-succession");
   const identity = document.getElementById("card-identity");
   const inspect = document.getElementById("card-inspect") as HTMLButtonElement | null;
+  const clear = document.getElementById("card-clear");
 
   if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety || !succession || !identity) {
     // No card in this document. Opening without one is the old behaviour and
@@ -244,6 +258,15 @@ export function showCard(input: CardInput): Promise<void> {
           });
       };
     }
+  }
+
+  // Carried in the clear: a fact about how it travelled, not about the
+  // document, and never the word "unsafe".
+  if (clear) {
+    clear.hidden = !input.clear;
+    clear.textContent = input.clear
+      ? "Shared without encryption. The store this came from could read it, and so could anything that carried it. What it is has still been checked."
+      : "";
   }
 
   card.hidden = false;

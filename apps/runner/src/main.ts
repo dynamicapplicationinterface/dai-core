@@ -483,6 +483,15 @@ let arrivedAsFile = true;
 let arrivedByLink: string | undefined;
 
 /**
+ * Whether the document was held unencrypted by the store it came from.
+ *
+ * A property of how it travelled, not of what it is, and the card says so —
+ * the person opening it did not make that choice and has no other way to
+ * learn it was made.
+ */
+let arrivedInClear = false;
+
+/**
  * Where a document came from, which decides whether it is shown a card first.
  *
  * A file somebody picked out of their own storage, or one they have just built
@@ -589,6 +598,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
         succession: succession?.card,
         applied: ISOLATION_CLAUSES,
+        clear: arrivedInClear,
         inspect: { file, playground: PLAYGROUND },
       });
       slot.classList.add("busy");
@@ -1079,6 +1089,7 @@ fileInput.addEventListener("change", () => {
     // A file arrived by no link. Cleared rather than left, or the next
     // document would be given an icon pointing at the last one.
     arrivedByLink = undefined;
+    arrivedInClear = false;
     void ingest(file);
   }
 });
@@ -1215,6 +1226,8 @@ async function openFromLink(carried: string): Promise<void> {
   arrivedAsFile = false;
   // The document is in this address. An icon made from it needs nothing else.
   arrivedByLink = location.href;
+  // Nothing held it anywhere, so there is no store that could have read it.
+  arrivedInClear = false;
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
         from: "From the link you followed. Nothing is uploaded — it runs on this device.",
   });
@@ -1282,6 +1295,8 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
   arrivedAsFile = false;
   // The address as it stands, fragment included: that is the document.
   arrivedByLink = location.href;
+  // Carried in the clear, if the link said so. Held until the card is built.
+  arrivedInClear = reference.clear === true;
   const store = reference.url ? where : "this project's store";
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
     from: `From ${store}, sealed so it could not be read there. Nothing is uploaded — it runs on this device.`,

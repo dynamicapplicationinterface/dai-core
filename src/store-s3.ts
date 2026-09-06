@@ -40,6 +40,15 @@ export interface S3StoreOptions {
   publicBase: string;
   /** Path-style (`endpoint/bucket/key`) or virtual-hosted (`bucket.endpoint/key`). R2 is path-style. */
   pathStyle?: boolean;
+  /**
+   * Accept documents held in the clear (see `StorePolicy`).
+   *
+   * Off unless an operator turns it on, and off on the public relay
+   * permanently. A store that holds documents it can read is making a
+   * different promise from the one this project makes, so the default has to
+   * be the promise.
+   */
+  allowClear?: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -191,7 +200,7 @@ export function s3Store(options: S3StoreOptions, fetchImpl: typeof fetch = fetch
 
   return {
     async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
-      await admit(hash, ciphertext, sidecar, icon);
+      await admit(hash, ciphertext, sidecar, icon, { allowClear: options.allowClear });
       const key = hash.toLowerCase();
       const existing = await this.head(publicHref(key));
       if (!existing.exists) {

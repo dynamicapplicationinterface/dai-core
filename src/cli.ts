@@ -84,6 +84,12 @@ Publish options:
                           and a name in a preview is cached by every chat server
                           that sees the link
       --icon <path.png>   A 512x512 PNG for that preview, under 100 KB
+      --clear             Store the document without encrypting it. Only for a
+                          store you run, inside a perimeter that already
+                          controls who reaches it, and only where the store has
+                          been configured to accept it. The store can then read
+                          every document it holds, and so can anything between
+                          — the opener says so on the card
 
 Examples:
   dai build ./dist
@@ -501,13 +507,21 @@ async function publishCommand(parsed: Parsed): Promise<number> {
     return 2;
   }
 
-  const { sealed, href, links } = await publish(html, store, opener, { preview: unfurl, icon });
+  const { sealed, href, links } = await publish(html, store, opener, {
+    preview: unfurl,
+    icon,
+    clear: parsed.flags.clear === true,
+  });
 
   if (parsed.flags.json) {
     process.stdout.write(JSON.stringify({ hash: sealed.hash, size: sealed.blob.length, href, links }, null, 2) + "\n");
     return 0;
   }
   process.stdout.write(
+    (sealed.clear
+      ? `clear    stored unencrypted. This store can read it, and so can anything that carries it
+`
+      : "") +
     (sealed.sidecar.preview
       ? `preview  "${sealed.sidecar.preview.name}" is what a link preview will show
 `

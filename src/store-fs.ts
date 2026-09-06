@@ -19,6 +19,14 @@ export interface FsStoreOptions {
   root: string;
   /** The URL the directory is served under, if it is. */
   baseUrl?: string;
+  /**
+   * Accept documents held in the clear (see `StorePolicy`).
+   *
+   * Off unless an operator turns it on. A store that holds documents it can
+   * read is making a different promise from the one this project makes, so the
+   * default has to be the promise.
+   */
+  allowClear?: boolean;
 }
 
 export function fsStore(options: FsStoreOptions): Store {
@@ -38,7 +46,7 @@ export function fsStore(options: FsStoreOptions): Store {
 
   return {
     async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
-      await admit(hash, ciphertext, sidecar, icon);
+      await admit(hash, ciphertext, sidecar, icon, { allowClear: options.allowClear });
       const path = join(root, hash.toLowerCase());
       if (icon) writeFileSync(path + ".png", icon.png);
       // Content-addressed, so a second put is the same bytes and nothing to do.
