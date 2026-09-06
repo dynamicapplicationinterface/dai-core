@@ -30,7 +30,7 @@ import { RECIPE } from "./recipe.js";
 import { lastLine, linkFor, type Host } from "./sender.js";
 import type { Store } from "./store.js";
 import { storeFromEnvironment as storeFromEnv } from "./env.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 export const SERVER_NAME = "dai";
@@ -295,13 +295,14 @@ async function createApp(
 
   // Staged in a temporary directory because the compiler reads from a tree.
   const staging = mkdtempSync(resolve(tmpdir(), "dai-mcp-"));
-  for (const [name, content] of Object.entries(files)) {
-    const target = withinRoot(staging, name);
-    mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, content, "utf8");
-  }
-
-  const result = await compileDirectory({
+  let result: Awaited<ReturnType<typeof compileDirectory>>;
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      const target = withinRoot(staging, name);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, content, "utf8");
+    }
+    result = await compileDirectory({
     sourceDir: staging,
     root: options.root,
     appName,
@@ -314,7 +315,12 @@ async function createApp(
     // Names the predecessor without needing its file: what a bundle carries
     // back from get_dai_source when the original is not on this disk (4.2).
     supersedes: typeof params.supersedes === "string" ? params.supersedes : undefined,
-  });
+    });
+  } finally {
+    // The model's files, in the clear, under a temporary directory nothing
+    // ever swept: a review found them accumulating. Gone with the call.
+    rmSync(staging, { recursive: true, force: true });
+  }
 
   const outputPath = withinRoot(
     options.root,

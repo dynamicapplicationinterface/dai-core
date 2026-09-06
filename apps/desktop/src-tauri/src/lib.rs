@@ -262,9 +262,36 @@ fn save_publisher(app: tauri::AppHandle, pin: PublisherPin) -> Result<(), String
     write_publishers(&app, &publishers)
 }
 
+/// A path this host will read a cartridge from.
+///
+/// Only host code calls the read commands, and the paths it passes come from
+/// the file dialog or the command line. This does not make that a rule the
+/// IPC layer enforces, but it narrows what a mistake could reach: a full path
+/// to an existing file with a cartridge's extension, and nothing else — not a
+/// relative name resolved against whatever the working directory happens to
+/// be, and not the first file a future caller passes by accident.
+fn readable(path: &str) -> Result<PathBuf, String> {
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return Err(format!("\"{}\" is not a full path.", path));
+    }
+    if !candidate.is_file() {
+        return Err(format!("No cartridge exists at {}.", candidate.display()));
+    }
+    let name = candidate
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !(name.ends_with(".dai") || name.ends_with(".html")) {
+        return Err(format!("{} is not a cartridge.", candidate.display()));
+    }
+    Ok(candidate.to_path_buf())
+}
+
 #[tauri::command]
 fn read_cartridge(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| format!("Failed to read cartridge file {}: {}", path, e))
+    let path = readable(&path)?;
+    fs::read_to_string(&path).map_err(|e| format!("Failed to read cartridge file {}: {}", path.display(), e))
 }
 
 /// Rejects a path the host cannot save to, before anything is written.
@@ -412,8 +439,9 @@ fn write_backup(target: &Path) -> Result<(), String> {
 /// form it has from the leading bytes, never from the extension.
 #[tauri::command]
 fn read_cartridge_bytes(path: String) -> Result<String, String> {
+    let path = readable(&path)?;
     let bytes = fs::read(&path)
-        .map_err(|e| format!("Failed to read cartridge file {}: {}", path, e))?;
+        .map_err(|e| format!("Failed to read cartridge file {}: {}", path.display(), e))?;
     Ok(BASE64.encode(bytes))
 }
 

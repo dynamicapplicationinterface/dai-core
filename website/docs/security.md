@@ -55,6 +55,12 @@ store, and the link that opens it is `<opener>/d/<id>#h=…&k=…`.
 - **Anyone holding the whole link can open the document.** That is the point
   of a link, and it is the property to think about before sending one: a link
   is the capability. Forwarding it forwards the document.
+- **A home-screen icon is a copy of the link.** Adding a document to the
+  home screen stores its launch address — key and all — in the phone's own
+  app metadata, so the icon can open the document on a device that has lost
+  everything else. Somebody with the unlocked phone has the document; that
+  was already true of the copy on the device, and now it is true of the icon
+  too. Remove the icon when you remove the document.
 
 ### Link previews are consented, and are not a trust signal
 
@@ -80,6 +86,40 @@ server-side and cache the result. Turning a preview off is a decision that has
 to be made before the first send, not after.
 
 ---
+
+## Where Copies Live
+
+A document is one file, and the promise is that it stays one. Two things
+worth knowing about the copies a host makes on its way to keeping that
+promise:
+
+- **The desktop app writes beside the document.** Before the first save of a
+  session it keeps `name.dai.bak`, and every save is staged through a
+  temporary file in the same folder and renamed into place — that is what
+  makes a save survive a crash or a power cut. Both are ordinary files in
+  the clear. Deleting a document does not delete its `.bak`; if the folder
+  matters, delete both.
+- **The opener keeps the documents you opened.** In the browser's own
+  storage for `opendai.app`, on that device, in the clear. Delete them from
+  the library, or clear the site's data, and they are gone.
+
+## Do Not Host a Document on a Page You Do Not Control
+
+A `.dai.html` file served from a web server runs there as a page, and a page
+can be framed. A hostile page that frames a document it has been given a
+URL for can pretend to be its host — and the container, asked to save,
+hands its document to whoever is listening as the host. The container says
+what it can about this in its own source; the practical rule is simpler.
+Send documents as files and as links to an opener you trust. Do not put
+them on a web server you do not run, and do not open one from a page whose
+address you did not type.
+
+Browsers also have channels a Content-Security-Policy does not govern —
+DNS prefetch, preconnect, speculation rules. The compiler refuses to seal a
+document that asks for any of them, which is the right layer for a browser
+host. A native host can go further and block them at the network layer; the
+desktop app does not yet, which is why the compiler's refusal is not
+optional.
 
 ## Why Organizational Identity Must Never Flow Inward
 

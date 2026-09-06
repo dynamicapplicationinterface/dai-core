@@ -593,8 +593,12 @@ test.describe("publisher signature", () => {
     writeFileSync(path, repack(html, archive), "utf8");
     await page.goto(`file:///${path.replace(/\\/g, "/")}`);
 
-    await expect(page.locator("#dai-boot-status")).toContainText("not authentic");
-    await expect(page.locator("#dai-boot-detail")).toContainText("different digest");
+    // The signed digest is the authority (§9.2), so this is caught as the
+    // integrity failure it is — the entry does not match the digest the
+    // publisher signed — before the signature is ever checked. Either
+    // wording is a refusal; what must not happen is a mount.
+    await expect(page.locator("#dai-boot-status")).toContainText(/modified|not authentic/);
+    await expect(page.locator("#dai-boot-detail")).toContainText(/does not match its digest|different digest/);
     expect(await page.locator("#dai-app").count()).toBe(0);
   });
 

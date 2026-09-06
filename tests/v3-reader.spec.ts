@@ -88,6 +88,24 @@ test.describe("a version 3 container, read", () => {
     await expect(verifyContainer(shellEdited)).rejects.toMatchObject({ code: "SHELL_MISMATCH" });
   });
 
+  test("hashes may omit what signedEntries covers, and the bootloader agrees", async ({ page }) => {
+    // §9.2: `signedEntries` is the authority; `hashes` MAY omit what it lists.
+    // The host reader accepted that and the bootloader refused it — one file,
+    // two verdicts. Both must agree, and the spec says accept.
+    const built = await build({ manifestVersion: 3 });
+    const sparse = withManifest(built.html, (m) => {
+      delete (m.hashes as Record<string, string>)["app/index.html"];
+    });
+    expect((await verifyContainer(sparse)).manifest.manifestVersion).toBe(3);
+
+    const dir = mkdtempSync(join(tmpdir(), "dai-v3-sparse-"));
+    const file = join(dir, "sparse.dai.html");
+    writeFileSync(file, sparse, "utf8");
+    const { pathToFileURL } = await import("node:url");
+    await page.goto(pathToFileURL(file).href);
+    await expect(page.locator("body")).toHaveClass(/dai-mounted/, { timeout: 30_000 });
+  });
+
   test("a version this reader does not know is refused by name, not as damage", async () => {
     const built = await build({ manifestVersion: 3 });
     const future = withManifest(built.html, (m) => { m.manifestVersion = 4; });

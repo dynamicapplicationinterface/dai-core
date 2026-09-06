@@ -398,10 +398,11 @@ async function verifyPayload(
   manifest: Manifest,
 ): Promise<string[]> {
   const problems: string[] = [];
+  const expectedDigests = authoritativeDigests(manifest);
 
   for (const [name, bytes] of Object.entries(files)) {
     if (name === MANIFEST_ENTRY) continue;
-    const expected = manifest.hashes[name];
+    const expected = expectedDigests[name];
     if (!expected) {
       problems.push(`${name} is not listed in the manifest`);
       continue;
@@ -412,11 +413,51 @@ async function verifyPayload(
     }
   }
 
-  for (const name of Object.keys(manifest.hashes)) {
+  for (const name of Object.keys(expectedDigests)) {
     if (!(name in files)) problems.push(`${name} is missing from the payload`);
   }
 
   return problems;
+}
+
+/**
+ * The entries the archive is held to, and their digests — the same rule the
+ * host reader applies (spec §9.2).
+ *
+ * Signed version 3: `signedEntries` is the authority, with the database and
+ * the sealed shell taken from `hashes` because neither is signed. `hashes`
+ * MAY then omit what `signedEntries` covers, and a review found this
+ * bootloader refusing exactly that while every other reader accepted it —
+ * two readers disagreeing about one file is the thing a specification is for.
+ * Otherwise `hashes` is the list, as in version 2.
+ */
+function authoritativeDigests(manifest: Manifest): Record<string, string> {
+  if (manifest.manifestVersion >= 3 && manifest.signature && manifest.signedEntries) {
+    const out: Record<string, string> = { ...manifest.signedEntries };
+    for (const name of [SQLITE_ENTRY, CONTAINER_ENTRY]) {
+      if (manifest.hashes[name]) out[name] = manifest.hashes[name]!;
+    }
+    return out;
+  }
+  return manifest.hashes;
+}
+
+/**
+ * A title as a file name. Browsers strip separators themselves, but a title
+ * is the application's text: `..`, a 300-character sentence, a reserved
+ * device name on Windows or a run of control characters were all going
+ * straight through to the save dialog.
+ */
+function fileNameFrom(title: string): string {
+  const cleaned = title
+    .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 100)
+    .replace(/[. ]+$/g, "");
+  if (!cleaned || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(cleaned)) return "document";
+  return cleaned;
 }
 
 /** Base64 to bytes, for keys and signatures carried as text. */
@@ -601,7 +642,7 @@ async function writeContainer(
 ): Promise<SaveResult> {
   const html = await resealContainer(files, sqlite);
 
-  const name = `${document.title || "document"}.dai.html`;
+  const name = `${fileNameFrom(document.title)}.dai.html`;
   const blob = new Blob([html], { type: "text/html" });
 
   const picker = method === "download" ? undefined : (

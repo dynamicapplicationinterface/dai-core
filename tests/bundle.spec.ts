@@ -100,6 +100,20 @@ test.describe("what it refuses", () => {
   test("a bundle with no files at all", () => {
     expect(() => parseBundle("dai bundle v1\n\nhello, I am prose\n")).toThrow(BundleError);
   });
+
+  test("names a disk would rewrite or read as something else", () => {
+    // The MCP path writes these files to disk, and the disk may be NTFS.
+    const bundle = (name: string) => ["dai bundle v1", "", `--- file: ${name}`, "x", ""].join("\n");
+    expect(() => parseBundle(bundle("index.html:evil"))).toThrow(/cannot carry/); // alternate data stream
+    expect(() => parseBundle(bundle("CON"))).toThrow(/device name/);
+    expect(() => parseBundle(bundle("nul.txt"))).toThrow(/device name/);
+    expect(() => parseBundle(bundle("lib/aux.js"))).toThrow(/device name/);
+    expect(() => parseBundle(bundle("notes."))).toThrow(/dot or a space/);
+    expect(() => parseBundle(bundle("dir /index.html"))).toThrow(/dot or a space/);
+    // Names that merely resemble them are fine.
+    expect(Object.keys(parseBundle(bundle("console.js")).files)).toEqual(["console.js"]);
+    expect(Object.keys(parseBundle(bundle("com10.txt")).files)).toEqual(["com10.txt"]);
+  });
 });
 
 test.describe("what it tolerates, and mentions", () => {

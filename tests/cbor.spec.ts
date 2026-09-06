@@ -145,6 +145,22 @@ test.describe("what it refuses", () => {
     // accepting it would mean decoding shapes nothing tests.
     expect(() => decode(new Uint8Array([0x9f, 0x01, 0xff]))).toThrow(/Unsupported length/i);
   });
+
+  test("nesting past any envelope's depth, by name rather than by stack overflow", () => {
+    // 0x81 is a one-element array; a thousand of them is a value nobody
+    // wrote for a reason. Before the cap this threw a RangeError from the
+    // engine, which the signature path reported as damage of an unplanned kind.
+    const deep = new Uint8Array([...new Array(1000).fill(0x81), 0x00]);
+    expect(() => decode(deep)).toThrow(/deeper than/i);
+    // Four levels — a COSE_Sign1 with a protected header map — is fine.
+    expect(decode(encode([[[[1]]]]))).toEqual([[[[1]]]]);
+  });
+
+  test("a repeated map key", () => {
+    // {1: 1, 1: 2} — deterministic encoding forbids it, and "last wins" is a
+    // reading nobody agreed to.
+    expect(() => decode(new Uint8Array([0xa2, 0x01, 0x01, 0x01, 0x02]))).toThrow(/duplicate/i);
+  });
 });
 
 test("round-trips everything it encodes", () => {

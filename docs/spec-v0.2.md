@@ -62,6 +62,13 @@ whole of it, which is the point: a fragment is not sent to a server, so a
 document carried this way is in the link and in no log, on no host, and behind
 nothing that can expire.
 
+What it carries is the signed view, the signature and the application; it
+does not carry countersignatures (§9.4, the unprotected header) or the
+identity bundle (§9.5). A reader of an inline link sees the publisher's own
+signature and nothing anybody else added to the file, and MUST NOT report a
+countersignature or identity as absent *from the document* on that basis —
+it is absent from the carrier.
+
 The value is base64url (RFC 4648 §5) without padding over three parts: one byte
 of carrier version, currently `1`; four bytes identifying the preset
 dictionary; and a raw DEFLATE stream (RFC 1951) compressed against that

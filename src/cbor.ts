@@ -159,7 +159,16 @@ function readHead(cursor: Cursor): { major: number; value: number } {
   return { major, value };
 }
 
-function decodeAt(cursor: Cursor): CborValue {
+/**
+ * How deep a value may nest. A COSE envelope is four levels; a crafted one of
+ * nested arrays would otherwise run the decoder off the stack, and a reader
+ * that throws a RangeError on the signature path is a reader that has been
+ * made to misreport a container as damaged in an unplanned way.
+ */
+const MAX_DEPTH = 32;
+
+function decodeAt(cursor: Cursor, depth = 0): CborValue {
+  if (depth > MAX_DEPTH) throw new CborError(`Nested deeper than ${MAX_DEPTH} levels.`);
   const { major, value } = readHead(cursor);
 
   switch (major) {
@@ -181,14 +190,17 @@ function decodeAt(cursor: Cursor): CborValue {
     }
     case MAJOR.ARRAY: {
       const items: CborValue[] = [];
-      for (let i = 0; i < value; i++) items.push(decodeAt(cursor));
+      for (let i = 0; i < value; i++) items.push(decodeAt(cursor, depth + 1));
       return items;
     }
     case MAJOR.MAP: {
       const map = new Map<CborValue, CborValue>();
       for (let i = 0; i < value; i++) {
-        const key = decodeAt(cursor);
-        map.set(key, decodeAt(cursor));
+        const key = decodeAt(cursor, depth + 1);
+        // Deterministic encoding (RFC 8949 §4.2.1) forbids a repeated key, and
+        // "last wins" is a reading nobody agreed to; a strict reader refuses.
+        if (map.has(key)) throw new CborError("Duplicate map key.");
+        map.set(key, decodeAt(cursor, depth + 1));
       }
       return map;
     }
@@ -201,7 +213,7 @@ function decodeAt(cursor: Cursor): CborValue {
        * this decoder has no meaning for.
        */
       if (value !== 18) throw new CborError(`Unsupported tag: ${value}`);
-      return decodeAt(cursor);
+      return decodeAt(cursor, depth + 1);
     case MAJOR.SIMPLE:
       if (value === 22) return null;
       throw new CborError(`Unsupported simple value: ${value}`);

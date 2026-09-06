@@ -95,6 +95,19 @@ function checkPath(path: string): string {
   if (clean.split(/[\\/]/).some((part) => part === "..")) {
     throw new BundleError(`"${clean}" climbs out of the application.`);
   }
+  // These files are written to a disk by the MCP path, and the disk may be
+  // NTFS: a colon names an alternate data stream, CON and NUL and their kin
+  // are devices whatever their extension, and a trailing dot or space is
+  // silently dropped so the name written is not the name checked.
+  if (/[\u0000-\u001f:]/.test(clean)) {
+    throw new BundleError(`"${clean}" contains a character a file name cannot carry.`);
+  }
+  for (const part of clean.split(/[\\/]/)) {
+    if (/[. ]$/.test(part)) throw new BundleError(`"${clean}" ends a name with a dot or a space.`);
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(part)) {
+      throw new BundleError(`"${clean}" is a device name on Windows, not a file.`);
+    }
+  }
   return clean.split("\\").join("/");
 }
 
