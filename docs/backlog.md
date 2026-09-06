@@ -469,10 +469,19 @@ no ciphertext, 200; a browser open of `/d/<id>#h=&k=` mounts with the fragment
 intact; a plain static host serves it with no preview and no error; an id the
 store never held is 200, generic, `no-store`.
 
-**Not yet verified:** whether Vercel bundles a middleware that imports from
-outside its project root. If it does not, the edge half is inert and the
-static half still carries every link — which is why it was built in that
-order. Check on the first deploy.
+**Verified on the deployed opener.** Vercel does bundle a middleware that
+imports from outside its project root, so no workspace-package rearrangement
+was needed. Checked the way the item said to check it — a crawler user agent
+against a real `/d/<id>`:
+
+    $ curl -A 'Slackbot-LinkExpanding 1.0' https://opendai.app/d/<64 hex>
+    200, cache-control: no-store
+    placeholder consumed, og:title injected
+
+An id the store has never held comes back 200 with the generic tags and
+`no-store`, which is the absent branch doing exactly what it should. The named
+branch is covered by `tests/unfurl.spec.ts`; confirming it against the live R2
+store needs a document published there, which needs the store credentials.
 
 ### 3.4 A stripped fragment degrades to a sentence
 
