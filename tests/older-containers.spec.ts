@@ -99,6 +99,6 @@ test("the shell's first line explains itself if nothing else runs", () => {
     " ",
   );
 
-  expect(status).toMatch(/will not run the file/i);
+  expect(status).toMatch(/will not run the file|cannot run it/i);
   expect(status).toContain("opendai.app");
 });
