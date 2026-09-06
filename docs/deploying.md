@@ -101,25 +101,34 @@ you what to fill in:
 Opener project → **Settings → Environment Variables**. The website project
 needs none of these; it has no presign endpoint.
 
-| Name | Sensitive | Environments |
-|---|---|---|
-| `DAI_STORE_ENDPOINT` | no | Production, Preview |
-| `DAI_STORE_BUCKET` | no | Production, Preview |
-| `DAI_STORE_REGION` | no | Production, Preview |
-| `DAI_STORE_PUBLIC_BASE` | no | Production, Preview |
-| `DAI_STORE_ACCESS_KEY_ID` | **yes** | one value per environment |
-| `DAI_STORE_SECRET_ACCESS_KEY` | **yes** | one value per environment |
-| `DAI_PRESIGN_PER_HOUR` | no | optional |
-| `DAI_PRESIGN_MAX_BYTES` | no | optional |
+| Name | Environments |
+|---|---|
+| `DAI_STORE_ENDPOINT` | Production, Preview |
+| `DAI_STORE_BUCKET` | Production, Preview |
+| `DAI_STORE_REGION` | Production, Preview |
+| `DAI_STORE_PUBLIC_BASE` | Production, Preview |
+| `DAI_STORE_ACCESS_KEY_ID` | one value per environment |
+| `DAI_STORE_SECRET_ACCESS_KEY` | one value per environment |
+| `DAI_PRESIGN_PER_HOUR` | optional |
+| `DAI_PRESIGN_MAX_BYTES` | optional |
 
 The two credential rows are added **twice**: once scoped to Production with the
 production token, once to Preview with the preview token. Different tokens, so
 a preview deployment — which any pull request can produce — cannot write to the
 production bucket. Leave Development unticked; that is what `.env.local` is.
 
-Mark both as **Sensitive**. Vercel then refuses to display the value again
-after saving, which is the behaviour you want for something you can rotate but
-should never need to read.
+**Do not mark them Sensitive.** It is the obvious thing to reach for and it
+does not work here: a Sensitive variable on Vercel is write-only, and its value
+is not exposed to the edge runtime — which is where `/api/presign` runs, and
+has to run, because the handler is written in the fetch style the edge expects.
+The symptom is a correctly-entered secret that is present in the dashboard and
+absent to the function, and a `503` that looks like the variable was never set.
+This cost an evening; the endpoint now answers a 503 with the missing names and
+a hint saying exactly this.
+
+What limits the damage is not the dashboard flag. It is the token: scoped to
+one bucket, object read/write only, one per environment. That is doing the real
+work, and it is why giving up write-only here costs little.
 
 ### The R2 token
 
