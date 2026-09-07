@@ -132,6 +132,21 @@ test.describe("how much of the screen an application gets", () => {
       .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor))
       .toBe("rgb(250, 247, 239)");
 
+    // And behind the application, in the shell around it: pulling the app
+    // down past its top on a phone shows what is behind it, and that was the
+    // shell's white ground. Both of its grounds are the app's colour now.
+    await expect
+      .poll(() =>
+        page
+          .frameLocator("#cartridge")
+          .locator("body")
+          .evaluate((body) => [
+            getComputedStyle(body).backgroundColor,
+            getComputedStyle(document.getElementById("dai-app")!).backgroundColor,
+          ]),
+      )
+      .toEqual(["rgb(250, 247, 239)", "rgb(250, 247, 239)"]);
+
     // Remembered, under the document's id and the colour scheme, because a
     // phone's status bar takes the page's colour as the page first appears,
     // and a colour that arrives after the app has drawn was measured to be

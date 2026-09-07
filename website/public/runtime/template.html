@@ -74,6 +74,13 @@
       background: Canvas;
       color: CanvasText;
     }
+    /*
+     * Behind a mounted application: its own colour, when the host has said
+     * what that is (--dai-ground, from the host's measurement of the app).
+     * Pulling the app down past its top on a phone shows what is behind it,
+     * and that was this shell's white over an app of any other colour.
+     */
+    body.dai-mounted, body.dai-mounted #dai-app { background: var(--dai-ground, Canvas); }
     #boot-ui {
       display: flex;
       align-items: center;

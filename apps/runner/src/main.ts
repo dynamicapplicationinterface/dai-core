@@ -154,6 +154,7 @@ function paintAbove(theme?: string): void {
 function settleGround(colour: string): void {
   document.documentElement.style.setProperty("--app-ground", colour);
   paintAbove(colour);
+  tellCanvas();
   if (!mountedUuid) return;
   const news = knownGround(mountedUuid) !== colour;
   keepGround(mountedUuid, colour);
@@ -248,6 +249,22 @@ function screenInsets(): { top: number; right: number; bottom: number; left: num
   };
   probe.remove();
   return insets;
+}
+
+/**
+ * The colour behind the application, told to the shell around it.
+ *
+ * Pulling a page down past its top on a phone shows what is behind it, and
+ * behind the application were two white grounds of the shell's — its body
+ * and the frame the app sits in — over an opener that is by now the app's
+ * colour. So the shell paints both in that colour while an app is mounted,
+ * and the pull shows the same colour, the way a phone's own apps do.
+ */
+function tellCanvas(): void {
+  const target = cartridgeFrame.contentWindow;
+  const colour = document.documentElement.style.getPropertyValue("--app-ground").trim();
+  if (!target || !mountedNonce || !colour) return;
+  target.postMessage({ type: "DAI_HOST_CANVAS", colour }, "*");
 }
 
 function tellInsets(): void {
@@ -1273,6 +1290,7 @@ window.addEventListener("message", (event) => {
     // Where the edges of the screen are. The application draws to them now,
     // and is the one document that cannot measure them. See tellInsets.
     tellInsets();
+    tellCanvas();
 
     /*
      * How long the container took to become usable, on this device.

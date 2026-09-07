@@ -2129,6 +2129,21 @@ async function boot(): Promise<void> {
      * application's frame has a listener, and a message sent then is a message
      * nobody hears.
      */
+    /*
+     * The colour behind the application, from the host. Painted on this
+     * shell's body and on the frame, so that pulling the application down
+     * past its top shows the application's own colour and not a white
+     * ground of this shell's. A colour and nothing else goes into a style.
+     */
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_CANVAS") {
+      const colour = typeof (event.data as { colour?: unknown }).colour === "string"
+        ? String((event.data as { colour: string }).colour).trim()
+        : "";
+      if (/^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(colour)) {
+        document.documentElement.style.setProperty("--dai-ground", colour);
+      }
+      return;
+    }
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_INSETS") {
       const insets = event.data as unknown as Record<string, unknown>;
       const passed: Record<string, number> = {};
