@@ -155,16 +155,24 @@ Exactly what somebody would tell a friend about it, one thing per line, under 90
 Beside it, <meta name="theme-color" content="…"> with the app's own background colour.
 
 THE WHOLE SCREEN IS YOURS
-The app is drawn edge to edge on a phone — under the status bar at the top and the home indicator at the bottom, the way a phone's own apps are. Four custom properties say how much of each edge is covered, and they are set for you before the app draws:
+The app is drawn edge to edge on a phone — under the status bar at the top and the home indicator at the bottom, the way a phone's own apps are. Nothing is reserved for the host, so nothing is done for you: an app that ignores this puts its own title under the clock.
+
+Four custom properties say how much of each edge is covered. They are set before the app draws, and are zero on a screen with nothing in the way:
 
   --dai-safe-top, --dai-safe-right, --dai-safe-bottom, --dai-safe-left
 
-Anything that must stay readable near an edge pads itself with them, and falls back to zero on a screen with nothing in the way:
+The rule is: the app's background fills those strips, and the app's content is pushed clear of them. Colour to the edge, content inside it.
 
-  header { padding-top: calc(16px + var(--dai-safe-top, 0px)); }
+  body { background: #faf7ef; }                                    /* to the edge */
+  header { padding-top: calc(16px + var(--dai-safe-top, 0px)); }   /* content clear */
   .bottom-bar { padding-bottom: calc(12px + var(--dai-safe-bottom, 0px)); }
 
-Backgrounds and images should run past those edges rather than stop at them: filling the screen is the point. Leave the top right corner of the screen clear of anything tappable — the host floats one small round button there, over the app. On a phone the strips under the status bar and the home indicator are painted in it, so the app reaches the edges of the screen instead of sitting in a grey frame.
+A scrolling page usually needs only two lines of this: padding at the top of whatever is first, and padding at the bottom of whatever is last, so the final row is not under the home indicator. Full-bleed images and colour blocks should run past the edges rather than stop short of them; that is the whole point of having the screen.
+
+Leave the top right corner clear of anything tappable. The host floats one small round button there, over the app, and it is how somebody reaches the menu.
+
+ONE APP, EVERY SCREEN
+Do not ask which device it is for, and do not build two of them. An app is sent as a link, and the person who opens it may be on a phone in a message, a tablet, or a desktop browser — the sender does not choose. One layout that holds from about 320px wide to a wide desktop window: a single column that grows, sensible maximum widths on text, tap targets no smaller than 44px, and no fixed pixel widths on anything that holds content. Check it at 390 wide and again at 1280 before handing it over. On a phone the strips under the status bar and the home indicator are painted in it, so the app reaches the edges of the screen instead of sitting in a grey frame.
 
 HOW TO HAND IT OVER
 If you can attach files, a zip of the files is best. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
@@ -205,7 +213,8 @@ BEFORE YOU ANSWER, CHECK
 - No Save button, no dirty flag, no localStorage. One <dai-save> at the bottom, or none.
 - No URL is fetched. No CDN. Every <script> with await is type="module".
 - icon.svg exists; index.html has a <meta name="description"> line and three <meta name="dai:does"> lines.
-- Anything pinned to a screen edge pads with var(--dai-safe-*, 0px), and nothing tappable sits in the top right corner.
+- The background reaches every edge; content near one pads with var(--dai-safe-*, 0px); nothing tappable is in the top right corner.
+- One layout, working at 390px wide and at 1280px. No second version for a phone.
 - The files are handed over as a tool call or as ONE fenced bundle, in the shape above.`;
 
 /** One line each, for a reader who wants the surface rather than the argument. */

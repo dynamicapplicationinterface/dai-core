@@ -13,13 +13,37 @@
     -->
     <script>
       (function () {
-        // Launched from a home screen: the body is sized differently, and
-        // the class has to be on before anything is laid out.
+        /*
+         * How tall the page is, measured before it is laid out.
+         *
+         * Every viewport unit was wrong somewhere. `inset: 0` is the layout
+         * viewport, which in a Safari tab runs on underneath the toolbars and
+         * hid the bottom of every application. `100dvh` fixed that and in a
+         * home-screen app came back 62pt short on an iPhone 16 Pro — exactly
+         * the top inset, measured off a screenshot — so an application ended
+         * that far above the bottom of the phone.
+         *
+         * `visualViewport.height` is the part of the page a person can
+         * actually see, which is the thing being asked for in both places: it
+         * excludes a browser's toolbars and it is the whole screen when there
+         * are none. Set here, before the first paint, and kept current below.
+         */
+        var setHeight = function () {
+          var vv = window.visualViewport;
+          var height = vv && vv.height ? vv.height : window.innerHeight;
+          if (height > 0) document.documentElement.style.setProperty("--app-height", height + "px");
+        };
+        try {
+          setHeight();
+          if (window.visualViewport) window.visualViewport.addEventListener("resize", setHeight);
+          window.addEventListener("resize", setHeight);
+          window.addEventListener("orientationchange", setHeight);
+        } catch (e) { /* The CSS fallback below stands. */ }
         try {
           if (navigator.standalone === true || matchMedia("(display-mode: standalone)").matches) {
             document.documentElement.classList.add("standalone");
           }
-        } catch (e) { /* No matchMedia: the media query above still applies. */ }
+        } catch (e) { /* Only the running-as line uses this now. */ }
         var s = location.search, h = location.hash, p = location.pathname;
         if (/[?&](doc|d)=/.test(s) || /\/d\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
           document.documentElement.classList.add("arriving");
@@ -148,35 +172,28 @@
        */
       html, body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
       /*
-       * The whole screen — measured the way each context measures it.
+       * The whole of what a person can see, and no more.
        *
-       * Two formulations, each right in one place and wrong in the other, and
-       * the screen was made to pick.
+       * Three attempts, each measured off a screenshot of the next failure.
        *
-       * `100dvh` is the viewport actually being shown and shrinks as a
-       * browser's toolbars appear, which is the only thing that keeps the
-       * bottom of an application out from behind Safari's bar in a tab.
-       * `inset: 0` is the layout viewport, which in a tab runs on underneath
-       * those toolbars and swallowed the last fifth of every application.
+       * `inset: 0` is the layout viewport, which in a Safari tab runs on
+       * underneath the toolbars: the bottom fifth of every application sat
+       * behind the bar and could not be reached.
        *
-       * In a home-screen app it is the other way round, and by a measured
-       * amount. A screenshot of one on an iPhone 16 Pro — 402×874pt, screen
-       * painted under the status bar by viewport-fit=cover — came back as
-       * four bands: 62pt of the opener's grey, a 38pt header (which is the
-       * declared height, so the ruler is right), 678pt of application, and
-       * 96pt of grey at the bottom. 96 is 62 + 34: the top inset and the
-       * bottom inset, both. Which puts `100dvh` there at 874 − 62 = 812 —
-       * the screen less the top inset, already. Padding by the insets inside
-       * that box subtracts the top one a second time and the bottom one from
-       * a box that was short to begin with, and the sum of the two is the
-       * band that was on screen.
+       * `100dvh` fixed the tab and left a home-screen app 96pt short — the
+       * top inset plus the bottom inset, both at the bottom — because the
+       * safe-area padding then subtracted the top one twice.
        *
-       * So: `100dvh` in a browser, the layout viewport in a home-screen app,
-       * where it is the whole screen and nothing is subtracted twice. The top
-       * inset is still padding, because the status bar is drawn over the page
-       * and the header has to clear it. The bottom is not, because an
-       * application should reach the bottom edge of the phone the way every
-       * other app on it does.
+       * Dropping the padding left it 62pt short: exactly the top inset,
+       * measured on an iPhone 16 Pro at 402×874pt. Which says what `100dvh`
+       * is in that context — 874 − 62 = 812, the screen less the top inset —
+       * and that no viewport unit here means "what is on the screen".
+       *
+       * `visualViewport.height` does mean that, in both places: it excludes a
+       * browser's toolbars, and it is the whole screen when there are none.
+       * The script in the head sets it before the first paint and keeps it
+       * current, and `100dvh` stays as the value for a browser that has no
+       * visual viewport to ask.
        */
       body {
         position: fixed;
@@ -184,24 +201,16 @@
         left: 0;
         right: 0;
         box-sizing: border-box;
-        /* The fallback first, for a browser that has no dynamic viewport. */
+        /* The fallbacks first, for a browser with no visual viewport to ask. */
         height: 100vh;
         height: 100dvh;
+        height: var(--app-height, 100dvh);
         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         display: flex;
         flex-direction: column;
         overscroll-behavior: none;
       }
-      /*
-       * Launched from a home screen. `html.standalone` is set before the first
-       * paint by the script in the head, for a device whose Safari answers
-       * `navigator.standalone` and not the media query.
-       */
-      @media (display-mode: standalone), (display-mode: fullscreen) {
-        body { bottom: 0; height: auto; }
-      }
-      html.standalone body { bottom: 0; height: auto; }
       /* While a document is open, the edges of the screen are its colour. */
       body.loaded { background: var(--app-ground, var(--bg)); }
 

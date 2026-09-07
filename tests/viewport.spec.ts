@@ -5,77 +5,55 @@ const RUNNER_URL = "http://localhost:5175/";
 /**
  * How much of the screen an application gets.
  *
- * Two formulations, each right in one place and wrong in the other.
+ * Three attempts, each measured off a screenshot of the next failure.
  *
- * In a browser tab, `inset: 0` is the layout viewport, which runs on
- * underneath Safari's toolbars: the bottom fifth of every application sat
- * behind the bar and could not be reached. `100dvh` is the viewport actually
- * being shown, and shrinks as the toolbars appear.
+ * `inset: 0` is the layout viewport, which in a Safari tab runs on underneath
+ * the toolbars: the bottom fifth of every application sat behind the bar.
+ * `100dvh` fixed the tab and left a home-screen app 96pt short. Dropping the
+ * safe-area padding left it 62pt short — exactly the top inset, on an iPhone
+ * 16 Pro at 402x874pt — which says what `100dvh` is there: 874 - 62 = 812.
  *
- * In a home-screen app it is the other way round, measured off a screenshot of
- * one on an iPhone 16 Pro (402×874pt): 62pt of the opener's grey, a 38pt
- * header, 678pt of application, and 96pt of grey at the bottom — and 96 is
- * 62 + 34, the top inset and the bottom inset both. So `100dvh` there is
- * 874 − 62 = 812, the screen less the top inset already, and padding by the
- * insets inside it subtracts the top one twice.
- *
- * A test browser reports no safe-area insets, so what these hold is the
- * wiring: which formulation each context gets, and that the one for a
- * home-screen app does not subtract a bottom inset at all.
+ * No viewport unit in that context means "what is on the screen".
+ * `visualViewport.height` does, in both: it excludes a browser's toolbars and
+ * it is the whole screen when there are none. A test browser has no toolbars
+ * inside the page, so what these hold is that the page is sized from that
+ * measurement rather than from a unit, and that nothing is left over.
  */
 test.describe("how much of the screen an application gets", () => {
-  test("in a browser tab the page is the viewport actually shown", async ({ page }) => {
+  test("the page is sized from the viewport a person can actually see", async ({ page }) => {
     await page.goto(RUNNER_URL);
     const seen = await page.evaluate(() => {
-      const body = document.body;
-      const box = body.getBoundingClientRect();
+      const box = document.body.getBoundingClientRect();
       return {
-        standalone: document.documentElement.classList.contains("standalone"),
-        top: Math.round(box.top),
-        height: Math.round(box.height),
-        inner: window.innerHeight,
-        bottomPad: getComputedStyle(body).paddingBottom,
-      };
-    });
-    expect(seen.standalone).toBe(false);
-    expect(seen.top).toBe(0);
-    // `100dvh`, which in a browser with no toolbars is the whole window.
-    expect(seen.height).toBe(seen.inner);
-  });
-
-  test("launched from a home screen the page is the whole screen, with nothing taken off the bottom", async ({
-    page,
-  }) => {
-    /*
-     * The head script sets this class before the first paint when the device
-     * says the page was launched from a home screen. Set the same way here,
-     * because no test browser can be put into that display mode.
-     */
-    await page.addInitScript(() => {
-      document.documentElement.classList.add("standalone");
-    });
-    await page.goto(RUNNER_URL);
-
-    const seen = await page.evaluate(() => {
-      const body = document.body;
-      const box = body.getBoundingClientRect();
-      return {
+        set: document.documentElement.style.getPropertyValue("--app-height"),
         top: Math.round(box.top),
         bottom: Math.round(box.bottom),
-        inner: window.innerHeight,
-        bottomPad: getComputedStyle(body).paddingBottom,
+        visible: Math.round(window.visualViewport?.height ?? window.innerHeight),
+        bottomPad: getComputedStyle(document.body).paddingBottom,
       };
     });
-
-    // The whole screen: top edge to bottom edge, and no inset carved out of
-    // the bottom of it. This is the half that was wrong — an application
-    // stopped 96pt short of the bottom of the phone.
+    // Set before the first paint, from the visual viewport, not from a unit.
+    expect(seen.set).toBe(`${seen.visible}px`);
     expect(seen.top).toBe(0);
-    expect(seen.bottom).toBe(seen.inner);
+    expect(seen.bottom).toBe(seen.visible);
+    // Nothing carved off the bottom: the application reaches the edge.
     expect(seen.bottomPad).toBe("0px");
   });
 
-  test("an open document reaches the bottom edge, in both", async ({ page }) => {
+  test("it follows the viewport when that changes, which is what a rotation is", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect
+      .poll(async () =>
+        page.evaluate(() => ({
+          set: document.documentElement.style.getPropertyValue("--app-height"),
+          visible: Math.round(window.visualViewport?.height ?? window.innerHeight),
+        })),
+      )
+      .toEqual({ set: "390px", visible: 390 });
+  });
+
+  test("an open document reaches the bottom edge", async ({ page }) => {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join, resolve, dirname } = await import("node:path");
@@ -89,24 +67,22 @@ test.describe("how much of the screen an application gets", () => {
     const file = join(source, "edge.dai.html");
     writeFileSync(file, built.html, "utf8");
 
-    for (const standalone of [false, true]) {
-      const context = await page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
-      const fresh = await context.newPage();
-      if (standalone) {
-        await fresh.addInitScript(() => document.documentElement.classList.add("standalone"));
-      }
-      await fresh.goto(RUNNER_URL);
-      await fresh.setInputFiles("#file", file);
-      await fresh.locator("#card-open").click({ timeout: 60_000 });
-      await expect(fresh.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await page.locator("#card-open").click({ timeout: 60_000 });
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
-      const frame = await fresh.evaluate(() => {
-        const el = document.getElementById("cartridge")!;
-        return { bottom: Math.round(el.getBoundingClientRect().bottom), inner: window.innerHeight };
-      });
-      // Nothing between the application and the bottom of the screen.
-      expect(frame.bottom, `standalone=${standalone}`).toBe(frame.inner);
-      await context.close();
-    }
+    const frame = await page.evaluate(() => {
+      const box = document.getElementById("cartridge")!.getBoundingClientRect();
+      return {
+        top: Math.round(box.top),
+        bottom: Math.round(box.bottom),
+        visible: Math.round(window.visualViewport?.height ?? window.innerHeight),
+      };
+    });
+    // Top edge to bottom edge: no strip above it, nothing left under it.
+    expect(frame.top).toBe(0);
+    expect(frame.bottom).toBe(frame.visible);
   });
 });
