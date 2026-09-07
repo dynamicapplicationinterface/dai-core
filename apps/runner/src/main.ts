@@ -168,6 +168,9 @@ function forgetOpen(): void {
 /** Whether this device holds the open document. Null until a store has answered. */
 let keptOnDevice: boolean | null = null;
 
+/** How many saves the running document has asked this host for. Read by tests. */
+let hostSaves = 0;
+
 /** The application's own index.html, as text, when the archive carries one. */
 function indexHtmlOf(cartridge: Cartridge): string | undefined {
   const bytes = cartridge.archive["app/index.html"];
@@ -201,6 +204,9 @@ function eject(): void {
   handshakeEstablished = false;
   document.body.classList.remove("loaded", "launching", "booting");
   document.documentElement.style.removeProperty("--app-ground");
+  const saveState = document.getElementById("save-state");
+  if (saveState) saveState.hidden = true;
+  hostSaves = 0;
   window.clearTimeout(bootingGuard);
   keeper?.clear();
   hideCard();
@@ -1032,6 +1038,24 @@ window.addEventListener("message", (event) => {
     );
     window.clearTimeout(bootingGuard);
     document.body.classList.remove("loaded", "booting");
+  } else if (data.type === "DAI_HOST_SAVE_STATE") {
+    // The runtime's own account of where the data stands. Shown, never
+    // inferred: a green word here means the host acknowledged a write.
+    if (!fromMountedContainer(event, data)) return;
+    const state = String(data.state ?? "");
+    const el = document.getElementById("save-state");
+    if (!el) return;
+    el.dataset.state = state;
+    el.hidden = state === "idle";
+    el.textContent = state === "saving" ? "Saving…" : state === "saved" ? "Saved" : state === "failed" ? "Not saved" : "";
+    el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
+    if (state === "failed") {
+      say(
+        `This document could not be saved on this device${typeof data.error === "string" ? ` (${data.error})` : ""}. ` +
+          `Your changes are still here; save a copy from the menu to keep them.`,
+        true,
+      );
+    }
   } else if (data.type === "DAI_HOST_TIMING") {
     // The boot finished. The handshake went out before the application had
     // painted, so this is the message carrying the number that matters.
@@ -1054,6 +1078,7 @@ window.addEventListener("message", (event) => {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
     if (!fromMountedContainer(event, data)) return;
+    hostSaves += 1;
     // Echoed on the reply so the container can tell this answer from any
     // other message that happens to be shaped like one.
     const requestId = typeof data.requestId === "string" ? data.requestId : undefined;
@@ -1105,6 +1130,9 @@ const closeSheet = (): void => {
 openButton.addEventListener("click", () => fileInput.click());
 moreButton.addEventListener("click", () => {
   slideOpen(sheet);
+});
+document.getElementById("save-state")?.addEventListener("click", (event) => {
+  if ((event.currentTarget as HTMLElement).dataset.state === "failed") slideOpen(sheet);
 });
 // Anywhere off the panel dismisses it, which is what a sheet does everywhere
 // else on a phone.
@@ -1913,6 +1941,9 @@ Object.defineProperty(window, "__runner", {
     },
     get handshakeEstablished() {
       return handshakeEstablished;
+    },
+    get saves() {
+      return hostSaves;
     },
     eject,
     exportContainer,

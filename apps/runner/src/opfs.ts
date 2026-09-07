@@ -63,15 +63,29 @@ function openIdb(): Promise<IDBDatabase> {
   });
 }
 
+/**
+ * A write is acknowledged when its transaction commits, not when the request
+ * succeeds. A request can succeed and its transaction still abort — quota,
+ * a version change, a closing page — and a promise resolved on the request
+ * had already told the caller its data was kept. Every write below goes
+ * through here.
+ */
+function committed(tx: IDBTransaction, run: (store: IDBObjectStore) => IDBRequest): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let requestError: DOMException | null = null;
+    const req = run(tx.objectStore(tx.objectStoreNames[0]!));
+    req.onerror = () => {
+      requestError = req.error;
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? requestError ?? new Error("The write did not commit."));
+    tx.onabort = () => reject(tx.error ?? requestError ?? new Error("The write was abandoned before it committed."));
+  });
+}
+
 async function saveToIdb(documentUuid: string, bytes: Uint8Array): Promise<void> {
   const db = await openIdb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(DB_STORE, "readwrite");
-    const store = tx.objectStore(DB_STORE);
-    const req = store.put(bytes, documentUuid);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
+  await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.put(bytes, documentUuid));
 }
 
 async function loadFromIdb(documentUuid: string): Promise<Uint8Array | null> {
@@ -109,6 +123,15 @@ async function deleteFromIdb(documentUuid: string): Promise<void> {
   }
 }
 
+/**
+ * One place holds a document's database at a time.
+ *
+ * The file system is preferred and IndexedDB is the fallback. A read that
+ * preferred any non-empty file over the fallback let an older file win over
+ * a newer fallback write — a save acknowledged in IndexedDB, and the reopened
+ * document showing the state before it. So whichever store takes the write,
+ * the other's copy is removed, and a read finds one answer.
+ */
 export async function saveDatabaseToOpfs(
   documentUuid: string,
   databaseBytes: Uint8Array,
@@ -134,6 +157,7 @@ export async function saveDatabaseToOpfs(
         ).createWritable();
         await writable.write(databaseBytes);
         await writable.close();
+        await deleteFromIdb(documentUuid).catch(() => undefined);
         return;
       }
     } catch {
@@ -142,6 +166,14 @@ export async function saveDatabaseToOpfs(
   }
 
   await saveToIdb(documentUuid, databaseBytes);
+  // The fallback is now the authority; a stale file must not outrank it.
+  await removeOpfsFile(documentUuid).catch(() => undefined);
+}
+
+async function removeOpfsFile(documentUuid: string): Promise<void> {
+  if (!navigator.storage?.getDirectory) return;
+  const root = await navigator.storage.getDirectory();
+  await root.removeEntry(`${documentUuid}.sqlite`).catch(() => undefined);
 }
 
 export async function loadDatabaseFromOpfs(
@@ -178,13 +210,7 @@ export async function deleteDatabaseFromOpfs(documentUuid: string): Promise<void
 
 export async function saveCartridgeToLibrary(item: LibraryItem): Promise<void> {
   const db = await openIdb();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(LIB_STORE, "readwrite");
-    const store = tx.objectStore(LIB_STORE);
-    const req = store.put(item);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
+  await committed(db.transaction(LIB_STORE, "readwrite"), (store) => store.put(item));
 }
 
 export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
@@ -214,13 +240,7 @@ export async function deleteCartridgeFromLibrary(
 ): Promise<void> {
   try {
     const db = await openIdb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(LIB_STORE, "readwrite");
-      const store = tx.objectStore(LIB_STORE);
-      const req = store.delete(documentUuid);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    await committed(db.transaction(LIB_STORE, "readwrite"), (store) => store.delete(documentUuid));
   } catch {
     // Ignore error
   }

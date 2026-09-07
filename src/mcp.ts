@@ -222,10 +222,22 @@ function withinRoot(root: string, target: string): string {
   const rel = relative(root, absolute);
   const escapes = rel.startsWith("..") || isAbsolute(rel) || resolve(root, rel) !== absolute;
   const realRoot = existsSync(root) ? realpathSync.native(root) : root;
-  const realTarget = existsSync(absolute) ? realpathSync.native(absolute) : undefined;
-  const escapesByLink =
-    realTarget !== undefined &&
-    (relative(realRoot, realTarget).startsWith("..") || isAbsolute(relative(realRoot, realTarget)));
+  /*
+   * The real path of the nearest thing that exists. A file about to be
+   * created has no real path, but the directory it goes in does — and a
+   * junction there points wherever it likes. Checking only the final file,
+   * only when it already existed, let a new file be written outside the
+   * root through a link inside it.
+   */
+  let existing = absolute;
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  const realExisting = existsSync(existing) ? realpathSync.native(existing) : existing;
+  const outside = relative(realRoot, realExisting);
+  const escapesByLink = outside.startsWith("..") || isAbsolute(outside);
   if (escapes || escapesByLink) {
     throw new CompileError(
       `Refusing to touch ${absolute}: it is outside ${root}, which this server is limited to.`,

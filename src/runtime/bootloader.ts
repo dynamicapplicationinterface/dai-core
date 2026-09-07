@@ -906,16 +906,61 @@ function bridgeMain(): void {
   const autosaves = Boolean(host.hosted);
   let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
   let autosaveDb: Any | null = null;
+  let saving: Promise<unknown> | null = null;
+  let failures = 0;
+  let saveStatus: "idle" | "saving" | "saved" | "failed" = "idle";
   const AUTOSAVE_DELAY_MS = 800;
+  const RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000];
+
+  /*
+   * The host is told where the data stands, so it can show it. "Saved" means
+   * the host acknowledged the write; "failed" means it did not — a full
+   * quota, a locked file, a store that refused — and the pending state is
+   * kept, retried on a widening schedule, and never quietly dropped. An app
+   * used to advertise saving while its changes sat in memory.
+   */
+  const tellSaveStatus = (state: typeof saveStatus, error?: string): void => {
+    saveStatus = state;
+    try {
+      window.parent.postMessage({ type: "dai:save-state", state, error }, "*");
+    } catch {
+      /* No parent listening; the status is still readable on the api. */
+    }
+  };
+
   const flushAutosave = (): Promise<unknown> | undefined => {
     if (autosaveTimer !== undefined) {
       clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
     }
-    if (!autosaveDb) return undefined;
+    if (!autosaveDb) return saving ?? undefined;
+    // One save in flight at a time; a write during a save is saved after it.
+    if (saving) return saving.then((): Promise<unknown> | undefined => flushAutosave());
     const db = autosaveDb;
     autosaveDb = null;
-    return saveState(exportDatabase(db), { method: "auto" }).catch(() => undefined);
+    tellSaveStatus("saving");
+    saving = saveState(exportDatabase(db), { method: "auto" }).then(
+      (result: Any) => {
+        saving = null;
+        if (result && result.saved === false) throw new Error(String(result.method || "the host did not save"));
+        failures = 0;
+        tellSaveStatus("saved");
+      },
+      (error: unknown) => {
+        saving = null;
+        // Kept, not dropped: the data is still only here.
+        if (!autosaveDb) autosaveDb = db;
+        const delay = RETRY_DELAYS_MS[Math.min(failures, RETRY_DELAYS_MS.length - 1)] as number;
+        failures += 1;
+        tellSaveStatus("failed", error instanceof Error ? error.message : String(error));
+        if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(() => {
+          autosaveTimer = undefined;
+          void flushAutosave();
+        }, delay);
+      },
+    );
+    return saving;
   };
   const scheduleAutosave = (db: Any): void => {
     if (!autosaves) return;
@@ -925,6 +970,25 @@ function bridgeMain(): void {
       autosaveTimer = undefined;
       void flushAutosave();
     }, AUTOSAVE_DELAY_MS);
+  };
+
+  /**
+   * A fingerprint of what is stored, cheap enough to take around every
+   * statement: rows changed since the connection opened, and the schema's own
+   * version, which SQLite bumps only when the schema actually changes — so a
+   * CREATE TABLE IF NOT EXISTS that created nothing is a read.
+   */
+  const storedState = (db: Any): string => {
+    let changes = -1;
+    let schema = -1;
+    try {
+      if (typeof db.changes === "function") changes = db.changes(true) as number;
+      if (typeof db.selectValue === "function") schema = db.selectValue("PRAGMA schema_version") as number;
+    } catch {
+      /* A closed handle, or a statement mid-flight: treated as changed. */
+      return String(Math.random());
+    }
+    return `${changes}:${schema}`;
   };
   /*
    * The SQL the document carries, run by the runtime and not by luck.
@@ -979,8 +1043,14 @@ function bridgeMain(): void {
     if (!autosaves || typeof db.exec !== "function") return db;
     const exec = db.exec.bind(db);
     db.exec = (...args: Any[]): Any => {
+      // Only a write schedules a save. The read helpers go through exec too,
+      // and a first version saved after every SELECT — a document redrawn
+      // every second was being written to storage every second. SQLite's own
+      // change counter says whether rows moved, and the schema version whether
+      // the schema did.
+      const before = storedState(db);
       const result = exec(...args);
-      scheduleAutosave(db);
+      if (storedState(db) !== before) scheduleAutosave(db);
       return result;
     };
     return db;
@@ -1219,8 +1289,10 @@ function bridgeMain(): void {
     openDatabase: (options?: { pageSize?: number }): Promise<Any> =>
       openDatabase(options).then((db: Any) => {
         if (!declaresSchema) {
+          // Watched first, so the seed rows a first open inserts are saved.
+          watched(db);
           runDocumentSql(db);
-          return watched(db);
+          return db;
         }
         // Closed before the error propagates: an application asking for a
         // handle to data it cannot account for does not get one, which is the
@@ -1229,8 +1301,9 @@ function bridgeMain(): void {
         // then fills in what is not.
         return reconcileSchema(db).then(
           () => {
+            watched(db);
             runDocumentSql(db);
-            return watched(db);
+            return db;
           },
           (error: Error) => {
             db.close();
@@ -1240,6 +1313,10 @@ function bridgeMain(): void {
       }),
     /** Whether every write is saved as it happens. True under a host. */
     autosaves: autosaves,
+    /** Where the data stands: idle, saving, saved, or failed (kept, and retried). */
+    get saveStatus() {
+      return saveStatus;
+    },
     /** Page size declared by a serialized database, read from its header. */
     pageSizeOf: (bytes: Uint8Array) => {
       if (bytes.byteLength < 20) return 0;
@@ -2060,6 +2137,14 @@ async function boot(): Promise<void> {
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
       window.parent.postMessage({ type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id }, "*");
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:save-state") {
+      const status = event.data as { state?: string; error?: string };
+      window.parent.postMessage(
+        { type: "DAI_HOST_SAVE_STATE", sessionNonce, state: status.state, error: status.error },
+        "*",
+      );
       return;
     }
 

@@ -44,7 +44,7 @@ export const PUBLISHED_TEST_KEYS: Readonly<Record<string, string>> = {
  */
 export function isPublishedTestKey(publicKey: string | undefined): boolean {
   if (!publicKey) return false;
-  return Object.hasOwn(PUBLISHED_TEST_KEYS, publicKey.replace(/\s+/g, ""));
+  return Object.prototype.hasOwnProperty.call(PUBLISHED_TEST_KEYS, publicKey.replace(/\s+/g, ""));
 }
 
 /** What to call it, for a message that has to say which one. */

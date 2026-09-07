@@ -87,11 +87,23 @@ self.addEventListener("install", (event) => {
   );
 });
 
+/*
+ * What an update may throw away: earlier versions of *this* cache, and
+ * nothing else. The document icons and manifests, and a share parked between
+ * the share sheet and the page, live in caches of their own with lives of
+ * their own — and a sweep that deleted everything but the current shell
+ * cache erased every home-screen manifest on every update, and any share
+ * that happened to be in flight.
+ */
+const OURS = "dai-runner-";
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then((keys) =>
+        Promise.all(keys.filter((key) => key.startsWith(OURS) && key !== CACHE).map((key) => caches.delete(key))),
+      )
       .then(() => self.clients.claim()),
   );
 });

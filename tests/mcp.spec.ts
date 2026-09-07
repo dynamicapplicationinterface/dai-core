@@ -263,6 +263,31 @@ test.describe("the boundary", () => {
   });
 });
 
+test.describe("a link inside the root", () => {
+  test("a new file under a junction that points outside is refused", async () => {
+    test.skip(process.platform !== "win32", "directory junctions are Windows");
+    // The final file did not exist, so nothing had a real path to check —
+    // and the directory it was going into was a junction to somewhere else.
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = workspace();
+    const elsewhere = mkdtempSync(join(tmpdir(), "dai-elsewhere-"));
+    execFileSync("cmd", ["/c", "mklink", "/J", join(root, "linked"), elsewhere], { stdio: "ignore" });
+
+    const result = await call(root, "create_dai_app", {
+      files: { "index.html": APP },
+      appName: "Escape",
+      outputPath: "linked/new.dai.html",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/outside/i);
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(elsewhere, "new.dai.html"))).toBe(false);
+  });
+});
+
 test.describe("verify_dai_app", () => {
   test("passes an intact container and fails an altered one", async () => {
     const root = workspace();
