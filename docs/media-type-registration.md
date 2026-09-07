@@ -17,26 +17,44 @@ Fill in the two bracketed fields and paste the rest as it stands.
 
 **Optional parameters:** none
 
+**Object identifier(s):** none
+
 **Encoding considerations:** binary. The file is a sectioned container: a
 header, a section table, page-aligned sections holding a JSON manifest, a zip
-archive of the application, and a SQLite database, and a 64-byte footer.
+archive of the application, and a SQLite database, and a 64-byte footer
+carrying a write generation and the SHA-256 digest of the database section.
 
-**Security considerations:** A DAI container carries executable content (an
-HTML application) intended to run inside a host that applies the isolation in
-the format's specification §4: an opaque-origin sandboxed frame with a Content
-Security Policy that permits no network connection of any kind. A host that
-does not apply that isolation MUST NOT execute the content. The manifest
-carries SHA-256 digests of every entry and MAY carry an ECDSA P-256 signature
-over them in a COSE_Sign1 envelope; a host MUST verify digests before running
-anything and MUST verify the signature when a key is present. Verification
-proves the file is unchanged since signing, not who signed it; the
-specification §8 and §9.6 describe what a host may and may not claim about a
-publisher. The container includes a SQLite database, which the application may
-read and write; it includes no capability to reach the network, the filesystem
-beyond the file itself, or other origins. The format does not use active
-content in the manifest. Privacy: the file may contain personal data the
-application stored; it contains no tracking, and the format specifies that a
-host sends nothing on open.
+**Security considerations:** A DAI container carries executable content: an
+HTML application intended to run only inside a host that applies the
+isolation defined in §4 of the specification, namely an opaque-origin
+sandboxed frame under a Content Security Policy that permits no network
+connection of any kind. A host that does not apply that isolation MUST NOT
+execute the content.
+
+The container is a sectioned binary file holding a JSON manifest, a zip
+archive of the application, and a SQLite database. The manifest carries
+SHA-256 digests of every archive entry and MAY carry an ECDSA P-256 signature
+over them in a COSE_Sign1 envelope. A host MUST verify every digest before
+running anything and MUST verify the signature when a key is present. The
+signature covers the manifest and the application, not the database; the
+database section is verified separately against a SHA-256 digest held in the
+file's footer, and a host MUST check it. Verification proves the file is
+unchanged since it was signed, not who signed it. §8 and §9.6 of the
+specification describe what a host may and may not claim about a publisher.
+
+Because the archive must be inflated before its manifest can be checked, a
+reader MUST bound decompression by the declared size of each entry, the
+declared total, and the entry count, and MUST refuse a file that exceeds
+those bounds rather than allocate for it. The manifest contains no active
+content.
+
+The application may read and write the SQLite database. The format grants it
+no capability to reach the network, the filesystem beyond the file itself, or
+other origins.
+
+Privacy: the file may contain personal data the application stored. It
+contains no tracking, and the specification requires that a host send nothing
+on open.
 
 **Interoperability considerations:** The format is versioned by
 `manifestVersion` in the manifest. Readers accept versions 2 and 3 and refuse
@@ -56,7 +74,7 @@ line tool; any host implementing the specification.
 **Additional information:**
 
 - Deprecated alias names for this type: none
-- Magic number(s): the first four bytes are `DAI1` (0x44 0x41 0x49 0x31)
+- Magic number(s): the first four bytes are 0x44 0x41 0x49 0x00 (`DAI` and a zero byte); the last four are 0x00 0x49 0x41 0x44
 - File extension(s): `.dai`
 - Macintosh file type code(s): none
 
