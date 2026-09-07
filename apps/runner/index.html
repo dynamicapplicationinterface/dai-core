@@ -191,8 +191,6 @@
         -webkit-font-smoothing: antialiased;
         display: flex;
         flex-direction: column;
-        padding-top: env(safe-area-inset-top);
-        padding-bottom: env(safe-area-inset-bottom);
         overscroll-behavior: none;
       }
       /*
@@ -201,9 +199,9 @@
        * `navigator.standalone` and not the media query.
        */
       @media (display-mode: standalone), (display-mode: fullscreen) {
-        body { bottom: 0; height: auto; padding-bottom: 0; }
+        body { bottom: 0; height: auto; }
       }
-      html.standalone body { bottom: 0; height: auto; padding-bottom: 0; }
+      html.standalone body { bottom: 0; height: auto; }
       /* While a document is open, the edges of the screen are its colour. */
       body.loaded { background: var(--app-ground, var(--bg)); }
 
@@ -216,35 +214,40 @@
        * people who built it. Somebody trying the thing for the first time reads
        * "Eject" and "Export Container" and concludes this is not for them.
        */
+      /*
+       * Not a bar. One control, floating over the application.
+       *
+       * Every version of this so far reserved a strip across the top and put
+       * the application underneath it, and beside a real installed app the
+       * strip was the thing that gave it away: a phone's own apps run to all
+       * four edges and float what little chrome they need on top. Apple's
+       * Passwords does it, and so does the page this was being written on —
+       * one round translucent button in the corner, and the content scrolling
+       * behind it.
+       *
+       * So the application gets the whole screen, under the status bar and
+       * down to the home indicator, and what is left of this app is a menu
+       * button in the corner. No name and no icon beside it: the application
+       * has its own, drawn the way its author drew it, and two of anything is
+       * one too many.
+       */
       header {
+        position: fixed;
+        top: 0;
+        right: 0;
+        z-index: 6;
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 12px 16px;
-        background: var(--chrome);
-        border-bottom: 1px solid var(--line);
-        flex: 0 0 auto;
+        gap: 8px;
+        padding: calc(env(safe-area-inset-top) + 7px) calc(env(safe-area-inset-right) + 10px) 0 0;
+        pointer-events: none;
       }
-      /*
-       * While a document is open there is no rule under the bar.
-       *
-       * A line across the screen is what makes a strip read as a frame around
-       * something rather than as part of it. The application below has its own
-       * header and its own colour; this stops competing with it.
-       */
-      body.loaded header { border-bottom: 0; }
-      header .spacer { flex: 1; }
-      /* No document, no header: the empty screen carries its own one control. */
+      header > * { pointer-events: auto; }
+      header .spacer { display: none; }
+      /* No document, no menu: the empty screen carries its own one control. */
       body:not(.loaded):not(.launching) header { display: none; }
-
-      body.loaded header,
-      body.launching header {
-        padding: 0 4px 0 12px;
-        min-height: 38px;
-        gap: 6px;
-      }
-      /* The name is in the menu, under the same icon: see #sheet-name. */
-      body.loaded #title, body.launching #title { display: none; }
+      /* The name and the icon are in the menu; the application has its own. */
+      #title, #title-icon { display: none; }
       body.loaded #open,
       body.launching #open { display: none; }
       /* Launching into a document: its header, and no chooser underneath. */
@@ -288,18 +291,55 @@
       }
       #save-state[hidden] { display: none; }
       #save-state[data-state="saving"] { color: var(--muted); }
+      /*
+       * Nothing on screen until there is something wrong.
+       *
+       * Saving and Saved were the last text in the corner, and reassurance
+       * that never leaves is furniture. What has to be seen is a save that did
+       * not happen: that is not reassurance, it is somebody's work sitting in
+       * memory, and the menu it points at is where Save a copy is. So this is
+       * off the screen entirely except when it says so — on the same
+       * translucent ground as the menu, because it floats over the same
+       * unknown surface.
+       */
+      #save-state { display: none; }
+      #save-state[data-state="failed"] {
+        display: inline-flex;
+        align-items: center;
+        -webkit-backdrop-filter: saturate(180%) blur(14px);
+        backdrop-filter: saturate(180%) blur(14px);
+        box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
+      }
+      #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
 
+      /*
+       * The one control, over whatever the application is drawing.
+       *
+       * Translucent and blurred rather than filled, because it sits on a
+       * surface this app does not choose and cannot know the colour of: a
+       * red banner, a photograph, a dark deck. The blur takes its contrast
+       * from whatever is behind it, which is what every phone does with a
+       * control that floats.
+       */
       #more {
-        width: 36px;
+        width: 34px;
+        height: 34px;
         padding: 0;
-        font-size: 18px;
+        font-size: 17px;
         line-height: 1;
-        background: transparent;
-        border-color: transparent;
-        color: var(--accent);
+        border-radius: 999px;
+        border: 0;
+        color: var(--text);
+        background: color-mix(in srgb, var(--surface) 62%, transparent);
+        -webkit-backdrop-filter: saturate(180%) blur(14px);
+        backdrop-filter: saturate(180%) blur(14px);
+        box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
       }
-      #more:hover { background: var(--surface-2); }
+      @supports not (backdrop-filter: blur(1px)) {
+        #more { background: var(--surface); }
+      }
+      #more:hover { background: var(--surface); }
       body:not(.loaded) #more { display: none; }
 
       /* ------------------------------------------------------------ sheet */
@@ -371,9 +411,12 @@
 
       main { flex: 1 1 auto; position: relative; overflow: hidden; }
 
+      /* The chooser is this app's own screen, so it keeps clear of the edges. */
       #slot {
         position: absolute;
         inset: 0;
+        padding-top: calc(24px + env(safe-area-inset-top));
+        padding-bottom: calc(24px + env(safe-area-inset-bottom));
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -565,6 +608,9 @@
       #launch {
         position: absolute;
         inset: 0;
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        box-sizing: border-box;
         z-index: 2;
         display: none;
         flex-direction: column;
@@ -621,7 +667,8 @@
         margin: 0 auto;
         display: flex;
         flex-direction: column;
-        padding: 0 0 30px;
+        /* The open screen is this app's own, and clears the island and the bar. */
+        padding: env(safe-area-inset-top) 0 calc(30px + env(safe-area-inset-bottom));
         text-align: left;
       }
       .card-head { display: flex; gap: 16px; align-items: flex-start; padding: 24px 22px 16px; }

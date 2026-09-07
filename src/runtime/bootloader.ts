@@ -1232,10 +1232,40 @@ function bridgeMain(): void {
       });
       return;
     }
+    /*
+     * Where the edges of the screen are.
+     *
+     * `env(safe-area-inset-*)` is zero in an iframe, always, and an
+     * application runs two frames down. Since the host stopped reserving a
+     * strip at the top and gave the whole screen to the application, the
+     * application is the thing drawing under a status bar and a home
+     * indicator, and it has no way of its own to find out where they are.
+     * The host measures them and they arrive here, as custom properties an
+     * application can pad with:
+     *
+     *   header { padding-top: calc(12px + var(--dai-safe-top, 0px)); }
+     *
+     * Absent on a host that does not send them, which is what the fallback in
+     * `var()` is for.
+     */
+    if (data.type === "dai:insets") {
+      const insets = data as unknown as Record<string, unknown>;
+      for (const edge of ["top", "right", "bottom", "left"]) {
+        const value = insets[edge];
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+          document.documentElement.style.setProperty(`--dai-safe-${edge}`, `${Math.round(value)}px`);
+        }
+      }
+      return;
+    }
     if (data.type !== "dai:appmode") return;
     appMode = !!data.active;
     appModeListeners.forEach((listener) => listener(appMode));
   });
+
+  // Now that there is something listening, ask. The host knew these at the
+  // handshake, which was before this frame existed.
+  window.parent.postMessage({ type: "dai:insets?" }, "*");
 
   const api: Any = {
     version: host.version,
@@ -1693,6 +1723,9 @@ function handshakeScript(): string {
   );
 }
 
+/** The last screen insets the host told this shell, for an application that asks. */
+let knownInsets: Record<string, number> = {};
+
 function mount(srcdoc: string): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   frame.id = "dai-app";
@@ -2019,6 +2052,46 @@ async function boot(): Promise<void> {
     }
 
     /*
+     * What the host says to this shell, rather than the application to it.
+     *
+     * Above the guard below deliberately. That guard drops every message that
+     * did not come from the mounted frame, and these two come from the window
+     * this shell is embedded in — so sitting under it they were never reached
+     * at all. The flush relay had been dead the whole time it was there: the
+     * host asked, nothing answered, and its 2.5 second wait expired and let
+     * the share go with whatever the last automatic save happened to hold.
+     */
+    const fromHost = event.data as { type?: string; id?: string };
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_FLUSH") {
+      // The host is packaging this document to share it and wants what the
+      // person sees, not the last autosave. The answer comes back the same way.
+      frame.contentWindow?.postMessage({ type: "dai:flush", id: fromHost.id }, "*");
+      return;
+    }
+    /*
+     * The screen's edges, measured by the host, which is the only document of
+     * the three that can see them. Kept here for this shell's own chrome, and
+     * because the application asks for them when it is ready rather than being
+     * told once: the host knows them at the handshake, which is before the
+     * application's frame has a listener, and a message sent then is a message
+     * nobody hears.
+     */
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_INSETS") {
+      const insets = event.data as unknown as Record<string, unknown>;
+      const passed: Record<string, number> = {};
+      for (const edge of ["top", "right", "bottom", "left"]) {
+        const value = insets[edge];
+        if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+          passed[edge] = Math.round(value);
+          document.documentElement.style.setProperty(`--dai-safe-${edge}`, `${Math.round(value)}px`);
+        }
+      }
+      knownInsets = passed;
+      frame.contentWindow?.postMessage({ type: "dai:insets", ...passed }, "*");
+      return;
+    }
+
+    /*
      * Everything below this line is the application talking to its own shell,
      * and is acted on only when it came from the frame this shell mounted.
      *
@@ -2127,13 +2200,11 @@ async function boot(): Promise<void> {
       return;
     }
 
-    // A flush, relayed: the host asks the shell, the shell asks the frame,
-    // and the frame's answer comes back the same way. A share that packages
-    // the document before the last edit has landed would send the wrong
-    // state; this is how the host waits for the right one.
     const relay = event.data as { type?: string; id?: string };
-    if (event.source === window.parent && relay?.type === "DAI_HOST_FLUSH") {
-      frame.contentWindow?.postMessage({ type: "dai:flush", id: relay.id }, "*");
+    // Asked for by the application as it starts, and answered with whatever
+    // the host has said so far.
+    if (event.source === frame.contentWindow && relay?.type === "dai:insets?") {
+      frame.contentWindow?.postMessage({ type: "dai:insets", ...knownInsets }, "*");
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {

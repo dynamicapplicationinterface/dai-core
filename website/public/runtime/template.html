@@ -61,8 +61,14 @@
   <style>
     :root { color-scheme: light dark; }
     html, body { margin: 0; height: 100%; overflow: hidden; }
-    /* Keep the shell's own chrome clear of the notch and home indicator. */
-    #dai-app-mode { top: max(10px, env(safe-area-inset-top)); }
+    /*
+     * Out of the top-right corner.
+     *
+     * The host floats its own menu there now, over the application, the way a
+     * phone floats what little chrome it needs. Two round controls in one
+     * corner is one too many, and this is the one somebody reaches for least.
+     */
+    #dai-app-mode { bottom: max(10px, env(safe-area-inset-bottom)); }
     body {
       font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       background: Canvas;
@@ -84,7 +90,7 @@
     */
     #dai-app-mode {
       position: fixed;
-      top: 10px;
+      bottom: 10px;
       right: max(10px, env(safe-area-inset-right));
       z-index: 2147483647;
       padding: 6px 12px;

@@ -420,8 +420,13 @@ test.describe("mobile shell", () => {
 
   test("keeps the shell control clear of the safe area", async () => {
     const built = await buildContainer(minimalInput());
-    // Without insets the App Mode button sits under the notch on a phone.
-    expect(built.html).toContain("env(safe-area-inset-top)");
+    /*
+     * Without insets the App Mode button sits under the home indicator on a
+     * phone. It is at the bottom now: the host floats its own menu in the top
+     * right, over the application, and two round controls in one corner is
+     * one too many.
+     */
+    expect(built.html).toContain("env(safe-area-inset-bottom)");
     expect(built.html).toContain("env(safe-area-inset-right)");
   });
 });

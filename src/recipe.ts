@@ -152,7 +152,19 @@ Then three lines saying what it does, each in its own tag:
 
 Exactly what somebody would tell a friend about it, one thing per line, under 90 characters each, starting with a verb. These are the whole of what the person sees before they open it, so write the three things that would make them want to — not the technology, not the format, not what it cannot do. Three, or none: two is a page with a gap in it.
 
-Beside it, <meta name="theme-color" content="…"> with the app's own background colour. On a phone the strips under the status bar and the home indicator are painted in it, so the app reaches the edges of the screen instead of sitting in a grey frame.
+Beside it, <meta name="theme-color" content="…"> with the app's own background colour.
+
+THE WHOLE SCREEN IS YOURS
+The app is drawn edge to edge on a phone — under the status bar at the top and the home indicator at the bottom, the way a phone's own apps are. Four custom properties say how much of each edge is covered, and they are set for you before the app draws:
+
+  --dai-safe-top, --dai-safe-right, --dai-safe-bottom, --dai-safe-left
+
+Anything that must stay readable near an edge pads itself with them, and falls back to zero on a screen with nothing in the way:
+
+  header { padding-top: calc(16px + var(--dai-safe-top, 0px)); }
+  .bottom-bar { padding-bottom: calc(12px + var(--dai-safe-bottom, 0px)); }
+
+Backgrounds and images should run past those edges rather than stop at them: filling the screen is the point. Leave the top right corner of the screen clear of anything tappable — the host floats one small round button there, over the app. On a phone the strips under the status bar and the home indicator are painted in it, so the app reaches the edges of the screen instead of sitting in a grey frame.
 
 HOW TO HAND IT OVER
 If you can attach files, a zip of the files is best. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
@@ -193,6 +205,7 @@ BEFORE YOU ANSWER, CHECK
 - No Save button, no dirty flag, no localStorage. One <dai-save> at the bottom, or none.
 - No URL is fetched. No CDN. Every <script> with await is type="module".
 - icon.svg exists; index.html has a <meta name="description"> line and three <meta name="dai:does"> lines.
+- Anything pinned to a screen edge pads with var(--dai-safe-*, 0px), and nothing tappable sits in the top right corner.
 - The files are handed over as a tool call or as ONE fenced bundle, in the shape above.`;
 
 /** One line each, for a reader who wants the surface rather than the argument. */

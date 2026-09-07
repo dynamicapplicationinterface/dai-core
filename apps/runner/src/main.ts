@@ -92,6 +92,52 @@ function say(message: string, isError = false): void {
  * carries something to open (see index.html). Taken off here when there is
  * nothing to open after all, so the chooser is back for the person to use.
  */
+/**
+ * The screen's edges, measured, for the document that is drawing to them.
+ *
+ * This page is the only one of the three that can see
+ * `env(safe-area-inset-*)` — the value is zero in an iframe, and the
+ * application is two frames down. It used to not matter, because this app
+ * reserved a strip at the top and padded the bottom, and the application was
+ * handed a rectangle that was already clear of both. It has the whole screen
+ * now, so it is the thing drawing under the status bar, and these are the
+ * numbers it needs to keep its own header out from under one.
+ *
+ * Read from a probe rather than a stylesheet, because `env()` resolves only
+ * where it is used. Sent on mount and again whenever the screen changes
+ * shape, which is what a rotation is.
+ */
+function screenInsets(): { top: number; right: number; bottom: number; left: number } {
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;" +
+    "padding-top:env(safe-area-inset-top);padding-right:env(safe-area-inset-right);" +
+    "padding-bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);";
+  document.body.appendChild(probe);
+  const style = getComputedStyle(probe);
+  const read = (value: string): number => {
+    const found = Number.parseFloat(value);
+    return Number.isFinite(found) && found >= 0 ? found : 0;
+  };
+  const insets = {
+    top: read(style.paddingTop),
+    right: read(style.paddingRight),
+    bottom: read(style.paddingBottom),
+    left: read(style.paddingLeft),
+  };
+  probe.remove();
+  return insets;
+}
+
+function tellInsets(): void {
+  const target = cartridgeFrame.contentWindow;
+  if (!target || !mountedNonce) return;
+  target.postMessage({ type: "DAI_HOST_INSETS", ...screenInsets() }, "*");
+}
+
+window.addEventListener("resize", () => tellInsets());
+window.addEventListener("orientationchange", () => tellInsets());
+
 /** Hides "Saved" again a few seconds after it appears. See DAI_HOST_SAVE_STATE. */
 let savedFor: number | undefined;
 
@@ -1055,6 +1101,10 @@ window.addEventListener("message", (event) => {
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+
+    // Where the edges of the screen are. The application draws to them now,
+    // and is the one document that cannot measure them. See tellInsets.
+    tellInsets();
 
     /*
      * How long the container took to become usable, on this device.
