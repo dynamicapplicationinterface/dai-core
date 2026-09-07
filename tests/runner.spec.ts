@@ -944,11 +944,27 @@ test.describe("keeping it", () => {
     await expect(page.locator("#cartridge")).toHaveCSS("opacity", "1");
   });
 
-  test("the action is in the header while a document is open, in the device's words", async ({ page }) => {
+  test("the action is in the menu while a document is open, in the device's words", async ({ page }) => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
+
+    /*
+     * Not in the bar over the application.
+     *
+     * It was a filled pill up there, and beside a home-screen app the whole
+     * strip read as somebody else's chrome wrapped around the thing somebody
+     * opened. What is left in the bar is the document's icon and the way to
+     * its menu, and the menu wears a dot while this is on offer.
+     */
+    await expect(page.locator("#more")).toBeVisible();
+    await expect(page.locator("#title")).toBeHidden();
+    await expect(
+      page.locator("#more").evaluate((el) => getComputedStyle(el, "::after").content),
+    ).resolves.not.toBe("none");
+
+    await page.click("#more");
     // Named literally. "Install" is a word for something that does not happen
     // here, and somebody following it would look for a button that is not there.
     await expect(page.locator("#keep-cta")).toBeVisible();
@@ -972,7 +988,10 @@ test.describe("keeping it", () => {
      */
     await page.waitForURL(/[?&]doc=/, { timeout: 60_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.click("#more");
     await page.locator("#keep-cta").click();
+    // One sheet at a time: the menu goes when the gesture comes up over it.
+    await expect(page.locator("#sheet")).toBeHidden();
     await expect(page.locator("#keep-sheet")).toBeVisible({ timeout: 60_000 });
     await expect(page.locator("#keep-title")).toContainText(/Add .* to your Home Screen/);
     await expect(page.locator("#keep-steps")).toContainText("Share");
@@ -983,6 +1002,7 @@ test.describe("keeping it", () => {
     await page.locator("#keep-done").click();
     await expect(page.locator("#keep-sheet")).toBeHidden();
     // Already there: a second tap shows the gesture again without a reload.
+    await page.click("#more");
     await page.locator("#keep-cta").click();
     await expect(page.locator("#keep-sheet")).toBeVisible();
   });
@@ -1013,6 +1033,10 @@ test.describe("keeping it", () => {
 
     await useIt(page);
     await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);
+    // And what a person sees is the menu's dot, since the control is inside it.
+    await expect(
+      page.locator("#more").evaluate((el) => getComputedStyle(el, "::after").content),
+    ).resolves.not.toBe("none");
 
     // The whole difference between a hint and a nag.
     await page.reload();
@@ -1063,6 +1087,7 @@ test.describe("keeping it, per device", () => {
     await openFile(page, CONTAINER);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await expect(page.locator("#keep-cta")).toHaveText(/Keep/);
+    await page.click("#more");
     await page.click("#keep-cta");
     // No install prompt in a test browser, so the steps appear instead.
     await expect(page.locator("#keep-sheet")).toBeVisible();

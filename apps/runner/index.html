@@ -195,16 +195,26 @@
         border-bottom: 1px solid var(--line);
         flex: 0 0 auto;
       }
+      /*
+       * While a document is open there is no rule under the bar.
+       *
+       * A line across the screen is what makes a strip read as a frame around
+       * something rather than as part of it. The application below has its own
+       * header and its own colour; this stops competing with it.
+       */
+      body.loaded header { border-bottom: 0; }
       header .spacer { flex: 1; }
       /* No document, no header: the empty screen carries its own one control. */
       body:not(.loaded):not(.launching) header { display: none; }
 
       body.loaded header,
       body.launching header {
-        padding: 0 6px 0 14px;
-        min-height: 44px;
+        padding: 0 4px 0 12px;
+        min-height: 38px;
         gap: 6px;
       }
+      /* The name is in the menu, under the same icon: see #sheet-name. */
+      body.loaded #title, body.launching #title { display: none; }
       body.loaded #open,
       body.launching #open { display: none; }
       /* Launching into a document: its header, and no chooser underneath. */
@@ -372,33 +382,35 @@
       #title-icon { border-radius: 7px; background: var(--surface-2); flex: 0 0 auto; }
       #title-icon[hidden], body:not(.loaded):not(.launching) #title-icon { display: none; }
 
-      /* The one filled control while a document is open. */
-      #keep-cta {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 7px 13px;
-        border-radius: 999px;
-        border: 0;
-        background: var(--accent);
-        color: var(--on-accent);
-        font-weight: 600;
-        font-size: 13px;
-        white-space: nowrap;
-        flex: 0 0 auto;
-      }
-      #keep-cta:hover { background: var(--accent-press); }
-      #keep-cta svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      /* A menu item, in the accent, because it is the one the menu is for. */
+      #keep-cta { color: var(--accent); font-weight: 600; }
       #keep-cta[hidden], body:not(.loaded) #keep-cta { display: none; }
+
+      /*
+       * A dot on the menu while keeping it is on offer.
+       *
+       * The control used to be its own filled pill in the bar; moving it into
+       * the menu without leaving a mark would have made the one gesture no
+       * browser teaches invisible. A dot is as much of the screen as it needs.
+       */
+      body:has(#keep-cta:not([hidden])) #more { position: relative; }
+      body:has(#keep-cta:not([hidden])) #more::after {
+        content: "";
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
       /* Once, after the first use: the eye goes to it and nothing interrupts. */
       @keyframes keep-nudge {
-        0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgb(0 122 255 / 0.45); }
-        40% { transform: scale(1.06); box-shadow: 0 0 0 8px rgb(0 122 255 / 0); }
+        0%, 100% { transform: scale(1); }
+        40% { transform: scale(1.5); }
       }
-      #keep-cta.nudge { animation: keep-nudge 900ms ease-out 2; }
-      @media (prefers-reduced-motion: reduce) { #keep-cta.nudge { animation: none; } }
-      /* On a narrow screen the name gives way to the action, not the reverse. */
-      @media (max-width: 380px) { #keep-cta { padding: 7px 11px; font-size: 12.5px; } }
+      body:has(#keep-cta.nudge) #more::after { animation: keep-nudge 900ms ease-out 2; }
+      @media (prefers-reduced-motion: reduce) { body:has(#keep-cta.nudge) #more::after { animation: none; } }
 
       #keep-sheet[hidden] { display: none; }
       #keep-sheet {
@@ -779,6 +791,16 @@
       different document from inside this one — a document arrives from a
       message or a file, the way documents do.
     -->
+    <!--
+      A bar, not a frame.
+
+      Beside a home-screen app this read as somebody else's chrome wrapped
+      around the application: an icon, the name again, a filled blue pill and
+      a menu, above an application that already has its own header. What is
+      left is what only this page can offer — which document is open, and the
+      way to its menu. The name is in the menu, under the same icon; keeping
+      it on the home screen is the menu's first item.
+    -->
     <header>
       <img id="title-icon" alt="" width="26" height="26" hidden />
       <span id="title"></span>
@@ -789,20 +811,6 @@
       -->
       <button id="save-state" type="button" hidden></button>
       <span class="spacer"></span>
-      <!--
-        The one action, where the thumb already is.
-
-        A document somebody has just watched run is, to them, a web page. The
-        thing that makes it theirs — an icon that opens it, offline, with its
-        own name — is a gesture no browser will show them. So it is the one
-        filled control on the screen while a document is open, in the words
-        the device uses, and it stays there; a control is not a question, so
-        there is nothing to dismiss. See install.ts for what it does per device.
-      -->
-      <button id="keep-cta" type="button" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 9v6M9 12h6"/></svg>
-        <span id="keep-cta-label">Add to Home Screen</span>
-      </button>
       <button id="more" type="button" aria-label="More" aria-haspopup="dialog">&#8943;</button>
     </header>
 
@@ -881,6 +889,20 @@
           other person taps and is in it — not a file that opens in a viewer
           which cannot run it. The sheet behind this says what will travel.
         -->
+        <!--
+          Keeping it, first.
+
+          This was a filled pill in the bar at the top, on the theory that the
+          one thing a person cannot discover on their own should be the one
+          thing on screen. It was also the widest object in a strip of somebody
+          else's chrome above an application that had its own header, and the
+          screen is what the application is for. So it is here, at the top of
+          the menu, and the menu carries a dot while it is being offered.
+        -->
+        <button id="keep-cta" type="button" class="with-glyph" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 9v6M9 12h6"/></svg>
+          <span id="keep-cta-label">Add to Home Screen</span>
+        </button>
         <button id="send" type="button" class="with-glyph">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/></svg>
           <span>Share app</span>

@@ -92,6 +92,9 @@ function say(message: string, isError = false): void {
  * carries something to open (see index.html). Taken off here when there is
  * nothing to open after all, so the chooser is back for the person to use.
  */
+/** Hides "Saved" again a few seconds after it appears. See DAI_HOST_SAVE_STATE. */
+let savedFor: number | undefined;
+
 /**
  * The hosts this opener has been, for a link made against one of them.
  *
@@ -1112,6 +1115,17 @@ window.addEventListener("message", (event) => {
     el.hidden = state === "idle";
     el.textContent = state === "saving" ? "Saving…" : state === "saved" ? "Saved" : state === "failed" ? "Not saved" : "";
     el.title = state === "failed" && typeof data.error === "string" ? data.error : "";
+    /*
+     * "Saved" says its piece and goes.
+     *
+     * A word that stays is a word somebody reads once and then looks past,
+     * and it was the only text left in a bar that is otherwise an icon and a
+     * menu. Saving and Not saved stay up, because one is still happening and
+     * the other is still true. The text is left on the element when it goes,
+     * so what it last said can still be read from the page.
+     */
+    window.clearTimeout(savedFor);
+    if (state === "saved") savedFor = window.setTimeout(() => { el.hidden = true; }, 3000);
     if (state === "failed") {
       say(
         `This document could not be saved on this device${typeof data.error === "string" ? ` (${data.error})` : ""}. ` +
@@ -1237,6 +1251,10 @@ document.addEventListener("keydown", (event) => {
  * data and its trust pin. A copy saved or sent is untouched, and the
  * question says so.
  */
+// Keeping it is a menu item now, and what it opens is a sheet of its own:
+// the menu closes rather than stacking one sheet on another.
+document.getElementById("keep-cta")?.addEventListener("click", () => closeSheet());
+
 document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
   if (!loaded) return;
