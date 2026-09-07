@@ -317,7 +317,29 @@ function parseSectioned(bytes: Uint8Array, options: ParseOptions = {}): ParsedCo
   }
   const sealedShell = new TextDecoder().decode(shell);
 
-  archive[MANIFEST_ENTRY] = manifestBytes;
+  /*
+   * The database, back in the archive, and accounted for.
+   *
+   * The sectioned form keeps the data as its own section, outside the payload
+   * and outside the manifest's digests — that is what lets a save touch only
+   * the data section and the footer and leave the publisher's signature
+   * alone. But a host mounts *the archive*: it builds its own shell around
+   * these entries and the runtime reads document.sqlite from them. With the
+   * database left in a field beside the archive, every sectioned document
+   * mounted empty, an app that creates its tables on first open looked fine,
+   * and the first autosave wrote that empty database over the real one.
+   *
+   * So the data goes under its entry name, and its digest — the footer's,
+   * already verified against the bytes — goes into `hashes`, where the
+   * runtime's integrity check looks for it. `hashes` is outside the signed
+   * view in every manifest version, so the signature is untouched; the
+   * manifest bytes the archive carries are rewritten to match, because that
+   * copy is the one the mounted runtime reads.
+   */
+  const database = sectionBytes(bytes, file, SECTION.DATA) ?? new Uint8Array(0);
+  archive[SQLITE_ENTRY] = database;
+  manifest.hashes = { ...(manifest.hashes ?? {}), [SQLITE_ENTRY]: file.dataDigest };
+  archive[MANIFEST_ENTRY] = new TextEncoder().encode(JSON.stringify(manifest, null, 2) + "\n");
 
   /*
    * A document a host can actually mount.
@@ -355,7 +377,7 @@ function parseSectioned(bytes: Uint8Array, options: ParseOptions = {}): ParsedCo
     integrityPolicy: metaContent(sealedShell, "dai-integrity") ?? "unknown",
     publicKey: metaContent(sealedShell, "dai-public-key") || undefined,
     publicKeyFingerprint: manifest.publicKeyFingerprint,
-    database: sectionBytes(bytes, file, SECTION.DATA) ?? new Uint8Array(0),
+    database,
     sectioned: { bytes },
     ...filled,
   };
