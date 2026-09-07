@@ -146,10 +146,19 @@ test.describe("sending a document", () => {
     const hash = match![1]!;
     expect(puts.has(hash)).toBe(true);
     expect(puts.has(`${hash}.png`)).toBe(true);
-    const sidecar = JSON.parse(puts.get(`${hash}.json`)!.toString("utf8")) as { preview?: { name: string; icon?: boolean } };
+    const sidecar = JSON.parse(puts.get(`${hash}.json`)!.toString("utf8")) as { preview?: { name: string; icon?: boolean }; retire?: string };
     expect(sidecar.preview).toEqual({ name: "Big one", icon: true });
     // Sealed: the store holds ciphertext, not the document.
     expect(puts.get(hash)!.toString("latin1")).not.toContain("dai-payload");
+    // And the record beside it carries the digest of a retire token, never the token.
+    expect(sidecar).toHaveProperty("retire", expect.stringMatching(/^[0-9a-f]{64}$/));
+
+    // Shared through the store, so the sheet now offers to take it back.
+    await resetShare(page);
+    await page.click("#more");
+    await page.click("#send");
+    await expect(page.locator("#send-retire")).toBeVisible();
+    await expect(page.locator("#send-retire")).toHaveText(/Stop the link I shared before/);
   });
 
   test("when the store cannot be reached, the file is offered and the person is told", async ({ page }) => {

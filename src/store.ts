@@ -33,8 +33,15 @@ import { ContainerError, parseContainer, thinned } from "./container.js";
 import type { Preview } from "./unfurl.js";
 import { fromBase64, sha256Hex, toBase64 } from "./core.js";
 
-/** What a DAI relay will hold. A general file host this is not. */
-export const STORE_CAP = 5 * 1024 * 1024;
+/**
+ * What a DAI relay will hold. A general file host this is not.
+ *
+ * Raised from 5 MB once real apps arrived: a custom app with its pictures in
+ * the database is tens of megabytes before anybody has done anything wrong,
+ * and the store holds it for a fixed time (see infra/r2-lifecycle.json), not
+ * for ever.
+ */
+export const STORE_CAP = 25 * 1024 * 1024;
 
 /** The fragment keys. `h` for the hash, `k` for the key, `u` for an any-host URL. */
 export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c" } as const;
@@ -76,6 +83,19 @@ export interface Sidecar {
    * says what it is called.
    */
   preview?: Preview;
+  /**
+   * The SHA-256, hex, of the token that retires this document (§1.1).
+   *
+   * A store keeps a shared document for a fixed time. Before that time is up
+   * the person who shared it may want it gone — a wrong recipient, a second
+   * thought — and the store needs a proof of standing that does not require
+   * a key most documents do not have. The proof is the link: for an encrypted
+   * document the token is derived from the key (`retireTokenFor`), so anyone
+   * who holds the link holds the standing to retire it, which is right; the
+   * recipient can too. The store holds only the hash of it, and so cannot
+   * retire anything itself.
+   */
+  retire?: string;
 }
 
 /** The icon a preview shows, stored beside the blob as `<hash>.png`. */
@@ -107,6 +127,8 @@ export interface Sealed {
   key: string;
   /** Stored without encryption, by a store whose policy allows it. */
   clear?: boolean;
+  /** The token that retires the document at the store. Kept by the sender; see `Sidecar.retire`. */
+  retire: string;
   sidecar: Sidecar;
 }
 
@@ -153,6 +175,27 @@ export interface SealOptions {
   clear?: boolean;
 }
 
+/** What the retire token is derived from. Fixed, so every host derives the same one. */
+const RETIRE_LABEL = "dai-store-retire";
+
+/**
+ * The retire token for a link, from its key.
+ *
+ * HMAC-SHA256 under the document key, over a fixed label, base64url. Anyone
+ * holding the link can compute it; the store, holding only its hash, cannot.
+ */
+export async function retireTokenFor(keyBase64Url: string): Promise<string> {
+  const raw = fromBase64Url(keyBase64Url);
+  const key = await crypto.subtle.importKey("raw", raw as unknown as ArrayBuffer, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(RETIRE_LABEL)));
+  return toBase64Url(mac);
+}
+
+/** What the sidecar holds of a retire token: its SHA-256, hex. */
+export async function retireDigest(token: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(token));
+}
+
 export async function sealForStore(html: string, options: SealOptions = {}): Promise<Sealed> {
   const container = parseContainer(html);
   const thin = new TextEncoder().encode(thinned(container));
@@ -167,15 +210,19 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
         `This document is ${(thin.length / 1024 / 1024).toFixed(1)} MB, and a store holds at most ${STORE_CAP / 1024 / 1024} MB.`,
       );
     }
+    // No key to derive from: a fresh token, kept by the sender alone.
+    const retire = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
     return {
       hash: await sha256Hex(thin),
       blob: thin,
       key: "",
       clear: true,
+      retire,
       icon: options.icon,
       sidecar: {
         size: thin.length,
         clear: true,
+        retire: await retireDigest(retire),
         ...(options.preview
           ? {
               preview: {
@@ -209,13 +256,16 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
     );
   }
 
+  const retire = await retireTokenFor(toBase64Url(rawKey));
   return {
     hash: await sha256Hex(blob),
     blob,
     key: toBase64Url(rawKey),
+    retire,
     icon: options.icon,
     sidecar: {
       size: blob.length,
+      retire: await retireDigest(retire),
       ...(options.preview
         ? {
             preview: {
@@ -351,6 +401,9 @@ export async function admit(
   }
   if ((await sha256Hex(ciphertext)) !== hash.toLowerCase()) {
     throw new ContainerError("STORE_REFUSED", "The blob does not hash to the name it is being stored under.");
+  }
+  if (sidecar.retire !== undefined && !/^[0-9a-f]{64}$/.test(sidecar.retire)) {
+    throw new ContainerError("STORE_REFUSED", "A retire digest must be 64 hex characters.");
   }
   if (sidecar.preview) {
     // Checked because this is the one part a store hands to anyone who asks.

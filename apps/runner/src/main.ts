@@ -53,6 +53,7 @@ import {
   saveDatabaseToOpfs,
   type LibraryItem,
 } from "./opfs.js";
+import type { Share } from "./opfs.js";
 
 const openButton = document.getElementById("open") as HTMLButtonElement;
 const exportButton = document.getElementById("export") as HTMLButtonElement;
@@ -1376,8 +1377,55 @@ async function linkToSend(html: string, preview: boolean): Promise<{ link: strin
     publicBase: STORE_BASE,
   });
   const icon = preview && loaded ? await previewIcon(loaded.manifest.favicon) : undefined;
-  const { links } = await publish(html, store, location.origin + "/", { preview, icon });
+  const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon });
+  // Remembered, so the person who shared it can take it back (see retireShares).
+  if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
   return { link: links.known, uploaded: true };
+}
+
+async function rememberShare(documentUuid: string, share: Share): Promise<void> {
+  try {
+    const held = await getCartridgeFromLibrary(documentUuid);
+    if (!held) return;
+    const shares = [...(held.shares ?? []).filter((s) => s.hash !== share.hash), share].slice(-20);
+    await saveCartridgeToLibrary({ ...held, shares });
+  } catch {
+    /* Not kept on this device; there is nowhere to remember it. */
+  }
+}
+
+/**
+ * Retires every link this device made through the store for the document.
+ *
+ * The store removes the blob, its record and its icon; the links stop
+ * opening. What people already opened is on their devices and stays theirs —
+ * said, so nobody takes this for a recall.
+ */
+async function retireShares(documentUuid: string): Promise<{ retired: number; failed: number }> {
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  const shares = held?.shares ?? [];
+  let retired = 0;
+  let failed = 0;
+  const remaining: Share[] = [];
+  for (const share of shares) {
+    try {
+      const response = await fetch(new URL("/api/forget", location.origin).href, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ hash: share.hash, token: share.retire }),
+      });
+      if (response.ok) retired += 1;
+      else {
+        failed += 1;
+        remaining.push(share);
+      }
+    } catch {
+      failed += 1;
+      remaining.push(share);
+    }
+  }
+  if (held) await saveCartridgeToLibrary({ ...held, shares: remaining }).catch(() => undefined);
+  return { retired, failed };
 }
 
 async function sendDocument(): Promise<void> {
@@ -1391,7 +1439,30 @@ async function sendDocument(): Promise<void> {
   const note = document.getElementById("send-note");
   const go = document.getElementById("send-go") as HTMLButtonElement | null;
   const cancel = document.getElementById("send-cancel");
-  if (!sheetEl || !icon || !titleEl || !sub || !withData || !note || !go || !cancel) return;
+  const retire = document.getElementById("send-retire") as HTMLButtonElement | null;
+  if (!sheetEl || !icon || !titleEl || !sub || !withData || !note || !go || !cancel || !retire) return;
+
+  // Links made before, through the store, and the way to take them back.
+  const uuid = loaded.manifest.documentUuid;
+  const earlier = (await getCartridgeFromLibrary(uuid).catch(() => null))?.shares ?? [];
+  retire.hidden = earlier.length === 0;
+  retire.disabled = false;
+  retire.textContent = earlier.length === 1 ? "Stop the link I shared before" : `Stop the ${earlier.length} links I shared before`;
+  retire.onclick = async () => {
+    retire.disabled = true;
+    retire.textContent = "Stopping…";
+    const { retired, failed } = await retireShares(uuid);
+    retire.hidden = failed === 0;
+    retire.disabled = false;
+    retire.textContent = failed === 1 ? "Stop the link I shared before" : `Stop the ${failed} links I shared before`;
+    say(
+      retired > 0
+        ? `${retired === 1 ? "That link no longer opens" : `${retired} links no longer open`}. Anyone who already opened it keeps their copy.` +
+            (failed > 0 ? ` ${failed} could not be stopped; try again later.` : "")
+        : "Those links could not be stopped just now. Try again later.",
+      retired === 0,
+    );
+  };
 
   // Sized as it would go with the data in, which is the larger of the two.
   const fits = Boolean(await linkForDocument(await currentHtml(true)));
@@ -1774,6 +1845,14 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
   let blob: Uint8Array;
   try {
     const response = await fetch(href, { mode: "cors", credentials: "omit" });
+    if (response.status === 404 || response.status === 410) {
+      // The store keeps a shared document for a fixed time and this one's
+      // is up. Said as what happened, not as a number: the person holding
+      // the link did nothing wrong and the sender has the document still.
+      slot.classList.remove("busy");
+      say("This link has expired. Ask whoever sent it to share the app again.", true);
+      return;
+    }
     if (!response.ok) throw new Error(String(response.status));
     blob = new Uint8Array(await response.arrayBuffer());
   } catch {

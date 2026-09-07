@@ -240,6 +240,46 @@ export async function presignPut(
   };
 }
 
+/**
+ * A URL that deletes one object, good for a minute.
+ *
+ * For the store's own endpoint to call, never handed to a page: the only
+ * thing that decides whether an object goes is the retire token check in
+ * front of this, and the bucket has no way to know about that. Signed the
+ * same way as a PUT, with only the host bound, because a DELETE has no body.
+ */
+export async function presignDelete(
+  options: S3StoreOptions,
+  key: string,
+  expiresSeconds = 60,
+  now = new Date(),
+): Promise<string> {
+  const endpoint = new URL(options.endpoint);
+  const host = options.pathStyle === false ? `${options.bucket}.${endpoint.host}` : endpoint.host;
+  const path = (options.pathStyle === false ? "" : `/${options.bucket}`) + "/" + key.split("/").map(rfc3986).join("/");
+  const { date, time } = stamp(now);
+  const scope = `${date}/${options.region}/s3/aws4_request`;
+  const query: Record<string, string> = {
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${options.accessKeyId}/${scope}`,
+    "X-Amz-Date": time,
+    "X-Amz-Expires": String(expiresSeconds),
+    "X-Amz-SignedHeaders": "host",
+  };
+  const canonicalQuery = Object.keys(query)
+    .sort()
+    .map((k) => `${rfc3986(k)}=${rfc3986(query[k]!)}`)
+    .join("&");
+  const canonicalRequest = ["DELETE", path, canonicalQuery, `host:${host}\n`, "host", "UNSIGNED-PAYLOAD"].join("\n");
+  const stringToSign = ["AWS4-HMAC-SHA256", time, scope, await sha256(canonicalRequest)].join("\n");
+  let signingKey = await hmac(encoder.encode("AWS4" + options.secretAccessKey), date);
+  signingKey = await hmac(signingKey, options.region);
+  signingKey = await hmac(signingKey, "s3");
+  signingKey = await hmac(signingKey, "aws4_request");
+  const signature = hex(await hmac(signingKey, stringToSign));
+  return `${endpoint.protocol}//${host}${path}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
 /** The headers every stored object carries. Content-addressed, so immutable is true. */
 export const OBJECT_HEADERS = {
   "content-type": "application/octet-stream",

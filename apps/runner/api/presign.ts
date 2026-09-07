@@ -35,7 +35,7 @@
  * is narrower and it should stay narrow.
  */
 import { presignPut } from "../../../src/store-s3.js";
-import { ICON_CAP } from "../../../src/store.js";
+import { ICON_CAP, STORE_CAP } from "../../../src/store.js";
 
 /*
  * The edge runtime, and it has to be.
@@ -54,7 +54,7 @@ import { ICON_CAP } from "../../../src/store.js";
 export const config = { runtime: "edge" };
 
 /** The largest object this will hand out a URL for. Same cap as the store. */
-const MAX_BYTES = Number(process.env.DAI_PRESIGN_MAX_BYTES ?? 5 * 1024 * 1024);
+const MAX_BYTES = Number(process.env.DAI_PRESIGN_MAX_BYTES ?? STORE_CAP);
 
 /** How many URLs one address may be given per hour. */
 const PER_HOUR = Number(process.env.DAI_PRESIGN_PER_HOUR ?? 20);

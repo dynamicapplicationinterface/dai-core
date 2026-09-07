@@ -143,10 +143,14 @@ viewer form, and MUST be verified by §7 as though it were a file.
 A store is three operations — `put(hash, blob, sidecar)`, `get(href)`,
 `head(href)` — and a conforming store holds only what it can check: the blob
 hashes to the name it is stored under, and is the size the sidecar states. A
-blob is at most 5 MB. Beside each blob the store keeps a sidecar in the clear
-carrying only `size`, `clear` when the blob is unencrypted, and — when and
-only when the sender consented (§3.3) — a `preview` of name, publisher name
-and whether an icon exists. A sidecar MUST NOT carry the manifest, the
+blob is at most 25 MB, and a store keeps it for a fixed time it states, not for ever. Beside each blob the store keeps a sidecar in the clear
+carrying only `size`, `clear` when the blob is unencrypted, `retire` — the
+SHA-256 of a token whose holder may ask the store to remove the document
+before its time is up; for an encrypted document the token is
+HMAC-SHA256 under the document key over the label `dai-store-retire`, so
+whoever holds the link holds the standing, and the store, holding only the
+hash, has none — and, when and only when the sender consented (§3.3), a
+`preview` of name, publisher name and whether an icon exists. A sidecar MUST NOT carry the manifest, the
 document's identity, or the publisher's key: it is readable by anyone who has
 the link's path, which every relay the link crosses does, and a document
 shared without a preview must be a document nothing beside the blob can

@@ -28,6 +28,17 @@ export interface LibraryItem {
    * and its whole-database write would put the newer work back.
    */
   revision?: number;
+  /**
+   * Links this device made through the store for the document, with the
+   * token that retires each. Kept so the person who shared can unshare.
+   */
+  shares?: Share[];
+}
+
+export interface Share {
+  hash: string;
+  retire: string;
+  at: string;
 }
 
 function openIdb(): Promise<IDBDatabase> {

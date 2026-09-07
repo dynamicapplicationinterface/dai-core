@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile, ejectFrom } from "./open.js";
 import { ContainerError, verifyContainer } from "../src/container.js";
-import { openFromStore, publish, referenceFrom, sealForStore, type Sidecar } from "../src/store.js";
+import { openFromStore, publish, referenceFrom, sealForStore, type Sidecar, retireDigest, retireTokenFor } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -138,9 +138,14 @@ test.describe("a document sealed for a store", () => {
     // The sidecar says nothing a stranger may not read: no manifest, no
     // identity, no key. A review found the whole manifest sitting at a public
     // URL with the preview off — name, publisher, generating model, dates.
-    expect(Object.keys(sealed.sidecar).sort()).toEqual(["size"]);
+    expect(Object.keys(sealed.sidecar).sort()).toEqual(["retire", "size"]);
     const unfurled = await sealForStore(built.html, { preview: true });
-    expect(Object.keys(unfurled.sidecar).sort()).toEqual(["preview", "size"]);
+    expect(Object.keys(unfurled.sidecar).sort()).toEqual(["preview", "retire", "size"]);
+    // The retire digest is the hash of a token the link's key derives, so the
+    // store cannot retire anything and anyone holding the link can.
+    expect(sealed.sidecar.retire).toBe(await retireDigest(sealed.retire));
+    expect(await retireTokenFor(sealed.key)).toBe(sealed.retire);
+    await expect(store.put(sealed.hash, sealed.blob, { ...sealed.sidecar, retire: "nope" })).rejects.toMatchObject({ code: "STORE_REFUSED" });
     expect(JSON.stringify(unfurled.sidecar)).not.toMatch(/documentUuid|publicKey|hashes|generator/);
 
     // A preview that is a payload rather than a caption.
