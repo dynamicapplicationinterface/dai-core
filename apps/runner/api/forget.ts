@@ -62,6 +62,23 @@ function same(a: string, b: string): boolean {
 
 export default async function handler(request: Request, fetchImpl: typeof fetch = fetch): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+  /*
+   * Whatever goes wrong, an answer in words.
+   *
+   * A phone pressed "Stop the link" and got a bare 500 from the edge with no
+   * body, which said nothing about which of the three steps failed and left
+   * no log to read. The message of anything thrown is the answer instead;
+   * none of the values it could mention is a secret, since the key never
+   * arrives here and the credentials are never put into an error.
+   */
+  try {
+    return await retire(request, fetchImpl);
+  } catch (error) {
+    return json({ error: `Retiring failed: ${error instanceof Error ? error.message : String(error)}` }, 500);
+  }
+}
+
+async function retire(request: Request, fetchImpl: typeof fetch): Promise<Response> {
   if (request.method !== "POST") return json({ error: "POST only." }, 405);
 
   const endpoint = process.env.DAI_STORE_ENDPOINT;
