@@ -52,9 +52,12 @@ function previewOf(sidecar: unknown): Preview | undefined {
   if (!sidecar || typeof sidecar !== "object") return undefined;
   const candidate = (sidecar as { preview?: unknown }).preview;
   if (!candidate || typeof candidate !== "object") return undefined;
-  const { name, publisherName, icon } = candidate as Record<string, unknown>;
+  const { name, description, publisherName, icon } = candidate as Record<string, unknown>;
   if (typeof name !== "string" || name.length === 0 || name.length > 200) return undefined;
   const preview: Preview = { name };
+  if (typeof description === "string" && description.length > 0 && description.length <= 200) {
+    preview.description = description;
+  }
   if (typeof publisherName === "string" && publisherName.length > 0 && publisherName.length <= 200) {
     preview.publisherName = publisherName;
   }

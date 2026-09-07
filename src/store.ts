@@ -30,7 +30,7 @@
  * hash, decrypts, and verifies what it finds exactly as it would a file.
  */
 import { ContainerError, parseContainer, thinned } from "./container.js";
-import type { Preview } from "./unfurl.js";
+import { descriptionOf, type Preview } from "./unfurl.js";
 import { fromBase64, sha256Hex, toBase64 } from "./core.js";
 
 /**
@@ -198,6 +198,9 @@ export async function retireDigest(token: string): Promise<string> {
 
 export async function sealForStore(html: string, options: SealOptions = {}): Promise<Sealed> {
   const container = parseContainer(html);
+  // The app's own line about itself, for the preview, when there is one to show.
+  const appIndex = container.archive["app/index.html"];
+  const description = options.preview && appIndex ? descriptionOf(new TextDecoder().decode(appIndex)) : undefined;
   const thin = new TextEncoder().encode(thinned(container));
 
   if (options.clear) {
@@ -227,6 +230,7 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
           ? {
               preview: {
                 name: container.manifest.appName,
+                ...(description ? { description } : {}),
                 ...(container.manifest.publisherName
                   ? { publisherName: container.manifest.publisherName }
                   : {}),
@@ -270,6 +274,7 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
         ? {
             preview: {
               name: container.manifest.appName,
+              ...(description ? { description } : {}),
               ...(container.manifest.publisherName
                 ? { publisherName: container.manifest.publisherName }
                 : {}),

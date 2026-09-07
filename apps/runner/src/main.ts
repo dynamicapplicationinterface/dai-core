@@ -1820,10 +1820,12 @@ async function sendDocument(): Promise<void> {
       return;
     }
     close();
-    const text = `${name} — ${STANDING_LINE} Tap to open it.`;
+    // The card and nothing beside it. A line of text under the card was
+    // this app talking over the app being sent; the card already says the
+    // name, shows the icon, and where it opens.
     if (canShare) {
       try {
-        await navigator.share({ title: name, text, url: made.link });
+        await navigator.share({ title: name, url: made.link });
         say(made.uploaded ? "Shared. The store holds a sealed copy only the link can open." : "Shared.");
         return;
       } catch (error) {

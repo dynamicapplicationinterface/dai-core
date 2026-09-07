@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import middleware from "../apps/runner/middleware.js";
 import { compileDirectory } from "../src/compile.js";
-import { documentIdFrom, injectPreview } from "../src/unfurl.js";
+import { descriptionOf, documentIdFrom, injectPreview } from "../src/unfurl.js";
 import { publish } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
 
@@ -43,7 +43,11 @@ test.describe("what a link preview is allowed to say", () => {
 
     const named = injectPreview(page, { name: "Chore chart", publisherName: "Acme" });
     expect(named.html).toContain(`content="Chore chart"`);
-    expect(named.html).toContain("Acme");
+    // The card is the app's: its name, its own line when it has one, and
+    // whose it is. Without a line, whose it is stands alone.
+    expect(named.html).toContain(`content="Made with DAI"`);
+    const described = injectPreview(page, { name: "Chore chart", description: "Who does what, this week" });
+    expect(described.html).toContain(`content="Who does what, this week · Made with DAI"`);
     // Content-addressed: these bytes will never mean anything else.
     expect(named.cacheControl).toBe("public, max-age=31536000, immutable");
 
@@ -60,6 +64,19 @@ test.describe("what a link preview is allowed to say", () => {
     });
     expect(out.html).not.toContain("<script>");
     expect(out.html).toContain("&quot;&gt;&lt;script&gt;");
+  });
+
+  test("an app's own line is read the way the card reads it, and only when it is a line", () => {
+    expect(descriptionOf('<head><meta name="description" content="Everything for the beach,  ticked off"></head>')).toBe(
+      "Everything for the beach, ticked off",
+    );
+    // Either attribute order.
+    expect(descriptionOf('<meta content="Written the other way round" name="description">')).toBe(
+      "Written the other way round",
+    );
+    expect(descriptionOf("<head><title>Nothing</title></head>")).toBeUndefined();
+    // A paragraph is not a line.
+    expect(descriptionOf(`<meta name="description" content="${"x".repeat(250)}">`)).toBeUndefined();
   });
 
   test("only a reference link is a document id", () => {

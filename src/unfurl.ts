@@ -25,6 +25,8 @@
 /** What a sender consented to show. Absent from a sidecar means no preview. */
 export interface Preview {
   name: string;
+  /** The app's own one line about itself, from its <meta name="description">. */
+  description?: string;
   /** The name the publisher signs under, when the document carries one. */
   publisherName?: string;
   /** Set when an icon was stored beside the blob. The URL is derived, not carried. */
@@ -32,6 +34,23 @@ export interface Preview {
 }
 
 const PLACEHOLDER = "<!--DAI_PREVIEW-->";
+
+/** The most a preview will say about an app in its own words. */
+const DESCRIPTION_CAP = 200;
+
+/**
+ * The app's one line about itself, as the card on the device reads it: the
+ * first <meta name="description"> in the head of its index.html, whitespace
+ * folded, and only when it is a line rather than a paragraph.
+ */
+export function descriptionOf(indexHtml: string): string | undefined {
+  const head = indexHtml.slice(0, 20_000);
+  const found =
+    /<meta\s+(?:[^>]*?\s)?name=["']description["'][^>]*?content=["']([^"']{1,300})["']/i.exec(head) ??
+    /<meta\s+(?:[^>]*?\s)?content=["']([^"']{1,300})["'][^>]*?name=["']description["']/i.exec(head);
+  const line = found?.[1]?.replace(/\s+/g, " ").trim();
+  return line && line.length > 0 && line.length <= DESCRIPTION_CAP ? line : undefined;
+}
 
 /** HTML attribute text. A name is somebody's text and must not become markup. */
 function attribute(value: string): string {
@@ -77,11 +96,12 @@ export function injectPreview(
   }
 
   const name = attribute(preview.name);
-  const by = preview.publisherName ? attribute(preview.publisherName) : "A DAI app";
+  // The app's own line, and whose it is: the card is the app's, made with DAI.
+  const description = preview.description ? `${attribute(preview.description)} · Made with DAI` : "Made with DAI";
   const tags = [
     `<title>${name}</title>`,
     `<meta property="og:title" content="${name}">`,
-    `<meta property="og:description" content="${by} · runs on your device, no account">`,
+    `<meta property="og:description" content="${description}">`,
     `<meta property="og:type" content="website">`,
     `<meta name="twitter:card" content="summary">`,
   ];

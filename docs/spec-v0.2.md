@@ -150,7 +150,7 @@ before its time is up; for an encrypted document the token is
 HMAC-SHA256 under the document key over the label `dai-store-retire`, so
 whoever holds the link holds the standing, and the store, holding only the
 hash, has none — and, when and only when the sender consented (§3.3), a
-`preview` of name, publisher name and whether an icon exists. A sidecar MUST NOT carry the manifest, the
+`preview` of name, the app's own one-line description, publisher name and whether an icon exists. A sidecar MUST NOT carry the manifest, the
 document's identity, or the publisher's key: it is readable by anyone who has
 the link's path, which every relay the link crosses does, and a document
 shared without a preview must be a document nothing beside the blob can
