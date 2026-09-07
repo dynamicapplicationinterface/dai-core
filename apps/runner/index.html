@@ -14,7 +14,7 @@
     <script>
       (function () {
         var s = location.search, h = location.hash, p = location.pathname;
-        if (/[?&](doc|d)=/.test(s) || /\/d\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
+        if (/[?&](doc|d)=/.test(s) || /\/[dp]\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
           document.documentElement.classList.add("arriving");
         }
         /*

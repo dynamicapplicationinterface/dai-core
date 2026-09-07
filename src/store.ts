@@ -29,7 +29,7 @@
  * The opener never imports this file's adapters. It fetches a URL, checks a
  * hash, decrypts, and verifies what it finds exactly as it would a file.
  */
-import { ContainerError, parseContainer, thinned } from "./container.js";
+import { ContainerError, parseContainer, thinned, type ParsedContainer } from "./container.js";
 import { descriptionOf, type Preview } from "./unfurl.js";
 import { fromBase64, sha256Hex, toBase64 } from "./core.js";
 
@@ -65,8 +65,17 @@ export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c" } as c
  * that matters. So a sidecar now says nothing a stranger may not know.
  */
 export interface Sidecar {
-  /** The blob's length, which `put` checks against what it was handed. */
+  /** The blob's length, which `put` checks against what it was handed. Zero when `inline`. */
   size: number;
+  /**
+   * The document is inside the link, not here.
+   *
+   * A document small enough to travel in a fragment never reaches a store,
+   * and so never had a card in a chat: there was nothing at the edge to build
+   * one from. This sidecar is that something - a preview under an id that
+   * names nothing else - stored beside no blob at all. See `storePreview`.
+   */
+  inline?: true;
   /**
    * Held in the clear, on a store whose policy allows it.
    *
@@ -110,7 +119,7 @@ export interface Store {
    * the blob can be read from. Idempotent: a second put of the same hash is
    * the same object.
    */
-  put(hash: string, ciphertext: Uint8Array, sidecar: Sidecar, icon?: PreviewIcon): Promise<string>;
+  put(hash: string, ciphertext: Uint8Array | undefined, sidecar: Sidecar, icon?: PreviewIcon): Promise<string>;
   get(href: string): Promise<Uint8Array>;
   head(href: string): Promise<{ exists: boolean; size: number }>;
 }
@@ -196,11 +205,65 @@ export async function retireDigest(token: string): Promise<string> {
   return sha256Hex(new TextEncoder().encode(token));
 }
 
+/** What a chat may show: the name, the app's own line, whose it is, and whether a picture was stored. */
+function previewOf(container: ParsedContainer, description: string | undefined, icon: PreviewIcon | undefined): Preview {
+  return {
+    name: container.manifest.appName,
+    ...(description ? { description } : {}),
+    ...(container.manifest.publisherName ? { publisherName: container.manifest.publisherName } : {}),
+    ...(icon ? { icon: true } : {}),
+  };
+}
+
+/** The app's own line about itself, from the archive, for a preview. */
+function descriptionIn(container: ParsedContainer): string | undefined {
+  const appIndex = container.archive["app/index.html"];
+  return appIndex ? descriptionOf(new TextDecoder().decode(appIndex)) : undefined;
+}
+
+/**
+ * A card for a document that travels inside its link.
+ *
+ * The document never reaches the store - it is in the fragment, which no
+ * server sees - so a chat fetching the link found only the opener's own tags
+ * and showed the generic card. This stores what a card needs and nothing
+ * else: the preview, under a random id that names no document, beside no
+ * blob. The link is then `/p/<id>#a=…`, and the edge builds the card from
+ * the sidecar exactly as it does for a stored document.
+ *
+ * Retired the same way a stored document is, with a token the sender keeps;
+ * the store holds its digest. The id is random rather than a digest of the
+ * document so that the public name of the card says nothing about what is
+ * inside the link.
+ */
+export async function storePreview(
+  html: string,
+  store: Store,
+  options: { icon?: PreviewIcon } = {},
+): Promise<{ id: string; retire: string; sidecar: Sidecar }> {
+  const container = parseContainer(html);
+  const id = toHex(crypto.getRandomValues(new Uint8Array(32)));
+  const retire = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const sidecar: Sidecar = {
+    size: 0,
+    inline: true,
+    retire: await retireDigest(retire),
+    preview: previewOf(container, descriptionIn(container), options.icon),
+  };
+  await store.put(id, undefined, sidecar, options.icon);
+  return { id, retire, sidecar };
+}
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export async function sealForStore(html: string, options: SealOptions = {}): Promise<Sealed> {
   const container = parseContainer(html);
   // The app's own line about itself, for the preview, when there is one to show.
-  const appIndex = container.archive["app/index.html"];
-  const description = options.preview && appIndex ? descriptionOf(new TextDecoder().decode(appIndex)) : undefined;
+  const description = options.preview ? descriptionIn(container) : undefined;
   const thin = new TextEncoder().encode(thinned(container));
 
   if (options.clear) {
@@ -228,14 +291,7 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
         retire: await retireDigest(retire),
         ...(options.preview
           ? {
-              preview: {
-                name: container.manifest.appName,
-                ...(description ? { description } : {}),
-                ...(container.manifest.publisherName
-                  ? { publisherName: container.manifest.publisherName }
-                  : {}),
-                ...(options.icon ? { icon: true } : {}),
-              },
+              preview: previewOf(container, description, options.icon),
             }
           : {}),
       },
@@ -272,14 +328,7 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
       retire: await retireDigest(retire),
       ...(options.preview
         ? {
-            preview: {
-              name: container.manifest.appName,
-              ...(description ? { description } : {}),
-              ...(container.manifest.publisherName
-                ? { publisherName: container.manifest.publisherName }
-                : {}),
-              ...(options.icon ? { icon: true } : {}),
-            },
+            preview: previewOf(container, description, options.icon),
           }
         : {}),
     },
@@ -383,11 +432,25 @@ export interface StorePolicy {
 
 export async function admit(
   hash: string,
-  ciphertext: Uint8Array,
+  ciphertext: Uint8Array | undefined,
   sidecar: Sidecar,
   icon?: PreviewIcon,
   policy: StorePolicy = {},
 ): Promise<void> {
+  if (!ciphertext) {
+    // A preview for a document that is inside its link: no blob, and the
+    // sidecar must say so, so a reader never takes it for a document that
+    // has gone missing.
+    if (sidecar.inline !== true || sidecar.size !== 0 || sidecar.clear) {
+      throw new ContainerError("STORE_REFUSED", "A sidecar stored without a document must say the document is inline, and be size 0.");
+    }
+    if (!/^[0-9a-f]{64}$/i.test(hash)) {
+      throw new ContainerError("STORE_REFUSED", "A preview is stored under 64 hex characters.");
+    }
+    if (!sidecar.preview) {
+      throw new ContainerError("STORE_REFUSED", "A sidecar stored without a document is a preview, and this one has none.");
+    }
+  }
   if (sidecar.clear && !policy.allowClear) {
     throw new ContainerError(
       "STORE_REFUSED",
@@ -395,16 +458,16 @@ export async function admit(
         "has to be configured to, because it is choosing to be able to read them.",
     );
   }
-  if (ciphertext.length > STORE_CAP) {
+  if (ciphertext && ciphertext.length > STORE_CAP) {
     throw new ContainerError("STORE_REFUSED", `A store holds at most ${STORE_CAP / 1024 / 1024} MB.`);
   }
-  if (sidecar.size !== ciphertext.length) {
+  if (ciphertext && sidecar.size !== ciphertext.length) {
     throw new ContainerError(
       "STORE_REFUSED",
       `The sidecar says ${sidecar.size} bytes and the blob is ${ciphertext.length}.`,
     );
   }
-  if ((await sha256Hex(ciphertext)) !== hash.toLowerCase()) {
+  if (ciphertext && (await sha256Hex(ciphertext)) !== hash.toLowerCase()) {
     throw new ContainerError("STORE_REFUSED", "The blob does not hash to the name it is being stored under.");
   }
   if (sidecar.retire !== undefined && !/^[0-9a-f]{64}$/.test(sidecar.retire)) {

@@ -299,13 +299,14 @@ export function s3Store(options: S3StoreOptions, fetchImpl: typeof fetch = fetch
     async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
       await admit(hash, ciphertext, sidecar, icon, { allowClear: options.allowClear });
       const key = hash.toLowerCase();
-      const existing = await this.head(publicHref(key));
+      // A card beside no document is keyed on its sidecar instead.
+      const existing = await this.head(publicHref(ciphertext ? key : key + ".json"));
       if (!existing.exists) {
-        await putObject(key, ciphertext, OBJECT_HEADERS["content-type"]);
+        if (ciphertext) await putObject(key, ciphertext, OBJECT_HEADERS["content-type"]);
         await putObject(key + ".json", new TextEncoder().encode(JSON.stringify(sidecar)), "application/json");
         if (icon) await putObject(key + ".png", icon.png, "image/png");
       }
-      return publicHref(key);
+      return publicHref(ciphertext ? key : key + ".json");
     },
 
     async get(href) {

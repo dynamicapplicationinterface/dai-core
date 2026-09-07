@@ -222,6 +222,32 @@ export default async function handler(request: Request): Promise<Response> {
   }
 
   /*
+   * Standing to describe a document that is not being stored.
+   *
+   * A document inside its link never comes here, and so never had a card in
+   * a chat. A card is a sidecar and an icon under an id that names nothing
+   * else, and this hands back the token those two are written with - for an
+   * id nothing is stored under yet, so nobody can take a stored document's
+   * card over by asking for its hash. Counted as an upload, like the rest.
+   */
+  if (body.kind === "preview") {
+    const base = publicBase.endsWith("/") ? publicBase : publicBase + "/";
+    for (const key of [hash, `${hash}.json`]) {
+      const held = await fetch(new URL(key, base).href, { method: "HEAD" }).catch(() => undefined);
+      if (held && held.status !== 404) {
+        return json({ error: "Something is already stored under that id." }, 409);
+      }
+    }
+    const when = Date.now();
+    const from =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      request.headers.get("x-real-ip") ??
+      "unknown";
+    if (!withinRate(from, when)) return json({ error: "Too many uploads from here in the last hour." }, 429);
+    return json({ token: await mintToken(secretAccessKey, hash, when) }, 200);
+  }
+
+  /*
    * Which object, of the three a document can have.
    *
    * The blob is the document; the sidecar is what a store checks it by and

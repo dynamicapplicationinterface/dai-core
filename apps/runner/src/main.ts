@@ -12,7 +12,7 @@ import { decodeInline, INLINE_CAP, inlineFrom, inlineLink, LAUNCH_CAP } from "..
 import type { PastHost } from "../../../src/inline.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
-import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } from "../../../src/store.js";
+import { ICON_CAP, openFromStore, publish, referenceFrom, storePreview, strippedReference } from "../../../src/store.js";
 import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { confusables } from "./confusables.js";
@@ -1671,14 +1671,39 @@ async function previewIcon(favicon: string | undefined): Promise<{ png: Uint8Arr
  * sheet can say whether anything left the device.
  */
 async function linkToSend(html: string, preview: boolean): Promise<{ link: string; uploaded: boolean }> {
-  const inline = await linkForDocument(html);
-  if (inline) return { link: withGround(inline), uploaded: false };
-  if (!STORE_BASE) throw new Error("This opener has no store, so a document this large can only be sent as a file.");
-  const store = presignedStore({
-    presignUrl: new URL("/api/presign", location.origin).href,
-    publicBase: STORE_BASE,
-  });
+  const store = STORE_BASE
+    ? presignedStore({ presignUrl: new URL("/api/presign", location.origin).href, publicBase: STORE_BASE })
+    : undefined;
   const icon = preview && loaded ? await previewIcon(loaded.manifest.favicon) : undefined;
+  const inline = await linkForDocument(html);
+  if (inline) {
+    /*
+     * The whole document is in the link. What a chat shows before anybody
+     * taps is not: it is fetched from the address, and the address of an
+     * inline link was the opener's front page, so every small app arrived
+     * as a generic card. The card - name, line, icon - is stored on its own
+     * under an id that names nothing, and the link points at that. A store
+     * that cannot be reached costs the card, never the link: the document
+     * travels either way.
+     */
+    if (preview && store) {
+      try {
+        const card = await storePreview(html, store, { icon });
+        const host = { template: HOST_TEMPLATE, runtime: HOST_RUNTIME };
+        const withCard = await inlineLink(html, location.origin + "/", host, INLINE_CAP, `/p/${card.id}`);
+        if (withCard) {
+          if (loaded) {
+            await rememberShare(loaded.manifest.documentUuid, { hash: card.id, retire: card.retire, at: new Date().toISOString() });
+          }
+          return { link: withGround(withCard), uploaded: false };
+        }
+      } catch {
+        /* No card, then. The link below carries the document all the same. */
+      }
+    }
+    return { link: withGround(inline), uploaded: false };
+  }
+  if (!store) throw new Error("This opener has no store, so a document this large can only be sent as a file.");
   const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon });
   // Remembered, so the person who shared it can take it back (see retireShares).
   if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
@@ -1774,7 +1799,7 @@ async function sendDocument(): Promise<void> {
   if (url) icon.src = url;
   titleEl.textContent = `Share ${name}`;
   sub.textContent = fits
-    ? "The whole app travels inside the link. Nothing is uploaded."
+    ? "The whole app travels inside the link. Only its name, its line and its icon go to the store, for the card a chat shows."
     : "Sealed with a key that only the link holds, then put in the store, which cannot read it.";
   withData.checked = true;
   const describe = (): void => {

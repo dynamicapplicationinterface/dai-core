@@ -50,15 +50,16 @@ export function fsStore(options: FsStoreOptions): Store {
       const path = join(root, hash.toLowerCase());
       if (icon) writeFileSync(path + ".png", icon.png);
       // Content-addressed, so a second put is the same bytes and nothing to do.
-      if (!existsSync(path)) {
-        writeFileSync(path, ciphertext);
+      // A card beside no document is keyed on its sidecar instead.
+      if (!existsSync(ciphertext ? path : path + ".json")) {
+        if (ciphertext) writeFileSync(path, ciphertext);
         writeFileSync(
           path + ".json",
           JSON.stringify({ ...sidecar, storedAt: new Date().toISOString() }, null, 2) + "\n",
           "utf8",
         );
       }
-      return hrefFor(hash);
+      return ciphertext ? hrefFor(hash) : hrefFor(hash) + ".json";
     },
 
     async get(href) {

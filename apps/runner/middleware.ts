@@ -17,12 +17,13 @@
  * A store may decline previews entirely by not being configured here, or by
  * refusing to serve the sidecar. Either way this falls back.
  */
-import { injectPreview, documentIdFrom, type Preview } from "../../src/unfurl.js";
+import { injectPreview, documentIdFrom, previewIdFrom, type Preview } from "../../src/unfurl.js";
 
 export const config = {
-  // Only reference links. Everything else is served straight from the CDN,
+  // Only links with a card at the store: a stored document, or a preview for
+  // one inside its link. Everything else is served straight from the CDN,
   // which is the point of a static opener.
-  matcher: "/d/:id",
+  matcher: ["/d/:id", "/p/:id"],
 };
 
 /**
@@ -67,7 +68,8 @@ function previewOf(sidecar: unknown): Preview | undefined {
 
 export default async function middleware(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const id = documentIdFrom(url.pathname);
+  const stored = documentIdFrom(url.pathname);
+  const id = stored ?? previewIdFrom(url.pathname);
 
   // The document the rewrite would have served. Fetched from this origin, so
   // it is the deployed index.html with whatever the build put in it.
@@ -89,7 +91,9 @@ export default async function middleware(request: Request): Promise<Response> {
     const sidecar = await fetch(new URL(`${id}.json`, storeBase()));
     if (sidecar.ok) {
       preview = previewOf(await sidecar.json());
-    } else if (sidecar.status === 404 || sidecar.status === 410) {
+    } else if (stored && (sidecar.status === 404 || sidecar.status === 410)) {
+      // A stored document that is gone. A card that is gone is only a card:
+      // the document is inside the link, and opens as it always did.
       expired = true;
     }
   } catch {

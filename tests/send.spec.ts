@@ -104,12 +104,28 @@ test.describe("sending a document", () => {
     await theirs.close();
   });
 
-  test("a small document travels inside the link, and nothing is uploaded", async ({ page }) => {
+  test("a small document travels inside the link, and only its card is uploaded", async ({ page }) => {
     test.slow();
-    let presigned = 0;
-    await page.route("**/api/presign", (route) => {
-      presigned += 1;
-      void route.fulfill({ status: 500, body: "{}" });
+    // A store, played by two routes, as below: what arrives is recorded.
+    const puts = new Map<string, Buffer>();
+    const asked: string[] = [];
+    await page.route("**/api/presign", async (route) => {
+      const body = route.request().postDataJSON() as { hash: string; kind: string };
+      asked.push(body.kind);
+      if (body.kind === "preview") {
+        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ token: "t.standing" }) });
+        return;
+      }
+      const key = body.kind === "sidecar" ? `${body.hash}.json` : body.kind === "icon" ? `${body.hash}.png` : body.hash;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ url: `http://localhost:5175/__bucket/${key}`, method: "PUT", headers: {}, href: `https://store.test/${key}` }),
+      });
+    });
+    await page.route("**/__bucket/**", async (route) => {
+      const url = new URL(route.request().url());
+      puts.set(url.pathname.slice("/__bucket/".length), route.request().postDataBuffer() ?? Buffer.alloc(0));
+      await route.fulfill({ status: 200, body: "" });
     });
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
@@ -119,12 +135,34 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await expect(page.locator("#send-sheet")).toBeVisible();
-    await expect(page.locator("#send-sub")).toContainText("Nothing is uploaded");
+    await expect(page.locator("#send-sub")).toContainText("travels inside the link");
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
     const link = (await copied())!;
-    expect(link).toMatch(/^http:\/\/localhost:5175\/#a=/);
-    expect(presigned).toBe(0);
+
+    // The document is in the fragment, as ever. The path names a card: the
+    // store holds the name, the line and the icon under an id that names
+    // nothing else, so a chat has something to show before anybody taps -
+    // which a small app never had, because nothing of it reached a store.
+    const url = new URL(link);
+    expect(url.hash).toMatch(/^#a=/);
+    const id = /^\/p\/([0-9a-f]{64})$/.exec(url.pathname)?.[1];
+    expect(id, link).toBeTruthy();
+    // Standing was asked for the card, and no document was ever uploaded.
+    expect(asked).toContain("preview");
+    expect(asked).not.toContain("blob");
+    expect(puts.has(id!)).toBe(false);
+    const sidecar = JSON.parse(puts.get(`${id}.json`)!.toString("utf8")) as {
+      size: number;
+      inline?: boolean;
+      preview?: { name: string };
+      retire?: string;
+    };
+    expect(sidecar.size).toBe(0);
+    expect(sidecar.inline).toBe(true);
+    expect(sidecar.preview?.name).toBeTruthy();
+    // And it can be taken back like any share: the digest of a token the sender kept.
+    expect(sidecar.retire).toMatch(/^[0-9a-f]{64}$/);
 
     // Somebody following it, in a browser that has never seen this page,
     // goes straight to the card. The chooser — "Open a file" — is not a

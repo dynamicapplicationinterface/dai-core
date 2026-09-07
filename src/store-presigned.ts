@@ -89,6 +89,29 @@ export function presignedStore(options: PresignedStoreOptions): Store {
     }
   };
 
+  /*
+   * Standing to describe a document that is not being stored: a card for a
+   * document inside its link. The endpoint hands back a token for an id
+   * nothing is stored under yet, and the sidecar and icon go beside nothing.
+   */
+  const mintPreview = async (id: string): Promise<string> => {
+    const response = await doFetch(options.presignUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hash: id, kind: "preview" }),
+    });
+    if (!response.ok) {
+      const said = await response
+        .json()
+        .then((body) => (body as { error?: string }).error)
+        .catch(() => undefined);
+      throw new Error(said ?? `The store refused this card (HTTP ${response.status}).`);
+    }
+    const { token } = (await response.json()) as { token?: string };
+    if (typeof token !== "string") throw new Error("The store gave no standing to describe this document.");
+    return token;
+  };
+
   return {
     async put(hash, ciphertext, sidecar: Sidecar, icon?: PreviewIcon) {
       // The same admission the server-side stores run. Checked here too, before
@@ -96,17 +119,27 @@ export function presignedStore(options: PresignedStoreOptions): Store {
       // not consume an upload slot to find that out.
       await admit(hash, ciphertext, sidecar, icon);
 
-      const blob = await mint(hash, ciphertext, "blob");
-      await put(ciphertext, blob);
+      let token: string | undefined;
+      let href: string;
+      if (ciphertext) {
+        const blob = await mint(hash, ciphertext, "blob");
+        await put(ciphertext, blob);
+        token = blob.token;
+        href = blob.href;
+      } else {
+        // A card beside no document: see storePreview.
+        token = await mintPreview(hash);
+        href = publicHrefFor(publicBase, `${hash}.json`);
+      }
 
       // Beside the document, with the token that came back with it: only
       // whoever stored the document may describe it.
       const sidecarBytes = new TextEncoder().encode(JSON.stringify(sidecar));
-      await put(sidecarBytes, await mint(hash, sidecarBytes, "sidecar", blob.token));
+      await put(sidecarBytes, await mint(hash, sidecarBytes, "sidecar", token));
 
-      if (icon) await put(icon.png, await mint(hash, icon.png, "icon", blob.token));
+      if (icon) await put(icon.png, await mint(hash, icon.png, "icon", token));
 
-      return blob.href;
+      return href;
     },
 
     async get(href) {

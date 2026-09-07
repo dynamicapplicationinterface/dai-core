@@ -8,6 +8,10 @@
     {
       "source": "/d/(.*)",
       "destination": "/"
+    },
+    {
+      "source": "/p/(.*)",
+      "destination": "/"
     }
   ],
   "headers": [

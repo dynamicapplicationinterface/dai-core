@@ -86,10 +86,12 @@ export async function inlineLink(
   opener: string,
   host: Host,
   cap: number = INLINE_CAP,
+  /** The path the link points at: the opener's root, or `/p/<id>` when a card was stored for it. */
+  path = "/",
 ): Promise<string | undefined> {
   const value = await encodeInline(html, host);
   if (value.length > cap) return undefined;
-  return `${opener.replace(/[#?].*$/, "").replace(/\/$/, "")}/#${INLINE_KEY}=${value}`;
+  return `${opener.replace(/[#?].*$/, "").replace(/\/$/, "")}${path}#${INLINE_KEY}=${value}`;
 }
 
 /**

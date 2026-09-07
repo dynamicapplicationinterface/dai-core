@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import middleware from "../apps/runner/middleware.js";
 import { compileDirectory } from "../src/compile.js";
-import { descriptionOf, documentIdFrom, injectPreview } from "../src/unfurl.js";
-import { publish } from "../src/store.js";
+import { descriptionOf, documentIdFrom, injectPreview, previewIdFrom } from "../src/unfurl.js";
+import { publish, storePreview } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,6 +82,11 @@ test.describe("what a link preview is allowed to say", () => {
   test("only a reference link is a document id", () => {
     const id = "a".repeat(64);
     expect(documentIdFrom(`/d/${id}`)).toBe(id);
+    // A card for a document inside its link is the other path, and not this one.
+    expect(documentIdFrom(`/p/${id}`)).toBeUndefined();
+    expect(previewIdFrom(`/p/${id}`)).toBe(id);
+    expect(previewIdFrom(`/d/${id}`)).toBeUndefined();
+    expect(previewIdFrom(`/p/${id}/../x`)).toBeUndefined();
     expect(documentIdFrom(`/d/${id.toUpperCase()}`)).toBe(id);
     expect(documentIdFrom("/d/nope")).toBeUndefined();
     expect(documentIdFrom("/")).toBeUndefined();
@@ -109,7 +114,7 @@ test.describe("a crawler fetching /d/<id>", () => {
   test.beforeAll(async () => {
     opener = createServer((request, response) => {
       const path = decodeURIComponent((request.url ?? "/").split("?")[0]!);
-      const rewritten = /^\/d\/[0-9a-f]{64}\/?$/i.test(path) ? "/" : path;
+      const rewritten = /^\/[dp]\/[0-9a-f]{64}\/?$/i.test(path) ? "/" : path;
       const file = join(dist, rewritten === "/" ? "index.html" : rewritten.replace(/^\/+/, ""));
       if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) {
         response.writeHead(404).end("not here");
@@ -180,6 +185,43 @@ test.describe("a crawler fetching /d/<id>", () => {
       expect(body).not.toContain(ciphertext.slice(0, 64));
       expect(body).not.toContain(sealed.key);
     }
+  });
+
+  test("a document inside its link gets a card of its own, and losing the card loses nothing else", async () => {
+    // Nothing of the document reaches the store: a preview under a random id,
+    // beside no blob, is all that is written.
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "examples/packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+    const card = await storePreview(built.html, fsStore({ root, baseUrl: storeOrigin }), {
+      icon: { png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
+    });
+    expect(card.id).toMatch(/^[0-9a-f]{64}$/);
+    expect(existsSync(join(root, card.id))).toBe(false);
+    expect(existsSync(join(root, `${card.id}.json`))).toBe(true);
+    expect(card.sidecar).toMatchObject({ size: 0, inline: true, preview: { name: "Beach trip", icon: true } });
+    expect(card.sidecar.preview?.description).toContain("beach");
+
+    const response = await middleware(
+      new Request(`${openerOrigin}/p/${card.id}`, { headers: { "user-agent": CRAWLERS[0]! } }),
+    );
+    const body = await response.text();
+    expect(response.status).toBe(200);
+    expect(body).toContain(`content="Beach trip"`);
+    expect(body).toContain("Made with DAI");
+    expect(body).toContain(`${card.id}.png`);
+
+    // A card the store no longer holds is only a card: the document is in the
+    // link and opens as it always did, so this is never "expired".
+    const gone = await middleware(
+      new Request(`${openerOrigin}/p/${"e".repeat(64)}`, { headers: { "user-agent": CRAWLERS[0]! } }),
+    );
+    const generic = await gone.text();
+    expect(gone.status).toBe(200);
+    expect(generic).not.toContain("expired");
+    expect(generic).toContain("A DAI app");
   });
 
   test("a sidecar of the wrong shape is no preview, and the link still opens", async () => {

@@ -122,3 +122,16 @@ export function injectPreview(
 export function documentIdFrom(pathname: string): string | undefined {
   return /^\/d\/([0-9a-f]{64})\/?$/i.exec(pathname)?.[1]?.toLowerCase();
 }
+
+/**
+ * Whether a path names a preview for a document that travels inside the
+ * link, and which one.
+ *
+ * `/p/<id>#a=…` is an inline link with a card: the document is in the
+ * fragment, as ever, and the store holds only what a chat may show about
+ * it - name, line, icon - under an id that names nothing else. The id says
+ * nothing about the document: it is random, not a digest.
+ */
+export function previewIdFrom(pathname: string): string | undefined {
+  return /^\/p\/([0-9a-f]{64})\/?$/i.exec(pathname)?.[1]?.toLowerCase();
+}
