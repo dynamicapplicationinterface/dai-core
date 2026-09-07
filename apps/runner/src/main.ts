@@ -35,7 +35,17 @@ import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
-import { describeDocument, describeSelf, faviconUrl, iconPng, launchAddress, watchForInstall } from "./install.js";
+import {
+  describeDocument,
+  describeSelf,
+  faviconUrl,
+  iconPng,
+  keepGround,
+  knownGround,
+  launchAddress,
+  watchForInstall,
+  type Identity,
+} from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
@@ -106,10 +116,14 @@ function say(message: string, isError = false): void {
  * rewrite of both: a browser takes the first tag whose condition holds, and
  * an app's colour holds in either scheme.
  */
-const schemeTags = Array.from(document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'));
-let appTag: HTMLMetaElement | undefined;
+const schemeTags = Array.from(document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"][media]'));
+// The head script may have put one there already, from what it remembered.
+let appTag = document.head.querySelector<HTMLMetaElement>('meta[name="theme-color"]:not([media])') ?? undefined;
 /** The colour the open application declared for that strip, if it declared one. */
 let declaredGround: string | undefined;
+/** The open document, for remembering its colour; and its identity, when iOS has one to describe. */
+let mountedUuid: string | undefined;
+let describedIdentity: Identity | undefined;
 /** A colour and nothing else: it goes into a style property and a meta tag on this page. */
 const COLOUR = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i;
 function paintAbove(theme?: string): void {
@@ -120,11 +134,29 @@ function paintAbove(theme?: string): void {
       appTag.name = "theme-color";
     }
     appTag.content = theme;
-    document.head.appendChild(appTag);
+    if (!appTag.isConnected) document.head.appendChild(appTag);
     return;
   }
   appTag?.remove();
   for (const tag of schemeTags) if (!tag.isConnected) document.head.appendChild(tag);
+}
+
+/**
+ * The colour is settled: on the page, and remembered for the next launch.
+ *
+ * Painted on the root, which is what a phone's status bar takes its colour
+ * from, and as the theme-color; kept under the document's id so the head
+ * script can paint it before the first frame next time, which is when the
+ * status bar is actually read. On iOS the manifest carries it too, so it is
+ * described again when the colour is news.
+ */
+function settleGround(colour: string): void {
+  document.documentElement.style.setProperty("--app-ground", colour);
+  paintAbove(colour);
+  if (!mountedUuid) return;
+  const news = knownGround(mountedUuid) !== colour;
+  keepGround(mountedUuid, colour);
+  if (news && describedIdentity) void describeDocument(describedIdentity).catch(() => undefined);
 }
 
 /**
@@ -343,6 +375,8 @@ function eject(): void {
   document.body.classList.remove("loaded", "launching", "booting");
   document.documentElement.style.removeProperty("--app-ground");
   declaredGround = undefined;
+  mountedUuid = undefined;
+  describedIdentity = undefined;
   paintAbove();
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
@@ -455,9 +489,14 @@ async function mount(cartridge: Cartridge): Promise<void> {
   // in the app's own colour.
   const { theme } = describeApp(indexHtmlOf(cartridge));
   declaredGround = theme;
-  if (theme) document.documentElement.style.setProperty("--app-ground", theme);
-  else document.documentElement.style.removeProperty("--app-ground");
-  paintAbove(theme);
+  mountedUuid = cartridge.manifest.documentUuid;
+  if (theme) settleGround(theme);
+  else {
+    // Not declared: the head script's remembered colour stands until the
+    // application has drawn and said what it is.
+    const remembered = knownGround(mountedUuid);
+    if (remembered) paintAbove(remembered);
+  }
   document.body.classList.remove("launching");
   /*
    * Its work is done.
@@ -920,6 +959,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         opens: 0,
         link: arrivedByLink ?? (await launchLinkForDocument(loaded.html)),
       };
+      // Kept, so the manifest can be described again once the app's colour
+      // is known, which is after it has drawn.
+      describedIdentity = identity;
       const target = launchAddress(identity);
       if (location.href !== target) {
         await describeDocument(identity);
@@ -1226,8 +1268,7 @@ window.addEventListener("message", (event) => {
     if (declaredGround) return;
     const colour = typeof data.colour === "string" ? data.colour.trim() : "";
     if (!COLOUR.test(colour)) return;
-    document.documentElement.style.setProperty("--app-ground", colour);
-    paintAbove(colour);
+    settleGround(colour);
   } else if (data.type === "DAI_HOST_SAVE_STATE") {
     // The runtime's own account of where the data stands. Shown, never
     // inferred: a green word here means the host acknowledged a write.

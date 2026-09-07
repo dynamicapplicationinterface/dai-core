@@ -132,6 +132,39 @@ export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link
   return url.href;
 }
 
+/**
+ * The colour under the status bar, remembered per document and per scheme.
+ *
+ * A home-screen app's status bar takes the colour of the page as it first
+ * appears, and the application's own colour is not known until it has drawn,
+ * which is later than that. So once it is known it is kept here, and the
+ * head script in index.html paints it before the first frame of the next
+ * launch. That script spells this key out by hand; keep the two in step.
+ */
+function groundKey(uuid: string): string {
+  let scheme = "light";
+  try {
+    if (matchMedia("(prefers-color-scheme: dark)").matches) scheme = "dark";
+  } catch {
+    /* No matchMedia: light, which is what the head script assumes too. */
+  }
+  return `dai:ground:${uuid}:${scheme}`;
+}
+export function knownGround(uuid: string): string | undefined {
+  try {
+    return localStorage.getItem(groundKey(uuid)) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function keepGround(uuid: string, colour: string): void {
+  try {
+    localStorage.setItem(groundKey(uuid), colour);
+  } catch {
+    /* Nothing to do: the strip is the chooser's colour until the app has drawn. */
+  }
+}
+
 function dismissedKey(uuid: string): string {
   return `dai:install-asked:${uuid}`;
 }
@@ -185,13 +218,13 @@ function svgWithSize(favicon: string, size: number): string | undefined {
       : undefined;
   if (!markup) return undefined;
 
-  const open = /<svg[^>]*>/i.exec(markup);
+  const open = /<svg\b[^>]*>/i.exec(markup);
   if (!open) return undefined;
 
   // Already sized: leave it exactly as the author wrote it.
   if (/\swidth\s*=/i.test(open[0]) && /\sheight\s*=/i.test(open[0])) return markup;
 
-  const sized = open[0].replace(/<svg/i, `<svg width="${size}" height="${size}"`);
+  const sized = open[0].replace(/<svg\b/i, `<svg width="${size}" height="${size}"`);
   return markup.replace(open[0], sized);
 }
 
@@ -303,8 +336,10 @@ export async function describeDocument(identity: Identity): Promise<void> {
     start_url: start,
     scope: new URL("/", location.origin).href,
     display: "standalone",
-    background_color: "#111827",
-    theme_color: "#111827",
+    // The app's own colour when it has been seen, for the splash and the
+    // first frame; the opener's dark ground for a document not yet drawn.
+    background_color: knownGround(identity.uuid) ?? "#111827",
+    theme_color: knownGround(identity.uuid) ?? "#111827",
     icons: icon
       ? [
           ...(inline ? [{ src: inline, sizes: "512x512", type: "image/png" }] : []),

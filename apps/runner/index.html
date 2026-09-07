@@ -17,6 +17,33 @@
         if (/[?&](doc|d)=/.test(s) || /\/d\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
           document.documentElement.classList.add("arriving");
         }
+        /*
+         * The colour under the clock, before the first frame.
+         *
+         * A home-screen app sits under a status bar the system paints from
+         * the page behind it, and it takes that colour as the page first
+         * appears; a colour set after that, once the application has drawn
+         * and reported its own, was measured to arrive too late. So the
+         * colour is remembered per document and per scheme the first time
+         * it is known (main.ts keeps it; install.ts owns the key), and a
+         * launch at a document's own address paints it here, before layout:
+         * on the root, which is what the canvas takes, and as the first
+         * theme-color tag, which is what a browser reads.
+         */
+        try {
+          var doc = /[?&]doc=([^&#]+)/.exec(s);
+          if (doc) {
+            var scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            var ground = localStorage.getItem("dai:ground:" + decodeURIComponent(doc[1]) + ":" + scheme);
+            if (ground && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(ground)) {
+              document.documentElement.style.setProperty("--app-ground", ground);
+              var tag = document.createElement("meta");
+              tag.name = "theme-color";
+              tag.content = ground;
+              document.head.appendChild(tag);
+            }
+          }
+        } catch (e) { /* No storage, or no matchMedia: the chooser's colour, as before. */ }
       })();
     </script>
     <!--
@@ -589,7 +616,7 @@
         width: 100%;
         height: 100%;
         border: 0;
-        background: var(--bg);
+        background: var(--app-ground, var(--bg));
         transition: opacity 220ms ease-out;
       }
       body:not(.loaded) #cartridge { display: none; }
@@ -608,7 +635,8 @@
         align-items: center;
         justify-content: center;
         gap: 14px;
-        background: var(--bg);
+        /* The app's own colour when it is known, so the first frame is already it. */
+        background: var(--app-ground, var(--bg));
       }
       body.launching #launch, body.booting #launch { display: flex; }
       #launch-icon { border-radius: 19px; background: var(--surface); box-shadow: var(--icon-shadow); }

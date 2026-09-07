@@ -131,5 +131,26 @@ test.describe("how much of the screen an application gets", () => {
     await expect
       .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor))
       .toBe("rgb(250, 247, 239)");
+
+    // Remembered, under the document's id and the colour scheme, because a
+    // phone's status bar takes the page's colour as the page first appears,
+    // and a colour that arrives after the app has drawn was measured to be
+    // too late. The next launch at the document's own address paints it in
+    // the head, before layout: on the root, and as the first theme-color
+    // tag - first, which is what tells it apart from the one main.ts adds
+    // at the end once the app has reported in.
+    const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("dai:ground:")));
+    expect(key).toMatch(/^dai:ground:[0-9a-f-]{36}:light$/);
+    const uuid = key!.split(":")[2];
+    await page.goto(`${RUNNER_URL}?doc=${uuid}`);
+    const early = await page.evaluate(() => {
+      const first = document.head.querySelector('meta[name="theme-color"]');
+      return {
+        ground: document.documentElement.style.getPropertyValue("--app-ground"),
+        content: first?.getAttribute("content"),
+        media: first?.getAttribute("media"),
+      };
+    });
+    expect(early).toEqual({ ground: "rgb(250, 247, 239)", content: "rgb(250, 247, 239)", media: null });
   });
 });
