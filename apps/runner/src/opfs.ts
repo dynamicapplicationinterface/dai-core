@@ -39,6 +39,12 @@ export interface Share {
   hash: string;
   retire: string;
   at: string;
+  /**
+   * A card for a document that travelled inside its link, rather than the
+   * document itself. Retiring it takes the card down; the link still opens,
+   * because the app is in it.
+   */
+  card?: true;
 }
 
 function openIdb(): Promise<IDBDatabase> {

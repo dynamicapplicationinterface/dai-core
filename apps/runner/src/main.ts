@@ -1693,7 +1693,7 @@ async function linkToSend(html: string, preview: boolean): Promise<{ link: strin
         const withCard = await inlineLink(html, location.origin + "/", host, INLINE_CAP, `/p/${card.id}`);
         if (withCard) {
           if (loaded) {
-            await rememberShare(loaded.manifest.documentUuid, { hash: card.id, retire: card.retire, at: new Date().toISOString() });
+            await rememberShare(loaded.manifest.documentUuid, { hash: card.id, retire: card.retire, at: new Date().toISOString(), card: true });
           }
           return { link: withGround(withCard), uploaded: false };
         }
@@ -1728,11 +1728,13 @@ async function rememberShare(documentUuid: string, share: Share): Promise<void> 
  * opening. What people already opened is on their devices and stays theirs —
  * said, so nobody takes this for a recall.
  */
-async function retireShares(documentUuid: string): Promise<{ retired: number; failed: number }> {
+async function retireShares(documentUuid: string): Promise<{ retired: number; failed: number; cards: number }> {
   const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
   const shares = held?.shares ?? [];
   let retired = 0;
   let failed = 0;
+  // How many of those retired were cards only: the link still opens.
+  let cards = 0;
   const remaining: Share[] = [];
   for (const share of shares) {
     try {
@@ -1741,8 +1743,10 @@ async function retireShares(documentUuid: string): Promise<{ retired: number; fa
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ hash: share.hash, token: share.retire }),
       });
-      if (response.ok) retired += 1;
-      else {
+      if (response.ok) {
+        retired += 1;
+        if (share.card) cards += 1;
+      } else {
         failed += 1;
         remaining.push(share);
       }
@@ -1752,7 +1756,20 @@ async function retireShares(documentUuid: string): Promise<{ retired: number; fa
     }
   }
   if (held) await saveCartridgeToLibrary({ ...held, shares: remaining }).catch(() => undefined);
-  return { retired, failed };
+  return { retired, failed, cards };
+}
+
+/**
+ * What the control offers to take back. A link made through the store stops
+ * opening; a link that carried the app inside it only loses its card, and
+ * the control says which, so nobody presses it expecting the other.
+ */
+function retireLabel(shares: Share[]): string {
+  const n = shares.length;
+  if (n > 0 && shares.every((share) => share.card)) {
+    return n === 1 ? "Take down the card from the link I shared" : `Take down the cards from the ${n} links I shared`;
+  }
+  return n === 1 ? "Stop the link I shared before" : `Stop the ${n} links I shared before`;
 }
 
 async function sendDocument(): Promise<void> {
@@ -1774,17 +1791,21 @@ async function sendDocument(): Promise<void> {
   const earlier = (await getCartridgeFromLibrary(uuid).catch(() => null))?.shares ?? [];
   retire.hidden = earlier.length === 0;
   retire.disabled = false;
-  retire.textContent = earlier.length === 1 ? "Stop the link I shared before" : `Stop the ${earlier.length} links I shared before`;
+  retire.textContent = retireLabel(earlier);
   retire.onclick = async () => {
     retire.disabled = true;
     retire.textContent = "Stopping…";
-    const { retired, failed } = await retireShares(uuid);
+    const { retired, failed, cards } = await retireShares(uuid);
+    const left = (await getCartridgeFromLibrary(uuid).catch(() => null))?.shares ?? [];
     retire.hidden = failed === 0;
     retire.disabled = false;
-    retire.textContent = failed === 1 ? "Stop the link I shared before" : `Stop the ${failed} links I shared before`;
+    retire.textContent = retireLabel(left);
+    const onlyCards = retired > 0 && cards === retired;
     say(
       retired > 0
-        ? `${retired === 1 ? "That link no longer opens" : `${retired} links no longer open`}. Anyone who already opened it keeps their copy.` +
+        ? (onlyCards
+            ? `${retired === 1 ? "The card is gone from that link" : `The cards are gone from those ${retired} links`}. The link still opens: the app is inside it.`
+            : `${retired === 1 ? "That link no longer opens" : `${retired} links no longer open`}. Anyone who already opened it keeps their copy.`) +
             (failed > 0 ? ` ${failed} could not be stopped; try again later.` : "")
         : "Those links could not be stopped just now. Try again later.",
       retired === 0,
