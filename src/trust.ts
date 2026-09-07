@@ -80,13 +80,29 @@ function presentedKey(container: VerifiedContainer): string | null {
  * would leave the real document reading as an impersonation ever after — with
  * nothing in the library to delete, and so no way to undo it.
  */
-export async function pinTrust(store: TrustStore, container: VerifiedContainer): Promise<void> {
+export async function pinTrust(store: TrustStore, container: VerifiedContainer): Promise<TrustVerdict> {
   await store.pin(container.manifest.documentUuid, {
     publicKey: presentedKey(container),
     fingerprint: container.publicKeyFingerprint ?? null,
     appName: container.manifest.appName ?? null,
     firstSeen: Date.now(),
   });
+  /*
+   * The pin that is there is the one that counts — and it may not be this
+   * one. Two opens of one document with two keys, both finding no pin, both
+   * pinning: the store keeps the first, and the second used to be told it
+   * was pinned and ran. What was kept is read back and compared, so the
+   * loser of that race is refused the way any later mismatch would be.
+   */
+  const look = await trustVerdict(store, container);
+  if (look.status === "trusted") return { status: "pinned", fingerprint: look.fingerprint };
+  if (look.status === "unknown") {
+    return {
+      status: "mismatch",
+      message: "This device could not remember which key signed this document. Nothing has been changed; try opening it again.",
+    };
+  }
+  return look;
 }
 
 /**
@@ -166,8 +182,7 @@ export async function checkTrust(
 ): Promise<TrustVerdict> {
   const look = await trustVerdict(store, container);
   if (look.status !== "unknown") return look;
-  await pinTrust(store, container);
-  return { status: "pinned", fingerprint: look.fingerprint };
+  return pinTrust(store, container);
 }
 
 /** Drops a pin so the next open trusts afresh. For a deliberate key rotation. */

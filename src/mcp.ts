@@ -552,8 +552,27 @@ async function callTool(
  */
 export async function handleMessage(
   options: ServerOptions,
-  request: JsonRpcRequest,
+  message: JsonRpcRequest | unknown,
 ): Promise<JsonRpcResponse | null> {
+  /*
+   * Valid JSON is not yet a request. `null`, an array, a number: each parsed
+   * and each used to throw here reading `.id`, which took down the queue the
+   * transport serialises messages through. The shape is checked before
+   * anything is read from it, and the answer is the protocol's own.
+   */
+  if (typeof message !== "object" || message === null || Array.isArray(message)) {
+    return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request: not a JSON-RPC object" } };
+  }
+  const shaped = message as Partial<JsonRpcRequest> & { id?: unknown; method?: unknown };
+  const idIsValid = shaped.id === undefined || shaped.id === null || typeof shaped.id === "string" || typeof shaped.id === "number";
+  if (!idIsValid || typeof shaped.method !== "string" || (shaped.params !== undefined && (typeof shaped.params !== "object" || shaped.params === null))) {
+    return {
+      jsonrpc: "2.0",
+      id: idIsValid ? ((shaped.id as string | number | null | undefined) ?? null) : null,
+      error: { code: -32600, message: "Invalid Request: method must be a string and params an object" },
+    };
+  }
+  const request = shaped as JsonRpcRequest;
   const id = request.id ?? null;
 
   // Notifications carry no id and must not be answered.

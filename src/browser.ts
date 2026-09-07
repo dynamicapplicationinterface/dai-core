@@ -11,7 +11,7 @@
  * engine quietly becomes several, so it lives here now and
  * `tests/one-engine.spec.ts` keeps it that way.
  */
-import { unzipSync } from "fflate";
+import { unzipBounded } from "./unzip.js";
 import { buildContainer, type BuildContainerResult } from "./core.js";
 
 export interface RuntimeAssets {
@@ -85,7 +85,7 @@ export async function loadRuntimeAssets(baseUrl = "/runtime"): Promise<RuntimeAs
  */
 export function unpackZip(bytes: Uint8Array): Record<string, Uint8Array> {
   const files: Record<string, Uint8Array> = {};
-  for (const [name, content] of Object.entries(unzipSync(bytes))) {
+  for (const [name, content] of Object.entries(unzipBounded(bytes))) {
     if (!name.endsWith("/") && content.byteLength >= 0) files[name] = content;
   }
   return stripCommonPrefix(files);

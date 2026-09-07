@@ -84,6 +84,17 @@ test.describe("protocol", () => {
     expect(response).toBeNull();
   });
 
+  test("valid JSON that is not a request is answered, not thrown on", async () => {
+    for (const bad of [null, [], 42, "x", { jsonrpc: "2.0", id: 1 }, { jsonrpc: "2.0", id: 1, method: 7 }, { jsonrpc: "2.0", id: { a: 1 }, method: "ping" }]) {
+      const response = await handleMessage({ root: workspace() }, bad);
+      expect(response, JSON.stringify(bad)).toBeTruthy();
+      expect(response!.error?.code, JSON.stringify(bad)).toBe(-32600);
+    }
+    // And the server is fine afterwards.
+    const ok = await handleMessage({ root: workspace() }, { jsonrpc: "2.0", id: 2, method: "ping" });
+    expect(ok?.error).toBeUndefined();
+  });
+
   test("an unknown method is a JSON-RPC error, not a crash", async () => {
     const response = await handleMessage(
       { root: workspace() },

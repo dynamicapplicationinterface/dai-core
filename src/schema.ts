@@ -72,15 +72,69 @@ export class SchemaError extends Error {
  * in a language where they sometimes are not.
  */
 export function normaliseSchema(sql: string): string {
-  return sql
-    // Line comments first: a `--` inside a string literal is rare in a schema
-    // and the alternative is a SQL parser.
-    .replace(/--[^\n]*/g, " ")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\s*([(),;])\s*/g, "$1")
+  /*
+   * Literals are kept exactly. SQLite ignores the case and spacing of its
+   * keywords and names and does not ignore them inside quotes: a CHECK that
+   * allows 'A' and one that allows 'a' are different schemas, and a `--`
+   * inside a string is not a comment. So the text is walked, and comments,
+   * whitespace and case are normalised only outside quotes.
+   */
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i]!;
+    const next = sql[i + 1];
+    if (ch === "-" && next === "-") {
+      while (i < sql.length && sql[i] !== "\n") i += 1;
+      out += " ";
+    } else if (ch === "/" && next === "*") {
+      const end = sql.indexOf("*/", i + 2);
+      i = end === -1 ? sql.length : end + 2;
+      out += " ";
+    } else if (ch === "'" || ch === '"' || ch === "`" || ch === "[") {
+      // A quoted run, its own quote doubled inside it, kept byte for byte.
+      const close = ch === "[" ? "]" : ch;
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === close) {
+          if (close !== "]" && sql[j + 1] === close) {
+            j += 2;
+            continue;
+          }
+          break;
+        }
+        j += 1;
+      }
+      out += sql.slice(i, Math.min(j + 1, sql.length));
+      i = j + 1;
+    } else {
+      out += ch;
+      i += 1;
+    }
+  }
+  return out
+    .replace(/\s+/g, (run, at: number, s: string) => (insideQuotes(s, at) ? run : " "))
+    .replace(/\s*([(),;])\s*/g, (run, mark: string, at: number, s: string) => (insideQuotes(s, at) ? run : mark))
     .trim()
-    .toLowerCase();
+    .replace(/[^'"`\[\]]+|'(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\]/g, (piece) =>
+      /^['"`\[]/.test(piece) ? piece : piece.toLowerCase(),
+    );
+}
+
+/** Whether position `at` in `s` falls inside a quoted run. */
+function insideQuotes(s: string, at: number): boolean {
+  let open: string | undefined;
+  for (let i = 0; i < at; i += 1) {
+    const ch = s[i]!;
+    if (open) {
+      if (ch === open) {
+        if (open !== "]" && s[i + 1] === open) i += 1;
+        else open = undefined;
+      }
+    } else if (ch === "'" || ch === '"' || ch === "`") open = ch;
+    else if (ch === "[") open = "]";
+  }
+  return open !== undefined;
 }
 
 /** Reads `003-add-tags.sql` as version 3. Anything else is refused by name. */

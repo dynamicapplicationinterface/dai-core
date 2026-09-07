@@ -35,9 +35,9 @@ lines.on("line", (line) => {
   if (!trimmed) return;
 
   queue = queue.then(async () => {
-    let request: JsonRpcRequest;
+    let request: unknown;
     try {
-      request = JSON.parse(trimmed) as JsonRpcRequest;
+      request = JSON.parse(trimmed);
     } catch {
       process.stdout.write(
         JSON.stringify({
@@ -49,7 +49,18 @@ lines.on("line", (line) => {
       return;
     }
 
-    const response = await handleMessage(options, request);
-    if (response) process.stdout.write(JSON.stringify(response) + "\n");
+    try {
+      const response = await handleMessage(options, request);
+      if (response) process.stdout.write(JSON.stringify(response) + "\n");
+    } catch (error) {
+      // One bad message is one bad answer, not the end of the queue.
+      process.stdout.write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32603, message: `Internal error: ${error instanceof Error ? error.message : String(error)}` },
+        }) + "\n",
+      );
+    }
   });
 });

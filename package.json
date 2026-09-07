@@ -94,6 +94,11 @@
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",
     "fflate": "^0.8.3"
   },
+  "overrides": {
+    "tsup": {
+      "esbuild": "^0.28.2"
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.1",

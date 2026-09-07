@@ -676,7 +676,7 @@ ${refusal.detail}` : ""),
     // again inside a function, and the path was checked a few lines up.
     const filePath: string = currentFilePath as string;
     const write = async (): Promise<void> => {
-    const written =
+    const written: Promise<void> =
       currentFileIsSectioned && databaseBytes
         ? invokeTauri<number>("save_cartridge_data", {
             path: filePath,
@@ -686,8 +686,11 @@ ${refusal.detail}` : ""),
           }).then((generation) => {
             backedUp.add(filePath);
             // Kept, so a second save from this window is checked against what
-            // this window actually wrote rather than what it first read.
-            currentGeneration = generation;
+            // this window actually wrote rather than what it first read — and
+            // only while this is still the open file: a save that finishes
+            // after the person opened something else must not hand its
+            // generation to the new document.
+            if (currentFilePath === filePath) currentGeneration = generation;
           })
         : invokeTauri("save_cartridge", {
             path: filePath,
@@ -705,7 +708,11 @@ ${refusal.detail}` : ""),
             backedUp.add(filePath);
           });
 
-    written.then(() => reply("ok")).catch((error: unknown) => reply("error", String(error)));
+    // Awaited, so the lock around this is held until the native write has
+    // answered and the generation is recorded. It used to return at once,
+    // and a second save entered with the generation the first was about to
+    // replace.
+    await written.then(() => reply("ok")).catch((error: unknown) => reply("error", String(error)));
   };
 
   /*

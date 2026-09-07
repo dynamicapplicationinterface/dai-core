@@ -62,6 +62,10 @@ import {
 import { DICTIONARY, DICTIONARY_ID } from "./dictionary.js";
 import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { compressPublicKey, decompressPublicKey } from "./p256.js";
+import { inflateCeiling } from "./unzip.js";
+
+/** The most a link may inflate to. Far above any link that fits an address. */
+const INLINE_INFLATE_CAP = 64 * 1024 * 1024;
 
 export const CARRIER_VERSION = 1;
 
@@ -296,7 +300,12 @@ export async function unpackInline(
 
   let fields: Map<CborValue, CborValue>;
   try {
-    const inflated = inflateSync(bytes.subarray(1 + DICTIONARY_ID.length), { dictionary: DICTIONARY });
+    const compressed = bytes.subarray(1 + DICTIONARY_ID.length);
+    // A fixed output, sized to the most this many bytes can honestly become:
+    // a link is small, and what it inflates to is bounded before it is read.
+    const out = new Uint8Array(inflateCeiling(compressed.length, INLINE_INFLATE_CAP));
+    const inflated = inflateSync(compressed, { dictionary: DICTIONARY, out });
+    if (inflated.length >= out.length) throw new Error("inflates past the cap");
     const decoded = decode(inflated);
     if (!(decoded instanceof Map)) throw new Error("not a map");
     fields = decoded;

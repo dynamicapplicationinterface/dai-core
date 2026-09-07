@@ -49,6 +49,21 @@ test.describe("normalising a schema", () => {
     );
   });
 
+  test("keeps what is inside quotes exactly", () => {
+    // SQLite distinguishes 'A' from 'a', and a -- inside a string is text.
+    const upper = "CREATE TABLE t (kind TEXT CHECK (kind IN ('A', 'B')));";
+    const lower = "CREATE TABLE t (kind TEXT CHECK (kind IN ('a', 'b')));";
+    expect(normaliseSchema(upper)).not.toBe(normaliseSchema(lower));
+    expect(normaliseSchema(upper)).toContain("'A'");
+    const spaced = "CREATE TABLE t (note TEXT DEFAULT 'two  words');";
+    const tight = "CREATE TABLE t (note TEXT DEFAULT 'two words');";
+    expect(normaliseSchema(spaced)).not.toBe(normaliseSchema(tight));
+    const dashes = "CREATE TABLE t (sep TEXT DEFAULT '--', n INTEGER);";
+    expect(normaliseSchema(dashes)).toContain("n integer");
+    // And an identifier's quotes are kept too, with what is in them.
+    expect(normaliseSchema('CREATE TABLE "Mixed Case" (a TEXT);')).toContain('"Mixed Case"');
+  });
+
   test("does not ignore a dropped NOT NULL", () => {
     expect(normaliseSchema("CREATE TABLE t (a TEXT NOT NULL);")).not.toBe(
       normaliseSchema("CREATE TABLE t (a TEXT);"),

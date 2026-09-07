@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { checkTrust, forgetTrust } from "../apps/desktop/src/trust.js";
+import { checkTrust as coreCheck } from "../src/trust.js";
 import type { VerifiedContainer } from "../src/container.js";
 
 /**
@@ -157,6 +158,30 @@ test.describe("trust on first use", () => {
 
     expect((await checkTrust(host.invoke, unsigned)).status).toBe("pinned");
     expect((await checkTrust(host.invoke, unsigned)).status).toBe("trusted");
+  });
+
+  test("the loser of a first-use race is refused, not told it was pinned", async () => {
+    // Two opens of one document, two keys, both finding no pin. The store
+    // keeps the first; the second must not run on the strength of its own
+    // write having been attempted.
+    const store = new Map<string, unknown>();
+    const firstWriterWins = {
+      get: async (uuid: string) => (store.get(uuid) as never) ?? null,
+      pin: async (uuid: string, key: unknown) => {
+        if (!store.has(uuid)) store.set(uuid, key);
+      },
+      forget: async (uuid: string) => {
+        store.delete(uuid);
+      },
+    };
+    const a = container();
+    const b = { ...container(), publicKey: "-----BEGIN PUBLIC KEY-----\nother\n-----END PUBLIC KEY-----", publicKeyFingerprint: "ff:ff" };
+    const [one, two] = await Promise.all([
+      coreCheck(firstWriterWins as never, a as never),
+      coreCheck(firstWriterWins as never, b as never),
+    ]);
+    const statuses = [one.status, two.status].sort();
+    expect(statuses).toEqual(["mismatch", "pinned"]);
   });
 
   test("a different document is a separate first use", async () => {

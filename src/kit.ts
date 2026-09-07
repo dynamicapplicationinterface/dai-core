@@ -236,6 +236,22 @@ function fill(element, row) {
   }
 }
 
+/**
+ * Lets go of the object URLs under a node that is coming down.
+ *
+ * A row's picture is an object URL (see fill), and a redraw makes new rows
+ * rather than refilling the old ones — so the URLs the old rows held were
+ * never revoked, and a list of photographs that refreshed on every edit
+ * kept every photograph it had ever shown.
+ */
+function release(node) {
+  if (!node || !node.querySelectorAll) return;
+  const held = node.matches && node.matches('[data-blob]') ? [node, ...node.querySelectorAll('[data-blob]')] : node.querySelectorAll('[data-blob]');
+  for (const target of held) {
+    if (target.src && target.src.startsWith('blob:')) URL.revokeObjectURL(target.src);
+  }
+}
+
 /** Wires every [data-run] inside a rendered row or the page. */
 function wire(element, values) {
   const triggers = element.querySelectorAll('[data-run]');
@@ -282,6 +298,7 @@ class DaiRows extends HTMLElement {
 
   disconnectedCallback() {
     views.delete(this);
+    release(this);
   }
 
   draw() {
@@ -289,7 +306,10 @@ class DaiRows extends HTMLElement {
     const rows = db.selectObjects(this.getAttribute('query'));
 
     const empty = this.getAttribute('empty');
-    while (this.lastChild && this.lastChild !== this.template) this.removeChild(this.lastChild);
+    while (this.lastChild && this.lastChild !== this.template) {
+      release(this.lastChild);
+      this.removeChild(this.lastChild);
+    }
 
     if (rows.length === 0 && empty) {
       const message = document.createElement('p');

@@ -20,7 +20,8 @@
  * Service Workers are deliberately not used: they are unavailable on `file://`,
  * which is the primary way a container is opened. See §1 of the Phase 2 spec.
  */
-import { unzipSync, zipSync } from "fflate";
+import { zipSync } from "fflate";
+import { unzipBounded } from "../unzip.js";
 // Imported rather than reimplemented: the host derives the same value from the
 // same helper, and two spellings of "canonical" would disagree eventually.
 import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
@@ -1763,7 +1764,7 @@ async function boot(): Promise<void> {
   try {
     const decoded = decodeBase64(b64);
     mark("decoded");
-    files = unzipSync(decoded);
+    files = unzipBounded(decoded);
     mark("unzipped");
   } catch (error) {
     refuse("PAYLOAD_UNREADABLE", "Payload could not be decoded.", String(error));

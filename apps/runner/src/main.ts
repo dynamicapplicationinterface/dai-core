@@ -42,6 +42,7 @@ import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/tr
 import {
   deleteCartridgeFromLibrary,
   deleteDatabaseFromOpfs,
+  getCartridgeFromLibrary,
   listCartridgesFromLibrary,
   loadDatabaseFromOpfs,
   saveCartridgeToLibrary,
@@ -89,6 +90,22 @@ function say(message: string, isError = false): void {
  * carries something to open (see index.html). Taken off here when there is
  * nothing to open after all, so the chooser is back for the person to use.
  */
+/**
+ * The save revision this tab is working from, per document.
+ *
+ * Read when a document opens and moved on by each save this tab commits. A
+ * save finding the library at some other revision is a tab that has fallen
+ * behind another, and is refused rather than written over it.
+ */
+const knownRevision = new Map<string, number>();
+
+async function learnRevision(documentUuid: string): Promise<number> {
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  const revision = held?.revision ?? 0;
+  knownRevision.set(documentUuid, revision);
+  return revision;
+}
+
 function arrived(still: boolean): void {
   document.documentElement.classList.toggle("arriving", still);
 }
@@ -278,6 +295,7 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
       lastOpened: new Date().toISOString(),
       html: loaded.html,
       publicKeyFingerprint: loaded.publicKeyFingerprint,
+      revision: await learnRevision(loaded.manifest.documentUuid),
     });
 
     rememberOpen(loaded.manifest.documentUuid);
@@ -691,7 +709,16 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     }
     // Agreed to, whether by pressing Open or by having kept it before. Only
     // now is a first sighting worth remembering.
-    if (verdict.status === "unknown") await pinTrust(trustStore(), cartridge);
+    if (verdict.status === "unknown") {
+      const pinned = await pinTrust(trustStore(), cartridge);
+      // Another open of this document got its pin in first, with a different
+      // key. What is remembered is what counts; this copy is the stranger.
+      if (pinned.status === "mismatch") {
+        say(pinned.message, true);
+        slot.classList.remove("busy");
+        return;
+      }
+    }
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     if (succession?.inherit) {
@@ -719,6 +746,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         lastOpened: new Date().toISOString(),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
+        revision: await learnRevision(loaded.manifest.documentUuid),
       });
       keptOnDevice = true;
     } catch {
@@ -1109,18 +1137,43 @@ window.addEventListener("message", (event) => {
         navigator.locks?.request
           ? navigator.locks.request(key, { mode: "exclusive" }, work)
           : work();
-      locked(() => saveDatabaseToOpfs(documentUuid, bytes))
+      /*
+       * Held through the whole of it — the revision check, the database, the
+       * reseal, the library — so no tab sees the database at one revision
+       * and the library at another. And the revision: the library record
+       * counts the saves committed for this document, and a tab that did
+       * not see the latest one is behind another tab. Its save is refused
+       * rather than written, because its whole database would put the
+       * other tab's work back; the runtime keeps the changes pending and
+       * says so in the header, and Save a copy is in the menu.
+       */
+      locked(async () => {
+        const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+        const current = held?.revision ?? 0;
+        if (knownRevision.has(documentUuid) && knownRevision.get(documentUuid) !== current) {
+          throw new Error(
+            "This document was saved from another tab since it was opened here. " +
+              "To keep these changes, use Save a copy; to see the other tab's, reopen it.",
+          );
+        }
+        await saveDatabaseToOpfs(documentUuid, bytes);
+        const next = current + 1;
+        if (loaded && loaded.manifest.documentUuid === documentUuid) {
+          loaded = await resealCartridge(loaded, bytes);
+          await saveCartridgeToLibrary({
+            documentUuid: loaded.manifest.documentUuid,
+            appName: loaded.manifest.appName ?? "container",
+            lastOpened: new Date().toISOString(),
+            html: loaded.html,
+            publicKeyFingerprint: loaded.publicKeyFingerprint,
+            revision: next,
+          });
+        } else if (held) {
+          await saveCartridgeToLibrary({ ...held, revision: next });
+        }
+        knownRevision.set(documentUuid, next);
+      })
         .then(async () => {
-          if (loaded && loaded.manifest.documentUuid === documentUuid) {
-            loaded = await resealCartridge(loaded, bytes);
-            await saveCartridgeToLibrary({
-              documentUuid: loaded.manifest.documentUuid,
-              appName: loaded.manifest.appName ?? "container",
-              lastOpened: new Date().toISOString(),
-              html: loaded.html,
-              publicKeyFingerprint: loaded.publicKeyFingerprint,
-            });
-          }
           (event.source as Window | null)?.postMessage(
             { type: "DAI_HOST_SAVE_ACK", status: "ok", requestId },
             "*",

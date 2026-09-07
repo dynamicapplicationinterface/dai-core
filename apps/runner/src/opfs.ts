@@ -22,6 +22,12 @@ export interface LibraryItem {
   lastOpened: string;
   html: string;
   publicKeyFingerprint?: string;
+  /**
+   * Counts the saves this device has committed for the document. A tab
+   * saving against a revision it did not see last is behind another tab,
+   * and its whole-database write would put the newer work back.
+   */
+  revision?: number;
 }
 
 function openIdb(): Promise<IDBDatabase> {
@@ -211,6 +217,16 @@ export async function deleteDatabaseFromOpfs(documentUuid: string): Promise<void
 export async function saveCartridgeToLibrary(item: LibraryItem): Promise<void> {
   const db = await openIdb();
   await committed(db.transaction(LIB_STORE, "readwrite"), (store) => store.put(item));
+}
+
+/** One document's library record, or null when this device does not hold it. */
+export async function getCartridgeFromLibrary(documentUuid: string): Promise<LibraryItem | null> {
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(LIB_STORE, "readonly").objectStore(LIB_STORE).get(documentUuid);
+    req.onsuccess = () => resolve((req.result as LibraryItem | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
