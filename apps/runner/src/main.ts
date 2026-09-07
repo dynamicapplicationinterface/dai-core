@@ -720,7 +720,6 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         succession: succession?.card,
         applied: ISOLATION_CLAUSES,
         clear: arrivedInClear,
-        inspect: { file, playground: PLAYGROUND },
         // A key worth naming: one this device may see again. Never for an
         // unsigned document, a test key, or a name in dispute.
         onNamePublisher:
@@ -940,18 +939,6 @@ let mountedNonce: string | null = null;
  */
 const OPENER = "opendai.app";
 
-/**
- * Where the card's "look inside" goes (backlog 1.5).
- *
- * The playground is on the site, not in this app, and deliberately: it reads a
- * container and never mounts one, which is a different program with a
- * different guarantee. Localhost in development, so the flow is exercised
- * before production rather than for the first time in it.
- */
-const PLAYGROUND =
-  location.hostname === "localhost" || location.hostname === "127.0.0.1"
-    ? `${location.protocol}//${location.hostname}:5176/playground`
-    : "https://www.dynamicapplicationinterface.io/playground";
 
 /** Milliseconds from the container starting to the application being usable. */
 let lastOpenMs: number | null = null;

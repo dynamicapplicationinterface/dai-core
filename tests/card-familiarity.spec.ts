@@ -54,7 +54,9 @@ test.describe("the card, keyed on familiarity", () => {
     const read = async (page: import("@playwright/test").Page) => ({
       name: await page.locator("#card-name").textContent(),
       publisher: await page.locator("#card-publisher").textContent(),
-      claims: await page.locator("#card-claims").innerText(),
+      // textContent, not innerText: the claims live under the line at the
+      // bottom of the screen, and what is compared is what each carrier says.
+      claims: await page.locator("#card-claims").textContent(),
     });
 
     const byFile = await browser.newContext();

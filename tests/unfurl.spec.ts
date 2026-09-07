@@ -177,7 +177,11 @@ test.describe("a crawler fetching /d/<id>", () => {
     );
     expect(response.status).toBe(200);
     const body = await response.text();
-    expect(body).not.toContain("42");
+    // No preview was built, so nothing the sidecar said reaches the page.
+    // Asked of the tags rather than of the whole document: the opener's own
+    // stylesheet is entitled to contain the digits 4 and 2 next to each other.
+    expect(body).not.toMatch(/<meta property="og:[a-z]+" content="[^"]*42/);
+    expect(body).not.toMatch(/<title>[^<]*42/);
     expect(body).toContain("<!doctype html>".slice(0, 9));
     expect(response.headers.get("cache-control")).toBe("no-store");
   });

@@ -87,6 +87,16 @@
         --accent: #007aff;
         --accent-press: #0062cc;
         --on-accent: #ffffff;
+        /*
+         * The one action on the open screen.
+         *
+         * Green, and deliberately not the system blue every other control on
+         * a phone uses: the first thing testers said about this screen was
+         * that it looked like a store page pretending to be one, and the blue
+         * pill was most of why.
+         */
+        --go: #12855a;
+        --on-go: #ffffff;
         --ok: #1f8f45;
         --warn: #b25e00;
         --bad: #d70015;
@@ -109,6 +119,8 @@
           --accent: #0a84ff;
           --accent-press: #3395ff;
           --on-accent: #ffffff;
+          --go: #2fce8b;
+          --on-go: #06271a;
           --ok: #30d158;
           --warn: #ffb340;
           --bad: #ff453a;
@@ -507,102 +519,178 @@
        * while it is up: nothing else is a decision.
        */
       body.deciding #slot { display: none; }
+      /*
+       * The open screen. Not a card.
+       *
+       * It was one: a rounded panel floating on a dimmed page, with the app's
+       * name small at the top and four security ticks filling the middle.
+       * Testers read that as a store page imitating another store page, and
+       * two of them used the word scam. What was wrong was the priority. The
+       * app had three lines about itself and the format had a screenful.
+       *
+       * So: the whole screen, and what the app is and does at the top of it.
+       * Who made it and when are facts in a row, in a person's words. Every
+       * sentence about isolation, keys and storage is behind one line at the
+       * bottom, for the person who wants it — which is a different person
+       * from the one deciding whether to open a watch list their brother
+       * sent them.
+       */
+      body.deciding #slot { display: none; }
       #card {
         position: absolute;
         inset: 0;
-        display: grid;
-        place-items: center;
-        padding: 20px;
-        overflow: auto;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        background: var(--bg);
       }
       #card[hidden] { display: none; }
       .card-panel {
+        outline: none;
         width: 100%;
-        max-width: 24rem;
+        max-width: 30rem;
+        margin: 0 auto;
         display: flex;
         flex-direction: column;
-        align-items: stretch;
-        gap: 14px;
-        padding: 22px 20px 20px;
-        border-radius: 22px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
+        padding: 0 0 30px;
         text-align: left;
       }
-      .card-head { display: flex; gap: 16px; align-items: flex-start; }
+      .card-head { display: flex; gap: 16px; align-items: flex-start; padding: 24px 22px 16px; }
       #card-icon {
-        width: 96px;
-        height: 96px;
+        width: 68px;
+        height: 68px;
         flex: 0 0 auto;
-        border-radius: 22px;
+        border-radius: 16px;
         background: var(--surface-2);
         box-shadow: var(--icon-shadow);
       }
       #card-icon[hidden] { display: none; }
-      .card-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-      #card-name { margin: 0; font-size: 22px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
-      #card-tagline { margin: 0; font-size: 14px; line-height: 1.35; color: var(--muted); }
+      .card-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+      #card-name { margin: 0; font-size: 24px; line-height: 1.08; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
+      #card-tagline { margin: 0; font-size: 14.5px; line-height: 1.4; color: var(--muted); }
       #card-tagline[hidden] { display: none; }
+
+      /* Sized to its word, not to the screen: the app's name stays the
+         largest thing here, and this is still the one thing to press. */
+      .card-act { padding: 0 22px 20px; }
       #card-open {
-        align-self: flex-start;
-        margin-top: 8px;
-        padding: 8px 26px;
+        padding: 9px 30px;
         font: inherit;
         font-size: 15px;
-        font-weight: 700;
+        font-weight: 600;
         border: 0;
         border-radius: 999px;
-        background: var(--accent);
-        color: var(--on-accent);
+        background: var(--go);
+        color: var(--on-go);
         cursor: pointer;
       }
-      #card-open:hover { background: var(--accent-press); }
-      /* Focused on arrival so a keyboard can press it; a ring only when a keyboard is what got here. */
-      /* No ring: WebKit treats a script's focus() as keyboard focus and drew a
-         black stroke around the one control on the card. A soft accent halo
-         for a real keyboard user; nothing for a thumb. */
       #card-open:focus, #keep-cta:focus, #keep-done:focus { outline: none; }
-      #card-open:focus-visible, #keep-cta:focus-visible, #keep-done:focus-visible { box-shadow: 0 0 0 4px rgb(0 122 255 / 0.28); }
+      /*
+       * A ring for a keyboard, nothing for a thumb.
+       *
+       * A script's focus() counts as keyboard focus to both engines, so
+       * focusing this button on arrival drew a stroke around it for everybody
+       * — which is the mark somebody read as a black outline on the buttons.
+       * Arrival focus goes to the top of the screen instead (see showCard), so
+       * this fires only when somebody has actually tabbed here.
+       */
+      #card-open:focus-visible { box-shadow: 0 0 0 4px rgb(18 133 90 / 0.32); }
+      #keep-cta:focus-visible, #keep-done:focus-visible { box-shadow: 0 0 0 4px rgb(0 122 255 / 0.28); }
 
-      /* The facts row: what a store page shows in a strip, this shows about the file. */
-      #card-facts {
-        list-style: none;
-        margin: 0;
-        padding: 10px 0;
-        border-top: 1px solid var(--line);
-        border-bottom: 1px solid var(--line);
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
+      .card-block { padding: 20px 22px; border-top: 1px solid var(--line); }
+      .card-label {
+        margin: 0 0 12px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--faint);
       }
-      #card-facts li {
+
+      /* What the app says it does, in its own words (three lines, §recipe). */
+      #card-does { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+      #card-does li {
         display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-        padding: 2px 6px;
-        text-align: center;
-        border-left: 1px solid var(--line);
-        min-width: 0;
+        gap: 10px;
+        align-items: baseline;
+        font-size: 14.5px;
+        line-height: 1.42;
+        color: var(--text);
       }
-      #card-facts li:first-child { border-left: 0; }
-      .fact-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
-      .fact-value { font-size: 16px; font-weight: 700; color: var(--text-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .fact-sub { font-size: 11.5px; color: var(--muted); }
-      #fact-publisher[data-state="known"] { color: var(--ok); }
-      #fact-publisher[data-state="unsigned"], #fact-publisher[data-state="test-key"] { color: var(--warn); }
-      #fact-publisher[data-state="conflict"] { color: var(--bad); }
+      #card-does li::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--go);
+        transform: translateY(-3px);
+      }
+      #card-does-block[hidden] { display: none; }
 
+      /* Who made it, when, and what comes with it. */
+      #card-meta { margin: 0; display: grid; gap: 10px; }
+      #card-meta > div { display: flex; justify-content: space-between; gap: 14px; align-items: baseline; }
+      #card-meta dt { margin: 0; font-size: 13.5px; color: var(--faint); }
+      #card-meta dd {
+        margin: 0;
+        font-size: 13.5px;
+        font-weight: 500;
+        color: var(--text-2);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      #card-meta dd[data-state="known"] { color: var(--ok); }
+      #card-meta dd[data-state="unsigned"], #card-meta dd[data-state="test-key"] { color: var(--warn); }
+      #card-meta dd[data-state="conflict"] { color: var(--bad); font-weight: 700; }
+
+      /*
+       * A signature that is actively misleading does not go behind a
+       * disclosure. Everything else about the publisher does.
+       */
+      #card-alert { margin: 14px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--warn); font-weight: 500; }
+      #card-alert[hidden] { display: none; }
+      #card-alert[data-state="conflict"] { color: var(--bad); font-weight: 600; }
+      #card-identity { margin: 14px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--ok); }
+      #card-identity[hidden] { display: none; }
+
+      #card-succession { margin: 14px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
+      #card-succession[hidden] { display: none; }
+      #card-succession[data-state="refused"] { color: var(--warn); }
+      #card-clear { margin: 14px 0 0; font-size: 13px; line-height: 1.45; color: var(--warn); }
+      #card-clear[hidden] { display: none; }
+      #card-from { margin: 14px 0 0; font-size: 12.5px; color: var(--faint); }
+      #card-from[hidden] { display: none; }
+
+      /*
+       * The format, and everything that is true of every document rather than
+       * of this one: the isolation sentences, the key, the sizes, the safety
+       * number. One line, at the bottom, opened by whoever wants it.
+       */
+      #card-about {
+        margin: 8px 22px 0;
+        padding: 14px 0 0;
+        border-top: 1px solid var(--line);
+        font-size: 13px;
+        color: var(--muted);
+      }
+      #card-about summary {
+        cursor: pointer;
+        list-style: none;
+        color: var(--faint);
+        font-size: 12.5px;
+        text-align: center;
+      }
+      #card-about summary::-webkit-details-marker { display: none; }
+      #card-about summary b { color: var(--muted); font-weight: 600; }
+      #card-about summary::after { content: " \203A"; }
+      #card-about[open] summary::after { content: " \2304"; }
+      .card-about-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 0 4px; }
       #card-publisher { margin: 0; font-size: 13.5px; line-height: 1.45; color: var(--muted); }
       #card-publisher[data-state="unsigned"] { color: var(--warn); }
-      /* Known is the one state that gets to look good. */
       #card-publisher[data-state="known"] { color: var(--ok); }
-      /* New and anonymous are neutral: nothing is wrong, nothing is established. */
       #card-publisher[data-state="new"],
       #card-publisher[data-state="anonymous"] { color: var(--text-2); }
-      /* Conflict is red: a key this device has never seen, using a name it has. */
       #card-publisher[data-state="conflict"] { color: var(--bad); font-weight: 600; }
-      #card-identity { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--ok); }
-      #card-identity[hidden] { display: none; }
       #card-verify {
         align-self: flex-start;
         padding: 5px 12px;
@@ -641,40 +729,16 @@
         display: flex;
         flex-direction: column;
         gap: 7px;
-        font-size: 14px;
+        font-size: 13.5px;
         color: var(--text-2);
       }
       #card-claims li { display: flex; gap: 9px; align-items: baseline; }
-      #card-claims li::before { content: "✓"; color: var(--ok); font-weight: 700; }
-      #card-details { font-size: 13px; color: var(--muted); }
-      #card-details summary { cursor: pointer; font-weight: 600; color: var(--accent); list-style: none; }
-      #card-details summary::-webkit-details-marker { display: none; }
-      #card-details summary::after { content: " ›"; }
-      #card-details[open] summary::after { content: " ⌄"; }
-      #card-details-list { margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+      #card-claims li::before { content: "\2713"; color: var(--ok); font-weight: 700; }
+      #card-details-list { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
       #card-details-list dt { color: var(--faint); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; align-self: baseline; }
       #card-details-list dd { margin: 0; color: var(--text-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-      #card-inspect {
-        align-self: center;
-        padding: 6px 10px;
-        font: inherit;
-        font-size: 13.5px;
-        font-weight: 600;
-        border: 0;
-        background: transparent;
-        color: var(--accent);
-        cursor: pointer;
-      }
-      #card-inspect[hidden] { display: none; }
-      #card-succession { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
-      #card-succession[hidden] { display: none; }
-      #card-succession[data-state="refused"] { color: var(--warn); }
-      #card-clear { margin: 0; font-size: 13px; line-height: 1.45; color: var(--warn); }
-      #card-clear[hidden] { display: none; }
-      #card-from { margin: 0; font-size: 12.5px; color: var(--faint); text-align: center; }
-      #card-from[hidden] { display: none; }
-      /* The standing line. Quiet, because the decision above it is louder. */
-      #card-line { margin: 0; font-size: 12.5px; color: var(--faint); font-style: italic; text-align: center; }
+      #card-details[hidden] { display: none; }
+      #card-line { margin: 0; font-size: 12.5px; color: var(--faint); font-style: italic; }
     </style>
   </head>
 
@@ -849,66 +913,68 @@
         <div id="report"></div>
       </div>
       <!--
-        The launch card. See apps/runner/src/card.ts: what somebody is about to
-        open, before it opens, with ticks that name the clauses backing them.
+        The open screen. See apps/runner/src/card.ts: what somebody is about
+        to open, before it opens — the app first, the format last.
       -->
       <div id="card" hidden>
-        <div class="card-panel">
+        <div class="card-panel" tabindex="-1">
           <div class="card-head">
-            <img id="card-icon" alt="" width="96" height="96" />
+            <img id="card-icon" alt="" width="68" height="68" />
             <div class="card-titles">
               <h2 id="card-name"></h2>
               <!-- One line about it, from the app's own <meta name="description">. -->
               <p id="card-tagline" hidden></p>
-              <button id="card-open" type="button">Open</button>
             </div>
           </div>
-          <ul id="card-facts">
-            <li><span class="fact-label">Publisher</span><span id="fact-publisher" class="fact-value"></span></li>
-            <li><span class="fact-label">Data</span><span id="fact-data" class="fact-value"></span></li>
-            <li><span class="fact-label">Runs</span><span class="fact-value">Offline</span><span class="fact-sub">on this device</span></li>
-          </ul>
-          <p id="card-publisher"></p>
-          <p id="card-identity" hidden></p>
-          <button id="card-verify" type="button" hidden>Verify</button>
-          <!-- A name for this signing key, on this device — offered here, where who signed it is in view. -->
-          <button id="card-name-publisher" type="button" hidden>Name this publisher…</button>
-          <p id="card-safety" hidden></p>
-          <ul id="card-claims"></ul>
+          <div class="card-act"><button id="card-open" type="button">Get</button></div>
+
           <!--
-            The technical facts — key, dates, size — under a disclosure. The
-            card answers in plain sentences; these are for whoever wants to
-            check them, and are labelled for what they are: the publisher's
-            claims where they are claims.
+            What the app says it does: up to three lines it declares itself,
+            from <meta name="dai:does">. Absent on a document built before the
+            recipe asked for them, and then the screen is the line above.
           -->
-          <details id="card-details">
-            <summary>Details</summary>
-            <dl id="card-details-list"></dl>
+          <div class="card-block" id="card-does-block" hidden>
+            <p class="card-label">What it does</p>
+            <ul id="card-does"></ul>
+          </div>
+
+          <div class="card-block">
+            <dl id="card-meta"></dl>
+            <!-- Out here, not behind the disclosure: a signature that misleads. -->
+            <p id="card-alert" hidden></p>
+            <p id="card-identity" hidden></p>
+            <p id="card-succession" hidden></p>
+            <!--
+              A document a store held unencrypted (backlog 3.4). Shown because
+              the person reading this did not choose it.
+            -->
+            <p id="card-clear" hidden></p>
+            <p id="card-from" hidden></p>
+          </div>
+
+          <!--
+            The format, and what is true of every document rather than of this
+            one. One line, and everything technical under it.
+          -->
+          <details id="card-about">
+            <summary>Made with <b>DAI</b>. What that means for your data</summary>
+            <div class="card-about-body">
+              <p id="card-publisher"></p>
+              <button id="card-verify" type="button" hidden>Verify</button>
+              <!-- A name for this signing key, on this device. -->
+              <button id="card-name-publisher" type="button" hidden>Name this publisher…</button>
+              <p id="card-safety" hidden></p>
+              <ul id="card-claims"></ul>
+              <dl id="card-details-list"></dl>
+              <!--
+                The one sentence, where the format explains itself. Off the
+                front of the screen, which is the app's, and still on it: this
+                is the sentence that says what kind of thing somebody is
+                holding, and it is written once (see tests/one-sentence).
+              -->
+              <p id="card-line">Send an app like you send a document.</p>
+            </div>
           </details>
-          <p id="card-succession" hidden></p>
-          <!--
-            A document a store held unencrypted (backlog 3.4).
-
-            Shown because the person reading this did not choose it. Every
-            other reference link is opened by a key that never reaches a
-            server; this one was not.
-          -->
-          <p id="card-clear" hidden></p>
-          <!--
-            Look inside, before running it (backlog 1.5).
-
-            The playground reads the same bytes and never mounts them: it
-            unpacks the archive, recomputes every digest and checks the
-            signature, and shows what it found. Somebody who wants to know what
-            is in a document before they run it has had no way to find out that
-            did not involve trusting this page's summary of it.
-
-            Hidden unless a document is on the card, because there is nothing
-            to look inside of otherwise.
-          -->
-          <button id="card-inspect" type="button" hidden>Look inside first</button>
-          <p id="card-from" hidden></p>
-          <p id="card-line">Send an app like you send a document.</p>
         </div>
       </div>
 

@@ -24,8 +24,11 @@ const ENV = {
   DAI_STORE_ENDPOINT: "https://example.r2.cloudflarestorage.com",
   DAI_STORE_BUCKET: "dai-store",
   DAI_STORE_REGION: "auto",
-  DAI_STORE_ACCESS_KEY_ID: "AKIATESTTESTTESTTEST",
-  DAI_STORE_SECRET_ACCESS_KEY: "not-a-real-secret-for-signing-tests-only",
+  // Deliberately not shaped like a real key or secret: the repository is
+  // scanned for things that look live (tests/credentials.spec.ts), and a
+  // fixture that trips that scan trains people to ignore it.
+  DAI_STORE_ACCESS_KEY_ID: "test key id",
+  DAI_STORE_SECRET_ACCESS_KEY: "not a real secret - signing tests only",
   DAI_STORE_PUBLIC_BASE: "https://store.example/",
 };
 

@@ -146,6 +146,9 @@ test.describe("the card a link lands on", () => {
     expect(fingerprint).toMatch(/^[0-9a-f]{16}$/);
     await expect(publisher).toHaveAttribute("data-state", "anonymous");
     await expect(publisher).toContainText("first time you've seen this key");
+    // Under the one line at the bottom: the safety number is for somebody who
+    // went looking for it, and the screen in front of them is about the app.
+    await page.locator("#card-about summary").click();
     await page.locator("#card-verify").click();
     await expect(page.locator("#card-safety")).toContainText(/Safety number \d{5}/);
   });
@@ -212,12 +215,12 @@ test.describe("a tick this host cannot back is not printed", () => {
 
 /**
  * The card in the shape a phone introduces an app: icon, name, the app's own
- * line, and the facts — publisher, size — in a strip. The line comes from the
- * application's <meta name="description">, which the recipe asks for; it is
- * shown as text and never as markup.
+ * line, and then what it says it does. Both come from the application's own
+ * <meta> tags, which the recipe asks for, and both are shown as text and
+ * never as markup. Everything about the format is one line further down.
  */
-test.describe("the card reads like a store page", () => {
-  test("shows the app's own line and the facts", async ({ page }) => {
+test.describe("the open screen leads with the app", () => {
+  test("shows the app's own line, who made it, and nothing technical", async ({ page }) => {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -237,15 +240,82 @@ test.describe("the card reads like a store page", () => {
     await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
     await expect(page.locator("#card-tagline")).toHaveText("Books to read, and the ones <b>you</b> did");
     expect(await page.locator("#card-tagline b").count()).toBe(0);
-    await expect(page.locator("#fact-publisher")).toHaveText("Unsigned");
-    // What data comes with it — none, for a fresh build — and the technical
-    // facts under Details, labelled for what they are.
-    await expect(page.locator("#fact-data")).toHaveText("Starts empty");
-    await expect(page.locator("#card-details")).toBeVisible();
-    await page.locator("#card-details summary").click();
+
+    // Who made it and what comes with it, in the words somebody would ask in.
+    const meta = page.locator("#card-meta");
+    await expect(meta).toContainText("Made by");
+    await expect(meta).toContainText("Not signed");
+    await expect(meta).toContainText("No data yet");
+    await expect(meta).toContainText("Offline, on this phone");
+
+    // Nothing about isolation, keys or storage is on the screen itself.
+    await expect(page.locator("#card-claims")).toBeHidden();
+    await expect(page.locator("#card-publisher")).toBeHidden();
+    // And no offer to look inside: Get is how somebody looks inside.
+    await expect(page.locator("#card-inspect")).toHaveCount(0);
+
+    // All of it is one line away, labelled as what it is.
+    const about = page.locator("#card-about");
+    await expect(about).toContainText("Made with DAI");
+    await page.locator("#card-about summary").click();
+    await expect(page.locator("#card-claims")).toBeVisible();
     await expect(page.locator("#card-details-list")).toContainText(/Size/);
     await expect(page.locator("#card-details-list")).toContainText(/\d+ KB/);
     await expect(page.locator("#card-details-list")).toContainText(/as stated by the publisher/);
-    await expect(page.locator("#card-open")).toHaveText("Open");
+
+    await expect(page.locator("#card-open")).toHaveText("Get");
+  });
+
+  test("the app's own three lines are the middle of the screen", async ({ page }) => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { compileDirectory } = await import("../src/compile.js");
+    const dir = mkdtempSync(join(tmpdir(), "dai-does-"));
+    writeFileSync(
+      join(dir, "index.html"),
+      '<!doctype html><meta charset="utf-8">' +
+        '<meta name="description" content="A family watch deck">' +
+        '<meta name="dai:does" content="Lists 39 films and shows in the order to watch them">' +
+        '<meta name="dai:does" content="Tick things off as you watch — it remembers">' +
+        '<meta name="dai:does" content="Counts down the days until <b>Doomsday</b>">' +
+        '<meta name="dai:does" content="A fourth line that must not fit">' +
+        "<p>x</p>",
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: dir, root: resolve(here, ".."), appName: "Watch deck" });
+    const file = join(dir, "watch.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+
+    const lines = page.locator("#card-does li");
+    // Three at most: a fourth would push who made it off the first screen.
+    await expect(lines).toHaveCount(3);
+    await expect(lines.first()).toHaveText("Lists 39 films and shows in the order to watch them");
+    // The app's words as text, never as markup.
+    await expect(lines.nth(2)).toHaveText("Counts down the days until <b>Doomsday</b>");
+    expect(await page.locator("#card-does b").count()).toBe(0);
+  });
+
+  test("an app that says nothing about itself gets no empty section", async ({ page }) => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { compileDirectory } = await import("../src/compile.js");
+    const dir = mkdtempSync(join(tmpdir(), "dai-nodoes-"));
+    writeFileSync(join(dir, "index.html"), '<!doctype html><meta charset="utf-8"><p>x</p>', "utf8");
+    const built = await compileDirectory({ sourceDir: dir, root: resolve(here, ".."), appName: "Quiet" });
+    const file = join(dir, "quiet.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("#card-does-block")).toBeHidden();
+    // The rest of the screen still stands on its own.
+    await expect(page.locator("#card-meta")).toContainText("Made by");
   });
 });

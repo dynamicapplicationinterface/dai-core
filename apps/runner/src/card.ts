@@ -1,11 +1,21 @@
 /**
- * The launch card: what somebody is about to open, before it opens.
+ * The open screen: what somebody is about to open, before it opens.
  *
  * A document arrives from somebody else — a link, a share, a message. The
  * moment before it runs is the only moment a person has to decide anything
  * about it, and until now that moment was either nothing at all or a button
- * naming a hostname. This is the screen instead: what the thing is called,
- * what it looks like, who signed it, and what it will not be able to do.
+ * naming a hostname. This is the screen instead.
+ *
+ * ## The app first, the format last
+ *
+ * It used to be a card: a panel floating on a dimmed page, the app's name
+ * small at the top, and four sentences about isolation filling the middle.
+ * Testers read it as one store page imitating another, and two of them said
+ * scam. The priority was wrong, not the facts. So the app's own account of
+ * itself — its name, its line, three things it says it does — takes the
+ * screen, who made it and when are a row of plain facts, and everything true
+ * of every DAI document rather than of this one sits behind a single line at
+ * the bottom.
  *
  * ## No claim without a passing probe
  *
@@ -23,7 +33,6 @@
 import { claimsFor } from "../../../src/host-profile.js";
 import type { PublisherState } from "../../../src/publisher.js";
 import { faviconUrl } from "./install.js";
-import { handOffToOpener } from "../../../src/handoff-tab.js";
 
 export interface CardInput {
   name: string;
@@ -31,6 +40,16 @@ export interface CardInput {
   favicon?: string;
   /** One line about the app, from its own <meta name="description">. */
   tagline?: string;
+  /**
+   * Up to three things the app says it does, from its own
+   * `<meta name="dai:does">` lines.
+   *
+   * The app's own words, shown as text and never as markup, and the reason
+   * this screen has something to say that is about *this* document. Absent on
+   * anything built before the recipe asked for them, and then the tagline
+   * carries the whole job on its own.
+   */
+  does?: readonly string[];
   /** The file's size in bytes, for Details. */
   size?: number;
   /** The database's size in bytes: what data comes with it. Zero means it starts empty. */
@@ -72,23 +91,6 @@ export interface CardInput {
    * What is gone is confidentiality, and only that is what this says.
    */
   clear?: boolean;
-  /**
-   * Looking inside, before running it (backlog 1.5).
-   *
-   * The card says what this document claims and what this host will not let
-   * any document do. It cannot say what is actually in the archive, and
-   * somebody who wants to know that has had no way to find out that did not
-   * come down to trusting this page's summary.
-   *
-   * So: the same bytes, handed to the playground, which unpacks them,
-   * recomputes every digest, checks the signature and shows what it found —
-   * and never mounts anything. The document goes tab to tab by `postMessage`,
-   * the same way a freshly built one reaches this app: no upload, no server,
-   * nothing on the network.
-   *
-   * Absent when there is nothing to look inside of.
-   */
-  inspect?: { file: File; playground: string };
   /** Offered when the document is signed by a key worth naming: the host's own naming UI. */
   onNamePublisher?: () => void;
 }
@@ -99,7 +101,9 @@ export interface CardInput {
  * store page puts under the name. Read from the signed application, never
  * from anything outside the file; shown as text, never as markup.
  */
-export function describeApp(indexHtml: string | undefined): { tagline?: string; theme?: string } {
+export function describeApp(
+  indexHtml: string | undefined,
+): { tagline?: string; theme?: string; does?: string[] } {
   if (!indexHtml) return {};
   const head = indexHtml.slice(0, 20_000);
   const meta = (name: string): string | undefined =>
@@ -108,10 +112,29 @@ export function describeApp(indexHtml: string | undefined): { tagline?: string; 
       ?.replace(/\s+/g, " ")
       .trim();
   const tagline = meta("description");
+  /*
+   * Three at most, and short.
+   *
+   * A fourth line would push what the app costs and who made it off the first
+   * screen, which is the trade this whole screen was rebuilt to stop making.
+   * Anything longer than a phone line is the app writing a paragraph where it
+   * was asked for a bullet, and is dropped rather than wrapped to four lines.
+   */
+  const does = [
+    ...head.matchAll(
+      /<meta\s+(?:[^>]*?\s)?name=["']dai:does["'][^>]*?content=["']([^"']{1,120})["']/gi,
+    ),
+    ...head.matchAll(
+      /<meta\s+(?:[^>]*?\s)?content=["']([^"']{1,120})["'][^>]*?name=["']dai:does["']/gi,
+    ),
+  ]
+    .map((found) => found[1]?.replace(/\s+/g, " ").trim() ?? "")
+    .filter((line) => line.length > 0)
+    .slice(0, 3);
   // A colour and nothing else: it goes into a style property on this page.
   const colour = meta("theme-color");
   const theme = colour && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(colour) ? colour : undefined;
-  return { ...(tagline ? { tagline } : {}), ...(theme ? { theme } : {}) };
+  return { ...(tagline ? { tagline } : {}), ...(theme ? { theme } : {}), ...(does.length ? { does } : {}) };
 }
 
 function formatSize(bytes: number): string {
@@ -124,7 +147,7 @@ function formatSize(bytes: number): string {
 function publisherFact(who: PublisherState): string {
   switch (who.state) {
     case "unsigned":
-      return "Unsigned";
+      return "Not signed";
     case "test-key":
       return "Test key";
     case "anonymous":
@@ -170,8 +193,8 @@ export function showCard(input: CardInput): Promise<void> {
   const safety = document.getElementById("card-safety");
   const succession = document.getElementById("card-succession");
   const identity = document.getElementById("card-identity");
-  const inspect = document.getElementById("card-inspect") as HTMLButtonElement | null;
   const clear = document.getElementById("card-clear");
+  const alert = document.getElementById("card-alert");
 
   if (!card || !icon || !name || !publisher || !claims || !open || !from || !verify || !safety || !succession || !identity) {
     // No card in this document. Opening without one is the old behaviour and
@@ -186,21 +209,74 @@ export function showCard(input: CardInput): Promise<void> {
     tagline.textContent = input.tagline ?? "";
     tagline.hidden = !input.tagline;
   }
-  const factPublisher = document.getElementById("fact-publisher");
-  if (factPublisher) {
-    factPublisher.textContent = publisherFact(input.publisher);
-    factPublisher.dataset.state = input.publisher.state;
-  }
-  const factData = document.getElementById("fact-data");
-  if (factData) {
-    factData.textContent = input.dataBytes && input.dataBytes > 0 ? formatSize(input.dataBytes) : "Starts empty";
+  /*
+   * What the app says it does, in its own words.
+   *
+   * Text, never markup — the same rule the tagline follows, and for the same
+   * reason: this is a string out of a file somebody else wrote.
+   */
+  const doesBlock = document.getElementById("card-does-block");
+  const does = document.getElementById("card-does");
+  if (doesBlock && does) {
+    const lines = (input.does ?? []).slice(0, 3);
+    does.replaceChildren(
+      ...lines.map((line) => {
+        const item = document.createElement("li");
+        item.textContent = line;
+        return item;
+      }),
+    );
+    doesBlock.hidden = lines.length === 0;
   }
 
-  // Details: the technical facts, labelled for what they are.
-  const details = document.getElementById("card-details");
+  /*
+   * Who made it, when, and what comes with it — the questions somebody asks
+   * about a thing a person sent them, answered in the words they asked in.
+   *
+   * "Works — offline, on this phone" is a claim like any other on this
+   * screen, so it appears only when this host actually applies the clause
+   * that makes it true. A host that does not say less; it never says more.
+   */
+  const meta = document.getElementById("card-meta");
+  if (meta) {
+    const claimIds = claimsFor(input.applied).map((claim) => claim.id);
+    const rows: { term: string; value: string; state?: string }[] = [
+      { term: "Made by", value: publisherFact(input.publisher), state: input.publisher.state },
+    ];
+    if (input.createdAt) {
+      const when = new Date(input.createdAt);
+      if (!Number.isNaN(when.getTime())) {
+        rows.push({
+          term: "Made on",
+          value: when.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" }),
+        });
+      }
+    }
+    rows.push({
+      term: "Comes with",
+      value: input.dataBytes && input.dataBytes > 0 ? `${formatSize(input.dataBytes)} of data` : "No data yet",
+    });
+    if (claimIds.includes("offline")) rows.push({ term: "Works", value: "Offline, on this phone" });
+    meta.replaceChildren(
+      ...rows.map(({ term, value, state }) => {
+        const row = document.createElement("div");
+        const dt = document.createElement("dt");
+        dt.textContent = term;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        if (state) dd.dataset.state = state;
+        row.append(dt, dd);
+        return row;
+      }),
+    );
+  }
+
+  // The technical facts, labelled for what they are, under the one line at
+  // the bottom that carries everything about the format.
+  const about = document.getElementById("card-about");
   const list = document.getElementById("card-details-list");
-  if (details && list) {
-    details.removeAttribute("open");
+  if (about) about.removeAttribute("open");
+  if (list) {
     const rows: [string, string][] = [];
     if (input.fingerprint) rows.push(["Key", input.fingerprint]);
     if (input.createdAt) {
@@ -220,7 +296,7 @@ export function showCard(input: CardInput): Promise<void> {
         return [dt, dd];
       }),
     );
-    details.hidden = rows.length === 0;
+    list.hidden = rows.length === 0;
   }
 
   const url = faviconUrl(input.favicon);
@@ -296,6 +372,22 @@ export function showCard(input: CardInput): Promise<void> {
   }
   publisher.dataset.state = who.state;
 
+  /*
+   * Out front, or behind the line at the bottom.
+   *
+   * "Made by — Not signed" in the facts row is the whole truth for a document
+   * nobody claimed anything about, and the sentence explaining it is one tap
+   * away. A test key and a name in conflict are different: both are
+   * signatures that look like a claim and are not one, and somebody who never
+   * opens the disclosure still has to be told.
+   */
+  if (alert) {
+    const shout = who.state === "conflict" || who.state === "test-key";
+    alert.hidden = !shout;
+    alert.dataset.state = who.state;
+    alert.textContent = shout ? publisher.textContent : "";
+  }
+
   // Who vouched for the key, when a root this host holds says so. The words
   // are "signed in as", which is what happened; not "verified", which is a
   // claim about the world this host cannot make.
@@ -344,41 +436,6 @@ export function showCard(input: CardInput): Promise<void> {
         ? `Claims to replace ${next.previous}, but ${next.why ?? "this device cannot confirm that"}. Your data stays where it is.`
         : `Replaces ${next.previous}, which this device does not have. It starts empty.`;
 
-  /*
-   * The tab must be opened inside the click itself. A popup opened after an
-   * await is blocked, and the failure looks exactly like the button doing
-   * nothing — which is the failure this whole card exists to stop.
-   */
-  if (inspect) {
-    const target = input.inspect;
-    inspect.hidden = !target;
-    if (target) {
-      inspect.onclick = () => {
-        const tab = window.open(`${target.playground}#handoff`, "_blank", "noopener=no");
-        if (!tab) {
-          inspect.textContent = "Allow pop-ups to look inside";
-          return;
-        }
-        inspect.disabled = true;
-        void target.file
-          .arrayBuffer()
-          .then((buffer) =>
-            handOffToOpener(
-              tab,
-              { name: target.file.name, bytes: new Uint8Array(buffer) },
-              { origin: new URL(target.playground).origin, window },
-            ),
-          )
-          .catch(() => {
-            inspect.textContent = "The playground did not answer";
-          })
-          .finally(() => {
-            inspect.disabled = false;
-          });
-      };
-    }
-  }
-
   // Carried in the clear: a fact about how it travelled, not about the
   // document, and never the word "unsafe".
   if (clear) {
@@ -390,7 +447,17 @@ export function showCard(input: CardInput): Promise<void> {
 
   card.hidden = false;
   document.body.classList.add("deciding");
-  open.focus();
+  card.scrollTop = 0;
+  /*
+   * Focus lands at the top of the screen, not on the button.
+   *
+   * Focusing the button drew a ring around it on arrival — a script's focus()
+   * is keyboard focus as far as both engines are concerned — and it put a
+   * screen reader on the word "Get" before it had said what the app was.
+   * From here, a reader reads the name, the line and the three things it does
+   * in order, and one Tab reaches the button.
+   */
+  (card.querySelector(".card-panel") as HTMLElement | null)?.focus({ preventScroll: true });
 
   return new Promise<void>((asked) => {
     const go = (): void => {

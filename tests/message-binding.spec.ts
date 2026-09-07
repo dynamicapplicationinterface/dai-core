@@ -105,9 +105,25 @@ test.describe("the shell acts only on messages from its own frame", () => {
      * the time the database has been opened. What matters is that nothing more
      * arrives after this line.
      */
-    const before = await page.evaluate(
-      () => (window as unknown as { seen: unknown[] }).seen.length,
-    );
+    /*
+     * Waited out rather than counted at a moment.
+     *
+     * The shell has legitimate things to say after the application mounts —
+     * that it was used, and where its first automatic save got to — and they
+     * arrive a second or two in. Snapshotting before those land counted them
+     * as answers to the forgery below. So: wait until the shell has been
+     * quiet for a while, and only then start listening for a reply.
+     */
+    const before = await page.evaluate(async () => {
+      const seen = (window as unknown as { seen: unknown[] }).seen;
+      let last = -1;
+      for (let quiet = 0; quiet < 40 && (seen.length !== last || quiet < 6); quiet += 1) {
+        last = seen.length;
+        await new Promise((settle) => setTimeout(settle, 250));
+        if (seen.length !== last) quiet = 0;
+      }
+      return seen.length;
+    });
     expect(before).toBeGreaterThan(0);
 
     await page.evaluate(() => {

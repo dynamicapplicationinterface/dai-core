@@ -144,6 +144,14 @@ Include a file named icon.svg: a simple, bold mark for this app on a square canv
 
 In the <head> of index.html, put one line about the app in <meta name="description" content="…">: what it is for, in under 60 characters, the way a store page puts a line under an app's name ("A packing list for the beach trip"). It is shown under the name when somebody is deciding whether to open it, so write it for them, not for a search engine.
 
+Then three lines saying what it does, each in its own tag:
+
+<meta name="dai:does" content="Lists every film and show in the order to watch them">
+<meta name="dai:does" content="Tick things off as you watch — it remembers where you got to">
+<meta name="dai:does" content="Counts down the days until the next one lands">
+
+Exactly what somebody would tell a friend about it, one thing per line, under 90 characters each, starting with a verb. These are the whole of what the person sees before they open it, so write the three things that would make them want to — not the technology, not the format, not what it cannot do. Three, or none: two is a page with a gap in it.
+
 Beside it, <meta name="theme-color" content="…"> with the app's own background colour. On a phone the strips under the status bar and the home indicator are painted in it, so the app reaches the edges of the screen instead of sitting in a grey frame.
 
 HOW TO HAND IT OVER
@@ -156,6 +164,9 @@ name: Reading list
 --- file: index.html
 <!doctype html>
 <meta name="description" content="Books to read, and the ones you did">
+<meta name="dai:does" content="Keep a list of what you want to read next">
+<meta name="dai:does" content="Mark a book finished and see what you got through">
+<meta name="dai:does" content="Search by author or title as the list grows">
 …
 
 --- file: schema.sql
@@ -181,7 +192,7 @@ BEFORE YOU ANSWER, CHECK
 - Every user action writes to the database immediately, and the screen is drawn from the database.
 - No Save button, no dirty flag, no localStorage. One <dai-save> at the bottom, or none.
 - No URL is fetched. No CDN. Every <script> with await is type="module".
-- icon.svg exists; index.html has a <meta name="description"> line.
+- icon.svg exists; index.html has a <meta name="description"> line and three <meta name="dai:does"> lines.
 - The files are handed over as a tool call or as ONE fenced bundle, in the shape above.`;
 
 /** One line each, for a reader who wants the surface rather than the argument. */

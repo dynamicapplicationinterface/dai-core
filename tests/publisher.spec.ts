@@ -243,6 +243,9 @@ async function token(page: import("@playwright/test").Page, name: string): Promi
     // Neutral: no positive colour.
     expect(await publisher.evaluate((el) => getComputedStyle(el).color)).toBe(await token(page, "--text-2"));
     // The verify affordance reveals a number two people can read to each other.
+    // It lives under the line at the bottom now: the screen in front of
+    // somebody is about the app, and this is for whoever went looking.
+    await page.locator("#card-about summary").click();
     await expect(page.locator("#card-safety")).toBeHidden();
     await page.locator("#card-verify").click();
     await expect(page.locator("#card-safety")).toContainText(/Safety number \d{5} \d{5} \d{5} \d{5} \d{5} \d{5}/);
