@@ -158,6 +158,59 @@ function settleGround(colour: string): void {
   const news = knownGround(mountedUuid) !== colour;
   keepGround(mountedUuid, colour);
   if (news && describedIdentity) void describeDocument(describedIdentity).catch(() => undefined);
+  for (const wake of groundWaiters.splice(0)) wake();
+}
+
+/** Whoever is waiting for the open document's colour to be settled. */
+let groundWaiters: Array<() => void> = [];
+
+/** Resolves once the document's colour is known, or after `within` ms without it. */
+function groundSettled(uuid: string, within: number): Promise<void> {
+  if (knownGround(uuid)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = (): void => {
+      window.clearTimeout(timer);
+      groundWaiters = groundWaiters.filter((waiter) => waiter !== done);
+      resolve();
+    };
+    const timer = window.setTimeout(done, within);
+    groundWaiters.push(done);
+  });
+}
+
+/**
+ * A rehearsal: a first open on iOS mounts the document once to learn its
+ * colour and then loads the page again at the document's address. Nothing
+ * in between counts — the frame stays behind the launch screen, the open is
+ * not counted, and the application's first use is not this one — because
+ * the page a person can actually touch is the next one.
+ */
+let rehearsing = false;
+
+/** The colour the address carried, when a link brought the page here. */
+function carriedGround(): string | undefined {
+  const colour = new URLSearchParams(location.search).get("ground")?.trim();
+  return colour && COLOUR.test(colour) ? colour : undefined;
+}
+
+/**
+ * The colour under the clock, on a link that is about to be sent.
+ *
+ * The person at the other end opens it for the first time, with nothing
+ * remembered on their device. The head script paints from the address before
+ * the first frame, so the first thing they see is right; and an icon they
+ * make from it carries the colour on.
+ */
+function withGround(link: string): string {
+  const colour = mountedUuid ? knownGround(mountedUuid) : undefined;
+  if (!colour) return link;
+  try {
+    const url = new URL(link);
+    url.searchParams.set("ground", colour);
+    return url.href;
+  } catch {
+    return link;
+  }
 }
 
 /**
@@ -273,6 +326,15 @@ const RESUME_KEY = "dai:resume";
  * in the library because it is about what to say to a person, not about the
  * document. Kept beside the record of a dismissed offer, for the same reason.
  */
+/** How many times this document has been opened here, without counting this one. */
+function seenOpens(uuid: string): number {
+  try {
+    return Number(localStorage.getItem(`dai:opens:${uuid}`) ?? "0");
+  } catch {
+    return 0;
+  }
+}
+
 function countOpen(uuid: string): number {
   try {
     const next = Number(localStorage.getItem(`dai:opens:${uuid}`) ?? "0") + 1;
@@ -493,10 +555,15 @@ async function mount(cartridge: Cartridge): Promise<void> {
   mountedUuid = cartridge.manifest.documentUuid;
   if (theme) settleGround(theme);
   else {
-    // Not declared: the head script's remembered colour stands until the
-    // application has drawn and said what it is.
-    const remembered = knownGround(mountedUuid);
-    if (remembered) paintAbove(remembered);
+    // Not declared: what this device remembers, or what the link it came by
+    // carried - the sender's device knew - stands until the application has
+    // drawn and said what it is. A link names no document until now, so the
+    // head script could paint from it but not remember it; this is where.
+    const remembered = knownGround(mountedUuid) ?? carriedGround();
+    if (remembered) {
+      paintAbove(remembered);
+      keepGround(mountedUuid, remembered);
+    }
   }
   document.body.classList.remove("launching");
   /*
@@ -513,7 +580,9 @@ async function mount(cartridge: Cartridge): Promise<void> {
   document.body.classList.add("loaded", "booting");
   window.clearTimeout(bootingGuard);
   // A runtime that never reports is still an app somebody wants to see.
-  bootingGuard = window.setTimeout(() => document.body.classList.remove("booting"), 8000);
+  bootingGuard = window.setTimeout(() => {
+    if (!rehearsing) document.body.classList.remove("booting");
+  }, 8000);
 
   /*
    * Named and iconed now; offered later.
@@ -538,7 +607,8 @@ async function mount(cartridge: Cartridge): Promise<void> {
     favicon: cartridge.manifest.favicon,
     savedAsFile: arrivedAsFile,
     link,
-    opens: countOpen(cartridge.manifest.documentUuid),
+    // A rehearsal is not an open: the page a person can touch counts it.
+    opens: rehearsing ? seenOpens(cartridge.manifest.documentUuid) : countOpen(cartridge.manifest.documentUuid),
   });
   title.textContent = name;
 
@@ -963,10 +1033,25 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       // Kept, so the manifest can be described again once the app's colour
       // is known, which is after it has drawn.
       describedIdentity = identity;
-      const target = launchAddress(identity);
-      if (!sameLaunch(location.href, target)) {
+      if (!sameLaunch(location.href, launchAddress(identity))) {
+        /*
+         * The colour under the clock, learned before the load that counts.
+         *
+         * iOS reads the status bar's colour as a page first appears and not
+         * again, and a document opened for the first time on a device has
+         * nothing remembered and nothing in its address. So the document is
+         * mounted here first, behind the launch screen, until it has said
+         * what colour it is — at once when it declares one, a moment after
+         * it has drawn otherwise — and the address it is then loaded at
+         * carries the colour. One boot more on a first open, and the first
+         * frame anybody sees is the right one.
+         */
+        hostMark("prepared");
+        rehearsing = true;
+        await mount(loaded);
+        await groundSettled(loaded.manifest.documentUuid, 2500);
         await describeDocument(identity);
-        location.replace(target);
+        location.replace(launchAddress(identity));
         return;
       }
     }
@@ -1304,9 +1389,10 @@ window.addEventListener("message", (event) => {
     // painted, so this is the message carrying the number that matters.
     if (fromMountedContainer(event, data)) {
       recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
-      // The app has drawn: the launch screen has done its job.
+      // The app has drawn: the launch screen has done its job — unless a
+      // first open on iOS is about to load the page again (see rehearsing).
       window.clearTimeout(bootingGuard);
-      document.body.classList.remove("booting");
+      if (!rehearsing) document.body.classList.remove("booting");
     }
   } else if (data.type === "DAI_HOST_USED") {
     /*
@@ -1316,7 +1402,9 @@ window.addEventListener("message", (event) => {
      */
     // Not offered on an open the card called a conflict: a stranger wearing a
     // known name does not get an icon on the home screen out of it.
-    if (fromMountedContainer(event, data) && !installSuppressed) keeper?.offer();
+    // Not during a rehearsal: that use is the kit's own, on a page nobody
+    // has touched, and the offer is once per document.
+    if (fromMountedContainer(event, data) && !installSuppressed && !rehearsing) keeper?.offer();
   } else if (data.type === "DAI_HOST_SAVE") {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
@@ -1566,7 +1654,7 @@ async function previewIcon(favicon: string | undefined): Promise<{ png: Uint8Arr
  */
 async function linkToSend(html: string, preview: boolean): Promise<{ link: string; uploaded: boolean }> {
   const inline = await linkForDocument(html);
-  if (inline) return { link: inline, uploaded: false };
+  if (inline) return { link: withGround(inline), uploaded: false };
   if (!STORE_BASE) throw new Error("This opener has no store, so a document this large can only be sent as a file.");
   const store = presignedStore({
     presignUrl: new URL("/api/presign", location.origin).href,
@@ -1576,7 +1664,7 @@ async function linkToSend(html: string, preview: boolean): Promise<{ link: strin
   const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon });
   // Remembered, so the person who shared it can take it back (see retireShares).
   if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
-  return { link: links.known, uploaded: true };
+  return { link: withGround(links.known), uploaded: true };
 }
 
 async function rememberShare(documentUuid: string, share: Share): Promise<void> {

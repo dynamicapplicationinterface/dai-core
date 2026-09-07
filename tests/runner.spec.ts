@@ -950,6 +950,9 @@ test.describe("keeping it", () => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
+    // The page a person can touch is the one at the document's own address;
+    // a first open on iOS rehearses once behind the launch screen before it.
+    await page.waitForURL(/[?&]doc=/, { timeout: 30_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     /*
@@ -1021,6 +1024,9 @@ test.describe("keeping it", () => {
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
+    // The page a person can touch: a first open on iOS rehearses once behind
+    // the launch screen, and nothing done there is use.
+    await page.waitForURL(/[?&]doc=/, { timeout: 30_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/);
 
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
@@ -1137,6 +1143,8 @@ test.describe("keeping it, per device", () => {
     });
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
+    // Used on the page a person can touch, after the first open's rehearsal.
+    await page.waitForURL(/[?&]doc=/, { timeout: 30_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
     await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);
@@ -1289,6 +1297,10 @@ test.describe("a control the kit runs is use too", () => {
     });
     await page.goto(RUNNER_URL);
     await openFile(page, file);
+    // On iOS a first open mounts once behind the launch screen, to learn the
+    // document's colour, and then loads the page at the document's address.
+    // What a person can touch is the second of those; so is what is ticked.
+    await page.waitForURL(/[?&]doc=/, { timeout: 30_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
 
     const app = page.frameLocator("#cartridge").frameLocator("#dai-app");

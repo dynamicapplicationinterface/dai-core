@@ -38,19 +38,27 @@
          * colour scheme, and the address was written under one of them.
          */
         try {
+          var scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          // An icon's address names the document; a shared link does not yet.
           var doc = /[?&]doc=([^&#]+)/.exec(s);
-          if (doc) {
-            var scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-            var ground = localStorage.getItem("dai:ground:" + decodeURIComponent(doc[1]) + ":" + scheme);
-            var carried = /[?&]ground=([^&#]+)/.exec(s);
-            if (!ground && carried) ground = decodeURIComponent(carried[1].replace(/\+/g, " "));
-            if (ground && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(ground)) {
-              document.documentElement.style.setProperty("--app-ground", ground);
-              var tag = document.createElement("meta");
-              tag.name = "theme-color";
-              tag.content = ground;
-              document.head.appendChild(tag);
-            }
+          var key = doc ? "dai:ground:" + decodeURIComponent(doc[1]) + ":" + scheme : null;
+          var ground = key ? localStorage.getItem(key) : null;
+          var carried = /[?&]ground=([^&#]+)/.exec(s);
+          var fromAddress = false;
+          if (!ground && carried) {
+            ground = decodeURIComponent(carried[1].replace(/\+/g, " "));
+            fromAddress = true;
+          }
+          if (ground && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(ground)) {
+            // What the address carried is now what this device remembers,
+            // so an icon made from here carries it on without a second open.
+            // (A link names no document yet; main.ts remembers it at mount.)
+            if (fromAddress && key) localStorage.setItem(key, ground);
+            document.documentElement.style.setProperty("--app-ground", ground);
+            var tag = document.createElement("meta");
+            tag.name = "theme-color";
+            tag.content = ground;
+            document.head.appendChild(tag);
           }
         } catch (e) { /* No storage, or no matchMedia: the chooser's colour, as before. */ }
       })();

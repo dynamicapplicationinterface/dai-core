@@ -59,6 +59,51 @@ async function bigDocument(prefix: string, withIcon: boolean): Promise<string> {
 }
 
 test.describe("sending a document", () => {
+  test("the link carries the colour under the clock, and the other end paints it before its first frame", async ({ page }) => {
+    test.slow();
+    await page.route("**/api/presign", (route) => void route.fulfill({ status: 500, body: "{}" }));
+    // A document that declares no colour: what travels is what was measured.
+    const dir = mkdtempSync(join(tmpdir(), "dai-send-ground-"));
+    writeFileSync(
+      join(dir, "index.html"),
+      '<!doctype html><meta charset="utf-8"><style>body{margin:0;background:rgb(90, 20, 60)}</style><p>plum</p>',
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Plum" });
+    const file = join(dir, "plum.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await openFile(page, file);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    // Measured by the application once it has drawn, and settled on this page.
+    await expect(page.locator('meta[name="theme-color"]').first()).toHaveAttribute("content", "rgb(90, 20, 60)", {
+      timeout: 30_000,
+    });
+    const copied = await captureClipboard(page);
+    await page.click("#more");
+    await page.click("#send");
+    await page.click("#send-go");
+    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    const link = (await copied())!;
+    expect(new URL(link).searchParams.get("ground")).toBe("rgb(90, 20, 60)");
+    expect(new URL(link).hash).toMatch(/^#a=/);
+
+    // The person at the other end has nothing remembered. The address is
+    // enough: the colour is on the root and in the first theme-color tag
+    // before the document has even been read, let alone drawn.
+    const theirs = await page.context().browser()!.newContext();
+    const fresh = await theirs.newPage();
+    await fresh.goto(link);
+    const early = await fresh.evaluate(() => ({
+      ground: document.documentElement.style.getPropertyValue("--app-ground"),
+      content: document.head.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
+    }));
+    expect(early).toEqual({ ground: "rgb(90, 20, 60)", content: "rgb(90, 20, 60)" });
+    await expect(fresh.locator("#card")).toBeVisible({ timeout: 30_000 });
+    await theirs.close();
+  });
+
   test("a small document travels inside the link, and nothing is uploaded", async ({ page }) => {
     test.slow();
     let presigned = 0;

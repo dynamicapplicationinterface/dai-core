@@ -163,5 +163,44 @@ test.describe("how much of the screen an application gets", () => {
       content: document.head.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
     }));
     expect(carried).toEqual({ ground: "rgb(250, 247, 239)", content: "rgb(250, 247, 239)" });
+    // And what the address carried is now remembered here, so an icon made
+    // on this device carries it on without a second open.
+    expect(await page.evaluate((k) => localStorage.getItem(k), key!)).toBe("rgb(250, 247, 239)");
+  });
+
+  test("on iOS, a first open learns the colour before the load the status bar is read on", async ({ page }) => {
+    test.slow();
+    // The same pretence tests/runner.spec.ts uses: iOS is told by the agent.
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "userAgent", {
+        get: () =>
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
+          "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      });
+    });
+    const source = mkdtempSync(join(tmpdir(), "dai-first-"));
+    writeFileSync(
+      join(source, "index.html"),
+      '<!doctype html><meta charset="utf-8"><style>body{margin:0;background:rgb(20, 30, 40)}</style><p id="app">here</p>',
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Night" });
+    const file = join(source, "night.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await page.locator("#card-open").click({ timeout: 60_000 });
+
+    // A first open on iOS loads the page again at the document's own address.
+    // The document declares no colour, so the opener had to mount it once,
+    // behind the launch screen, and wait for it to say what it is - and the
+    // address it then loads carries the answer, for the head script to paint
+    // before the first frame of the load that counts.
+    await page.waitForURL(/[?&]doc=/, { timeout: 60_000 });
+    expect(new URL(page.url()).searchParams.get("ground")).toBe("rgb(20, 30, 40)");
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    const first = page.locator('meta[name="theme-color"]').first();
+    await expect(first).toHaveAttribute("content", "rgb(20, 30, 40)");
   });
 });
