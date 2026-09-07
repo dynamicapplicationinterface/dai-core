@@ -78,6 +78,19 @@ if ("storage" in navigator && typeof navigator.storage?.persist === "function") 
 function say(message: string, isError = false): void {
   report.textContent = message;
   report.classList.toggle("error", isError);
+  // Something went wrong on the way in: the chooser is the way out.
+  if (isError) arrived(false);
+}
+
+/**
+ * Whether the page is still on its way to a document the address names.
+ *
+ * The head script hides the chooser before the first paint when the address
+ * carries something to open (see index.html). Taken off here when there is
+ * nothing to open after all, so the chooser is back for the person to use.
+ */
+function arrived(still: boolean): void {
+  document.documentElement.classList.toggle("arriving", still);
 }
 
 /**
@@ -1208,8 +1221,8 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * document is sent as a link. When it fits an address it travels inside the
  * link and nothing is uploaded; when it does not, it is sealed with a fresh
  * key and put in the store, and only the link holds the key. The store
- * cannot read what it holds; the message preview shows the name and icon
- * only if the person leaves that on, on the sheet where they can see it.
+ * cannot read what it holds; the message preview shows the name and icon,
+ * the way a phone shows them for any app it shares.
  *
  * On a phone the link goes to the share sheet, so iMessage shows the card.
  * On a computer it goes to the clipboard. If the store cannot be reached the
@@ -1299,12 +1312,11 @@ async function sendDocument(): Promise<void> {
   const icon = document.getElementById("send-icon") as HTMLImageElement | null;
   const titleEl = document.getElementById("send-title");
   const sub = document.getElementById("send-sub");
-  const toggle = document.getElementById("send-preview") as HTMLInputElement | null;
   const withData = document.getElementById("send-with-data") as HTMLInputElement | null;
   const note = document.getElementById("send-note");
   const go = document.getElementById("send-go") as HTMLButtonElement | null;
   const cancel = document.getElementById("send-cancel");
-  if (!sheetEl || !icon || !titleEl || !sub || !toggle || !withData || !note || !go || !cancel) return;
+  if (!sheetEl || !icon || !titleEl || !sub || !withData || !note || !go || !cancel) return;
 
   // Sized as it would go with the data in, which is the larger of the two.
   const fits = Boolean(await linkForDocument(await currentHtml(true)));
@@ -1316,7 +1328,6 @@ async function sendDocument(): Promise<void> {
   sub.textContent = fits
     ? "The whole app travels inside the link. Nothing is uploaded."
     : "Sealed with a key that only the link holds, then put in the store, which cannot read it.";
-  toggle.checked = true;
   withData.checked = true;
   const describe = (): void => {
     note.textContent = withData.checked
@@ -1347,7 +1358,9 @@ async function sendDocument(): Promise<void> {
       // Packaged now, not when the sheet opened: what goes is what the
       // person sees at the moment they press Share.
       const html = await currentHtml(withData.checked);
-      made = await linkToSend(html, toggle.checked);
+      // The name and icon go with it, as they do when a phone shares any
+      // app; the person can take the card off in the share sheet itself.
+      made = await linkToSend(html, true);
     } catch (error) {
       close();
       say(
@@ -1804,6 +1817,7 @@ async function start(): Promise<void> {
     // Painted as launching into it by the worker, and it is not here: the
     // chooser, or a card for what the link carries, is the honest screen.
     document.body.classList.remove("launching");
+    if (!inlineFrom(location.hash) && !referenceFrom(location.pathname, location.search, location.hash)) arrived(false);
   }
 
   const carried = inlineFrom(location.hash);
@@ -1846,6 +1860,9 @@ async function start(): Promise<void> {
     );
     return;
   }
+
+  // Nothing above found a document in the address: the chooser is the page.
+  arrived(false);
 
   if (location.hash === "#handoff" && !window.opener) {
     /*

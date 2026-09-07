@@ -77,8 +77,28 @@ test.describe("sending a document", () => {
     await expect(page.locator("#send-sub")).toContainText("Nothing is uploaded");
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
-    expect(await copied()).toMatch(/^http:\/\/localhost:5175\/#a=/);
+    const link = (await copied())!;
+    expect(link).toMatch(/^http:\/\/localhost:5175\/#a=/);
     expect(presigned).toBe(0);
+
+    // Somebody following it, in a browser that has never seen this page,
+    // goes straight to the card. The chooser — "Open a file" — is not a
+    // screen a link should ever show, not even for a frame.
+    const theirs = await page.context().browser()!.newContext();
+    const fresh = await theirs.newPage();
+    await fresh.goto(link);
+    await expect(fresh.locator("html")).toHaveClass(/arriving/);
+    await expect(fresh.locator("#open")).toBeHidden();
+    await expect(fresh.locator("#card")).toBeVisible({ timeout: 30_000 });
+    await expect(fresh.locator("#open")).toBeHidden();
+
+    // And a link that names nothing this page can open hands the chooser back.
+    // A fresh load, not a same-document hash change.
+    await fresh.goto("about:blank");
+    await fresh.goto(`${RUNNER_URL}#k=${"a".repeat(43)}`);
+    await expect(fresh.locator("#report")).toContainText(/does not say which document/);
+    await expect(fresh.locator("#open")).toBeVisible();
+    await theirs.close();
   });
 
   test("a large document goes through the store, sealed, with the preview as decided", async ({ page }) => {
@@ -112,11 +132,12 @@ test.describe("sending a document", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     const copied = await captureClipboard(page);
 
-    // Preview on: the sidecar carries the name, and an icon travels.
+    // The sidecar carries the name, and an icon travels: the card is what a
+    // message shows, the same as for any app a phone shares.
     await page.click("#more");
     await page.click("#send");
     await expect(page.locator("#send-sub")).toContainText("Sealed with a key");
-    await expect(page.locator("#send-preview")).toBeChecked();
+    await expect(page.locator("#send-preview")).toHaveCount(0);
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 60_000 });
     const link = (await copied())!;
@@ -129,19 +150,6 @@ test.describe("sending a document", () => {
     expect(sidecar.preview).toEqual({ name: "Big one", icon: true });
     // Sealed: the store holds ciphertext, not the document.
     expect(puts.get(hash)!.toString("latin1")).not.toContain("dai-payload");
-
-    // Preview off: a sidecar with no preview, and no icon.
-    puts.clear();
-    await resetShare(page);
-    await page.click("#more");
-    await page.click("#send");
-    await page.locator("#send-preview").uncheck();
-    await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 60_000 });
-    const second = /\/d\/([0-9a-f]{64})#/.exec((await copied())!)![1]!;
-    const bare = JSON.parse(puts.get(`${second}.json`)!.toString("utf8")) as { preview?: unknown };
-    expect(bare.preview).toBeUndefined();
-    expect(puts.has(`${second}.png`)).toBe(false);
   });
 
   test("when the store cannot be reached, the file is offered and the person is told", async ({ page }) => {

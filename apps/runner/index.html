@@ -3,6 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <!--
+      Read before the first paint. An address that names a document — a
+      shared link, an icon's launch address, a store reference — should never
+      show the chooser, not even for the frame it takes the script to load.
+      The worker paints the launch screen for a document it knows; a browser
+      meeting this page for the first time has no worker, and this is what it
+      has instead. Taken off in main.ts the moment there turns out to be
+      nothing to open.
+    -->
+    <script>
+      (function () {
+        var s = location.search, h = location.hash, p = location.pathname;
+        if (/[?&](doc|d)=/.test(s) || /\/d\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
+          document.documentElement.classList.add("arriving");
+        }
+      })();
+    </script>
+    <!--
       One document, served at more than one path.
 
       A reference link is `/d/<id>`, and the host serves this same file there
@@ -166,6 +183,9 @@
       body.launching #open { display: none; }
       /* Launching into a document: its header, and no chooser underneath. */
       body.launching #slot { visibility: hidden; }
+      /* Arriving by a link: the status line, and no pitch to open a file. */
+      html.arriving body:not(.loaded) #slot > p,
+      html.arriving body:not(.loaded) #open { display: none; }
 
       /* The document's name, and nothing else that is not a control. */
       #title {
@@ -699,9 +719,10 @@
     <!--
       Sending it.
 
-      One decision, made where the thing being decided is visible: whether the
-      message preview may show the app's name and icon. Everything else is
-      stated, not asked. Small documents travel inside the link itself; larger
+      One decision, made where the thing being decided is visible: whether
+      what this person has entered goes with it. The name and icon always
+      travel, as they do when a phone shares any app; the person can take the
+      card off in the share sheet. Everything else is stated, not asked. Small documents travel inside the link itself; larger
       ones are sealed with a fresh key and put in the store, and only the link
       holds the key. Then the phone's own share sheet, or the clipboard.
     -->
@@ -713,11 +734,7 @@
         <p id="send-sub"></p>
         <label class="send-toggle">
           <input id="send-with-data" type="checkbox" checked />
-          <span>Include what I have entered</span>
-        </label>
-        <label class="send-toggle">
-          <input id="send-preview" type="checkbox" checked />
-          <span>Show the name and icon in the message preview</span>
+          <span>Send personal saved data</span>
         </label>
         <p id="send-note"></p>
         <button id="send-go" type="button">Send</button>
