@@ -1,5 +1,20 @@
 # Brief: a home-screen web app does not reach the bottom of the screen
 
+> **Resolved.** The measurement below was taken and the cause found: in an iOS
+> standalone web app with `viewport-fit=cover`, `100dvh` already returns the
+> screen *less the top safe-area inset*, so padding the body by the insets
+> subtracted the top one a second time. The fix is in
+> `apps/runner/index.html` — `100dvh` in a browser, the layout viewport
+> (`inset: 0`) in a home-screen app, and no bottom padding there — and is held
+> by `tests/viewport.spec.ts`. What follows is kept as the record of how it was
+> found, and is still the right brief if the band ever comes back.
+>
+> The numbers, off a screenshot of a home-screen launch on an iPhone 16 Pro
+> (402×874pt): 62pt of the opener's grey, a 38pt header (the declared height,
+> so the ruler is right), 678pt of application, 96pt of grey at the bottom.
+> 96 = 62 + 34 — the top inset and the bottom inset, both. Therefore
+> `100dvh` = 874 − 62 = 812.
+
 ## What to fix
 
 `opendai.app` is a PWA that opens a document and mounts it in a frame. Added to
