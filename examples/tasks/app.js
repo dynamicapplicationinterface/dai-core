@@ -328,7 +328,23 @@ function draw() {
 
 /* --------------------------------------------------------------- saving */
 
+/*
+ * Whether this file is being saved for us.
+ *
+ * Under a host, every write goes to the host's storage as it happens and a
+ * Save button is a button that does nothing anybody needs — so it is not
+ * shown, the way the kit's own <dai-save> is not. Opened as a plain file,
+ * with no host to write to, saving is a deliberate act and the button is the
+ * only way to do it.
+ *
+ * It matters twice over here: this button sits in the top right corner, which
+ * is where a host floats its own menu over the application.
+ */
+const hostSaves = dai.autosaves === true;
+if (hostSaves) ui.save.hidden = true;
+
 function markDirty() {
+  if (hostSaves) return;
   dirty = true;
   ui.save.classList.add("is-dirty");
   ui.save.classList.remove("is-saved");
@@ -437,14 +453,14 @@ ui.clear.onclick = () => {
   say("Completed tasks cleared");
 };
 
-ui.save.onclick = save;
+if (!hostSaves) ui.save.onclick = save;
 
 document.addEventListener("keydown", (event) => {
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName);
 
   if ((event.metaKey || event.ctrlKey) && event.key === "s") {
     event.preventDefault();
-    save();
+    if (!hostSaves) save();
     return;
   }
   if (event.key === "/" && !typing) {

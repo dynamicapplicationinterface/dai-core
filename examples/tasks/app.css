@@ -88,10 +88,19 @@ svg {
 
 /* ---------------------------------------------------------------- layout */
 
+/*
+ * The screen's edges.
+ *
+ * A host draws this application edge to edge and says how much of each edge a
+ * status bar or a home indicator covers. The colour runs out to them; the
+ * content is pushed clear. Zero when nothing is in the way.
+ */
 .shell {
   display: grid;
   grid-template-columns: var(--rail) minmax(0, 1fr);
   min-height: 100%;
+  padding: var(--dai-safe-top, 0px) var(--dai-safe-right, 0px) var(--dai-safe-bottom, 0px)
+    var(--dai-safe-left, 0px);
 }
 
 .sidebar {
