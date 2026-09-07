@@ -152,5 +152,16 @@ test.describe("how much of the screen an application gets", () => {
       };
     });
     expect(early).toEqual({ ground: "rgb(250, 247, 239)", content: "rgb(250, 247, 239)", media: null });
+
+    // And with nothing remembered - a home-screen app on iOS has storage of
+    // its own, so an icon's first launch finds none - the colour rides in
+    // the icon's own address, and is painted from there just the same.
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(`${RUNNER_URL}?doc=${uuid}&ground=${encodeURIComponent("rgb(250, 247, 239)")}`);
+    const carried = await page.evaluate(() => ({
+      ground: document.documentElement.style.getPropertyValue("--app-ground"),
+      content: document.head.querySelector('meta[name="theme-color"]')?.getAttribute("content"),
+    }));
+    expect(carried).toEqual({ ground: "rgb(250, 247, 239)", content: "rgb(250, 247, 239)" });
   });
 });

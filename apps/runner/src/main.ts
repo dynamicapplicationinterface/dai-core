@@ -43,6 +43,7 @@ import {
   keepGround,
   knownGround,
   launchAddress,
+  sameLaunch,
   watchForInstall,
   type Identity,
 } from "./install.js";
@@ -963,7 +964,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       // is known, which is after it has drawn.
       describedIdentity = identity;
       const target = launchAddress(identity);
-      if (location.href !== target) {
+      if (!sameLaunch(location.href, target)) {
         await describeDocument(identity);
         location.replace(target);
         return;

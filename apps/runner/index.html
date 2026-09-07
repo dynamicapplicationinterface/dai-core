@@ -29,12 +29,21 @@
          * launch at a document's own address paints it here, before layout:
          * on the root, which is what the canvas takes, and as the first
          * theme-color tag, which is what a browser reads.
+         *
+         * A home-screen app on iOS has storage of its own, apart from
+         * Safari's, so on the icon's first launch nothing is remembered
+         * here. The icon's address carries the colour as well, put there
+         * when the icon was made (install.ts), and that needs no storage.
+         * What is remembered wins when both are present: it follows the
+         * colour scheme, and the address was written under one of them.
          */
         try {
           var doc = /[?&]doc=([^&#]+)/.exec(s);
           if (doc) {
             var scheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
             var ground = localStorage.getItem("dai:ground:" + decodeURIComponent(doc[1]) + ":" + scheme);
+            var carried = /[?&]ground=([^&#]+)/.exec(s);
+            if (!ground && carried) ground = decodeURIComponent(carried[1].replace(/\+/g, " "));
             if (ground && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(ground)) {
               document.documentElement.style.setProperty("--app-ground", ground);
               var tag = document.createElement("meta");

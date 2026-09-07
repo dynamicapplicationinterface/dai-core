@@ -118,18 +118,43 @@ const KEEP_AFTER_RELOAD = "dai:keep-after-reload";
  * link private makes it safe to put on a home screen.
  */
 export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link?: string }): string {
-  if (identity.link) {
-    // The link, and the document's id beside it: an opener that already holds
-    // this document opens its own copy — offline, and without asking the
-    // store again — and one that does not follows the link.
-    const url = new URL(identity.link);
-    url.searchParams.set("doc", identity.uuid);
-    return url.href;
-  }
-  const url = new URL("/", location.origin);
+  const url = identity.link ? new URL(identity.link) : new URL("/", location.origin);
+  // The link, and the document's id beside it: an opener that already holds
+  // this document opens its own copy — offline, and without asking the
+  // store again — and one that does not follows the link.
   url.searchParams.set("doc", identity.uuid);
-  url.searchParams.set("name", identity.name);
+  if (!identity.link) url.searchParams.set("name", identity.name);
+  /*
+   * The colour under the clock, in the address itself.
+   *
+   * A home-screen app on iOS has storage of its own, apart from Safari's, so
+   * what Safari remembered about this document is not there on the icon's
+   * first launch — and the first launch is the one the status bar is read
+   * on. The address needs no storage: the head script paints from it before
+   * the first frame, on any device, in any container.
+   */
+  const ground = knownGround(identity.uuid);
+  if (ground) url.searchParams.set("ground", ground);
+  else url.searchParams.delete("ground");
   return url.href;
+}
+
+/**
+ * The same launch, colour aside: the colour rides in the address but does
+ * not make it a different place, and a page already at a document's address
+ * is not reloaded because the colour has since been learned.
+ */
+export function sameLaunch(a: string, b: string): boolean {
+  const strip = (address: string): string => {
+    try {
+      const url = new URL(address);
+      url.searchParams.delete("ground");
+      return url.href;
+    } catch {
+      return address;
+    }
+  };
+  return strip(a) === strip(b);
 }
 
 /**
@@ -385,7 +410,7 @@ export async function describeDocument(identity: Identity): Promise<void> {
  */
 function keepHere(identity: Identity & { link?: string }): boolean {
   const target = launchAddress(identity);
-  if (location.href === target) return false;
+  if (sameLaunch(location.href, target)) return false;
   try {
     sessionStorage.setItem(KEEP_AFTER_RELOAD, identity.uuid);
   } catch {
