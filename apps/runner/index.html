@@ -235,6 +235,9 @@
       .sheet-note { margin: 0; font-size: 12.5px; color: var(--muted); }
       .sheet-note[data-state="known"] { color: var(--ok); }
       .sheet-note[data-state="unsigned"] { color: var(--warn); }
+      #sheet-kept[hidden] { display: none; }
+      #sheet-kept[data-state="kept"] { color: var(--ok); }
+      #sheet-kept[data-state="refused"] { color: var(--warn); }
       .sheet-rule { height: 1px; margin: 4px 6px; background: var(--line); }
       .sheet-panel button.danger { color: var(--bad); }
       .sheet-panel button.with-glyph { display: flex; align-items: center; gap: 12px; }
@@ -404,7 +407,7 @@
         gap: 12px;
         width: 100%;
         max-width: 24rem;
-        margin-top: 10px;
+        margin-top: 6px;
         padding: 12px 14px;
         border-radius: 12px;
         background: var(--surface-2);
@@ -608,6 +611,14 @@
       }
       #card-claims li { display: flex; gap: 9px; align-items: baseline; }
       #card-claims li::before { content: "✓"; color: var(--ok); font-weight: 700; }
+      #card-details { font-size: 13px; color: var(--muted); }
+      #card-details summary { cursor: pointer; font-weight: 600; color: var(--accent); list-style: none; }
+      #card-details summary::-webkit-details-marker { display: none; }
+      #card-details summary::after { content: " ›"; }
+      #card-details[open] summary::after { content: " ⌄"; }
+      #card-details-list { margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+      #card-details-list dt { color: var(--faint); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; align-self: baseline; }
+      #card-details-list dd { margin: 0; color: var(--text-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
       #card-inspect {
         align-self: center;
         padding: 6px 10px;
@@ -680,6 +691,10 @@
         <h2 id="send-title"></h2>
         <p id="send-sub"></p>
         <label class="send-toggle">
+          <input id="send-with-data" type="checkbox" checked />
+          <span>Include what I have entered</span>
+        </label>
+        <label class="send-toggle">
           <input id="send-preview" type="checkbox" checked />
           <span>Show the name and icon in the message preview</span>
         </label>
@@ -727,6 +742,8 @@
           <div class="sheet-head-text">
             <p class="sheet-name" id="sheet-name"></p>
             <p class="sheet-note" id="sheet-note"></p>
+            <!-- Said only after storage has succeeded, never as a promise. -->
+            <p class="sheet-note" id="sheet-kept" hidden></p>
           </div>
         </div>
         <!--
@@ -808,7 +825,7 @@
           </div>
           <ul id="card-facts">
             <li><span class="fact-label">Publisher</span><span id="fact-publisher" class="fact-value"></span></li>
-            <li><span class="fact-label">Size</span><span id="fact-size" class="fact-value"></span></li>
+            <li><span class="fact-label">Data</span><span id="fact-data" class="fact-value"></span></li>
             <li><span class="fact-label">Runs</span><span class="fact-value">Offline</span><span class="fact-sub">on this device</span></li>
           </ul>
           <p id="card-publisher"></p>
@@ -818,6 +835,16 @@
           <button id="card-name-publisher" type="button" hidden>Name this publisher…</button>
           <p id="card-safety" hidden></p>
           <ul id="card-claims"></ul>
+          <!--
+            The technical facts — key, dates, size — under a disclosure. The
+            card answers in plain sentences; these are for whoever wants to
+            check them, and are labelled for what they are: the publisher's
+            claims where they are claims.
+          -->
+          <details id="card-details">
+            <summary>Details</summary>
+            <dl id="card-details-list"></dl>
+          </details>
           <p id="card-succession" hidden></p>
           <!--
             A document a store held unencrypted (backlog 3.4).

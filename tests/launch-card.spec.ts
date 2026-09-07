@@ -238,7 +238,14 @@ test.describe("the card reads like a store page", () => {
     await expect(page.locator("#card-tagline")).toHaveText("Books to read, and the ones <b>you</b> did");
     expect(await page.locator("#card-tagline b").count()).toBe(0);
     await expect(page.locator("#fact-publisher")).toHaveText("Unsigned");
-    await expect(page.locator("#fact-size")).toHaveText(/\d+ KB/);
+    // What data comes with it — none, for a fresh build — and the technical
+    // facts under Details, labelled for what they are.
+    await expect(page.locator("#fact-data")).toHaveText("Starts empty");
+    await expect(page.locator("#card-details")).toBeVisible();
+    await page.locator("#card-details summary").click();
+    await expect(page.locator("#card-details-list")).toContainText(/Size/);
+    await expect(page.locator("#card-details-list")).toContainText(/\d+ KB/);
+    await expect(page.locator("#card-details-list")).toContainText(/as stated by the publisher/);
     await expect(page.locator("#card-open")).toHaveText("Open");
   });
 });

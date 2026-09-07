@@ -31,8 +31,14 @@ export interface CardInput {
   favicon?: string;
   /** One line about the app, from its own <meta name="description">. */
   tagline?: string;
-  /** The file's size in bytes, for the facts row. */
+  /** The file's size in bytes, for Details. */
   size?: number;
+  /** The database's size in bytes: what data comes with it. Zero means it starts empty. */
+  dataBytes?: number;
+  /** The publisher's own account of when it was made (ISO). A claim, labelled as one. */
+  createdAt?: string;
+  /** The signing key's fingerprint, for Details. */
+  fingerprint?: string;
   /**
    * Who signed it, as far as this device has seen. Never a bare fingerprint
    * and never the word "verified": a name in one of the states
@@ -185,8 +191,37 @@ export function showCard(input: CardInput): Promise<void> {
     factPublisher.textContent = publisherFact(input.publisher);
     factPublisher.dataset.state = input.publisher.state;
   }
-  const factSize = document.getElementById("fact-size");
-  if (factSize) factSize.textContent = input.size !== undefined ? formatSize(input.size) : "—";
+  const factData = document.getElementById("fact-data");
+  if (factData) {
+    factData.textContent = input.dataBytes && input.dataBytes > 0 ? formatSize(input.dataBytes) : "Starts empty";
+  }
+
+  // Details: the technical facts, labelled for what they are.
+  const details = document.getElementById("card-details");
+  const list = document.getElementById("card-details-list");
+  if (details && list) {
+    details.removeAttribute("open");
+    const rows: [string, string][] = [];
+    if (input.fingerprint) rows.push(["Key", input.fingerprint]);
+    if (input.createdAt) {
+      const when = new Date(input.createdAt);
+      if (!Number.isNaN(when.getTime())) {
+        rows.push(["Made", when.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) + " (as stated by the publisher)"]);
+      }
+    }
+    if (input.size !== undefined) rows.push(["Size", formatSize(input.size)]);
+    if (input.dataBytes !== undefined) rows.push(["Data", input.dataBytes > 0 ? formatSize(input.dataBytes) : "none yet"]);
+    list.replaceChildren(
+      ...rows.flatMap(([term, value]) => {
+        const dt = document.createElement("dt");
+        dt.textContent = term;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        return [dt, dd];
+      }),
+    );
+    details.hidden = rows.length === 0;
+  }
 
   const url = faviconUrl(input.favicon);
   if (url) {

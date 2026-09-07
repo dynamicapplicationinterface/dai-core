@@ -1150,7 +1150,18 @@ function bridgeMain(): void {
     // Pushed from the shell, which is the only window that knows.
     if (event.source !== window.parent) return;
     const data = event.data as Any;
-    if (!data || data.type !== "dai:appmode") return;
+    if (!data) return;
+    if (data.type === "dai:flush") {
+      // The host is about to package this document — to share it — and
+      // wants what the person sees, not the last autosave. Anything pending
+      // is written now, and the answer waits for the host to have it.
+      const pending = flushAutosave();
+      void Promise.resolve(pending).then(() => {
+        window.parent.postMessage({ type: "dai:flushed", id: data.id }, "*");
+      });
+      return;
+    }
+    if (data.type !== "dai:appmode") return;
     appMode = !!data.active;
     appModeListeners.forEach((listener) => listener(appMode));
   });
@@ -2035,6 +2046,20 @@ async function boot(): Promise<void> {
       // about anything and the stall notice must not appear behind it.
       stopWatching();
       document.body.classList.add("dai-mounted");
+      return;
+    }
+
+    // A flush, relayed: the host asks the shell, the shell asks the frame,
+    // and the frame's answer comes back the same way. A share that packages
+    // the document before the last edit has landed would send the wrong
+    // state; this is how the host waits for the right one.
+    const relay = event.data as { type?: string; id?: string };
+    if (event.source === window.parent && relay?.type === "DAI_HOST_FLUSH") {
+      frame.contentWindow?.postMessage({ type: "dai:flush", id: relay.id }, "*");
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
+      window.parent.postMessage({ type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id }, "*");
       return;
     }
 

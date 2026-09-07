@@ -31,6 +31,15 @@ async function captureClipboard(page: Page): Promise<() => Promise<string | unde
   return () => page.evaluate(() => (window as unknown as { __copied?: string }).__copied);
 }
 
+/** Clears the report and the captured clipboard, so a second share is awaited on its own. */
+async function resetShare(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const report = document.getElementById("report");
+    if (report) report.textContent = "";
+    (window as unknown as { __copied?: string }).__copied = undefined;
+  });
+}
+
 /** A document too big for an address: random bytes defeat the carrier's compression. */
 async function bigDocument(prefix: string, withIcon: boolean): Promise<string> {
   const filler = Buffer.from(crypto.getRandomValues(new Uint8Array(60 * 1024))).toString("base64");
@@ -123,6 +132,7 @@ test.describe("sending a document", () => {
 
     // Preview off: a sidecar with no preview, and no icon.
     puts.clear();
+    await resetShare(page);
     await page.click("#more");
     await page.click("#send");
     await page.locator("#send-preview").uncheck();
@@ -154,5 +164,86 @@ test.describe("sending a document", () => {
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Sharing the file instead/, { timeout: 60_000 });
     expect((await download).suggestedFilename()).toMatch(/\.dai\.html$/);
+  });
+});
+
+/**
+ * What goes is what the sender sees — and, when they choose, none of it.
+ *
+ * Autosave lands shortly after the last edit. A share packaged inside that
+ * window used to send the state before the edit; now the host asks the app
+ * to flush and waits. And a blank copy is the same app with an empty
+ * database: a template, sent without the sender's entries.
+ */
+test.describe("what a share carries", () => {
+  test("an edit made the instant before sharing is in the link; a blank copy carries none", async ({ browser, page }) => {
+    test.slow();
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { compileDirectory } = await import("../src/compile.js");
+    const source = mkdtempSync(join(tmpdir(), "dai-share-state-"));
+    writeFileSync(
+      join(source, "schema.sql"),
+      "CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, done INTEGER NOT NULL DEFAULT 0);\n" +
+        "INSERT INTO jobs (id) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM jobs);",
+      "utf8",
+    );
+    writeFileSync(
+      join(source, "index.html"),
+      [
+        '<!doctype html><meta charset="utf-8">',
+        '<dai-rows query="SELECT id, done FROM jobs ORDER BY id">',
+        "  <template>",
+        '    <p><button id="tick" type="button" data-run="UPDATE jobs SET done = 1 - done WHERE id = :id">tick</button>',
+        '    <span id="state" data-text="done"></span></p>',
+        "  </template>",
+        "</dai-rows>",
+        '<script type="module" src="./dai-kit.js"></script>',
+      ].join("\n"),
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Jobs" });
+    const file = join(source, "jobs.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await openFile(page, file);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    const copied = await captureClipboard(page);
+    const app = page.frameLocator("#cartridge").frameLocator("#dai-app");
+    await expect(app.locator("#state")).toHaveText("0", { timeout: 30_000 });
+
+    // Tick, and share at once — inside the autosave window.
+    await app.locator("#tick").click();
+    await expect(app.locator("#state")).toHaveText("1");
+    await page.click("#more");
+    await page.click("#send");
+    await page.click("#send-go");
+    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    const withData = (await copied())!;
+
+    // Then a blank copy.
+    await resetShare(page);
+    await page.click("#more");
+    await page.click("#send");
+    await page.locator("#send-with-data").uncheck();
+    await expect(page.locator("#send-note")).toContainText("none of your entries");
+    await page.click("#send-go");
+    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    const blank = (await copied())!;
+    expect(blank).not.toBe(withData);
+
+    // Opened elsewhere, each says what it carries.
+    for (const [link, expected] of [[withData, "1"], [blank, "0"]] as const) {
+      const other = await browser.newContext();
+      const fresh = await other.newPage();
+      await fresh.goto(link);
+      await fresh.locator("#card-open").click({ timeout: 60_000 });
+      await expect(fresh.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+      const theirs = fresh.frameLocator("#cartridge").frameLocator("#dai-app");
+      await expect(theirs.locator("#state")).toHaveText(expected, { timeout: 30_000 });
+      await other.close();
+    }
   });
 });

@@ -957,23 +957,22 @@ test.describe("keeping it", () => {
     await expect(page.locator("#keep-sheet")).toBeHidden();
   });
 
-  test("iOS is walked to the document's own address, then shown the gesture", async ({ page }) => {
+  test("on iOS, Open lands at the document's own address, and the action shows the gesture at once", async ({ page }) => {
     test.slow();
     await pretendIphone(page);
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
-    await expect(page.locator("body")).toHaveClass(/loaded/);
 
     /*
-     * A phone test showed why this is two steps. iOS names a home-screen
-     * icon from the manifest the page linked when it loaded, so on a page
-     * that loaded as the opener, Share would install the opener. The action
-     * first moves the page to the document's own address, and only there
-     * shows the gesture.
+     * iOS names a home-screen icon from the manifest the page linked when it
+     * loaded, so a page that loaded as the opener would install the opener.
+     * The person decided when they pressed Open, so Open itself loads the
+     * page at the document's address — one extra load, behind the launch
+     * screen — and from then on the action is one gesture away.
      */
-    await page.locator("#keep-cta").click();
     await page.waitForURL(/[?&]doc=/, { timeout: 60_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.locator("#keep-cta").click();
     await expect(page.locator("#keep-sheet")).toBeVisible({ timeout: 60_000 });
     await expect(page.locator("#keep-title")).toContainText(/Add .* to your Home Screen/);
     await expect(page.locator("#keep-steps")).toContainText("Share");

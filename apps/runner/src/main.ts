@@ -34,7 +34,7 @@ import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
 import { handOff } from "../../../src/handoff.js";
 import { receiveHandoff } from "../../../src/handoff-tab.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
-import { describeSelf, faviconUrl, iconPng, watchForInstall } from "./install.js";
+import { describeDocument, describeSelf, faviconUrl, iconPng, launchAddress, watchForInstall } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
@@ -164,6 +164,9 @@ function forgetOpen(): void {
     /* As above. */
   }
 }
+
+/** Whether this device holds the open document. Null until a store has answered. */
+let keptOnDevice: boolean | null = null;
 
 /** The application's own index.html, as text, when the archive carries one. */
 function indexHtmlOf(cartridge: Cartridge): string | undefined {
@@ -357,6 +360,14 @@ async function mount(cartridge: Cartridge): Promise<void> {
     ? `Signed by ${cartridge.publicKeyFingerprint.slice(0, 8)}`
     : "Not signed";
   sheetNote.dataset.state = cartridge.publicKeyFingerprint ? "signed" : "unsigned";
+  const kept = document.getElementById("sheet-kept");
+  if (kept) {
+    kept.hidden = keptOnDevice === null;
+    kept.dataset.state = keptOnDevice ? "kept" : "refused";
+    kept.textContent = keptOnDevice
+      ? "Kept on this device · works offline"
+      : "Not kept — this device refused storage";
+  }
   exportButton.textContent = "Save a copy…";
 }
 
@@ -640,6 +651,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         favicon: cartridge.manifest.favicon,
         ...describeApp(indexHtmlOf(cartridge)),
         size: file.size,
+        dataBytes: cartridge.archive["document.sqlite"]?.length ?? 0,
+        createdAt: cartridge.manifest.createdAt,
+        fingerprint: cartridge.publicKeyFingerprint,
         publisher: who,
         identity: identity?.status === "shown" ? identity : undefined,
         from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
@@ -676,16 +690,51 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       loaded = cartridge;
     }
 
-    // Save/update cartridge in IndexedDB Library
-    await saveCartridgeToLibrary({
-      documentUuid: loaded.manifest.documentUuid,
-      appName: loaded.manifest.appName ?? "container",
-      lastOpened: new Date().toISOString(),
-      html: loaded.html,
-      publicKeyFingerprint: loaded.publicKeyFingerprint,
-    });
+    // Kept on this device — and said only once it is. Storage can refuse
+    // (a private window, a full quota); the document still opens, and the
+    // menu says it was not kept rather than promising it was.
+    try {
+      await saveCartridgeToLibrary({
+        documentUuid: loaded.manifest.documentUuid,
+        appName: loaded.manifest.appName ?? "container",
+        lastOpened: new Date().toISOString(),
+        html: loaded.html,
+        publicKeyFingerprint: loaded.publicKeyFingerprint,
+      });
+      keptOnDevice = true;
+    } catch {
+      keptOnDevice = false;
+    }
 
     rememberOpen(loaded.manifest.documentUuid);
+
+    /*
+     * On iOS, Open loads the page at the document's own address.
+     *
+     * The person decided when they pressed Open; asking again with "Keep
+     * it" was a second question about the same decision. iOS reads a
+     * home-screen icon's name and address from the manifest the page linked
+     * when it loaded, so the page is loaded there now — described by the
+     * worker, opened from the copy just kept — and Add to Home Screen is
+     * one gesture away from this moment on. One extra load, behind the
+     * launch screen; other platforms read the manifest live and need none.
+     */
+    if (platform() === "ios" && keptOnDevice) {
+      const identity = {
+        uuid: loaded.manifest.documentUuid,
+        name: loaded.manifest.appName ?? "container",
+        favicon: loaded.manifest.favicon,
+        opens: 0,
+        link: arrivedByLink ?? (await launchLinkForDocument(loaded.html)),
+      };
+      const target = launchAddress(identity);
+      if (location.href !== target) {
+        await describeDocument(identity);
+        location.replace(target);
+        return;
+      }
+    }
+
     hostMark("prepared");
     await mount(loaded);
     hostMark("mounted");
@@ -1138,8 +1187,50 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * On a computer it goes to the clipboard. If the store cannot be reached the
  * file is offered instead, and the person is told why.
  */
-async function currentHtml(): Promise<string> {
+/**
+ * Asks the running application to write anything pending, and waits.
+ *
+ * Autosave lands shortly after the last edit; a share packaged inside that
+ * window would send the state before the edit. The request goes host →
+ * shell → frame and the answer comes back the same way, after the save has
+ * been acknowledged. A shell that does not answer — an older one — is given
+ * a moment and then not waited for.
+ */
+function flushDocument(): Promise<void> {
+  const target = cartridgeFrame.contentWindow;
+  if (!target || !mountedNonce) return Promise.resolve();
+  const id = Math.random().toString(36).slice(2);
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", onFlushed);
+      resolve();
+    }, 2500);
+    const onFlushed = (event: MessageEvent): void => {
+      const data = event.data as { type?: string; id?: string; sessionNonce?: string } | null;
+      if (!data || data.type !== "DAI_HOST_FLUSHED" || data.id !== id) return;
+      if (!fromMountedContainer(event, data)) return;
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onFlushed);
+      resolve();
+    };
+    window.addEventListener("message", onFlushed);
+    target.postMessage({ type: "DAI_HOST_FLUSH", id }, "*");
+  });
+}
+
+/**
+ * The document as it stands, or as it arrived: with the person's data, or as
+ * a blank copy — the same app with an empty database, which the schema and
+ * seed rows fill on first open. Flushed first, so a share is the state the
+ * sender sees.
+ */
+async function currentHtml(withData = true): Promise<string> {
   if (!loaded) throw new Error("nothing open");
+  if (!withData) {
+    const blank = await resealCartridge(loaded, new Uint8Array(0));
+    return blank.supplied.length > 0 ? refatten(blank) : blank.html;
+  }
+  await flushDocument();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   return current.supplied.length > 0 ? refatten(current) : current.html;
@@ -1181,13 +1272,14 @@ async function sendDocument(): Promise<void> {
   const titleEl = document.getElementById("send-title");
   const sub = document.getElementById("send-sub");
   const toggle = document.getElementById("send-preview") as HTMLInputElement | null;
+  const withData = document.getElementById("send-with-data") as HTMLInputElement | null;
   const note = document.getElementById("send-note");
   const go = document.getElementById("send-go") as HTMLButtonElement | null;
   const cancel = document.getElementById("send-cancel");
-  if (!sheetEl || !icon || !titleEl || !sub || !toggle || !note || !go || !cancel) return;
+  if (!sheetEl || !icon || !titleEl || !sub || !toggle || !withData || !note || !go || !cancel) return;
 
-  const html = await currentHtml();
-  const fits = Boolean(await linkForDocument(html));
+  // Sized as it would go with the data in, which is the larger of the two.
+  const fits = Boolean(await linkForDocument(await currentHtml(true)));
   const canShare = typeof navigator.share === "function";
   const url = faviconUrl(loaded.manifest.favicon);
   icon.hidden = !url;
@@ -1197,7 +1289,14 @@ async function sendDocument(): Promise<void> {
     ? "The whole app travels inside the link. Nothing is uploaded."
     : "Sealed with a key that only the link holds, then put in the store, which cannot read it.";
   toggle.checked = true;
-  note.textContent = "Anyone with the link can open it, with what is in it now.";
+  withData.checked = true;
+  const describe = (): void => {
+    note.textContent = withData.checked
+      ? "Anyone with the link can open it, with what is in it now."
+      : "Anyone with the link gets the app as it arrived, with none of your entries.";
+  };
+  describe();
+  withData.onchange = describe;
   go.textContent = canShare ? "Share" : "Copy link";
   go.disabled = false;
   slideOpen(sheetEl);
@@ -1217,6 +1316,9 @@ async function sendDocument(): Promise<void> {
     go.textContent = fits ? "Preparing…" : "Sealing…";
     let made: { link: string; uploaded: boolean };
     try {
+      // Packaged now, not when the sheet opened: what goes is what the
+      // person sees at the moment they press Share.
+      const html = await currentHtml(withData.checked);
       made = await linkToSend(html, toggle.checked);
     } catch (error) {
       close();
@@ -1661,6 +1763,13 @@ async function start(): Promise<void> {
       (candidate) => candidate.documentUuid === wanted,
     );
     if (held) {
+      keptOnDevice = true;
+      // The address an icon launched with carries the link the document came
+      // by, when it did; keep it, so the manifest written from here carries it
+      // on rather than falling back to an address only this device can open.
+      if (inlineFrom(location.hash) || referenceFrom(location.pathname, location.search, location.hash)) {
+        arrivedByLink = location.href;
+      }
       await launchFromLibrary(held);
       return;
     }
