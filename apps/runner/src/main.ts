@@ -8,11 +8,11 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
-import { decodeInline, INLINE_CAP, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
+import { decodeInline, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
 import type { PastHost } from "../../../src/inline.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
-import { ICON_CAP, openFromStore, publish, referenceFrom, storePreview, strippedReference } from "../../../src/store.js";
+import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } from "../../../src/store.js";
 import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { confusables } from "./confusables.js";
@@ -1675,39 +1675,37 @@ async function linkToSend(html: string, preview: boolean): Promise<{ link: strin
     ? presignedStore({ presignUrl: new URL("/api/presign", location.origin).href, publicBase: STORE_BASE })
     : undefined;
   const icon = preview && loaded ? await previewIcon(loaded.manifest.favicon) : undefined;
-  const inline = await linkForDocument(html);
-  if (inline) {
-    /*
-     * The whole document is in the link. What a chat shows before anybody
-     * taps is not: it is fetched from the address, and the address of an
-     * inline link was the opener's front page, so every small app arrived
-     * as a generic card. The card - name, line, icon - is stored on its own
-     * under an id that names nothing, and the link points at that. A store
-     * that cannot be reached costs the card, never the link: the document
-     * travels either way.
-     */
-    if (preview && store) {
-      try {
-        const card = await storePreview(html, store, { icon });
-        const host = { template: HOST_TEMPLATE, runtime: HOST_RUNTIME };
-        const withCard = await inlineLink(html, location.origin + "/", host, INLINE_CAP, `/p/${card.id}`);
-        if (withCard) {
-          if (loaded) {
-            await rememberShare(loaded.manifest.documentUuid, { hash: card.id, retire: card.retire, at: new Date().toISOString(), card: true });
-          }
-          return { link: withGround(withCard), uploaded: false };
-        }
-      } catch {
-        /* No card, then. The link below carries the document all the same. */
-      }
+  /*
+   * Through the store, whatever the size.
+   *
+   * A small document used to travel inside its link and nothing left the
+   * device. Then a card was stored for it, so a chat could show one - and
+   * the sender's phone did show one, and sent the other person the bare
+   * address. A rich link travels only for a short address; a document
+   * inside its address is tens of kilobytes, and what arrives is text that
+   * a chat may not even keep whole. So every document sent from here goes
+   * the way the large ones always did: sealed, with the key in the fragment
+   * and an address a few hundred characters long, and the card beside it.
+   * The store cannot read what it holds, and a share can be taken back.
+   *
+   * Inside the link is still what a document does when there is no store
+   * to reach: the link goes without a card rather than not at all.
+   */
+  if (store) {
+    try {
+      const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon });
+      // Remembered, so the person who shared it can take it back (see retireShares).
+      if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
+      return { link: withGround(links.known), uploaded: true };
+    } catch (error) {
+      const inline = await linkForDocument(html);
+      if (!inline) throw error;
+      return { link: withGround(inline), uploaded: false };
     }
-    return { link: withGround(inline), uploaded: false };
   }
-  if (!store) throw new Error("This opener has no store, so a document this large can only be sent as a file.");
-  const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon });
-  // Remembered, so the person who shared it can take it back (see retireShares).
-  if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
-  return { link: withGround(links.known), uploaded: true };
+  const inline = await linkForDocument(html);
+  if (inline) return { link: withGround(inline), uploaded: false };
+  throw new Error("This opener has no store, so a document this large can only be sent as a file.");
 }
 
 async function rememberShare(documentUuid: string, share: Share): Promise<void> {
@@ -1812,16 +1810,16 @@ async function sendDocument(): Promise<void> {
     );
   };
 
-  // Sized as it would go with the data in, which is the larger of the two.
-  const fits = Boolean(await linkForDocument(await currentHtml(true)));
+  // Through the store when there is one, whatever the size (see linkToSend).
+  const viaStore = Boolean(STORE_BASE);
   const canShare = typeof navigator.share === "function";
   const url = faviconUrl(loaded.manifest.favicon);
   icon.hidden = !url;
   if (url) icon.src = url;
   titleEl.textContent = `Share ${name}`;
-  sub.textContent = fits
-    ? "The whole app travels inside the link. Only its name, its line and its icon go to the store, for the card a chat shows."
-    : "Sealed with a key that only the link holds, then put in the store, which cannot read it.";
+  sub.textContent = viaStore
+    ? "Sealed with a key that only the link holds, then put in the store, which cannot read it."
+    : "The whole app travels inside the link. Nothing is uploaded.";
   withData.checked = true;
   const describe = (): void => {
     note.textContent = withData.checked
@@ -1846,7 +1844,7 @@ async function sendDocument(): Promise<void> {
 
   go.onclick = async () => {
     go.disabled = true;
-    go.textContent = fits ? "Preparing…" : "Sealing…";
+    go.textContent = viaStore ? "Sealing…" : "Preparing…";
     let made: { link: string; uploaded: boolean };
     try {
       // Packaged now, not when the sheet opened: what goes is what the

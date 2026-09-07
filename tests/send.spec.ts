@@ -104,7 +104,7 @@ test.describe("sending a document", () => {
     await theirs.close();
   });
 
-  test("a small document travels inside the link, and only its card is uploaded", async ({ page }) => {
+  test("a small document goes through the store too, so what arrives is a short address with a card", async ({ page }) => {
     test.slow();
     // A store, played by two routes, as below: what arrives is recorded.
     const puts = new Map<string, Buffer>();
@@ -112,14 +112,10 @@ test.describe("sending a document", () => {
     await page.route("**/api/presign", async (route) => {
       const body = route.request().postDataJSON() as { hash: string; kind: string };
       asked.push(body.kind);
-      if (body.kind === "preview") {
-        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ token: "t.standing" }) });
-        return;
-      }
       const key = body.kind === "sidecar" ? `${body.hash}.json` : body.kind === "icon" ? `${body.hash}.png` : body.hash;
       await route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({ url: `http://localhost:5175/__bucket/${key}`, method: "PUT", headers: {}, href: `https://store.test/${key}` }),
+        body: JSON.stringify({ url: `http://localhost:5175/__bucket/${key}`, method: "PUT", headers: {}, href: `https://store.test/${key}`, token: "t.standing" }),
       });
     });
     await page.route("**/__bucket/**", async (route) => {
@@ -135,34 +131,50 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await expect(page.locator("#send-sheet")).toBeVisible();
-    await expect(page.locator("#send-sub")).toContainText("travels inside the link");
+    await expect(page.locator("#send-sub")).toContainText("Sealed with a key");
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
     const link = (await copied())!;
 
-    // The document is in the fragment, as ever. The path names a card: the
-    // store holds the name, the line and the icon under an id that names
-    // nothing else, so a chat has something to show before anybody taps -
-    // which a small app never had, because nothing of it reached a store.
+    // A document that would fit inside its link goes through the store all
+    // the same: a phone sends a rich link only for a short address, and a
+    // document inside its address is tens of kilobytes that arrived as bare
+    // text. Sealed, with the key in the fragment, and the card beside it.
     const url = new URL(link);
-    expect(url.hash).toMatch(/^#a=/);
-    const id = /^\/p\/([0-9a-f]{64})$/.exec(url.pathname)?.[1];
-    expect(id, link).toBeTruthy();
-    // Standing was asked for the card, and no document was ever uploaded.
-    expect(asked).toContain("preview");
-    expect(asked).not.toContain("blob");
-    expect(puts.has(id!)).toBe(false);
-    const sidecar = JSON.parse(puts.get(`${id}.json`)!.toString("utf8")) as {
-      size: number;
-      inline?: boolean;
-      preview?: { name: string };
-      retire?: string;
-    };
-    expect(sidecar.size).toBe(0);
-    expect(sidecar.inline).toBe(true);
+    const hash = /^\/d\/([0-9a-f]{64})$/.exec(url.pathname)?.[1];
+    expect(hash, link).toBeTruthy();
+    expect(url.hash).toMatch(/^#h=[0-9a-f]{64}&k=[A-Za-z0-9_-]{43}$/);
+    expect(link.length).toBeLessThan(400);
+    expect(asked).toContain("blob");
+    expect(puts.has(hash!)).toBe(true);
+    // Sealed: the store holds ciphertext, not the document.
+    expect(puts.get(hash!)!.toString("latin1")).not.toContain("dai-payload");
+    const sidecar = JSON.parse(puts.get(`${hash}.json`)!.toString("utf8")) as { preview?: { name: string }; retire?: string };
     expect(sidecar.preview?.name).toBeTruthy();
-    // And it can be taken back like any share: the digest of a token the sender kept.
     expect(sidecar.retire).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  test("a small document still travels when the store is out of reach, inside its link", async ({ page }) => {
+    test.slow();
+    let presigned = 0;
+    await page.route("**/api/presign", (route) => {
+      presigned += 1;
+      void route.fulfill({ status: 500, body: "{}" });
+    });
+    await page.goto(RUNNER_URL);
+    await openFile(page, CONTAINER);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    const copied = await captureClipboard(page);
+
+    await page.click("#more");
+    await page.click("#send");
+    await expect(page.locator("#send-sheet")).toBeVisible();
+    await page.click("#send-go");
+    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    const link = (await copied())!;
+    // No card, then; the link goes rather than not at all.
+    expect(link).toMatch(/^http:\/\/localhost:5175\/(\?ground=[^#]*)?#a=/);
+    expect(presigned).toBeGreaterThan(0);
 
     // Somebody following it, in a browser that has never seen this page,
     // goes straight to the card. The chooser — "Open a file" — is not a
