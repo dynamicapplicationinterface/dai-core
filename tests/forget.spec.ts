@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import handler from "../apps/runner/api/forget.js";
+import { retireWith as handler } from "../apps/runner/api/forget.js";
 import { retireDigest } from "../src/store.js";
 
 /**

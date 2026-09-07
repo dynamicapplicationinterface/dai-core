@@ -60,16 +60,29 @@ function same(a: string, b: string): boolean {
   return differ === 0;
 }
 
-export default async function handler(request: Request, fetchImpl: typeof fetch = fetch): Promise<Response> {
+/**
+ * The platform's entry: the request, and nothing else this function reads.
+ *
+ * The platform calls this with a second argument of its own - a context - and
+ * the first version took the fetch to use in that position, with a default.
+ * The default never applied, the context was called as a function, and every
+ * "Stop the link" pressed against production got a 500 that said "t is not a
+ * function" once it could say anything. Tests hand in their fetch by name.
+ */
+export default async function handler(request: Request): Promise<Response> {
+  return retireWith(request, fetch);
+}
+
+/** The endpoint, with the fetch it should use: the real one, or a test's. */
+export async function retireWith(request: Request, fetchImpl: typeof fetch): Promise<Response> {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   /*
    * Whatever goes wrong, an answer in words.
    *
-   * A phone pressed "Stop the link" and got a bare 500 from the edge with no
-   * body, which said nothing about which of the three steps failed and left
-   * no log to read. The message of anything thrown is the answer instead;
-   * none of the values it could mention is a secret, since the key never
-   * arrives here and the credentials are never put into an error.
+   * A bare 500 from the edge has no body and leaves no log to read from
+   * here. The message of anything thrown is the answer instead; none of the
+   * values it could mention is a secret, since the key never arrives here
+   * and the credentials are never put into an error.
    */
   try {
     return await retire(request, fetchImpl);
