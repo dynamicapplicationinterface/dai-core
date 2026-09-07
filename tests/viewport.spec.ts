@@ -103,4 +103,33 @@ test.describe("how much of the screen an application gets", () => {
     await expect(tags).toHaveAttribute("content", "#123456");
     await expect(tags).not.toHaveAttribute("media", /.+/);
   });
+
+  test("an application that declared no colour is measured, and the strip above it is what it painted", async ({ page }) => {
+    const source = mkdtempSync(join(tmpdir(), "dai-ground-"));
+    writeFileSync(
+      join(source, "index.html"),
+      '<!doctype html><meta charset="utf-8"><style>.page{background:rgb(250, 247, 239);min-height:100vh}</style>' +
+        '<div class="page"><p id="app">here</p></div>',
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Cream" });
+    const file = join(source, "cream.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await page.locator("#card-open").click({ timeout: 60_000 });
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+
+    // The colour is on a wrapper, not on body: what is read is the first
+    // background at the top left corner, which is what a person sees there.
+    const tags = page.locator('meta[name="theme-color"]');
+    await expect(tags).toHaveCount(1, { timeout: 30_000 });
+    await expect(tags).toHaveAttribute("content", "rgb(250, 247, 239)");
+    // And the page's own ground, which is what the system paints the status
+    // bar from, on the root element rather than only on body.
+    await expect
+      .poll(() => page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor))
+      .toBe("rgb(250, 247, 239)");
+  });
 });

@@ -152,7 +152,14 @@
        * result is an application that drifts up and down inside its own frame
        * while somebody is trying to tick a box.
        */
-      html, body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
+      /*
+       * The page's own ground is the app's colour while a document is open,
+       * and on `html` as well as `body`: the strip under a phone's status
+       * bar is painted by the system from the canvas behind the page, and
+       * the canvas takes its colour from `html`. With it on `body` alone the
+       * strip was this app's grey over an application of any other colour.
+       */
+      html, body { margin: 0; overflow: hidden; background: var(--app-ground, var(--bg)); color: var(--text); }
       /*
        * The whole of what a person can see, and no more.
        *
@@ -188,8 +195,6 @@
         flex-direction: column;
         overscroll-behavior: none;
       }
-      /* While a document is open, the edges of the screen are its colour. */
-      body.loaded { background: var(--app-ground, var(--bg)); }
 
       /*
        * Two heights: a chooser before anything is open, and a single slim line

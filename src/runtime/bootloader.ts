@@ -1267,6 +1267,59 @@ function bridgeMain(): void {
   // handshake, which was before this frame existed.
   window.parent.postMessage({ type: "dai:insets?" }, "*");
 
+  /*
+   * The colour of the one strip an application cannot paint.
+   *
+   * On a phone the status bar sits above the web view and the system draws
+   * it, from whatever is behind the top-level page. An application that
+   * declares <meta name="theme-color"> has said what that should be and the
+   * host uses it. This is for the ones that have not: the colour actually at
+   * the top left corner of the page, read once the page has painted and again
+   * if the colour scheme changes, so the strip above the app is the app's own
+   * colour rather than the host's. The first element with a background at
+   * the top edge, because a page's colour is as often on a wrapper as on
+   * body, and a wrapper inside body's default margin starts 8px in: so a
+   * few points along that edge, then the first thing in the body.
+   */
+  const groundColour = (): string | undefined => {
+    const painted = (from: Element | null): string | undefined => {
+      for (let el = from; el; el = el.parentElement) {
+        const colour = getComputedStyle(el).backgroundColor;
+        if (colour && colour !== "transparent" && colour !== "rgba(0, 0, 0, 0)") return colour;
+      }
+      return undefined;
+    };
+    const middle = Math.floor(window.innerWidth / 2);
+    const starts: Array<Element | null> = [
+      document.elementFromPoint(1, 1),
+      document.elementFromPoint(middle, 1),
+      document.elementFromPoint(middle, 12),
+      document.body?.firstElementChild ?? null,
+      document.body,
+    ];
+    for (const start of starts) {
+      const colour = painted(start);
+      if (colour) return colour;
+    }
+    return undefined;
+  };
+  const tellGround = (): void => {
+    const colour = groundColour();
+    if (colour) window.parent.postMessage({ type: "dai:ground", colour }, "*");
+  };
+  // Two frames on: the first is when styles have applied, the second is
+  // when they have painted, and a colour read before that is the default.
+  const groundSoon = (): void => {
+    requestAnimationFrame(() => requestAnimationFrame(tellGround));
+  };
+  if (document.readyState === "complete") groundSoon();
+  else window.addEventListener("load", groundSoon);
+  try {
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", groundSoon);
+  } catch {
+    /* No matchMedia: the colour was read once, which is the common case. */
+  }
+
   const api: Any = {
     version: host.version,
     get appMode() {
@@ -2209,6 +2262,16 @@ async function boot(): Promise<void> {
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
       window.parent.postMessage({ type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id }, "*");
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:ground") {
+      // The colour at the top of the application, for the strip above it
+      // that only the host's page can colour. Passed on as it came; the host
+      // decides whether a declared theme-color outranks it.
+      const ground = event.data as { colour?: unknown };
+      if (typeof ground.colour === "string" && ground.colour.length <= 64) {
+        window.parent.postMessage({ type: "DAI_HOST_GROUND", sessionNonce, colour: ground.colour }, "*");
+      }
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:save-state") {

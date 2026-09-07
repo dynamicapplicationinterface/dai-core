@@ -108,6 +108,10 @@ function say(message: string, isError = false): void {
  */
 const schemeTags = Array.from(document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'));
 let appTag: HTMLMetaElement | undefined;
+/** The colour the open application declared for that strip, if it declared one. */
+let declaredGround: string | undefined;
+/** A colour and nothing else: it goes into a style property and a meta tag on this page. */
+const COLOUR = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i;
 function paintAbove(theme?: string): void {
   if (theme) {
     for (const tag of schemeTags) tag.remove();
@@ -338,6 +342,7 @@ function eject(): void {
   handshakeEstablished = false;
   document.body.classList.remove("loaded", "launching", "booting");
   document.documentElement.style.removeProperty("--app-ground");
+  declaredGround = undefined;
   paintAbove();
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
@@ -449,6 +454,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
   // status bar above it, which the system paints in this page's theme-color -
   // in the app's own colour.
   const { theme } = describeApp(indexHtmlOf(cartridge));
+  declaredGround = theme;
   if (theme) document.documentElement.style.setProperty("--app-ground", theme);
   else document.documentElement.style.removeProperty("--app-ground");
   paintAbove(theme);
@@ -1211,6 +1217,17 @@ window.addEventListener("message", (event) => {
     );
     window.clearTimeout(bootingGuard);
     document.body.classList.remove("loaded", "booting");
+  } else if (data.type === "DAI_HOST_GROUND") {
+    // The colour at the top edge of the application, measured by it once it
+    // had painted, for the strip above it that only this page can colour.
+    // An application that declared a theme-color said what that strip should
+    // be, and what it said stands.
+    if (!fromMountedContainer(event, data)) return;
+    if (declaredGround) return;
+    const colour = typeof data.colour === "string" ? data.colour.trim() : "";
+    if (!COLOUR.test(colour)) return;
+    document.documentElement.style.setProperty("--app-ground", colour);
+    paintAbove(colour);
   } else if (data.type === "DAI_HOST_SAVE_STATE") {
     // The runtime's own account of where the data stands. Shown, never
     // inferred: a green word here means the host acknowledged a write.
