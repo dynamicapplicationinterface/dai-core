@@ -435,6 +435,29 @@ async function mount(cartridge: Cartridge): Promise<void> {
     ? `Signed by ${cartridge.publicKeyFingerprint.slice(0, 8)}`
     : "Not signed";
   sheetNote.dataset.state = cartridge.publicKeyFingerprint ? "signed" : "unsigned";
+  /*
+   * As an app, or inside a browser.
+   *
+   * An icon added to a home screen is one of two things and looks like one:
+   * a web app, which gets the whole screen, or a bookmark, which opens the
+   * browser with its bars around the page. iOS makes a bookmark whenever it
+   * decides a page is not app-capable, says nothing about having done so, and
+   * there is no way to tell them apart from the icon. So the app says which
+   * one it is running as, and what the other one would take.
+   */
+  const mode = document.getElementById("sheet-mode");
+  if (mode) {
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)").matches === true ||
+      window.matchMedia?.("(display-mode: fullscreen)").matches === true ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    mode.hidden = false;
+    mode.dataset.state = standalone ? "app" : "browser";
+    mode.textContent = standalone
+      ? "Running as an app · the whole screen"
+      : "Running in a browser · its bars are the browser's. Add it to your Home Screen for the whole screen.";
+  }
+
   const kept = document.getElementById("sheet-kept");
   if (kept) {
     kept.hidden = keptOnDevice === null;

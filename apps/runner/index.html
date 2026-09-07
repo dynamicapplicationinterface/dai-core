@@ -57,6 +57,7 @@
 
     <!-- iOS ignores the manifest for standalone launch and icons. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="DAI" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
@@ -318,6 +319,8 @@
       .sheet-note { margin: 0; font-size: 12.5px; color: var(--muted); }
       .sheet-note[data-state="known"] { color: var(--ok); }
       .sheet-note[data-state="unsigned"] { color: var(--warn); }
+      #sheet-mode[data-state="browser"] { color: var(--warn); }
+      #sheet-mode[hidden] { display: none; }
       #sheet-kept[hidden] { display: none; }
       #sheet-kept[data-state="kept"] { color: var(--ok); }
       #sheet-kept[data-state="refused"] { color: var(--warn); }
@@ -882,6 +885,17 @@
             <p class="sheet-note" id="sheet-note"></p>
             <!-- Said only after storage has succeeded, never as a promise. -->
             <p class="sheet-note" id="sheet-kept" hidden></p>
+            <!--
+              Whether this is running as an app or inside a browser.
+
+              A person who added an icon and still sees browser chrome around
+              their app has no way to tell whether the icon is a web app or a
+              bookmark — iOS makes both, they look the same on the home
+              screen, and only one of them gets the whole screen. This says
+              which one is on screen, in a person's words, and what to do
+              about it when it is the other one.
+            -->
+            <p class="sheet-note" id="sheet-mode" hidden></p>
           </div>
         </div>
         <!--

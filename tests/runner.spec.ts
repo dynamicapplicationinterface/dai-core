@@ -1088,6 +1088,15 @@ test.describe("keeping it, per device", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await expect(page.locator("#keep-cta")).toHaveText(/Keep/);
     await page.click("#more");
+    /*
+     * Which of the two kinds of icon this is running from.
+     *
+     * A test browser is a browser, so this is the browser half — and that is
+     * the half that matters: somebody who added an icon and still sees bars
+     * around their app can read here whether the icon is a web app or a
+     * bookmark, which the home screen gives no way to tell apart.
+     */
+    await expect(page.locator("#sheet-mode")).toContainText(/Running in a browser/);
     await page.click("#keep-cta");
     // No install prompt in a test browser, so the steps appear instead.
     await expect(page.locator("#keep-sheet")).toBeVisible();
