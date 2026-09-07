@@ -255,9 +255,27 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
   return toBase64Url(out);
 }
 
+/** A host as it once was: what it rebuilt shells and kits from. */
+export interface PastHost extends Host {
+  kit: string;
+}
+
 export interface UnpackOptions {
   /** The engine this host holds, by digest (§6.2). */
   supply?: Supplier;
+  /**
+   * Hosts this one used to be, asked for only when its own rebuild does not
+   * match the digest a link names.
+   *
+   * A link elides the shell and the kit because the receiver can rebuild
+   * them — the receiver as it was when the link was made. Every deploy that
+   * changes the runtime by a byte changed every rebuilt shell's digest, and
+   * every compact link made before it stopped opening with "made with
+   * another version". The retention is the fix: an opener keeps what it
+   * used to rebuild from, content-addressed, and tries each in turn. What
+   * comes out is still proven by digest before it is trusted for anything.
+   */
+  pastHosts?: () => Promise<PastHost[]>;
 }
 
 /**
@@ -388,19 +406,24 @@ export async function unpackInline(
 
     const digest = bytesToHex(payload);
     let rebuilt: Uint8Array | undefined;
-    if (name === CONTAINER_ENTRY) {
+    if (name === CONTAINER_ENTRY || name === KIT_PATH) {
       // The shell needs the application's files to decide its policy, and
       // they were carried ahead of it: the manifest lists app/ entries first.
-      rebuilt = await rebuildShell(host, {
-        appName,
-        favicon,
-        required,
-        publicKey,
-        uuid,
-        files: applicationFiles(archive),
-      });
-    } else if (name === KIT_PATH) {
-      rebuilt = new TextEncoder().encode(KIT_SOURCE);
+      const fields = { appName, favicon, required, publicKey, uuid, files: applicationFiles(archive) };
+      const make = async (from: PastHost): Promise<Uint8Array> =>
+        name === CONTAINER_ENTRY ? rebuildShell(from, fields) : new TextEncoder().encode(from.kit);
+      rebuilt = await make({ ...host, kit: KIT_SOURCE });
+      if ((await sha256Hex(rebuilt)) !== digest && options.pastHosts) {
+        // Not this host's. One it used to be, perhaps — each is tried, and
+        // the one whose rebuild carries the sealed digest is the one used.
+        for (const past of await options.pastHosts().catch((): PastHost[] => [])) {
+          const candidate = await make(past);
+          if ((await sha256Hex(candidate)) === digest) {
+            rebuilt = candidate;
+            break;
+          }
+        }
+      }
     } else {
       rebuilt = options.supply?.(digest);
       if (!rebuilt) {

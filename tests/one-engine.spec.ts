@@ -40,6 +40,9 @@ const ENGINE_FILES = [
   // from it: zipping, digesting and re-forming the signature envelope are its
   // job, and it is the one place that job is done. A wrapper calls it.
   "src/inline.ts",
+  // Reading an archive within bounds is the one place inflation is done, so
+  // the caps on it are applied everywhere an archive is opened.
+  "src/unzip.ts",
   // Sealing a document for a store — the key, the cipher, the hash that names
   // the blob — is format, and admitting one to a store verifies a signature.
   // The S3 adapter signs its own requests. All of it is done here or nowhere.

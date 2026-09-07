@@ -9,6 +9,7 @@
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
 import { decodeInline, INLINE_CAP, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
+import type { PastHost } from "../../../src/inline.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
 import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } from "../../../src/store.js";
@@ -90,6 +91,27 @@ function say(message: string, isError = false): void {
  * carries something to open (see index.html). Taken off here when there is
  * nothing to open after all, so the chooser is back for the person to use.
  */
+/**
+ * The hosts this opener has been, for a link made against one of them.
+ *
+ * Kept at /hosts/<id>/ by the build (scripts/retain-host.mjs), newest first
+ * in the index. Fetched only when this host's own rebuild does not match a
+ * link's digest, which is what a link from before a deploy looks like; and
+ * every rebuilt entry is still proven by digest before it is used.
+ */
+async function pastHosts(): Promise<PastHost[]> {
+  const ids = (await (await fetch("/hosts/index.json", { cache: "no-cache" })).json()) as string[];
+  const hosts: PastHost[] = [];
+  for (const id of ids.slice(0, 12)) {
+    if (!/^[0-9a-f]{16}$/.test(id)) continue;
+    const [template, runtime, kit] = await Promise.all(
+      ["template.html", "runtime.js", "kit.js"].map(async (name) => (await fetch(`/hosts/${id}/${name}`)).text()),
+    );
+    hosts.push({ template: template!, runtime: runtime!, kit: kit! });
+  }
+  return hosts;
+}
+
 /**
  * The save revision this tab is working from, per document.
  *
@@ -1683,6 +1705,7 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
       carried,
       { template: HOST_TEMPLATE, runtime: HOST_RUNTIME },
       await heldEngine(),
+      pastHosts,
     );
   } catch (error) {
     slot.classList.remove("busy");

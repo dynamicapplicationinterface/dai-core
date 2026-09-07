@@ -17,7 +17,7 @@
  * carrier that sends what is the document's and rebuilds what is the host's.
  */
 import { parseContainer, type Supplier } from "./container.js";
-import { packInline, unpackInline, type Host } from "./inline.js";
+import { packInline, unpackInline, type Host, type PastHost } from "./inline.js";
 
 export type { Host } from "./inline.js";
 
@@ -65,8 +65,13 @@ export async function encodeInline(html: string, host: Host): Promise<string> {
  * Verify what comes back exactly as a file: this rebuilds bytes and proves the
  * rebuilt ones match the sealed digests, and decides nothing else.
  */
-export async function decodeInline(value: string, host: Host, supply?: Supplier): Promise<string> {
-  return unpackInline(value, host, { supply });
+export async function decodeInline(
+  value: string,
+  host: Host,
+  supply?: Supplier,
+  pastHosts?: () => Promise<PastHost[]>,
+): Promise<string> {
+  return unpackInline(value, host, { supply, pastHosts });
 }
 
 /**

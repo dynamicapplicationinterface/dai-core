@@ -10,3 +10,10 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Named by content: what a host used to rebuild links from never changes.
+/hosts/index.json
+  Cache-Control: no-cache
+
+/hosts/*
+  Cache-Control: public, max-age=31536000, immutable
