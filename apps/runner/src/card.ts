@@ -256,7 +256,13 @@ export function showCard(input: CardInput): Promise<void> {
       term: "Comes with",
       value: input.dataBytes && input.dataBytes > 0 ? `${formatSize(input.dataBytes)} of data` : "No data yet",
     });
-    if (claimIds.includes("offline")) rows.push({ term: "Works", value: "Offline, on this phone" });
+    if (claimIds.includes("offline")) {
+      // The device somebody is holding, named. A coarse pointer is a finger,
+      // which is the only part of this worth asking the browser about; the
+      // rest of the sentence is true either way.
+      const handheld = window.matchMedia?.("(pointer: coarse)").matches === true;
+      rows.push({ term: "Works", value: `Offline, on this ${handheld ? "phone" : "computer"}` });
+    }
     meta.replaceChildren(
       ...rows.map(({ term, value, state }) => {
         const row = document.createElement("div");

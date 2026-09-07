@@ -246,7 +246,9 @@ test.describe("the open screen leads with the app", () => {
     await expect(meta).toContainText("Made by");
     await expect(meta).toContainText("Not signed");
     await expect(meta).toContainText("No data yet");
-    await expect(meta).toContainText("Offline, on this phone");
+    // Named for what somebody is holding: a finger says phone, a mouse says
+    // computer, and a test browser is the second of those.
+    await expect(meta).toContainText(/Offline, on this (phone|computer)/);
 
     // Nothing about isolation, keys or storage is on the screen itself.
     await expect(page.locator("#card-claims")).toBeHidden();

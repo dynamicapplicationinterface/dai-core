@@ -688,6 +688,41 @@
         background: var(--bg);
       }
       #card[hidden] { display: none; }
+      /*
+       * On a screen with room, a panel in the middle of it.
+       *
+       * Full bleed is right on a phone, where the screen is the app and there
+       * is nothing else to look at. On a desktop the same markup was a narrow
+       * column of text pinned to the top of an empty window, with two thirds
+       * of the screen below it doing nothing — which reads as a page that
+       * failed to finish loading rather than as a decision about a document.
+       * So on a wide screen it is what it is: one panel, in the middle,
+       * lifted off the ground, with the rest of the window quiet behind it.
+       */
+      @media (min-width: 700px) and (min-height: 560px) {
+        #card {
+          display: flex;
+          /* Centred, and no taller than what is in it: a flex child stretches
+             on the cross axis by default, which made the panel the height of
+             the window with the last third of it empty. */
+          align-items: center;
+          justify-content: center;
+          padding: 32px;
+          background: var(--bg);
+        }
+        .card-panel {
+          margin: auto;
+          max-width: 34rem;
+          padding: 0 0 8px;
+          background: var(--surface);
+          border-radius: 22px;
+          box-shadow: var(--shadow);
+          overflow: hidden;
+        }
+        .card-head { padding: 30px 30px 24px; }
+        .card-block { padding: 24px 30px; }
+        #card-about { margin: 8px 30px 0; }
+      }
       .card-panel {
         outline: none;
         width: 100%;
@@ -699,28 +734,40 @@
         padding: env(safe-area-inset-top) 0 calc(30px + env(safe-area-inset-bottom));
         text-align: left;
       }
-      .card-head { display: flex; gap: 16px; align-items: flex-start; padding: 24px 22px 16px; }
+      .card-head { display: flex; gap: 18px; align-items: flex-start; padding: 26px 22px 22px; }
       #card-icon {
-        width: 68px;
-        height: 68px;
+        width: 136px;
+        height: 136px;
         flex: 0 0 auto;
-        border-radius: 16px;
+        border-radius: 30px;
         background: var(--surface-2);
         box-shadow: var(--icon-shadow);
       }
       #card-icon[hidden] { display: none; }
-      .card-titles { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-      #card-name { margin: 0; font-size: 24px; line-height: 1.08; font-weight: 700; letter-spacing: -0.02em; text-wrap: balance; }
-      #card-tagline { margin: 0; font-size: 14.5px; line-height: 1.4; color: var(--muted); }
+      /*
+       * One column beside the icon: the name, the line under it, and the
+       * action, all starting at the same edge. The icon is the picture of the
+       * thing and everything that reads as a sentence about it lines up.
+       */
+      .card-titles {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 7px;
+      }
+      #card-name { margin: 0; font-size: 27px; line-height: 1.06; font-weight: 700; letter-spacing: -0.022em; text-wrap: balance; }
+      #card-tagline { margin: 0; font-size: 16px; line-height: 1.38; color: var(--muted); }
       #card-tagline[hidden] { display: none; }
 
       /* Sized to its word, not to the screen: the app's name stays the
          largest thing here, and this is still the one thing to press. */
-      .card-act { padding: 0 22px 20px; }
+      #card-open { margin-top: 5px; }
       #card-open {
-        padding: 9px 30px;
+        padding: 11px 34px;
         font: inherit;
-        font-size: 15px;
+        font-size: 16.5px;
         font-weight: 600;
         border: 0;
         border-radius: 999px;
@@ -741,10 +788,10 @@
       #card-open:focus-visible { box-shadow: 0 0 0 4px rgb(18 133 90 / 0.32); }
       #keep-cta:focus-visible, #keep-done:focus-visible { box-shadow: 0 0 0 4px rgb(0 122 255 / 0.28); }
 
-      .card-block { padding: 20px 22px; border-top: 1px solid var(--line); }
+      .card-block { padding: 22px 22px; border-top: 1px solid var(--line); }
       .card-label {
-        margin: 0 0 12px;
-        font-size: 11px;
+        margin: 0 0 13px;
+        font-size: 11.5px;
         font-weight: 600;
         letter-spacing: 0.09em;
         text-transform: uppercase;
@@ -755,10 +802,10 @@
       #card-does { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
       #card-does li {
         display: flex;
-        gap: 10px;
+        gap: 11px;
         align-items: baseline;
-        font-size: 14.5px;
-        line-height: 1.42;
+        font-size: 17px;
+        line-height: 1.4;
         color: var(--text);
       }
       #card-does li::before {
@@ -773,12 +820,12 @@
       #card-does-block[hidden] { display: none; }
 
       /* Who made it, when, and what comes with it. */
-      #card-meta { margin: 0; display: grid; gap: 10px; }
+      #card-meta { margin: 0; display: grid; gap: 12px; }
       #card-meta > div { display: flex; justify-content: space-between; gap: 14px; align-items: baseline; }
-      #card-meta dt { margin: 0; font-size: 13.5px; color: var(--faint); }
+      #card-meta dt { margin: 0; font-size: 15.5px; color: var(--faint); }
       #card-meta dd {
         margin: 0;
-        font-size: 13.5px;
+        font-size: 15.5px;
         font-weight: 500;
         color: var(--text-2);
         text-align: right;
@@ -811,6 +858,17 @@
        * of this one: the isolation sentences, the key, the sizes, the safety
        * number. One line, at the bottom, opened by whoever wants it.
        */
+      /* Below about 360px the icon steps back rather than crushing the name. */
+      @media (max-width: 359px) {
+        #card-icon { width: 104px; height: 104px; border-radius: 23px; }
+        #card-name { font-size: 24px; }
+      }
+      /* Room to breathe: on anything wider than a phone the name grows. */
+      @media (min-width: 480px) {
+        #card-name { font-size: 32px; }
+        #card-tagline { font-size: 17px; }
+      }
+
       #card-about {
         margin: 8px 22px 0;
         padding: 14px 0 0;
@@ -1090,9 +1148,15 @@
               <h2 id="card-name"></h2>
               <!-- One line about it, from the app's own <meta name="description">. -->
               <p id="card-tagline" hidden></p>
+              <!--
+                Under the name and the line, and starting where they start.
+                The icon is the picture of the thing; everything that reads as
+                a sentence about it, the action included, lines up in one
+                column beside the icon rather than under it.
+              -->
+              <button id="card-open" type="button">Get</button>
             </div>
           </div>
-          <div class="card-act"><button id="card-open" type="button">Get</button></div>
 
           <!--
             What the app says it does: up to three lines it declares itself,
