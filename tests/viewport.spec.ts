@@ -1,39 +1,54 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { compileDirectory } from "../src/compile.js";
 
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
 
 /**
  * How much of the screen an application gets.
  *
- * Three attempts, each measured off a screenshot of the next failure.
+ * A home-screen launch on an iPhone ended 62pt above the bottom of the phone,
+ * and three formulations of the body's height — `inset: 0`, `100dvh`,
+ * `visualViewport.height` — each measured off a screenshot, each came back
+ * exactly 62pt short. A unit cannot be wrong three ways by the same amount.
+ * The viewport was: with `apple-mobile-web-app-status-bar-style` set to
+ * black-translucent, iOS paints the page under the status bar and reports a
+ * viewport one status bar shorter than the web view, anchored at the top.
+ * Nothing the page can measure sees the last 62pt.
  *
- * `inset: 0` is the layout viewport, which in a Safari tab runs on underneath
- * the toolbars: the bottom fifth of every application sat behind the bar.
- * `100dvh` fixed the tab and left a home-screen app 96pt short. Dropping the
- * safe-area padding left it 62pt short — exactly the top inset, on an iPhone
- * 16 Pro at 402x874pt — which says what `100dvh` is there: 874 - 62 = 812.
- *
- * No viewport unit in that context means "what is on the screen".
- * `visualViewport.height` does, in both: it excludes a browser's toolbars and
- * it is the whole screen when there are none. A test browser has no toolbars
- * inside the page, so what these hold is that the page is sized from that
- * measurement rather than from a unit, and that nothing is left over.
+ * So the load-bearing part of the fix is a tag that is not there, and the
+ * first test here is that it stays not there. The rest hold the sizing that is
+ * right once the viewport is honest: `100dvh`, which in a browser tab ends
+ * above the toolbar and in a home-screen app is the web view, top to bottom.
+ * A test browser has no toolbars inside the page, so what these can hold is
+ * that the page is exactly the viewport and that nothing is left over.
  */
 test.describe("how much of the screen an application gets", () => {
-  test("the page is sized from the viewport a person can actually see", async ({ page }) => {
+  test("the page does not ask for a translucent status bar", async ({ page }) => {
+    await page.goto(RUNNER_URL);
+    await expect(page.locator('meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveCount(0);
+    // The manifest's display: standalone is what makes a home-screen icon an
+    // app; the pre-manifest tag went with the other one, so there is one way
+    // to say it.
+    await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveCount(0);
+    await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
+  });
+
+  test("the page is exactly the viewport", async ({ page }) => {
     await page.goto(RUNNER_URL);
     const seen = await page.evaluate(() => {
       const box = document.body.getBoundingClientRect();
       return {
-        set: document.documentElement.style.getPropertyValue("--app-height"),
         top: Math.round(box.top),
         bottom: Math.round(box.bottom),
-        visible: Math.round(window.visualViewport?.height ?? window.innerHeight),
+        visible: Math.round(window.innerHeight),
         bottomPad: getComputedStyle(document.body).paddingBottom,
       };
     });
-    // Set before the first paint, from the visual viewport, not from a unit.
-    expect(seen.set).toBe(`${seen.visible}px`);
     expect(seen.top).toBe(0);
     expect(seen.bottom).toBe(seen.visible);
     // Nothing carved off the bottom: the application reaches the edge.
@@ -44,31 +59,26 @@ test.describe("how much of the screen an application gets", () => {
     await page.goto(RUNNER_URL);
     await page.setViewportSize({ width: 844, height: 390 });
     await expect
-      .poll(async () =>
-        page.evaluate(() => ({
-          set: document.documentElement.style.getPropertyValue("--app-height"),
-          visible: Math.round(window.visualViewport?.height ?? window.innerHeight),
-        })),
-      )
-      .toEqual({ set: "390px", visible: 390 });
+      .poll(async () => page.evaluate(() => Math.round(document.body.getBoundingClientRect().height)))
+      .toBe(390);
   });
 
-  test("an open document reaches the bottom edge", async ({ page }) => {
-    const { mkdtempSync, writeFileSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
-    const { join, resolve, dirname } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const { compileDirectory } = await import("../src/compile.js");
-    const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-
+  test("an open document reaches the bottom edge, and the strip above it is its colour", async ({ page }) => {
     const source = mkdtempSync(join(tmpdir(), "dai-viewport-"));
-    writeFileSync(join(source, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">here</p>', "utf8");
+    writeFileSync(
+      join(source, "index.html"),
+      '<!doctype html><meta charset="utf-8"><meta name="theme-color" content="#123456"><p id="app">here</p>',
+      "utf8",
+    );
     const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Edge" });
     const file = join(source, "edge.dai.html");
     writeFileSync(file, built.html, "utf8");
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(RUNNER_URL);
+    // The chooser's own colour, one tag per scheme.
+    await expect(page.locator('meta[name="theme-color"][media]')).toHaveCount(2);
+
     await page.setInputFiles("#file", file);
     await page.locator("#card-open").click({ timeout: 60_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
@@ -78,11 +88,19 @@ test.describe("how much of the screen an application gets", () => {
       return {
         top: Math.round(box.top),
         bottom: Math.round(box.bottom),
-        visible: Math.round(window.visualViewport?.height ?? window.innerHeight),
+        visible: Math.round(window.innerHeight),
       };
     });
     // Top edge to bottom edge: no strip above it, nothing left under it.
     expect(frame.top).toBe(0);
     expect(frame.bottom).toBe(frame.visible);
+
+    // The one edge it cannot paint — a phone's status bar, drawn by the
+    // system from this page's theme-color — is the application's colour, and
+    // in either scheme: one tag, no media condition.
+    const tags = page.locator('meta[name="theme-color"]');
+    await expect(tags).toHaveCount(1);
+    await expect(tags).toHaveAttribute("content", "#123456");
+    await expect(tags).not.toHaveAttribute("media", /.+/);
   });
 });

@@ -38,10 +38,12 @@ test.describe("runner shell", () => {
       manifest.icons.some((icon: { purpose?: string }) => icon.purpose === "maskable"),
     ).toBe(true);
 
-    // iOS reads none of the above; it needs its own tags.
-    expect(await page.getAttribute('meta[name="apple-mobile-web-app-capable"]', "content")).toBe(
-      "yes",
-    );
+    // iOS reads the manifest for the launch and the icon tag for the icon.
+    // The two Apple tags that used to sit here are gone on purpose: the
+    // status-bar one shortened the viewport by a status bar, and the capable
+    // one said what display: standalone already says. tests/viewport.spec.ts
+    // holds both absences.
+    expect(await page.locator('meta[name="apple-mobile-web-app-capable"]').count()).toBe(0);
     expect(await page.getAttribute('link[rel="apple-touch-icon"]', "href")).toContain(".png");
 
     // The icons must actually exist and be real PNGs, not 404 pages.

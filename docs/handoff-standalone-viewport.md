@@ -1,19 +1,31 @@
 # Brief: a home-screen web app does not reach the bottom of the screen
 
-> **Resolved.** The measurement below was taken and the cause found: in an iOS
-> standalone web app with `viewport-fit=cover`, `100dvh` already returns the
-> screen *less the top safe-area inset*, so padding the body by the insets
-> subtracted the top one a second time. The fix is in
-> `apps/runner/index.html` — `100dvh` in a browser, the layout viewport
-> (`inset: 0`) in a home-screen app, and no bottom padding there — and is held
-> by `tests/viewport.spec.ts`. What follows is kept as the record of how it was
-> found, and is still the right brief if the band ever comes back.
+> **Resolved, at the second attempt.** The first resolution blamed the unit:
+> it read the 62pt shortfall as `100dvh` excluding the top inset and swapped
+> units three times (`inset: 0`, `100dvh`, `visualViewport.height`), and every
+> one of them came back exactly 62pt short at the bottom. A unit cannot be
+> wrong three ways by the same amount; the viewport itself was. The cause was
+> `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`:
+> under it iOS paints the page beneath the status bar but reports a viewport one
+> status bar shorter than the web view, anchored at the top, so the last 62pt of
+> an 874pt phone are outside every measurement the page can make.
+>
+> The fix is to remove that tag (and the `apple-mobile-web-app-capable` one,
+> whose job the manifest's `display: standalone` does). iOS then keeps the
+> status bar above the web view, paints it in the page's `theme-color` - which
+> `apps/runner/src/main.ts` sets to the open application's own colour - and the
+> web view reaches the bottom of the phone. The body is back to plain `100dvh`,
+> which is right in a Safari tab and, now that the viewport is honest, in a
+> home-screen app too. The reference app in this brief, `trellisapp.fit`, has
+> neither Apple tag and sizes with `height: 100%`; that is the whole of its
+> secret. Held by `tests/viewport.spec.ts`. The brief below is kept as the
+> record of how it was found.
 >
 > The numbers, off a screenshot of a home-screen launch on an iPhone 16 Pro
-> (402×874pt): 62pt of the opener's grey, a 38pt header (the declared height,
-> so the ruler is right), 678pt of application, 96pt of grey at the bottom.
-> 96 = 62 + 34 — the top inset and the bottom inset, both. Therefore
-> `100dvh` = 874 − 62 = 812.
+> (402x874pt), with the body at `inset: 0` and a 62pt top padding: 62pt of
+> grey, a 38pt header, 712pt of application, 62pt of grey. The box was 812
+> tall, anchored at the top of an 874pt screen, and every later formulation
+> measured the same 812.
 
 ## What to fix
 

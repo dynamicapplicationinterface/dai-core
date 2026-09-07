@@ -13,37 +13,6 @@
     -->
     <script>
       (function () {
-        /*
-         * How tall the page is, measured before it is laid out.
-         *
-         * Every viewport unit was wrong somewhere. `inset: 0` is the layout
-         * viewport, which in a Safari tab runs on underneath the toolbars and
-         * hid the bottom of every application. `100dvh` fixed that and in a
-         * home-screen app came back 62pt short on an iPhone 16 Pro — exactly
-         * the top inset, measured off a screenshot — so an application ended
-         * that far above the bottom of the phone.
-         *
-         * `visualViewport.height` is the part of the page a person can
-         * actually see, which is the thing being asked for in both places: it
-         * excludes a browser's toolbars and it is the whole screen when there
-         * are none. Set here, before the first paint, and kept current below.
-         */
-        var setHeight = function () {
-          var vv = window.visualViewport;
-          var height = vv && vv.height ? vv.height : window.innerHeight;
-          if (height > 0) document.documentElement.style.setProperty("--app-height", height + "px");
-        };
-        try {
-          setHeight();
-          if (window.visualViewport) window.visualViewport.addEventListener("resize", setHeight);
-          window.addEventListener("resize", setHeight);
-          window.addEventListener("orientationchange", setHeight);
-        } catch (e) { /* The CSS fallback below stands. */ }
-        try {
-          if (navigator.standalone === true || matchMedia("(display-mode: standalone)").matches) {
-            document.documentElement.classList.add("standalone");
-          }
-        } catch (e) { /* Only the running-as line uses this now. */ }
         var s = location.search, h = location.hash, p = location.pathname;
         if (/[?&](doc|d)=/.test(s) || /\/d\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
           document.documentElement.classList.add("arriving");
@@ -86,10 +55,23 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0f0f10" media="(prefers-color-scheme: dark)" />
 
-    <!-- iOS ignores the manifest for standalone launch and icons. -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!--
+      No apple-mobile-web-app-status-bar-style, and not by oversight.
+
+      black-translucent puts the page under the status bar and then reports a
+      viewport one status bar short of the bottom of the phone: 812pt on an
+      874pt iPhone 16 Pro, measured off a screenshot, with the missing 62pt as
+      a dead band under the application. Every way of sizing the page - dvh,
+      inset: 0, visualViewport.height - inherited it, three attempts running.
+
+      Left alone, iOS keeps the status bar above the web view and paints it in
+      this page's theme-color, which main.ts sets to the open application's
+      own colour; the web view then reaches the bottom of the phone the way
+      every other installed app does. The manifest's display: standalone is
+      what makes a home-screen icon launch as an app. The capable tag was the
+      pre-manifest way to say the same, and is gone with the other one.
+    -->
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="DAI" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 
@@ -174,26 +156,22 @@
       /*
        * The whole of what a person can see, and no more.
        *
-       * Three attempts, each measured off a screenshot of the next failure.
+       * `100dvh` is the viewport actually being shown. In a browser tab it
+       * shrinks as the toolbars appear, which is what keeps the bottom of an
+       * application out from behind Safari's bar; `inset: 0` is the layout
+       * viewport, which runs on underneath that bar and hid the last fifth of
+       * every application. In a home-screen app there are no toolbars, and it
+       * is the web view, top to bottom.
        *
-       * `inset: 0` is the layout viewport, which in a Safari tab runs on
-       * underneath the toolbars: the bottom fifth of every application sat
-       * behind the bar and could not be reached.
-       *
-       * `100dvh` fixed the tab and left a home-screen app 96pt short — the
-       * top inset plus the bottom inset, both at the bottom — because the
-       * safe-area padding then subtracted the top one twice.
-       *
-       * Dropping the padding left it 62pt short: exactly the top inset,
-       * measured on an iPhone 16 Pro at 402×874pt. Which says what `100dvh`
-       * is in that context — 874 − 62 = 812, the screen less the top inset —
-       * and that no viewport unit here means "what is on the screen".
-       *
-       * `visualViewport.height` does mean that, in both places: it excludes a
-       * browser's toolbars, and it is the whole screen when there are none.
-       * The script in the head sets it before the first paint and keeps it
-       * current, and `100dvh` stays as the value for a browser that has no
-       * visual viewport to ask.
+       * That last sentence was false for a day, and the cause was in the
+       * head, not here. With the status bar set to black-translucent, iOS
+       * painted the page under the status bar and reported a viewport that
+       * stopped one status bar short of the bottom: 812pt on an 874pt phone,
+       * with the 62pt left over as a dead band under the application. Every
+       * unit inherited it - `100dvh`, `inset: 0`, `visualViewport.height`,
+       * each measured off a screenshot and each 62pt short - and three
+       * formulations of this rule were written against a viewport that was
+       * lying. The tag is gone, and the numbers add up again.
        */
       body {
         position: fixed;
@@ -201,10 +179,9 @@
         left: 0;
         right: 0;
         box-sizing: border-box;
-        /* The fallbacks first, for a browser with no visual viewport to ask. */
+        /* The fallback first, for a browser that has no dynamic viewport. */
         height: 100vh;
         height: 100dvh;
-        height: var(--app-height, 100dvh);
         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         display: flex;

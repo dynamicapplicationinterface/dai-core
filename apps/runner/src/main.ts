@@ -93,6 +93,37 @@ function say(message: string, isError = false): void {
  * nothing to open after all, so the chooser is back for the person to use.
  */
 /**
+ * The colour of the strip above the application.
+ *
+ * On a phone an installed app sits under a status bar that the system paints
+ * itself, from this page's `theme-color`; Safari tints its toolbar from the
+ * same tag. This page's own two tags, one per colour scheme, are the
+ * chooser's. While a document is open the strip is the application's colour,
+ * so an app that reaches the top of its screen looks as though it reaches the
+ * top of the phone - the one part of the screen it cannot paint for itself.
+ *
+ * One tag with no media condition while a document is open, rather than a
+ * rewrite of both: a browser takes the first tag whose condition holds, and
+ * an app's colour holds in either scheme.
+ */
+const schemeTags = Array.from(document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]'));
+let appTag: HTMLMetaElement | undefined;
+function paintAbove(theme?: string): void {
+  if (theme) {
+    for (const tag of schemeTags) tag.remove();
+    if (!appTag) {
+      appTag = document.createElement("meta");
+      appTag.name = "theme-color";
+    }
+    appTag.content = theme;
+    document.head.appendChild(appTag);
+    return;
+  }
+  appTag?.remove();
+  for (const tag of schemeTags) if (!tag.isConnected) document.head.appendChild(tag);
+}
+
+/**
  * The screen's edges, measured, for the document that is drawing to them.
  *
  * This page is the only one of the three that can see
@@ -307,6 +338,7 @@ function eject(): void {
   handshakeEstablished = false;
   document.body.classList.remove("loaded", "launching", "booting");
   document.documentElement.style.removeProperty("--app-ground");
+  paintAbove();
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
   hostSaves = 0;
@@ -413,11 +445,13 @@ async function mount(cartridge: Cartridge): Promise<void> {
   // ground — until the runtime reports the app interactive (DAI_HOST_TIMING
   // below), and the frame fades in over it. See #launch in index.html.
   showLaunch(cartridge.manifest.appName ?? "container", cartridge.manifest.favicon);
-  // The screen's edges — the strips under the status bar and the home
-  // indicator, which an app in a frame cannot reach — in the app's own colour.
+  // The edges the app cannot paint - the ground behind its frame, and the
+  // status bar above it, which the system paints in this page's theme-color -
+  // in the app's own colour.
   const { theme } = describeApp(indexHtmlOf(cartridge));
   if (theme) document.documentElement.style.setProperty("--app-ground", theme);
   else document.documentElement.style.removeProperty("--app-ground");
+  paintAbove(theme);
   document.body.classList.remove("launching");
   /*
    * Its work is done.
