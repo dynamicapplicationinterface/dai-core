@@ -298,7 +298,26 @@ self.addEventListener("fetch", (event) => {
           (await caches.match("./index.html"));
         const network = fromNetwork();
         if (cached) {
-          event.waitUntil(network.catch(() => {}));
+          /*
+           * A newer shell arrived behind a page running the old one.
+           *
+           * "At most one launch behind a deploy" was every launch after a
+           * deploy running the build before it, and an afternoon of phone
+           * tests measured the wrong build three times over. So the page is
+           * told, and reloads while there is still nothing to lose (see
+           * main.ts): on the chooser, or on the launch screen before a
+           * document has mounted. Under an open document it waits.
+           */
+          event.waitUntil(
+            network
+              .then(async (fresh) => {
+                const [was, now] = await Promise.all([cached.clone().text(), fresh.clone().text()]);
+                if (was === now) return;
+                const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+                for (const page of pages) page.postMessage({ type: "dai:shell-updated" });
+              })
+              .catch(() => {}),
+          );
           return describedAs(await clean(cached), url);
         }
         return describedAs(await clean(await network), url);

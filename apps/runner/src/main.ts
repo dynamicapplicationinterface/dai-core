@@ -2505,4 +2505,19 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     reloaded = true;
     location.reload();
   });
+  /*
+   * The shell is served from the cache and refreshed behind it, so a page is
+   * at most one deploy behind - and the first launch after every deploy was
+   * exactly that one, for a person and for a phone test alike. The worker
+   * says when its refresh brought a newer shell, and the page reloads while
+   * there is still nothing to lose: on the chooser, or on the launch screen
+   * before a document has mounted. Under an open document it waits; the
+   * next launch is current anyway, because the cache already is.
+   */
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if ((event.data as { type?: string } | null)?.type !== "dai:shell-updated") return;
+    if (reloaded || document.body.classList.contains("loaded")) return;
+    reloaded = true;
+    location.reload();
+  });
 }
