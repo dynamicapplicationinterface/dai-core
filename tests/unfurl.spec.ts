@@ -165,6 +165,23 @@ test.describe("a crawler fetching /d/<id>", () => {
     }
   });
 
+  test("a sidecar of the wrong shape is no preview, and the link still opens", async () => {
+    // A sidecar is a public object written by whoever stored the document.
+    // One that says the name is a number once stopped the page being served
+    // at all; now it is simply not a preview.
+    const { writeFileSync } = await import("node:fs");
+    const hash = "c".repeat(64);
+    writeFileSync(join(root, `${hash}.json`), JSON.stringify({ size: 10, preview: { name: 42, icon: "yes" } }), "utf8");
+    const response = await middleware(
+      new Request(`${openerOrigin}/d/${hash}`, { headers: { "user-agent": CRAWLERS[0]! } }),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).not.toContain("42");
+    expect(body).toContain("<!doctype html>".slice(0, 9));
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
   test("a store refuses an icon it would have to serve as an asset", async () => {
     const { compileDirectory } = await import("../src/compile.js");
     const built = await compileDirectory({

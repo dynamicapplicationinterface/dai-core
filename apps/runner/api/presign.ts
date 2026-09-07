@@ -92,22 +92,76 @@ function withinRate(address: string, now: number): boolean {
   return true;
 }
 
+// The site and the opener are different origins from this function.
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "content-type",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-max-age": "86400",
+};
+
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",
-      // The site and the opener are different origins from this function.
-      "access-control-allow-origin": "*",
-      "access-control-allow-headers": "content-type",
-      "access-control-allow-methods": "POST, OPTIONS",
+      ...CORS,
     },
   });
 }
 
+/*
+ * Who may write beside a document.
+ *
+ * The blob is bound to its name by its hash. The sidecar and the icon are not:
+ * they sit under the blob's hash with a digest the caller declares, so anyone
+ * who had seen a link — and so knew the hash — could mint a URL for its
+ * sidecar and rewrite the preview, or put a shape in it the unfurl could not
+ * read. The answer is a token minted with the blob's URL and required for the
+ * two that go beside it: an HMAC over the hash and an expiry, under a key
+ * this function already holds. Whoever stored the document may describe it;
+ * nobody else. Fifteen minutes, which is the same upload session.
+ */
+const TOKEN_SECONDS = 15 * 60;
+
+async function hmac(secret: string, text: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(text)));
+  let binary = "";
+  for (const byte of signature) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function mintToken(secret: string, hash: string, now: number): Promise<string> {
+  const expires = Math.floor(now / 1000) + TOKEN_SECONDS;
+  return `${expires}.${await hmac(secret, `${hash}:${expires}`)}`;
+}
+
+async function tokenAllows(secret: string, hash: string, token: unknown, now: number): Promise<boolean> {
+  if (typeof token !== "string") return false;
+  const dot = token.indexOf(".");
+  if (dot < 1) return false;
+  const expires = Number(token.slice(0, dot));
+  if (!Number.isInteger(expires) || expires * 1000 < now) return false;
+  const expected = await hmac(secret, `${hash}:${expires}`);
+  const given = token.slice(dot + 1);
+  if (given.length !== expected.length) return false;
+  let differ = 0;
+  for (let i = 0; i < expected.length; i++) differ |= expected.charCodeAt(i) ^ given.charCodeAt(i);
+  return differ === 0;
+}
+
 export default async function handler(request: Request): Promise<Response> {
-  if (request.method === "OPTIONS") return json({}, 204);
+  // A preflight has no body: a 204 with one is refused by the Response
+  // constructor itself, and every cross-origin upload died there.
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (request.method !== "POST") return json({ error: "POST only." }, 405);
 
   const endpoint = process.env.DAI_STORE_ENDPOINT;
@@ -151,11 +205,15 @@ export default async function handler(request: Request): Promise<Response> {
     );
   }
 
-  let body: { hash?: unknown; size?: unknown; kind?: unknown; sha256?: unknown };
+  let body: { hash?: unknown; size?: unknown; kind?: unknown; sha256?: unknown; token?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return json({ error: "Expected a JSON body." }, 400);
+  }
+  // Valid JSON is not the same as the right shape: `null` parses.
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "Expected a JSON object." }, 400);
   }
 
   const hash = typeof body.hash === "string" ? body.hash.toLowerCase() : "";
@@ -228,11 +286,23 @@ export default async function handler(request: Request): Promise<Response> {
     sha256 = declared;
   }
 
+  const now = Date.now();
+  if (kind !== "blob" && !(await tokenAllows(secretAccessKey, hash, body.token, now))) {
+    return json(
+      {
+        error:
+          `The ${kind} beside a document may be written only by whoever stored the document, ` +
+          "with the token that came back when it was stored.",
+      },
+      403,
+    );
+  }
+
   const address =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
     request.headers.get("x-real-ip") ??
     "unknown";
-  if (!withinRate(address, Date.now())) {
+  if (!withinRate(address, now)) {
     return json({ error: "Too many uploads from here in the last hour." }, 429);
   }
 
@@ -256,6 +326,8 @@ export default async function handler(request: Request): Promise<Response> {
       expiresIn: EXPIRES_SECONDS,
       // Where it will be readable once written. Public, no credential.
       href: new URL(key, publicBase.endsWith("/") ? publicBase : publicBase + "/").href,
+      // For the document itself: what the sidecar and the icon must present.
+      ...(kind === "blob" ? { token: await mintToken(secretAccessKey, hash, now) } : {}),
     },
     200,
   );

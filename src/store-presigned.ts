@@ -33,6 +33,8 @@ interface Minted {
   method: string;
   headers: Record<string, string>;
   href: string;
+  /** For the document itself: what the sidecar and the icon must present to be written beside it. */
+  token?: string;
 }
 
 export function presignedStore(options: PresignedStoreOptions): Store {
@@ -48,11 +50,11 @@ export function presignedStore(options: PresignedStoreOptions): Store {
    * caller: a store that trusted a client's word about its own upload would
    * be a file host with extra steps, which is what the endpoint used to be.
    */
-  const mint = async (hash: string, bytes: Uint8Array, kind: "blob" | "sidecar" | "icon"): Promise<Minted> => {
+  const mint = async (hash: string, bytes: Uint8Array, kind: "blob" | "sidecar" | "icon", token?: string): Promise<Minted> => {
     const response = await doFetch(options.presignUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ hash, size: bytes.length, kind, sha256: await sha256Hex(bytes) }),
+      body: JSON.stringify({ hash, size: bytes.length, kind, sha256: await sha256Hex(bytes), ...(token ? { token } : {}) }),
     });
 
     if (!response.ok) {
@@ -97,10 +99,12 @@ export function presignedStore(options: PresignedStoreOptions): Store {
       const blob = await mint(hash, ciphertext, "blob");
       await put(ciphertext, blob);
 
+      // Beside the document, with the token that came back with it: only
+      // whoever stored the document may describe it.
       const sidecarBytes = new TextEncoder().encode(JSON.stringify(sidecar));
-      await put(sidecarBytes, await mint(hash, sidecarBytes, "sidecar"));
+      await put(sidecarBytes, await mint(hash, sidecarBytes, "sidecar", blob.token));
 
-      if (icon) await put(icon.png, await mint(hash, icon.png, "icon"));
+      if (icon) await put(icon.png, await mint(hash, icon.png, "icon", blob.token));
 
       return blob.href;
     },

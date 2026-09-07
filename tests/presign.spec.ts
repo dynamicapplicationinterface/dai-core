@@ -80,12 +80,65 @@ test.describe("the presign endpoint", () => {
     expect(String(lying.json.error)).toMatch(/name is the digest/);
   });
 
+  test("a preflight is answered with no body, and the headers a browser needs", async () => {
+    // A 204 with a body is refused by the Response constructor itself, and
+    // every cross-origin upload used to die at the preflight.
+    const response = await handler(new Request("https://opendai.app/api/presign", { method: "OPTIONS" }));
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe("");
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  test("valid JSON of the wrong shape is refused, not thrown on", async () => {
+    for (const body of ["null", "[]", '"x"', "42"]) {
+      const response = await handler(
+        new Request("https://opendai.app/api/presign", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+          body,
+        }),
+      );
+      expect(response.status, body).toBe(400);
+    }
+  });
+
+  test("only whoever stored the document may write its sidecar and icon", async () => {
+    // Anyone who has seen a link knows the hash. That must not be enough to
+    // rewrite what a preview says about the document.
+    const stranger = await call({ hash: HASH, size: 200, kind: "sidecar", sha256: OTHER });
+    expect(stranger.status).toBe(403);
+    expect(String(stranger.json.error)).toMatch(/whoever stored the document/);
+
+    const blob = await call({ hash: HASH, size: 4096 });
+    expect(blob.status).toBe(200);
+    const token = blob.json.token as string;
+    expect(token).toMatch(/^\d+\.[A-Za-z0-9_-]{43}$/);
+
+    // The token that came back with the blob opens the sidecar and the icon.
+    const sidecar = await call({ hash: HASH, size: 200, kind: "sidecar", sha256: OTHER, token });
+    expect(sidecar.status).toBe(200);
+    const icon = await call({ hash: HASH, size: 2000, kind: "icon", sha256: OTHER, token });
+    expect(icon.status).toBe(200);
+    // Neither of them hands out a token of its own.
+    expect(sidecar.json.token).toBeUndefined();
+
+    // A token for one document does not open another's, and a tampered one opens nothing.
+    const other = await call({ hash: OTHER, size: 200, kind: "sidecar", sha256: HASH, token });
+    expect(other.status).toBe(403);
+    const forged = await call({ hash: HASH, size: 200, kind: "sidecar", sha256: OTHER, token: token.slice(0, -1) + (token.endsWith("A") ? "B" : "A") });
+    expect(forged.status).toBe(403);
+    const expired = await call({ hash: HASH, size: 200, kind: "sidecar", sha256: OTHER, token: "1." + token.split(".")[1] });
+    expect(expired.status).toBe(403);
+  });
+
   test("the sidecar and the icon must declare their own digest", async () => {
     const unsaid = await call({ hash: HASH, size: 512, kind: "sidecar" });
     expect(unsaid.status).toBe(400);
     expect(String(unsaid.json.error)).toMatch(/sha256 must be/);
 
-    const said = await call({ hash: HASH, size: 512, kind: "sidecar", sha256: OTHER });
+    const token = (await call({ hash: HASH, size: 4096 })).json.token as string;
+    const said = await call({ hash: HASH, size: 512, kind: "sidecar", sha256: OTHER, token });
     expect(said.status).toBe(200);
     expect((said.json.headers as Record<string, string>)["x-amz-content-sha256"]).toBe(OTHER);
     expect((said.json.headers as Record<string, string>)["content-type"]).toBe("application/json");
@@ -93,11 +146,12 @@ test.describe("the presign endpoint", () => {
   });
 
   test("an icon is capped where the store caps it, not at the document cap", async () => {
-    const big = await call({ hash: HASH, size: ICON_CAP + 1, kind: "icon", sha256: OTHER });
+    const token = (await call({ hash: HASH, size: 4096 })).json.token as string;
+    const big = await call({ hash: HASH, size: ICON_CAP + 1, kind: "icon", sha256: OTHER, token });
     expect(big.status).toBe(413);
     expect(String(big.json.error)).toMatch(/preview icon/);
 
-    const fine = await call({ hash: HASH, size: ICON_CAP, kind: "icon", sha256: OTHER });
+    const fine = await call({ hash: HASH, size: ICON_CAP, kind: "icon", sha256: OTHER, token });
     expect(fine.status).toBe(200);
   });
 

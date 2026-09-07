@@ -40,6 +40,28 @@ function storeBase(): string {
   return process.env.DAI_STORE_PUBLIC_BASE ?? "https://store.opendai.app/";
 }
 
+/**
+ * The preview a sidecar carries, if it is one.
+ *
+ * A sidecar is a public object written by whoever stored the document, and
+ * this function puts its words into a page. So its shape is checked here,
+ * field by field, and anything else is no preview: a number where the name
+ * should be once stopped the page being served at all.
+ */
+function previewOf(sidecar: unknown): Preview | undefined {
+  if (!sidecar || typeof sidecar !== "object") return undefined;
+  const candidate = (sidecar as { preview?: unknown }).preview;
+  if (!candidate || typeof candidate !== "object") return undefined;
+  const { name, publisherName, icon } = candidate as Record<string, unknown>;
+  if (typeof name !== "string" || name.length === 0 || name.length > 200) return undefined;
+  const preview: Preview = { name };
+  if (typeof publisherName === "string" && publisherName.length > 0 && publisherName.length <= 200) {
+    preview.publisherName = publisherName;
+  }
+  if (icon === true) preview.icon = true;
+  return preview;
+}
+
 export default async function middleware(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const id = documentIdFrom(url.pathname);
@@ -63,7 +85,7 @@ export default async function middleware(request: Request): Promise<Response> {
   try {
     const sidecar = await fetch(new URL(`${id}.json`, storeBase()));
     if (sidecar.ok) {
-      preview = ((await sidecar.json()) as { preview?: Preview }).preview;
+      preview = previewOf(await sidecar.json());
     } else if (sidecar.status === 404 || sidecar.status === 410) {
       expired = true;
     }
@@ -71,12 +93,16 @@ export default async function middleware(request: Request): Promise<Response> {
     /* The store is unreachable. The link still opens; there is simply no preview. */
   }
 
-  const { html: body, cacheControl } = injectPreview(
-    html,
-    preview,
-    new URL(`${id}.png`, storeBase()).href,
-    { expired },
-  );
+  // Whatever the sidecar said, the link opens. A preview that cannot be built
+  // is no preview, never an error page.
+  let body = html;
+  let cacheControl = "no-store";
+  try {
+    ({ html: body, cacheControl } = injectPreview(html, preview, new URL(`${id}.png`, storeBase()).href, { expired }));
+  } catch {
+    body = html;
+    cacheControl = "no-store";
+  }
 
   return new Response(body, {
     status: 200,
