@@ -246,6 +246,7 @@ let bootingGuard: number | undefined;
 
 function eject(): void {
   forgetOpen();
+  arrived(false);
   if (mountedUrl) {
     URL.revokeObjectURL(mountedUrl);
     mountedUrl = undefined;
@@ -369,6 +370,17 @@ async function mount(cartridge: Cartridge): Promise<void> {
   if (theme) document.documentElement.style.setProperty("--app-ground", theme);
   else document.documentElement.style.removeProperty("--app-ground");
   document.body.classList.remove("launching");
+  /*
+   * Its work is done.
+   *
+   * The head script hides the chooser when the address names a document, and
+   * nothing took the class off again once one had opened. Removing a document
+   * from a home-screen app then left the chooser on screen with its text and
+   * its button both hidden — an empty page, black in dark mode, with nothing
+   * on it to press. Cleared here and on eject, so the chooser is a chooser
+   * again the moment there is no document.
+   */
+  arrived(false);
   document.body.classList.add("loaded", "booting");
   window.clearTimeout(bootingGuard);
   // A runtime that never reports is still an app somebody wants to see.
@@ -1229,11 +1241,24 @@ document.getElementById("remove")?.addEventListener("click", () => {
   closeSheet();
   if (!loaded) return;
   const name = loaded.manifest.appName ?? "this document";
+  /*
+   * What it does, and the part somebody found out afterwards.
+   *
+   * This deletes what is stored here. It cannot delete a home-screen icon —
+   * no page can — and an icon carries the application inside its own address,
+   * so tapping it afterwards opens the app again with nothing in it. Somebody
+   * who read "Remove from this device" and then found the icon still working
+   * had no way to tell whether the removal had done anything at all.
+   */
   const sure = window.confirm(
-    `Remove ${name} from this device?\n\nIts data on this device is deleted. A copy you saved or sent is not affected.`,
+    `Remove ${name} from this device?\n\n` +
+      `Everything you have entered here is deleted. A copy you saved or sent is not affected.\n\n` +
+      `An icon you added to your home screen stays there, and still opens the app — empty.`,
   );
   if (!sure) return;
-  void deleteApp(loaded.manifest.documentUuid);
+  void deleteApp(loaded.manifest.documentUuid).then(() => {
+    say(`${name} was removed. What you had entered here is gone.`);
+  });
 });
 
 /**

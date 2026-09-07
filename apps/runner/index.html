@@ -140,18 +140,32 @@
        */
       html, body { margin: 0; overflow: hidden; background: var(--bg); color: var(--text); }
       /*
-       * Pinned to the screen, not sized to it.
+       * The whole screen, and only the part of it that is on screen.
        *
-       * This was height: 100dvh with the safe-area insets padded inside it. On
-       * a home-screen app on iOS that left a band the height of both insets
-       * at the bottom — the document painted short, in the opener's grey. A
-       * fixed body spanning the whole viewport, with the insets as padding,
-       * is what a phone's own apps do: the app frame reaches the edge, and the
-       * inset strips are painted in the app's own colour (see --app-ground).
+       * Two failures, one after the other. `height: 100dvh` with the safe-area
+       * insets padded inside it left a band the height of both insets at the
+       * bottom of a home-screen app, painted in the opener's grey; that was
+       * fixed by painting the strips in the app's own colour (--app-ground)
+       * rather than by changing the height, but the height was changed too, to
+       * `inset: 0`. In a browser tab that is the layout viewport, which runs
+       * on underneath the toolbars — so the bottom of every application sat
+       * behind Safari's bar, and the last fifth of it could not be reached.
+       *
+       * `100dvh` is the viewport actually being shown, and it changes as the
+       * toolbars come and go. With border-box the insets come out of it, and
+       * the strips they leave are the app's colour, so both cases hold: an
+       * application in a tab ends above the toolbar, and one launched from the
+       * home screen reaches the edges of the phone.
        */
       body {
         position: fixed;
-        inset: 0;
+        top: 0;
+        left: 0;
+        right: 0;
+        box-sizing: border-box;
+        /* The fallback first, for a browser that has no dynamic viewport. */
+        height: 100vh;
+        height: 100dvh;
         font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         -webkit-font-smoothing: antialiased;
         display: flex;
@@ -195,9 +209,21 @@
       body.launching #open { display: none; }
       /* Launching into a document: its header, and no chooser underneath. */
       body.launching #slot { visibility: hidden; }
-      /* Arriving by a link: the status line, and no pitch to open a file. */
+      /*
+       * Arriving, or opening: the status line, and nothing else.
+       *
+       * The chooser used to dim to 0.6 while a document was being read and
+       * mounted, which is the same thing as staying on screen. Somebody
+       * watching an app open saw "Open a document somebody sent you" and a
+       * blue button flash up between the screen they answered and the app
+       * they answered it for, and read it as having been sent somewhere else.
+       * A transition shows the launch screen and the report line; the pitch
+       * for a file they have already chosen is not part of it.
+       */
       html.arriving body:not(.loaded) #slot > p,
-      html.arriving body:not(.loaded) #open { display: none; }
+      html.arriving body:not(.loaded) #open,
+      #slot.busy > p,
+      #slot.busy #open { display: none; }
 
       /* The document's name, and nothing else that is not a control. */
       #title {
@@ -329,7 +355,7 @@
          some people arrive with. */
       #slot p.hint { font-size: 13px; color: var(--faint); }
       #slot p.hint a { color: var(--accent); }
-      #slot.busy { opacity: 0.6; }
+      /* Hidden rather than dimmed while a document opens: see above. */
 
       #report {
         font-family: ui-monospace, SFMono-Regular, monospace;

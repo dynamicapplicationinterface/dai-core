@@ -117,6 +117,34 @@ export function stripCommonPrefix(
 }
 
 /** Junk the operating system and editors leave in a folder or archive. */
+/**
+ * The name of an app, from the name of the file or folder it arrived in.
+ *
+ * A person who drops `road-to-doomsday.dai.html`, or a folder somebody called
+ * `road-to-doomsday-dai`, gets an app called "Road to doomsday". The suffix is
+ * ours: it names the format the file is written in, and putting it in the
+ * app's own name means it shows on the open screen, on the home screen and in
+ * the message somebody is sent — a person's watch list called
+ * "road-to-doomsday-dai" because of how it is stored.
+ *
+ * The separators become spaces and the first letter is raised, and nothing
+ * else is touched: an app whose name genuinely contains the word is left with
+ * it, because only a trailing one is the suffix.
+ */
+export function appNameFrom(fileOrFolderName: string): string {
+  const bare = (fileOrFolderName.split(/[/\\]/).pop() ?? fileOrFolderName)
+    // The extensions, longest first: .dai.html before .html.
+    .replace(/\.dai\.html?$/i, "")
+    .replace(/\.(dai|html?|zip)$/i, "")
+    // And the suffix worn as part of the name.
+    .replace(/[-_. ]dai$/i, "");
+  const words = bare.replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
+  // A file called nothing but the suffix names no app. The caller keeps
+  // whatever it already had rather than showing an empty field.
+  if (!words || /^dai$/i.test(words)) return "";
+  return words[0]!.toUpperCase() + words.slice(1);
+}
+
 export function isNoise(name: string): boolean {
   const base = name.split("/").pop() ?? "";
   return (

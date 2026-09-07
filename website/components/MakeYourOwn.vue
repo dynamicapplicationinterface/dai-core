@@ -15,7 +15,7 @@
  */
 import { computed, ref } from 'vue';
 import { useFileHandoff } from './useFileHandoff.js';
-import { compileInBrowser, isNoise, stripCommonPrefix, unpackZip } from '../../src/browser.js';
+import { appNameFrom, compileInBrowser, isNoise, stripCommonPrefix, unpackZip } from '../../src/browser.js';
 import { breaking, lintFiles, storesDataInFile, type Finding } from '../../src/lint.js';
 import { RECIPE_AS_PROMPT as PROMPT } from '../../src/recipe.js';
 import { handOffToOpener } from '../../src/handoff-tab.js';
@@ -130,7 +130,8 @@ async function accept(list: FileList | null): Promise<void> {
       files.value = Object.entries(unpacked)
         .filter(([name]) => !isNoise(name))
         .map(([name, bytes]) => ({ name, bytes }));
-      if (appName.value === 'My App') appName.value = picked[0]!.name.replace(/\.zip$/i, '');
+      // The app's name, not the archive's file name: see appNameFrom.
+      if (appName.value === 'My App') appName.value = appNameFrom(picked[0]!.name) || appName.value;
     } catch (error) {
       errorText.value = `That zip could not be read: ${String(error)}`;
     }
@@ -149,7 +150,7 @@ async function accept(list: FileList | null): Promise<void> {
 
   const folder = (picked[0] as File & { webkitRelativePath?: string }).webkitRelativePath;
   if (appName.value === 'My App' && folder && folder.includes('/')) {
-    appName.value = folder.split('/')[0]!;
+    appName.value = appNameFrom(folder.split('/')[0]!) || appName.value;
   }
 }
 
