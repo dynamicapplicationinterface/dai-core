@@ -359,15 +359,23 @@ def main() -> int:
     if links_file.exists():
         for case in json.loads(links_file.read_text(encoding="utf-8"))["links"]:
             name = f"{case['name']} — carried in a link"
+            # A case may expect a refusal rather than a reading. A document
+            # naming a capability this reader lacks is intact and correctly
+            # packed; refusing it at the far end is the whole purpose of
+            # carrying `requires` in the link, so reading it is the failure.
+            refuse = case.get("refuse")
             try:
                 report = verify_link(case["link"], NOW)
-                wrong = [
-                    f"{key}: expected {value!r}, read {getattr(report, key)!r}"
-                    for key, value in case["expect"].items()
-                    if getattr(report, key) != value
-                ]
+                if refuse:
+                    wrong = [f"expected a refusal ({refuse}), was read"]
+                else:
+                    wrong = [
+                        f"{key}: expected {value!r}, read {getattr(report, key)!r}"
+                        for key, value in case["expect"].items()
+                        if getattr(report, key) != value
+                    ]
             except ContainerError as error:
-                wrong = [f"refused: {error}"]
+                wrong = [] if refuse and refuse in str(error) else [f"refused: {error}"]
             if wrong:
                 failures.append((name, "; ".join(wrong)))
             print(f"{'ok' if not wrong else 'FAILED':>7}  {name}")

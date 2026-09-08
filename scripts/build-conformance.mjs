@@ -1132,6 +1132,30 @@ for (const entry of written) {
     expect: { ok: true, signature: entry.expect.signature, shell: "elided" },
   });
 }
+/*
+ * A link carrying a capability the receiving reader does not implement.
+ *
+ * Not produced by the loop above, which packs only what a reader could open —
+ * and this reader cannot open it, which is the point. Label 15 exists so that
+ * `requires` survives a link at all; without a vector carrying a value, the
+ * label is only ever exercised empty, and dropping it would pass the suite.
+ *
+ * The `requires` is injected after parsing rather than built into the file,
+ * because that is what the sender is: a reader that does implement the
+ * capability, packing a document it has open for someone who may not. Read
+ * down, never up — the refusal has to happen at the far end.
+ */
+{
+  const html = readFileSync(join(suite, "cases/version-4.dai.html"), "utf8");
+  const parsed = parseContainer(html);
+  parsed.manifest.requires = ["session"];
+  links.push({
+    name: "version-4-requires-unimplemented",
+    link: `https://opener.example/#a=${await packInline(parsed, host)}`,
+    refuse: "UNSUPPORTED_CAPABILITY",
+  });
+}
+
 writeFileSync(
   join(suite, "inline-links.json"),
   JSON.stringify({ suiteVersion: 1, generatedBy: "scripts/build-conformance.mjs", links }, null, 2) + "\n",

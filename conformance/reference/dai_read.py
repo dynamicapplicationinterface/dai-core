@@ -521,6 +521,17 @@ def from_inline_link(link: str) -> InlineDocument:
     # than a decoration — a rebuilt manifest that lost it would claim to need
     # nothing and open on a reader that cannot honour it.
     required = [n for n in fields.get(15, []) if isinstance(n, str)]
+    # Refused here, beside the version gate, and not left to the rebuilt
+    # manifest: this path rebuilds and reports without going back through
+    # verify(), so a check that lived only there would never run on a link.
+    # The other reader arrives at the same refusal by rebuilding and verifying;
+    # a conformance vector holds the two to the same answer.
+    missing = check_requires({"requires": required})
+    if missing:
+        raise ContainerError(
+            f"UNSUPPORTED_CAPABILITY: This document needs {', '.join(missing)}, "
+            "which this reader does not implement."
+        )
 
     manifest: dict[str, Any] = {
         "manifestVersion": version,
