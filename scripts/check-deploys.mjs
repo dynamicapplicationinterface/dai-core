@@ -16,9 +16,33 @@
 import { execSync } from "node:child_process";
 
 const SITES = [
-  { name: "website", url: "https://www.dynamicapplicationinterface.io/version.json" },
-  { name: "opener", url: "https://opendai.app/version.json" },
+  { name: "website", origin: "https://www.dynamicapplicationinterface.io" },
+  { name: "opener", origin: "https://opendai.app" },
 ];
+
+/**
+ * The build id the page itself carries.
+ *
+ * `version.json` is a file beside the page; the meta tag is in the bytes that
+ * run. During a promotion the two disagreed for several minutes — the page
+ * served the new build while the sidecar still answered with the old one —
+ * and reading only the sidecar produced two confident wrong answers about
+ * whether a fix was live.
+ *
+ * So both are read, and a disagreement is reported rather than resolved,
+ * because which one is right depends on which one you were about to trust.
+ * The page wins when they differ: it is what a person is looking at.
+ */
+async function pageStamp(origin) {
+  try {
+    const response = await fetch(`${origin}/?at=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return null;
+    const html = await response.text();
+    return /name="dai-build" content="([^"]*)"/.exec(html)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const head = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
 const short = (sha) => (sha && sha !== "unknown" ? sha.slice(0, 7) : String(sha));
@@ -30,7 +54,7 @@ let stale = 0;
 for (const site of SITES) {
   let stamp;
   try {
-    const response = await fetch(`${site.url}?at=${Date.now()}`, { cache: "no-store" });
+    const response = await fetch(`${site.origin}/version.json?at=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     stamp = await response.json();
   } catch (error) {
@@ -39,6 +63,16 @@ for (const site of SITES) {
     console.log(`${site.name.padEnd(8)} no version.json (${String(error)})`);
     stale += 1;
     continue;
+  }
+
+  // What the running page says about itself, beside what the file says.
+  const onPage = await pageStamp(site.origin);
+  const pageCommit = onPage ? onPage.split(" ")[0] : null;
+  if (pageCommit && pageCommit !== short(stamp.commit)) {
+    console.log(
+      `${site.name.padEnd(8)} !!  the page says ${pageCommit}, version.json says ${short(stamp.commit)}. ` +
+        "A promotion in flight looks like this for a few minutes; the page is the one running.",
+    );
   }
 
   const current = stamp.commit === head;
