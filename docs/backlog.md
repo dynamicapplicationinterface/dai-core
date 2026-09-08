@@ -890,6 +890,26 @@ about other people's documents.
 
 ## Small, undisputed, cheap
 
+- Copy is US English, and some of it is not. The audience is American and so
+  is the person whose product this is; British spelling in shipped strings
+  reads as somebody else's writing. Three tiers, and only the first two are
+  copy:
+
+  1. **User-visible strings.** `apps/runner/src/card.ts` says "trusted by your
+     organisation" on the launch card. Sweep for the rest.
+  2. **Author-facing text.** `src/recipe.ts` is the published instruction sheet
+     and says "background colour" and "colour blocks". It is read by whoever
+     builds an app, so it is copy.
+  3. **Not copy, and must not be swept.** `colour` is a field name in the
+     host-to-app message `DAI_HOST_CANVAS`, and the CSS custom properties use
+     the same spelling. Renaming those is a breaking protocol change wearing a
+     spelling fix's clothes. Comments are not copy either; leave them or change
+     them on their own time, but never in the same commit as strings.
+
+  A blanket find-and-replace is exactly the wrong tool here. The counts say
+  eighty-odd matches, and almost all of them are tier 3.
+
+
 - The desktop window builds unsigned, because `compileInBrowser` no longer
   mints a key. It is the one host that *could* keep one — it has a filesystem
   and a config directory — so it should offer to, and to reuse the same key
