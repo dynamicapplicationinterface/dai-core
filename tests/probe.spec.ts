@@ -136,12 +136,22 @@ test.describe("which build this is", () => {
     await expect(page.locator("#sheet-version")).toHaveText(/^[0-9a-f]{7} · /);
   });
 
-  test("it is in the page, not fetched, so it survives having no network", async ({
+  test("it names the bytes that are running, not the bytes that were deployed", async ({
     page,
     context,
   }) => {
-    // The whole reason it moved out of version.json. A build id that needs the
-    // network is missing in the one situation somebody reaches for it.
+    /*
+     * The stamp rides in the shell, so a stale worker serving a stale shell
+     * reports the stale id — and that is the wanted behaviour, not a caveat.
+     * "My opener will not open the new file" is a shell-is-old problem (§2.2),
+     * and the id a person reads off the screen has to be the build actually
+     * running in front of them. A stamp fetched separately would report the
+     * deploy while the page ran something else, which is the confusion it
+     * exists to end.
+     *
+     * Offline is the sharpest form of the same case: the shell here came from
+     * the cache, and the id came with it.
+     */
     await page.goto("http://localhost:5175/");
     await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, {
       timeout: 60_000,

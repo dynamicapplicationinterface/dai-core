@@ -101,6 +101,56 @@ export async function inlineLink(
  * native host, which has an address but no `location`, uses the same reader.
  */
 export function inlineFrom(hash: string): string | undefined {
-  const value = /^#?a=([A-Za-z0-9\-_]+)$/.exec(hash)?.[1];
-  return value && value.length > 0 ? value : undefined;
+  // Read as fields rather than as the whole fragment, because a link may now
+  // carry a `u=` hint beside the document (R7). The value itself is still held
+  // to its alphabet: a fragment that is not exactly this is not a document,
+  // and guessing at a damaged one is how a reader opens something it should
+  // have refused.
+  const value = fragmentFields(hash).get("a");
+  return value && /^[A-Za-z0-9\-_]+$/.test(value) ? value : undefined;
+}
+
+/** The fragment's `key=value` fields. Never decoded as a document; see `inlineFrom`. */
+function fragmentFields(hash: string): Map<string, string> {
+  const fields = new Map<string, string>();
+  for (const part of hash.replace(/^#/, "").split("&")) {
+    const at = part.indexOf("=");
+    if (at <= 0) continue;
+    fields.set(part.slice(0, at), part.slice(at + 1));
+  }
+  return fields;
+}
+
+/** The fragment key for the hint: which document this address is probably for. */
+export const HINT_KEY = "u";
+
+/**
+ * The document a launch address is probably for (R7).
+ *
+ * A hint and nothing else. It says which library entry to try, so that "do I
+ * already have this?" can be answered without decompressing a payload or
+ * asking a store — which for a home-screen icon meant a network round trip to
+ * open a document sitting in local storage. What is actually opened decides
+ * its own identity: the mounted document's manifest UUID is authoritative, and
+ * a fragment naming a different one is a first sighting, not a reason to reuse
+ * anybody's data.
+ *
+ * It lives in the fragment because a fragment is never sent to a server. The
+ * predecessor, `?doc=<uuid>`, was a query parameter, which means every launch
+ * from every home-screen icon put that document's UUID in the opener's request
+ * log — the one address in this design that reached a server at all. It is
+ * still read here, for icons already on people's phones, and callers move the
+ * address to this form on arrival so it is gone from the tab and the history.
+ */
+export function hintedUuid(hash: string, search = ""): string | undefined {
+  const shaped = (value: string | undefined | null): string | undefined =>
+    value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+      ? value.toLowerCase()
+      : undefined;
+  return shaped(fragmentFields(hash).get(HINT_KEY)) ?? shaped(new URLSearchParams(search).get("doc"));
+}
+
+/** Whether an address carries the retired query form, and so should be rewritten. */
+export function hasLegacyHint(search: string): boolean {
+  return new URLSearchParams(search).has("doc");
 }

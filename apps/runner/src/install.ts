@@ -39,6 +39,7 @@
  * Other desktop browsers have no install of their own; their menu does, and
  * the text says where.
  */
+import { HINT_KEY } from "../../../src/link.js";
 import { platform, standalone } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 
@@ -99,6 +100,21 @@ function iconAddress(uuid: string): string {
   return new URL(`/doc-icons/${uuid}.png`, location.origin).href;
 }
 
+/**
+ * A fragment carrying the hint, beside whatever it already carried.
+ *
+ * An icon's address may already be a link with a document or a store
+ * reference in its fragment, so this adds a field rather than replacing one.
+ */
+function withHint(hash: string, uuid: string): string {
+  const parts = hash
+    .replace(/^#/, "")
+    .split("&")
+    .filter((part) => part.length > 0 && !part.startsWith(`${HINT_KEY}=`));
+  parts.push(`${HINT_KEY}=${uuid}`);
+  return `#${parts.join("&")}`;
+}
+
 export function manifestAddress(uuid: string): string {
   return new URL(`/doc-manifests/${uuid}.webmanifest`, location.origin).href;
 }
@@ -119,10 +135,20 @@ const KEEP_AFTER_RELOAD = "dai:keep-after-reload";
  */
 export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link?: string }): string {
   const url = identity.link ? new URL(identity.link) : new URL("/", location.origin);
-  // The link, and the document's id beside it: an opener that already holds
-  // this document opens its own copy — offline, and without asking the
-  // store again — and one that does not follows the link.
-  url.searchParams.set("doc", identity.uuid);
+  /*
+   * The link, and the document's id beside it in the fragment: an opener that
+   * already holds this document opens its own copy — offline, and without
+   * asking the store again — and one that does not follows the link.
+   *
+   * `#u=`, not `?doc=`. A query parameter is sent to the server, and this is
+   * an address launched every time somebody taps an icon, so the retired form
+   * put the document's UUID in the opener's request log on every launch. It is
+   * the one part of this design that ever reached a server; the key, the hash
+   * and the payload are all in the fragment for exactly this reason, and the
+   * id belongs there with them.
+   */
+  url.searchParams.delete("doc");
+  url.hash = withHint(url.hash, identity.uuid);
   if (!identity.link) url.searchParams.set("name", identity.name);
   /*
    * The colour under the clock, in the address itself.
@@ -379,6 +405,16 @@ export async function describeDocument(identity: Identity): Promise<void> {
   // A real address, served by the worker from the same cache as the icon.
   // Chrome reads it fresh at install; iOS reads it at the next load of a page
   // that links it, which `keepHere` arranges.
+  //
+  // Written here and read back locally — never fetched — so unlike an address
+  // the worker caches from a server, this cannot drift from an origin: this is
+  // the origin. What it can do is go stale. It is keyed by document UUID and
+  // holds the document's name, icon and colour, and a successor keeps the UUID
+  // while any of the three may change. Overwritten on every pass through here,
+  // so a document kept again after a change is corrected; a home-screen icon
+  // for a document whose name changed and was never kept again keeps the old
+  // one. Milder than a cache bug and a different shape, but it is the reason
+  // this put is unconditional rather than skipped when an entry exists.
   const address = manifestAddress(identity.uuid);
   try {
     const cache = await caches.open(ICON_CACHE);
@@ -387,6 +423,10 @@ export async function describeDocument(identity: Identity): Promise<void> {
       new Response(JSON.stringify(manifest), { headers: { "content-type": "application/manifest+json" } }),
     );
     headTag("link", 'rel="manifest"').setAttribute("href", address);
+    // And the worker is told, for the load this page is about to cause: it
+    // cannot read `#u=` from a fragment, and it rewrites the head on the way
+    // out. Cleared by describeSelf when nothing is open.
+    void describeNext(identity.uuid);
   } catch {
     headTag("link", 'rel="manifest"').setAttribute(
       "href",
@@ -416,12 +456,74 @@ function keepHere(identity: Identity & { link?: string }): boolean {
   } catch {
     /* No session storage: the steps are still in the menu. */
   }
-  location.assign(target);
+  /*
+   * A real load, even when only the fragment moved.
+   *
+   * This used to change the query, so assigning the address reloaded the page
+   * and the manifest was linked at load, which is the only kind of manifest
+   * iOS reads. The hint is in the fragment now, and a navigation that changes
+   * nothing but the fragment is a same-document navigation: nothing reloads,
+   * no head is rewritten, and the icon comes out as the reader's. So when that
+   * is the only difference, the address is set and the page reloaded
+   * deliberately.
+   *
+   * Synchronous, deliberately. An earlier attempt awaited the announcement to
+   * the worker here and navigated in a `then`, which put a turn of the event
+   * loop between deciding to leave and leaving — long enough for the rest of
+   * the open to run, and the navigation was lost. The announcement is written
+   * when the document is described instead, which is well before this.
+   */
+  const here = location.href.split("#")[0];
+  if (target.split("#")[0] === here) {
+    location.hash = new URL(target).hash;
+    location.reload();
+  } else {
+    location.assign(target);
+  }
   return true;
+}
+
+/** Where the page tells the worker which document the next load is for. */
+const DESCRIBE_NEXT = "/doc-describe-next";
+
+/**
+ * Which document the load about to happen is about.
+ *
+ * iOS reads a home-screen icon's name and picture from the manifest the page
+ * linked *when it loaded*, so the worker rewrites the head on the way out
+ * (sw.js `describedAs`). It used to learn which document from `?doc=` in the
+ * address — and that is a query parameter, which is sent to the server, which
+ * is why the hint moved into the fragment as `#u=`.
+ *
+ * A worker cannot read a fragment. Fragments are never transmitted, so the
+ * request the worker sees does not have one, and there is no arrangement of
+ * `#u=` that lets it know. Left there, moving the hint would have put the icon
+ * back to being the reader's — the exact bug the described head exists to fix,
+ * reintroduced by the fix for the leak.
+ *
+ * So the page says so directly, over the cache both can see, immediately
+ * before the reload it is about to cause. Stamped, and honoured only for a few
+ * seconds (sw.js), so it describes the reload it was written for and not some
+ * later navigation that happens to come along.
+ */
+async function describeNext(uuid: string | null): Promise<void> {
+  try {
+    const cache = await caches.open(ICON_CACHE);
+    if (uuid === null) {
+      await cache.delete(DESCRIBE_NEXT);
+      return;
+    }
+    await cache.put(DESCRIBE_NEXT, new Response(JSON.stringify({ uuid })));
+  } catch {
+    /* No cache: the head is not rewritten, and the sheet still says what to do. */
+  }
 }
 
 /** The opener as itself again, once nothing is open. */
 export function describeSelf(): void {
+  // Nothing is open, so nothing is being described: the worker must not go on
+  // dressing this page as a document somebody has left.
+  void describeNext(null);
   document.title = "DAI";
   headTag("meta", 'name="apple-mobile-web-app-title"').setAttribute("content", "DAI");
   headTag("link", 'rel="apple-touch-icon"').setAttribute("href", "./icons/apple-touch-icon.png");

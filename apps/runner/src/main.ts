@@ -8,7 +8,7 @@
  */
 import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
-import { decodeInline, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
+import { decodeInline, hasLegacyHint, hintedUuid, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
 import type { PastHost } from "../../../src/inline.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
@@ -1136,7 +1136,24 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         await mount(loaded);
         await groundSettled(loaded.manifest.documentUuid, 2500);
         await describeDocument(identity);
-        location.replace(launchAddress(identity));
+        /*
+         * A real load, even when only the fragment moved.
+         *
+         * The point of this navigation is the load: iOS reads the status bar
+         * colour and the manifest as a page first appears, and not again. The
+         * hint moved from `?doc=` into the fragment (`#u=`), and a navigation
+         * that changes nothing but the fragment is a same-document navigation
+         * — the address changes, no load happens, and neither the colour nor
+         * the manifest is re-read. So when that is the only difference, the
+         * address is set and the reload asked for explicitly.
+         */
+        const target = launchAddress(identity);
+        if (target.split("#")[0] === location.href.split("#")[0]) {
+          location.hash = new URL(target).hash;
+          location.reload();
+        } else {
+          location.replace(target);
+        }
         return;
       }
     }
@@ -2397,7 +2414,29 @@ async function start(): Promise<void> {
    * the link is only for an opener that has never seen it (an iOS
    * home-screen app gets storage of its own, and starts with nothing).
    */
-  const wanted = parameters.get("doc");
+  const wanted = hintedUuid(location.hash, location.search);
+  /*
+   * An icon made before the hint moved into the fragment.
+   *
+   * `?doc=` is still read, because icons carrying it are on people's phones
+   * and deleting the reader would strand them on an empty chooser. It gets the
+   * hint's rules and nothing more: it selects a library entry to try, and the
+   * mounted document's manifest decides what the document actually is.
+   *
+   * And the address is rewritten here, before anything else happens, so the
+   * parameter is gone from the tab, from the history entry, and from any later
+   * reload — the icon still carries it, nothing else does. That also makes
+   * removing the reader a no-op for anybody who has launched even once.
+   */
+  if (wanted && hasLegacyHint(location.search)) {
+    const corrected = new URL(location.href);
+    corrected.searchParams.delete("doc");
+    corrected.hash = `#${[
+      ...corrected.hash.replace(/^#/, "").split("&").filter((part) => part.length > 0 && !part.startsWith("u=")),
+      `u=${wanted}`,
+    ].join("&")}`;
+    history.replaceState(history.state, "", corrected.href);
+  }
   if (wanted) {
     const held = (await listCartridgesFromLibrary()).find(
       (candidate) => candidate.documentUuid === wanted,

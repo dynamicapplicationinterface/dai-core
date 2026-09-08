@@ -373,7 +373,7 @@ test.describe("the home-screen icon for a document that came by link", () => {
       // has opens its own copy without asking the store.
       expect(manifest!.start_url).toContain(`k=${sealed.key}`);
       expect(manifest!.start_url).toContain(`h=${sealed.hash}`);
-      expect(manifest!.start_url).toContain(`doc=${built.manifest.documentUuid}`);
+      expect(manifest!.start_url).toContain(`u=${built.manifest.documentUuid}`);
       expect(manifest!.id).toContain(built.manifest.documentUuid);
     } finally {
       await new Promise<void>((done) => a.server.close(() => done()));
@@ -395,7 +395,7 @@ test.describe("the home-screen icon for a document that came by link", () => {
 
     // No link to point at, so the honest answer: the document this device
     // keeps, by its identity.
-    expect(start).toContain("doc=");
+    expect(start).toContain("u=");
     expect(start).not.toContain("k=");
   });
 });
