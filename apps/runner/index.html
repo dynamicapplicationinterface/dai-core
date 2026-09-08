@@ -91,6 +91,16 @@
     <meta property="og:description" content="Runs on your device. No account, nothing installed." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary" />
+    <!--
+      Which build this is, filled in at build time (vite.config.ts).
+
+      In the page rather than fetched, because it is read on the chooser as
+      well as in the menu, and the chooser is where somebody sits whose
+      document will not open — possibly with no network. A fetch would also
+      have cost the guarantee that opening a document you already have asks
+      the network for nothing at all.
+    -->
+    <meta name="dai-build" content="dev" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>DAI</title>
 
@@ -1166,6 +1176,16 @@
           <a href="https://www.dynamicapplicationinterface.io/open">What is a .dai file?</a>
         </p>
         <div id="report"></div>
+        <!--
+          The same build stamp as the menu's, here as well.
+
+          The person who most needs to say which build they are on is the one
+          whose document will not open — and that person is looking at this
+          screen, which has no menu. Fetched on render: the chooser is not
+          under the "a second open asks the network for nothing" guarantee,
+          because nothing has been opened.
+        -->
+        <p class="sheet-version" id="chooser-version"></p>
       </div>
       <!--
         The open screen. See apps/runner/src/card.ts: what somebody is about

@@ -400,6 +400,60 @@ self.addEventListener("fetch", (event) => {
   }
 
   /*
+   * Kept forever only where forever is true.
+   *
+   * This was a denylist: cache by URL, except for the paths somebody had
+   * remembered to exclude. Three exclusions were added in a single day —
+   * /probe, /m/, /version.json — which is a shape saying the default is
+   * wrong, not that the list is short. A cached copy of an address whose
+   * content can change is a wrong answer served confidently and forever, and
+   * the failures it makes are the worst kind: a frozen home-screen icon, a
+   * build stamp naming the previous deploy, a measurement page reporting a
+   * state the browser is no longer in. None of them look like a cache bug.
+   *
+   * So it is an allowlist. Cache-forever is correct for exactly one thing: a
+   * name that cannot mean different bytes later. That is a content hash in the
+   * name, or a file this worker precached and replaces wholesale when it
+   * takes over. Everything else goes to the network first and falls back to
+   * whatever is held, which is never wrong — only slower.
+   *
+   * Adding a path here is a claim that its name is immutable. If the name
+   * carries a document id, a user id, or a version that is not in the name
+   * itself, the claim is false and the answer is no.
+   */
+  const immutable =
+    // Content-hashed: vite's bundles, the confusable table, retained hosts.
+    /\.[0-9a-f]{8,}\.[a-z0-9]+$/i.test(url.pathname) ||
+    url.pathname.startsWith("/assets/") ||
+    url.pathname.startsWith("/hosts/") ||
+    // The engine and the opener's own icons: fixed names, replaced only by a
+    // new worker, which empties the old cache when it activates.
+    url.pathname.startsWith("/runtime/") ||
+    url.pathname.startsWith("/icons/") ||
+    // Written by this device for a document it holds, never fetched from
+    // anywhere, and rewritten in place whenever the document is kept again.
+    // Local state that happens to be addressed, not a remote resource.
+    url.pathname.startsWith("/doc-icons/") ||
+    url.pathname.startsWith("/doc-manifests/") ||
+    PRECACHE.some((entry) => new URL(entry, self.location.origin).pathname === url.pathname);
+
+  if (!immutable) {
+    /*
+     * Network first, cache second. Offline this is exactly what the cache
+     * branch below would have done; online it is the only way an address
+     * whose content can change ever gets its new content.
+     */
+    event.respondWith(
+      fromNetwork().catch(async () => {
+        const held = (await caches.match(request)) || (await caches.match(url.pathname));
+        if (held) return held;
+        throw new Error("offline and not cached");
+      }),
+    );
+    return;
+  }
+
+  /*
    * Everything else — hashed assets, icons, the engine — is fine from the
    * cache, because a new shell names new assets and never the old ones.
    *

@@ -110,12 +110,16 @@ test.describe("the fortnight the measurement needs", () => {
 });
 
 test.describe("which build this is", () => {
-  test("the menu names the commit, so a phone can tell one deploy from the next", async ({ page }) => {
-    // Production is promoted from main automatically, and an afternoon of
-    // phone testing once measured the wrong build three times over. The stamp
-    // existed; it had nowhere to be read.
-    // Read from the menu, which is where it is asked for. The chooser has no
-    // menu, so a document has to be open first.
+  test("the chooser names the commit, where somebody whose document will not open is sitting", async ({
+    page,
+  }) => {
+    // The chooser has no menu, and the person who most needs to report a build
+    // id is exactly the one who never gets a document open.
+    await page.goto("http://localhost:5175/");
+    await expect(page.locator("#chooser-version")).toHaveText(/^[0-9a-f]{7} · \d{4}-\d{2}-\d{2}/);
+  });
+
+  test("the menu names it too, for somebody already inside an app", async ({ page }) => {
     const built = await compileDirectory({
       sourceDir: resolve(repo, "examples/chore-chart"),
       root: repo,
@@ -129,26 +133,21 @@ test.describe("which build this is", () => {
     });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await page.locator("#more").click();
-    await expect
-      .poll(async () => page.locator("#sheet-version").textContent(), { timeout: 10_000 })
-      .toMatch(/^[0-9a-f]{7}/);
+    await expect(page.locator("#sheet-version")).toHaveText(/^[0-9a-f]{7} · /);
   });
 
-  test("the stamp is never answered from the worker's cache", async ({ page }) => {
-    // A remembered stamp names the deploy before, which is the exact failure
-    // it was written to end.
+  test("it is in the page, not fetched, so it survives having no network", async ({
+    page,
+    context,
+  }) => {
+    // The whole reason it moved out of version.json. A build id that needs the
+    // network is missing in the one situation somebody reaches for it.
     await page.goto("http://localhost:5175/");
     await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, {
       timeout: 60_000,
     });
-    const cached = await page.evaluate(async () => {
-      const keys = await caches.keys();
-      for (const key of keys) {
-        const hit = await (await caches.open(key)).match("/version.json");
-        if (hit) return true;
-      }
-      return false;
-    });
-    expect(cached).toBe(false);
+    await context.setOffline(true);
+    await page.reload();
+    await expect(page.locator("#chooser-version")).toHaveText(/^[0-9a-f]{7} · /);
   });
 });

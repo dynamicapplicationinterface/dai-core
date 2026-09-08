@@ -15,20 +15,50 @@ import { defineConfig, type Plugin } from "vite";
  * never promoted from the deployment actually serving people — they are
  * identical from outside.
  */
+function commitId(): string {
+  return (
+    process.env.VERCEL_GIT_COMMIT_SHA ??
+    (() => {
+      try {
+        return execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+      } catch {
+        return "unknown";
+      }
+    })()
+  );
+}
+
 function stamp(): Plugin {
   return {
     name: "dai-version-stamp",
     apply: "build",
+    /*
+     * Into the page, not only into a file beside it.
+     *
+     * The stamp is read on two screens, and one of them is the chooser, which
+     * a person reaches with no network and nothing opened. A fetch for it also
+     * costs the guarantee that opening a document you already have asks the
+     * network for nothing at all — that is not theoretical, it broke the test
+     * that holds it. Nothing here needs the bundle, so it is known at
+     * transform time and the page carries it.
+     *
+     * version.json is still written: `npm run deploys` asks a deployment what
+     * it is over HTTP, and cannot read a meta tag out of a bundle.
+     */
+    transformIndexHtml(html) {
+      const commit = commitId().slice(0, 7);
+      const built = new Date().toISOString().slice(0, 10);
+      const environment = process.env.VERCEL_ENV ?? "local";
+      // Named only when it is not production: the case worth catching is a
+      // preview that was never promoted, and those look identical otherwise.
+      const where = environment === "production" ? "" : ` · ${environment}`;
+      return html.replace(
+        /<meta name="dai-build" content="[^"]*" \/>/,
+        `<meta name="dai-build" content="${commit} · ${built}${where}" />`,
+      );
+    },
     closeBundle() {
-      const commit =
-        process.env.VERCEL_GIT_COMMIT_SHA ??
-        (() => {
-          try {
-            return execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
-          } catch {
-            return "unknown";
-          }
-        })();
+      const commit = commitId();
 
       writeFileSync(
         join(import.meta.dirname, "dist", "version.json"),
