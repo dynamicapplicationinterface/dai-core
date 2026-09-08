@@ -1,4 +1,10 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { compileDirectory } from "../src/compile.js";
+import { openFile } from "./open.js";
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const PROBE_URL = "http://localhost:5175/probe/";
 
@@ -100,5 +106,49 @@ test.describe("the fortnight the measurement needs", () => {
     await expect(page.locator("#persist")).toContainText("Storage was");
     await expect(page.locator("#persist")).not.toContainText("not recorded");
     await expect(page.locator("#persist")).toContainText("Browser then");
+  });
+});
+
+test.describe("which build this is", () => {
+  test("the menu names the commit, so a phone can tell one deploy from the next", async ({ page }) => {
+    // Production is promoted from main automatically, and an afternoon of
+    // phone testing once measured the wrong build three times over. The stamp
+    // existed; it had nowhere to be read.
+    // Read from the menu, which is where it is asked for. The chooser has no
+    // menu, so a document has to be open first.
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "examples/chore-chart"),
+      root: repo,
+      appName: "Chore chart",
+    });
+    await page.goto("http://localhost:5175/");
+    await openFile(page, {
+      name: "chore-chart.dai.html",
+      mimeType: "text/html",
+      buffer: Buffer.from(built.html, "utf8"),
+    });
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.locator("#more").click();
+    await expect
+      .poll(async () => page.locator("#sheet-version").textContent(), { timeout: 10_000 })
+      .toMatch(/^[0-9a-f]{7}/);
+  });
+
+  test("the stamp is never answered from the worker's cache", async ({ page }) => {
+    // A remembered stamp names the deploy before, which is the exact failure
+    // it was written to end.
+    await page.goto("http://localhost:5175/");
+    await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, {
+      timeout: 60_000,
+    });
+    const cached = await page.evaluate(async () => {
+      const keys = await caches.keys();
+      for (const key of keys) {
+        const hit = await (await caches.open(key)).match("/version.json");
+        if (hit) return true;
+      }
+      return false;
+    });
+    expect(cached).toBe(false);
   });
 });

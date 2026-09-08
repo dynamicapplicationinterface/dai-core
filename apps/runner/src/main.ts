@@ -1600,6 +1600,10 @@ const closeSheet = (): void => {
 openButton.addEventListener("click", () => fileInput.click());
 moreButton.addEventListener("click", () => {
   slideOpen(sheet);
+  // Asked for when the menu is opened, not when the page loads: opening a
+  // document you already have must ask the network for nothing at all, and a
+  // test holds that claim. Nobody is reading a build id at launch anyway.
+  void showVersion();
 });
 document.getElementById("save-state")?.addEventListener("click", (event) => {
   if ((event.currentTarget as HTMLElement).dataset.state === "failed") slideOpen(sheet);
@@ -2617,3 +2621,54 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     location.reload();
   });
 }
+
+/*
+ * Which build this is, in the menu.
+ *
+ * "Is the fix live?" is a real question here, because production is promoted
+ * from main automatically and a phone gives no way to tell one deploy from
+ * the next. An afternoon of testing measured the wrong build three times over,
+ * which is what the version stamp was written for; it just had nowhere to be
+ * read. This is that place.
+ *
+ * Fetched rather than compiled in, because the stamp is written after the
+ * bundle is (vite.config.ts closeBundle) and a value baked into this file
+ * could only ever name the commit before it. `no-store` so it is the deployed
+ * answer and not a remembered one; the worker leaves this address alone for
+ * the same reason.
+ *
+ * Failure is silence. A missing stamp is a build that was not stamped, and an
+ * error message in a menu about a diagnostic nobody asked for is worse than
+ * the blank line it replaces.
+ *
+ * Run when the menu opens, never at load. The claim that a second open of a
+ * document you already have asks the network for nothing at all is a real
+ * guarantee with a test behind it, and one fetch for a diagnostic would have
+ * quietly cost it.
+ */
+async function showVersion(): Promise<void> {
+  const slot = document.getElementById("sheet-version");
+  if (!slot) return;
+  try {
+    const response = await fetch("/version.json", { cache: "no-store" });
+    if (!response.ok) return;
+    const stamp = (await response.json()) as {
+      commit?: string;
+      builtAt?: string;
+      environment?: string;
+    };
+    const commit = typeof stamp.commit === "string" ? stamp.commit.slice(0, 7) : "";
+    if (!commit) return;
+    // The date, not the time: a person comparing this against a push wants to
+    // know which day's build they are holding, and seconds are noise on a
+    // line that has to stay one line on a phone.
+    const built = typeof stamp.builtAt === "string" ? stamp.builtAt.slice(0, 10) : "";
+    // Named only when it is not production, because the case worth catching is
+    // a preview that was never promoted — those are identical from outside.
+    const where = stamp.environment && stamp.environment !== "production" ? ` · ${stamp.environment}` : "";
+    slot.textContent = `${commit}${built ? ` · ${built}` : ""}${where}`;
+  } catch {
+    /* Offline, or no stamp. The line stays empty. */
+  }
+}
+

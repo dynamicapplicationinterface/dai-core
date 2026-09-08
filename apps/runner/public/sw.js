@@ -288,6 +288,15 @@ self.addEventListener("fetch", (event) => {
    */
   if (url.pathname.startsWith("/m/")) return;
 
+  /*
+   * The build stamp is the one file that must never be remembered.
+   *
+   * It exists to answer "which deploy am I looking at", and a cached copy
+   * answers it with the deploy before. That is the exact failure it was
+   * written to end, so a worker holding it would be worse than not having it.
+   */
+  if (url.pathname === "/version.json") return;
+
   /** Fetches, and keeps a copy of anything worth keeping. */
   const fromNetwork = () =>
     fetch(request).then((response) => {
@@ -319,12 +328,48 @@ self.addEventListener("fetch", (event) => {
      */
     event.respondWith(
       (async () => {
-        const cached =
-          (await caches.match(request)) ||
-          (await caches.match(url.pathname)) ||
-          (await caches.match("./")) ||
-          (await caches.match("./index.html"));
+        /*
+         * A reference link's head is written at the edge, and a cached shell
+         * does not have it.
+         *
+         * `/d/<id>` and `/p/<id>` rewrite to this same page, and the edge
+         * fills the placeholder with that document's title and apple-touch
+         * icon. Those two tags are exactly what iOS reads at Add to Home
+         * Screen. Served the generic shell out of the cache instead, an
+         * install of a shared document is named and iconed as the reader —
+         * the bug that `describedAs` exists to prevent, arriving by another
+         * door and only for people who have used the opener before, since a
+         * first-ever visitor has no worker yet and reaches the edge. It would
+         * pass on any fresh device and fail for everyone real.
+         *
+         * `describedAs` cannot cover it: that reads a manifest this device
+         * cached for a document it holds, and a reference link is for a
+         * document it has never held.
+         *
+         * So these go to the network first. Nothing is given up by it: a
+         * reference link has to reach the store for the document itself, so a
+         * cached shell buys no offline launch here — only a wrong name on the
+         * home screen. The cache is still the fallback, because offline the
+         * opener saying it could not reach the store beats a browser error,
+         * and an install is not happening then anyway.
+         */
+        const perDocument = url.pathname.startsWith("/d/") || url.pathname.startsWith("/p/");
+        const cached = perDocument
+          ? (await caches.match(request)) || (await caches.match(url.pathname))
+          : (await caches.match(request)) ||
+            (await caches.match(url.pathname)) ||
+            (await caches.match("./")) ||
+            (await caches.match("./index.html"));
         const network = fromNetwork();
+        if (perDocument && !cached) {
+          try {
+            return describedAs(await clean(await network), url);
+          } catch {
+            const generic = (await caches.match("./")) || (await caches.match("./index.html"));
+            if (generic) return describedAs(await clean(generic), url);
+            throw new Error("offline and not cached");
+          }
+        }
         if (cached) {
           /*
            * A newer shell arrived behind a page running the old one.

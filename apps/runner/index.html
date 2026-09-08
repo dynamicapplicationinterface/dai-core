@@ -429,6 +429,18 @@
       #sheet-kept[data-state="kept"] { color: var(--ok); }
       #sheet-kept[data-state="refused"] { color: var(--warn); }
       .sheet-rule { height: 1px; margin: 4px 6px; background: var(--line); }
+      /* Readable when looked for, invisible when not. Selectable, because the
+         thing a person does with a build id is paste it into a message. */
+      .sheet-version {
+        margin: 10px 6px 0;
+        font-size: 11.5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--muted);
+        opacity: 0.75;
+        text-align: center;
+        user-select: text;
+        -webkit-user-select: text;
+      }
       .sheet-panel button.danger { color: var(--bad); }
       .sheet-panel button.with-glyph { display: flex; align-items: center; gap: 12px; }
       .sheet-panel button.with-glyph svg { width: 20px; height: 20px; flex: 0 0 auto; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -1108,6 +1120,17 @@
           its data and its trust pin. A copy saved or sent is not touched.
         -->
         <button id="remove" type="button" class="danger">Remove from this device</button>
+        <!--
+          Which build this is.
+
+          Production is promoted from main automatically, so "is the fix live"
+          is a question about whether a deploy has landed, and the only way to
+          answer it from a phone was to grep a bundle and hope. An afternoon of
+          testing measured the wrong build three times over. The stamp is
+          already written at build time (vite.config.ts); this is where a
+          person can read it. Last in the sheet, quiet, and never a control.
+        -->
+        <p class="sheet-version" id="sheet-version"></p>
       </div>
     </div>
 
