@@ -129,7 +129,7 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     }, uuid);
     expect(manifest.status).toBe(200);
     expect(manifest.body.name).toBe(name);
-    expect(manifest.body.start_url).toContain(`doc=${uuid}`);
+    expect(manifest.body.start_url).toContain(`u=${uuid}`);
     expect(manifest.body.icons.some((icon) => icon.src.includes("doc-icons"))).toBe(true);
 
     // A fresh load at that address: the HTML itself — before any script runs

@@ -212,7 +212,7 @@ test.describe("how much of the screen an application gets", () => {
     // behind the launch screen, and wait for it to say what it is - and the
     // address it then loads carries the answer, for the head script to paint
     // before the first frame of the load that counts.
-    await page.waitForURL(/[?&]doc=/, { timeout: 60_000 });
+    await page.waitForURL(/#.*u=/, { timeout: 60_000 });
     expect(new URL(page.url()).searchParams.get("ground")).toBe("rgb(20, 30, 40)");
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     const first = page.locator('meta[name="theme-color"]').first();

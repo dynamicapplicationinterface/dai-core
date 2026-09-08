@@ -124,6 +124,32 @@ async function clean(response) {
 }
 
 /**
+ * The document the page said the next load would be about.
+ *
+ * The hint lives in the fragment now (`#u=`), because a query parameter is
+ * sent to the server and an icon's address is launched every time somebody
+ * taps it. A worker cannot read a fragment — it is never transmitted, so the
+ * request here does not have one — which would leave the head undescribed and
+ * put a home-screen icon back to being the reader's.
+ *
+ * So the page writes it down when it starts standing for a document — the
+ * same moment it writes that document's manifest — and this reads it. Not
+ * timed: an install can be minutes after the open, and iOS may load the page
+ * more than once around one. It is cleared instead, by `describeSelf` when
+ * nothing is open, so this page is never dressed as a document somebody left.
+ */
+async function announcedDocument() {
+  try {
+    const hit = await caches.match("/doc-describe-next");
+    if (!hit) return null;
+    const said = await hit.json();
+    return said && typeof said.uuid === "string" ? said.uuid : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The shell, introducing itself as the document it is about to open.
  *
  * iOS takes a home-screen icon's name, picture and launch address from the
@@ -136,7 +162,7 @@ async function clean(response) {
  * rewritten one; this happens on the way out.
  */
 async function describedAs(response, url) {
-  const uuid = url.searchParams.get("doc");
+  const uuid = url.searchParams.get("doc") ?? (await announcedDocument());
   if (!uuid || !/^[0-9a-f-]{36}$/i.test(uuid) || !response || !response.ok) return response;
   const type = response.headers.get("content-type") || "";
   if (!type.includes("text/html")) return response;
