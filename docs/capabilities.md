@@ -49,9 +49,27 @@ undescribed cannot be reasoned about by anyone.
 **Adding one.** Propose the name and the row: what a reader must actually do to
 claim it, in a sentence, written so two implementations can be checked against
 it. If the sentence needs a paragraph, the capability is more than one
-capability. A new name also needs a conformance case that a reader lacking it
-refuses, in a file and carried in a link, because those are two different code
-paths and one has already diverged from the other.
+capability.
+
+A new name also needs a case per carrier: a reader lacking it must refuse the
+document as a file, as an inline link, and as a reference link.
+
+The reason is an incident, and the rule is written down because the reasoning
+that would have skipped it looked sound at the time. `requires` was enforced in
+the file path and appeared to be enforced everywhere, because the inline path
+rebuilds a manifest from the link's labels. It did not go back through
+verification, so it gated `manifestVersion` and never gated `requires` — one
+implementation refused such a link and the other opened it. Nothing found this
+until a vector was built for the case, and the vector was nearly not built,
+because the generator only made links from documents a reader could open and
+this is a document it cannot.
+
+Generalise it past capabilities: **every refusal code gets a case per carrier.**
+Three carriers is three code paths, and an argument that one of them shares
+another's gate is exactly what was believed about the inline path. The
+reference path does share the file's gate — sealing stores the container's own
+bytes and opening returns them to be verified like any file — and that is held
+by a test rather than by the argument.
 
 ## Where this lives in the code
 

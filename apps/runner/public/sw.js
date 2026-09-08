@@ -271,6 +271,23 @@ self.addEventListener("fetch", (event) => {
    */
   if (url.pathname === "/probe" || url.pathname.startsWith("/probe/")) return;
 
+  /*
+   * A document's own manifest is that document's, not a shared asset.
+   *
+   * `/m/<id>.webmanifest` is per-document: it names one document's icon,
+   * start address and scope. It is not a navigation, so it would not be
+   * mistaken for the shell — it would fall to the branch below, which caches
+   * by URL forever on the reasoning that a name carrying a content hash is the
+   * same bytes. These names carry a document id, and the document behind an id
+   * can be replaced, so that reasoning does not hold and the icon on somebody's
+   * home screen would be the one from the first time they ever opened it.
+   *
+   * Exempted before the route exists, because the same mistake has now been
+   * made once (see /probe above) and finding it a second time on a phone costs
+   * an afternoon.
+   */
+  if (url.pathname.startsWith("/m/")) return;
+
   /** Fetches, and keeps a copy of anything worth keeping. */
   const fromNetwork = () =>
     fetch(request).then((response) => {

@@ -510,3 +510,59 @@ test.describe("a document a store was allowed to read", () => {
     }
   });
 });
+
+test.describe("the third carrier and the one rule", () => {
+  test("a stored document requiring what this reader lacks is refused, exactly as a file is", async () => {
+    /*
+     * The same rule, on the third path.
+     *
+     * `requires` is enforced in the file path, and it had to be added to the
+     * inline path separately because that one rebuilt a manifest and reported
+     * on it without going back through verify — a conformance vector caught
+     * it. Reference is the remaining carrier, so it gets the same case rather
+     * than an argument that it is fine.
+     *
+     * It is fine, and for a structural reason worth holding here: sealing
+     * stores the container's own bytes, and opening returns those bytes to be
+     * verified like any file. There is no second gate to forget. A change that
+     * gave this path its own manifest handling would break this test, which is
+     * the point of writing it.
+     */
+    const dir = mkdtempSync(join(tmpdir(), "dai-ref-cap-"));
+    writeFileSync(join(dir, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">held</p>', "utf8");
+    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Needs" });
+
+    // Injected the way a writer that implements the capability would emit it.
+    // The manifest is outside `hashes`, so no entry digest moves.
+    const { zipSync } = await import("fflate");
+    const { MANIFEST_ENTRY, ZIP_EPOCH, toBase64 } = await import("../src/core.js");
+    const { parseContainer } = await import("../src/container.js");
+    const archive = { ...parseContainer(built.html).archive };
+    const manifest = JSON.parse(new TextDecoder().decode(archive[MANIFEST_ENTRY]!)) as Record<string, unknown>;
+    manifest["manifestVersion"] = 4;
+    manifest["requires"] = ["session"];
+    archive[MANIFEST_ENTRY] = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);
+    const html = built.html.replace(
+      /(<script type="application\/octet-stream" id="dai-payload">)([\s\S]*?)(<\/script>)/,
+      (_m, open: string, _old: string, close: string) =>
+        open + toBase64(zipSync(archive, { level: 9, mtime: ZIP_EPOCH })) + close,
+    );
+
+    const sealed = await sealForStore(html);
+    const returned = await openFromStore(sealed.blob, sealed.hash, sealed.key);
+
+    // The declaration survives the round trip. The store holds bytes and reads
+    // nothing, so it can neither notice the capability nor strip it; if it
+    // could, the refusal below would stop happening and the document would
+    // open without the feature it says it needs.
+    const back = JSON.parse(
+      new TextDecoder().decode(parseContainer(returned).archive[MANIFEST_ENTRY]!),
+    ) as Record<string, unknown>;
+    expect(back["requires"]).toEqual(["session"]);
+
+    // And the refusal happens where every carrier's refusal happens.
+    await expect(verifyContainer(returned)).rejects.toMatchObject({
+      code: "UNSUPPORTED_CAPABILITY",
+    });
+  });
+});
