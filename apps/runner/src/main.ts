@@ -1001,12 +1001,56 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       await saveDatabaseToOpfs(cartridge.manifest.documentUuid, succession.inherit);
     }
 
-    // If an OPFS database exists for this documentUuid, mount the latest database.
+    /*
+     * Which copy of the data is the later one.
+     *
+     * Nearly always the one on this device: reopening a file mounts what has
+     * been done since, not the state the file was built with. But a document
+     * can come back. Two people playing a game by link send the same document
+     * to and fro, and what arrives is the same application carrying data this
+     * device has never seen — so mounting the stored copy over it dropped the
+     * other person's move without a word.
+     *
+     * `savedAt` is written into the manifest by every reseal, outside the
+     * signed set, and travels with the document. Later wins. Equal or older
+     * loses, which is what makes an old link scrolled back to in a message
+     * thread harmless: it cannot roll a game backwards.
+     *
+     * Wall clocks on two devices are not perfectly ordered. This decides
+     * between two copies a person is holding, not between two writers racing,
+     * and a skew large enough to matter is a skew a person would already have
+     * noticed elsewhere.
+     */
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
-    if (opfsDb && opfsDb.byteLength > 0) {
+    const arriving = savedAtOf(cartridge);
+    const heldItem = library.find(
+      (item) => item.documentUuid === cartridge.manifest.documentUuid,
+    );
+    const brought =
+      Boolean(opfsDb && opfsDb.byteLength > 0) &&
+      arriving !== undefined &&
+      heldItem?.savedAt !== undefined &&
+      arriving > heldItem.savedAt;
+
+    if (opfsDb && opfsDb.byteLength > 0 && !brought) {
       loaded = await resealCartridge(cartridge, opfsDb);
+      if (arriving !== undefined && heldItem?.savedAt !== undefined && arriving < heldItem.savedAt) {
+        // Said rather than done silently: somebody who opened an older link
+        // and saw their own game is owed the reason it did not change.
+        say(
+          `This link is an older copy of ${loaded.manifest.appName ?? "this document"} than the one on this device. ` +
+            `Nothing was changed.`,
+        );
+      }
     } else {
+      // What arrived is the later copy, so it is the one that mounts — and it
+      // is written to this device's storage before the application starts, so
+      // a reload finds the data the person just watched arrive.
       loaded = cartridge;
+      const incoming = cartridge.archive["document.sqlite"];
+      if (brought && incoming && incoming.byteLength > 0) {
+        await saveDatabaseToOpfs(cartridge.manifest.documentUuid, incoming);
+      }
     }
 
     // Kept on this device — and said only once it is. Storage can refuse
@@ -1017,6 +1061,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         documentUuid: loaded.manifest.documentUuid,
         appName: loaded.manifest.appName ?? "container",
         lastOpened: new Date().toISOString(),
+        savedAt: savedAtOf(loaded),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(loaded.manifest.documentUuid),
@@ -1264,6 +1309,19 @@ function recordTimings(timings?: { phase: string; at: number }[]): void {
   }
 }
 
+/**
+ * When a container was last saved, from the manifest sealed around its data.
+ *
+ * Written by every reseal and carried by every carrier, so it is the one
+ * number that can order two copies of the same document that have been apart.
+ * Absent on a document nobody has saved yet, which orders nothing and is why
+ * every comparison here requires both sides to have one.
+ */
+function savedAtOf(container: { manifest: Record<string, unknown> }): string | undefined {
+  const at = container.manifest["savedAt"];
+  return typeof at === "string" && at ? at : undefined;
+}
+
 /** Whether a message came from the container this runner is showing. */
 function fromMountedContainer(event: MessageEvent, data: { sessionNonce?: string }): boolean {
   if (event.source !== cartridgeFrame.contentWindow) return false;
@@ -1483,6 +1541,10 @@ window.addEventListener("message", (event) => {
             documentUuid: loaded.manifest.documentUuid,
             appName: loaded.manifest.appName ?? "container",
             lastOpened: new Date().toISOString(),
+            // Stamped by the reseal a line above. Without it here, this
+            // device has no record of when its own copy was last written,
+            // and an arriving copy cannot be told newer or older than it.
+            savedAt: savedAtOf(loaded),
             html: loaded.html,
             publicKeyFingerprint: loaded.publicKeyFingerprint,
             revision: next,

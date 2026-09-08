@@ -29,6 +29,17 @@ export interface LibraryItem {
    */
   revision?: number;
   /**
+   * When the copy this device holds was last saved, from the manifest that
+   * was sealed around it (`savedAt`).
+   *
+   * Kept so an arriving copy of the same document can be told apart from the
+   * one already here: a document that comes back — a move returned in a game
+   * played by link — carries data this device has never seen, and a document
+   * opened again from the file it came from carries data older than what has
+   * been done to it since.
+   */
+  savedAt?: string;
+  /**
    * Links this device made through the store for the document, with the
    * token that retires each. Kept so the person who shared can unshare.
    */
