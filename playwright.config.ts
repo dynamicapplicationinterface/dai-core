@@ -9,9 +9,12 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   // "github" annotates each failure on the run's summary page, so a red build
   // says what broke without anybody downloading an artifact to find out.
+  // The count gate runs everywhere, because the failure it catches — tests
+  // that stopped being collected — is invisible in every other signal a green
+  // run produces. See tests/count-gate.ts.
   reporter: process.env.CI
-    ? [["github"], ["list"], ["html", { open: "never" }]]
-    : [["list"]],
+    ? [["github"], ["list"], ["html", { open: "never" }], ["./tests/count-gate.ts"]]
+    : [["list"], ["./tests/count-gate.ts"]],
   use: {
     // Containers are opened from disk, never served.
     acceptDownloads: true,
