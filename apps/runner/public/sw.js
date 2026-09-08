@@ -260,6 +260,17 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
+  /*
+   * The measurement pages answer for themselves.
+   *
+   * Every navigation below is treated as the shell, which is right for the
+   * opener and wrong for anything else served from this origin: /probe would
+   * be handed index.html and never load. It also has to bypass the cache on
+   * principle — a page whose job is to report what this browser still holds
+   * cannot be a copy this worker kept.
+   */
+  if (url.pathname === "/probe" || url.pathname.startsWith("/probe/")) return;
+
   /** Fetches, and keeps a copy of anything worth keeping. */
   const fromNetwork = () =>
     fetch(request).then((response) => {

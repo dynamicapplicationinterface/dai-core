@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Device probe</title>
+    <!--
+      Two measurements, and nothing else.
+
+      Track 5 assumes two facts about phones that nobody here has measured:
+      that a non-extractable key put in IndexedDB is still there a fortnight
+      later, and that one passkey's PRF output is the same value however the
+      browser reached the authenticator. The second is not a compatibility
+      question — if the platform flow and the QR flow hand back different
+      bytes for the same credential and the same input, then a replica key
+      derived from it changes identity when somebody signs in from a laptop,
+      and the data model is what breaks.
+
+      So: no build step, no imports, nothing shared with the opener. This page
+      writes to its own IndexedDB database and its own localStorage keys, and
+      the service worker is told to leave it alone (sw.js) so what it reports
+      is the browser's own state and never a cached copy of itself.
+
+      Persistence has a fourteen-day clock, which is the only reason this
+      exists before the reader work it interrupts.
+    -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfaf8;
+        --ink: #17181a;
+        --dim: #6a6d73;
+        --line: #dedbd5;
+        --card: #ffffff;
+        --ok: #1c6b3f;
+        --bad: #a3231f;
+        --wait: #7a5a12;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #131415;
+          --ink: #eceae6;
+          --dim: #9b9ea3;
+          --line: #2c2e31;
+          --card: #1b1c1e;
+          --ok: #6cc48d;
+          --bad: #ea8a86;
+          --wait: #d8b45c;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: max(20px, env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom));
+        background: var(--bg);
+        color: var(--ink);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        max-width: 46rem;
+        margin-inline: auto;
+      }
+      h1 {
+        font-size: 1.3rem;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 0 0 10px;
+      }
+      p {
+        margin: 0 0 10px;
+      }
+      .lede {
+        color: var(--dim);
+        margin-bottom: 22px;
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 4px 14px;
+        margin: 0 0 12px;
+        font-size: 14px;
+      }
+      dt {
+        color: var(--dim);
+      }
+      dd {
+        margin: 0;
+        font-family: var(--mono);
+        overflow-wrap: anywhere;
+      }
+      button {
+        font: inherit;
+        padding: 9px 14px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--ink);
+        cursor: pointer;
+        margin: 0 6px 6px 0;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .bad {
+        color: var(--bad);
+      }
+      .wait {
+        color: var(--wait);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        font-family: var(--mono);
+      }
+      .scroll {
+        overflow-x: auto;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 6px 10px 6px 0;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        color: var(--dim);
+        font-weight: 400;
+      }
+      .note {
+        color: var(--dim);
+        font-size: 13px;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Device probe</h1>
+    <p class="lede">
+      Two measurements for the relay work: whether a key survives here, and whether one passkey
+      gives the same secret however it is reached. Nothing here is sent anywhere.
+    </p>
+
+    <section>
+      <h2>Where this is running</h2>
+      <dl id="context"></dl>
+    </section>
+
+    <section>
+      <h2>1 &middot; Does a key survive</h2>
+      <p class="note" id="persist-what">
+        A non-extractable P-256 private key in IndexedDB. Come back in fourteen days without
+        clearing anything and see whether it still signs.
+      </p>
+      <dl id="persist"></dl>
+      <button id="make">Create the key</button>
+      <button id="check">Check it now</button>
+      <button id="ask">Ask to keep storage</button>
+      <button id="forget">Start over</button>
+    </section>
+
+    <section>
+      <h2>2 &middot; Is the passkey secret the same everywhere</h2>
+      <p class="note">
+        Register once, then evaluate from every route that can reach the same credential &mdash;
+        this device, a phone by QR code, a security key. The input is fixed, so the output must not
+        move. A row that differs from the first row for the same credential is the finding.
+      </p>
+      <dl id="prf-support"></dl>
+      <button id="reg-platform">Register on this device</button>
+      <button id="reg-cross">Register a phone or key</button>
+      <button id="eval">Evaluate</button>
+      <button id="clear-prf">Clear the log</button>
+      <div class="scroll"><table id="log"></table></div>
+      <p class="note" id="prf-note"></p>
+    </section>
+
+    <script>
+      "use strict";
+
+      const DB = "dai-probe";
+      const STORE = "keys";
+      const LOG_KEY = "dai-probe-prf-log";
+      // Fixed, and written out rather than derived, so the same bytes are
+      // evaluated on every device and every build of this page. Changing it
+      // invalidates every row already recorded.
+      const PRF_INPUT = new TextEncoder().encode("dai-probe-prf-input-v1");
+      const CHALLENGE = new TextEncoder().encode("dai-probe-not-a-real-challenge");
+
+      const $ = (id) => document.getElementById(id);
+      const hex = (buffer) =>
+        [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+      function rows(target, pairs) {
+        target.innerHTML = "";
+        for (const [label, value, cls] of pairs) {
+          const dt = document.createElement("dt");
+          dt.textContent = label;
+          const dd = document.createElement("dd");
+          dd.textContent = value;
+          if (cls) dd.className = cls;
+          target.append(dt, dd);
+        }
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Context                                                             */
+
+      async function showContext() {
+        const standalone =
+          window.matchMedia("(display-mode: standalone)").matches ||
+          window.navigator.standalone === true;
+        let persisted = "unknown";
+        let quota = "unknown";
+        try {
+          if (navigator.storage && navigator.storage.persisted) {
+            persisted = (await navigator.storage.persisted()) ? "yes" : "no";
+          }
+          if (navigator.storage && navigator.storage.estimate) {
+            const estimate = await navigator.storage.estimate();
+            if (estimate.quota) quota = `${Math.round(estimate.quota / 1e6)} MB`;
+          }
+        } catch {
+          /* Reporting only; a browser that declines tells us that much. */
+        }
+        rows($("context"), [
+          // Installed and browser are separate storage on iOS, which is the
+          // whole reason the relay exists. Recorded on every row so a result
+          // is never read as belonging to the wrong one.
+          ["Context", standalone ? "installed (home screen)" : "browser tab"],
+          ["Storage kept", persisted, persisted === "yes" ? "ok" : ""],
+          ["Quota", quota],
+          ["Today", new Date().toISOString().slice(0, 10)],
+          ["Browser", navigator.userAgent],
+        ]);
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* 1 — key persistence                                                 */
+
+      function openDb() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(DB, 1);
+          request.onupgradeneeded = () => request.result.createObjectStore(STORE);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      function transact(mode, run) {
+        return openDb().then(
+          (db) =>
+            new Promise((resolve, reject) => {
+              const tx = db.transaction(STORE, mode);
+              const out = run(tx.objectStore(STORE));
+              out.onsuccess = () => resolve(out.result);
+              out.onerror = () => reject(out.error);
+            }),
+        );
+      }
+
+      const readKey = () => transact("readonly", (store) => store.get("record"));
+      const writeKey = (record) => transact("readwrite", (store) => store.put(record, "record"));
+      const dropKey = () => transact("readwrite", (store) => store.delete("record"));
+
+      async function makeKey() {
+        const pair = await crypto.subtle.generateKey(
+          { name: "ECDSA", namedCurve: "P-256" },
+          // Not extractable: the same terms a replica key would be held on, so
+          // a browser that refuses to store one tells us now rather than in
+          // Track 2.
+          false,
+          ["sign", "verify"],
+        );
+        const record = {
+          privateKey: pair.privateKey,
+          publicJwk: await crypto.subtle.exportKey("jwk", pair.publicKey),
+          createdAt: new Date().toISOString(),
+          // Which context wrote it. If a key written by the installed app is
+          // missing in Safari on the same phone, that is the storage split and
+          // not an eviction.
+          createdIn:
+            window.matchMedia("(display-mode: standalone)").matches ||
+            window.navigator.standalone === true
+              ? "installed"
+              : "browser",
+        };
+        await writeKey(record);
+        await checkKey();
+      }
+
+      async function checkKey() {
+        let record;
+        try {
+          record = await readKey();
+        } catch (error) {
+          rows($("persist"), [["Key", `IndexedDB refused: ${error}`, "bad"]]);
+          return;
+        }
+        if (!record) {
+          rows($("persist"), [["Key", "none yet — press Create the key", "wait"]]);
+          return;
+        }
+
+        // Signing is the proof. A record that reads back with a CryptoKey that
+        // no longer works is the failure worth catching, and it would look
+        // like success to anything that only checked the record was there.
+        let signs = "no";
+        let cls = "bad";
+        try {
+          const signature = await crypto.subtle.sign(
+            { name: "ECDSA", hash: "SHA-256" },
+            record.privateKey,
+            CHALLENGE,
+          );
+          const publicKey = await crypto.subtle.importKey(
+            "jwk",
+            record.publicJwk,
+            { name: "ECDSA", namedCurve: "P-256" },
+            true,
+            ["verify"],
+          );
+          const good = await crypto.subtle.verify(
+            { name: "ECDSA", hash: "SHA-256" },
+            publicKey,
+            signature,
+            CHALLENGE,
+          );
+          signs = good ? "yes" : "signed, but does not verify";
+          cls = good ? "ok" : "bad";
+        } catch (error) {
+          signs = `no: ${error}`;
+        }
+
+        const age = (Date.now() - Date.parse(record.createdAt)) / 86400000;
+        rows($("persist"), [
+          ["Created", record.createdAt.slice(0, 16).replace("T", " ")],
+          ["Written in", record.createdIn],
+          ["Days since", age.toFixed(1)],
+          ["Still signs", signs, cls],
+          ["Public key", (record.publicJwk.x || "").slice(0, 22)],
+        ]);
+      }
+
+      $("make").onclick = () => makeKey().catch((e) => rows($("persist"), [["Failed", String(e), "bad"]]));
+      $("check").onclick = () => checkKey();
+      $("forget").onclick = () => dropKey().then(checkKey);
+      $("ask").onclick = async () => {
+        try {
+          await navigator.storage.persist();
+        } catch {
+          /* Safari has historically decided this for itself. */
+        }
+        showContext();
+      };
+
+      /* ------------------------------------------------------------------ */
+      /* 2 — PRF                                                             */
+
+      const loadLog = () => {
+        try {
+          return JSON.parse(localStorage.getItem(LOG_KEY) || "[]");
+        } catch {
+          return [];
+        }
+      };
+      const saveLog = (entries) => {
+        try {
+          localStorage.setItem(LOG_KEY, JSON.stringify(entries));
+        } catch {
+          /* A full or partitioned store loses the log, not the measurement. */
+        }
+      };
+
+      function drawLog() {
+        const entries = loadLog();
+        const table = $("log");
+        table.innerHTML =
+          "<tr><th>when</th><th>credential</th><th>reached by</th><th>PRF</th></tr>";
+        // First value per credential is the reference; anything else is the
+        // finding, so it is called out rather than left to the eye.
+        const first = new Map();
+        let mismatch = false;
+        for (const entry of entries) {
+          if (!first.has(entry.credential)) first.set(entry.credential, entry.prf);
+          const differs = first.get(entry.credential) !== entry.prf;
+          if (differs) mismatch = true;
+          const tr = document.createElement("tr");
+          for (const cell of [
+            entry.at.slice(0, 16).replace("T", " "),
+            entry.credential,
+            entry.how,
+            entry.prf.slice(0, 24),
+          ]) {
+            const td = document.createElement("td");
+            td.textContent = cell;
+            if (differs) td.className = "bad";
+            tr.append(td);
+          }
+          table.append(tr);
+        }
+        $("prf-note").textContent = !entries.length
+          ? ""
+          : mismatch
+            ? "A credential gave two different secrets. That is the result to report."
+            : "Every credential has given one value so far.";
+        $("prf-note").className = mismatch ? "note bad" : "note ok";
+      }
+
+      async function showPrfSupport() {
+        let platform = "unknown";
+        try {
+          if (window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable) {
+            platform = (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable())
+              ? "yes"
+              : "no";
+          }
+        } catch {
+          /* Reported as unknown. */
+        }
+        rows($("prf-support"), [
+          ["WebAuthn", window.PublicKeyCredential ? "available" : "missing", window.PublicKeyCredential ? "ok" : "bad"],
+          ["Built-in authenticator", platform],
+        ]);
+      }
+
+      async function register(attachment) {
+        const label = prompt("Name this credential (it is only a label):", attachment);
+        if (!label) return;
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge: CHALLENGE,
+            rp: { name: "DAI probe" },
+            user: {
+              // A fresh id each time, so registering twice gives two
+              // credentials to compare rather than replacing the first.
+              id: crypto.getRandomValues(new Uint8Array(16)),
+              name: label,
+              displayName: label,
+            },
+            pubKeyCredParams: [
+              { type: "public-key", alg: -7 },
+              { type: "public-key", alg: -257 },
+            ],
+            authenticatorSelection: {
+              authenticatorAttachment: attachment,
+              residentKey: "required",
+              userVerification: "required",
+            },
+            // Asked for at creation because some authenticators only enable
+            // the extension for credentials that requested it.
+            extensions: { prf: {} },
+          },
+        });
+        const supported = credential.getClientExtensionResults?.().prf?.enabled;
+        const store = JSON.parse(localStorage.getItem(LOG_KEY + "-ids") || "{}");
+        store[hex(credential.rawId).slice(0, 16)] = label;
+        localStorage.setItem(LOG_KEY + "-ids", JSON.stringify(store));
+        alert(
+          supported === false
+            ? `Registered "${label}", but this authenticator says it has no PRF. Evaluating will fail.`
+            : `Registered "${label}". Now press Evaluate — here, and from every other route that can reach it.`,
+        );
+      }
+
+      async function evaluate() {
+        const how = prompt("How is the authenticator being reached? (this device / QR / key):", "this device");
+        if (!how) return;
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            userVerification: "required",
+            // No allowCredentials: the browser offers everything it can reach,
+            // which is what makes the QR route selectable from a laptop.
+            extensions: { prf: { eval: { first: PRF_INPUT } } },
+          },
+        });
+        const results = assertion.getClientExtensionResults?.().prf?.results;
+        if (!results || !results.first) {
+          alert("No PRF came back. Record that: this route cannot derive a key at all.");
+          return;
+        }
+        const id = hex(assertion.rawId).slice(0, 16);
+        const names = JSON.parse(localStorage.getItem(LOG_KEY + "-ids") || "{}");
+        const entries = loadLog();
+        entries.push({
+          at: new Date().toISOString(),
+          credential: names[id] || id,
+          how,
+          prf: hex(results.first),
+        });
+        saveLog(entries);
+        drawLog();
+      }
+
+      const fail = (error) => alert(String(error));
+      $("reg-platform").onclick = () => register("platform").catch(fail);
+      $("reg-cross").onclick = () => register("cross-platform").catch(fail);
+      $("eval").onclick = () => evaluate().catch(fail);
+      $("clear-prf").onclick = () => {
+        saveLog([]);
+        drawLog();
+      };
+
+      showContext();
+      checkKey();
+      showPrfSupport();
+      drawLog();
+    </script>
+  </body>
+</html>
