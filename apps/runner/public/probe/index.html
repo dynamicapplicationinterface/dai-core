@@ -141,6 +141,14 @@
         color: var(--dim);
         font-weight: 400;
       }
+      .banner {
+        border: 1px solid var(--wait);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin: 0 0 14px;
+        font-size: 14px;
+        color: var(--ink);
+      }
       .note {
         color: var(--dim);
         font-size: 13px;
@@ -166,6 +174,20 @@
         A non-extractable P-256 private key in IndexedDB. Come back in fourteen days without
         clearing anything and see whether it still signs.
       </p>
+      <!--
+        Shown only once a key exists and until it is a fortnight old, because
+        that is exactly the window it applies to. Eviction is keyed to site
+        interaction, not to this page: opening a chess link or the demo on
+        this origin is a visit, and it resets the clock for that context
+        silently. Nothing in the readout would show that it had happened,
+        which is what makes it worth a banner rather than a note.
+      -->
+      <div id="quiet" class="banner" hidden>
+        <strong>Leave this site alone until then.</strong> Not just this page &mdash; opening
+        anything on opendai.app counts as a visit and restarts the clock for whichever context you
+        opened it in. Both the browser and the installed app have to sit untouched, so route any
+        real use through the desktop host or another browser until the fortnight is up.
+      </div>
       <dl id="persist"></dl>
       <button id="make">Create the key</button>
       <button id="check">Check it now</button>
@@ -179,6 +201,11 @@
         Register once, then evaluate from every route that can reach the same credential &mdash;
         this device, a phone by QR code, a security key. The input is fixed, so the output must not
         move. A row that differs from the first row for the same credential is the finding.
+      </p>
+      <p class="note">
+        Run the QR route from Chrome as well as Safari, and say which in the label. A value that
+        moves in Safari alone is a WebKit bug and a browser caveat; a value that moves in both is a
+        protocol divergence, and the exclusion stops being about Safari.
       </p>
       <dl id="prf-support"></dl>
       <button id="reg-platform">Register on this device</button>
@@ -298,6 +325,21 @@
             window.navigator.standalone === true
               ? "installed"
               : "browser",
+          // Stamped at creation, not read at checking time, because it is the
+          // variable the measurement turns on. If Safari granted persistence
+          // the key surviving proves little; the finding is whether an
+          // ungranted context survives. Two records without this column cannot
+          // be told apart a fortnight later.
+          persistedAtCreation: await (async () => {
+            try {
+              return (await navigator.storage?.persisted?.()) ? "granted" : "not granted";
+            } catch {
+              return "unknown";
+            }
+          })(),
+          // The whole string: eviction behaviour is a build-level fact, and
+          // "iOS 18" is not specific enough to match against a release note.
+          agent: navigator.userAgent,
         };
         await writeKey(record);
         await checkKey();
@@ -309,10 +351,12 @@
           record = await readKey();
         } catch (error) {
           rows($("persist"), [["Key", `IndexedDB refused: ${error}`, "bad"]]);
+          $("quiet").hidden = true;
           return;
         }
         if (!record) {
           rows($("persist"), [["Key", "none yet — press Create the key", "wait"]]);
+          $("quiet").hidden = true;
           return;
         }
 
@@ -350,10 +394,13 @@
         rows($("persist"), [
           ["Created", record.createdAt.slice(0, 16).replace("T", " ")],
           ["Written in", record.createdIn],
+          ["Storage was", record.persistedAtCreation || "not recorded"],
           ["Days since", age.toFixed(1)],
           ["Still signs", signs, cls],
           ["Public key", (record.publicJwk.x || "").slice(0, 22)],
+          ["Browser then", record.agent || "not recorded"],
         ]);
+        $("quiet").hidden = age >= 14;
       }
 
       $("make").onclick = () => makeKey().catch((e) => rows($("persist"), [["Failed", String(e), "bad"]]));

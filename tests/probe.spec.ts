@@ -75,3 +75,30 @@ test.describe("the device probe", () => {
     await expect(page.locator("#persist")).toContainText("none yet");
   });
 });
+
+test.describe("the fortnight the measurement needs", () => {
+  test("the quiet-period warning appears with the key and not before", async ({ page }) => {
+    // Eviction is keyed to site interaction, so opening anything on this
+    // origin restarts the clock for that context and nothing in the readout
+    // would show it had happened. That is what makes it a banner.
+    await page.goto(PROBE_URL);
+    await expect(page.locator("#quiet")).toBeHidden();
+
+    await page.locator("#make").click();
+    await expect(page.locator("#quiet")).toBeVisible();
+    await expect(page.locator("#quiet")).toContainText("opendai.app");
+
+    await page.locator("#forget").click();
+    await expect(page.locator("#quiet")).toBeHidden();
+  });
+
+  test("the record carries what the result has to be read against", async ({ page }) => {
+    // Whether persistence was granted is the variable the finding turns on,
+    // and it is stamped at creation rather than read at checking time.
+    await page.goto(PROBE_URL);
+    await page.locator("#make").click();
+    await expect(page.locator("#persist")).toContainText("Storage was");
+    await expect(page.locator("#persist")).not.toContainText("not recorded");
+    await expect(page.locator("#persist")).toContainText("Browser then");
+  });
+});
