@@ -97,6 +97,48 @@ is read and stays in the suite as a regression. **Left:** `hostLabel` UI beyond
 a prompt; a QR for the safety number; CDDL and byte vectors for 2.4; a real
 Sigstore signing flow at build time.
 
+## Later — device capabilities (health, notifications, and the rest)
+
+Not scheduled. Recorded because the shape is decided by things already built,
+and doing it the other way would be expensive to undo.
+
+**The bridge is the model.** `requestShare()` is the template: the application
+never holds the capability, it asks; the host performs the action in its own
+UI; the person decides; the application receives a result. A health read is the
+same shape — `requestHealth({ types, from, to })`, the host's own sheet naming
+what it will read, the host writing the rows into the application's database.
+The application never touches the device API and cannot ask twice unseen.
+
+**The card already accounts for it.** `claimsFor()` prints a promise only when
+the host holds every clause behind it, so a host with device access stops
+displaying "Can't see your other tabs, files or apps" on its own, with no
+special case. That is the part usually got wrong and it is already built.
+
+**Prefer growing hosts to growing the format.** The web opener cannot read
+HealthKit; there is no web API, so only a native host ever could, and a
+capability in the format is one most hosts cannot honour. A workout tracker is
+an ordinary document opened by a capable host, degrading the way applications
+already degrade on `hasSqliteEngine`. Nothing in the manifest reserves a
+capability field today, and adding one later is a `manifestVersion` bump, which
+readers already refuse by name.
+
+Three hazards, worst first:
+
+- **Notifications are not a read.** A read is the person handing data in while
+  looking at the application. A notification is the document reaching out while
+  it is *not open*, which breaks "inert when closed" — a stronger property than
+  the network one, and the reason it is safe to keep a stranger's file. The
+  honest version is the host scheduling a reminder about a document, which is
+  the host's notification and not the application's.
+- **Data read in is data that travels.** The document is the database, so a
+  heart rate read in can be sent by "Share app". The include-data toggle is not
+  adequate consent at that stakes; this likely needs data marked as never
+  travelling, which is a real format change and the expensive part.
+- **It makes signing load-bearing.** Unsigned is tolerable today *because* a
+  document can do nothing. Unsigned and reading health data is not the same
+  proposition, so capabilities are gated on publisher trust — which means the
+  trust and identity work has to be finished first, not shipped alongside.
+
 ## Phase 0 — Make "open from a stranger" true
 
 ### 0.2 The host owns the runtime
