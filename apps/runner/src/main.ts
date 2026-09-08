@@ -512,8 +512,17 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
       loaded = cartridge;
     }
 
-    // Update last opened time in library
+    /*
+     * Update last opened time in library.
+     *
+     * A library write replaces the whole record, so everything not named here
+     * is dropped — which is how opening a document from the library erased
+     * its own account of when its data was last written, and left an arriving
+     * copy with nothing to be newer than. Opening is not saving: `savedAt` is
+     * carried across untouched.
+     */
     await saveCartridgeToLibrary({
+      ...(item.savedAt !== undefined ? { savedAt: item.savedAt } : {}),
       documentUuid: loaded.manifest.documentUuid,
       appName: loaded.manifest.appName ?? "container",
       lastOpened: new Date().toISOString(),
@@ -1061,7 +1070,21 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         documentUuid: loaded.manifest.documentUuid,
         appName: loaded.manifest.appName ?? "container",
         lastOpened: new Date().toISOString(),
-        savedAt: savedAtOf(loaded),
+        /*
+         * When the data was last written, not when it was last mounted.
+         *
+         * Opening reseals the container around the stored database, and a
+         * reseal stamps `savedAt` with the time it ran — so reading it off
+         * `loaded` here would move this copy's clock forward every time the
+         * document was opened, with nothing changed. A copy opened after the
+         * other person moved would then look newer than their move and refuse
+         * it, which is the bug this whole change exists to fix, reintroduced
+         * one line further on.
+         *
+         * So: the arriving copy's own stamp when it won, and otherwise the
+         * one already recorded here, untouched.
+         */
+        savedAt: brought ? savedAtOf(cartridge) : (heldItem?.savedAt ?? savedAtOf(cartridge)),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(loaded.manifest.documentUuid),

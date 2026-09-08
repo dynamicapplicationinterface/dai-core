@@ -165,4 +165,43 @@ test.describe("a move sent back to somebody who has the app", () => {
     await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
     await his.close();
   });
+
+  test("opening your own copy after they moved does not make yours look newer", async ({ browser }) => {
+    test.slow();
+    const file = await board();
+
+    // He has the game and has played a move of his own, saved.
+    const his = await browser.newContext();
+    const bob = await his.newPage();
+    await open(bob, file);
+    await inside(bob).locator("#move").click();
+    await settled(bob);
+
+    // She moves after that, on her device, and sends it.
+    const hers = await browser.newContext();
+    const alice = await hers.newPage();
+    await open(alice, file);
+    await inside(alice).locator("#move").click();
+    await inside(alice).locator("#move").click();
+    await settled(alice);
+    const link = await shareLink(alice);
+    await hers.close();
+
+    /*
+     * He opens his own copy before following her link — the ordinary thing to
+     * do, and the thing that broke it. Opening reseals around the stored
+     * database and stamps the moment it ran; recording that as when his copy
+     * was saved would put his clock ahead of her move and refuse it.
+     */
+    await bob.goto("about:blank");
+    await bob.goto(RUNNER_URL);
+    await through(bob);
+    await expect(inside(bob).locator("#app")).toHaveText("move1");
+
+    await bob.goto("about:blank");
+    await bob.goto(link);
+    await through(bob);
+    await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
+    await his.close();
+  });
 });

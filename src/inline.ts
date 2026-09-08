@@ -100,6 +100,20 @@ const L = {
   version: 12,
   /** `[tool, model?, provider?]`, empty strings for absent. Version 3. */
   generator: 13,
+  /**
+   * When the data this link carries was last written (`savedAt`).
+   *
+   * Carried because a document can come back. Two people playing a game by
+   * link send one document to and fro, and the receiver has to tell a copy
+   * later than theirs from one older than it. Dropping this made every
+   * arriving copy unorderable, so the copy already on the device always won
+   * and the other person's move was discarded without a word.
+   *
+   * It goes unnoticed rather than refused when absent: the manifest is not in
+   * the signed set and its own bytes are not in `hashes`, so a manifest
+   * rebuilt without a field it arrived with still verifies.
+   */
+  savedAt: 14,
 } as const;
 
 const CARRIED = 0;
@@ -235,6 +249,8 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
   if (manifest.publisherName) fields.set(L.publisherName, manifest.publisherName);
   if (manifest.supersedes) fields.set(L.supersedes, uuidToBytes(manifest.supersedes));
   if (manifest.manifestVersion >= 3) fields.set(L.version, manifest.manifestVersion);
+  const savedAt = (manifest as { savedAt?: unknown }).savedAt;
+  if (typeof savedAt === "string" && savedAt) fields.set(L.savedAt, savedAt);
   if (manifest.generator?.tool) {
     fields.set(L.generator, [
       manifest.generator.tool,
@@ -470,6 +486,9 @@ export async function unpackInline(
       ? { supersedes: bytesToUuid(supersedesBytes) }
       : {}),
     ...(generator ? { generator } : {}),
+    ...(typeof fields.get(L.savedAt) === "string" && fields.get(L.savedAt)
+      ? { savedAt: fields.get(L.savedAt) as string }
+      : {}),
     createdAt,
     algorithm: "SHA-256",
     integrityPolicy: required ? "required" : "advisory",
