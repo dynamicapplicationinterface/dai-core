@@ -203,6 +203,9 @@ One fence around everything, not one per file: the file markers begin with three
 
 Every file starts with a line reading "--- file: " and its path, at the start of the line. Everything after that line belongs to that file until the next one. If a line inside a file would itself start with "--- file:", put a backslash in front of it.
 
+ONE DOCUMENT, NOT MANY
+A DAI document is one sealed file with one database. There is no way for a running app to create a second document — a "New Game" button does not make a new file, because nothing here spawns one. Model separate instances as rows in your own schema instead: a games table with one row per game, an active_game_id the UI reads to decide what it is showing, a "New Game" button that inserts a row and switches to it. Every save slot, every match, every list a person might call a "new one" lives in the same database as everything else in the app.
+
 FINALLY
 Make it look finished: real spacing, a considered empty state, keyboard support, and a dark mode via prefers-color-scheme. It is a document somebody will keep.
 
@@ -241,6 +244,14 @@ export const API: { call: string; does: string }[] = [
   {
     call: "window.dai.onAppModeChange(fn)",
     does: "Called when the container enters or leaves full-screen App Mode.",
+  },
+  {
+    call: "window.dai.requestShare()",
+    does:
+      "Opens the host's own share sheet — the same one behind its menu. Does not share " +
+      "anything itself: the person still sees the card, still chooses whether to include " +
+      "their data, and still presses Send. Put a Share button in the app's own UI instead " +
+      "of sending someone to find the host's menu; never build a substitute share flow.",
   },
 ];
 

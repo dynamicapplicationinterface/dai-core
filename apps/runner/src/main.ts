@@ -1373,6 +1373,17 @@ window.addEventListener("message", (event) => {
     const colour = typeof data.colour === "string" ? data.colour.trim() : "";
     if (!COLOUR.test(colour)) return;
     settleGround(colour);
+  } else if (data.type === "DAI_HOST_REQUEST_SHARE") {
+    /*
+     * The application asked for its host's own share sheet.
+     *
+     * Identical to a tap on the menu's "Share app": the same sheet, the same
+     * name and icon read from the same manifest, the same choice of whether
+     * to include data, the same press of Send before anything is built. The
+     * application chose the moment; the person still chooses what happens.
+     */
+    if (!fromMountedContainer(event, data)) return;
+    void sendDocument();
   } else if (data.type === "DAI_HOST_SAVE_STATE") {
     // The runtime's own account of where the data stands. Shown, never
     // inferred: a green word here means the host acknowledged a write.

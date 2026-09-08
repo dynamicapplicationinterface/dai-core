@@ -1419,6 +1419,19 @@ function bridgeMain(): void {
       return saveState(exportDatabase(db), options);
     },
     saveState: saveState,
+    /*
+     * Opens the host's own share sheet — the same one behind its menu.
+     *
+     * Not a way to share: a way to ask the host to offer to. The host still
+     * builds the link, still shows the card with the name and icon this
+     * document declares, and the person still chooses whether to include
+     * their data and still has to press the button that sends it. This saves
+     * the two taps to find that menu; it does not skip anything the menu
+     * requires.
+     */
+    requestShare: () => {
+      window.parent.postMessage({ type: "dai:request-share" }, "*");
+    },
   };
 
   (window as unknown as Any).dai = api;
@@ -2295,6 +2308,13 @@ async function boot(): Promise<void> {
         { type: "DAI_HOST_SAVE_STATE", sessionNonce, state: status.state, error: status.error },
         "*",
       );
+      return;
+    }
+    // The application asking the host to offer its share sheet. Relayed
+    // exactly as asked — no data of the application's choosing rides along,
+    // because none is needed: the host reads the document it already has.
+    if (event.source === frame.contentWindow && relay?.type === "dai:request-share") {
+      window.parent.postMessage({ type: "DAI_HOST_REQUEST_SHARE", sessionNonce }, "*");
       return;
     }
 
