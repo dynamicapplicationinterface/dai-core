@@ -220,6 +220,20 @@ BEFORE YOU ANSWER, CHECK
 - One layout, working at 390px wide and at 1280px. No second version for a phone.
 - The files are handed over as a tool call or as ONE fenced bundle, in the shape above.`;
 
+/**
+ * The four custom properties a host sets on the application's own root.
+ *
+ * Named here rather than only in the prose above so the website can publish
+ * the same list the recipe teaches, and a test can hold the two together. A
+ * page that drifted from what a model is told would be worse than no page.
+ */
+export const CSS_VARS: { name: string; is: string }[] = [
+  { name: "--dai-safe-top", is: "How much of the top edge a status bar covers." },
+  { name: "--dai-safe-right", is: "How much of the right edge is covered." },
+  { name: "--dai-safe-bottom", is: "How much of the bottom edge a home indicator covers." },
+  { name: "--dai-safe-left", is: "How much of the left edge is covered." },
+];
+
 /** One line each, for a reader who wants the surface rather than the argument. */
 export const API: { call: string; does: string }[] = [
   { call: "await window.dai.openDatabase()", does: "Opens the database inside this file." },

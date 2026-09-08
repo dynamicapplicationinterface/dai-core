@@ -5,6 +5,7 @@ import DownloadCard from '../../components/DownloadCard.vue';
 import MakerWalkthrough from '../../components/MakerWalkthrough.vue';
 import MakeYourOwn from '../../components/MakeYourOwn.vue';
 import Recipe from '../../components/Recipe.vue';
+import AppSurface from '../../components/AppSurface.vue';
 import Landing from '../../components/Landing.vue';
 import PhoneFlow from '../../components/PhoneFlow.vue';
 import './style.css';
@@ -18,6 +19,7 @@ export default {
     app.component('MakerWalkthrough', MakerWalkthrough);
     app.component('MakeYourOwn', MakeYourOwn);
     app.component('Recipe', Recipe);
+    app.component('AppSurface', AppSurface);
     app.component('Landing', Landing);
     app.component('PhoneFlow', PhoneFlow);
   }
