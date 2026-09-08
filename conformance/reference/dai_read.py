@@ -57,7 +57,43 @@ DATABASE_ENTRY = "document.sqlite"
 
 # §9.1: the versions a reader accepts. Anything else is refused by name, before
 # step 1, because the file is not damaged and the person can update the host.
-SUPPORTED_MANIFEST_VERSIONS = (2, 3)
+SUPPORTED_MANIFEST_VERSIONS = (2, 3, 4)
+
+# 2.1.1 §2.1: the capability names version 4 defines. Documentation only — a
+# reader refuses on what it implements, below, registered or not. §2.3 makes
+# these names immutable: a behaviour change is a new name, never a redefinition.
+CAPABILITY_REGISTRY = (
+    "session",
+    "shared-dataset",
+    "replicated",
+    "passphrase",
+    "recipient-bound",
+    "relay",
+)
+
+# What this reader implements, and therefore what it will open. Empty at
+# Track 0: the version gate ships before the capabilities do, so a document
+# needing one is refused by name rather than opened without it. Each track adds
+# its own name as it lands.
+IMPLEMENTED_CAPABILITIES: tuple[str, ...] = ()
+
+
+def check_requires(manifest: dict[str, Any]) -> list[str]:
+    """The capabilities this document needs that this reader does not have.
+
+    §2.2 allows no degraded mode. For the capabilities carrying safety rules —
+    rosters, sessions, confidentiality — opening without the feature is the
+    vulnerability the feature exists to close, so a reader that cannot honour
+    a declared capability refuses and names it.
+
+    Honoured whenever the field is present, not only at version 4: a document
+    that declares a dependency is declaring it, and ignoring the field on an
+    older version would be the silent degradation §2.2 forbids.
+    """
+    listed = manifest.get("requires")
+    if not isinstance(listed, list):
+        return []
+    return [n for n in listed if isinstance(n, str) and n not in IMPLEMENTED_CAPABILITIES]
 
 # §9.4: a writer emits an untagged COSE_Sign1; a reader accepts tag 18 around
 # it as well, because standard COSE libraries emit one.
@@ -481,6 +517,11 @@ def from_inline_link(link: str) -> InlineDocument:
     if version not in SUPPORTED_MANIFEST_VERSIONS:
         raise ContainerError(f"UNSUPPORTED_MANIFEST_VERSION: manifestVersion {version!r}.")
 
+    # Label 15: `requires`. Carried by the link because it is a refusal rather
+    # than a decoration — a rebuilt manifest that lost it would claim to need
+    # nothing and open on a reader that cannot honour it.
+    required = [n for n in fields.get(15, []) if isinstance(n, str)]
+
     manifest: dict[str, Any] = {
         "manifestVersion": version,
         "documentUuid": uuid,
@@ -491,6 +532,10 @@ def from_inline_link(link: str) -> InlineDocument:
         "integrityPolicy": "required" if fields.get(5) == 1 else "advisory",
         "hashes": hashes,
     }
+    if required:
+        # Sorted on the wire and here, so the rebuilt manifest signs the same
+        # bytes as the one that was packed.
+        manifest["requires"] = sorted(required)
     if isinstance(fields.get(6), int):
         manifest["validUntil"] = fields[6]
     if isinstance(fields.get(10), str) and fields[10]:
@@ -585,6 +630,12 @@ def verify(data: bytes, now: int) -> Report:
     version = manifest.get("manifestVersion")
     if version not in SUPPORTED_MANIFEST_VERSIONS:
         report.code = "UNSUPPORTED_MANIFEST_VERSION"
+        return report
+
+    # §2.1: a document that needs a capability this reader lacks is refused by
+    # name, never opened without it.
+    if check_requires(manifest):
+        report.code = "UNSUPPORTED_CAPABILITY"
         return report
 
     # 3. Entries, both directions. An unlisted entry is as much a failure as a

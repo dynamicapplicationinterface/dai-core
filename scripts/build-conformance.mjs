@@ -229,6 +229,46 @@ define(
 
 define(
   "version-4",
+  "Version 4, requiring nothing. A reader that knows 4 opens it; read down, never up (§2.2).",
+  {
+    mount: true,
+    ok: true,
+    entries: { mismatched: [], missing: [], unlisted: [] },
+    shell: "ok",
+    signature: "unsigned",
+    expiry: "none",
+  },
+  async () => {
+    const { html } = await buildContainer(base());
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    manifest.manifestVersion = 4;
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "version-4.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "version-4-requires-unimplemented",
+  "Version 4 naming a capability this reader does not implement. Refused by name, never opened without it (§2.2).",
+  {
+    mount: false,
+    ok: false,
+    code: "UNSUPPORTED_CAPABILITY",
+  },
+  async () => {
+    const { html } = await buildContainer(base());
+    const archive = archiveOf(html);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+    manifest.manifestVersion = 4;
+    manifest.requires = ["session"];
+    archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
+    return { file: "version-4-requires-unimplemented.dai.html", body: repack(html, archive) };
+  },
+);
+
+define(
+  "version-5",
   "A manifestVersion this reader does not know. Not damage: refused by name, with a remedy (§9.1).",
   {
     mount: false,
@@ -239,9 +279,9 @@ define(
     const { html } = await buildContainer(base({ signingKey: KEY, manifestVersion: 3 }));
     const archive = archiveOf(html);
     const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
-    manifest.manifestVersion = 4;
+    manifest.manifestVersion = 5;
     archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
-    return { file: "version-4.dai.html", body: repack(html, archive) };
+    return { file: "version-5.dai.html", body: repack(html, archive) };
   },
 );
 

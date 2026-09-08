@@ -122,6 +122,35 @@
       "name": "version-4",
       "file": "cases/version-4.dai.html",
       "form": "viewer",
+      "summary": "Version 4, requiring nothing. A reader that knows 4 opens it; read down, never up (§2.2).",
+      "expect": {
+        "mount": true,
+        "ok": true,
+        "entries": {
+          "mismatched": [],
+          "missing": [],
+          "unlisted": []
+        },
+        "shell": "ok",
+        "signature": "unsigned",
+        "expiry": "none"
+      }
+    },
+    {
+      "name": "version-4-requires-unimplemented",
+      "file": "cases/version-4-requires-unimplemented.dai.html",
+      "form": "viewer",
+      "summary": "Version 4 naming a capability this reader does not implement. Refused by name, never opened without it (§2.2).",
+      "expect": {
+        "mount": false,
+        "ok": false,
+        "code": "UNSUPPORTED_CAPABILITY"
+      }
+    },
+    {
+      "name": "version-5",
+      "file": "cases/version-5.dai.html",
+      "form": "viewer",
       "summary": "A manifestVersion this reader does not know. Not damage: refused by name, with a remedy (§9.1).",
       "expect": {
         "mount": false,

@@ -179,6 +179,19 @@ export interface ContainerManifest {
    */
   publisherName?: string;
   /**
+   * The capabilities this document depends on, by name (spec 2.1.1 §2.1).
+   *
+   * In the signed set, so what a document requires cannot be edited away by
+   * anything but the key that signed it. A reader opens the document only if
+   * it implements every entry; anything else is refused by name rather than
+   * opened without the feature, because for the capabilities that carry
+   * safety rules — rosters, sessions, confidentiality — "open without it" is
+   * the vulnerability the feature exists to close.
+   *
+   * `broadcast` and `open` are the base behaviour and are never listed.
+   */
+  requires?: string[];
+  /**
    * The document this one replaces, by UUID. Covered by the signature, and
    * honoured by a host only when this document is signed by the same key the
    * host pinned for that one — otherwise anybody could claim to be the next
@@ -722,6 +735,8 @@ export interface SignedView {
   publisherName?: string;
   /** Present only when this document replaces another. */
   supersedes?: string;
+  /** Present only when the document names capabilities; version 4. */
+  requires?: string[];
   /** Present only when set; version 3. */
   generator?: Generator;
   createdAt: string;
@@ -839,6 +854,7 @@ export function signedViewOf(manifest: {
   favicon?: string;
   publisherName?: string;
   supersedes?: string;
+  requires?: string[];
   generator?: Generator;
   createdAt: string;
   algorithm: string;
@@ -855,6 +871,7 @@ export function signedViewOf(manifest: {
     favicon: manifest.favicon ?? "",
     publisherName: manifest.publisherName,
     supersedes: manifest.supersedes,
+    requires: manifest.requires,
     generator: manifest.generator,
     createdAt: manifest.createdAt,
     algorithm: manifest.algorithm,
@@ -895,6 +912,12 @@ export function signedBytes(view: SignedView): Uint8Array {
   // every container signed before names existed still verifies unchanged.
   if (view.publisherName) fields.set("publisherName", view.publisherName);
   if (view.supersedes) fields.set("supersedes", view.supersedes);
+  // Sorted, so two writers listing the same capabilities in a different order
+  // sign the same bytes. Absent when empty, so a document that requires
+  // nothing signs exactly as it did before the field existed.
+  if (view.requires && view.requires.length > 0) {
+    fields.set("requires", [...view.requires].sort());
+  }
   if (view.generator?.tool) {
     const generator = new Map<CborValue, CborValue>([["tool", view.generator.tool]]);
     if (view.generator.model) generator.set("model", view.generator.model);

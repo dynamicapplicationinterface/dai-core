@@ -158,6 +158,7 @@ not what it claims.
 | `UNSUPPORTED_CRYPTO` | no | No WebCrypto: not a secure context. |
 | `SECTION_MISSING` | no | A required section is absent; the file is incomplete. |
 | `UNSUPPORTED_MANIFEST_VERSION` | no | A manifestVersion this reader does not know. The file is not damaged; the host needs updating. |
+| `UNSUPPORTED_CAPABILITY` | no | The document names a capability this reader does not implement. The file is not damaged; the host needs updating. Never opened without the capability: for rosters, sessions and confidentiality that is the hole the capability closes. |
 | `RUNTIME_UNAVAILABLE` | no | Published without its engine, for a host that already holds those exact bytes. This one does not. |
 | `LINK_DAMAGED` | no | The link does not decode: probably cut or wrapped in transit. |
 | `LINK_UNSUPPORTED` | no | The link names a carrier version or dictionary this reader does not have. |

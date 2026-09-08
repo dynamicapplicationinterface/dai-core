@@ -108,7 +108,8 @@ test.describe("a version 3 container, read", () => {
 
   test("a version this reader does not know is refused by name, not as damage", async () => {
     const built = await build({ manifestVersion: 3 });
-    const future = withManifest(built.html, (m) => { m.manifestVersion = 4; });
+    // Five, not four: four is a version this reader now knows.
+    const future = withManifest(built.html, (m) => { m.manifestVersion = 5; });
     const refusal = await verifyContainer(future).catch((e: unknown) => e);
     expect(refusal).toBeInstanceOf(ContainerError);
     expect((refusal as ContainerError).code).toBe("UNSUPPORTED_MANIFEST_VERSION");
@@ -117,7 +118,7 @@ test.describe("a version 3 container, read", () => {
 
     const audit = await auditContainer(parseContainer(future));
     expect(audit.ok).toBe(false);
-    expect(audit.unavailable).toMatch(/version 4/);
+    expect(audit.unavailable).toMatch(/version 5/);
   });
 
   test("version 2 is still read, and its reverse-reconciliation hole stays closed", async () => {

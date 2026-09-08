@@ -30,6 +30,13 @@ export const REFUSALS = {
     recoverable: false,
     means: "A manifestVersion this reader does not know. The file is not damaged; the host needs updating.",
   },
+  UNSUPPORTED_CAPABILITY: {
+    recoverable: false,
+    means:
+      "The document names a capability this reader does not implement. The file is not damaged; " +
+      "the host needs updating. Never opened without the capability: for rosters, sessions and " +
+      "confidentiality that is the hole the capability closes.",
+  },
   RUNTIME_UNAVAILABLE: {
     recoverable: false,
     means: "Published without its engine, for a host that already holds those exact bytes. This one does not.",

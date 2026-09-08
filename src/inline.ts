@@ -114,6 +114,18 @@ const L = {
    * rebuilt without a field it arrived with still verifies.
    */
   savedAt: 14,
+  /**
+   * The capabilities the document depends on (`requires`, spec §2.1).
+   *
+   * Carried because it is a refusal, not a decoration. A link that dropped it
+   * would rebuild a manifest claiming to need nothing, and a reader without
+   * the capability would open the document instead of refusing by name —
+   * which for a session or a roster is exactly the hole the capability
+   * closes. It is also in the signed set, so a signed document whose
+   * `requires` went missing in transit would fail its signature rather than
+   * open quietly; carrying it keeps a legitimate link verifiable.
+   */
+  requires: 15,
 } as const;
 
 const CARRIED = 0;
@@ -249,6 +261,9 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
   if (manifest.publisherName) fields.set(L.publisherName, manifest.publisherName);
   if (manifest.supersedes) fields.set(L.supersedes, uuidToBytes(manifest.supersedes));
   if (manifest.manifestVersion >= 3) fields.set(L.version, manifest.manifestVersion);
+  if (Array.isArray(manifest.requires) && manifest.requires.length > 0) {
+    fields.set(L.requires, [...manifest.requires].sort());
+  }
   const savedAt = (manifest as { savedAt?: unknown }).savedAt;
   if (typeof savedAt === "string" && savedAt) fields.set(L.savedAt, savedAt);
   if (manifest.generator?.tool) {
@@ -486,6 +501,9 @@ export async function unpackInline(
       ? { supersedes: bytesToUuid(supersedesBytes) }
       : {}),
     ...(generator ? { generator } : {}),
+    ...(Array.isArray(fields.get(L.requires)) && (fields.get(L.requires) as unknown[]).length > 0
+      ? { requires: (fields.get(L.requires) as unknown[]).filter((n): n is string => typeof n === "string") }
+      : {}),
     ...(typeof fields.get(L.savedAt) === "string" && fields.get(L.savedAt)
       ? { savedAt: fields.get(L.savedAt) as string }
       : {}),

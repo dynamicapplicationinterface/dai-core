@@ -157,7 +157,64 @@ function fillFromHost(
 }
 
 /** The versions this reader knows (spec §9.1). */
-export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3];
+export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3, 4];
+
+/**
+ * The capability names version 4 defines (spec 2.1.1 §2.1).
+ *
+ * Documentation, not a gate: a reader refuses on what it *implements*, below,
+ * whether or not a name is registered here. Recorded so the next capability is
+ * added to a list rather than invented twice, and because §2.3 makes these
+ * names immutable — a behaviour change is a new name, never a redefinition.
+ */
+export const CAPABILITY_REGISTRY: readonly string[] = [
+  "session",
+  "shared-dataset",
+  "replicated",
+  "passphrase",
+  "recipient-bound",
+  "relay",
+];
+
+/**
+ * What this reader actually implements, and therefore what it will open.
+ *
+ * Empty at Track 0 by design. The version gate ships before any of the
+ * capabilities do, so a document requiring one is refused by name rather than
+ * opened without it. Each track adds its own name here as it lands:
+ * `replicated` with Track 1, `session` and `shared-dataset` with Track 3,
+ * `passphrase` and `recipient-bound` with Track 4, `relay` with Track 5.
+ *
+ * A document listing nothing — every document that exists today — is
+ * unaffected.
+ */
+export const IMPLEMENTED_CAPABILITIES: readonly string[] = [];
+
+/**
+ * Refuses a document that needs something this reader does not have.
+ *
+ * Named in the refusal, because "this app cannot open it" sends somebody to
+ * look for damage that is not there. There is deliberately no degraded mode:
+ * the capabilities that carry safety rules are exactly the ones where opening
+ * without the feature is the hole the feature was added to close (§2.2).
+ *
+ * Honoured whenever the field is present rather than only at version 4. A
+ * document that declares a dependency is declaring it; ignoring the field on
+ * an older version would be the silent degradation §2.2 forbids.
+ */
+export function checkRequires(manifest: { requires?: unknown }): void {
+  const listed = manifest.requires;
+  if (!Array.isArray(listed) || listed.length === 0) return;
+  const missing = listed
+    .filter((name): name is string => typeof name === "string")
+    .filter((name) => !IMPLEMENTED_CAPABILITIES.includes(name));
+  if (missing.length === 0) return;
+  throw new ContainerError(
+    "UNSUPPORTED_CAPABILITY",
+    `This document needs ${missing.join(", ")}, which this app does not do yet. ` +
+      "Nothing is wrong with the file: update the app that opens it.",
+  );
+}
 
 /**
  * Refuses a version this reader does not know, by name.
@@ -674,6 +731,7 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
 
   try {
     checkManifestVersion(manifest);
+    checkRequires(manifest);
   } catch (error) {
     report.unavailable = (error as Error).message;
     return report;
@@ -804,6 +862,7 @@ export async function verifyContainer(
 ): Promise<VerifiedContainer> {
   const parsed = parseContainer(source, options);
   checkManifestVersion(parsed.manifest);
+  checkRequires(parsed.manifest);
   const report = await auditContainer(parsed);
 
   // One implementation of what checking means, presented two ways: a report for
