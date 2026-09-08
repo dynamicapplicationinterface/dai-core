@@ -41,7 +41,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | 3.2 | Mirrorable static opener | [x] `c9a6789` |
 | 3.3 | Unfurl without the blob | [x] `a7a0be8` + this — static half and edge half |
 | 3.4 | Stripped fragment degrades to a sentence | [x] `c4be316` sentence; no-key variant is a store policy |
-| 3.5 | iOS solved by the link | [~] the icon launches into the link; the device test is yours |
+| 3.5 | iOS solved by the link | [~] one way only: an icon launches into the link, but a link cannot reach an installed icon — see Phase 6 |
 | 3.6 | Second-use integrations only | [x] the rule is a test now |
 | 4.1 | Succession | [x] `c31a68b` — opener adopts under the same key; desktop and the scripted eval stage open |
 | 4.2 | "Modify this app" | [x] clipboard bundle, `get_dai_source`, header carries identity |
@@ -56,7 +56,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | v3 | confusables, two rules, two stores, root lists | [x] `5fcd4b0` |
 | v3 | identity: Sigstore bundle, offline | [x] `6925a25` |
 | v3 | compiler default flips to 3 | [x] `f8b8f8e` — after desktop v0.2.0 shipped the reader |
-| — | Media type registered | [ ] `docs/media-type-registration.md` drafted; the form is yours to submit |
+| — | Media type registered | [~] submitted 7 Sep; IANA asked whether review may go to the public media-types list, answered yes; awaiting the expert |
 | — | Desktop window shows the document's icon | [ ] |
 | — | Packing list date editable | [x] `30a83aa` |
 | — | dai-core 0.2.0 published | [ ] yours |
@@ -96,6 +96,63 @@ its installers were published. Every compiler writes version 3 now; version 2
 is read and stays in the suite as a regression. **Left:** `hostLabel` UI beyond
 a prompt; a QR for the safety number; CDDL and byte vectors for 2.4; a real
 Sigstore signing flow at build time.
+
+## Phase 6 — Correspondence: the document that comes back
+
+Everything above is distribution — one person makes a document, others
+receive it. A document that returns is a different lifecycle, found by two
+people playing a game of correspondence chess by link, and half of it is
+missing.
+
+### 6.1 Ordering — closed
+
+An arriving copy wins only when it is demonstrably later. `savedAt` is stamped
+into the manifest by every reseal, outside the signed set; label 14 carries it
+through the inline carrier (`c2e8c6c`); the library keeps this device's own
+stamp across opens, and only a save sets a new one. Later mounts, equal or
+older leaves what is here alone and says so, so an old link scrolled back to
+in a message thread cannot roll a game backwards. `698ad97`, `c2e8c6c`.
+`tests/returning-document.spec.ts` plays all three sequences.
+
+Two limits, written down rather than fixed: ordering is by wall clock across
+two devices, which is enough for correspondence and is not a causal clock; and
+a library record written before this carries no stamp, so that device's copy
+wins by default until it is saved once.
+
+### 6.2 A data-only carrier — open
+
+Every move sends the whole application. The recipient already has it, byte for
+byte, and only the database changed. This is the complaint that started it.
+
+The mechanism exists one level down: a compact link already elides the shell,
+the kit and the engine, names them by digest, and has the receiver rebuild
+them. The same move applied one level up — leave out the application when the
+receiver holds that `documentUuid`, name it by digest, let their copy supply
+it — turns a megabyte per move into a link shorter than a paragraph, with no
+store, no upload and no expiry. It carries no code at all, so it is a smaller
+trust surface than what is sent today, and the schema reconciliation that
+already runs is what refuses a database that does not fit.
+
+Needs: the carrier and its grammar in the spec, a refusal a person can act on
+when the receiver does not have the application (naming it, and who to ask),
+and a second choice in the send sheet — the application, or just the data.
+
+### 6.3 iOS: a link cannot reach an installed icon — open
+
+A home-screen web app and Safari are separate storage on iOS: separate
+library, OPFS and pins. A link tapped in Messages always opens Safari, and
+there is no way to route it into an installed web app — no share target, no
+URL scheme, no file handler, and universal links need a native app. So a game
+played from a home-screen icon never sees a move that arrives by link, and
+6.1's ordering never gets the chance to run.
+
+The cheap answer, untested on a device: install a document that travels as a
+*bookmark* rather than a web app — `display: browser` in its own manifest —
+so the icon and the links share Safari's storage. It costs the standalone
+chrome and can be decided per document, since the library already records
+which documents this device has both received and shared.
+
+The expensive answer is a native iOS host with universal links.
 
 ## Later — device capabilities (health, notifications, and the rest)
 
