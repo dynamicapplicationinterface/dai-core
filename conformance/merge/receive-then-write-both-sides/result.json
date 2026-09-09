@@ -1,0 +1,17 @@
+{
+  "what": "The sender's file, opened by a recipient who adopts a new identity, then a write on each side. Nothing is rejected and both copies converge.",
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0
+  }
+}

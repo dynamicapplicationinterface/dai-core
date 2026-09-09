@@ -585,6 +585,20 @@ Reopening your own copy is a no-op, so this is not "a new identity every
 launch". The host knows which case it is: a document from its own library is
 its own, and one that arrived as a file or a link is not.
 
+**The same person opening their own file on a second device is also a new
+replica, and that is the design rather than an oversight.** A replica is a
+copy, and their phone and their laptop are two copies: each allocates sequence
+numbers independently, and sharing an identity between them would produce
+exactly the collision this decision exists to prevent — the same
+`(replica, seq)` claimed twice, refused as tampering, by one person using two
+of their own devices. They appear as two replicas in `_dai_replicas` and both
+sets of rows are theirs.
+
+Track 2 does not change this. A replica key derived from a synced passkey is
+still per copy; what the key adds is proof that both replicas belong to the
+same person, not permission to merge them into one. Anyone who files the
+two-devices case as a bug should be shown this paragraph.
+
 Found by an application author writing a fixture for two people playing
 correspondence chess, against an implementation that had passed every
 conformance vector. No vector covered it because every vector builds both

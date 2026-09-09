@@ -1,0 +1,7 @@
+# cases
+e4	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1	1	11111111111111111111111111111111	[]	0	0	nil
+Nf3	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	2	2	22222222222222222222222222222222	[]	0	0	nil
+e5	open	nil	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	1	2	33333333333333333333333333333333	[]	0	0	nil
+# _dai_replicas
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

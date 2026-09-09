@@ -31,6 +31,7 @@ import {
   mergeFrom,
 } from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
+import { adoptReplica } from "../dist/dai-merge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(repo, "conformance", "merge");
@@ -64,6 +65,32 @@ function open(path, extra) {
     run: (sql, params = []) => void db.prepare(sql).run(...params),
     close: () => db.close(),
   };
+}
+
+/**
+ * B as a copy of A's file rather than as a second database.
+ *
+ * Every other vector builds two independent copies, which is why none of them
+ * could have caught T1-D22: the suite had no notion of a file arriving. This
+ * copies every row and A's own `_dai_replica`, exactly as opening a received
+ * file does, and then lets the recipient adopt an identity of its own.
+ */
+function receiveInto(to, from, id) {
+  for (const row of from.all('SELECT * FROM "cases"')) {
+    const names = Object.keys(row);
+    to.run(
+      `INSERT INTO "cases" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+      names.map((n) => row[n]),
+    );
+  }
+  const theirs = from.all("SELECT id, seq, lc FROM _dai_replica")[0];
+  to.run("DELETE FROM _dai_replica");
+  to.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
+    theirs.id, theirs.seq, theirs.lc,
+  ]);
+  to.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [theirs.id]);
+  // And the recipient becomes itself (T1-D22).
+  adoptReplica(to, id);
 }
 
 function asReplica(db, replicaId) {
@@ -164,6 +191,32 @@ const VECTORS = [
     },
   },
   {
+    name: "receive-then-write-both-sides",
+    cites: ["5", "T1-D22"],
+    what:
+      "The sender's file, opened by a recipient who adopts a new identity, then a write on each side. Nothing is rejected and both copies converge.",
+    /*
+     * The shape every exchange actually begins with, and the one no other
+     * vector models: the copies here are not two independent databases, they
+     * are one file and a copy of it.
+     *
+     * Without T1-D22 the recipient writes under the sender's replica id, both
+     * allocate the same (replica, seq), and the next merge refuses one of two
+     * honest rows as tampering. This vector is red against that reader and
+     * green against this one.
+     */
+    receives: true,
+    fill: (a, b) => {
+      // A is the sender. B is A's file after a recipient opened it.
+      createEntity(a, "cases", E1, { title: "e4", status: "open", weight: null });
+      void b;
+    },
+    afterReceive: (a, b) => {
+      createEntity(a, "cases", E2, { title: "Nf3", status: "open", weight: null });
+      createEntity(b, "cases", id(0x33), { title: "e5", status: "open", weight: null });
+    },
+  },
+  {
     name: "schema-digest-replicated-only",
     cites: ["T1-D14", "T1-D21"],
     what:
@@ -194,8 +247,14 @@ function run(vector, direction) {
   const a = open(join(out, vector.name, "scratch-a.db"), vector.localOnA);
   const b = open(join(out, vector.name, "scratch-b.db"));
   asReplica(a, A);
-  asReplica(b, B);
-  vector.fill(a, b);
+  if (vector.receives) {
+    vector.fill(a, b);
+    receiveInto(b, a, B);
+    vector.afterReceive(a, b);
+  } else {
+    asReplica(b, B);
+    vector.fill(a, b);
+  }
   const [left, right] = direction === "ab" ? [a, b] : [b, a];
   const result = mergeFrom(left, right, TABLES);
   const dump = canonicalDump(left, TABLES);
@@ -233,8 +292,14 @@ function writeInputs(vector) {
   const a = open(join(dir, "a.db"), vector.localOnA);
   const b = open(join(dir, "b.db"));
   asReplica(a, A);
-  asReplica(b, B);
-  vector.fill(a, b);
+  if (vector.receives) {
+    vector.fill(a, b);
+    receiveInto(b, a, B);
+    vector.afterReceive(a, b);
+  } else {
+    asReplica(b, B);
+    vector.fill(a, b);
+  }
   a.close();
   b.close();
 }

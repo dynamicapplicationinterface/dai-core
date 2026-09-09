@@ -178,6 +178,27 @@ does this: it ships the canonical schema text, not merely a pair of copies that
 happen to merge. The rule for the next one is to notice the gate and give it a
 vector on sight, rather than waiting for two implementations to differ.
 
+A second instance, found the same way and worth naming because it is a
+different flavour of the same blindness. Every merge vector built its two
+copies as independent databases. Real exchanges never start that way: they
+start with one file and a copy of it, opened by somebody else. Nothing in the
+suite modelled a file *arriving*, so the identity a recipient writes under —
+the first thing that happens in every exchange there has ever been — was
+untested, and an implementation that got it wrong made two people playing
+correspondence chess produce a row refused as tampering.
+
+`receive-then-write-both-sides` models it: the sender's file, a recipient who
+adopts an identity of their own, then a write on each side.
+
+**What that vector does and does not catch, stated because the difference
+matters.** It pins the outcome — two replicas whose sequence numbers overlap
+(`aaaa:1` and `bbbb:1` both present), nothing rejected, both copies converging.
+It does not catch a *host* that fails to adopt an identity in the first place,
+because adopting is something a host does before any merge, and the fixture's
+inputs already have it done. That half is covered by runtime tests, not by this
+suite. A fixture can pin what a reader concludes; it cannot pin what happened
+before the reader was called.
+
 ## What it does not cover
 
 Saving. `generation` advancing and the manifest surviving a save are host
