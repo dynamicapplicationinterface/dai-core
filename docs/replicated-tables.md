@@ -799,6 +799,7 @@ merged" sends somebody looking for damage that is not there.
 | `UNSUPPORTED_LEVEL` | merge: the sibling declares a level this reader does not implement |
 | `MERGE_MODULE_MISMATCH` | merge: the merge module the host sent is not the one this runtime was built against |
 | `NOT_REPLICATED` | merge: neither copy has a replicated table, so there is nothing a merge could do |
+| `WRITE_SURFACE_UNAVAILABLE` | write: the frame holds replicated tables and was sent no write rules, so it refuses rather than asking for them |
 | `MERGE_UNAVAILABLE` | merge: the host could not obtain the merge module, so nothing was attempted |
 | `MERGE_TIMED_OUT` | merge: the host stopped waiting. The frame may still finish; its answer carries the request id and is discarded |
 
@@ -838,6 +839,14 @@ success and changed nothing, which reads to a person as "it worked" and to a
 log as a merge that happened. A document without replicated tables is not one
 that failed to merge; it is one that is replaced whole, by `savedAt`
 succession, and saying which is the difference between an answer and nothing.
+
+`WRITE_SURFACE_UNAVAILABLE` is the fail-closed half of pushing the write rules
+at mount. The host decides whether a document is replicated and sends the
+module if it is; a frame that finds `_r_` columns and was sent nothing means
+the two disagree about what is replicated, which is a refusal and not a
+negotiation. It does not ask — asking is the channel that was deliberately not
+built, and a document that cannot write its own replicated tables says so
+rather than appearing to work.
 
 ## 11. Not in Track 1
 

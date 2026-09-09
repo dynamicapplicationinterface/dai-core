@@ -1182,6 +1182,83 @@ function bridgeMain(): void {
     }
   };
 
+  /**
+   * Takes the write rules the host pushed, once they check out.
+   *
+   * Shares `mergeModule`: the merge and the write rules are one module, so a
+   * document that has been given the surface has already been given the merge,
+   * and neither can be a different version of the other.
+   */
+  const adoptWriteRules = async (source: unknown): Promise<void> => {
+    if (mergeModule || typeof source !== "string" || source.length === 0) return;
+    const bytes = new TextEncoder().encode(source);
+    const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
+    const got = Array.prototype.map
+      .call(new Uint8Array(digest), (b: number) => b.toString(16).padStart(2, "0"))
+      .join("");
+    if (got !== MERGE_DIGEST) return;
+    const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    try {
+      mergeModule = await import(/* @vite-ignore */ url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  /**
+   * The one path an application writes a replicated row through.
+   *
+   * Every write goes here — the declarative `dai-form` surface is sugar over
+   * this and not a second implementation, because two ways of stamping a row
+   * is the drift problem in miniature and this project has found that problem
+   * four times already.
+   *
+   * It exists whether or not the rules have arrived, and refuses by name when
+   * they have not. A frame holding `_r_` columns with no module means the host
+   * and the frame disagree about what is replicated, and that is a refusal
+   * rather than a negotiation: it does not ask for the module, because asking
+   * is the channel that was deliberately not built.
+   */
+  const replicatedSurface = (db: Any): Any => {
+    const rules = (): Any => {
+      if (!mergeModule) throw new Error("WRITE_SURFACE_UNAVAILABLE");
+      return mergeModule as Any;
+    };
+    const rows = {
+      all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
+      run: (sql: string, params: Any[] = []) => {
+        db.exec(sql, { bind: params.slice() });
+      },
+    };
+    const hex = (bytes: Uint8Array): string =>
+      Array.prototype.map.call(bytes, (b: number) => b.toString(16).padStart(2, "0")).join("");
+    const entity = (): Uint8Array => crypto.getRandomValues(new Uint8Array(16));
+    return {
+      insert: (table: string, values: Any): string => {
+        const id = entity();
+        rules().createEntity(rows, table, id, values);
+        return hex(id);
+      },
+      change: (table: string, entityHex: string, values: Any): string => {
+        const id = fromHex(entityHex);
+        rules().changeEntity(rows, table, id, values);
+        return entityHex;
+      },
+      remove: (table: string, entityHex: string): string => {
+        rules().deleteEntity(rows, table, fromHex(entityHex));
+        return entityHex;
+      },
+    };
+  };
+
+  const fromHex = (text: string): Uint8Array => {
+    const out = new Uint8Array(Math.floor(text.length / 2));
+    for (let index = 0; index < out.length; index += 1) {
+      out[index] = parseInt(text.slice(index * 2, index * 2 + 2), 16);
+    }
+    return out;
+  };
+
   window.addEventListener("pagehide", () => {
     void flushAutosave();
   });
@@ -1378,6 +1455,14 @@ function bridgeMain(): void {
      * the conformance fixtures import, so what runs here is what three readers
      * agreed on.
      */
+    if (data.type === "dai:write-rules") {
+      // The same pin the merge uses. A module that does not hash to what this
+      // runtime was built against is not imported, and the document stays
+      // read-only for its replicated tables rather than writing rows under
+      // rules nobody vouched for.
+      void adoptWriteRules(data.source);
+      return;
+    }
     if (data.type === "dai:merge") {
       void mergeSibling(data)
         .then((report: Any) => {
@@ -1531,6 +1616,19 @@ function bridgeMain(): void {
       });
     },
     initSqlite: initSqlite,
+    /*
+     * The one path a replicated row is written through (T1-D23).
+     *
+     * insert / change / remove, each returning the entity as hex, which is
+     * how an application refers to a thing across rows. Bound to the handle
+     * the application already opened, so there is nothing to pass and no way
+     * to write to the wrong database.
+     *
+     * Present whether or not the rules arrived, and refusing by name when they
+     * did not: a document that cannot write its replicated tables says so
+     * rather than appearing to work.
+     */
+    replicated: (db: Any): Any => replicatedSurface(db),
     /*
      * Reconciled before the application is given the handle. An application
      * that cannot open the database cannot write over data it does not
@@ -2316,6 +2414,23 @@ async function boot(): Promise<void> {
      * digest of its own before importing it, so nothing here needs to vouch
      * for what it is passing along.
      */
+    /*
+     * The write rules for a replicated document, pushed by the host at mount.
+     *
+     * Pushed, not asked for: the host already knows whether this document has
+     * replicated tables, having computed it from bytes it verified, so no
+     * request channel exists for the frame to open. Relayed straight through —
+     * this shell does not import it, does not check it, and does not need to.
+     * The frame holds the digest it must match.
+     */
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_WRITE_RULES") {
+      const pushed = event.data as { source?: unknown };
+      frame.contentWindow?.postMessage(
+        { type: "dai:write-rules", source: pushed.source },
+        "*",
+      );
+      return;
+    }
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_MERGE") {
       const request = event.data as {
         id?: string;

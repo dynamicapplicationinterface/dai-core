@@ -1516,6 +1516,32 @@ window.addEventListener("message", (event) => {
      */
     recordTimings(data.payload?.timings as { phase: string; at: number }[] | undefined);
 
+    /*
+     * The write rules, pushed to a replicated document at mount (T1-D23).
+     *
+     * Pushed and not requested. The host already knows whether this document
+     * is replicated — it computed that from bytes it verified, before any of
+     * this — so it can simply send the module, and a frame-initiated request
+     * channel never has to exist. Host computes, host decides, frame receives
+     * and checks against its own pin.
+     *
+     * A document with no replicated tables is sent nothing and pays nothing.
+     * One that has them cannot function without these rules: the first move of
+     * a game is a write, long before any merge, so this is not lazy in the
+     * sense the merge delivery is — it is the difference between a working
+     * document and a read-only one.
+     */
+    void (async () => {
+      const data = loaded?.archive["document.sqlite"];
+      if (!data || !looksReplicated(data)) return;
+      const source = await loadMergeModule().catch(() => null);
+      if (!source) return;
+      (event.source as Window | null)?.postMessage(
+        { type: "DAI_HOST_WRITE_RULES", sessionNonce: mountedNonce, source },
+        "*",
+      );
+    })();
+
     (event.source as Window | null)?.postMessage(
       {
         type: "DAI_HOST_HANDSHAKE_ACK",
