@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { siblingTest, whyNotSibling } from "../src/sibling.js";
+import { readFileSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { rewriteReplicated } from "../src/replicated.js";
+import { looksReplicated, siblingTest, whyNotSibling } from "../src/sibling.js";
 
 /**
  * Whether a merge is offered at all (docs/replicated-tables.md §7).
@@ -75,5 +78,51 @@ test.describe("when it is not", () => {
       expect(said.length, because).toBeGreaterThan(20);
       expect(said, because).not.toMatch(/error|failed|invalid/i);
     }
+  });
+});
+
+test.describe("the host works out for itself what is replicated", () => {
+  /** A real database, since the point is what survives into stored bytes. */
+  function bytesFor(schema: string): Uint8Array {
+    const db = new DatabaseSync(":memory:");
+    db.exec(rewriteReplicated(schema).sql);
+    const path = `${process.env["TEMP"] ?? "/tmp"}/dai-detect-${Math.random().toString(36).slice(2)}.db`;
+    db.exec(`VACUUM INTO '${path.split("\\").join("/")}'`);
+    db.close();
+    const bytes = new Uint8Array(readFileSync(path));
+    rmSync(path);
+    return bytes;
+  }
+
+  test("a replicated document is recognised from bytes the host already verified", () => {
+    /*
+     * The host must not ask the frame this. The frame is the sandbox; the host
+     * decides whether a merge is offered. A flag from the frame would be a
+     * fact supplied by the party the decision exists to contain.
+     */
+    const replicated = bytesFor("-- dai:replicated\nCREATE TABLE moves (san TEXT NOT NULL);\n");
+    expect(looksReplicated(replicated)).toBe(true);
+  });
+
+  test("an ordinary document is not", () => {
+    expect(looksReplicated(bytesFor("CREATE TABLE notes (body TEXT);\n"))).toBe(false);
+  });
+
+  test("the declaration itself is gone, which is why the columns are what it looks for", () => {
+    // The compiler consumes `-- dai:replicated`, and runtime/schema.json holds
+    // a digest and migrations rather than schema text. The rewrite's own
+    // columns are what survives into bytes, stored verbatim by SQLite.
+    const replicated = bytesFor("-- dai:replicated\nCREATE TABLE moves (san TEXT NOT NULL);\n");
+    const text = new TextDecoder().decode(replicated);
+    expect(text).toContain("_r_replica");
+    expect(text).not.toContain("dai:replicated");
+  });
+
+  test("both markers are required, so one column name cannot fake it", () => {
+    // A heuristic until the manifest carries replication.tables, and its
+    // failure is safe in the only direction that matters: a false positive is
+    // an offer the frame then refuses by name, never a wrong merge.
+    const decoy = new TextEncoder().encode("a table storing the words _r_replica and nothing else");
+    expect(looksReplicated(decoy)).toBe(false);
   });
 });
