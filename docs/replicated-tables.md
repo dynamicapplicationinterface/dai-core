@@ -561,6 +561,36 @@ Shape only, then, with the hole named rather than left to be discovered: a
 `CHECK` that differs between copies shows up as rows that will not merge, not
 as a document that will not open.
 
+**T1-D22 — a copy that arrived from somebody else adopts a new replica
+identity on first open.** A replica is per *copy*, not per document. Draft 1
+§5.1 mints one on the first write to a replicated table and says nothing about
+a file that already carries one — which is every file anybody ever sends.
+
+Left alone, the recipient writes rows stamped with the sender's id. That is not
+an attribution problem to tidy up later: both copies then allocate the same
+`(replica, seq)` pairs independently, and the next exchange refuses one of them
+with `ROW_REJECTED` — the code that means a row id was claimed twice with
+different contents. **Two people using the document exactly as intended produce
+a row rejected as tampering, and neither has done anything wrong.**
+
+So on opening a copy this device did not write, the host mints a fresh replica
+and moves the sender's id into `_dai_replicas`. Their rows stay theirs; nothing
+already in the file changes hands. `seq` restarts at zero, because sequence
+numbers are per replica and this one has issued none. The clock does **not**
+restart: this copy has seen everything the file contains, so a row it writes
+now happened after all of them, and a reset clock would sort that row below the
+rows it was written in response to — which is what `_current` picks by.
+
+Reopening your own copy is a no-op, so this is not "a new identity every
+launch". The host knows which case it is: a document from its own library is
+its own, and one that arrived as a file or a link is not.
+
+Found by an application author writing a fixture for two people playing
+correspondence chess, against an implementation that had passed every
+conformance vector. No vector covered it because every vector builds both
+copies locally and never models a file *arriving* — the fixtures had no notion
+of a recipient. Vector `merge-recipient-adopts-identity` closes that.
+
 **T1-D16 — a refused row's parents supersede nothing.** T1-D13 keeps the rest
 of the exchange when one row is refused, and says nothing about the refused
 row's edges. They are dropped: the row is not in the set, so nothing it claims

@@ -171,6 +171,57 @@ export function ensureReplica(db: Rows, id: Uint8Array): void {
   db.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [id]);
 }
 
+/**
+ * Takes over a copy that arrived from somewhere else, under a new identity
+ * (T1-D22).
+ *
+ * A replica is per *copy*, not per document. A file that arrives from another
+ * person carries their `_dai_replica`, and `ensureReplica` above will not
+ * touch it, because a row is already there — so without this the recipient
+ * writes rows stamped with the sender's id.
+ *
+ * That is not a cosmetic attribution problem. Both people then allocate the
+ * same `(replica, seq)` pairs independently, and the next exchange refuses one
+ * of them: `ROW_REJECTED`, the code that means a row id was claimed twice with
+ * different contents. Two people using the document exactly as intended
+ * produce a row rejected as tampering, and neither has done anything wrong.
+ *
+ * So the host calls this when it opens a copy this device did not write. The
+ * sender's id moves into `_dai_replicas` — their rows stay theirs, and their
+ * authorship of everything already in the file is untouched.
+ *
+ * `seq` restarts at zero because sequence numbers are per replica and this
+ * replica has issued none. The clock does **not** restart: this copy has seen
+ * everything in the file, so its clock must be at least as high as anything
+ * it holds, or the first row it writes would sort below rows it was written
+ * after.
+ */
+export function adoptReplica(db: Rows, id: Uint8Array): boolean {
+  const current = db.all("SELECT id, lc FROM _dai_replica LIMIT 1")[0];
+  if (!current) {
+    ensureReplica(db, id);
+    return true;
+  }
+  const held = current["id"] as Uint8Array;
+  if (held instanceof Uint8Array && hex(held) === hex(id)) return false;
+
+  // The previous owner keeps their place among the replicas this copy knows.
+  db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [
+    held,
+    Number(current["lc"] ?? 0),
+  ]);
+  db.run("DELETE FROM _dai_replica");
+  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, ?)", [
+    id,
+    Number(current["lc"] ?? 0),
+  ]);
+  db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [
+    id,
+    Number(current["lc"] ?? 0),
+  ]);
+  return true;
+}
+
 /** The ids of an entity's current heads, sorted, for a row that supersedes them. */
 export function headsOf(db: Rows, table: string, entity: Uint8Array): string[] {
   return db

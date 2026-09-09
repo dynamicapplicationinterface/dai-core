@@ -7,6 +7,7 @@ import {
   triggerColumns,
 } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
+import { adoptReplica } from "../src/replicated-rows.js";
 import {
   applyRow,
   canonicalDump,
@@ -598,5 +599,128 @@ CREATE TABLE cases (
     expect(report.applied).toBe(1);
     a.close();
     b.close();
+  });
+});
+
+test.describe("a copy that arrived from somebody else", () => {
+  /** The file, opened on another device: same rows, same _dai_replica. */
+  function received(from: Rows & { close(): void }): Rows & { close(): void } {
+    const to = open();
+    for (const row of from.all("SELECT * FROM cases")) {
+      to.run(
+        "INSERT INTO cases (title,status,weight,_r_replica,_r_seq,_r_lc,_r_entity,_r_parents,_r_deleted,_r_superseded)" +
+          " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+          row["title"], row["status"], row["weight"], row["_r_replica"], row["_r_seq"],
+          row["_r_lc"], row["_r_entity"], row["_r_parents"], row["_r_deleted"], row["_r_superseded"],
+        ],
+      );
+    }
+    const theirs = from.all("SELECT id, seq, lc FROM _dai_replica")[0]!;
+    to.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
+      theirs["id"], theirs["seq"], theirs["lc"],
+    ]);
+    to.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [theirs["id"]]);
+    return to;
+  }
+
+  test("writes under its own identity, not the sender's", () => {
+    /*
+     * The bug this exists for, found by an application author writing a
+     * fixture for two people playing correspondence chess.
+     *
+     * `ensureReplica` leaves an existing `_dai_replica` alone, which is right
+     * for reopening your own copy and wrong for opening somebody else's file:
+     * the recipient wrote rows stamped with the sender's id. Both then
+     * allocated the same (replica, seq) pairs, and the next exchange refused
+     * one of them as ROW_REJECTED — the code meaning a row id was claimed
+     * twice with different contents. Two people using the document exactly as
+     * intended produced a row rejected as tampering.
+     */
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+
+    const bob = received(alice);
+    expect(adoptReplica(bob, B)).toBe(true);
+
+    // Bob writes as Bob.
+    createEntity(bob, "cases", E2, { title: "e5", status: "open", weight: null });
+    // By entity, not by sequence: Bob's counter restarted at 1, so both his
+    // row and Alice's carry seq 1 and ordering by it picks arbitrarily. That
+    // the two share a sequence number is exactly right — they are different
+    // replicas now, which is the whole point.
+    const written = bob.all("SELECT hex(_r_replica) r FROM cases WHERE _r_entity = ?", [E2])[0]!;
+    expect(String(written["r"]).toLowerCase()).toBe("bb".repeat(16));
+
+    // And Alice's next move does not collide with it.
+    changeEntity(alice, "cases", E1, { title: "Nf3", status: "open", weight: null });
+    const report = mergeSibling(alice, bob);
+    expect(report.refused).toBeUndefined();
+    expect(report.rejected).toEqual([]);
+    expect(report.applied).toBe(1);
+
+    alice.close();
+    bob.close();
+  });
+
+  test("the sender keeps authorship of what they wrote", () => {
+    // Their rows stay theirs. Adopting a new identity is about what this copy
+    // writes next, and says nothing about what is already in the file.
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+
+    const bob = received(alice);
+    adoptReplica(bob, B);
+
+    const author = bob.all("SELECT hex(_r_replica) r FROM cases")[0]!;
+    expect(String(author["r"]).toLowerCase()).toBe("aa".repeat(16));
+    // And the sender is among the replicas this copy knows.
+    const known = bob.all("SELECT hex(id) h FROM _dai_replicas").map((x) => String(x["h"]).toLowerCase());
+    expect(known).toContain("aa".repeat(16));
+    expect(known).toContain("bb".repeat(16));
+    bob.close();
+    alice.close();
+  });
+
+  test("the clock does not restart, or the first row written sorts below what it followed", () => {
+    /*
+     * `seq` restarts because sequence numbers are per replica. The clock must
+     * not: this copy has seen everything in the file, so a row it writes now
+     * happened after all of them, and a clock reset would make it sort below
+     * rows it was written in response to — which `_current` picks by.
+     */
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    for (let n = 0; n < 4; n += 1) {
+      createEntity(alice, "cases", bytes(0x50 + n), { title: `m${n}`, status: "open", weight: null });
+    }
+    const theirHighest = Number(alice.all("SELECT max(_r_lc) m FROM cases")[0]!["m"]);
+
+    const bob = received(alice);
+    adoptReplica(bob, B);
+    expect(Number(bob.all("SELECT seq FROM _dai_replica")[0]!["seq"])).toBe(0);
+
+    const mine = createEntity(bob, "cases", E2, { title: "next", status: "open", weight: null });
+    expect(mine._r_lc).toBeGreaterThan(theirHighest);
+    bob.close();
+    alice.close();
+  });
+
+  test("reopening your own copy changes nothing", () => {
+    // The other half: adopting is for a copy that arrived, and calling it with
+    // the identity already held is a no-op rather than a new replica each open.
+    const mine = open();
+    mine.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 3, 7)", [A]);
+    mine.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    expect(adoptReplica(mine, A)).toBe(false);
+    const state = mine.all("SELECT hex(id) h, seq, lc FROM _dai_replica")[0]!;
+    expect(String(state["h"]).toLowerCase()).toBe("aa".repeat(16));
+    expect(Number(state["seq"])).toBe(3);
+    mine.close();
   });
 });
