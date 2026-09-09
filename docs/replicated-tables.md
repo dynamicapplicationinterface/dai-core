@@ -100,6 +100,11 @@ CREATE TRIGGER T__no_update BEFORE UPDATE OF
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 CREATE TRIGGER T__no_delete BEFORE DELETE ON T
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
+
+-- The one permitted update, and only in one direction (T1-D10).
+CREATE TRIGGER T__superseded_monotonic BEFORE UPDATE OF _r_superseded ON T
+  WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
+  BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 ```
 
 `_r_superseded` is maintained at write, not derived by a scan. This is D5 of
@@ -132,7 +137,7 @@ tiebreak lexicographic on `_r_replica`, and exposes `_r_conflicted = 1`:
 CREATE VIEW T_current AS
   SELECT h.*,
          (SELECT count(*) FROM T_heads x
-           WHERE x._r_entity = h._r_entity AND x._r_deleted = 0) > 1
+           WHERE x._r_entity = h._r_entity) > 1
            AS _r_conflicted
   FROM T_heads h
   WHERE h._r_deleted = 0
@@ -261,17 +266,34 @@ converges on the same flags regardless of arrival order. Draft 1 never faced
 this because its view recomputed from scratch on every read; the flag is the
 optimization and this is its cost.
 
-**T1-D3 — a delete/change conflict shows the change, not the tombstone.**
+**T1-D3 — a tombstone loses to a change only when the two are concurrent.**
 2.1.1 says `T_current` picks the highest `_r_lc` head and never omits the
 entity; it does not say what happens when the winning head is a tombstone.
-`T_current` therefore picks among **non-deleted** heads, and an entity with any
-live head is shown with `_r_conflicted = 1`. The alternative — letting a
-tombstone win on clock order — deletes somebody's edit silently, which is the
-exact failure 2.1.1's no-omission rule exists to prevent. The tombstone is not
-lost: it is in `T_heads` and the entity is in `T_conflicts`, and resolution is
-the app writing a row with both parents. An entity all of whose heads are
-tombstones is deleted and absent from `T_current`, which is not an omission but
-an answer.
+
+The rule is scoped to concurrency, not to tombstones generally. A tombstone
+that names the change as a parent is a later delete of an edit its author had
+already seen, and it wins the ordinary way — the change is superseded, is not a
+head, and the entity is deleted. Without that scoping a delete could never
+stick against any edit that existed before it, which is not conflict resolution
+but a table that cannot be emptied.
+
+The case that needs a rule is two rows that are *both heads*, neither naming
+the other: nobody saw the other's work. There `T_current` picks among the
+**non-deleted** heads, because letting a tombstone win on clock order deletes
+somebody's edit silently — the exact failure the no-omission rule exists to
+prevent.
+
+And the surfaced row carries `_r_conflicted = 1`. It is not enough to quietly
+show the edit: the person has to see that somebody else deleted this and choose,
+rather than discover later that a delete they made was reverted without a word.
+So `_r_conflicted` counts **all** heads of the entity, not the live ones — an
+entity with one live head and one tombstone head is conflicted, and an earlier
+draft of this view read 0 there, which is the bug this amendment caught.
+
+The tombstone is never lost: it is in `T_heads`, the entity is in
+`T_conflicts`, and resolution is the app writing a row naming both parents. An
+entity all of whose heads are tombstones is deleted and absent from
+`T_current` — not an omission but an answer.
 
 **T1-D4 — the publisher check is "agrees", not "SPKI equal".** Draft 1
 assumes a signed document. Unsigned documents are ordinary in this project, and
@@ -289,6 +311,13 @@ would merge nothing and silently diverge, which is exactly the degradation the
 `requires` gate exists to refuse. `IMPLEMENTED_CAPABILITIES` gains
 `"replicated"` in the same change that ships the merge.
 
+Checked before building against this, because the ordering is only real if the
+readers are actually deployed: the opener serving opendai.app was verified to
+contain the version-4 reader commit. A returning visitor running a shell from
+cache is the remaining case, and it degrades correctly — a pre-v4 shell meets
+a version-4 document and refuses it by name with "update the app", which is
+what the gate is for, rather than opening it without the capability.
+
 **T1-D6 — `_r_seq` is the final tiebreak in `T_current`.** 2.1.1 gives highest
 `_r_lc`, then lexicographic `_r_replica`. Two heads for one entity from the
 *same* replica are reachable, so that pair is not a total order. Adding
@@ -304,19 +333,50 @@ anyway. The cost is one always-null column.
 optional and its value is the signature; unsigned, it is a hash anyone can
 recompute and nobody can attest.
 
-**T1-D9 — "identical tables" in the G1 vectors means a canonical dump, not
-identical files.** SQLite file bytes depend on page allocation and insertion
-order, so two hosts that converge correctly can hold different files. The
-comparison is a text dump of every replicated table plus `_dai_replicas`,
-rows sorted by `(hex(_r_replica), _r_seq)`, columns in declared order, blobs as
-lowercase hex. The Python reader's `merge` subcommand emits exactly this, and
-so does the TypeScript side.
+**T1-D9 — "identical tables" means a canonical dump, and the dump's encoding
+is specified here.** SQLite file bytes depend on page allocation and insertion
+order, so two hosts that converge correctly can hold different files.
 
-**T1-D10 — the update trigger is column-scoped.** Draft 1's blanket
-`BEFORE UPDATE` would forbid the very write D5 requires. The trigger names the
-immutable columns instead, leaving `_r_superseded` writable, and the author's
-own columns are covered by the rule that applications never write `_r_*` and by
-the kit's refusal to emit `UPDATE` against a replicated table.
+The comparison is a text dump of every replicated table plus `_dai_replicas`:
+rows ordered by `(hex(_r_replica), _r_seq)`, columns in declared order, one row
+per line, values tab-separated.
+
+The encoding is where two implementations actually diverge — not on the rows,
+on the printing of them. So it is fixed per storage class:
+
+| class | encoding |
+|---|---|
+| NULL | the three characters `nil` |
+| INTEGER | decimal, no separators, leading `-` for negatives |
+| TEXT | the UTF-8 text, with tab, newline and backslash backslash-escaped |
+| BLOB | lowercase hex, no prefix, empty blob as the empty string |
+| REAL | shortest round-trip decimal (the shortest string that parses back to the same double), always with a decimal point or exponent so it cannot be read as an integer |
+
+REAL carries the special cases explicitly, because this is where a language's
+default formatter will silently disagree: negative zero is `-0.0`, not-a-number
+is `nan`, and the infinities are `inf` and `-inf`. Python's `repr` and
+JavaScript's `Number.prototype.toString` both produce shortest round-trip
+digits, but they disagree on all four of those tokens by default.
+
+Vector `canonical-dump-real-edge-cases` covers this and **runs before
+`merge-commutative`**. Otherwise the first document with a float column fails
+the commutativity vector, and the merge — which is correct — takes the blame
+for the printer.
+
+**T1-D10 — the update trigger is column-scoped, and the flag only rises.**
+Draft 1's blanket `BEFORE UPDATE` would forbid the very write D5 requires. The
+trigger names the immutable columns instead, leaving `_r_superseded` writable.
+
+Writable in one direction only: 0 to 1 is permitted, 1 to 0 is
+`ROW_REJECTED`. Without that, D2's convergence argument has a hole big enough
+to lose data through — two hosts holding the identical row set, one of which
+has cleared a flag, disagree about `T_heads` forever, and nothing in a later
+exchange corrects it because the row sets already match and union merge has
+nothing left to do. Monotonicity is what makes the flag a function of the row
+set rather than of the history of writes to it.
+
+The author's own columns are covered by the rule that applications never write
+`_r_*` and by the kit's refusal to emit `UPDATE` against a replicated table.
 
 ## 9. Level 1 conformance vectors
 
@@ -336,13 +396,35 @@ reverses.
 | `merge-unrelated-uuid` | Different `documentUuid`. Sibling test fails at step 1; no merge offered. |
 | `merge-schema-behind` | Sibling one migration behind. Migrated in a scratch copy, then merged. |
 | `merge-schema-ahead` | Sibling one migration ahead. `SCHEMA_AHEAD`. |
+| `canonical-dump-real-edge-cases` | A table with REAL columns holding `-0.0`, `nan`, `inf`, `-inf` and a value needing 17 digits. Both readers emit the same dump. **Runs before `merge-commutative`.** |
 | `heads-via-superseded-flag` | `T_heads` equals the set a full parents scan would produce, including for rows merged in child-before-parent order (T1-D2). |
 | `current-conflict-deterministic-pick` | Identical `T_current` across both readers for a conflicted entity, including the same-replica tiebreak of T1-D6. |
 
 The Python reader gains a `merge` subcommand implementing §6 from this text
 alone. Both implementations must produce identical dumps for every vector.
 
-## 10. Not in Track 1
+## 10. What Level 1 does not defend against
+
+Stated plainly rather than left to be inferred from T1-D4, because it is the
+kind of thing that reads as an oversight later.
+
+At Level 1 a replica id is 16 random bytes a copy asserts about itself, and no
+row carries a signature. So **any file claiming the document's UUID and
+matching its schema digest can be offered as a sibling and merged**. It can
+assert any replica id, any label, and any rows it likes. The person choosing
+*Merge into my copy* is the only gate, and what they are told is where the file
+came from — not who wrote the rows inside it.
+
+This is not closed by being cleverer here. It is closed by Track 2, where the
+replica key makes authorship a proof rather than a claim, and rows from an
+unknown or mismatched key are refused rather than counted. Until then the
+honest description of a Level 1 merge is: *these rows came from a file you
+chose to merge.*
+
+The sibling test of §7 raises the cost — a stranger needs the UUID and a
+compatible schema — but it is a filter for accidents, not for adversaries.
+
+## 11. Not in Track 1
 
 Replica keys and row signatures (Draft 1 §5.2, §7), `_dai_snapshots`,
 `merge-level2-bad-sig`, `merge-replica-key-conflict`,
