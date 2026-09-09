@@ -848,6 +848,12 @@ negotiation. It does not ask — asking is the channel that was deliberately not
 built, and a document that cannot write its own replicated tables says so
 rather than appearing to work.
 
+It is not the name for a document that has not opened its database yet. That is
+`NO_DOCUMENT_OPEN`, and the two were briefly one name — which sent the first
+search for a real failure into the application, where nothing was wrong, rather
+than into the host that decided what to send. The faults are in different
+programs and belong under different names.
+
 ## 11. Not in Track 1
 
 Replica keys and row signatures (Draft 1 §5.2, §7), `_dai_snapshots`,

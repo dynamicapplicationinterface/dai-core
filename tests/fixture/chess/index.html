@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Velvet Chess</title>
+<meta name="description" content="A little chess, whenever it’s your turn.">
+<meta name="dai:does" content="Play a friend at your own pace, one thoughtful move at a time">
+<meta name="dai:does" content="Both copies merge into one game, whichever order the moves arrive">
+<meta name="dai:does" content="Keep every match, move, and win in your own game collection">
+<meta name="theme-color" content="#14101f">
+<link rel="icon" type="image/svg+xml" href="./icon.svg">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+<header class="masthead">
+ <img class="brand-icon" src="./icon.svg" alt="" width="42" height="42">
+ <div><div class="brand-name">velvet<span>chess</span></div><div class="brand-subtitle">GOOD MOVES. NO RUSH.</div></div>
+</header>
+<div id="boot-notice" class="boot-notice" role="status">Opening your board…</div>
+<main id="app" hidden>
+ <nav class="tabs" aria-label="Main navigation">
+  <button type="button" data-view="board" aria-current="page"><span data-icon="board"></span>Board</button>
+  <button type="button" data-view="games"><span data-icon="games"></span>Games <span class="nav-count" id="games-count"></span></button>
+  <button type="button" data-view="settings"><span data-icon="settings"></span>Options</button>
+ </nav>
+ <section id="view-board" aria-label="Chess board">
+  <div id="empty-board" class="empty-state" hidden>
+   <img src="./icon.svg" width="76" height="76" alt="Miniature purple chessboard">
+   <div class="eyebrow">MAKE YOUR FIRST MOVE</div><h1>A good game.<br>On your own time.</h1>
+   <p>Pick a friend, choose your pieces, and send the board. Every copy merges back into one game.</p>
+   <button class="button primary" type="button" data-new-game><span data-icon="plus"></span>New Game</button>
+  </div>
+  <div id="game-area">
+   <div class="title-row"><div><div class="eyebrow" id="turn-eyebrow">CORRESPONDENCE CHESS</div><h1 id="turn-title">Your move.</h1></div><span class="live-dot" aria-hidden="true"></span></div>
+   <p class="turn-subtitle" id="turn-subtitle"></p>
+   <div id="demo-note" class="demo-note" hidden>Try the practice board. <button type="button" data-new-game>Start your own game <span aria-hidden="true">↗</span></button></div>
+   <div id="conflict-banner" class="notice" hidden><strong id="conflict-title"></strong><p id="conflict-detail"></p><div class="button-row" id="conflict-choices"></div></div>
+   <div id="draw-banner" class="notice" hidden><p id="draw-message"></p><div class="button-row"><button class="button small" id="accept-draw">Accept draw</button><button class="button quiet small" id="decline-draw">Keep playing</button></div></div>
+   <div id="top-player" class="player-strip"></div>
+   <div class="board-scroll"><div id="board" class="board" role="grid" aria-label="Chessboard" aria-describedby="board-help"></div></div>
+   <p class="narrow-hint">Swipe sideways to see the full board.</p>
+   <div id="bottom-player" class="player-strip bottom-player"></div>
+   <div class="last-move"><div><span class="eyebrow" id="last-label">LAST MOVE</span><p id="last-description">The story starts with the first move.</p></div><button class="icon-button" id="replay-last" aria-label="Replay last move" title="Replay last move"><span data-icon="replay"></span></button></div>
+   <section class="move-card" aria-label="Your move">
+    <div class="move-card-head"><div><span class="eyebrow" id="move-step"></span><h2 id="move-summary">Pick a piece.</h2></div><button class="text-button" id="change-move" hidden>Change move</button></div>
+    <p id="move-instruction">Tap one of your pieces. Its legal destinations will light up.</p>
+    <div class="action-row"><button class="button lock-button" id="play-move"><span data-icon="lock"></span><span id="play-label">Play move</span></button><button class="button primary" id="share"><span data-icon="share"></span><span id="share-label">Share</span></button></div>
+   </section>
+   <div class="under-board-actions"><button type="button" class="text-button" id="game-actions-button">Game actions <span aria-hidden="true">⌄</span></button><button type="button" class="text-button" data-new-game><span data-icon="plus"></span>New Game</button></div>
+   <details id="history-section" class="history-section"><summary><span>Move history</span><span id="history-count"></span></summary><div class="history-head"><span>#</span><span>White</span><span>Black</span></div>
+    <div id="move-history"></div>
+    <p class="fine-print" id="ignored-note" hidden></p>
+   </details>
+   <p id="board-help" class="keyboard-help">Tap a piece, then a highlighted square. Keyboard: arrows to navigate, Enter to select, Escape to clear.</p>
+  </div>
+ </section>
+ <section id="view-games" hidden aria-labelledby="games-title">
+  <div class="section-heading"><div><div class="eyebrow">THE COLLECTION</div><h1 id="games-title">Your games.</h1></div><button class="button small" data-new-game><span data-icon="plus"></span>New Game</button></div>
+  <div class="stats-grid"><div><strong id="stat-open">0</strong><span>In play</span></div><div><strong id="stat-decided">0</strong><span>Decided</span></div><div><strong id="stat-drawn">0</strong><span>Drawn</span></div></div>
+  <div id="games-list"></div>
+  <p class="fine-print">Sharing sends the open game only. Your other games, names, and photos stay in this copy.</p>
+ </section>
+ <section id="view-settings" hidden aria-labelledby="settings-title">
+  <div class="eyebrow">MAKE YOURSELF AT HOME</div><h1 id="settings-title">The finer details.</h1>
+  <section class="settings-card"><h2>Appearance</h2><p>A little light. A little midnight. Your call.</p><div class="segmented" role="group" aria-label="Color theme"><button data-theme-choice="light"><span data-icon="sun"></span>Light</button><button data-theme-choice="dark"><span data-icon="moon"></span>Dark</button><button data-theme-choice="system"><span data-icon="monitor"></span>System</button></div><div class="setting-switch"><div><strong>Move animations</strong><p>Also respects your device’s reduced-motion setting.</p></div><button type="button" id="animations-toggle" class="switch" role="switch" aria-checked="true" aria-label="Move animations"><span></span></button></div></section>
+  <section class="settings-card" id="player-settings"><h2>Players in this game</h2><form id="rename-form"><label>White<input name="white_name" id="edit-white-name" maxlength="40" required autocomplete="off"></label><label>Black<input name="black_name" id="edit-black-name" maxlength="40" required autocomplete="off"></label><button class="button small" type="submit">Update names</button></form><p class="fine-print">Names are part of the shared game, so a rename reaches your opponent on the next merge. If you both rename at once, the game keeps one and shows you the other.</p><div class="photo-tools"><dai-attach run="INSERT OR REPLACE INTO photos(game_id, color, bytes) VALUES ((SELECT active_game_id FROM settings WHERE id = 1), 'w', :file)">White’s photo</dai-attach><dai-attach run="INSERT OR REPLACE INTO photos(game_id, color, bytes) VALUES ((SELECT active_game_id FROM settings WHERE id = 1), 'b', :file)">Black’s photo</dai-attach></div><button class="text-button" id="remove-photos">Remove photos</button><p class="fine-print">Photos stay in this copy. They are never shared.</p></section>
+  <section class="settings-card"><h2>How the turns work</h2><p>Try one legal move, then play it. Share sends the board through DAI. When their copy comes back, both boards merge into one game, whichever order the moves arrive in.</p><p>If you both move at the same turn on separate copies, nothing is lost: the board shows both moves and asks which one stands.</p><p class="fine-print">Names label the players; there are no accounts or identity checks.</p></section>
+  <section class="settings-card danger-card"><h2>A clean slate</h2><p>Hides every game and removes the names and photos from this copy. Moves already shared are part of the game and stay in it.</p><button class="button danger" id="clear-data">Clear All Data</button></section>
+  <div class="app-signature">velvet chess <span>2.0 · One move at a time.</span></div>
+ </section>
+ <footer><dai-save>Save</dai-save></footer>
+</main>
+<dialog id="new-game-dialog" aria-labelledby="new-game-title"><div class="dialog-body"><button class="dialog-close icon-button" data-close-dialog aria-label="Close new game"><span data-icon="close"></span></button><div class="eyebrow">ANOTHER GOOD GAME</div><h2 id="new-game-title">Who’s across the board?</h2><p>A fresh match. Your other games stay right where they are.</p><form id="new-game-form"><label>Your name<input id="setup-you" name="you" maxlength="40" required placeholder="Your name" autocomplete="given-name"></label><label>Their name<input id="setup-them" name="them" maxlength="40" required placeholder="Your opponent’s name" autocomplete="off"></label><fieldset><legend>Your pieces</legend><div class="color-choices"><label><input type="radio" name="color" value="w"><span class="color-disc white"></span>White</label><label><input type="radio" name="color" value="b"><span class="color-disc black"></span>Black</label><label><input type="radio" name="color" value="random" checked><span class="color-disc random"></span>Random</label></div></fieldset><p id="color-note" class="fine-print">White moves first. Random makes the choice for you.</p><button type="submit" class="button primary full-width">Let’s play <span data-icon="arrow"></span></button></form></div></dialog>
+<dialog id="promotion-dialog" aria-labelledby="promotion-title"><div class="dialog-body"><div class="eyebrow">A WELL-EARNED UPGRADE</div><h2 id="promotion-title">Choose your promotion.</h2><p>Your pawn can become any of these pieces.</p><div id="promotion-choices" class="promotion-choices"></div><button class="button quiet full-width" id="cancel-promotion">Go back</button></div></dialog>
+<dialog id="actions-dialog" aria-labelledby="actions-title"><div class="dialog-body"><button class="dialog-close icon-button" data-close-dialog aria-label="Close game actions"><span data-icon="close"></span></button><div class="eyebrow">AT THE BOARD</div><h2 id="actions-title">Game actions.</h2><button class="menu-action" id="offer-draw"><span>Offer a draw with this move</span><span id="offer-state"></span></button><p class="fine-print">The offer travels with your next played move.</p><button class="menu-action" id="claim-draw"><span>Claim a draw</span><span id="claim-state"></span></button><p class="fine-print" id="claim-help">Available for threefold repetition or 50 moves without a pawn move or capture.</p><button class="menu-action danger-text" id="resign"><span>Resign this game</span><span data-icon="flag"></span></button><button class="button quiet full-width" data-close-dialog>Close</button></div></dialog>
+<dialog id="confirm-dialog" aria-labelledby="confirm-title"><div class="dialog-body"><div class="eyebrow" id="confirm-eyebrow">PLEASE CONFIRM</div><h2 id="confirm-title"></h2><p id="confirm-detail"></p><label id="delete-label" hidden>Type CLEAR to confirm<input id="delete-confirm-input" autocomplete="off" autocapitalize="characters"></label><div class="button-row"><button class="button" id="confirm-no">Go back</button><button class="button primary" id="confirm-yes">Confirm</button></div></div></dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<dai-value id="kit-refresh-signal" query="SELECT random()" hidden></dai-value>
+<script type="application/sql" id="seed-sql">
+INSERT INTO settings(id) SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM settings WHERE id = 1);
+INSERT INTO ui_state(id) SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM ui_state WHERE id = 1);
+</script>
+<script type="module" src="./dai-kit.js"></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

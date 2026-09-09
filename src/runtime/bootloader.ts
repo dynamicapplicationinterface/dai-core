@@ -1168,6 +1168,15 @@ function bridgeMain(): void {
         // Rows changed under whatever is on screen. Scheduling a save also
         // makes the merge durable rather than living until the next write.
         scheduleAutosave(liveDb);
+        /*
+         * The application hears about it in its own window.
+         *
+         * This bridge is injected into the frame's document, so it shares a
+         * window with the application: a plain event reaches it, and no
+         * message channel or polling is needed. One name for one event — the
+         * runtime's — rather than a second name at the application boundary.
+         */
+        window.dispatchEvent(new CustomEvent("dai:merged", { detail: report }));
         return report;
       } catch (error) {
         liveDb.exec("ROLLBACK");
@@ -1219,15 +1228,35 @@ function bridgeMain(): void {
    * rather than a negotiation: it does not ask for the module, because asking
    * is the channel that was deliberately not built.
    */
-  const replicatedSurface = (db: Any): Any => {
+  const replicatedSurface = (): Any => {
+    /*
+     * Two ways to have no write surface, and they are not the same fault.
+     *
+     * No rules means the host did not push them: it did not think this
+     * document replicated, and the frame does. No handle means the
+     * application wrote before opening its database. Reported under one name,
+     * the first reads as the second, and the search starts in the application
+     * rather than in the host that decided what to send.
+     */
     const rules = (): Any => {
       if (!mergeModule) throw new Error("WRITE_SURFACE_UNAVAILABLE");
       return mergeModule as Any;
     };
+    /*
+     * The handle the application opened, looked up per call.
+     *
+     * Not passed in: an application should not be able to name the database it
+     * writes replicated rows into, and this object exists before any handle
+     * does — `window.dai` is built once, and the database is opened later.
+     */
     const rows = {
-      all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
+      all: (sql: string, params: Any[] = []) => {
+        if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
+        return liveDb.selectObjects(sql, params.slice());
+      },
       run: (sql: string, params: Any[] = []) => {
-        db.exec(sql, { bind: params.slice() });
+        if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
+        liveDb.exec(sql, { bind: params.slice() });
       },
     };
     const hex = (bytes: Uint8Array): string =>
@@ -1628,7 +1657,7 @@ function bridgeMain(): void {
      * did not: a document that cannot write its replicated tables says so
      * rather than appearing to work.
      */
-    replicated: (db: Any): Any => replicatedSurface(db),
+    replicated: replicatedSurface(),
     /*
      * Reconciled before the application is given the handle. An application
      * that cannot open the database cannot write over data it does not
