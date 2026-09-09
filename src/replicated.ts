@@ -317,6 +317,46 @@ CREATE TABLE _dai_replicas (
 }
 
 /**
+ * What the immutability trigger must name, checked against the table itself.
+ *
+ * The trigger has to list every column but `_r_superseded`, because SQLite has
+ * no "update of anything except". That list is produced by parsing the
+ * author's column declarations, which makes the parser trust-relevant: a
+ * column it fails to see is a column that can be edited in place, in a table
+ * whose whole contract is that it cannot.
+ *
+ * So the parse is not trusted. The caller loads the rewritten schema into a
+ * real engine and reads the columns back from it, and anything the trigger
+ * does not name is a build failure. A parser bug becomes a refused build
+ * rather than a document that quietly is not append-only.
+ */
+export function checkTriggerCoverage(
+  table: string,
+  columnsFromEngine: readonly string[],
+  namedByTrigger: readonly string[],
+): void {
+  const named = new Set(namedByTrigger);
+  const missing = columnsFromEngine.filter(
+    (column) => column !== "_r_superseded" && !named.has(column),
+  );
+  if (missing.length === 0) return;
+  throw new ReplicationError(
+    `${table} would allow ${missing.join(", ")} to be edited in place: the immutability ` +
+      "trigger does not name them. A replicated table is append-only, so this is a build " +
+      "failure rather than something to notice later.",
+  );
+}
+
+/** The columns a generated trigger names, read back out of the SQL. */
+export function triggerColumns(sql: string, table: string): string[] {
+  const found = new RegExp(
+    `CREATE TRIGGER ${table}__no_update BEFORE UPDATE OF\\s+([\\s\\S]*?)\\s+ON ${table}\\b`,
+  ).exec(sql);
+  if (!found) return [];
+  return found[1]!.split(",").map((name) => name.trim()).filter(Boolean);
+}
+
+/**
  * Rewrites an author's schema into the one SQLite is given.
  *
  * Returns the schema unchanged, and no tables, when nothing is declared — so
