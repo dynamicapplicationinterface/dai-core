@@ -741,6 +741,34 @@ chose to merge.*
 The sibling test of §7 raises the cost — a stranger needs the UUID and a
 compatible schema — but it is a filter for accidents, not for adversaries.
 
+**And the host does not ask about the replica, deliberately.** The standing
+choice of T1-D23 is per document: *keep this copy up to date* covers any copy
+that passes the sibling test, whoever sent it. A card asking "do you accept
+this replica?" would be asking about an identity nobody can verify — at Level 1
+a replica id is sixteen bytes a copy asserts about itself — and a consent
+prompt about an unverifiable claim is theatre. Theatre in a consent flow is
+worse than its absence, because it teaches people to click through the ones
+that matter.
+
+The proper answer arrives in two parts, and neither involves reading a
+database. Track 2 makes a replica id a key, so authorship becomes a proof.
+Track 3's roster makes admission a signed row, so *have I accepted this party*
+is answered host-side from bytes it can verify, before anything is handed to
+the frame. That is where the question belonged.
+
+Recorded because the tempting shortcut is to have the host parse enough SQLite
+to read `_dai_replica` out of an arriving copy. It should not: a hand-rolled
+b-tree reader in the trust path is a liability out of proportion to what it
+buys, and what it buys is a claim — the same claim, read more expensively. The
+other shortcut is to let the frame report the id, which puts the sandbox in
+charge of a fact the host's decision rests on, and that is the direction the
+whole arrangement exists to prevent.
+
+What is fine, and is not a gate: `newReplicas` travels in the merge result
+already, so an application can say *moves from someone new arrived* after the
+fact. That is the application telling a person what changed, which is its job,
+and it decides nothing.
+
 **And union merge converges over undisputed rows only.** A row id claimed with
 two different contents is disputed, and each copy keeps its own: neither can
 accept the other's without abandoning a row it holds. Two such copies never
