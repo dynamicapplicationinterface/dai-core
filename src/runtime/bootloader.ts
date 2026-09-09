@@ -343,6 +343,8 @@ interface Manifest {
    * `declaresReplication` is the same test, unreachable from serialized code.
    */
   replication?: { tables: string[]; level: number };
+  /** The capabilities the document declares; read only for the debug line. */
+  requires?: string[];
   /*
    * Descriptive fields, listed because the signature covers them.
    *
@@ -1396,7 +1398,9 @@ function bridgeMain(): void {
           lastRefusal ??
           (expectsRules
             ? "rules were expected and none arrived"
-            : "the host did not say this document was replicated");
+            : `the host did not say this document was replicated; manifest ${String(
+                host.manifestDebug ?? "?",
+              )}`);
         const error = new Error(`WRITE_SURFACE_UNAVAILABLE (${reason})`);
         error.name = "WRITE_SURFACE_UNAVAILABLE";
         throw error;
@@ -2159,6 +2163,8 @@ function frameLoader(): void {
       publicKeyFingerprint: data.facts.publicKeyFingerprint,
       // Rules are coming; wait for them before handing out a database.
       replicated: Boolean(data.facts.replicated),
+      // Carried for the write refusal only; see facts.manifestDebug.
+      manifestDebug: String(data.facts.manifestDebug ?? ""),
       nonce: nonce,
       sqlite: new Uint8Array(data.sqlite as ArrayBuffer),
       sqliteWasm: (data.wasm as ArrayBuffer) || null,
@@ -2508,6 +2514,22 @@ async function boot(): Promise<void> {
        */
       replicated:
         Array.isArray(manifest?.replication?.tables) && manifest.replication.tables.length > 0,
+      /*
+       * A short account of what the manifest actually said about replication,
+       * for the one case that has resisted every desk-side reproduction: a
+       * document that opens on a phone and reports the host never called it
+       * replicated. It rides in the write refusal, so a screenshot answers
+       * whether the manifest is an old version, whether the field is present
+       * but empty, or whether it is there and the frame still misread it.
+       * Costs a few bytes and is otherwise inert.
+       */
+      manifestDebug: manifest
+        ? `v${String(manifest.manifestVersion)} repl=${
+            manifest.replication
+              ? `[${(manifest.replication.tables ?? []).length}]`
+              : "absent"
+          } req=${Array.isArray(manifest.requires) ? manifest.requires.join(",") || "none" : "absent"}`
+        : "no-manifest",
     },
   };
 
