@@ -469,7 +469,7 @@ export function showCard(input: CardInput): Promise<void> {
   const kin = input.sibling;
   if (sibling) {
     sibling.hidden = !kin || kin.offer;
-    sibling.textContent = kin && !kin.offer ? kin.why : "";
+    sibling.textContent = kin && kin.offer === false ? kin.why : "";
   }
   if (merge) {
     merge.hidden = !kin?.offer;

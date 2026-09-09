@@ -15,6 +15,7 @@ import { heldEngine } from "./engine.js";
 import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } from "../../../src/store.js";
 import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
+import { looksReplicated, siblingTest, whyNotSibling } from "../../../src/sibling.js";
 import { confusables } from "./confusables.js";
 import { verifyIdentity } from "../../../src/identity.js";
 
@@ -966,7 +967,47 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const library = await listCartridgesFromLibrary();
     const succession = await planSuccession(cartridge, library);
 
+    /*
+     * Another copy of a document this device already has (§7).
+     *
+     * This has to be decided before `familiar` is used, because a sibling is
+     * familiar by definition — same document, already held — and the familiar
+     * path mounts without asking. For an ordinary document that is right: a
+     * newer copy replaces an older one by `savedAt` and nobody needs a
+     * question. For a replicated one it is wrong twice over. §1 says `savedAt`
+     * succession does not apply to a document with replicated tables at all,
+     * and §8.2 says a host must not merge without the person choosing it — so
+     * the silent path would both use the wrong rule and skip the only choice
+     * that matters.
+     *
+     * The replication test is the host's own (T1-D4 and `looksReplicated`),
+     * made from bytes it has already verified. The frame is never asked.
+     */
+    const incomingData = cartridge.archive["document.sqlite"];
+    const heldHere = library.find(
+      (item) => item.documentUuid === cartridge.manifest.documentUuid,
+    );
+    const kin =
+      heldHere && incomingData && looksReplicated(incomingData)
+        ? siblingTest(
+            {
+              documentUuid: cartridge.manifest.documentUuid,
+              publicKeyFingerprint: cartridge.publicKeyFingerprint,
+              replicated: true,
+            },
+            {
+              documentUuid: heldHere.documentUuid,
+              // The same document by the same publisher is the same
+              // application, so a replicated incoming copy means a replicated
+              // local one; there is nothing further to read.
+              publicKeyFingerprint: cartridge.publicKeyFingerprint,
+              replicated: true,
+            },
+          )
+        : undefined;
+
     const familiar =
+      !kin?.sibling &&
       verdict.status === "trusted" &&
       who.state !== "conflict" &&
       library.some((item) => item.documentUuid === cartridge.manifest.documentUuid);
@@ -1002,6 +1043,18 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
             "Nothing is uploaded — it runs on this device."
           : (carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here."),
         succession: succession?.card,
+        sibling: kin
+          ? kin.sibling
+            ? ({ offer: true } as const)
+            : ({ offer: false, why: whyNotSibling(kin.because) } as const)
+          : undefined,
+        onMerge: kin?.sibling && incomingData
+          ? async () => {
+              const report = await mergeSiblingInto(incomingData);
+              hideCard();
+              say(describeMerge(report), Boolean(report.refused));
+            }
+          : undefined,
         applied: ISOLATION_CLAUSES,
         clear: arrivedInClear,
         // A key worth naming: one this device may see again. Never for an
@@ -1772,6 +1825,66 @@ function flushDocument(): Promise<void> {
     window.addEventListener("message", onFlushed);
     target.postMessage({ type: "DAI_HOST_FLUSH", id }, "*");
   });
+}
+
+/**
+ * What a merge did, in a sentence.
+ *
+ * The counts are four numbers and a list, and three of them are the kind of
+ * detail that belongs in a log. What a person needs is what changed, whether
+ * anything now disagrees, and — if nothing happened — why.
+ *
+ * `conflicts` gets words rather than a number. "2 conflicts" tells somebody
+ * there is a problem and nothing about what to do; the entities are still
+ * there, both versions are kept, and the application is where they are looked
+ * at. A count with no route to the thing it counts is an alarm.
+ */
+export function describeMerge(report: MergeReport): string {
+  if (report.refused) {
+    switch (report.refused) {
+      case "SCHEMA_MISMATCH":
+        return "These two copies were built from different versions of the app, so their rows cannot be lined up. Open the newer one first.";
+      case "NOT_REPLICATED":
+        return "This document is replaced as a whole rather than merged.";
+      case "UNSUPPORTED_LEVEL":
+        return "This copy expects checks this app cannot make yet. Nothing was merged, and your copy is untouched.";
+      case "MERGE_MODULE_MISMATCH":
+        return "This app could not verify its own merge, so it did not run one. Your copy is untouched.";
+      case "MERGE_TIMED_OUT":
+        return "The merge did not finish in time. Nothing here has changed; try again.";
+      case "NOT_A_DATABASE":
+        return "There is nothing readable in that copy to merge.";
+      default:
+        return "Nothing was merged, and your copy is exactly as it was.";
+    }
+  }
+
+  const added = report.applied;
+  const parts: string[] = [];
+  parts.push(
+    added === 0
+      ? "Nothing new — you already had everything in that copy."
+      : added === 1
+        ? "One change came across."
+        : `${added} changes came across.`,
+  );
+  if (report.rejected.length > 0) {
+    // Said, never hidden: a row refused is a row somebody wrote that this copy
+    // will not hold, and the rest of the exchange still happened.
+    parts.push(
+      report.rejected.length === 1
+        ? "One row was refused because it claims an id another row already uses."
+        : `${report.rejected.length} rows were refused because they claim ids other rows already use.`,
+    );
+  }
+  if (report.conflicts > 0) {
+    parts.push(
+      report.conflicts === 1
+        ? "One thing was changed in both copies at once. Both versions are kept, and the app shows them together so you can choose."
+        : "Some things were changed in both copies at once. Both versions of each are kept, and the app shows them together so you can choose.",
+    );
+  }
+  return parts.join(" ");
 }
 
 /**
