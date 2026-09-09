@@ -358,7 +358,8 @@ export function mergeFrom(
    * `_r_lc`, so that row would lose to its own ancestors and the person's
    * newest edit would vanish behind an older one.
    */
-  let ceiling = Number(local.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
+  const before = Number(local.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
+  let ceiling = before;
   ceiling = Math.max(ceiling, Number(sibling.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0));
   for (const table of tables) {
     const highest = sibling.all(`SELECT max(_r_lc) AS m FROM "${table}"`)[0]?.["m"];
@@ -371,8 +372,8 @@ export function mergeFrom(
     local.all("SELECT hex(id) AS h FROM _dai_replicas").map((row) => String(row["h"])),
   );
   const theirs = [
-    ...sibling.all("SELECT id, label FROM _dai_replica"),
-    ...sibling.all("SELECT id, label FROM _dai_replicas"),
+    ...sibling.all("SELECT id FROM _dai_replica"),
+    ...sibling.all("SELECT id FROM _dai_replicas"),
   ];
   for (const replica of theirs) {
     const id = replica["id"] as Uint8Array;
@@ -381,10 +382,23 @@ export function mergeFrom(
     if (known.has(key)) continue;
     known.add(key);
     result.newReplicas += 1;
-    local.run("INSERT INTO _dai_replicas (id, label, first_seen, rows_seen) VALUES (?, ?, ?, 0)", [
+    /*
+     * The id, and nothing the sibling said about it.
+     *
+     * The label is deliberately not carried across (T1-D12). A label is a name
+     * this copy gives a key, never a name the key carries — keys cannot be
+     * faked and names can — so importing the sender's label would be a name
+     * travelling with an identity, which is the one thing that decision
+     * refused. This copy has not named this replica, so it has no name.
+     *
+     * `first_seen` is the local clock as it stood when the merge began, not
+     * the ceiling it is about to become (T1-D19): it records where in this
+     * copy's own timeline the replica appeared, and every replica arriving in
+     * one exchange sharing the ceiling would record nothing at all.
+     */
+    local.run("INSERT INTO _dai_replicas (id, label, first_seen, rows_seen) VALUES (?, NULL, ?, 0)", [
       id,
-      replica["label"] ?? null,
-      ceiling,
+      before,
     ]);
   }
 

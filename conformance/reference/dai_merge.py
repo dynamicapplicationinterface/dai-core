@@ -185,7 +185,8 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
     # highest-_r_lc pick and the newest edit disappears behind an older one.
-    ceiling = local.execute("SELECT lc FROM _dai_replica").fetchone()[0]
+    before = local.execute("SELECT lc FROM _dai_replica").fetchone()[0]
+    ceiling = before
     theirs = sibling.execute("SELECT lc FROM _dai_replica").fetchone()
     if theirs:
         ceiling = max(ceiling, theirs[0])
@@ -198,17 +199,21 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
     # Union, and nothing more. A replica id seen is a replica id known;
     # anything further would be inventing an authority Level 1 does not have.
     known = {row[0] for row in local.execute("SELECT hex(id) FROM _dai_replicas")}
-    seen = list(sibling.execute("SELECT id, label FROM _dai_replica")) + list(
-        sibling.execute("SELECT id, label FROM _dai_replicas")
+    seen = list(sibling.execute("SELECT id FROM _dai_replica")) + list(
+        sibling.execute("SELECT id FROM _dai_replicas")
     )
-    for rid, label in seen:
+    for (rid,) in seen:
         if bytes(rid).hex().upper() in known:
             continue
         known.add(bytes(rid).hex().upper())
         result["newReplicas"] += 1
+        # The id, and nothing the sibling said about it. A label is a name
+        # this copy gives a key, never one the key carries (T1-D12), so it is
+        # not imported; first_seen is the local clock as it stood when the
+        # merge began, not the ceiling it is about to become (T1-D19).
         local.execute(
-            "INSERT INTO _dai_replicas (id, label, first_seen, rows_seen) VALUES (?, ?, ?, 0)",
-            (rid, label, ceiling),
+            "INSERT INTO _dai_replicas (id, label, first_seen, rows_seen) VALUES (?, NULL, ?, 0)",
+            (rid, before),
         )
 
     for table in tables:

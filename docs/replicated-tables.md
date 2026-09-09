@@ -141,13 +141,8 @@ CREATE VIEW T_current AS
            AS _r_conflicted
   FROM T_heads h
   WHERE h._r_deleted = 0
-    AND h._r_seq = (
-      SELECT y._r_seq FROM T_heads y
-       WHERE y._r_entity = h._r_entity AND y._r_deleted = 0
-       ORDER BY y._r_lc DESC, hex(y._r_replica) ASC, y._r_seq ASC
-       LIMIT 1)
-    AND h._r_replica = (
-      SELECT y._r_replica FROM T_heads y
+    AND h._r_replica || ':' || h._r_seq = (
+      SELECT y._r_replica || ':' || y._r_seq FROM T_heads y
        WHERE y._r_entity = h._r_entity AND y._r_deleted = 0
        ORDER BY y._r_lc DESC, hex(y._r_replica) ASC, y._r_seq ASC
        LIMIT 1);
@@ -356,8 +351,27 @@ is `nan`, and the infinities are `inf` and `-inf`. Python's `repr` and
 JavaScript's `Number.prototype.toString` both produce shortest round-trip
 digits, but they disagree on all four of those tokens by default.
 
-Vector `canonical-dump-real-edge-cases` covers this and **runs before
-`merge-commutative`**. Otherwise the first document with a float column fails
+And the framing, which the first version of this decision left out entirely —
+it fixed how a *value* is written and said nothing about where a line ends or a
+section begins. A third implementation got every value right and had to read a
+fixture to learn the shape of the file:
+
+- One section per replicated table, in ascending name order, introduced by a
+  line `# <table>`.
+- Then one section `# _dai_replicas`, always last.
+- Table sections: one line per row, values tab-separated, columns in the order
+  `PRAGMA table_info` reports them, rows ordered by `(_r_replica, _r_seq)`.
+- The `_dai_replicas` section: one bare replica id per line, lowercase hex,
+  ascending. Not tab-separated, because there is one field (T1-D12).
+- The file ends with a newline after the final line.
+
+Ordering is by the raw bytes of `_r_replica`, and printing is lowercase hex.
+Sorting the uppercase form SQLite's `hex()` produces gives the identical order —
+digits precede letters in both cases, so the mapping is order-preserving — and
+that is stated here only because a reader should not have to prove it.
+
+Vector `canonical-dump-real-edge-cases` covers the value encoding and **runs
+before `merge-commutative`**. Otherwise the first document with a float column fails
 the commutativity vector, and the merge — which is correct — takes the blame
 for the printer.
 
@@ -444,6 +458,59 @@ set rather than of the history of writes to it.
 The author's own columns are covered by the rule that applications never write
 `_r_*` and by the kit's refusal to emit `UPDATE` against a replicated table.
 
+**T1-D15 — the merge reports `applied`, `duplicate`, `rejected` and
+`newReplicas`.** Draft 1 §9 says `rowsAdded` and nothing else, and a fixture
+carrying four names the prose never defines makes the fixture the
+specification. They are:
+
+| field | meaning |
+|---|---|
+| `applied` | rows inserted, having not been held before |
+| `duplicate` | rows already held with the same content (§6's idempotence) |
+| `rejected` | row ids held with *different* content, refused per T1-D13 |
+| `newReplicas` | ids written into `_dai_replicas` that were not there before |
+
+"Same content" means every author column, `_r_lc`, `_r_entity`, `_r_parents`
+and `_r_deleted`. `_r_superseded` is excluded (T1-D11), and that exclusion is
+what makes `duplicate` rather than `rejected` the answer on almost every real
+exchange: a sender's flag legitimately differs from ours.
+
+A rejected id is written in the `_r_parents` text form — lowercase hex, colon,
+sequence number. The `T_conflicts` view uses SQLite's uppercase `hex()` for the
+same idea, and that inconsistency is the view's, not this one's; anything a
+reader emits uses the lowercase form.
+
+**T1-D16 — a refused row's parents supersede nothing.** T1-D13 keeps the rest
+of the exchange when one row is refused, and says nothing about the refused
+row's edges. They are dropped: the row is not in the set, so nothing it claims
+about the set applies. Accepting its edges would let a row this copy refused to
+hold still decide which rows are heads, which is the refusal doing half its job.
+
+**T1-D17 — supersession is recomputed, not applied only to the rows just
+inserted.** §6 says "apply the supersession rule over the rows just inserted",
+which reads two ways. The normative one is the whole set: a row is superseded
+if any row present names it, evaluated over everything the copy holds. T1-D2
+makes the flag a function of the row set and T1-D10 makes it monotonic, so the
+narrow reading is a permitted optimisation and never a different answer — but
+only the wide one is the definition.
+
+**T1-D18 — which tables are replicated is read from the manifest, and a bare
+database is read structurally.** §3 puts the list in the signed manifest, which
+is right for a document. A conformance fixture is two databases and no
+manifest, so a reader given one takes any table carrying `_r_replica` and
+`_r_seq` to be replicated. Stated because it was a guess a third implementation
+had to make, and two readers guessing differently would disagree about what to
+merge before disagreeing about anything interesting.
+
+**T1-D19 — `first_seen` is the local clock before the merge advances it, and
+`rows_seen` is unused at Level 1.** §6 inserts into `_dai_replicas` without
+saying what goes in either column, and neither is in the dump (T1-D12), so two
+implementations can disagree and both pass every vector. That is the worst
+shape a gap can have, so: `first_seen` is `_dai_replica.lc` as it stood when
+the merge began, and `rows_seen` stays 0 until something is specified to
+maintain it. Neither is load-bearing; both are pinned so they cannot quietly
+diverge.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -462,7 +529,7 @@ reverses.
 | `merge-unrelated-uuid` | Different `documentUuid`. Sibling test fails at step 1; no merge offered. |
 | `merge-schema-behind` | Sibling one migration behind. Migrated in a scratch copy, then merged. |
 | `merge-schema-ahead` | Sibling one migration ahead. `SCHEMA_AHEAD`. |
-| `canonical-dump-real-edge-cases` | A table with REAL columns holding `-0.0`, `nan`, `inf`, `-inf` and a value needing 17 digits. Both readers emit the same dump. **Runs before `merge-commutative`.** |
+| `canonical-dump-real-edge-cases` | The REAL encoder over `-0.0`, `nan`, `inf`, `-inf` and a value needing 17 digits. **Runs before `merge-commutative`.** Note that SQLite cannot *store* NaN — it becomes NULL on insert — so that case is reachable only by calling the encoder directly, and the vector tests the encoder rather than a round trip. Positive zero prints `0.0`. |
 | `heads-via-superseded-flag` | `T_heads` equals the set a full parents scan would produce, including for rows merged in child-before-parent order (T1-D2). |
 | `current-conflict-deterministic-pick` | Identical `T_current` across both readers for a conflicted entity, including the same-replica tiebreak of T1-D6. |
 
