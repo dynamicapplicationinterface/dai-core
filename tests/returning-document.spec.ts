@@ -205,3 +205,58 @@ test.describe("a move sent back to somebody who has the app", () => {
     await his.close();
   });
 });
+
+test.describe("a newer copy arriving at its own icon's address", () => {
+  test("inline-newer-copy-of-held-document-supersedes", async ({ browser }) => {
+    test.slow();
+
+    /*
+     * The same succession, at the address an icon launches.
+     *
+     * A home-screen icon for a document that arrived by link carries both the
+     * document and `#u=<uuid>` — the payload and a hint naming it. The hint
+     * used to be read first: a library hit opened the local copy and returned,
+     * so the payload was never decompressed and `ingest`, which is where
+     * `savedAt` decides succession, was never reached. A newer copy of a
+     * document you already had could not win, by construction, and nothing on
+     * screen said a newer one had arrived.
+     *
+     * The payload decides now, and this is the case that could never pass
+     * before: the link is newer, the address names the document it carries,
+     * and the newer state is what opens.
+     */
+    const file = await board();
+    const { parseContainer } = await import("../src/container.js");
+    const { readFileSync } = await import("node:fs");
+    const uuid = parseContainer(readFileSync(file, "utf8")).manifest.documentUuid;
+
+    // Her device: a move, saved, shared.
+    const hers = await browser.newContext();
+    const alice = await hers.newPage();
+    await open(alice, file);
+    await inside(alice).locator("#move").click();
+    await expect(inside(alice).locator("#app")).toHaveText("move1");
+    await settled(alice);
+    const link = await shareLink(alice);
+    await hers.close();
+
+    // His device: the same game, no moves, and now held — so the hint below
+    // names something this device really has, which is the whole trap.
+    const his = await browser.newContext();
+    const bob = await his.newPage();
+    await open(bob, file);
+    await expect(inside(bob).locator("#app")).toHaveText("no moves");
+
+    // Her link, with the hint an icon would carry beside it.
+    const iconAddress = `${link}${link.includes("#") ? "&" : "#"}u=${uuid}`;
+    await bob.goto("about:blank");
+    await bob.goto(iconAddress);
+    await through(bob);
+
+    // Her move. Under the old ordering this said "no moves": his own copy,
+    // opened because the hint matched, with hers still sitting unread in the
+    // address bar.
+    await expect(inside(bob).locator("#app")).toHaveText("move1", { timeout: 60_000 });
+    await his.close();
+  });
+});
