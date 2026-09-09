@@ -1,5 +1,9 @@
 {
   "what": "A delete on one side and nothing on the other. Absent from current, present in heads.",
+  "cites": [
+    "5",
+    "T1-D3"
+  ],
   "converges": true,
   "stable": true,
   "ab": {

@@ -196,8 +196,27 @@ matters.** It pins the outcome — two replicas whose sequence numbers overlap
 It does not catch a *host* that fails to adopt an identity in the first place,
 because adopting is something a host does before any merge, and the fixture's
 inputs already have it done. That half is covered by runtime tests, not by this
-suite. A fixture can pin what a reader concludes; it cannot pin what happened
-before the reader was called.
+suite. **A fixture can pin what a reader concludes; it cannot pin what happened
+before the reader was called.**
+
+That sentence is the rule for deciding, for any new property, whether it wants
+a fixture or a runtime test — and most people will guess wrong the first time,
+because the property usually *reads* like something a fixture could hold.
+
+### Paired tests name each other
+
+A property split across a fixture and a runtime test leaves a hole that neither
+half reports. Delete the fixture and the runtime test still passes; delete the
+runtime test and the suite is still green. The property is gone and every
+signal is unchanged, which is the failure mode this whole directory exists to
+prevent.
+
+So the two halves cite each other by name, in both directions. The cost is two
+lines; the alternative is a hole that opens silently and stays open.
+
+| property | fixture | runtime test |
+|---|---|---|
+| a recipient writes under its own identity (T1-D22) | `receive-then-write-both-sides` | `tests/replicated-converge.spec.ts` — *a copy that arrived from somebody else* |
 
 ## What it does not cover
 

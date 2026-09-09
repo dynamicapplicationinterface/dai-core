@@ -1,5 +1,10 @@
 {
   "what": "The sender's file, opened by a recipient who adopts a new identity, then a write on each side. Nothing is rejected and both copies converge.",
+  "cites": [
+    "5",
+    "T1-D22"
+  ],
+  "pairedWith": "tests/replicated-converge.spec.ts — a copy that arrived from somebody else",
   "converges": true,
   "stable": true,
   "ab": {

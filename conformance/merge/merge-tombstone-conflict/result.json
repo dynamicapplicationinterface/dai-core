@@ -1,5 +1,9 @@
 {
   "what": "A delete on one side, a change on the other, concurrent. Current shows the change, flagged (T1-D3).",
+  "cites": [
+    "T1-D3",
+    "T1-D9"
+  ],
   "converges": true,
   "stable": true,
   "ab": {

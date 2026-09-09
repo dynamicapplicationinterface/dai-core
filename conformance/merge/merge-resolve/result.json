@@ -1,5 +1,9 @@
 {
   "what": "A change written while the conflict is open names both heads, which is what resolves it.",
+  "cites": [
+    "5",
+    "T1-D17"
+  ],
   "converges": true,
   "stable": true,
   "ab": {

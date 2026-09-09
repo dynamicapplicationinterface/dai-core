@@ -1,5 +1,10 @@
 {
   "what": "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
+  "cites": [
+    "4",
+    "T1-D2",
+    "T1-D10"
+  ],
   "converges": true,
   "stable": true,
   "ab": {

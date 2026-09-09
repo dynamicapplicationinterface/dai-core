@@ -1,5 +1,9 @@
 {
   "what": "B's rows only. Merging the same copy again adds nothing.",
+  "cites": [
+    "6",
+    "T1-D15"
+  ],
   "converges": true,
   "stable": true,
   "ab": {

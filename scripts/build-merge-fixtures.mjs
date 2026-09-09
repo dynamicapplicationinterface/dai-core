@@ -106,6 +106,7 @@ function asReplica(db, replicaId) {
 const VECTORS = [
   {
     name: "merge-disjoint",
+    cites: ["6", "T1-D9"],
     what: "Two replicas, entities that never meet. Every row is new to the other side.",
     fill: (a, b) => {
       createEntity(a, "cases", E1, { title: "mine", status: "open", weight: 1.5 });
@@ -114,6 +115,7 @@ const VECTORS = [
   },
   {
     name: "merge-idempotent",
+    cites: ["6", "T1-D15"],
     what: "B's rows only. Merging the same copy again adds nothing.",
     fill: (a, b) => {
       createEntity(b, "cases", E2, { title: "yours", status: "open", weight: null });
@@ -122,6 +124,7 @@ const VECTORS = [
   },
   {
     name: "merge-conflict",
+    cites: ["4", "T1-D6", "T1-D9"],
     what: "Both changed one entity from the same head. Two heads; current shows the deterministic pick, flagged.",
     fill: (a, b) => {
       createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
@@ -132,6 +135,7 @@ const VECTORS = [
   },
   {
     name: "merge-resolve",
+    cites: ["5", "T1-D17"],
     what: "A change written while the conflict is open names both heads, which is what resolves it.",
     fill: (a, b) => {
       createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
@@ -144,6 +148,7 @@ const VECTORS = [
   },
   {
     name: "merge-tombstone",
+    cites: ["5", "T1-D3"],
     what: "A delete on one side and nothing on the other. Absent from current, present in heads.",
     fill: (a, b) => {
       createEntity(a, "cases", E1, { title: "doomed", status: "open", weight: null });
@@ -153,6 +158,7 @@ const VECTORS = [
   },
   {
     name: "merge-tombstone-conflict",
+    cites: ["T1-D3", "T1-D9"],
     what: "A delete on one side, a change on the other, concurrent. Current shows the change, flagged (T1-D3).",
     fill: (a, b) => {
       createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
@@ -163,6 +169,7 @@ const VECTORS = [
   },
   {
     name: "merge-row-id-reused",
+    cites: ["T1-D13", "T1-D15", "T1-D16"],
     what: "A row id already held with different content. Refused and counted; the honest rows still merge.",
     // The one vector where the copies do not end up the same, and that is the
     // answer. Each side holds different content under bb:1 and refuses the
@@ -195,6 +202,11 @@ const VECTORS = [
     cites: ["5", "T1-D22"],
     what:
       "The sender's file, opened by a recipient who adopts a new identity, then a write on each side. Nothing is rejected and both copies converge.",
+    // Half a property. The other half — that a host adopts an identity at all,
+    // which happens before any merge and is already done in these inputs — is
+    // tests/replicated-converge.spec.ts, 'a copy that arrived from somebody
+    // else'. Delete either and the other still passes with the hole open.
+    pairedWith: "tests/replicated-converge.spec.ts — a copy that arrived from somebody else",
     /*
      * The shape every exchange actually begins with, and the one no other
      * vector models: the copies here are not two independent databases, they
@@ -233,6 +245,7 @@ const VECTORS = [
   },
   {
     name: "heads-via-superseded-flag",
+    cites: ["4", "T1-D2", "T1-D10"],
     what: "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
     fill: (a, b) => {
       createEntity(a, "cases", E1, { title: "one", status: "open", weight: null });
@@ -356,6 +369,39 @@ const compare = (path, content) => {
   }
 };
 
+/*
+ * A vector asserts a property; the property has to be written down somewhere a
+ * reader can find it.
+ *
+ * This check was added once and lost once, to a `git checkout` of this file
+ * that reverted far more than the line it was aimed at — and nothing noticed,
+ * because `--check` regenerates and compares, so a missing field is missing on
+ * both sides and matches. The enforcement has to live here, in the build, or
+ * it does not live anywhere.
+ */
+function checkCitations(vectors) {
+  const spec = readFileSync(join(repo, "docs", "replicated-tables.md"), "utf8");
+  const sections = new Set([
+    ...[...spec.matchAll(/^#{2,3} (\d+(?:\.\d+)?)\.?\s/gm)].map((m) => m[1]),
+    ...[...spec.matchAll(/\*\*(T1-D\d+)/g)].map((m) => m[1]),
+  ]);
+  const problems = [];
+  for (const vector of vectors) {
+    if (!vector.cites || vector.cites.length === 0) {
+      problems.push(`${vector.name} cites no section. A vector nobody can trace to the document is a rule the suite invented.`);
+      continue;
+    }
+    for (const where of vector.cites) {
+      if (!sections.has(where)) problems.push(`${vector.name} cites ${where}, which the document does not have.`);
+    }
+  }
+  if (problems.length === 0) return;
+  for (const line of problems) console.error(line);
+  process.exit(1);
+}
+
+checkCitations(VECTORS);
+
 mkdirSync(out, { recursive: true });
 compare(join(out, "README.md"), README);
 
@@ -390,6 +436,16 @@ for (const vector of VECTORS) {
     `${JSON.stringify(
       {
         what: vector.what,
+        // The sections this vector exercises. Dropped once already, by an edit
+        // that rewrote this object for another field — and nothing caught it,
+        // because `--check` regenerates and compares, so both sides lost the
+        // field together. The generator's own citation check is what kept the
+        // rule alive; this is only the record of it.
+        cites: vector.cites,
+        // The other half of a property split across a fixture and a runtime
+        // test. Named here so deleting either half is visible from the one
+        // that remains.
+        ...(vector.pairedWith ? { pairedWith: vector.pairedWith } : {}),
         converges: shouldConverge,
         ...(vector.shrinksAt ? { shrinksAt: vector.shrinksAt } : {}),
         // Each copy is a fixed point whether or not the two agree: run()

@@ -1,5 +1,10 @@
 {
   "what": "A row id already held with different content. Refused and counted; the honest rows still merge.",
+  "cites": [
+    "T1-D13",
+    "T1-D15",
+    "T1-D16"
+  ],
   "converges": false,
   "shrinksAt": "Track 2 — signatures decide a disputed row id",
   "stable": true,

@@ -1,5 +1,9 @@
 {
   "what": "The same replicated table on both sides and a local table on one. The canonical replicated schema must be identical, and the pair is a sibling.",
+  "cites": [
+    "T1-D14",
+    "T1-D21"
+  ],
   "converges": true,
   "stable": true,
   "ab": {

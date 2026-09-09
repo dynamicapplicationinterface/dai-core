@@ -1,5 +1,9 @@
 {
   "what": "Two replicas, entities that never meet. Every row is new to the other side.",
+  "cites": [
+    "6",
+    "T1-D9"
+  ],
   "converges": true,
   "stable": true,
   "ab": {
