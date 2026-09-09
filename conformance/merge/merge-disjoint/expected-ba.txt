@@ -1,0 +1,6 @@
+# cases
+mine	open	1.5	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1	1	11111111111111111111111111111111	[]	0	0	nil
+yours	open	nil	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	1	1	22222222222222222222222222222222	[]	0	0	nil
+# _dai_replicas
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

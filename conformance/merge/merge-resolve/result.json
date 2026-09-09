@@ -1,0 +1,17 @@
+{
+  "what": "A change written while the conflict is open names both heads, which is what resolves it.",
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0
+  }
+}

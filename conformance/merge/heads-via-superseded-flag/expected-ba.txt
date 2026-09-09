@@ -1,0 +1,7 @@
+# cases
+one	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1	1	11111111111111111111111111111111	[]	0	1	nil
+two	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	2	2	11111111111111111111111111111111	["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1"]	0	0	nil
+other	open	nil	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	1	1	22222222222222222222222222222222	[]	0	0	nil
+# _dai_replicas
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

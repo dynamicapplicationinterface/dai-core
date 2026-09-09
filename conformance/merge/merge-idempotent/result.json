@@ -1,0 +1,17 @@
+{
+  "what": "B's rows only. Merging the same copy again adds nothing.",
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1
+  }
+}
