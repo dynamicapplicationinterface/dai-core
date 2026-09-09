@@ -846,6 +846,26 @@ merged" sends somebody looking for damage that is not there.
 | `WRITE_SURFACE_UNAVAILABLE` | write: the frame holds replicated tables and was sent no write rules, so it refuses rather than asking for them |
 | `MERGE_UNAVAILABLE` | merge: the host could not obtain the merge module, so nothing was attempted |
 | `MERGE_TIMED_OUT` | merge: the host stopped waiting. The frame may still finish; its answer carries the request id and is discarded |
+| `WRITE_RULES_NOT_DELIVERED` | write: the frame was told rules were coming and waited ten seconds for them. The document opens read-only and the host says so |
+
+**The rules are held until the frame is listening.** The host pushes them at
+the handshake, and the handshake is sent before the application frame's bridge
+exists — the bridge is written into the frame only after `dai:frame-hello` and
+`dai:payload`. A message posted to a window whose listener is not yet installed
+is not queued; it is dropped, and by design nothing re-sends it, because asking
+is the channel that was deliberately not built. So the shell holds pushed rules
+until the bridge's own `dai:insets?`, which it posts synchronously after
+installing its listener, and delivers on whichever of the two arrives second.
+The frame, told by the payload that rules are coming, holds its `openDatabase`
+until they settle — adopted, refused, or given up on — so no write can precede
+them. Order cannot matter any more.
+
+It mattered once. Every desktop installed the bridge before a local module
+fetch returned; a phone on wifi did not, and refused its first write with
+`WRITE_SURFACE_UNAVAILABLE` on every open. CPU throttling never reproduced it,
+because throttling slows both sides and leaves the order alone. The test
+`write rules that arrive before the frame is listening` forces the order by
+posting the rules in the handshake handler itself.
 
 `MERGE_TIMED_OUT` is the host's own answer and never the frame's. A timeout
 stops this side waiting; it does not stop the merge. The frame's transaction is

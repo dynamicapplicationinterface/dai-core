@@ -337,6 +337,12 @@ function toArrayBuffer(view: Uint8Array): ArrayBuffer {
 interface Manifest {
   manifestVersion: number;
   documentUuid: string;
+  /**
+   * The replicated tables this document declares, when it declares any. Read
+   * here only to tell the frame that write rules are coming; the host's
+   * `declaresReplication` is the same test, unreachable from serialized code.
+   */
+  replication?: { tables: string[]; level: number };
   /*
    * Descriptive fields, listed because the signature covers them.
    *
@@ -903,6 +909,49 @@ function bridgeMain(): void {
   const declaresSchema = Boolean(host.schema);
 
   /*
+   * Whether write rules are on their way, as the shell read it off the signed
+   * manifest, and the promise `openDatabase` waits on when they are.
+   *
+   * The rules used to arrive whenever they arrived, and the application's
+   * first write either found them or threw. Every write goes through the
+   * handle `openDatabase` returns, so holding that handle until the rules have
+   * settled — adopted, refused, or given up on — turns a race into an order.
+   * Settled, not adopted: a refusal resolves this too, so a document whose
+   * rules were rejected still opens and can be read, and the write that then
+   * refuses refuses by name.
+   */
+  const expectsRules = Boolean(host.replicated);
+  let rulesDone = false;
+  let settleRules: () => void = () => undefined;
+  const rulesSettled = new Promise<void>((resolve) => {
+    settleRules = () => {
+      rulesDone = true;
+      resolve();
+    };
+  });
+  /*
+   * How long a database open waits for rules that were promised. Long enough
+   * for a phone to fetch a small module; short enough that a host which never
+   * sends is reported rather than waited on forever. The wait ends in a
+   * refusal by name, so the document opens read-only and says so.
+   */
+  const RULES_WAIT_MS = 10_000;
+  const awaitRules = (): Promise<void> =>
+    rulesDone
+      ? Promise.resolve()
+      : Promise.race([
+          rulesSettled,
+          new Promise<void>((resolve) =>
+            setTimeout(() => {
+              if (!rulesDone) {
+                refuseWriteRules("WRITE_RULES_NOT_DELIVERED", `waited ${RULES_WAIT_MS}ms`);
+              }
+              resolve();
+            }, RULES_WAIT_MS),
+          ),
+        ]);
+
+  /*
    * Saved as it happens.
    *
    * An application used to have to call saveDatabase, and so to build a Save
@@ -1230,6 +1279,9 @@ function bridgeMain(): void {
     } catch {
       /* Nothing above to tell; the refusal below still stands. */
     }
+    // A refusal is an answer. Whoever is waiting to open the database can
+    // stop waiting; the write that follows will refuse by name.
+    settleRules();
   };
 
   const adoptWriteRules = async (source: unknown): Promise<void> => {
@@ -1258,6 +1310,7 @@ function bridgeMain(): void {
     const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     try {
       mergeModule = await import(/* @vite-ignore */ url);
+      settleRules();
     } catch (error) {
       // A blob import can be refused by a policy this frame runs under rather
       // than by anything wrong with the module, and that reads nothing like a
@@ -1751,7 +1804,11 @@ function bridgeMain(): void {
      * between the code and the data.
      */
     openDatabase: (options?: { pageSize?: number }): Promise<Any> =>
-      openDatabase(options).then((db: Any) => {
+      // A replicated document's handle is not handed out until its write rules
+      // have settled; see expectsRules. An ordinary document waits for nothing.
+      (expectsRules ? awaitRules() : Promise.resolve())
+        .then(() => openDatabase(options))
+        .then((db: Any) => {
         if (!declaresSchema) {
           // Watched first, so the seed rows a first open inserts are saved.
           watched(db);
@@ -2072,6 +2129,8 @@ function frameLoader(): void {
       verified: data.facts.verified,
       signature: data.facts.signature,
       publicKeyFingerprint: data.facts.publicKeyFingerprint,
+      // Rules are coming; wait for them before handing out a database.
+      replicated: Boolean(data.facts.replicated),
       nonce: nonce,
       sqlite: new Uint8Array(data.sqlite as ArrayBuffer),
       sqliteWasm: (data.wasm as ArrayBuffer) || null,
@@ -2171,6 +2230,37 @@ function handshakeScript(): string {
 
 /** The last screen insets the host told this shell, for an application that asks. */
 let knownInsets: Record<string, number> = {};
+
+/*
+ * The write rules, held until the frame is listening (T1-D23 delivery).
+ *
+ * The host pushes them at the handshake, which is sent before the application
+ * frame exists. The payload has the same problem and solves it the right way:
+ * the frame speaks first, and the shell answers. The rules were posted the
+ * instant they arrived, to whatever `frame.contentWindow` was at that moment —
+ * and a message posted to a window whose bridge has not yet installed its
+ * listener is not queued, it is dropped. Nothing re-sent it, because asking is
+ * the channel that was deliberately not built. A replicated document then
+ * refused its own first write, on a phone, every time, while every desktop
+ * won the race and never saw it.
+ *
+ * So the rules wait here for the bridge's own `dai:insets?`, which it posts
+ * synchronously after installing its listener. Whichever arrives second —
+ * the rules or the announcement — delivers. Order cannot matter any more.
+ */
+let pendingRules: { source: unknown; ownCopy: unknown } | null = null;
+/** The bridge's window, once it has said it is listening; the delivery target. */
+let listeningWindow: Window | null = null;
+
+function deliverRules(): void {
+  if (!pendingRules || !listeningWindow) return;
+  const rules = pendingRules;
+  pendingRules = null;
+  listeningWindow.postMessage(
+    { type: "dai:write-rules", source: rules.source, ownCopy: rules.ownCopy },
+    "*",
+  );
+}
 
 function mount(srcdoc: string): HTMLIFrameElement {
   const frame = document.createElement("iframe");
@@ -2380,6 +2470,16 @@ async function boot(): Promise<void> {
       verified: policy === "required",
       signature: signatureState,
       publicKeyFingerprint: manifest?.publicKeyFingerprint ?? null,
+      /*
+       * Whether write rules are on their way. Decided here, from the signed
+       * manifest, and told to the frame so it can wait for them before it
+       * hands the application a database — rather than throwing on the first
+       * write because the rules lost a race they were never meant to run.
+       * Read straight off the manifest: this function is serialized and
+       * cannot reach the host's helper.
+       */
+      replicated:
+        Array.isArray(manifest?.replication?.tables) && manifest.replication.tables.length > 0,
     },
   };
 
@@ -2539,10 +2639,10 @@ async function boot(): Promise<void> {
      */
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_WRITE_RULES") {
       const pushed = event.data as { source?: unknown; ownCopy?: unknown };
-      frame.contentWindow?.postMessage(
-        { type: "dai:write-rules", source: pushed.source, ownCopy: pushed.ownCopy },
-        "*",
-      );
+      // Held, not forwarded. See pendingRules: the bridge may not exist yet,
+      // and a message to a window with no listener is dropped, not queued.
+      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy };
+      if (listeningWindow) deliverRules();
       return;
     }
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_MERGE") {
@@ -2715,6 +2815,10 @@ async function boot(): Promise<void> {
     // the host has said so far.
     if (event.source === frame.contentWindow && relay?.type === "dai:insets?") {
       frame.contentWindow?.postMessage({ type: "dai:insets", ...knownInsets }, "*");
+      // The bridge has a listener now. Anything held for it goes now, and
+      // anything that arrives later goes straight through.
+      listeningWindow = event.source as Window;
+      deliverRules();
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
