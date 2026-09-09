@@ -626,3 +626,34 @@ The first is a decision. The second is a failure, and it must not be allowed to
 become the first by default. The measurement is bounded to Safari 18.3 /
 AppleWebKit 605.1.15 and the browser behaviour may change; the rule does not
 depend on it, and would hold even if no browser ever did this again.
+
+**And the source recorded at first write is the source for that document on
+that host, permanently.** PRF availability is consulted once, when the key is
+created, and never again for a document that already has one.
+
+This is the third door and the most dangerous, because it does not look like a
+failure at all. A platform *gains* PRF — Safari updates, the OS changes, a
+person moves from a browser without it to one with it — and a host that
+consults availability on every launch sees a document whose key is `host-held`
+sitting next to a PRF that now works. Upgrading it is the obvious, tidy,
+well-intentioned move. It also mints a second replica for the same person and
+the same document, and leaves everything they wrote before attributed to a
+replica that no longer answers.
+
+It is the same corruption as the divergent-value case and the same as the
+fallback case, arriving through the door marked improvement. Nobody would ship
+the first two on purpose; this one somebody ships as maintenance.
+
+So availability is a question asked at creation. Afterwards the document's
+recorded source is the answer, and a host that finds PRF newly available for a
+document already keyed `host-held` does nothing at all.
+
+If moving a document between key sources is ever wanted, it is an explicit
+operation with a person behind it: re-sign under the new key, record the
+succession so the old replica's rows keep their attribution and the new one
+inherits it, and never do any of that because a capability appeared. That is
+Track 2 work if it is wanted, and it is not wanted yet.
+
+CTAP2 hardware keys are excluded and stay unmeasured. Nothing in the baseline
+depends on them, they were already outside it, and a measurement nobody will
+act on is a measurement not worth taking.
