@@ -596,3 +596,33 @@ Replica keys and row signatures (Draft 1 §5.2, §7), `_dai_snapshots`,
 Real-time sync, compaction, cross-publisher forks and delta exchange remain out
 of scope entirely; compaction is instrumented from the first build (rows and
 bytes per document) so that the decision to build it is made against numbers.
+
+### One rule Track 2 has to carry, measured before it was needed
+
+When replica keys arrive they may be derived from a passkey's PRF output. A
+measurement on 9 September 2026 found that Safari 18.3 driving the cross-device
+QR flow completes the assertion and returns **no PRF at all** — where Chromium's
+same flow, and Safari's own synced-keychain route, both return the value the
+on-device route returns.
+
+So the rule, written here because Track 2 is far enough away that a rule living
+only in a plan is a rule that gets missed:
+
+**An absent PRF means this route cannot derive a key. It must never mean derive
+one another way.** A host that fails over to a freshly generated random key at
+that moment mints a second replica for the same person and the same document,
+and their earlier rows stay attributed to a replica that no longer answers.
+That is the corruption the exclusion existed to prevent, arriving through the
+door marked graceful degradation.
+
+Two states, kept apart in the code:
+
+- *PRF unavailable on this platform* — decided once, recorded as the key source,
+  a random key generated and stored. A position.
+- *PRF absent on this route* — a route failing mid-flow. The operation does not
+  proceed on that route; another route is offered, or the person is told.
+
+The first is a decision. The second is a failure, and it must not be allowed to
+become the first by default. The measurement is bounded to Safari 18.3 /
+AppleWebKit 605.1.15 and the browser behaviour may change; the rule does not
+depend on it, and would hold even if no browser ever did this again.
