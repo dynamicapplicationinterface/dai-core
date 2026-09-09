@@ -1206,6 +1206,12 @@
                 column beside the icon rather than under it.
               -->
               <button id="card-open" type="button">Get</button>
+        <!--
+          Offered only for a sibling, and never the default: the copy already
+          here is the one with the person's own work in it, and merging is the
+          answer to a question they have to be asked rather than told.
+        -->
+        <button id="card-merge" type="button" hidden>Merge into my copy</button>
             </div>
           </div>
 
@@ -1225,6 +1231,16 @@
             <p id="card-alert" hidden></p>
             <p id="card-identity" hidden></p>
             <p id="card-succession" hidden></p>
+            <!--
+              Another copy of a document this device already has (§7).
+
+              Said before anything happens, because merging is a choice and the
+              person is the only one who can make it: a host may offer, and
+              must never merge on its own. When it cannot be offered, this says
+              why in words — a card that reports a merge is unavailable and
+              stops has told somebody their document is broken.
+            -->
+            <p id="card-sibling" hidden></p>
             <!--
               A document a store held unencrypted (backlog 3.4). Shown because
               the person reading this did not choose it.

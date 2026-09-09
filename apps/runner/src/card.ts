@@ -76,6 +76,16 @@ export interface CardInput {
    * doing about it (4.1). Absent when it replaces nothing this host has.
    */
   succession?: { state: "adopting" | "refused" | "nothing-here"; previous: string; why?: string };
+  /**
+   * Another copy of a document this device already holds (§7).
+   *
+   * `offer` puts *Merge into my copy* beside *Get*; anything else replaces it
+   * with a sentence saying why not, and *Get* stays as *Open as a separate
+   * copy* — a refusal to merge is never a refusal to open.
+   */
+  sibling?: { offer: true } | { offer: false; why: string };
+  /** Chosen instead of opening. Resolves when the merge has been attempted. */
+  onMerge?: () => void | Promise<void>;
   /** The §4 clauses this host applies. */
   applied: readonly string[];
   /**
@@ -192,6 +202,8 @@ export function showCard(input: CardInput): Promise<void> {
   const verify = document.getElementById("card-verify") as HTMLButtonElement | null;
   const safety = document.getElementById("card-safety");
   const succession = document.getElementById("card-succession");
+  const sibling = document.getElementById("card-sibling");
+  const merge = document.getElementById("card-merge") as HTMLButtonElement | null;
   const identity = document.getElementById("card-identity");
   const clear = document.getElementById("card-clear");
   const alert = document.getElementById("card-alert");
@@ -441,6 +453,36 @@ export function showCard(input: CardInput): Promise<void> {
       : next.state === "refused"
         ? `Claims to replace ${next.previous}, but ${next.why ?? "this device cannot confirm that"}. Your data stays where it is.`
         : `Replaces ${next.previous}, which this device does not have. It starts empty.`;
+
+  /*
+   * Another copy of this document, and what can be done about it (§7).
+   *
+   * Offered, never done. A host may put the choice on screen and must not make
+   * it: the copy already here has the person's own work in it, and merging is
+   * an answer to a question they have to be asked.
+   *
+   * When it cannot be offered, the reason is a sentence and the document still
+   * opens. A refusal to merge is not a refusal to open, and a card that said a
+   * merge was unavailable and stopped would have told somebody their document
+   * was broken when nothing is wrong with it.
+   */
+  const kin = input.sibling;
+  if (sibling) {
+    sibling.hidden = !kin || kin.offer;
+    sibling.textContent = kin && !kin.offer ? kin.why : "";
+  }
+  if (merge) {
+    merge.hidden = !kin?.offer;
+    merge.onclick = kin?.offer && input.onMerge ? () => void input.onMerge?.() : null;
+  }
+  /*
+   * The other copy still opens, and says so.
+   *
+   * "Get" is the word for a document this device does not have. When it does
+   * have one, opening this is a second copy beside the first, and calling that
+   * "Get" would hide the only thing about it worth knowing.
+   */
+  if (kin) open.textContent = "Open as a separate copy";
 
   // Carried in the clear: a fact about how it travelled, not about the
   // document, and never the word "unsafe".
