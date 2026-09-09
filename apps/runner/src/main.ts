@@ -1801,6 +1801,22 @@ export interface MergeReport {
  */
 let mergeSource: string | null = null;
 
+/**
+ * Merge requests this host has stopped waiting for.
+ *
+ * A timeout stops the host waiting; it does not stop the frame. If the frame
+ * finishes at thirty-one seconds its answer arrives for a request already
+ * reported as timed out — and with no id to match against, that answer would
+ * resolve whatever request happened to be listening, which after a retry is a
+ * different merge entirely.
+ *
+ * The frame's transaction is the frame's to finish. It commits or rolls back on
+ * its own terms and is never left open because this side stopped listening;
+ * otherwise the timeout becomes a second source of the half-written row the
+ * transaction was added to prevent.
+ */
+const closedMerges = new Set<string>();
+
 async function loadMergeModule(): Promise<string> {
   if (mergeSource !== null) return mergeSource;
   const response = await fetch(new URL("runtime/dai-merge.js", location.href), { cache: "force-cache" });
@@ -1843,13 +1859,21 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
     // spinner with no account of why. Long enough for a large document to be
     // read and written; short enough to be a failure rather than a hang.
     const timer = window.setTimeout(() => {
+      // Closed, not cancelled: the frame carries on, and its answer is
+      // discarded when it arrives rather than resolving something else.
+      closedMerges.add(id);
       window.removeEventListener("message", onResult);
       resolve(refused("MERGE_TIMED_OUT"));
     }, 30_000);
     const onResult = (event: MessageEvent): void => {
-      const data = event.data as ({ type?: string; sessionNonce?: string } & MergeReport) | null;
+      const data = event.data as
+        | ({ type?: string; id?: string; sessionNonce?: string } & MergeReport)
+        | null;
       if (!data || data.type !== "DAI_HOST_MERGE_RESULT") return;
       if (!fromMountedContainer(event, data)) return;
+      // The answer to *this* request. One the host gave up on may still land,
+      // and it belongs to nobody.
+      if (data.id !== id || closedMerges.has(id)) return;
       window.clearTimeout(timer);
       window.removeEventListener("message", onResult);
       const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;

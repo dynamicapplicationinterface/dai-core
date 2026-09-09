@@ -727,6 +727,17 @@ merged" sends somebody looking for damage that is not there.
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |
 | `UNSUPPORTED_LEVEL` | merge: the sibling declares a level this reader does not implement |
 | `MERGE_MODULE_MISMATCH` | merge: the merge module the host sent is not the one this runtime was built against |
+| `MERGE_UNAVAILABLE` | merge: the host could not obtain the merge module, so nothing was attempted |
+| `MERGE_TIMED_OUT` | merge: the host stopped waiting. The frame may still finish; its answer carries the request id and is discarded |
+
+`MERGE_TIMED_OUT` is the host's own answer and never the frame's. A timeout
+stops this side waiting; it does not stop the merge. The frame's transaction is
+the frame's to finish — it commits or rolls back on its own terms and is never
+left open because the host stopped listening, or the timeout becomes a second
+source of the half-written row the transaction exists to prevent. Every request
+carries an id, and an answer that arrives after the host has closed that id is
+discarded rather than allowed to resolve whatever is listening, which after a
+retry is a different merge.
 
 `MERGE_MODULE_MISMATCH` is how the frame keeps a promise it would otherwise
 only be making. The merge arrives with the request rather than being carried by
