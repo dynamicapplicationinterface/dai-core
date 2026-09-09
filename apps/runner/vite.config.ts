@@ -60,6 +60,25 @@ function stamp(): Plugin {
     closeBundle() {
       const commit = commitId();
 
+      /*
+       * The worker's cache is named by this commit. A worker whose bytes never
+       * change is never reinstalled, and its precached shell page is served
+       * cache-first forever — which is how a phone stayed two deploys behind
+       * production. Asserted, not hoped: a stamp that finds no marker and
+       * writes the file back unchanged is the silent no-op this repository
+       * has been bitten by before.
+       */
+      const workerPath = join(import.meta.dirname, "dist", "sw.js");
+      const worker = readFileSync(workerPath, "utf8");
+      const MARKER = '"__DAI_BUILD__"';
+      if (!worker.includes(MARKER)) {
+        throw new Error(
+          `dist/sw.js carries no ${MARKER} marker; the cache name would never change ` +
+            "across deploys. See the note above CACHE in apps/runner/public/sw.js.",
+        );
+      }
+      writeFileSync(workerPath, worker.replace(MARKER, JSON.stringify(commit)), "utf8");
+
       writeFileSync(
         join(import.meta.dirname, "dist", "version.json"),
         JSON.stringify(

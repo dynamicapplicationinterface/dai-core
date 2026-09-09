@@ -21,7 +21,23 @@
  * Note this caches the *runner*, never a container. Containers arrive from the
  * user's own filesystem and are stored separately; they are never fetched.
  */
-const CACHE = "dai-runner-v7";
+/*
+ * Named by the build, not by hand.
+ *
+ * This was a constant — "dai-runner-v7" — and a constant here is a promise
+ * somebody has to remember to break. The shell page is precached and served
+ * cache-first, and the browser only installs a new worker when this file's
+ * bytes change; with a fixed name they never did, so a phone kept the page it
+ * first loaded through every deploy afterwards. A person reported a build two
+ * deploys old while production served the fix they were waiting for.
+ *
+ * The placeholder is replaced with the commit at build time (see closeBundle
+ * in vite.config.ts), which fails the build if the marker is missing rather
+ * than shipping a worker that quietly never retires its cache again. Unstamped
+ * — a bare dev copy — it still works, under a name that says so.
+ */
+const BUILD = "__DAI_BUILD__";
+const CACHE = "dai-runner-" + (BUILD.indexOf("__") === 0 ? "dev" : BUILD.slice(0, 12));
 
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.

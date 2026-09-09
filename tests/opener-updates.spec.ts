@@ -28,11 +28,27 @@ test.describe("the opener updates", () => {
     expect(shell).toMatch(/fromNetwork\(\)\s*\.catch\(/);
   });
 
-  test("the cache name carries a version", () => {
-    // A change to this file under the same cache name leaves the old shell in
-    // place for the new worker to serve.
-    expect(worker).toMatch(/const CACHE = "dai-runner-v\d+"/);
-    expect(worker).not.toContain('"dai-runner-v1"');
+  test("the cache name is the build's, not a number somebody bumps", () => {
+    /*
+     * This asserted `dai-runner-v\d+` — a hand-bumped version — and a
+     * hand-bumped version is a promise somebody has to remember to break. It
+     * went unbumped across every deploy of a day's work, so the worker's bytes
+     * never changed, the browser never reinstalled it, and the precached shell
+     * was served from cache through all of them. A phone reported a build two
+     * deploys behind while production served the fix it was waiting for, and
+     * every test passed, because every test starts a fresh browser.
+     *
+     * So the source carries a marker and the build replaces it with the
+     * commit. Both halves are held: the marker in the source, so the build has
+     * something to stamp, and the commit in the built worker, so a deploy is
+     * a new worker by construction.
+     */
+    expect(worker).toContain('const BUILD = "__DAI_BUILD__"');
+    expect(worker).not.toMatch(/const CACHE = "dai-runner-v\d+"/);
+
+    const built = readFileSync(resolve(repo, "apps/runner/dist/sw.js"), "utf8");
+    expect(built).toMatch(/const BUILD = "[0-9a-f]{40}"/);
+    expect(built).not.toContain("__DAI_BUILD__");
   });
 
   test("a page picks up a new worker rather than waiting for the next visit", () => {
