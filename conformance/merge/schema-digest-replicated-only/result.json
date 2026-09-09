@@ -1,0 +1,17 @@
+{
+  "what": "The same replicated table on both sides and a local table on one. The canonical replicated schema must be identical, and the pair is a sibling.",
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1
+  }
+}

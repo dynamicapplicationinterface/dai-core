@@ -108,6 +108,41 @@ def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
 # ---------------------------------------------------------------- the merge
 
 
+def replicated_schema_of(db: sqlite3.Connection) -> str:
+    """The replicated schema, canonicalised (T1-D21).
+
+    Over the author's columns, recovered from the table, and never over the
+    CREATE TABLE text SQLite stores: that text is the compiler's output, and
+    two conforming compilers could emit it differently while both being right.
+    Comparing it would refuse a merge between two copies of one document built
+    by different tools — a disagreement about whether a merge may happen, which
+    no row-level fixture can catch because the rows never get compared.
+    """
+    lines: list[str] = []
+    for table in sorted(replicated_tables(db)):
+        for _cid, name, decl, notnull, default, _pk in db.execute(
+            f'PRAGMA table_info("{table}")'
+        ):
+            if name.startswith("_r_"):
+                continue
+            lines.append(
+                "\t".join(
+                    [
+                        table,
+                        name,
+                        # SQLite treats `text` and `TEXT` alike, so case is not
+                        # a difference of schema.
+                        (decl or "").strip().upper(),
+                        "NOT NULL" if notnull else "",
+                        # Verbatim: normalising a literal is how two readers
+                        # begin disagreeing about what a default means.
+                        "" if default is None else str(default),
+                    ]
+                )
+            )
+    return "\n".join(lines) + "\n"
+
+
 def row_id(replica: bytes, seq: int) -> str:
     return f"{bytes(replica).hex()}:{seq}"
 
@@ -275,6 +310,16 @@ def check(name: str) -> list[str]:
                 )
         local.close()
         sibling.close()
+
+    # The schema both copies must agree on before any of this is allowed.
+    # Shipped as text rather than a hash so a disagreement is readable.
+    shape = directory / "expected-schema.txt"
+    if shape.exists():
+        local = load(directory / "a.db")
+        mine = replicated_schema_of(local)
+        local.close()
+        if mine != shape.read_text(encoding="utf-8"):
+            failures.append(f"{name}: the canonical replicated schema differs from expected-schema.txt")
 
     # Both directions of a converging vector must agree, and the one that does
     # not converge must not (a disputed row id is where union merge stops).

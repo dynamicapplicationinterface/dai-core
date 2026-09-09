@@ -78,19 +78,55 @@ export function replicatedTablesOf(rows: Rows): string[] {
 }
 
 /**
- * The schema digests of two copies, compared as T1-D14 requires.
+ * The replicated schema of a copy, canonicalised (T1-D21).
  *
- * Compared over the replicated tables' own definitions rather than the whole
- * schema: a local table the sibling does not have is not a reason to refuse a
- * merge, because local tables never travel and never merge.
+ * Over the **author's** columns, recovered from the table itself, and not over
+ * the `CREATE TABLE` text SQLite stores. That text is the compiler's output —
+ * the replication columns, the key, and whatever whitespace and ordering that
+ * compiler chose — and two compilers could emit it differently while both
+ * being right. Comparing it would refuse a merge between two copies of the
+ * same document built by different tools: a disagreement about *mergeability*
+ * rather than about a merge, which is the worse of the two, because the rows
+ * never get far enough to disagree.
+ *
+ * One line per author column, tab-separated, tables in name order and columns
+ * in declared order. The `_r_*` columns are excluded: every conforming compiler
+ * emits exactly the same ones, so they carry no information and only invite a
+ * formatting difference.
+ *
+ * Local tables are absent by construction. A private table on one side is not a
+ * reason to refuse — local tables never travel and never merge, so a difference
+ * in them says nothing about whether two copies can exchange rows.
  */
-function replicatedSchema(rows: Rows, tables: readonly string[]): string {
-  return tables
-    .map((name) => {
-      const sql = rows.all("SELECT sql FROM sqlite_schema WHERE name = ?", [name])[0]?.["sql"];
-      return `${name}:${String(sql ?? "")}`;
-    })
-    .join("\n");
+export function replicatedSchemaOf(rows: Rows, tables?: readonly string[]): string {
+  const names = tables ?? replicatedTablesOf(rows);
+  const lines: string[] = [];
+  for (const table of [...names].sort()) {
+    const columns = rows.all('SELECT name, type, "notnull", dflt_value FROM pragma_table_info(?)', [
+      table,
+    ]);
+    for (const column of columns) {
+      const name = String(column["name"]);
+      if (name.startsWith("_r_")) continue;
+      lines.push(
+        [
+          table,
+          name,
+          // The declared type, upper-cased: SQLite keeps the author's spelling
+          // and treats `text` and `TEXT` identically, so a difference of case
+          // is not a difference of schema.
+          String(column["type"] ?? "").trim().toUpperCase(),
+          Number(column["notnull"] ?? 0) === 1 ? "NOT NULL" : "",
+          // Verbatim. A default is a literal, and normalising a literal is how
+          // two readers begin disagreeing about what a default means.
+          column["dflt_value"] === null || column["dflt_value"] === undefined
+            ? ""
+            : String(column["dflt_value"]),
+        ].join("\t"),
+      );
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -117,7 +153,7 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
   if (
     tables.length !== theirs.length ||
     tables.some((name, index) => name !== theirs[index]) ||
-    replicatedSchema(local, tables) !== replicatedSchema(sibling, theirs)
+    replicatedSchemaOf(local, tables) !== replicatedSchemaOf(sibling, theirs)
   ) {
     return { ...empty, conflicts: 0, refused: "SCHEMA_MISMATCH" };
   }

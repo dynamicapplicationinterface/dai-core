@@ -495,14 +495,47 @@ dai:merge-result  frame -> shell -> host
 ```
 
 `conflicts` is kept from Draft 1 because it is the one number the person is
-shown — how many entities now have more than one head — and it is not derivable
-from the other four. `rowsAdded` and `unknownReplicas` are dropped as aliases of
-`applied` and `newReplicas`.
+shown and the only one not derivable from the other four. `rowsAdded` and
+`unknownReplicas` are dropped as aliases of `applied` and `newReplicas`.
+
+**It is the post-merge total: every entity that has more than one head now**,
+across every replicated table — exactly what `T_conflicts` counts. Not the
+entities this merge newly put into conflict, which is the other available
+reading and the wrong one. The total needs no memory of the previous state, so
+two hosts that merged in different orders report the same number for the same
+rows; a delta depends on where each host started, and two people looking at the
+same document would see different figures and both be right. It also matches
+what the person can then go and look at: the count and the list agree.
 
 `refused` carries a refusal name when the merge did not run at all: a schema
 digest that differs (`SCHEMA_MISMATCH`, T1-D14), or a payload that is not a
 database. It is absent when the merge ran, however many rows it rejected —
 a merge that refused some rows still happened, and T1-D13 is the reason.
+
+**T1-D21 — the schema comparison is over the author's columns, not the
+compiler's output.** T1-D14 refuses a sibling whose schema digest differs, and
+leaves open what is digested. The `CREATE TABLE` text SQLite stores is the
+compiler's: replication columns, key, triggers, whitespace, ordering. Two
+conforming compilers could emit it differently and both be right, and comparing
+it would refuse a merge between two copies of the same document built by
+different tools.
+
+That is the worse kind of disagreement. Two readers disagreeing about a *merge*
+is caught by the fixtures; two readers disagreeing about whether a merge may
+happen at all is not, because the rows never get far enough to be compared.
+
+So the comparison is the author's columns, recovered from the table: one line
+per column, tab-separated, tables in name order and columns in declared order,
+carrying the name, the declared type upper-cased, whether it is `NOT NULL`, and
+the default verbatim. The `_r_*` columns are excluded — every conforming
+compiler emits the same ones, so they carry no information and only invite a
+formatting difference. Types are upper-cased because SQLite treats `text` and
+`TEXT` alike; defaults are left exactly as written, because normalising a
+literal is how two readers start disagreeing about what a default means.
+
+Local tables are absent by construction, which is the point: a private table on
+one side is not a reason to refuse, because local tables never travel and never
+merge. Vector `schema-digest-replicated-only`.
 
 **T1-D16 — a refused row's parents supersede nothing.** T1-D13 keeps the rest
 of the exchange when one row is refused, and says nothing about the refused
@@ -611,6 +644,31 @@ dispute has an answer rather than two sides. Until then it is real, and
 Non-convergent is not non-deterministic. Each copy's own state must be stable —
 merging again changes nothing and the dispute does not grow — and the fixture
 asserts that too.
+
+## 10a. Refusal codes
+
+Added to the bridge enum by Track 1. Each is refused **by name**, never as a
+generic failure, for the reason the capability gate gives: "this could not be
+merged" sends somebody looking for damage that is not there.
+
+| code | when |
+|---|---|
+| `REPLICATION_SCHEMA_INVALID` | compile: reserved `_r_` prefix, an author's own primary key, or `AUTOINCREMENT` (§3) |
+| `REPLICATED_TABLE_IMMUTABLE` | runtime: an `UPDATE` or `DELETE` against a replicated table (§4) |
+| `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
+| `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |
+| `UNSUPPORTED_LEVEL` | merge: the sibling declares a level this reader does not implement |
+
+`UNSUPPORTED_LEVEL` is `requires` at merge time and deserves the same
+treatment. A Level 2 sibling merged as though it were Level 1 would have its
+signatures unchecked while the person was told the merge succeeded — the same
+silent degradation the capability gate refuses, arriving through a different
+event.
+
+**These names are immutable, as the capability names are.** If what a reader
+must do to raise one changes, that is a new name and not a redefinition: a
+refusal recorded in a host's log or shown on a card years ago says what it
+meant when it was written, and there is no way for it to learn otherwise.
 
 ## 11. Not in Track 1
 

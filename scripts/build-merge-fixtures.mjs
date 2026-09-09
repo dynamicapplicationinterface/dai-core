@@ -30,6 +30,7 @@ import {
   deleteEntity,
   mergeFrom,
 } from "../dist/replicated-rows.js";
+import { replicatedSchemaOf } from "../dist/replicated-frame.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(repo, "conformance", "merge");
@@ -51,10 +52,13 @@ const E1 = id(0x11);
 const E2 = id(0x22);
 
 /** A database on disk, behind the interface the write rules ask for. */
-function open(path) {
+function open(path, extra) {
   if (existsSync(path)) rmSync(path);
   const db = new DatabaseSync(path);
   db.exec(rewriteReplicated(SCHEMA).sql);
+  // A table the author did not declare replicated. It never travels and never
+  // merges, and the fixture exists to prove it does not stop one either.
+  if (extra) db.exec(extra);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...params),
     run: (sql, params = []) => void db.prepare(sql).run(...params),
@@ -160,6 +164,21 @@ const VECTORS = [
     },
   },
   {
+    name: "schema-digest-replicated-only",
+    cites: ["T1-D14", "T1-D21"],
+    what:
+      "The same replicated table on both sides and a local table on one. The canonical replicated schema must be identical, and the pair is a sibling.",
+    // The rows are almost beside the point here; what is asserted is that two
+    // readers agree about *whether these may merge*. Two readers disagreeing
+    // about a merge is caught by every other vector; disagreeing about
+    // mergeability is not, because the rows never get compared.
+    localOnA: "CREATE TABLE notes_local (body TEXT);",
+    fill: (a, b) => {
+      createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+      createEntity(b, "cases", E2, { title: "yours", status: "open", weight: null });
+    },
+  },
+  {
     name: "heads-via-superseded-flag",
     what: "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
     fill: (a, b) => {
@@ -172,7 +191,7 @@ const VECTORS = [
 
 /** Merges a fresh copy of `from` into a fresh copy of `into` and reports both. */
 function run(vector, direction) {
-  const a = open(join(out, vector.name, "scratch-a.db"));
+  const a = open(join(out, vector.name, "scratch-a.db"), vector.localOnA);
   const b = open(join(out, vector.name, "scratch-b.db"));
   asReplica(a, A);
   asReplica(b, B);
@@ -211,7 +230,7 @@ function run(vector, direction) {
 function writeInputs(vector) {
   const dir = join(out, vector.name);
   mkdirSync(dir, { recursive: true });
-  const a = open(join(dir, "a.db"));
+  const a = open(join(dir, "a.db"), vector.localOnA);
   const b = open(join(dir, "b.db"));
   asReplica(a, A);
   asReplica(b, B);
@@ -292,6 +311,13 @@ for (const vector of VECTORS) {
     process.exit(1);
   }
 
+  {
+    const shape = open(join(dir, "scratch-shape.db"), vector.localOnA);
+    const schema = replicatedSchemaOf(shape);
+    shape.close();
+    rmSync(join(dir, "scratch-shape.db"));
+    compare(join(dir, "expected-schema.txt"), schema);
+  }
   compare(join(dir, "expected-ab.txt"), ab.dump);
   compare(join(dir, "expected-ba.txt"), ba.dump);
   compare(
