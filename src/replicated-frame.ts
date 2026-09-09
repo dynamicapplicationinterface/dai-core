@@ -112,10 +112,11 @@ export function replicatedSchemaOf(rows: Rows, tables?: readonly string[]): stri
         [
           table,
           name,
-          // The declared type, upper-cased: SQLite keeps the author's spelling
-          // and treats `text` and `TEXT` identically, so a difference of case
-          // is not a difference of schema.
-          String(column["type"] ?? "").trim().toUpperCase(),
+          // The declared type, case-folded with its whitespace collapsed.
+          // SQLite keeps the author's spelling and treats `text` and `TEXT`
+          // alike, and `VARCHAR( 20 )` and `VARCHAR(20)` alike; two tools will
+          // spell both ways, and neither difference is a difference of schema.
+          String(column["type"] ?? "").trim().replace(/\s+/g, " ").toUpperCase(),
           Number(column["notnull"] ?? 0) === 1 ? "NOT NULL" : "",
           // Verbatim. A default is a literal, and normalising a literal is how
           // two readers begin disagreeing about what a default means.

@@ -152,6 +152,32 @@ probe that reports "blocked" everywhere is worthless until it has been shown to
 report otherwise — against a deliberately permissive host that grants
 `allow-same-origin` and carries no policy. It must fail that one.
 
+## A class of disagreement fixtures miss on their own
+
+Worth naming, because it stayed invisible here for months and was found by
+accident.
+
+A fixture compares what two readers do with an input. It cannot compare what
+they do *before* they reach that input — whether they agree the input is one
+they should be reading at all. The merge suite is the example: every vector
+held two readers to the same rows, and nothing held them to the same answer
+about whether those two copies were allowed to merge in the first place. The
+mergeability test lived in each reader's own code, was never compared, and two
+readers could have disagreed about it while agreeing about every row they were
+given.
+
+That is the worse of the two disagreements. A disagreement about the answer
+surfaces the moment anybody runs the suite. A disagreement about whether to
+compute an answer never surfaces at all, because the inputs that would expose
+it are the ones one reader declines to process.
+
+So: whenever a reader has a *gate* — a check that decides whether to proceed —
+that gate needs a fixture of its own, shipping the value the gate is computed
+from rather than the outcome of passing it. `schema-digest-replicated-only`
+does this: it ships the canonical schema text, not merely a pair of copies that
+happen to merge. The rule for the next one is to notice the gate and give it a
+vector on sight, rather than waiting for two implementations to differ.
+
 ## What it does not cover
 
 Saving. `generation` advancing and the manifest surviving a save are host

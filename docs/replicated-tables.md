@@ -537,6 +537,30 @@ Local tables are absent by construction, which is the point: a private table on
 one side is not a reason to refuse, because local tables never travel and never
 merge. Vector `schema-digest-replicated-only`.
 
+**The comparison covers shape, not constraints, and that is a stated
+trade-off.** What a table can be asked for its own columns are names, declared
+types, `NOT NULL`, defaults and key position. `CHECK` constraints and `COLLATE`
+clauses are not among them. So two copies whose author schemas differ *only* in
+a `CHECK` compare as identical, are treated as siblings, and merge — and a row
+that is valid on one side can fail the other side's constraint when it is
+inserted.
+
+That failure is `ROW_REJECTED`, counted like any other, and the two copies do
+not converge on that row. It behaves exactly like the disputed-row-id case
+(T1-D13, §10): the exchange continues, the refusal is reported, and the person
+is told what was dropped.
+
+The alternative is pulling the `CHECK` text into the comparison, which
+reintroduces the problem this decision exists to remove — two compilers can
+spell one constraint differently and both be right, and comparing their text
+refuses a merge between two correct copies. A false refusal of a valid merge is
+worse than a true refusal of a row: the first stops everything and cannot be
+worked around, the second stops one row and says so.
+
+Shape only, then, with the hole named rather than left to be discovered: a
+`CHECK` that differs between copies shows up as rows that will not merge, not
+as a document that will not open.
+
 **T1-D16 — a refused row's parents supersede nothing.** T1-D13 keeps the rest
 of the exchange when one row is refused, and says nothing about the refused
 row's edges. They are dropped: the row is not in the set, so nothing it claims

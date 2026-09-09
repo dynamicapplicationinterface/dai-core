@@ -130,9 +130,11 @@ def replicated_schema_of(db: sqlite3.Connection) -> str:
                     [
                         table,
                         name,
-                        # SQLite treats `text` and `TEXT` alike, so case is not
-                        # a difference of schema.
-                        (decl or "").strip().upper(),
+                        # Case-folded, whitespace collapsed. SQLite treats
+                        # `text` and `TEXT` alike, and `VARCHAR( 20 )` and
+                        # `VARCHAR(20)` alike; two tools spell both ways and
+                        # neither is a difference of schema.
+                        " ".join((decl or "").split()).upper(),
                         "NOT NULL" if notnull else "",
                         # Verbatim: normalising a literal is how two readers
                         # begin disagreeing about what a default means.
