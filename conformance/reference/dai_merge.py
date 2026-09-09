@@ -290,10 +290,51 @@ def load(path: Path) -> sqlite3.Connection:
     return memory
 
 
+SCHEMA = SUITE / "schema.json"
+
+
+def validate_shape(name: str, result: dict) -> list[str]:
+    """Holds result.json to the schema shipped beside it.
+
+    Checked here rather than in the generator on purpose. A generator that
+    validates its own output can only confirm it agrees with itself, and when
+    the field and the check that wanted it were removed by the same edit,
+    nothing downstream noticed for a day. A check that can be deleted by the
+    same motion that deletes what it checks is not a check.
+
+    A missing field fails rather than being skipped: a vector this reader
+    cannot understand is a vector it is not checking, and a silent skip reads
+    exactly like a pass.
+    """
+    if not SCHEMA.exists():
+        return [f"{name}: conformance/merge/schema.json is missing; nothing defines what a vector must carry"]
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    problems: list[str] = []
+
+    for field in schema["required"]:
+        if field not in result:
+            problems.append(f"{name}: result.json has no {field!r}, which the schema requires")
+    cites = result.get("cites")
+    if isinstance(cites, list) and len(cites) == 0:
+        problems.append(f"{name}: cites is empty; a vector nobody can trace to the document is a rule the suite invented")
+    for direction in ("ab", "ba"):
+        block = result.get(direction)
+        if not isinstance(block, dict):
+            continue
+        for field in schema["requiredInResult"]:
+            if field not in block:
+                problems.append(f"{name}: {direction} has no {field!r}, which the schema requires")
+    return problems
+
+
 def check(name: str) -> list[str]:
     directory = SUITE / name
     failures: list[str] = []
     expected = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+
+    # The shape first. A vector whose record is malformed is not a vector that
+    # ran and passed; it is one nothing checked.
+    failures.extend(validate_shape(name, expected))
 
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)

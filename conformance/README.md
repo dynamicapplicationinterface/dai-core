@@ -203,6 +203,26 @@ That sentence is the rule for deciding, for any new property, whether it wants
 a fixture or a runtime test — and most people will guess wrong the first time,
 because the property usually *reads* like something a fixture could hold.
 
+### A check that can be deleted by the same motion that deletes what it checks is not a check
+
+The test for where any gate belongs.
+
+The citation rule was added to the merge generator and lost within the hour, to
+a `git checkout` of that file which reverted the check and the citations
+together — one motion, both halves. Nothing downstream noticed for a day,
+because the fixture check regenerates and compares: a field absent from both
+sides matches perfectly. Two working mechanisms, and neither could see it.
+
+So the shape a gate wants is a **consumer** verifying a **producer**, not a
+producer verifying itself. `conformance/merge/schema.json` says what a
+`result.json` must carry, and the readers validate against it before running
+anything — processes with no way to delete the requirement along with the
+field. It is the same argument as the third reader: independence is what makes
+it evidence.
+
+A reader that meets a record it cannot understand fails rather than skips. A
+skipped vector and a passed one produce the same green line.
+
 ### Paired tests name each other
 
 A property split across a fixture and a runtime test leaves a hole that neither

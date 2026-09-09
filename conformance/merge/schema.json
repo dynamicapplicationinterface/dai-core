@@ -1,0 +1,27 @@
+{
+  "what": "The shape every result.json must have. Validated by the readers, not by the generator.",
+  "why": [
+    "A generator that checks its own output can only confirm it agrees with itself.",
+    "This file is checked by the processes that consume the fixtures — the Python and Rust readers — so a field dropped from the generator fails in places the edit that dropped it never touched.",
+    "A check that can be deleted by the same motion that deletes what it checks is not a check."
+  ],
+  "required": {
+    "what": "string — one sentence saying what this vector is for",
+    "cites": "array of strings, non-empty — sections and numbered decisions of docs/replicated-tables.md that this vector exercises",
+    "converges": "boolean — whether the two directions must produce identical dumps",
+    "stable": "boolean — whether merging a second time must change nothing",
+    "ab": "object — the merge result of B into A",
+    "ba": "object — the merge result of A into B"
+  },
+  "requiredInResult": {
+    "applied": "integer — rows inserted that were not held before",
+    "duplicate": "integer — rows already held with the same content",
+    "rejected": "array of strings — row ids refused, in the _r_parents text form",
+    "newReplicas": "integer — replica ids written to _dai_replicas"
+  },
+  "optional": {
+    "shrinksAt": "string — when a stated limitation stops applying",
+    "pairedWith": "string — the runtime test holding the other half of this property, so deleting either half is visible from the one that remains"
+  },
+  "note": "A reader that finds a missing or misshapen field must fail rather than skip: a vector it cannot understand is a vector it is not checking, and a silent skip is indistinguishable from a pass."
+}

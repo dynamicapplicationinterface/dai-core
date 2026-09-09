@@ -396,6 +396,54 @@ fn main() {
         let expect: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(f.join("result.json")).unwrap()).unwrap();
         let mut problems: Vec<String> = vec![];
+
+        // The record's shape, against the schema shipped beside the fixtures.
+        //
+        // Checked by this reader rather than by whatever wrote the fixtures: a
+        // generator validating its own output can only confirm it agrees with
+        // itself, and a field and the check that wanted it can be removed by
+        // one edit. A check that can be deleted by the same motion that
+        // deletes what it checks is not a check.
+        //
+        // A malformed record fails rather than being skipped. A vector this
+        // reader cannot understand is a vector it is not checking, and a
+        // silent skip reads exactly like a pass.
+        let schema_path = f.parent().unwrap().join("schema.json");
+        match std::fs::read_to_string(&schema_path) {
+            Err(_) => problems.push(
+                "conformance/merge/schema.json is missing; nothing defines what a vector must carry"
+                    .to_string(),
+            ),
+            Ok(text) => {
+                let schema: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if let Some(required) = schema["required"].as_object() {
+                    for field in required.keys() {
+                        if expect.get(field).is_none() {
+                            problems.push(format!("result.json has no {:?}, which the schema requires", field));
+                        }
+                    }
+                }
+                if let Some(cites) = expect["cites"].as_array() {
+                    if cites.is_empty() {
+                        problems.push(
+                            "cites is empty; a vector nobody can trace to the document is a rule the suite invented"
+                                .to_string(),
+                        );
+                    }
+                }
+                if let Some(required) = schema["requiredInResult"].as_object() {
+                    for dirn in ["ab", "ba"] {
+                        if let Some(block) = expect.get(dirn) {
+                            for field in required.keys() {
+                                if block.get(field).is_none() {
+                                    problems.push(format!("{} has no {:?}, which the schema requires", dirn, field));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         for (dirn, base, sib, exp) in [
             ("ab", "a.db", "b.db", "expected-ab.txt"),
             ("ba", "b.db", "a.db", "expected-ba.txt"),
