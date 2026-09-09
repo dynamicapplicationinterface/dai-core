@@ -154,6 +154,46 @@ which documents this device has both received and shared.
 
 The expensive answer is a native iOS host with universal links.
 
+### 6.4 The post-merge relaunch to `#u=` hangs at a document address — open
+
+**Separate from 6.3.** Not the storage split — a real hang in the relaunch
+step itself. After a merge on the card at a document address (`/d/<id>`), the
+opener relaunches to the document's own address with the update hint
+(`#u=<uuid>`) so iOS re-reads the manifest and status-bar colour as the page
+first appears. The relaunch does not complete: the person is left on a page
+that never finishes mounting the merged copy.
+
+**Reproduce from a document address, not the root.** The relaunch only runs
+for a copy that arrived by link (`arrivedByLink` set, `launchAddress` targets
+`/d/<id>#…u=…`); opening the same file from `/` takes a different path and
+never exercises it. So a reproduction that starts at `/` will not see it, which
+is how it survived every green run.
+
+Findings from reading, for whoever picks it up:
+
+- The relaunch is in `apps/runner/src/main.ts`, the `platform() === "ios"`
+  block after `keptOnDevice` (~1251–1298). When the target shares the current
+  path and differs only in fragment it does `location.hash = …;
+  location.reload()`; otherwise `location.replace(target)`. On `/d/<id>` the
+  same-path branch is taken, and `location.hash = …` followed by
+  `location.reload()` is the suspect — a programmatic hash set immediately
+  before a reload has bitten this repo before (memory: a hash change is a
+  same-document navigation; reload timing/bfcache on iOS is the risk).
+- The `#u=` **open** path it reloads into (~2900, `hintOnly`) is *not*
+  iOS-gated and looks correct: it finds the held (merged) copy by uuid and
+  calls `launchFromLibrary`. If the hang is here rather than in the reload, it
+  is reproducible off-iOS by navigating straight to `/d/<id>#u=<uuid>` with the
+  merged copy in the library — worth trying first, since it needs no device.
+- `card.ts` `onMerge` does not itself relaunch; it merges, hides the card, and
+  records consent. Whatever triggers the relaunch is the ingest/mount path, not
+  the card handler — confirm which, because "post-merge" may mean the relaunch
+  is fired by a later mount rather than by the merge.
+
+Do not ship a fix without an on-device reading or an off-iOS reproduction of
+the `#u=` open path. This class of bug has cost this project repeatedly when
+reasoned about from a desk; the relaunch mechanics are iOS Safari's and the
+harness runs desktop.
+
 ## Later — device capabilities (health, notifications, and the rest)
 
 Not scheduled. Recorded because the shape is decided by things already built,

@@ -987,3 +987,49 @@ Track 2 work if it is wanted, and it is not wanted yet.
 CTAP2 hardware keys are excluded and stay unmeasured. Nothing in the baseline
 depends on them, they were already outside it, and a measurement nobody will
 act on is a measurement not worth taking.
+
+### Track 5 moves up: the relay is a mechanism, not a finish line
+
+Track 5 was queued last and described as the thing that "closes the iOS split"
+— the beat where a document reaches an installed icon without a file changing
+hands. That framing undersold it. The same relay is the mechanism for two
+things this project actually needs next, not one convenience at the end:
+
+- **The chess loop.** Today two people exchange a file per move. With a mailbox
+  the losing side's move is published on write and the winning side's copy
+  pulls it — the game plays itself between two phones with no file passed by
+  hand. It is the replicated-tables story finally told end to end.
+- **The "text me an update" beat of the enterprise demo.** The firm writes a
+  statement into its copy; the client's copy receives it. That is the same
+  push, the same mailbox, the same append — the firm's write is the loser's
+  move under a different name. One build serves both, and building it twice
+  would be the drift problem this whole design refuses.
+
+**Minimal scope, and no more:**
+
+1. **One mailbox per document**, addressed by the document id, holding
+   ciphertext the relay cannot read — the same property `no-beacon` and the
+   reference store already hold: a request is a log line, never content.
+2. **`append` / `since` / `head`.** Append a row-batch; read everything since a
+   cursor; report the head cursor. Nothing richer. The rows are the
+   append-only replicated rows that already merge by union, so the relay
+   carries what the file carried and the frame merges it the same way — T1-D13
+   governs a bad row here exactly as it does in a file.
+3. **Push subscription**, so a waiting copy is told rather than polling. The
+   delivery is silent by construction (§8, decision 5): the mailbox *was* the
+   consent, so a relayed row raises no card, only the same `dai:merged` a file
+   merge raises.
+4. **The app publishes on every write.** One line at the write surface, beside
+   the autosave that already fires — the same single write path
+   (`window.dai.replicated`) that the compiler wired, so publishing is not a
+   second way to change a row.
+
+**Deferred, deliberately:** retention (how long a mailbox keeps a row),
+entitlement (who may append or subscribe, and any dial attached to it), and
+multi-party fan-out beyond the two-party session. Those are dials on a working
+mechanism; shipping the mechanism first is what lets them be decided against a
+thing that runs rather than a plan. Nothing here weakens the earlier tracks'
+refusals — a Level 2 signature (Track 2) or a Track 3 roster still gates what a
+mailbox will accept once those exist; Track 5's minimal form simply does not
+wait for them to carry Level 1 rows between two copies that already trust each
+other.
