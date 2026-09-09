@@ -232,9 +232,52 @@ In order:
 5. Incoming `_dai_replica.id` differs from the local one — equal ids mean this
    is my own copy coming back, which is succession, not a merge.
 
-On a sibling the host offers **Merge into my copy** on the launch card. It MUST
-NOT merge without the person choosing it, and MUST NOT overwrite the local copy
-with the incoming one.
+On a sibling the host offers to keep this copy up to date. It MUST NOT merge
+without the person choosing it, and MUST NOT overwrite the local copy with the
+incoming one.
+
+**The choice is per document and standing; the card is for decisions, and an
+update is not a decision** (T1-D23).
+
+Draft 1 §8.2 requires the person to choose, and a choice can be a standing one.
+Nobody approves each message from a sender they have already accepted — they
+accepted the sender once. The profiles say the same thing in their own terms:
+joining a roster *is* the consent, and rows from roster members merge without
+being asked about. And the relay is meaningless if every delivery needs a
+button pressed.
+
+So:
+
+1. **The first sibling arrival for a document gets one card and one choice.**
+   *Keep this copy up to date* merges now, and every time after, for copies
+   this host would have permitted anyway. *Open as a separate copy* stays
+   beside it. That press is the person choosing, in the sense §8.2 means.
+
+2. **After that, permitted merges are silent.** No card. The frame is told, the
+   application decides what to show — a chess board simply has a new move on
+   it. A host may show a transient line with the counts; it never interrupts.
+
+3. **The card comes back only for decisions.** A refusal, in words, with the
+   local copy untouched and *Open as a separate copy* offered. A replica this
+   copy has never merged from, which until profiles close it is the
+   forwarded-copy signal, and which gets the same one-time card. And changing
+   the standing choice, which is reachable from settings and never from a card.
+
+4. **Conflicts never produce a host card.** They belong to the application,
+   where the person can act on them. A host line saying "2 conflicts" is
+   friction with no action attached; the count travels in `dai:merged` for the
+   application to use.
+
+5. **Relay deliveries are silent by construction** (Track 5). The consent was
+   the mailbox.
+
+The standing choice is per document, per copy, and local: a fact beside the
+library entry, never in the document and never merged. Revoking it is a
+settings action.
+
+Silence is only ever for merges the host would have permitted anyway. It is
+never a way past a refusal: the sibling test still runs on every arrival, and
+every refusal still surfaces.
 
 ## 8. Decisions taken here
 

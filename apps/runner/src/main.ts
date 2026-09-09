@@ -1006,6 +1006,29 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
           )
         : undefined;
 
+    /*
+     * A sibling the person has already said yes to (T1-D23).
+     *
+     * §8.2 requires the person to choose, and a choice can be standing. The
+     * first arrival asks; after that, copies this host would have permitted
+     * anyway merge without a card, because approving each one is not consent,
+     * it is friction — nobody re-approves each message from a sender they
+     * already accepted, and a relay delivering moves would be unusable.
+     *
+     * Silence is only ever for merges that were going to be permitted. Every
+     * refusal still reaches the card, and the sibling test still runs on every
+     * arrival: this decides whether to *ask*, never whether to *check*.
+     */
+    const standing = kin?.sibling === true && heldHere?.mergeStanding === true;
+    if (standing && incomingData) {
+      const report = await mergeSiblingInto(incomingData);
+      slot.classList.remove("busy");
+      // A line, not a card: it says what happened and interrupts nothing.
+      say(describeMerge(report), Boolean(report.refused));
+      if (!report.refused) return;
+      // A refusal is a decision after all, and falls through to the card.
+    }
+
     const familiar =
       !kin?.sibling &&
       verdict.status === "trusted" &&
@@ -1043,16 +1066,29 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
             "Nothing is uploaded — it runs on this device."
           : (carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here."),
         succession: succession?.card,
-        sibling: kin
-          ? kin.sibling
-            ? ({ offer: true } as const)
-            : ({ offer: false, why: whyNotSibling(kin.because) } as const)
-          : undefined,
+        // Narrowed on the discriminant rather than on its truthiness, which
+        // TypeScript does not follow through a nested conditional.
+        sibling:
+          kin === undefined
+            ? undefined
+            : kin.sibling === true
+              ? ({ offer: true } as const)
+              : ({ offer: false, why: whyNotSibling(kin.because) } as const),
         onMerge: kin?.sibling && incomingData
           ? async () => {
               const report = await mergeSiblingInto(incomingData);
               hideCard();
               say(describeMerge(report), Boolean(report.refused));
+              /*
+               * The choice, recorded — and only when the merge worked.
+               *
+               * Standing consent to something that has never succeeded is not
+               * a choice anybody made knowingly, and it would silence the very
+               * refusal they need to see next time.
+               */
+              if (!report.refused && heldHere) {
+                await saveCartridgeToLibrary({ ...heldHere, mergeStanding: true });
+              }
             }
           : undefined,
         applied: ISOLATION_CLAUSES,
@@ -1877,13 +1913,15 @@ export function describeMerge(report: MergeReport): string {
         : `${report.rejected.length} rows were refused because they claim ids other rows already use.`,
     );
   }
-  if (report.conflicts > 0) {
-    parts.push(
-      report.conflicts === 1
-        ? "One thing was changed in both copies at once. Both versions are kept, and the app shows them together so you can choose."
-        : "Some things were changed in both copies at once. Both versions of each are kept, and the app shows them together so you can choose.",
-    );
-  }
+  /*
+   * Conflicts are not mentioned here, deliberately.
+   *
+   * They are the application's to surface, where the person can act on them —
+   * *Keep Nf3 / Keep d4*, in the app, next to the thing being chosen between.
+   * A host line reading "2 conflicts" is friction with no action attached: it
+   * reports a problem, offers no route to it, and the count is already
+   * travelling in dai:merged for the app to use.
+   */
   return parts.join(" ");
 }
 

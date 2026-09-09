@@ -44,6 +44,25 @@ export interface LibraryItem {
    * token that retires each. Kept so the person who shared can unshare.
    */
   shares?: Share[];
+  /**
+   * The person said to keep this copy up to date (T1-D23).
+   *
+   * Set once, by pressing it on the launch card the first time another copy of
+   * this document arrives. After that, copies this host would have permitted
+   * anyway merge without asking — because §8.2 requires the person to choose
+   * and a choice can be a standing one. Nobody approves each message from a
+   * sender they have already accepted.
+   *
+   * Per document, per copy, and local: it is a fact about what this person
+   * decided on this device, never part of the document and never merged. It
+   * would be meaningless in somebody else's copy and dangerous if it travelled
+   * — a consent nobody on that device ever gave.
+   *
+   * Absent means not yet asked. Explicitly false means asked and declined, and
+   * is not the same thing: declined means offer again, and this device keeps
+   * opening arriving copies separately until told otherwise.
+   */
+  mergeStanding?: boolean;
 }
 
 export interface Share {
