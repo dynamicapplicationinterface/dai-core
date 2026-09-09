@@ -861,6 +861,17 @@ type Carrier = {
    * Honoured only when the link turns out to carry that document.
    */
   consentedFor?: string;
+  /**
+   * What the address said this document was, when it said anything.
+   *
+   * The same value as `consentedFor` and kept apart from it because they are
+   * asked different questions: one is "may this open without asking", the
+   * other is "did the address describe what it carried". A link whose hint
+   * names one document and whose payload is another is the signature of a
+   * hand-edited link, and the card says so rather than presenting a stranger
+   * as though the address had introduced it.
+   */
+  hinted?: string;
 };
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
@@ -963,6 +974,16 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       carrier.consentedFor !== undefined &&
       carrier.consentedFor === cartridge.manifest.documentUuid &&
       who.state !== "conflict";
+    /*
+     * The address named a different document than it carried.
+     *
+     * Not damage and not necessarily an attack — but it is what a hand-edited
+     * link looks like, and the person is about to be shown a document they did
+     * not expect. Saying it is cheap; leaving it unsaid means the only signal
+     * is that the app on the card is not the one they thought they tapped.
+     */
+    const misdescribed =
+      carrier.hinted !== undefined && carrier.hinted !== cartridge.manifest.documentUuid;
     if (!familiar && !consented) {
       slot.classList.remove("busy");
       say("");
@@ -976,7 +997,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         fingerprint: cartridge.publicKeyFingerprint,
         publisher: who,
         identity: identity?.status === "shown" ? identity : undefined,
-        from: carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here.",
+        from: misdescribed
+          ? "The link carried a different document than its address named. " +
+            "Nothing is uploaded — it runs on this device."
+          : (carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here."),
         succession: succession?.card,
         applied: ISOLATION_CLAUSES,
         clear: arrivedInClear,
@@ -2266,6 +2290,7 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
     from: "From the link you followed. Nothing is uploaded — it runs on this device.",
     consentedFor,
+    hinted: consentedFor,
   });
 }
 
@@ -2413,6 +2438,10 @@ async function start(): Promise<void> {
    * has the document, that is what opens — offline, without a store — and
    * the link is only for an opener that has never seen it (an iOS
    * home-screen app gets storage of its own, and starts with nothing).
+   *
+   * Only when the address has nothing to read, though. See `hintOnly` below:
+   * an unverified string does not get to decide which bytes are mounted while
+   * verified bytes are sitting in the same address.
    */
   const wanted = hintedUuid(location.hash, location.search);
   /*
@@ -2437,7 +2466,27 @@ async function start(): Promise<void> {
     ].join("&")}`;
     history.replaceState(history.state, "", corrected.href);
   }
-  if (wanted) {
+  /*
+   * The hint decides nothing when there is a document to read (R7).
+   *
+   * `#u=` rides in a fragment, which anybody can edit, and it is read before
+   * anything is decompressed — so it is a guess by construction. Consulted
+   * first, it meant a link carrying one document opened a different one: the
+   * payload was never examined, the person got their own copy of something
+   * else, and nothing on screen said so. A newer copy of a held document,
+   * arriving by link, could never win either, because succession is decided
+   * inside `ingest` and `ingest` was never reached.
+   *
+   * So: bytes in the address are read and their manifest is authoritative;
+   * the library is consulted by *that* UUID and succession applies as usual.
+   * The hint is for addresses with nothing to read — a reference link, or a
+   * bare `#u=` icon — which is exactly where skipping a fetch is worth
+   * something. An inline icon pays a decompression it did not pay before; the
+   * bytes are already local and a link is capped at 32 KB, so the cost is
+   * bounded and buys the guarantee.
+   */
+  const hintOnly = wanted !== undefined && inlineFrom(location.hash) === undefined;
+  if (hintOnly) {
     const held = (await listCartridgesFromLibrary()).find(
       (candidate) => candidate.documentUuid === wanted,
     );
@@ -2455,7 +2504,7 @@ async function start(): Promise<void> {
     // Painted as launching into it by the worker, and it is not here: the
     // chooser, or a card for what the link carries, is the honest screen.
     document.body.classList.remove("launching");
-    if (!inlineFrom(location.hash) && !referenceFrom(location.pathname, location.search, location.hash)) arrived(false);
+    if (!referenceFrom(location.pathname, location.search, location.hash)) arrived(false);
   }
 
   const carried = inlineFrom(location.hash);
