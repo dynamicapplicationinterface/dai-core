@@ -6,6 +6,7 @@ import {
   rewriteReplicated,
   triggerColumns,
 } from "../src/replicated.js";
+import { mergeSibling } from "../src/replicated-frame.js";
 import {
   applyRow,
   canonicalDump,
@@ -47,9 +48,9 @@ CREATE TABLE cases (
 `;
 
 /** `node:sqlite` behind the small interface the write rules ask for. */
-function open(): Rows & { close(): void } {
+function openWith(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
-  db.exec(rewriteReplicated(SCHEMA).sql);
+  db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
     run: (sql, params = []) => {
@@ -58,6 +59,8 @@ function open(): Rows & { close(): void } {
     close: () => db.close(),
   };
 }
+
+const open = (): Rows & { close(): void } => openWith(SCHEMA);
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
 const A = bytes(0xaa);
@@ -506,6 +509,93 @@ test.describe("merge", () => {
     expect(result.rejected).toHaveLength(1);
     expect(result.applied).toBe(1);
     expect(a.all("SELECT count(*) c FROM cases")[0]!["c"]).toBe(2);
+    a.close();
+    b.close();
+  });
+});
+
+test.describe("the frame's side of a merge", () => {
+  const rowsFor = (db: ReturnType<typeof open>) => db;
+
+  test("a sibling with the same tables merges and reports the conflict count", () => {
+    const a = open();
+    const b = open();
+    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
+    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
+
+    createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
+    mergeSibling(rowsFor(b), rowsFor(a));
+    changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+    changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
+
+    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    expect(report.refused).toBeUndefined();
+    expect(report.applied).toBe(1);
+    // The one number a person is shown, and not derivable from the other four.
+    expect(report.conflicts).toBe(1);
+    a.close();
+    b.close();
+  });
+
+  test("a sibling whose replicated schema differs is refused, not merged", () => {
+    /*
+     * T1-D14, at the point it actually bites. Refusing loudly is safe to
+     * tighten now and loosen later: the migration chain turns some of these
+     * into merges and never turns a merge into a refusal.
+     */
+    const a = open();
+    const b = openWith(`-- dai:replicated
+CREATE TABLE cases (
+  title  TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  weight REAL,
+  extra  TEXT
+);
+`);
+    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
+    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
+    createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null, extra: "x" });
+
+    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    expect(report.refused).toBe("SCHEMA_MISMATCH");
+    expect(report.applied).toBe(0);
+    // Refused means nothing happened, not that some of it happened.
+    expect(a.all("SELECT count(*) c FROM cases")[0]!["c"]).toBe(0);
+    a.close();
+    b.close();
+  });
+
+  test("a level this frame does not implement is refused rather than treated as Level 1", () => {
+    // A Level 2 sibling merged as Level 1 would have its signatures unchecked
+    // while the person was told the merge succeeded.
+    const a = open();
+    const b = open();
+    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
+    const report = mergeSibling(rowsFor(a), rowsFor(b), 2);
+    expect(report.refused).toBe("UNSUPPORTED_LEVEL");
+    a.close();
+    b.close();
+  });
+
+  test("a local table on one side only does not stop the merge", () => {
+    // Local tables never travel and never merge, so a difference in them says
+    // nothing about whether these two copies can exchange rows.
+    const a = openWith(`${SCHEMA}\nCREATE TABLE notes_local (body TEXT);\n`);
+    const b = open();
+    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
+    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
+    createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null });
+
+    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    expect(report.refused).toBeUndefined();
+    expect(report.applied).toBe(1);
     a.close();
     b.close();
   });

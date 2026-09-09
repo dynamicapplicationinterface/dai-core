@@ -480,6 +480,30 @@ sequence number. The `T_conflicts` view uses SQLite's uppercase `hex()` for the
 same idea, and that inconsistency is the view's, not this one's; anything a
 reader emits uses the lowercase form.
 
+**T1-D20 — the bridge carries T1-D15's vocabulary, plus the conflict count.**
+Draft 1 §8.3 gives `dai:merge-result` as `{ rowsAdded, conflicts,
+unknownReplicas, refused? }`; T1-D15 defines `{ applied, duplicate, rejected,
+newReplicas }` for the same event. Two names for one quantity is how a fixture
+and a bridge drift apart, so the wire carries T1-D15's four, and `conflicts`
+alongside them:
+
+```
+DAI_HOST_MERGE    host -> shell -> frame
+  { sessionNonce, payload: { databaseBytes, replicaId, level } }
+dai:merge-result  frame -> shell -> host
+  { applied, duplicate, rejected: [...], newReplicas, conflicts, refused? }
+```
+
+`conflicts` is kept from Draft 1 because it is the one number the person is
+shown — how many entities now have more than one head — and it is not derivable
+from the other four. `rowsAdded` and `unknownReplicas` are dropped as aliases of
+`applied` and `newReplicas`.
+
+`refused` carries a refusal name when the merge did not run at all: a schema
+digest that differs (`SCHEMA_MISMATCH`, T1-D14), or a payload that is not a
+database. It is absent when the merge ran, however many rows it rejected —
+a merge that refused some rows still happened, and T1-D13 is the reason.
+
 **T1-D16 — a refused row's parents supersede nothing.** T1-D13 keeps the rest
 of the exchange when one row is refused, and says nothing about the refused
 row's edges. They are dropped: the row is not in the set, so nothing it claims
