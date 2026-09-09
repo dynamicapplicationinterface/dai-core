@@ -1576,8 +1576,30 @@ window.addEventListener("message", (event) => {
      */
     void (async () => {
       if (!loaded || !declaresReplication(loaded.manifest)) return;
+      /*
+       * A failure here is said out loud, because the alternative already
+       * happened.
+       *
+       * This swallowed the error and returned. The host had decided the
+       * document was replicated and then quietly delivered nothing, so the
+       * application refused its own first write and the person was shown
+       * `WRITE_SURFACE_UNAVAILABLE` — a code, from inside the frame, about a
+       * decision this side made. Nothing on screen came from the half that
+       * knew what went wrong.
+       *
+       * The document still opens: it is intact, and reading it is worth more
+       * than nothing. What it cannot do is take a write, and that is what the
+       * sentence says.
+       */
       const source = await loadMergeModule().catch(() => null);
-      if (!source) return;
+      if (!source) {
+        say(
+          "This document can be read here but not changed: the part of the app that " +
+            "writes its shared tables could not be loaded. Reload the page to try again.",
+          true,
+        );
+        return;
+      }
       (event.source as Window | null)?.postMessage(
         {
           type: "DAI_HOST_WRITE_RULES",
@@ -2055,9 +2077,26 @@ let mergeSource: string | null = null;
  */
 const closedMerges = new Set<string>();
 
+/**
+ * The write rules and the merge, fetched once.
+ *
+ * Against `document.baseURI`, as every other runtime asset is — the engine,
+ * the confusables table, the roots — and never against `location.href`. The
+ * page carries `<base href="/">`, so the base is the site root whatever
+ * address the person is on; `location.href` is the address itself.
+ *
+ * That difference is the whole of a bug. A document opened from its own page
+ * has an address like `/d/<uuid>`, and `runtime/dai-merge.js` resolved against
+ * *that* asks for `/d/runtime/dai-merge.js`, which does not exist. The fetch
+ * failed, the push was skipped, and the application refused its own first write
+ * with `WRITE_SURFACE_UNAVAILABLE` — on a phone, on the route people actually
+ * use, while every test opening from the root passed.
+ */
 async function loadMergeModule(): Promise<string> {
   if (mergeSource !== null) return mergeSource;
-  const response = await fetch(new URL("runtime/dai-merge.js", location.href), { cache: "force-cache" });
+  const response = await fetch(new URL("runtime/dai-merge.js", document.baseURI), {
+    cache: "force-cache",
+  });
   if (!response.ok) throw new Error("MERGE_UNAVAILABLE");
   mergeSource = await response.text();
   return mergeSource;
