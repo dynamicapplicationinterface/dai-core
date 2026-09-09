@@ -727,6 +727,7 @@ merged" sends somebody looking for damage that is not there.
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |
 | `UNSUPPORTED_LEVEL` | merge: the sibling declares a level this reader does not implement |
 | `MERGE_MODULE_MISMATCH` | merge: the merge module the host sent is not the one this runtime was built against |
+| `NOT_REPLICATED` | merge: neither copy has a replicated table, so there is nothing a merge could do |
 | `MERGE_UNAVAILABLE` | merge: the host could not obtain the merge module, so nothing was attempted |
 | `MERGE_TIMED_OUT` | merge: the host stopped waiting. The frame may still finish; its answer carries the request id and is discarded |
 
@@ -758,6 +759,14 @@ event.
 must do to raise one changes, that is a new name and not a redefinition: a
 refusal recorded in a host's log or shown on a card years ago says what it
 meant when it was written, and there is no way for it to learn otherwise.
+
+`NOT_REPLICATED` exists because the alternative is a silence. Two copies with
+no replicated tables compare as having identical (empty) table lists, the union
+runs over nothing, and the answer is `applied: 0` — a merge that reports
+success and changed nothing, which reads to a person as "it worked" and to a
+log as a merge that happened. A document without replicated tables is not one
+that failed to merge; it is one that is replaced whole, by `savedAt`
+succession, and saying which is the difference between an answer and nothing.
 
 ## 11. Not in Track 1
 

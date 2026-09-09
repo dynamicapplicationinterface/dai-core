@@ -151,6 +151,22 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
 
   const tables = replicatedTablesOf(local);
   const theirs = replicatedTablesOf(sibling);
+
+  /*
+   * Neither copy has a replicated table, so there is nothing a merge could do.
+   *
+   * Without this the two empty table lists compare as equal, the union runs
+   * over nothing, and the answer is `applied: 0` — a merge that reports
+   * success and changed nothing, which reads to a person as "it worked" and to
+   * a log as a merge that happened. A document with no replicated tables is
+   * not a document two copies of which can be merged; it is a document that is
+   * replaced whole, by `savedAt` succession, and saying so is the difference
+   * between an answer and a silence.
+   */
+  if (tables.length === 0 && theirs.length === 0) {
+    return { ...empty, conflicts: 0, refused: "NOT_REPLICATED" };
+  }
+
   if (
     tables.length !== theirs.length ||
     tables.some((name, index) => name !== theirs[index]) ||
