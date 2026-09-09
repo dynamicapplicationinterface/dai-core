@@ -180,10 +180,14 @@ Findings from reading, for whoever picks it up:
   before a reload has bitten this repo before (memory: a hash change is a
   same-document navigation; reload timing/bfcache on iOS is the risk).
 - The `#u=` **open** path it reloads into (~2900, `hintOnly`) is *not*
-  iOS-gated and looks correct: it finds the held (merged) copy by uuid and
-  calls `launchFromLibrary`. If the hang is here rather than in the reload, it
-  is reproducible off-iOS by navigating straight to `/d/<id>#u=<uuid>` with the
-  merged copy in the library — worth trying first, since it needs no device.
+  iOS-gated, and it is **confirmed healthy off-iOS**: opening a held replicated
+  document by navigating straight to `#u=<uuid>` finds the copy by uuid, calls
+  `launchFromLibrary`, and mounts the board with a working write surface (tried
+  9 Sep, a throwaway repro). So the hang is **not** in the open path — it is
+  isolated to the iOS **reload** step above it: `location.hash = …;
+  location.reload()` on iOS Safari, and its interaction with the
+  `launching`/`booting` paint and bfcache. That half is device-only; the
+  reproducible half is eliminated.
 - `card.ts` `onMerge` does not itself relaunch; it merges, hides the card, and
   records consent. Whatever triggers the relaunch is the ingest/mount path, not
   the card handler — confirm which, because "post-merge" may mean the relaunch
