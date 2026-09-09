@@ -1775,6 +1775,95 @@ function flushDocument(): Promise<void> {
 }
 
 /**
+ * What a merge did, as the frame reports it (T1-D20).
+ */
+export interface MergeReport {
+  applied: number;
+  duplicate: number;
+  rejected: string[];
+  newReplicas: number;
+  conflicts: number;
+  refused?: string;
+}
+
+/**
+ * The merge module this host holds, fetched once.
+ *
+ * Held by the host and never by a document: the rules about what merges and
+ * what is refused are this side's, and a document shipping its own copy could
+ * accept rows this one would refuse. Fetched rather than bundled because a
+ * document that never merges should not carry it — it is ten per cent of a
+ * minimal container, paid by every document including the ones that can never
+ * use it.
+ *
+ * The frame checks it against a digest compiled into its own runtime before
+ * importing it, so nothing here has to be trusted about what it hands over.
+ */
+let mergeSource: string | null = null;
+
+async function loadMergeModule(): Promise<string> {
+  if (mergeSource !== null) return mergeSource;
+  const response = await fetch(new URL("runtime/dai-merge.js", location.href), { cache: "force-cache" });
+  if (!response.ok) throw new Error("MERGE_UNAVAILABLE");
+  mergeSource = await response.text();
+  return mergeSource;
+}
+
+/**
+ * Hands a sibling's data section to the frame and waits for the counts.
+ *
+ * The sibling has already been verified as a container by the time this runs —
+ * same document, same publisher, compatible schema. The frame merges rows and
+ * does not re-decide any of that; it opens the bytes inside the sandbox
+ * because they are somebody else's SQLite file, which is the one thing on this
+ * path that has to be treated as hostile.
+ */
+async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<MergeReport> {
+  const target = cartridgeFrame.contentWindow;
+  const refused = (why: string): MergeReport => ({
+    applied: 0,
+    duplicate: 0,
+    rejected: [],
+    newReplicas: 0,
+    conflicts: 0,
+    refused: why,
+  });
+  if (!target || !mountedNonce) return refused("NO_DOCUMENT_OPEN");
+
+  let source: string;
+  try {
+    source = await loadMergeModule();
+  } catch {
+    return refused("MERGE_UNAVAILABLE");
+  }
+
+  const id = Math.random().toString(36).slice(2);
+  return new Promise<MergeReport>((resolve) => {
+    // A merge that never answers must not leave the person waiting on a
+    // spinner with no account of why. Long enough for a large document to be
+    // read and written; short enough to be a failure rather than a hang.
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", onResult);
+      resolve(refused("MERGE_TIMED_OUT"));
+    }, 30_000);
+    const onResult = (event: MessageEvent): void => {
+      const data = event.data as ({ type?: string; sessionNonce?: string } & MergeReport) | null;
+      if (!data || data.type !== "DAI_HOST_MERGE_RESULT") return;
+      if (!fromMountedContainer(event, data)) return;
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onResult);
+      const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;
+      resolve({ applied, duplicate, rejected, newReplicas, conflicts, ...(why ? { refused: why } : {}) });
+    };
+    window.addEventListener("message", onResult);
+    target.postMessage(
+      { type: "DAI_HOST_MERGE", id, payload: { databaseBytes, mergeSource: source, level } },
+      "*",
+    );
+  });
+}
+
+/**
  * The document as it stands, or as it arrived: with the person's data, or as
  * a blank copy — the same app with an empty database, which the schema and
  * seed rows fill on first open. Flushed first, so a share is the state the

@@ -2303,6 +2303,38 @@ async function boot(): Promise<void> {
       return;
     }
     /*
+     * A sibling to merge, passed through to the frame that holds the database.
+     *
+     * Relayed rather than acted on. This shell has no database — the
+     * application's connection lives one frame further in — and opening
+     * somebody else's SQLite file out here would put the parsing of hostile
+     * bytes a layer closer to the host than it needs to be. Draft 1 §8.3 puts
+     * the merge in the frame for exactly that reason, and this is the step that
+     * keeps it there.
+     *
+     * The merge module travels with the request. The frame checks it against a
+     * digest of its own before importing it, so nothing here needs to vouch
+     * for what it is passing along.
+     */
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_MERGE") {
+      const request = event.data as {
+        id?: string;
+        payload?: { databaseBytes?: unknown; mergeSource?: unknown; level?: unknown };
+      };
+      const payload = request.payload ?? {};
+      frame.contentWindow?.postMessage(
+        {
+          type: "dai:merge",
+          id: request.id,
+          databaseBytes: payload.databaseBytes,
+          mergeSource: payload.mergeSource,
+          level: payload.level,
+        },
+        "*",
+      );
+      return;
+    }
+    /*
      * The screen's edges, measured by the host, which is the only document of
      * the three that can see them. Kept here for this shell's own chrome, and
      * because the application asks for them when it is ready rather than being
@@ -2458,6 +2490,23 @@ async function boot(): Promise<void> {
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
       window.parent.postMessage({ type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id }, "*");
+      return;
+    }
+    /*
+     * What the merge did, on its way back to the host.
+     *
+     * `dai:merged` is the runtime's own event and keeps that name inside the
+     * frame, where the application listens for it. Crossing to the host it
+     * takes the host-facing form the other messages use, and the counts pass
+     * through untouched: this shell has no view of the rows and no business
+     * summarising them.
+     */
+    if (event.source === frame.contentWindow && relay?.type === "dai:merged") {
+      const { type: _ignored, ...report } = event.data as Record<string, unknown>;
+      window.parent.postMessage(
+        { type: "DAI_HOST_MERGE_RESULT", sessionNonce, ...report },
+        "*",
+      );
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:ground") {

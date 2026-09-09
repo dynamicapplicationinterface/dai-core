@@ -73,7 +73,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && node scripts/stamp-merge-digest.mjs && node scripts/retain-host.mjs",
+    "build": "tsup && node scripts/retain-host.mjs",
     "prepare": "npm run build",
     "build:runner": "vite build apps/runner",
     "build:studio": "vite build examples/web-studio",

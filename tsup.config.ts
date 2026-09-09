@@ -54,6 +54,11 @@ export default defineConfig([
     platform: "browser",
     // template.html ships beside the compiled JS; it is read at runtime.
     // The template must be copied before the assets module embeds it.
-    onSuccess: "node scripts/copy-template.mjs && node scripts/embed-assets.mjs",
+    // The digest is stamped here, between building the runtime and embedding
+    // it. Anything that copies or embeds dai-runtime.js must see the stamped
+    // bytes, or the repository ends up holding two runtimes that differ by
+    // exactly the pin — which is what the staleness checks caught.
+    onSuccess:
+      "node scripts/copy-template.mjs && node scripts/stamp-merge-digest.mjs && node scripts/embed-assets.mjs",
   },
 ]);
