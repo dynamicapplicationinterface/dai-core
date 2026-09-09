@@ -20,7 +20,11 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7",
+        "3"
+      ]
     },
     {
       "name": "valid-signed",
@@ -38,7 +42,11 @@
         "shell": "ok",
         "signature": "valid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7",
+        "3.1"
+      ]
     },
     {
       "name": "valid-signed-named",
@@ -56,7 +64,11 @@
         "shell": "ok",
         "signature": "valid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "3.1",
+        "9.3"
+      ]
     },
     {
       "name": "signed-name-changed",
@@ -68,7 +80,10 @@
         "ok": false,
         "signature": "invalid",
         "code": "UNVERIFIED_SIGNATURE"
-      }
+      },
+      "cites": [
+        "3.1"
+      ]
     },
     {
       "name": "valid-signed-supersedes",
@@ -86,7 +101,11 @@
         "shell": "ok",
         "signature": "valid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "3.1",
+        "5.1"
+      ]
     },
     {
       "name": "version-3-minimal",
@@ -104,7 +123,10 @@
         "shell": "ok",
         "signature": "valid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.2"
+      ]
     },
     {
       "name": "version-3-shell-listed",
@@ -116,7 +138,10 @@
         "ok": false,
         "code": "SIGNED_SET_MISMATCH",
         "signature": "invalid"
-      }
+      },
+      "cites": [
+        "9.2"
+      ]
     },
     {
       "name": "version-4",
@@ -134,7 +159,10 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.1"
+      ]
     },
     {
       "name": "version-4-requires-unimplemented",
@@ -145,7 +173,10 @@
         "mount": false,
         "ok": false,
         "code": "UNSUPPORTED_CAPABILITY"
-      }
+      },
+      "cites": [
+        "9.1"
+      ]
     },
     {
       "name": "version-5",
@@ -156,7 +187,10 @@
         "mount": false,
         "ok": false,
         "code": "UNSUPPORTED_MANIFEST_VERSION"
-      }
+      },
+      "cites": [
+        "9.1"
+      ]
     },
     {
       "name": "envelope-tagged",
@@ -174,7 +208,10 @@
         "shell": "ok",
         "signature": "valid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.4"
+      ]
     },
     {
       "name": "version-3-signed-entries-edited",
@@ -192,7 +229,10 @@
           "missing": [],
           "unlisted": []
         }
-      }
+      },
+      "cites": [
+        "9.2"
+      ]
     },
     {
       "name": "version-3-entry-smuggled",
@@ -210,7 +250,10 @@
             "runtime/schema.json"
           ]
         }
-      }
+      },
+      "cites": [
+        "9.2"
+      ]
     },
     {
       "name": "valid-expiry-current",
@@ -228,7 +271,10 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "current"
-      }
+      },
+      "cites": [
+        "7"
+      ]
     },
     {
       "name": "expired",
@@ -247,7 +293,10 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "expired"
-      }
+      },
+      "cites": [
+        "7"
+      ]
     },
     {
       "name": "entry-modified",
@@ -268,7 +317,10 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7"
+      ]
     },
     {
       "name": "entry-added",
@@ -289,7 +341,10 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7"
+      ]
     },
     {
       "name": "entry-removed",
@@ -310,7 +365,10 @@
         "shell": "ok",
         "signature": "unsigned",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7"
+      ]
     },
     {
       "name": "shell-modified",
@@ -329,7 +387,10 @@
         "shell": "mismatch",
         "signature": "unsigned",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7"
+      ]
     },
     {
       "name": "signature-invalid",
@@ -348,7 +409,11 @@
         "shell": "ok",
         "signature": "invalid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "7",
+        "3.1"
+      ]
     },
     {
       "name": "signed-entries-disagree",
@@ -367,7 +432,10 @@
         "shell": "ok",
         "signature": "invalid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.2"
+      ]
     },
     {
       "name": "version-2-signed",
@@ -385,7 +453,10 @@
         "shell": "ok",
         "signature": "valid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.1"
+      ]
     },
     {
       "name": "signed-extra-entry",
@@ -404,7 +475,10 @@
         "shell": "ok",
         "signature": "invalid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.2"
+      ]
     },
     {
       "name": "signed-schema-injected",
@@ -423,7 +497,11 @@
         "shell": "ok",
         "signature": "invalid",
         "expiry": "none"
-      }
+      },
+      "cites": [
+        "9.2",
+        "6.3"
+      ]
     },
     {
       "name": "sectioned-valid",
@@ -446,7 +524,10 @@
           "missing": [],
           "staleFooter": false
         }
-      }
+      },
+      "cites": [
+        "2"
+      ]
     },
     {
       "name": "sectioned-payload-modified",
@@ -467,7 +548,11 @@
           "missing": [],
           "staleFooter": false
         }
-      }
+      },
+      "cites": [
+        "2",
+        "7"
+      ]
     },
     {
       "name": "sectioned-stale-footer",
@@ -486,7 +571,11 @@
           "missing": [],
           "staleFooter": true
         }
-      }
+      },
+      "cites": [
+        "2",
+        "7"
+      ]
     },
     {
       "name": "sectioned-missing-data",
@@ -507,7 +596,11 @@
           ],
           "staleFooter": false
         }
-      }
+      },
+      "cites": [
+        "2",
+        "7"
+      ]
     },
     {
       "name": "not-a-container",
@@ -517,7 +610,11 @@
       "expect": {
         "mount": false,
         "parses": false
-      }
+      },
+      "cites": [
+        "7",
+        "2.2"
+      ]
     }
   ]
 }

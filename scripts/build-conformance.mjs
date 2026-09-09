@@ -97,6 +97,87 @@ const repack = (html, archive) =>
  * run this. The report fields say why, so an implementation that refuses for
  * the wrong reason does not pass by accident.
  */
+/*
+ * What each case is testing, by the section that says so.
+ *
+ * Any text a reader is compared against is specification by construction — the
+ * only question is whether the document says the rule or the fixture carries
+ * it in silence. In the Track 1 suite four rules turned out to be carried
+ * silently, found by an implementation written from the document alone, and
+ * every one was a place two readers could disagree and both pass. This suite
+ * predates that lesson by months and was built under the same conditions.
+ *
+ * So every case names the sections it exercises, and a name that does not
+ * resolve against the specification fails the build. A case that can cite
+ * nothing is the finding: a property both readers enforce that the document
+ * never states.
+ */
+const CITES = {
+  "valid-unsigned": ["7", "3"],
+  "valid-signed": ["7", "3.1"],
+  "valid-signed-named": ["3.1", "9.3"],
+  "signed-name-changed": ["3.1"],
+  "valid-signed-supersedes": ["3.1", "5.1"],
+  "version-3-minimal": ["9.2"],
+  "version-3-shell-listed": ["9.2"],
+  "version-4": ["9.1"],
+  "version-4-requires-unimplemented": ["9.1"],
+  "version-5": ["9.1"],
+  "envelope-tagged": ["9.4"],
+  "version-3-signed-entries-edited": ["9.2"],
+  "version-3-entry-smuggled": ["9.2"],
+  "valid-expiry-current": ["7"],
+  "expired": ["7"],
+  "entry-modified": ["7"],
+  "entry-added": ["7"],
+  "entry-removed": ["7"],
+  "shell-modified": ["7"],
+  "signature-invalid": ["7", "3.1"],
+  "signed-entries-disagree": ["9.2"],
+  "version-2-signed": ["9.1"],
+  "signed-extra-entry": ["9.2"],
+  "signed-schema-injected": ["9.2", "6.3"],
+  "sectioned-valid": ["2"],
+  "sectioned-payload-modified": ["2", "7"],
+  "sectioned-stale-footer": ["2", "7"],
+  "sectioned-missing-data": ["2", "7"],
+  "not-a-container": ["7", "2.2"],
+};
+
+/** Section numbers the specification actually has. */
+function specSections() {
+  const text = readFileSync(join(repo, "docs", "spec-v0.2.md"), "utf8");
+  return new Set(
+    // `## 7. Verification` carries a period after the number and
+    // `### 9.1 Versions a reader accepts` does not, so the period is optional.
+    // Requiring it resolved only the top-level sections, which read as
+    // twenty-one bad citations rather than as one bad regex.
+    [...text.matchAll(/^#{2,3} (\d+(?:\.\d+)?)\.?\s/gm)].map((match) => match[1]),
+  );
+}
+
+/** Refuses the build when a case cites nothing, or cites something absent. */
+function checkCitations(names) {
+  const sections = specSections();
+  const problems = [];
+  for (const name of names) {
+    const cited = CITES[name];
+    if (!cited || cited.length === 0) {
+      problems.push(`${name} cites no section. A case nobody can trace to the specification is a rule the suite invented.`);
+      continue;
+    }
+    for (const where of cited) {
+      if (!sections.has(where)) problems.push(`${name} cites §${where}, which docs/spec-v0.2.md does not have.`);
+    }
+  }
+  for (const name of Object.keys(CITES)) {
+    if (!names.includes(name)) problems.push(`CITES names ${name}, which is not a case any more.`);
+  }
+  if (problems.length === 0) return;
+  for (const line of problems) console.error(line);
+  throw new Error(`${problems.length} citation problem(s)`);
+}
+
 const definitions = [];
 
 const define = (name, summary, expect, make) =>
@@ -783,6 +864,10 @@ if (disagreements.length > 0) {
   process.exit(1);
 }
 
+// Before the suite is written, not after: a case that cannot be traced to the
+// specification should stop the build rather than ship and be noticed later.
+checkCitations(written.map((entry) => entry.name));
+
 writeFileSync(
   join(suite, "cases.json"),
   JSON.stringify(
@@ -791,7 +876,7 @@ writeFileSync(
       formatVersion: 2,
       specification: "docs/spec-v0.2.md",
       generatedBy: "scripts/build-conformance.mjs",
-      cases: written,
+      cases: written.map((entry) => ({ ...entry, cites: CITES[entry.name] })),
     },
     null,
     2,
