@@ -120,6 +120,20 @@ function engine(): Plugin {
       const files = {
         "sqlite3.wasm": join(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm"),
         "sqlite3.mjs": join(repo, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"),
+        /*
+         * The merge, held by the host and never by a document.
+         *
+         * A document must not be able to supply its own: the rules about what
+         * merges and what is refused are the host's, and a document shipping
+         * its own copy could accept rows this one refuses. So it is staged
+         * here beside the engine, travels the same §6.2 supply route, and the
+         * frame imports it only when a merge is actually asked for.
+         *
+         * The same file the conformance fixtures import, deliberately, so
+         * "the frame ran what three readers agreed on" is about identical
+         * bytes and not about two builds of one source.
+         */
+        "dai-merge.js": join(repo, "dist/dai-merge.js"),
       };
       for (const [name, from] of Object.entries(files)) copyFileSync(from, join(out, name));
     },

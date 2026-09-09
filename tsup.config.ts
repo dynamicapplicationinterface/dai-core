@@ -15,6 +15,32 @@ export default defineConfig([
     shims: true,
     external: ["vite"],
   },
+  /*
+   * The merge, as one self-contained module.
+   *
+   * The frame that owns the database is serialized with `toString()` and
+   * cannot reference an import, so the merge reaches it as a module the host
+   * supplies — the same route §6.2 already uses for the engine. This is the
+   * file that travels, and the conformance fixtures import this one too, so
+   * "the frame ran what the fixtures ran" is a statement about identical bytes
+   * rather than about two builds of one source.
+   *
+   * `splitting: false` matters: the library build emits a thin re-export over
+   * a shared chunk, which is two files and the wrong two — the chunk carries
+   * other modules' code as well.
+   */
+  {
+    entry: { "dai-merge": "src/replicated-rows.ts" },
+    format: ["esm"],
+    outExtension: () => ({ js: ".js" }),
+    splitting: false,
+    clean: false,
+    minify: false,
+    sourcemap: false,
+    dts: false,
+    target: "es2020",
+    platform: "browser",
+  },
   // The browser bootloader, bundled to a single IIFE (fflate inlined) and
   // injected verbatim into the container. It must never fetch anything.
   {

@@ -29,7 +29,7 @@ import {
   createEntity,
   deleteEntity,
   mergeFrom,
-} from "../dist/replicated-rows.js";
+} from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
