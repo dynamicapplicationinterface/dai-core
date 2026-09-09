@@ -87,7 +87,7 @@
     "deploys": "node scripts/check-deploys.mjs",
     "measure": "node scripts/measure.mjs",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json && node scripts/check-symbols.mjs",
     "prepublishOnly": "npm run build",
     "test": "playwright test",
     "test:headed": "playwright test --headed"

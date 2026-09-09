@@ -1,0 +1,43 @@
+{
+  "//": [
+    "Syntax and undefined symbols in the directories nothing else checks.",
+    "",
+    "`tsconfig.json` includes `src` alone, so `tests/` and `apps/runner/src`",
+    "were checked by no tsc invocation at all — and both shipped a defect",
+    "through the gap: a call to a function that did not exist, which built",
+    "cleanly and would have thrown when somebody pressed a button, and an",
+    "unterminated string that surfaced only as a Babel error from Playwright's",
+    "own parser, with nothing pointing at the edit that caused it.",
+    "",
+    "Deliberately not strict. These files were never written against",
+    "`strict` + `noUncheckedIndexedAccess`, and holding them to it now produces",
+    "39 findings that are almost all lib noise — `Uint8Array<ArrayBufferLike>`",
+    "against `BufferSource`, untyped imports from `dist/` — and no defects.",
+    "Demanding that is a different project, and one nobody asked for.",
+    "",
+    "What this does catch is exactly what got through: a name that does not",
+    "exist, and a file that does not parse. Both of the real defects fail here",
+    "and neither failed anywhere else."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "noEmit": true,
+    "allowJs": false,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "noUncheckedIndexedAccess": false,
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "allowImportingTsExtensions": false
+  },
+  "include": ["tests", "apps/runner/src"],
+  "exclude": ["apps/runner/api"]
+}
