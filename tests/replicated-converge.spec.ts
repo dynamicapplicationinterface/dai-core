@@ -9,7 +9,11 @@ import {
 import {
   applyRow,
   canonicalDump,
+  changeEntity,
+  createEntity,
+  deleteEntity,
   encodeValue,
+  mergeFrom,
   RowRejected,
   type ReplicatedRow,
   type Rows,
@@ -129,7 +133,38 @@ function applyAll(order: readonly ReplicatedRow[]): string {
   }
 }
 
+/**
+ * The orders that must be covered, named rather than hoped for.
+ *
+ * A random shuffle usually reaches each of these. "Usually" is the word the
+ * harness exists to remove, so they are enumerated: if a seeded order stops
+ * producing one of them after an edit to the row set, the property is still
+ * checked against it here.
+ *
+ * The duplicate is deliberately mid-sequence rather than appended: a re-insert
+ * that lands between a row and its child is the shape a real exchange makes.
+ */
+const NAMED_ORDERS: ReadonlyArray<{ what: string; order: ReplicatedRow[] }> = [
+  { what: "as written", order: [...SET] },
+  { what: "reversed", order: [...SET].reverse() },
+  // aa:2 names aa:1; delivering the child first is the case D2 exists for.
+  { what: "child before parent", order: [SET[1]!, SET[0]!, SET[2]!, SET[3]!, SET[4]!, SET[5]!] },
+  // bb:3 buries bb:2; the tombstone arrives before what it buries.
+  { what: "tombstone before change", order: [SET[5]!, SET[4]!, SET[0]!, SET[1]!, SET[2]!, SET[3]!] },
+  // aa:3 names both heads; the resolution arrives before either of them.
+  { what: "resolution before its heads", order: [SET[3]!, SET[1]!, SET[2]!, SET[0]!, SET[4]!, SET[5]!] },
+  // Every exchange re-sends everything, so this is the common case, not an edge.
+  { what: "same row twice, mid-sequence", order: [SET[0]!, SET[1]!, SET[0]!, SET[2]!, SET[3]!, SET[4]!, SET[5]!] },
+];
+
 test.describe("the flag is a function of the row set, not of arrival order", () => {
+  test("the adversarial orders, each named", () => {
+    const reference = applyAll(SET);
+    for (const { what, order } of NAMED_ORDERS) {
+      expect(applyAll(order), what).toBe(reference);
+    }
+  });
+
   test("every order of the same rows produces the same table", () => {
     const reference = applyAll(SET);
     const failures: string[] = [];
@@ -311,5 +346,167 @@ test.describe("the trigger's column list is checked against the engine", () => {
     // the trap T1-D10 was written against.
     const { sql } = rewriteReplicated(SCHEMA);
     expect(triggerColumns(sql, "cases")).not.toContain("_r_superseded");
+  });
+});
+
+test.describe("merge", () => {
+  /** Two independent copies of the same schema. */
+  function pair() {
+    const a = open();
+    const b = open();
+    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
+    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
+    return { a, b };
+  }
+
+  test("merge-disjoint", () => {
+    const { a, b } = pair();
+    createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+    createEntity(b, "cases", E2, { title: "yours", status: "open", weight: null });
+
+    const result = mergeFrom(a, b, ["cases"]);
+    expect(result.applied).toBe(1);
+    expect(result.duplicate).toBe(0);
+    expect(result.rejected).toEqual([]);
+    expect(a.all("SELECT count(*) c FROM cases_current")[0]!["c"]).toBe(2);
+    a.close();
+    b.close();
+  });
+
+  test("merge-idempotent", () => {
+    const { a, b } = pair();
+    createEntity(b, "cases", E2, { title: "yours", status: "open", weight: null });
+
+    expect(mergeFrom(a, b, ["cases"]).applied).toBe(1);
+    const second = mergeFrom(a, b, ["cases"]);
+    expect(second.applied).toBe(0);
+    expect(second.duplicate).toBe(1);
+    a.close();
+    b.close();
+  });
+
+  test("merge-commutative", () => {
+    // A←B then A←C against A←C then A←B, by the dump of T1-D9.
+    const build = (order: "bc" | "cb"): string => {
+      const a = open();
+      const b = open();
+      const c = open();
+      for (const [db, id] of [[a, A], [b, B], [c, bytes(0xcc)]] as const) {
+        db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [id]);
+        db.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [id]);
+      }
+      createEntity(a, "cases", E1, { title: "a", status: "open", weight: 1 });
+      createEntity(b, "cases", E2, { title: "b", status: "open", weight: 2 });
+      createEntity(c, "cases", bytes(0x33), { title: "c", status: "open", weight: null });
+      if (order === "bc") {
+        mergeFrom(a, b, ["cases"]);
+        mergeFrom(a, c, ["cases"]);
+      } else {
+        mergeFrom(a, c, ["cases"]);
+        mergeFrom(a, b, ["cases"]);
+      }
+      const dump = canonicalDump(a, ["cases"]);
+      a.close();
+      b.close();
+      c.close();
+      return dump;
+    };
+    expect(build("bc")).toBe(build("cb"));
+  });
+
+  test("merge-conflict, and current shows the pick with the flag up", () => {
+    const { a, b } = pair();
+    const base = createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
+    mergeFrom(b, a, ["cases"]);          // both hold the base row
+    changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+    changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
+
+    mergeFrom(a, b, ["cases"]);
+    expect(a.all("SELECT count(*) c FROM cases_conflicts")[0]!["c"]).toBe(1);
+    expect(a.all("SELECT count(*) c FROM cases_heads")[0]!["c"]).toBe(2);
+    const current = a.all("SELECT title, _r_conflicted FROM cases_current");
+    // Never omitted, always flagged.
+    expect(current).toHaveLength(1);
+    expect(Number(current[0]!["_r_conflicted"])).toBe(1);
+    expect(base._r_seq).toBe(1);
+    a.close();
+    b.close();
+  });
+
+  test("merge-tombstone-conflict shows the change, not the delete (T1-D3)", () => {
+    const { a, b } = pair();
+    createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
+    mergeFrom(b, a, ["cases"]);
+    changeEntity(a, "cases", E1, { title: "edited", status: "open", weight: null });
+    deleteEntity(b, "cases", E1);
+
+    mergeFrom(a, b, ["cases"]);
+    const current = a.all("SELECT title, _r_conflicted FROM cases_current");
+    expect(current).toHaveLength(1);
+    expect(current[0]!["title"]).toBe("edited");
+    // And the person is told somebody deleted it, rather than finding their
+    // edit quietly resurrected.
+    expect(Number(current[0]!["_r_conflicted"])).toBe(1);
+    a.close();
+    b.close();
+  });
+
+  test("merge-resolve clears the conflict", () => {
+    const { a, b } = pair();
+    createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
+    mergeFrom(b, a, ["cases"]);
+    changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+    changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
+    mergeFrom(a, b, ["cases"]);
+
+    // A change written while a conflict is open names every head, which is
+    // what makes it a resolution; there is no separate operation.
+    changeEntity(a, "cases", E1, { title: "settled", status: "open", weight: null });
+    expect(a.all("SELECT count(*) c FROM cases_conflicts")[0]!["c"]).toBe(0);
+    const current = a.all("SELECT title, _r_conflicted FROM cases_current");
+    expect(current[0]!["title"]).toBe("settled");
+    expect(Number(current[0]!["_r_conflicted"])).toBe(0);
+    a.close();
+    b.close();
+  });
+
+  test("the clock is above everything the merge brought in, before the next write", () => {
+    /*
+     * A local row written after a merge must outrank what the merge delivered.
+     * `_current` picks the highest `_r_lc`, so a row written with a stale clock
+     * would lose to its own ancestors and the person's newest edit would
+     * disappear behind an older one.
+     */
+    const { a, b } = pair();
+    for (let n = 0; n < 5; n += 1) {
+      createEntity(b, "cases", bytes(0x40 + n), { title: `b${n}`, status: "open", weight: null });
+    }
+    const theirs = Number(b.all("SELECT max(_r_lc) m FROM cases")[0]!["m"]);
+    mergeFrom(a, b, ["cases"]);
+    expect(Number(a.all("SELECT lc FROM _dai_replica")[0]!["lc"])).toBeGreaterThanOrEqual(theirs);
+
+    const mine = createEntity(a, "cases", E1, { title: "after", status: "open", weight: null });
+    expect(mine._r_lc).toBeGreaterThan(theirs);
+    a.close();
+    b.close();
+  });
+
+  test("one refused row does not deny the good ones", () => {
+    // Refusing the whole exchange would make one forged row cheaper than
+    // forging anything real.
+    const { a, b } = pair();
+    createEntity(b, "cases", E1, { title: "honest", status: "open", weight: null });
+    createEntity(b, "cases", E2, { title: "also honest", status: "open", weight: null });
+    // A row this copy already holds under that id, with different content.
+    applyRow(a, "cases", row(B, 1, 1, E1, [], { title: "not what B wrote", status: "open", weight: null }));
+
+    const result = mergeFrom(a, b, ["cases"]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.applied).toBe(1);
+    expect(a.all("SELECT count(*) c FROM cases")[0]!["c"]).toBe(2);
+    a.close();
+    b.close();
   });
 });

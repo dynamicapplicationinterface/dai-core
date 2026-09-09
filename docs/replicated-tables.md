@@ -363,6 +363,31 @@ Vector `canonical-dump-real-edge-cases` covers this and **runs before
 the commutativity vector, and the merge — which is correct — takes the blame
 for the printer.
 
+**T1-D11 — the flag is not row content: not compared, not signed, not
+exported as fact.** `_r_superseded` says what *this copy* has seen supersede
+what. It is derived from the row set and it is local.
+
+Three consequences, and the third is the one that would be found late:
+
+- **Not compared.** Two copies of the same row legitimately carry different
+  flags, because the sender may hold a child this copy has not. Including it in
+  the idempotence check of §6 would make `ROW_REJECTED` fire on honest rows in
+  every exchange.
+- **Not exported as fact.** A merge derives the flag from the rows it has, and
+  ignores whatever the sender's column said. There is nothing to reconcile,
+  because the value is recomputed rather than transferred.
+- **Not signed.** When Level 2 arrives, `_r_superseded` is excluded from the
+  canonical row encoding. A signature covering it would fail verification on
+  every honest merge, for exactly the reason the comparison would — and it
+  would fail *after* the rows had been accepted, which reads as forgery rather
+  than as a design error. Draft 1 §7 already lists the signed fields and this
+  column is not among them; this says why it must stay that way.
+
+It is in the canonical dump of T1-D9 all the same, and that is not a
+contradiction. The dump is what proves two copies converged, and the flag is a
+function of the row set — so if two hosts hold the same rows and disagree about
+the flag, they have not converged and the dump must say so.
+
 **T1-D10 — the update trigger is column-scoped, and the flag only rises.**
 Draft 1's blanket `BEFORE UPDATE` would forbid the very write D5 requires. The
 trigger names the immutable columns instead, leaving `_r_superseded` writable.

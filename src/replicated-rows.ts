@@ -302,3 +302,111 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
   }
   return `${lines.join("\n")}\n`;
 }
+
+/* -------------------------------------------------------------- the merge */
+
+export interface MergeResult {
+  /** Rows this copy did not have. */
+  applied: number;
+  /** Rows it already had, unchanged. Every exchange re-sends everything. */
+  duplicate: number;
+  /** Row ids refused, and the reason is always the same one: a different row wearing that id. */
+  rejected: string[];
+  /** Replica ids this copy had never seen. */
+  newReplicas: number;
+}
+
+/**
+ * Union-merges a sibling's rows into this copy (§6).
+ *
+ * Nothing here decides anything. Union on a set keyed by `(_r_replica, _r_seq)`
+ * is commutative, associative and idempotent, so the answer does not depend on
+ * which copy merged which, nor in what order, nor how many times.
+ *
+ * At Level 1 there is nothing to verify. A replica id is a claim and a label is
+ * a claim, and this reconciles them by union precisely because inferring
+ * anything more from them would be inventing an authority Level 1 does not
+ * have. Who wrote a row is Level 2's question.
+ */
+export function mergeFrom(
+  local: Rows,
+  sibling: Rows,
+  tables: readonly string[],
+): MergeResult {
+  const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0 };
+
+  /*
+   * The clock first, and durably before any local write that follows.
+   *
+   * A local row written after a merge must carry a clock above everything the
+   * merge brought in. If the advance were left until after the rows, a crash
+   * between the two would leave this copy able to write a row with a clock
+   * lower than rows it has already seen — and `_current` picks the highest
+   * `_r_lc`, so that row would lose to its own ancestors and the person's
+   * newest edit would vanish behind an older one.
+   */
+  let ceiling = Number(local.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
+  ceiling = Math.max(ceiling, Number(sibling.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0));
+  for (const table of tables) {
+    const highest = sibling.all(`SELECT max(_r_lc) AS m FROM "${table}"`)[0]?.["m"];
+    if (typeof highest === "number") ceiling = Math.max(ceiling, highest);
+  }
+  local.run("UPDATE _dai_replica SET lc = ?", [ceiling]);
+
+  // Union, and nothing else. A replica id seen is a replica id known.
+  const known = new Set(
+    local.all("SELECT hex(id) AS h FROM _dai_replicas").map((row) => String(row["h"])),
+  );
+  const theirs = [
+    ...sibling.all("SELECT id, label FROM _dai_replica"),
+    ...sibling.all("SELECT id, label FROM _dai_replicas"),
+  ];
+  for (const replica of theirs) {
+    const id = replica["id"] as Uint8Array;
+    if (!(id instanceof Uint8Array)) continue;
+    const key = [...id].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+    if (known.has(key)) continue;
+    known.add(key);
+    result.newReplicas += 1;
+    local.run("INSERT INTO _dai_replicas (id, label, first_seen, rows_seen) VALUES (?, ?, ?, 0)", [
+      id,
+      replica["label"] ?? null,
+      ceiling,
+    ]);
+  }
+
+  for (const table of tables) {
+    const authored = authorColumnsOf(sibling, table);
+    for (const incoming of sibling.all(`SELECT * FROM "${table}"`)) {
+      const columns: Record<string, unknown> = {};
+      for (const name of authored) columns[name] = incoming[name];
+      const row: ReplicatedRow = {
+        _r_replica: incoming["_r_replica"] as Uint8Array,
+        _r_seq: Number(incoming["_r_seq"]),
+        _r_lc: Number(incoming["_r_lc"]),
+        _r_entity: incoming["_r_entity"] as Uint8Array,
+        _r_parents: String(incoming["_r_parents"]),
+        _r_deleted: Number(incoming["_r_deleted"]),
+        _r_sig: (incoming["_r_sig"] as Uint8Array | null) ?? null,
+        columns,
+      };
+      try {
+        if (applyRow(local, table, row) === "added") result.applied += 1;
+        else result.duplicate += 1;
+      } catch (error) {
+        if (!(error instanceof RowRejected)) throw error;
+        /*
+         * One row refused, the rest still merged.
+         *
+         * Refusing the whole exchange would let one bad row deny every good
+         * one, which is a cheaper attack than forging a row. The id is
+         * reported so a person can be told what was dropped; who sent it is
+         * not reported, because at Level 1 nothing here knows.
+         */
+        result.rejected.push(rowId(row._r_replica, row._r_seq));
+      }
+    }
+  }
+
+  return result;
+}
