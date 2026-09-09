@@ -726,6 +726,16 @@ merged" sends somebody looking for damage that is not there.
 | `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |
 | `UNSUPPORTED_LEVEL` | merge: the sibling declares a level this reader does not implement |
+| `MERGE_MODULE_MISMATCH` | merge: the merge module the host sent is not the one this runtime was built against |
+
+`MERGE_MODULE_MISMATCH` is how the frame keeps a promise it would otherwise
+only be making. The merge arrives with the request rather than being carried by
+every document, and the frame hashes what arrived against a digest compiled
+into the runtime before importing any of it. So the frame cannot execute a
+merge the conformance fixtures did not, whatever it was sent, and a runtime and
+a merge module are versioned together by construction rather than by anyone
+remembering. It is fail-closed: an unstamped build matches nothing and refuses
+every merge.
 
 `UNSUPPORTED_LEVEL` is `requires` at merge time and deserves the same
 treatment. A Level 2 sibling merged as though it were Level 1 would have its

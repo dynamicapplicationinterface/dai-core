@@ -716,6 +716,15 @@ async function writeContainer(
  * `postMessage` and sets it locally instead.
  */
 function bridgeMain(): void {
+  /*
+   * The SHA-256 of the merge module this runtime was built against.
+   *
+   * Replaced at build time by scripts/stamp-merge-digest.mjs, which refuses to
+   * run if this placeholder is not here. Left unreplaced it matches nothing,
+   * and every merge refuses — the safe direction.
+   */
+  const MERGE_DIGEST = "__DAI_MERGE_DIGEST__";
+
   type Any = Record<string, any>;
   const host: Any = ((window as unknown as Any).__DAI__ as Any) || {};
 
@@ -1084,6 +1093,33 @@ function bridgeMain(): void {
     if (!mergeModule) {
       const source = request.mergeSource;
       if (typeof source !== "string" || source.length === 0) throw new Error("MERGE_UNAVAILABLE");
+
+      /*
+       * The merge this runtime was built against, and no other.
+       *
+       * The message is source-checked, so what arrives is the host's — but "in
+       * practice it is the host's" is the sentence this project keeps finding
+       * holes behind. The expected digest is written into this bundle at build
+       * time, and what arrived is hashed before anything is imported.
+       *
+       * It makes a test assertion into a property of the running system: this
+       * frame cannot execute a merge the conformance fixtures did not, whatever
+       * it was sent. And it versions a runtime and a merge module together by
+       * construction, so "were these two built together" stops being a question
+       * anybody can ask.
+       *
+       * Fail-closed by design. If the build step that writes the digest never
+       * ran, the constant is still its placeholder, nothing matches it, and
+       * every merge refuses — which is the safe direction for a check that is
+       * only ever wrong in one of two ways.
+       */
+      const bytes = new TextEncoder().encode(source);
+      const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
+      const got = Array.prototype.map
+        .call(new Uint8Array(digest), (b: number) => b.toString(16).padStart(2, "0"))
+        .join("");
+      if (got !== MERGE_DIGEST) throw new Error("MERGE_MODULE_MISMATCH");
+
       // Imported on the first merge and never at load: a document that never
       // merges never evaluates it.
       const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
