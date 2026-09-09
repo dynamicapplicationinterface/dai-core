@@ -1039,7 +1039,17 @@ function bridgeMain(): void {
     }
   };
 
+  /*
+   * The handle the application is using, and the merge once it has been asked
+   * for. `autosaveDb` is not the first of these: it is set on a write and
+   * cleared when the save flushes, so it is null exactly when a merge is most
+   * likely — a document just opened to receive somebody's copy.
+   */
+  let liveDb: Any | null = null;
+  let mergeModule: Any | null = null;
+
   const watched = (db: Any): Any => {
+    liveDb = db;
     lenient(db);
     if (!autosaves || typeof db.exec !== "function") return db;
     const exec = db.exec.bind(db);
@@ -1056,6 +1066,86 @@ function bridgeMain(): void {
     };
     return db;
   };
+  /**
+   * Opens a sibling's data section and merges its rows into this copy.
+   *
+   * One transaction around the whole thing. A failure part-way leaves either
+   * nothing or everything, never a row half-written and — the case that
+   * actually matters — never the clock advanced past rows that did not arrive.
+   * `_current` picks by the clock, so a copy whose clock ran ahead of its rows
+   * would answer with its own older edits and look as though it had lost the
+   * newer ones.
+   */
+  const mergeSibling = async (request: Any): Promise<Any> => {
+    const bytes = request && request.databaseBytes;
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0) throw new Error("NOT_A_DATABASE");
+    if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
+
+    if (!mergeModule) {
+      const source = request.mergeSource;
+      if (typeof source !== "string" || source.length === 0) throw new Error("MERGE_UNAVAILABLE");
+      // Imported on the first merge and never at load: a document that never
+      // merges never evaluates it.
+      const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+      try {
+        mergeModule = await import(/* @vite-ignore */ url);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    const api2 = await initSqlite();
+    const sibling = new api2.oo1.DB() as Any;
+    try {
+      const pointer = api2.wasm.allocFromTypedArray(bytes);
+      const rc = api2.capi.sqlite3_deserialize(
+        sibling.pointer,
+        "main",
+        pointer,
+        bytes.byteLength,
+        bytes.byteLength,
+        api2.capi.SQLITE_DESERIALIZE_FREEONCLOSE | api2.capi.SQLITE_DESERIALIZE_RESIZEABLE,
+      );
+      if (rc !== 0) throw new Error("NOT_A_DATABASE");
+      // The same touch the document's own open needs: until something reads
+      // the schema, the connection reports its own defaults and not the file's.
+      sibling.exec("SELECT count(*) FROM sqlite_schema");
+
+      const rows = (db: Any): Any => ({
+        all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
+        run: (sql: string, params: Any[] = []) => {
+          db.exec(sql, { bind: params.slice() });
+        },
+      });
+
+      liveDb.exec("BEGIN");
+      try {
+        const merge = mergeModule as Any;
+        const report = merge.mergeSibling(rows(liveDb), rows(sibling), request.level || 1);
+        if (report.refused) {
+          // Nothing was written. Rolled back rather than assumed: a refusal
+          // that left a transaction open would take the next write with it.
+          liveDb.exec("ROLLBACK");
+          return report;
+        }
+        liveDb.exec("COMMIT");
+        // Rows changed under whatever is on screen. Scheduling a save also
+        // makes the merge durable rather than living until the next write.
+        scheduleAutosave(liveDb);
+        return report;
+      } catch (error) {
+        liveDb.exec("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      try {
+        sibling.close();
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
   window.addEventListener("pagehide", () => {
     void flushAutosave();
   });
@@ -1230,6 +1320,48 @@ function bridgeMain(): void {
       void Promise.resolve(pending).then(() => {
         window.parent.postMessage({ type: "dai:flushed", id: data.id }, "*");
       });
+      return;
+    }
+    /*
+     * A sibling's rows (docs/replicated-tables.md §6).
+     *
+     * The host has already decided this is a sibling — same document, same
+     * publisher, compatible schema — before any of these bytes were sent. This
+     * side merges rows and does not re-decide that: a frame defending itself
+     * against its own host's inputs would have two trust boundaries where the
+     * design has one, and the second is the one nobody maintains.
+     *
+     * What it does contain is the bytes. Somebody else's SQLite file is opened
+     * here, inside the sandbox that exists for exactly that, and never out
+     * where the host lives.
+     *
+     * The merge itself arrives with the request rather than being carried by
+     * every document: the code that decides what merges belongs to the host,
+     * a document supplying its own could accept rows this one refuses, and a
+     * document that never merges should not pay for it. It is the same file
+     * the conformance fixtures import, so what runs here is what three readers
+     * agreed on.
+     */
+    if (data.type === "dai:merge") {
+      void mergeSibling(data)
+        .then((report: Any) => {
+          window.parent.postMessage({ type: "dai:merged", id: data.id, ...report }, "*");
+        })
+        .catch((error: Any) => {
+          window.parent.postMessage(
+            {
+              type: "dai:merged",
+              id: data.id,
+              applied: 0,
+              duplicate: 0,
+              rejected: [],
+              newReplicas: 0,
+              conflicts: 0,
+              refused: (error && error.message) || "MERGE_FAILED",
+            },
+            "*",
+          );
+        });
       return;
     }
     /*

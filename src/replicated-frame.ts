@@ -173,5 +173,26 @@ export function conflictsIn(rows: Rows, tables: readonly string[]): number {
   return total;
 }
 
-/** The canonical dump, re-exported so a host can show what a merge produced. */
-export { canonicalDump };
+/*
+ * The whole surface, from one module.
+ *
+ * This is the file the frame imports and the fixtures import, so everything a
+ * merge needs has to leave by this door — otherwise the frame would need two
+ * modules and the question of whether they were built together would be live.
+ */
+export {
+  adoptReplica,
+  applyRow,
+  authorColumnsOf,
+  canonicalDump,
+  changeEntity,
+  createEntity,
+  deleteEntity,
+  encodeValue,
+  ensureReplica,
+  headsOf,
+  mergeFrom,
+  parentsOf,
+  rowId,
+  RowRejected,
+} from "./replicated-rows.js";

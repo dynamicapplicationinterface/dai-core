@@ -30,7 +30,7 @@ export default defineConfig([
    * other modules' code as well.
    */
   {
-    entry: { "dai-merge": "src/replicated-rows.ts" },
+    entry: { "dai-merge": "src/replicated-frame.ts" },
     format: ["esm"],
     outExtension: () => ({ js: ".js" }),
     splitting: false,
