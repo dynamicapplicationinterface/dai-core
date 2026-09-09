@@ -307,9 +307,17 @@ CREATE TABLE _dai_replica (
   label TEXT
 );
 
+-- Every column but the id is LOCAL: true of this copy, not of the document.
+-- They are deliberately outside the canonical dump (T1-D12), and a dump
+-- generator that adds them will find two correct copies that never agree.
 CREATE TABLE _dai_replicas (
   id         BLOB PRIMARY KEY CHECK (length(id) = 16),
+  -- LOCAL. A name this copy gives a key, never a name the key carries: keys
+  -- cannot be faked and names can, so a label that propagated would be the
+  -- one thing the identity design refused.
   label      TEXT,
+  -- LOCAL. When *this* copy first saw that replica. A and B each record the
+  -- other at the merge that introduced them, so these disagree by design.
   first_seen INTEGER NOT NULL,
   rows_seen  INTEGER NOT NULL DEFAULT 0
 );

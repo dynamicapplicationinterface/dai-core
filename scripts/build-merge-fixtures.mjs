@@ -138,7 +138,13 @@ const VECTORS = [
     // other's: union merge converges over rows nobody disputes, and a disputed
     // id is where the guarantee stops. The alternative is one side silently
     // adopting the other's version of a row, which refusing it exists to stop.
+    //
+    // A Level 1 property, not a permanent one: at Level 2 the row that fails
+    // to verify is refused and the one that verifies is kept, so the dispute
+    // has an answer instead of two sides. Both copies are still fixed points
+    // here — the run() above merges twice and requires nothing to move.
     converges: false,
+    shrinksAt: "Track 2 — signatures decide a disputed row id",
     fill: (a, b) => {
       createEntity(b, "cases", E1, { title: "honest", status: "open", weight: null });
       createEntity(b, "cases", E2, { title: "also honest", status: "open", weight: null });
@@ -174,6 +180,26 @@ function run(vector, direction) {
   const [left, right] = direction === "ab" ? [a, b] : [b, a];
   const result = mergeFrom(left, right, TABLES);
   const dump = canonicalDump(left, TABLES);
+
+  /*
+   * And again, changing nothing.
+   *
+   * For a converging vector this is idempotence. For the disputed one it is
+   * the claim that matters more: two copies that will never agree must each
+   * still be a fixed point. Non-convergent must not mean non-deterministic —
+   * a dispute that grew on every exchange would be a copy that never settles,
+   * which is worse than one that settles differently from its sibling.
+   */
+  const again = mergeFrom(left, right, TABLES);
+  const settled = canonicalDump(left, TABLES);
+  if (settled !== dump) {
+    console.error(`${vector.name} [${direction}]: merging twice changed the table`);
+    process.exit(1);
+  }
+  if (again.applied !== 0) {
+    console.error(`${vector.name} [${direction}]: the second merge applied ${again.applied} rows`);
+    process.exit(1);
+  }
   a.close();
   b.close();
   rmSync(join(out, vector.name, "scratch-a.db"));
@@ -270,7 +296,20 @@ for (const vector of VECTORS) {
   compare(join(dir, "expected-ba.txt"), ba.dump);
   compare(
     join(dir, "result.json"),
-    `${JSON.stringify({ what: vector.what, converges: shouldConverge, ab: ab.result, ba: ba.result }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        what: vector.what,
+        converges: shouldConverge,
+        ...(vector.shrinksAt ? { shrinksAt: vector.shrinksAt } : {}),
+        // Each copy is a fixed point whether or not the two agree: run()
+        // merges a second time and requires nothing to move.
+        stable: true,
+        ab: ab.result,
+        ba: ba.result,
+      },
+      null,
+      2,
+    )}\n`,
   );
 }
 

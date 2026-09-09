@@ -1,6 +1,7 @@
 {
   "what": "Both changed one entity from the same head. Two heads; current shows the deterministic pick, flagged.",
   "converges": true,
+  "stable": true,
   "ab": {
     "applied": 1,
     "duplicate": 1,

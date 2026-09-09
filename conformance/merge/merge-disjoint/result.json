@@ -1,6 +1,7 @@
 {
   "what": "Two replicas, entities that never meet. Every row is new to the other side.",
   "converges": true,
+  "stable": true,
   "ab": {
     "applied": 1,
     "duplicate": 0,

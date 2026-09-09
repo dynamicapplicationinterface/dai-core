@@ -373,11 +373,20 @@ generator working: an assertion about convergence that a correct
 implementation fails is worse than no assertion, because somebody will
 eventually "fix" it by making the wrong thing converge.
 
-`label` is excluded for a different reason. At Level 1 it is a claim a replica
-makes about itself, nothing propagates a rename, and two copies holding
-different labels for one id have not failed to converge — they have heard
-different things. The *set of ids* does converge, and that is what the dump
-asserts.
+`label` is excluded for a stronger reason than that it happens not to
+converge: it must not. A label is **recipient-assigned by design** — a name
+this copy gives a key, never a name the key carries. Keys cannot be faked and
+names can, which is why authorship is a key and a name is a label attached to
+one. A label that propagated between copies would be a name travelling with an
+identity, which is exactly what that decision refused.
+
+So this is not a conservative choice to revisit later. Two copies holding
+different labels for one replica are both correct. The *set of ids* converges,
+and that is what the dump asserts.
+
+The columns stay in the table — a copy needs them — and are marked LOCAL in the
+emitted schema, so the next person writing a dump generator finds the reason
+next to the column rather than rediscovering it through a failing fixture.
 
 **T1-D13 — a refusal must never be cheaper than the thing it refuses.** One
 row refused does not deny the rest of the exchange. Refusing the whole merge on
@@ -496,6 +505,21 @@ chose to merge.*
 
 The sibling test of §7 raises the cost — a stranger needs the UUID and a
 compatible schema — but it is a filter for accidents, not for adversaries.
+
+**And union merge converges over undisputed rows only.** A row id claimed with
+two different contents is disputed, and each copy keeps its own: neither can
+accept the other's without abandoning a row it holds. Two such copies never
+become the same, however many times they exchange.
+
+That is a Level 1 property and the same weakness T1-D4 names, reached from the
+other side. At Level 2 the boundary shrinks to nothing worth stating: the row
+that fails to verify is refused and the one that verifies is kept, so the
+dispute has an answer rather than two sides. Until then it is real, and
+`merge-row-id-reused` pins it rather than describing it.
+
+Non-convergent is not non-deterministic. Each copy's own state must be stable —
+merging again changes nothing and the dispute does not grow — and the fixture
+asserts that too.
 
 ## 11. Not in Track 1
 

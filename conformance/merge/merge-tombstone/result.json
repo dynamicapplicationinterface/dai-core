@@ -1,6 +1,7 @@
 {
   "what": "A delete on one side and nothing on the other. Absent from current, present in heads.",
   "converges": true,
+  "stable": true,
   "ab": {
     "applied": 1,
     "duplicate": 1,

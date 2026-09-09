@@ -1,6 +1,7 @@
 {
   "what": "A delete on one side, a change on the other, concurrent. Current shows the change, flagged (T1-D3).",
   "converges": true,
+  "stable": true,
   "ab": {
     "applied": 1,
     "duplicate": 1,
