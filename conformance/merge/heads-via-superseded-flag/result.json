@@ -1,0 +1,16 @@
+{
+  "what": "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
+  "converges": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1
+  }
+}

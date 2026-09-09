@@ -294,11 +294,24 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
     );
     for (const row of rows) lines.push(columns.map((name) => encodeValue(row[name])).join("\t"));
   }
+  /*
+   * The replicas this copy knows of — the ids, and only the ids (T1-D12).
+   *
+   * `first_seen` and `rows_seen` are observations about this copy's own
+   * history, not facts about the document: A records seeing B on the merge
+   * that introduced them and B records the same about A, so the two can never
+   * agree and never should. The fixture generator caught this on its first
+   * run, with every row converging perfectly and the dumps differing anyway.
+   *
+   * `label` is out for a different reason: at Level 1 it is a claim a replica
+   * makes about itself, nothing propagates a rename, and two copies holding
+   * different labels for one id have not failed to converge — they have heard
+   * different things. The set of ids does converge, so that is what is
+   * asserted here.
+   */
   lines.push("# _dai_replicas");
-  for (const row of db.all("SELECT id, label, first_seen, rows_seen FROM _dai_replicas ORDER BY hex(id) ASC")) {
-    lines.push(
-      [row["id"], row["label"], row["first_seen"], row["rows_seen"]].map(encodeValue).join("\t"),
-    );
+  for (const row of db.all("SELECT id FROM _dai_replicas ORDER BY hex(id) ASC")) {
+    lines.push(encodeValue(row["id"]));
   }
   return `${lines.join("\n")}\n`;
 }
@@ -396,12 +409,18 @@ export function mergeFrom(
       } catch (error) {
         if (!(error instanceof RowRejected)) throw error;
         /*
-         * One row refused, the rest still merged.
+         * One row refused, the rest still merged (T1-D13).
          *
-         * Refusing the whole exchange would let one bad row deny every good
-         * one, which is a cheaper attack than forging a row. The id is
-         * reported so a person can be told what was dropped; who sent it is
-         * not reported, because at Level 1 nothing here knows.
+         * A refusal must never be cheaper than the thing it refuses. Refusing
+         * the whole exchange on one bad row would mean somebody who wanted to
+         * stop two people syncing needed one malformed row rather than a
+         * plausible document — the refusal becomes the attack. The same rule
+         * governs the relay in Track 5.
+         *
+         * The id is reported so a person can be told what was dropped. Who
+         * sent it is not, because at Level 1 nothing here knows: a replica id
+         * is a claim, and reporting it as authorship would dress a guess as a
+         * fact.
          */
         result.rejected.push(rowId(row._r_replica, row._r_seq));
       }

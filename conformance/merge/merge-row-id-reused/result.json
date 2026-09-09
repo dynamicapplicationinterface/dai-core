@@ -1,0 +1,20 @@
+{
+  "what": "A row id already held with different content. Refused and counted; the honest rows still merge.",
+  "converges": false,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"
+    ],
+    "newReplicas": 1
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"
+    ],
+    "newReplicas": 1
+  }
+}

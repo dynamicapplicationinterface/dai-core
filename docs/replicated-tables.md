@@ -233,9 +233,7 @@ In order:
 2. Publisher identity agrees (T1-D4) — otherwise refuse.
 3. `replication.tables` present in both manifests — otherwise not a replicated
    document; fall through to normal succession.
-4. Schema digest equal, or reachable through the migration chain — otherwise
-   `SCHEMA_INCOMPATIBLE`; a sibling *ahead* of the local application is
-   `SCHEMA_AHEAD`.
+4. Schema digest equal — otherwise `SCHEMA_MISMATCH`, refused (T1-D14).
 5. Incoming `_dai_replica.id` differs from the local one — equal ids mean this
    is my own copy coming back, which is succession, not a merge.
 
@@ -363,6 +361,40 @@ Vector `canonical-dump-real-edge-cases` covers this and **runs before
 the commutativity vector, and the merge — which is correct — takes the blame
 for the printer.
 
+**T1-D12 — the dump asserts the replica ids and nothing else about them.**
+`_dai_replicas` carries `first_seen` and `rows_seen`, and neither can converge:
+they are records of *this copy's* history. A records seeing B on the merge that
+introduced them, and B records the same about A, so the two disagree by
+construction and always will.
+
+The fixture generator found this on its first run, with every row in every
+table converging perfectly and the dumps differing anyway — which is the
+generator working: an assertion about convergence that a correct
+implementation fails is worse than no assertion, because somebody will
+eventually "fix" it by making the wrong thing converge.
+
+`label` is excluded for a different reason. At Level 1 it is a claim a replica
+makes about itself, nothing propagates a rename, and two copies holding
+different labels for one id have not failed to converge — they have heard
+different things. The *set of ids* does converge, and that is what the dump
+asserts.
+
+**T1-D13 — a refusal must never be cheaper than the thing it refuses.** One
+row refused does not deny the rest of the exchange. Refusing the whole merge on
+one bad row would make forging a single row a cheaper attack than forging
+anything real: an attacker who wanted to stop two people syncing would need one
+malformed row rather than a plausible document. The same principle governs the
+relay in Track 5, and it is written here because this is where it first has
+teeth.
+
+The corollary, which is not a defect: two copies holding different content
+under one row id **never converge**. Each refuses the other's version and keeps
+its own. Union merge converges over rows nobody disputes, and a disputed id is
+exactly where the guarantee stops — the alternative is one side silently
+adopting the other's version of a row, which is what refusing it exists to
+prevent. Fixture `merge-row-id-reused` pins this with both dumps checked in and
+`converges: false` recorded beside them.
+
 **T1-D11 — the flag is not row content: not compared, not signed, not
 exported as fact.** `_r_superseded` says what *this copy* has seen supersede
 what. It is derived from the row set and it is local.
@@ -427,6 +459,22 @@ reverses.
 
 The Python reader gains a `merge` subcommand implementing §6 from this text
 alone. Both implementations must produce identical dumps for every vector.
+
+**T1-D14 — at Level 1 a differing schema digest is refused, loudly.**
+Draft 1 §9 sends a sibling that is one migration behind through the chain, in a
+scratch copy, before merging. That needs migration semantics for replicated
+tables which do not exist yet, and inventing them in a hurry to unblock the
+wiring is how a format acquires a rule nobody meant.
+
+So the interim rule is the conservative one: digests differ, `SCHEMA_MISMATCH`,
+no merge. It is safe to tighten now and loosen later — the migration chain
+turns some of these refusals into merges and never turns a merge into a
+refusal, so nothing built against this rule breaks when it arrives. A document
+refused today is refused with a message; a document merged today under invented
+semantics is wrong quietly.
+
+`merge-schema-behind` and `merge-schema-ahead` stay on the G1 list and are not
+satisfied by this. They are the two vectors Track 1 closes last.
 
 ## 10. What Level 1 does not defend against
 

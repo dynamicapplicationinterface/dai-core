@@ -1,0 +1,8 @@
+# cases
+base	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	1	1	11111111111111111111111111111111	[]	0	1	nil
+mine	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	2	2	11111111111111111111111111111111	["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1"]	0	1	nil
+settled	open	nil	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	3	3	11111111111111111111111111111111	["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:2","bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"]	0	0	nil
+yours	open	nil	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	1	2	11111111111111111111111111111111	["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1"]	0	1	nil
+# _dai_replicas
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
