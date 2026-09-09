@@ -126,6 +126,22 @@ const L = {
    * open quietly; carrying it keeps a legitimate link verifiable.
    */
   requires: 15,
+  /**
+   * The replicated tables and level (`replication`, replicated-tables.md §3).
+   *
+   * Carried, and its absence was a real bug. A link that dropped it rebuilt a
+   * version-4 manifest that still said `requires: ["replicated"]` but carried
+   * no `replication` — so the host never told the frame rules were coming, the
+   * frame never waited for them, and the first write refused with
+   * `WRITE_SURFACE_UNAVAILABLE`. It reached a phone through the "open at its
+   * own address" path, which every desktop and every test skipped. It is also
+   * in the signed set, so a signed document whose `replication` went missing
+   * in transit would fail its signature rather than open quietly.
+   *
+   * As `[level, ...tables]`, tables sorted, so a signed document round-trips to
+   * the identical signed bytes `signedBytes` produces.
+   */
+  replication: 16,
 } as const;
 
 const CARRIED = 0;
@@ -263,6 +279,18 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
   if (manifest.manifestVersion >= 3) fields.set(L.version, manifest.manifestVersion);
   if (Array.isArray(manifest.requires) && manifest.requires.length > 0) {
     fields.set(L.requires, [...manifest.requires].sort());
+  }
+  if (
+    manifest.replication &&
+    Array.isArray(manifest.replication.tables) &&
+    manifest.replication.tables.length > 0
+  ) {
+    // [level, ...tables], tables sorted — the same order signedBytes uses, so
+    // a signed document reconstructs to identical signed bytes.
+    fields.set(L.replication, [
+      manifest.replication.level,
+      ...[...manifest.replication.tables].sort(),
+    ]);
   }
   const savedAt = (manifest as { savedAt?: unknown }).savedAt;
   if (typeof savedAt === "string" && savedAt) fields.set(L.savedAt, savedAt);
@@ -503,6 +531,19 @@ export async function unpackInline(
     ...(generator ? { generator } : {}),
     ...(Array.isArray(fields.get(L.requires)) && (fields.get(L.requires) as unknown[]).length > 0
       ? { requires: (fields.get(L.requires) as unknown[]).filter((n): n is string => typeof n === "string") }
+      : {}),
+    ...(Array.isArray(fields.get(L.replication)) && (fields.get(L.replication) as unknown[]).length >= 2
+      ? {
+          // `{ tables, level }`, in that order: the manifest is reserialized
+          // with JSON.stringify, so the key order has to match what core.ts
+          // wrote or the bytes — and a signature over them — differ.
+          replication: {
+            tables: (fields.get(L.replication) as unknown[])
+              .slice(1)
+              .filter((n): n is string => typeof n === "string"),
+            level: Number((fields.get(L.replication) as unknown[])[0]) || 1,
+          },
+        }
       : {}),
     ...(typeof fields.get(L.savedAt) === "string" && fields.get(L.savedAt)
       ? { savedAt: fields.get(L.savedAt) as string }

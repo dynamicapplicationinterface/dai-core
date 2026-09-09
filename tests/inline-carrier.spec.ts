@@ -62,6 +62,46 @@ test.describe("the compact inline carrier", () => {
     expect((await verifyContainer(back)).signature).toBe("valid");
   });
 
+  test("a replicated document keeps its replication field across the link", async () => {
+    test.slow();
+    /*
+     * The field the carrier used to drop. `replication` had no entry in the
+     * inline dictionary, so a version-4 document round-tripped through a link
+     * came back with `requires: ["replicated"]` and no `replication` — a
+     * manifest that says it needs the capability and no longer says which
+     * tables use it. The host then never told the frame rules were coming, and
+     * the first write refused with WRITE_SURFACE_UNAVAILABLE. It only ever
+     * showed on the "open at its own address" path, which no other test took.
+     *
+     * Signed, because the field is in the signed set: if the round-trip does
+     * not reproduce it exactly, the byte-for-byte check fails and the
+     * signature does not verify. This asserts all three.
+     */
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "tests", "fixture", "chess"),
+      root: repo,
+      appName: "Velvet Chess",
+      signingKey: KEY,
+      allowTestKey: true,
+    });
+
+    const source = parseContainer(built.html);
+    expect(source.manifest.replication?.tables).toEqual(["game_events", "games", "moves"]);
+
+    const value = await packInline(source, HOST);
+    const back = await unpackInline(value, HOST, { supply: engine });
+
+    // Byte-identical: the manifest that comes back is the one that went in.
+    expect(back).toBe(built.html);
+    // And explicitly, so a failure names the field rather than a hash.
+    const round = parseContainer(back);
+    expect(round.manifest.replication?.tables).toEqual(["game_events", "games", "moves"]);
+    expect(round.manifest.replication?.level).toBe(1);
+    expect(round.manifest.requires).toEqual(["replicated"]);
+    // The signature over the signed set — replication included — still holds.
+    expect((await verifyContainer(back)).signature).toBe("valid");
+  });
+
   test("a shell this host cannot rebuild is carried, and the link still opens", async () => {
     test.slow();
     // A publisher who built with a different template: the sealed shell is not
