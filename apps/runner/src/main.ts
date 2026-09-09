@@ -441,6 +441,58 @@ function showLaunch(name: string, favicon: string | undefined): void {
 
 let bootingGuard: number | undefined;
 
+/*
+ * The launch screen is never a dead end.
+ *
+ * A document is launched by loading the page at its own address and letting
+ * the splash stand until it mounts. When that load is the programmatic
+ * relaunch to `#u=` — set the hash, reload — it can fail to complete on iOS
+ * Safari, and the splash then sits forever with no way off it: the screen
+ * hung, which reads as a broken app and loses the person.
+ *
+ * So the splash carries a fail-safe, not a fix. A few seconds after it
+ * appears, if nothing has mounted, it reveals a sentence and a *Tap to open*
+ * control. The tap matters: a plain navigation from a real user gesture
+ * completes where the programmatic one it stands in for did not, and it uses
+ * neither a hash trick nor a reload. It is the same debt the merge card pays —
+ * a sentence and a way forward, whatever the screen failed to do — and it
+ * stays after the device session finds the root cause.
+ */
+let launchGuard: number | undefined;
+let launchTarget: string | null = null;
+/** A few seconds: longer than a working mount, short enough to rescue one. */
+const LAUNCH_STALL_MS = 6000;
+
+function guardLaunch(target: string): void {
+  launchTarget = target;
+  window.clearTimeout(launchGuard);
+  launchGuard = window.setTimeout(() => {
+    const body = document.body.classList;
+    // Mounted, or no longer launching: nothing to rescue.
+    if (body.contains("loaded")) return;
+    if (!body.contains("launching") && !body.contains("booting")) return;
+    body.add("launch-stalled");
+    // The splash is aria-hidden while it is only decoration; now it holds the
+    // one control on screen, so it must reach assistive technology.
+    document.getElementById("launch")?.setAttribute("aria-hidden", "false");
+  }, LAUNCH_STALL_MS);
+}
+
+function clearLaunchGuard(): void {
+  window.clearTimeout(launchGuard);
+  document.body.classList.remove("launch-stalled");
+  document.getElementById("launch")?.setAttribute("aria-hidden", "true");
+}
+
+const launchOpenButton = document.getElementById("launch-open") as HTMLButtonElement | null;
+launchOpenButton?.addEventListener("click", () => {
+  // The gesture the automatic path could not make. Plain navigation to the
+  // launch address — the `#u=` open path is the same one a healthy launch
+  // takes, and it is known to work; only reaching it by script was the problem.
+  clearLaunchGuard();
+  location.assign(launchTarget ?? location.href);
+});
+
 function eject(): void {
   forgetOpen();
   arrived(false);
@@ -454,6 +506,7 @@ function eject(): void {
   loaded = undefined;
   handshakeEstablished = false;
   document.body.classList.remove("loaded", "launching", "booting");
+  clearLaunchGuard();
   document.documentElement.style.removeProperty("--app-ground");
   declaredGround = undefined;
   mountedUuid = undefined;
@@ -613,6 +666,7 @@ async function mount(cartridge: Cartridge): Promise<void> {
    */
   arrived(false);
   document.body.classList.add("loaded", "booting");
+  clearLaunchGuard();
   window.clearTimeout(bootingGuard);
   // A runtime that never reports is still an app somebody wants to see.
   bootingGuard = window.setTimeout(() => {
@@ -1290,6 +1344,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
          * address is set and the reload asked for explicitly.
          */
         const target = launchAddress(identity);
+        // If this relaunch does not complete — the iOS reload bug — the splash
+        // stays up on this same page, and the guard turns it into Tap to open
+        // pointed at where the reload was trying to go. See guardLaunch.
+        guardLaunch(target);
         if (target.split("#")[0] === location.href.split("#")[0]) {
           location.hash = new URL(target).hash;
           location.reload();
@@ -2804,6 +2862,15 @@ window.addEventListener("hashchange", () => {
 });
 
 async function start(): Promise<void> {
+  /*
+   * Loaded already on a document's address — the head script painted the
+   * launch splash before any of this ran. If the mount that should follow
+   * never arrives, the guard turns the splash into Tap to open pointed at this
+   * same address, which is the healthy open path reached by a gesture. Armed
+   * before the async work below so a hang anywhere in it is still caught.
+   */
+  if (document.body.classList.contains("launching")) guardLaunch(location.href);
+
   await refreshLibrary();
 
   const parameters = new URLSearchParams(location.search);
@@ -3071,6 +3138,11 @@ Object.defineProperty(window, "__runner", {
     // can draw it with a weaker profile than this host has, which is the only
     // way to check that a sentence disappears when its clause does.
     showCard,
+    // The launch fail-safe arms inside iOS-only launch paths a desktop test
+    // cannot enter (the service worker injects the launching class; the
+    // relaunch is platform-gated). Exposed so the reveal, and the gesture it
+    // offers, can be checked where the stall itself cannot be produced.
+    guardLaunch,
   },
 });
 

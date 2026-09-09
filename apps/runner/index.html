@@ -681,6 +681,26 @@
       #launch-icon { border-radius: 19px; background: var(--surface); box-shadow: var(--icon-shadow); }
       #launch-icon[hidden] { display: none; }
       #launch-name { margin: 0; font-size: 17px; font-weight: 600; color: var(--text); }
+      /*
+       * Hidden until the launch stalls. Shown by adding `launch-stalled` to the
+       * body, so no script runs to reveal them beyond setting one class.
+       */
+      #launch-stall-note, #launch-open { display: none; }
+      #launch-stall-note { margin: 0; font-size: 15px; color: var(--text-dim, var(--text)); }
+      body.launch-stalled #launch-stall-note { display: block; }
+      body.launch-stalled #launch-open {
+        display: inline-block;
+        appearance: none;
+        border: 0;
+        border-radius: 980px;
+        padding: 12px 28px;
+        font-size: 17px;
+        font-weight: 600;
+        color: #fff;
+        /* The same green pill as Get: opening is opening, whichever screen. */
+        background: var(--go);
+        cursor: pointer;
+      }
       @media (prefers-reduced-motion: reduce) { #cartridge { transition: none; } }
       body.loaded #slot { display: none; }
 
@@ -1171,6 +1191,16 @@
       <div id="launch" aria-hidden="true">
         <img id="launch-icon" alt="" width="84" height="84" hidden />
         <p id="launch-name"></p>
+        <!--
+          The splash is never a dead end. If the document has not mounted a few
+          seconds after the launch screen appeared, these two appear: a
+          sentence, and a control that opens it by a real tap. The tap is the
+          point — a plain navigation from a user gesture completes where the
+          programmatic relaunch it is standing in for did not. See guardLaunch
+          in main.ts. It stays even once the underlying cause is fixed.
+        -->
+        <p id="launch-stall-note">This is taking longer than it should.</p>
+        <button id="launch-open" type="button">Tap to open</button>
       </div>
       <div id="slot">
         <!--
