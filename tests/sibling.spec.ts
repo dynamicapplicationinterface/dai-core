@@ -1,8 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync, rmSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { rewriteReplicated } from "../src/replicated.js";
 import { looksReplicated, siblingTest, whyNotSibling } from "../src/sibling.js";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * Whether a merge is offered at all (docs/replicated-tables.md §7).
@@ -124,5 +128,54 @@ test.describe("the host works out for itself what is replicated", () => {
     // an offer the frame then refuses by name, never a wrong merge.
     const decoy = new TextEncoder().encode("a table storing the words _r_replica and nothing else");
     expect(looksReplicated(decoy)).toBe(false);
+  });
+});
+
+test.describe("the heuristic has an expiry, and it is enforced", () => {
+  /*
+   * `looksReplicated` reads a data section for the rewrite's columns because
+   * the authority it stands in for does not exist yet: the compiler does not
+   * emit `replication.tables` into the signed manifest.
+   *
+   * The day it does, this file must lose the heuristic. A stand-in still
+   * present after the real thing arrives is a second opinion about a trust
+   * decision — the host consulting two sources about what is replicated,
+   * which is the negotiation the frame was not allowed to have, arriving by
+   * another door.
+   *
+   * So the expiry is a test rather than an intention. It goes red on the
+   * commit that lands the wiring and stays red until the heuristic is gone.
+   */
+  const read = (path: string): string => readFileSync(resolve(repoRoot, path), "utf8");
+
+  test("when the compiler emits replication.tables, looksReplicated must be gone", () => {
+    const emitsManifestField =
+      /replication\s*:\s*\{/.test(read("src/compile.ts")) ||
+      /"replication"\s*:/.test(read("src/core.ts"));
+
+    if (!emitsManifestField) {
+      // Not yet. The heuristic is the only answer the host has, and it is
+      // expected to be here.
+      expect(read("src/sibling.ts")).toContain("export function looksReplicated");
+      return;
+    }
+
+    expect(
+      read("src/sibling.ts"),
+      "The compiler now emits replication.tables, so the manifest is the authority. " +
+        "Delete looksReplicated and read the manifest instead — leaving both is the host " +
+        "holding two opinions about a trust decision.",
+    ).not.toContain("export function looksReplicated");
+  });
+
+  test("nothing consults the heuristic once the manifest can answer", () => {
+    const emitsManifestField =
+      /replication\s*:\s*\{/.test(read("src/compile.ts")) ||
+      /"replication"\s*:/.test(read("src/core.ts"));
+    if (!emitsManifestField) return;
+
+    for (const path of ["apps/runner/src/main.ts", "apps/runner/src/card.ts"]) {
+      expect(read(path), `${path} still calls looksReplicated`).not.toContain("looksReplicated(");
+    }
   });
 });
