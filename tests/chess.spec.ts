@@ -37,9 +37,23 @@ const RUNNER_URL = "http://localhost:5175/";
  * self-consistent and nothing more. So the rows come straight out of SQLite,
  * blobs hexed, ordered by the key the protocol says identifies a row.
  */
+/**
+ * The application's own frame.
+ *
+ * Two deep, and both levels are load-bearing. The host mounts its own shell
+ * around the archive it verified — never the publisher's — and that shell in
+ * turn puts the application in a sandboxed frame of its own. A test reaching
+ * for one `iframe` finds the shell, which has no application in it.
+ */
+function appIn(page: Page): FrameLocator {
+  return page.frameLocator("iframe").frameLocator("iframe");
+}
+
 async function dumpOf(page: Page): Promise<string> {
-  return page.frameLocator("iframe").owner().evaluate(async (frame: HTMLIFrameElement) => {
-    const win = frame.contentWindow as unknown as {
+  return appIn(page)
+    .locator("body")
+    .evaluate(async (body: HTMLElement) => {
+    const win = body.ownerDocument.defaultView as unknown as {
       daiKit: { db: { selectObjects(q: string): Record<string, unknown>[] } };
     };
     const out: Record<string, unknown[]> = {};
@@ -83,6 +97,16 @@ async function play(app: FrameLocator, from: string, to: string): Promise<void> 
 
 /** Saves this copy out as a file, the way the Share card does. */
 async function saveOut(page: Page, to: string): Promise<string> {
+  /*
+   * Down the download route, which is a real one: it is what a browser with no
+   * `showSaveFilePicker` takes, Safari and Firefox included. The picker route
+   * opens a native dialog no test can answer, and stubbing the picker to
+   * succeed would be testing a stub. What matters here is the bytes that leave,
+   * and both routes write the same ones.
+   */
+  await page.evaluate(() => {
+    delete (window as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+  });
   const downloading = page.waitForEvent("download", { timeout: 60_000 });
   await page.evaluate(() =>
     (window as unknown as { __runner: { exportContainer(): Promise<void> } }).__runner.exportContainer(),
@@ -98,7 +122,7 @@ async function firstOpen(page: Page, file: string): Promise<FrameLocator> {
   await page.setInputFiles("#file", file);
   await page.locator("#card-open").waitFor({ timeout: 60_000 });
   await page.locator("#card-open").click();
-  const app = page.frameLocator("iframe");
+  const app = appIn(page);
   await expect(app.locator("#app")).toBeVisible({ timeout: 60_000 });
   return app;
 }
@@ -120,25 +144,7 @@ test.describe("a game of chess played by exchanging files", () => {
     writeFileSync(container, built.html, "utf8");
   });
 
-  /*
-   * Waiting on the compiler, and deliberately not deleted while it waits.
-   *
-   * `rewriteReplicated` has no caller outside its own tests: `compileDirectory`
-   * reads `schema.sql` and injects it verbatim, `-- dai:replicated` and all, so
-   * a built container holds plain tables with no `_r_` columns. The host then
-   * correctly declines to push the write rules to a document it can see is not
-   * replicated, and the application's first write refuses. Every piece behaves
-   * as specified; the chain has a gap at the first link.
-   *
-   * That is the `compile.ts` wiring, which was scheduled last on purpose. What
-   * running this established is that the gate sentence for Level 1 sits behind
-   * it — the ordering was chosen before anything depended on it, and something
-   * does now.
-   *
-   * Left as `fixme` rather than removed or commented out: it goes red the day
-   * the wiring lands, which is the only signal that says the gate is passable.
-   */
-  test.fixme("both copies end on the same rows, and the card appears once", async ({ browser }) => {
+  test("both copies end on the same rows, and the card appears once", async ({ browser }) => {
     // Two devices, not two tabs: a merge that only works because both copies
     // share a database has not been tested at all.
     const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
@@ -149,7 +155,10 @@ test.describe("a game of chess played by exchanging files", () => {
     const appA = await firstOpen(pageA, container);
 
     // A starts the game and plays the first move.
-    await appA.locator("[data-new-game]").first().click();
+    // Several New Game buttons exist across the views; the app seeds a practice
+    // board, so the one in the empty state is hidden and the one under the
+    // board is not.
+    await appA.locator("[data-new-game]:visible").first().click();
     await appA.locator("#setup-you").fill("Ada");
     await appA.locator("#setup-them").fill("Bo");
     await appA.locator('input[name="color"][value="w"]').check();
@@ -166,7 +175,7 @@ test.describe("a game of chess played by exchanging files", () => {
     await expect(pageB.locator("#card-open")).toBeVisible({ timeout: 60_000 });
     await expect(pageB.locator("#card-merge")).toBeHidden();
     await pageB.locator("#card-open").click();
-    const appB = pageB.frameLocator("iframe");
+    const appB = appIn(pageB);
     await expect(appB.locator("#app")).toBeVisible({ timeout: 60_000 });
     await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
 
@@ -175,26 +184,39 @@ test.describe("a game of chess played by exchanging files", () => {
     await saveOut(pageB, afterE5);
 
     /*
-     * The second arrival is the one T1-D23 is about. This copy is known, the
-     * person has already said yes to this correspondent once, and asking
-     * again on every move is the failure the ruling names. No card.
+     * A's first merge, and the only one it is asked about (T1-D23).
+     *
+     * §8.2 requires the person to choose, and a choice can be standing. The
+     * first arrival asks; the answer is recorded against this document, and
+     * only when the merge actually succeeded — consent to something that has
+     * never worked is not a choice anybody made knowingly.
      */
     await pageA.setInputFiles("#file", afterE5);
+    await expect(pageA.locator("#card-merge")).toBeVisible({ timeout: 60_000 });
+    await pageA.locator("#card-merge").click();
     await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 60_000 });
-    await expect(pageA.locator("#card")).toBeHidden();
 
     await play(appA, "g1", "f3");
     const afterNf3 = join(scratch, "a-nf3.dai.html");
     await saveOut(pageA, afterNf3);
 
+    // B's first merge: B has opened this document before but never merged, so
+    // B is asked once too.
     await pageB.setInputFiles("#file", afterNf3);
+    await expect(pageB.locator("#card-merge")).toBeVisible({ timeout: 60_000 });
+    await pageB.locator("#card-merge").click();
     await expect(appB.locator("#move-history")).toContainText("Nf3", { timeout: 60_000 });
-    await expect(pageB.locator("#card")).toBeHidden();
 
     await play(appB, "b8", "c6");
     const afterNc6 = join(scratch, "b-nc6.dai.html");
     await saveOut(pageB, afterNc6);
 
+    /*
+     * The fourth exchange, and the point of the ruling. A has already said yes
+     * to this document; asking again is not consent, it is friction, and a
+     * relay delivering moves would be unusable. No card — this one merges and
+     * says so in a line.
+     */
     await pageA.setInputFiles("#file", afterNc6);
     await expect(appA.locator("#move-history")).toContainText("Nc6", { timeout: 60_000 });
     await expect(pageA.locator("#card")).toBeHidden();

@@ -261,29 +261,29 @@ function tableObjects(name: string, authored: string[]): string {
     "_r_sig",
   ].join(", ");
   return `
-CREATE INDEX ${q}__r_entity ON ${q}(_r_entity, _r_lc);
-CREATE INDEX ${q}__r_heads ON ${q}(_r_entity) WHERE _r_superseded = 0;
+CREATE INDEX IF NOT EXISTS ${q}__r_entity ON ${q}(_r_entity, _r_lc);
+CREATE INDEX IF NOT EXISTS ${q}__r_heads ON ${q}(_r_entity) WHERE _r_superseded = 0;
 
-CREATE TRIGGER ${q}__no_update BEFORE UPDATE OF
+CREATE TRIGGER IF NOT EXISTS ${q}__no_update BEFORE UPDATE OF
     ${immutable} ON ${q}
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
-CREATE TRIGGER ${q}__no_delete BEFORE DELETE ON ${q}
+CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
-CREATE TRIGGER ${q}__superseded_monotonic BEFORE UPDATE OF _r_superseded ON ${q}
+CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_superseded ON ${q}
   WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-CREATE VIEW ${q}_heads AS
+CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT * FROM ${q} WHERE _r_superseded = 0;
 
-CREATE VIEW ${q}_conflicts AS
+CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
          json_group_array(hex(_r_replica) || ':' || _r_seq) AS head_ids
   FROM ${q}_heads GROUP BY _r_entity HAVING count(*) > 1;
 
-CREATE VIEW ${q}_current AS
+CREATE VIEW IF NOT EXISTS ${q}_current AS
   SELECT h.*,
          (SELECT count(*) FROM ${q}_heads x WHERE x._r_entity = h._r_entity) > 1
            AS _r_conflicted
@@ -297,10 +297,20 @@ CREATE VIEW ${q}_current AS
 `;
 }
 
-/** The two document-level tables, emitted once when anything is replicated. */
+/**
+ * The two document-level tables, emitted once when anything is replicated.
+ *
+ * `IF NOT EXISTS` on every object this file emits, as on the indexes, triggers
+ * and views above. The schema block is executed on *every* open, not only the
+ * first — the kit runs each `<script type="application/sql">` before anything
+ * draws — so a bare CREATE opens a fresh document once and refuses to open it
+ * ever again. It was invisible in unit tests because each one builds a new
+ * in-memory database and runs the schema exactly once; the first thing to hit
+ * it was a second person opening a document that had been used.
+ */
 function documentTables(): string {
   return `
-CREATE TABLE _dai_replica (
+CREATE TABLE IF NOT EXISTS _dai_replica (
   id    BLOB PRIMARY KEY CHECK (length(id) = 16),
   seq   INTEGER NOT NULL DEFAULT 0,
   lc    INTEGER NOT NULL DEFAULT 0,
@@ -310,7 +320,7 @@ CREATE TABLE _dai_replica (
 -- Every column but the id is LOCAL: true of this copy, not of the document.
 -- They are deliberately outside the canonical dump (T1-D12), and a dump
 -- generator that adds them will find two correct copies that never agree.
-CREATE TABLE _dai_replicas (
+CREATE TABLE IF NOT EXISTS _dai_replicas (
   id         BLOB PRIMARY KEY CHECK (length(id) = 16),
   -- LOCAL. A name this copy gives a key, never a name the key carries: keys
   -- cannot be faked and names can, so a label that propagated would be the
@@ -357,8 +367,16 @@ export function checkTriggerCoverage(
 
 /** The columns a generated trigger names, read back out of the SQL. */
 export function triggerColumns(sql: string, table: string): string[] {
+  /*
+   * `IF NOT EXISTS` is optional here because this reads back what the emitter
+   * above wrote, and the emitter gained the clause after this was written.
+   *
+   * A regex that stops matching its own output does not report a mismatch — it
+   * reports no trigger at all, and the coverage check then fails on every
+   * column at once, which is how this was found.
+   */
   const found = new RegExp(
-    `CREATE TRIGGER ${table}__no_update BEFORE UPDATE OF\\s+([\\s\\S]*?)\\s+ON ${table}\\b`,
+    `CREATE TRIGGER (?:IF NOT EXISTS )?${table}__no_update BEFORE UPDATE OF\\s+([\\s\\S]*?)\\s+ON ${table}\\b`,
   ).exec(sql);
   if (!found) return [];
   return found[1]!.split(",").map((name) => name.trim()).filter(Boolean);
@@ -389,7 +407,16 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     const withoutRowid = /\bWITHOUT\s+ROWID\b/i.test(options) ? "" : " WITHOUT ROWID";
     const tail = options.replace(/;\s*$/, "") + withoutRowid + ";";
 
-    out += sql.slice(cursor, span.open + 1);
+    /*
+     * The compiler owns this statement — it adds seven columns, a composite
+     * key and WITHOUT ROWID — so it also makes it idempotent. The schema block
+     * runs on every open, and a bare CREATE opens a document once and refuses
+     * it thereafter. An author who wrote IF NOT EXISTS already keeps theirs.
+     */
+    const header = sql.slice(cursor, span.open + 1);
+    out += /\bIF\s+NOT\s+EXISTS\b/i.test(header)
+      ? header
+      : header.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
     out += `${authorBody},\n${replicationColumns()}\n)${tail}`;
     out += tableObjects(span.name, authorColumns(body));
     cursor = span.end;

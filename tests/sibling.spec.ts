@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
-import { rewriteReplicated } from "../src/replicated.js";
-import { looksReplicated, siblingTest, whyNotSibling } from "../src/sibling.js";
+import { compileDirectory } from "../src/compile.js";
+import { MANIFEST_ENTRY, type ContainerManifest } from "../src/core.js";
+import { parseContainer } from "../src/container.js";
+import { declaresReplication, siblingTest, whyNotSibling } from "../src/sibling.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -86,96 +87,76 @@ test.describe("when it is not", () => {
 });
 
 test.describe("the host works out for itself what is replicated", () => {
-  /** A real database, since the point is what survives into stored bytes. */
-  function bytesFor(schema: string): Uint8Array {
-    const db = new DatabaseSync(":memory:");
-    db.exec(rewriteReplicated(schema).sql);
-    const path = `${process.env["TEMP"] ?? "/tmp"}/dai-detect-${Math.random().toString(36).slice(2)}.db`;
-    db.exec(`VACUUM INTO '${path.split("\\").join("/")}'`);
-    db.close();
-    const bytes = new Uint8Array(readFileSync(path));
-    rmSync(path);
-    return bytes;
-  }
+  /*
+   * The host must not ask the frame this. The frame is the sandbox; the host
+   * decides whether a merge is offered. A flag from the frame would be a fact
+   * supplied by the party the decision exists to contain.
+   *
+   * The answer is the signed manifest. It was a heuristic over the database
+   * bytes until the compiler emitted `replication.tables`, because nothing
+   * else survived into a container: `-- dai:replicated` is consumed at build
+   * and `runtime/schema.json` carries a digest rather than schema text.
+   */
+  test("a document whose schema declared a replicated table says so", () => {
+    expect(declaresReplication({ replication: { tables: ["moves"], level: 1 } })).toBe(true);
+  });
 
-  test("a replicated document is recognised from bytes the host already verified", () => {
+  test("an ordinary document does not", () => {
+    expect(declaresReplication({})).toBe(false);
+  });
+
+  test("a declaration of no tables is not a declaration", () => {
+    // The compiler writes the field only when there is something in it, so an
+    // empty list should not exist. Reading one as "replicated" would offer a
+    // merge over nothing and report success having changed nothing, which is
+    // exactly what NOT_REPLICATED exists to say instead.
+    expect(declaresReplication({ replication: { tables: [], level: 1 } })).toBe(false);
+  });
+
+  test("the field is what the compiler actually writes", async () => {
     /*
-     * The host must not ask the frame this. The frame is the sandbox; the host
-     * decides whether a merge is offered. A flag from the frame would be a
-     * fact supplied by the party the decision exists to contain.
+     * The end of the chain, checked end to end rather than against a literal
+     * this test wrote itself. A hand-built object proves the reader; only a
+     * real build proves the reader and the writer agree, which is the pair
+     * that was wrong while the rewrite had no caller.
      */
-    const replicated = bytesFor("-- dai:replicated\nCREATE TABLE moves (san TEXT NOT NULL);\n");
-    expect(looksReplicated(replicated)).toBe(true);
-  });
-
-  test("an ordinary document is not", () => {
-    expect(looksReplicated(bytesFor("CREATE TABLE notes (body TEXT);\n"))).toBe(false);
-  });
-
-  test("the declaration itself is gone, which is why the columns are what it looks for", () => {
-    // The compiler consumes `-- dai:replicated`, and runtime/schema.json holds
-    // a digest and migrations rather than schema text. The rewrite's own
-    // columns are what survives into bytes, stored verbatim by SQLite.
-    const replicated = bytesFor("-- dai:replicated\nCREATE TABLE moves (san TEXT NOT NULL);\n");
-    const text = new TextDecoder().decode(replicated);
-    expect(text).toContain("_r_replica");
-    expect(text).not.toContain("dai:replicated");
-  });
-
-  test("both markers are required, so one column name cannot fake it", () => {
-    // A heuristic until the manifest carries replication.tables, and its
-    // failure is safe in the only direction that matters: a false positive is
-    // an offer the frame then refuses by name, never a wrong merge.
-    const decoy = new TextEncoder().encode("a table storing the words _r_replica and nothing else");
-    expect(looksReplicated(decoy)).toBe(false);
+    const built = await compileDirectory({
+      sourceDir: resolve(repoRoot, "tests/fixture/chess"),
+      root: repoRoot,
+      appName: "Velvet Chess",
+    });
+    const manifest = JSON.parse(
+      new TextDecoder().decode(parseContainer(built.html).archive[MANIFEST_ENTRY]!),
+    ) as ContainerManifest;
+    expect(declaresReplication(manifest)).toBe(true);
+    expect(manifest.replication?.tables).toEqual(["game_events", "games", "moves"]);
+    expect(manifest.replication?.level).toBe(1);
+    expect(manifest.manifestVersion).toBe(4);
+    expect(manifest.requires).toEqual(["replicated"]);
   });
 });
 
-test.describe("the heuristic has an expiry, and it is enforced", () => {
+test.describe("the host holds one opinion about what is replicated", () => {
   /*
-   * `looksReplicated` reads a data section for the rewrite's columns because
-   * the authority it stands in for does not exist yet: the compiler does not
-   * emit `replication.tables` into the signed manifest.
+   * `looksReplicated` searched a data section for the rewrite's own column
+   * names, as a stand-in for a manifest field that did not exist yet. It has
+   * been deleted, and this is what keeps it deleted.
    *
-   * The day it does, this file must lose the heuristic. A stand-in still
-   * present after the real thing arrives is a second opinion about a trust
-   * decision — the host consulting two sources about what is replicated,
-   * which is the negotiation the frame was not allowed to have, arriving by
-   * another door.
-   *
-   * So the expiry is a test rather than an intention. It goes red on the
-   * commit that lands the wiring and stays red until the heuristic is gone.
+   * A stand-in still present after the real thing arrives is a second opinion
+   * about a trust decision — the host consulting two sources about what is
+   * replicated, which is the negotiation the frame was not allowed to have,
+   * arriving by another door. It also had a false positive the field does not:
+   * a table holding both column names as content read as replicated.
    */
   const read = (path: string): string => readFileSync(resolve(repoRoot, path), "utf8");
 
-  test("when the compiler emits replication.tables, looksReplicated must be gone", () => {
-    const emitsManifestField =
-      /replication\s*:\s*\{/.test(read("src/compile.ts")) ||
-      /"replication"\s*:/.test(read("src/core.ts"));
-
-    if (!emitsManifestField) {
-      // Not yet. The heuristic is the only answer the host has, and it is
-      // expected to be here.
-      expect(read("src/sibling.ts")).toContain("export function looksReplicated");
-      return;
-    }
-
-    expect(
-      read("src/sibling.ts"),
-      "The compiler now emits replication.tables, so the manifest is the authority. " +
-        "Delete looksReplicated and read the manifest instead — leaving both is the host " +
-        "holding two opinions about a trust decision.",
-    ).not.toContain("export function looksReplicated");
+  test("the heuristic is gone and does not come back", () => {
+    expect(read("src/sibling.ts")).not.toContain("looksReplicated");
   });
 
-  test("nothing consults the heuristic once the manifest can answer", () => {
-    const emitsManifestField =
-      /replication\s*:\s*\{/.test(read("src/compile.ts")) ||
-      /"replication"\s*:/.test(read("src/core.ts"));
-    if (!emitsManifestField) return;
-
+  test("nothing consults it", () => {
     for (const path of ["apps/runner/src/main.ts", "apps/runner/src/card.ts"]) {
-      expect(read(path), `${path} still calls looksReplicated`).not.toContain("looksReplicated(");
+      expect(read(path), `${path} still calls looksReplicated`).not.toContain("looksReplicated");
     }
   });
 });

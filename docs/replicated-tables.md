@@ -74,6 +74,27 @@ Manifest surface, in the signed set so every copy agrees:
 See T1-D5: this is the first writer to emit version 4, and it is what closes
 the "readers before writers" ordering that Track 0 opened.
 
+All three fields are written **only when the schema declares a replicated
+table**, and the tables are sorted. A build that declares none emits the
+version it emitted before, no `requires`, no `replication`, and signs the same
+bytes it would have signed before this existed — so wiring the rewrite reissues
+nothing. `rewriteReplicated` returns an undeclared schema unchanged, which is
+what makes that true of the digest as well as of the manifest.
+
+The schema digest (`runtime/schema.json`) is taken over the **rewritten** SQL,
+not the authored text. What SQLite executes is the rewrite, so digesting the
+author's version would let a change to the rewrite alter the shape of every
+stored database with the digest unmoved — which is the one thing the migration
+gate exists to prevent. The archive still carries the authored `schema.sql`:
+that is what a person or a model gets back when they ask for the application,
+and handing them generated columns they did not write and cannot edit is the
+failure `authoredFiles` already exists to prevent.
+
+Every object the rewrite emits is `IF NOT EXISTS` — the tables, the indexes,
+the triggers, the views, and the two document-level tables. The kit runs the
+schema block on *every* open, not the first, so a bare `CREATE` opens a fresh
+document once and refuses it thereafter.
+
 ## 4. Storage schema
 
 For a declared table `T`:

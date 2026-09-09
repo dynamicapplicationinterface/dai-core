@@ -103,10 +103,18 @@ test.describe("the version gate", () => {
 });
 
 test.describe("the capability list", () => {
-  test("nothing is implemented yet, and the registry names what version 4 defines", () => {
-    // Track 0 ships the gate before any capability. This assertion is meant to
-    // change: each track adds its own name as it lands.
-    expect(IMPLEMENTED_CAPABILITIES).toEqual([]);
+  test("what is implemented, and what version 4 defines", () => {
+    /*
+     * Track 0 shipped the gate before any capability, and this assertion is
+     * meant to change: each track adds its own name as it lands.
+     *
+     * `replicated` joined with the compiler that emits it — write rules pushed
+     * at mount, union merge over the row set, and a chess game played end to
+     * end through the host. A name here is a promise that a document declaring
+     * it opens and behaves; adding one earlier would have been the silent
+     * degradation this gate exists to refuse.
+     */
+    expect(IMPLEMENTED_CAPABILITIES).toEqual(["replicated"]);
     expect(CAPABILITY_REGISTRY).toEqual([
       "session",
       "shared-dataset",
@@ -160,8 +168,11 @@ test.describe("the capability list", () => {
     // A document that declares a dependency is declaring it. Ignoring the
     // field because the version is older would be the silent degradation the
     // whole gate exists to prevent.
+    // A name this reader does not implement, on an older version. `session`
+    // rather than `replicated`, which this reader now does implement — an
+    // example has to be an example of the thing.
     const html = await withManifest((m) => {
-      m["requires"] = ["replicated"];
+      m["requires"] = ["session"];
     });
     await expect(verifyContainer(html)).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
   });

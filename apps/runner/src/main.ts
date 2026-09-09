@@ -15,7 +15,7 @@ import { heldEngine } from "./engine.js";
 import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } from "../../../src/store.js";
 import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
-import { looksReplicated, siblingTest, whyNotSibling } from "../../../src/sibling.js";
+import { declaresReplication, siblingTest, whyNotSibling } from "../../../src/sibling.js";
 import { confusables } from "./confusables.js";
 import { verifyIdentity } from "../../../src/identity.js";
 
@@ -486,6 +486,8 @@ async function refreshLibrary(): Promise<void> {
 }
 
 async function launchFromLibrary(item: LibraryItem): Promise<void> {
+  // Out of this device's own library: the copy it has been writing.
+  mountIsOwnCopy = true;
   slot.classList.add("busy");
   say(`Loading ${item.appName}…`);
 
@@ -823,6 +825,21 @@ async function collectSharedContainer(): Promise<{ file: File; from: string } | 
  * Screen" working and the new icon having nothing to open.
  */
 let arrivedAsFile = true;
+/*
+ * Whether the copy now mounting is one this device has been writing (T1-D22).
+ *
+ * The frame cannot work this out. It sees one database, and a copy this device
+ * has held for a month and a copy that arrived by mail five seconds ago are the
+ * same bytes in the same place. This host knows, because it is the thing that
+ * either loaded the document out of its own library or took delivery of a file,
+ * and it tells the frame once, with the write rules.
+ *
+ * Wrong in the safe direction if it is ever wrong: a copy treated as somebody
+ * else's takes a fresh replica id, which costs an id and nothing else. A copy
+ * wrongly treated as this device's writes under an id another person is also
+ * writing under, and the next exchange refuses honest rows as tampering.
+ */
+let mountIsOwnCopy = false;
 
 /**
  * The link this document arrived by, when it arrived by one (backlog 3.5).
@@ -876,6 +893,8 @@ type Carrier = {
 };
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
+  // Arriving from outside, whatever the carrier: not this device's copy.
+  mountIsOwnCopy = false;
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
 
@@ -980,15 +999,16 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * the silent path would both use the wrong rule and skip the only choice
      * that matters.
      *
-     * The replication test is the host's own (T1-D4 and `looksReplicated`),
-     * made from bytes it has already verified. The frame is never asked.
+     * The replication test is the host's own (T1-D4), read from the signed
+     * manifest of a container it has already verified. The frame is never
+     * asked, and nothing here parses somebody else's SQLite.
      */
     const incomingData = cartridge.archive["document.sqlite"];
     const heldHere = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
     );
     const kin =
-      heldHere && incomingData && looksReplicated(incomingData)
+      heldHere && declaresReplication(cartridge.manifest)
         ? siblingTest(
             {
               documentUuid: cartridge.manifest.documentUuid,
@@ -1180,6 +1200,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     // menu says it was not kept rather than promising it was.
     try {
       await saveCartridgeToLibrary({
+        // Standing consent and issued shares belong to the copy, not to this
+        // write. See the note on the save path above.
+        ...heldItem,
         documentUuid: loaded.manifest.documentUuid,
         appName: loaded.manifest.appName ?? "container",
         lastOpened: new Date().toISOString(),
@@ -1289,6 +1312,20 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
 async function exportContainer(): Promise<void> {
   if (!loaded) return;
 
+  /*
+   * Anything pending is written before the bytes are read.
+   *
+   * Autosave lands a moment after the last edit, and this reads OPFS — so a
+   * copy saved inside that window was the document as it stood *before* the
+   * thing the person had just done. Playing a move and immediately sending the
+   * board produced a file with the move missing, and neither the sender nor the
+   * recipient had any way to tell: the file was valid, complete, and one move
+   * stale.
+   *
+   * `currentHtml` has always flushed first. This path did not, which is the
+   * cost of two functions packaging the same document.
+   */
+  await flushDocument();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const activeCartridge = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   loaded = activeCartridge;
@@ -1532,12 +1569,18 @@ window.addEventListener("message", (event) => {
      * document and a read-only one.
      */
     void (async () => {
-      const data = loaded?.archive["document.sqlite"];
-      if (!data || !looksReplicated(data)) return;
+      if (!loaded || !declaresReplication(loaded.manifest)) return;
       const source = await loadMergeModule().catch(() => null);
       if (!source) return;
       (event.source as Window | null)?.postMessage(
-        { type: "DAI_HOST_WRITE_RULES", sessionNonce: mountedNonce, source },
+        {
+          type: "DAI_HOST_WRITE_RULES",
+          sessionNonce: mountedNonce,
+          source,
+          // T1-D22: whether this copy keeps the replica id it holds or takes a
+          // new one. See mountIsOwnCopy.
+          ownCopy: mountIsOwnCopy,
+        },
         "*",
       );
     })();
@@ -1717,6 +1760,18 @@ window.addEventListener("message", (event) => {
         if (loaded && loaded.manifest.documentUuid === documentUuid) {
           loaded = await resealCartridge(loaded, bytes);
           await saveCartridgeToLibrary({
+            /*
+             * What this write does not own, it keeps.
+             *
+             * A library item carries more than the document: standing consent
+             * to merge (T1-D23) and the shares this copy has issued. Rebuilding
+             * it as a literal silently dropped both — so playing a move, which
+             * is a save, revoked the consent given a moment earlier, and the
+             * person was asked again on the very next exchange. That is exactly
+             * the friction the standing-consent ruling exists to remove, caused
+             * by the code that implements it.
+             */
+            ...held,
             documentUuid: loaded.manifest.documentUuid,
             appName: loaded.manifest.appName ?? "container",
             lastOpened: new Date().toISOString(),

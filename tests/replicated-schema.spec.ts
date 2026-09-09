@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 
@@ -126,7 +127,9 @@ test.describe("a declared table", () => {
 
   test("heads come from the flag, not from a scan of every row's parents", () => {
     const { sql } = rewriteReplicated(CASES);
-    expect(sql).toContain("CREATE VIEW cases_heads AS\n  SELECT * FROM cases WHERE _r_superseded = 0");
+    expect(sql).toContain(
+      "CREATE VIEW IF NOT EXISTS cases_heads AS\n  SELECT * FROM cases WHERE _r_superseded = 0",
+    );
     // Draft 1 walked json_each over every row on every read; D5 replaced it.
     expect(sql).not.toMatch(/CREATE VIEW cases_heads[\s\S]*?json_each/);
   });
@@ -160,10 +163,33 @@ test.describe("a declared table", () => {
     const two = `${CASES}\n-- dai:replicated\nCREATE TABLE visits (\n  note TEXT\n);\n`;
     const { sql, tables } = rewriteReplicated(two);
     expect(tables).toEqual(["cases", "visits"]);
-    expect(sql.match(/CREATE TABLE _dai_replica\b/g)).toHaveLength(1);
-    expect(sql.match(/CREATE TABLE _dai_replicas\b/g)).toHaveLength(1);
+    expect(sql.match(/CREATE TABLE IF NOT EXISTS _dai_replica\b/g)).toHaveLength(1);
+    expect(sql.match(/CREATE TABLE IF NOT EXISTS _dai_replicas\b/g)).toHaveLength(1);
     // No pubkey at Level 1; it returns in Track 2.
     expect(sql).not.toContain("pubkey");
+  });
+
+  test("the whole schema runs twice, because that is what an open does", () => {
+    /*
+     * The kit executes every `<script type="application/sql">` block before
+     * anything draws — on *every* open, not the first. So a schema that is not
+     * idempotent opens a fresh document once and refuses to open it ever
+     * again, and the refusal lands on the second person to touch the file.
+     *
+     * That shipped. `CREATE TABLE _dai_replica` had no `IF NOT EXISTS`, and no
+     * unit test saw it because each one builds a new in-memory database and
+     * runs the schema exactly once. The assertions above name the clause; this
+     * one asks the engine, which is the only thing that can answer.
+     */
+    const two = `${CASES}\n-- dai:replicated\nCREATE TABLE visits (\n  note TEXT\n);\n`;
+    const { sql } = rewriteReplicated(two);
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(sql);
+      expect(() => db.exec(sql)).not.toThrow();
+    } finally {
+      db.close();
+    }
   });
 });
 

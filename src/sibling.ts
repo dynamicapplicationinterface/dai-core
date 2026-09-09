@@ -21,35 +21,23 @@
  * two ever disagree about what is replicated, that is a refusal and not a
  * negotiation — the host declines, and the frame is never consulted.
  *
- * The `-- dai:replicated` declaration is not available to look for: the
- * compiler consumes it, and `runtime/schema.json` carries a digest and
- * migrations rather than schema text. What survives into bytes the host has
- * already verified is the rewrite's own columns, which SQLite stores verbatim
- * in its schema table.
+ * It reads the signed manifest, which is the authority. `replication.tables`
+ * is covered by the signature, so what a document says about itself here
+ * cannot be edited without the key that signed it, and an unsigned document's
+ * answer is exactly as trustworthy as the rest of it.
  *
- * So this is a heuristic, and its limits are worth stating. A table holding
- * both of these names as *content* would read as replicated. Two things make
- * that acceptable: both markers are required, so an application column would
- * have to contain both, and the failure is safe in the only direction that
- * matters — a false positive means the host offers a merge and the frame
- * refuses it by name, while a false negative means an offer that does not
- * appear. Neither merges anything wrongly.
- *
- * It disappears when the compiler emits `replication.tables` into the signed
- * manifest, which is the authority this stands in for.
+ * This replaced a heuristic that searched the database bytes for the rewrite's
+ * own column names, because until the compiler emitted this field there was
+ * nothing else that survived into a container: the `-- dai:replicated` marker
+ * is consumed at build and `runtime/schema.json` carries a digest, not schema
+ * text. The heuristic had a false positive — a table holding both column names
+ * as content — and the field has none.
  */
-export function looksReplicated(databaseBytes: Uint8Array): boolean {
-  const marker = (text: string): boolean => {
-    const needle = new TextEncoder().encode(text);
-    outer: for (let at = 0; at + needle.length <= databaseBytes.length; at += 1) {
-      for (let index = 0; index < needle.length; index += 1) {
-        if (databaseBytes[at + index] !== needle[index]) continue outer;
-      }
-      return true;
-    }
-    return false;
-  };
-  return marker("_r_replica") && marker("_r_superseded");
+export function declaresReplication(manifest: {
+  replication?: { tables?: unknown } | null;
+}): boolean {
+  const tables = manifest.replication?.tables;
+  return Array.isArray(tables) && tables.length > 0;
 }
 
 /** What a host knows about a copy without opening its database. */

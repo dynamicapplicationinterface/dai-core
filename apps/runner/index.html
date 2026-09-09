@@ -716,6 +716,18 @@
         overflow-y: auto;
         overscroll-behavior: contain;
         background: var(--bg);
+        /*
+         * Above the running document, because that is when it matters most.
+         *
+         * A card used to appear on an empty screen: nothing was open, so
+         * nothing could be in front of it. A merge offer arrives while the
+         * person's own copy is open and on screen — and with both absolutely
+         * positioned and no z-index between them, the frame painted last and
+         * took the clicks. The card was fully visible and completely inert,
+         * which is the worst of the two failures: it looks like the button
+         * does nothing.
+         */
+        z-index: 12;
       }
       #card[hidden] { display: none; }
       /*

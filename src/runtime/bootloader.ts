@@ -1056,6 +1056,18 @@ function bridgeMain(): void {
    */
   let liveDb: Any | null = null;
   let mergeModule: Any | null = null;
+  /*
+   * Whether this copy is one this device wrote, as the host reported it, and
+   * whether its replica identity has been settled yet.
+   *
+   * The frame cannot answer the first question. It sees one database and has
+   * no way to tell a copy this device has been writing for a month from a copy
+   * that arrived by mail five seconds ago — the two are the same bytes in the
+   * same place. The host knows, because it is the thing that either loaded the
+   * document from its own library or took delivery of a file.
+   */
+  let mountIsOwnCopy = false;
+  let replicaSettled = false;
 
   const watched = (db: Any): Any => {
     liveDb = db;
@@ -1215,6 +1227,32 @@ function bridgeMain(): void {
   };
 
   /**
+   * This copy's replica identity, settled before its first write (T1-D22).
+   *
+   * A replica is per copy, not per document. A file that arrives from another
+   * person carries their `_dai_replica`, and a recipient that writes under it
+   * allocates `(replica, seq)` pairs the sender is allocating too — so the next
+   * exchange refuses one of them as `ROW_REJECTED`, the code that means a row
+   * id was claimed twice with different contents. Two people using the document
+   * exactly as intended produce a row rejected as tampering.
+   *
+   * Lazy rather than at mount, because the two things it needs arrive in either
+   * order: the host pushes the rules at handshake and the application opens its
+   * database whenever it is ready. First write is the first moment both are
+   * certainly present, and it is early enough — nothing has been stamped yet.
+   */
+  const settleReplica = (rows: Any): void => {
+    if (replicaSettled || !mergeModule) return;
+    replicaSettled = true;
+    const fresh = crypto.getRandomValues(new Uint8Array(16));
+    // Reopening this device's own copy keeps the id it has been writing under;
+    // anything that arrived from elsewhere takes a new one, and the sender's
+    // moves into `_dai_replicas` with their rows still theirs.
+    if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
+    else (mergeModule as Any).adoptReplica(rows, fresh);
+  };
+
+  /**
    * The one path an application writes a replicated row through.
    *
    * Every write goes here — the declarative `dai-form` surface is sugar over
@@ -1262,18 +1300,22 @@ function bridgeMain(): void {
     const hex = (bytes: Uint8Array): string =>
       Array.prototype.map.call(bytes, (b: number) => b.toString(16).padStart(2, "0")).join("");
     const entity = (): Uint8Array => crypto.getRandomValues(new Uint8Array(16));
+    // Every write settles the identity first; it does the work once.
     return {
       insert: (table: string, values: Any): string => {
         const id = entity();
+        settleReplica(rows);
         rules().createEntity(rows, table, id, values);
         return hex(id);
       },
       change: (table: string, entityHex: string, values: Any): string => {
         const id = fromHex(entityHex);
+        settleReplica(rows);
         rules().changeEntity(rows, table, id, values);
         return entityHex;
       },
       remove: (table: string, entityHex: string): string => {
+        settleReplica(rows);
         rules().deleteEntity(rows, table, fromHex(entityHex));
         return entityHex;
       },
@@ -1485,6 +1527,7 @@ function bridgeMain(): void {
      * agreed on.
      */
     if (data.type === "dai:write-rules") {
+      mountIsOwnCopy = data.ownCopy === true;
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
       // read-only for its replicated tables rather than writing rows under
@@ -2453,9 +2496,9 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_WRITE_RULES") {
-      const pushed = event.data as { source?: unknown };
+      const pushed = event.data as { source?: unknown; ownCopy?: unknown };
       frame.contentWindow?.postMessage(
-        { type: "dai:write-rules", source: pushed.source },
+        { type: "dai:write-rules", source: pushed.source, ownCopy: pushed.ownCopy },
         "*",
       );
       return;

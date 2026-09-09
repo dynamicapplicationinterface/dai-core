@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
-import { SUBSTITUTABLE_ENTRIES } from "../src/core.js";
+import { MANIFEST_ENTRY, SUBSTITUTABLE_ENTRIES } from "../src/core.js";
 import { parseContainer, thinned } from "../src/container.js";
 import { openFile } from "./open.js";
 
@@ -24,7 +24,9 @@ const RUNNER_URL = "http://localhost:5175/";
  * The byte-for-byte comparison is the one that matters. Anything weaker would
  * let a thin document be a lesser edition wearing the same name — you could
  * open it here, save it, mail it, and the recipient would have something the
- * publisher never signed.
+ * publisher never signed. It is made entry by entry over everything a save may
+ * not touch, which is every part of the document except its database and the
+ * `savedAt` a reseal stamps.
  */
 async function complete() {
   const source = mkdtempSync(join(tmpdir(), "dai-opener-thin-"));
@@ -110,9 +112,33 @@ test.describe("a document published without its engine, in the opener", () => {
     );
     const saved = await page.evaluate(() => (window as unknown as { __saved?: string }).__saved);
 
-    // The whole point. Not an equivalent document, not one this opener rebuilt
-    // — the file the publisher's complete build produced.
-    expect(saved).toBe(fat.html);
+    /*
+     * The whole point. Not an equivalent document, not one this opener
+     * rebuilt — the publisher's own bytes, engine included.
+     *
+     * Compared entry by entry rather than as one string, because a save is
+     * allowed to touch exactly two things and does: `document.sqlite`, which
+     * now carries the rows the application seeded on open, and the manifest,
+     * which gains a `savedAt` the reseal stamps. Everything that makes this
+     * document this document — the application, the shell, the engine and its
+     * glue — has to come back byte for byte, and that is what is asserted.
+     *
+     * It compared whole files until the export learned to flush pending writes
+     * first. Before that it read the database a moment before the seed rows
+     * landed, so the two files matched by racing the autosave rather than by
+     * being the same document.
+     */
+    const savedArchive = parseContainer(saved!).archive;
+    const builtArchive = parseContainer(fat.html).archive;
+    expect(Object.keys(savedArchive).sort()).toEqual(Object.keys(builtArchive).sort());
+    for (const name of Object.keys(builtArchive)) {
+      if (name === "document.sqlite" || name === MANIFEST_ENTRY) continue;
+      expect(Buffer.from(savedArchive[name]!), name).toEqual(Buffer.from(builtArchive[name]!));
+    }
+    // And the engine really did go back in: this is what "complete" means.
+    for (const name of SUBSTITUTABLE_ENTRIES) {
+      expect(savedArchive[name]!.byteLength).toBeGreaterThan(0);
+    }
   });
 
   test("a host with no engine to offer refuses it, and does not call it damage", async ({

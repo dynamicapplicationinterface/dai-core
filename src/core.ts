@@ -14,6 +14,7 @@ import { zipSync, type Zippable } from "fflate";
 import { encode as cborEncode, type CborValue } from "./cbor.js";
 import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
+import { rewriteReplicated } from "./replicated.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
@@ -35,6 +36,15 @@ import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
  * predates version 3 refuses a version 3 file by name and says to update.
  */
 export const MANIFEST_VERSION = 3;
+
+/**
+ * The level whose rules a declared table follows (§3).
+ *
+ * One value because there is one level. It is written into the manifest rather
+ * than assumed by a reader so that a Level 2 document is refused by a Level 1
+ * reader on what the document says, not on what the reader guesses.
+ */
+export const REPLICATION_LEVEL = 1;
 
 export const DEFAULT_APP_PREFIX = "app";
 export const DEFAULT_SQLITE_ENTRY = "document.sqlite";
@@ -191,6 +201,18 @@ export interface ContainerManifest {
    * `broadcast` and `open` are the base behaviour and are never listed.
    */
   requires?: string[];
+  /**
+   * The replicated tables this document declares, and the level whose rules
+   * they follow (§3). Present only when `schema.sql` declares at least one,
+   * and absent otherwise — so every document built before this field existed
+   * signs and verifies exactly as it did.
+   *
+   * In the signed set, because it is the answer to "is this a replicated
+   * document" and two copies must agree on it. A host reading it does not have
+   * to guess from column names in bytes it has already verified, which is what
+   * it did while this field was unwritten.
+   */
+  replication?: { tables: string[]; level: number };
   /**
    * The document this one replaces, by UUID. Covered by the signature, and
    * honoured by a host only when this document is signed by the same key the
@@ -477,14 +499,55 @@ export async function buildContainer(
    * against a version two destroying a version one runs for everything, not
    * only for people who use a terminal.
    */
-  const schema = input.schema !== undefined ? input.schema : await declareSchema(files, undefined);
+  /*
+   * The replicated tables, rewritten before anything reads the schema.
+   *
+   * Ordered ahead of `declareSchema` on purpose. The digest that gate compares
+   * is the schema a person's data was created under, and what SQLite actually
+   * executes is this rewrite — author columns plus the `_r_` columns, the
+   * composite key, the triggers and the views. Digesting the authored text
+   * instead would let a change to the rewrite alter the shape of every stored
+   * database with the digest unmoved, which is the one thing the migration
+   * gate exists to prevent.
+   *
+   * A schema declaring nothing is returned byte for byte, so every document
+   * that exists today digests, signs and verifies unchanged.
+   */
+  let replication: { tables: string[]; level: number } | undefined;
+  let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
+  if (schemaSql !== undefined) {
+    const rewritten = rewriteReplicated(schemaSql);
+    if (rewritten.tables.length > 0) {
+      schemaSql = rewritten.sql;
+      // Sorted here as well as in the signed bytes, so the manifest a reader
+      // parses says what the signature covers rather than merely re-sorting to
+      // the same thing.
+      replication = { tables: [...rewritten.tables].sort(), level: REPLICATION_LEVEL };
+    }
+  }
+
+  /*
+   * `files` keeps what the author wrote; only the digest and the page get the
+   * rewrite. The archive's `schema.sql` is handed back by `authoredFiles` when
+   * somebody asks for the bundle, and a person or a model that asked for their
+   * own application back must not receive four generated columns, a composite
+   * key and three views they did not write and cannot edit — which is the
+   * failure `authoredFiles` already exists to prevent for the kit and the
+   * injected block.
+   */
+  const declaredFrom =
+    replication && schemaSql !== undefined
+      ? { ...files, [SCHEMA_FILE]: new TextEncoder().encode(schemaSql) }
+      : files;
+
+  const schema =
+    input.schema !== undefined ? input.schema : await declareSchema(declaredFrom, undefined);
 
   // And the declared statements go into the page, so they run first and are
   // written once. See injectSchema.
-  if (files[SCHEMA_FILE] && files["index.html"]) {
-    const decoder = new TextDecoder();
+  if (schemaSql !== undefined && files["index.html"]) {
     files["index.html"] = new TextEncoder().encode(
-      injectSchema(decoder.decode(files["index.html"]), decoder.decode(files[SCHEMA_FILE])),
+      injectSchema(new TextDecoder().decode(files["index.html"]), schemaSql),
     );
   }
 
@@ -561,7 +624,19 @@ export async function buildContainer(
   // Signed entries deliberately exclude the database: the application is
   // immutable but its database is not, and a container has no private key to
   // re-sign with after a save.
-  const version = input.manifestVersion ?? MANIFEST_VERSION;
+  /*
+   * A replicated document is a version 4 document, and nothing else is.
+   *
+   * T1-D5: this is the first writer to emit version 4. The bump is carried by
+   * the declaration rather than by the calendar, so a build whose schema
+   * declares no replicated table writes the version it wrote yesterday and the
+   * bytes it wrote yesterday. A reader that does not know 4 refuses this
+   * document by name and keeps opening every other one.
+   */
+  const version = input.manifestVersion ?? (replication ? 4 : MANIFEST_VERSION);
+  // The capability the document depends on, named so a reader without it
+  // refuses rather than opening a document whose writes it cannot make.
+  const requires = replication ? ["replicated"] : undefined;
   // Version 3 (spec §9.2): the shell is an unsigned, self-attesting part and
   // leaves the signed set, so a host with its own shell verifies a signature
   // without reproducing the publisher's, and a template can change without
@@ -592,6 +667,8 @@ export async function buildContainer(
     favicon,
     publisherName,
     supersedes,
+    requires,
+    replication,
     generator,
     createdAt,
     algorithm: "SHA-256",
@@ -613,6 +690,8 @@ export async function buildContainer(
     favicon,
     ...(publisherName ? { publisherName } : {}),
     ...(supersedes ? { supersedes } : {}),
+    ...(requires ? { requires } : {}),
+    ...(replication ? { replication } : {}),
     ...(generator ? { generator } : {}),
     createdAt,
     algorithm: "SHA-256",
@@ -737,6 +816,8 @@ export interface SignedView {
   supersedes?: string;
   /** Present only when the document names capabilities; version 4. */
   requires?: string[];
+  /** Present only when the schema declares replicated tables; version 4. */
+  replication?: { tables: string[]; level: number };
   /** Present only when set; version 3. */
   generator?: Generator;
   createdAt: string;
@@ -855,6 +936,7 @@ export function signedViewOf(manifest: {
   publisherName?: string;
   supersedes?: string;
   requires?: string[];
+  replication?: { tables: string[]; level: number };
   generator?: Generator;
   createdAt: string;
   algorithm: string;
@@ -872,6 +954,7 @@ export function signedViewOf(manifest: {
     publisherName: manifest.publisherName,
     supersedes: manifest.supersedes,
     requires: manifest.requires,
+    replication: manifest.replication,
     generator: manifest.generator,
     createdAt: manifest.createdAt,
     algorithm: manifest.algorithm,
@@ -917,6 +1000,22 @@ export function signedBytes(view: SignedView): Uint8Array {
   // nothing signs exactly as it did before the field existed.
   if (view.requires && view.requires.length > 0) {
     fields.set("requires", [...view.requires].sort());
+  }
+  /*
+   * Sorted, for the same reason `requires` is: two writers listing the same
+   * tables in a different order sign the same bytes. Absent when the schema
+   * declares none, so every document built before replication existed signs
+   * exactly the bytes it signed then — which is the whole of the promise that
+   * wiring the rewrite does not reissue the world.
+   */
+  if (view.replication && view.replication.tables.length > 0) {
+    fields.set(
+      "replication",
+      new Map<CborValue, CborValue>([
+        ["tables", [...view.replication.tables].sort()],
+        ["level", view.replication.level],
+      ]),
+    );
   }
   if (view.generator?.tool) {
     const generator = new Map<CborValue, CborValue>([["tool", view.generator.tool]]);

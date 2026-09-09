@@ -98,6 +98,31 @@ The schema's shape is what protects the person's data when you change the app. I
 
 A version whose schema moved without a migration is refused at build. Do not work around that by dropping tables: the old file holds a month of somebody's entries. Adding a table needs no migration; only a changed one does.
 
+TABLES TWO PEOPLE SHARE — -- dai:replicated
+Most tables are one person's. A table that has to survive two people editing two copies and sending the file back and forth gets one comment line directly above it:
+
+  --- file: schema.sql
+  -- dai:replicated
+  CREATE TABLE IF NOT EXISTS moves (
+    game_id TEXT NOT NULL,
+    ply     INTEGER NOT NULL,
+    san     TEXT NOT NULL
+  );
+
+The compiler rewrites that table. It adds the columns that make a row's authorship and order knowable, a key of its own, triggers that refuse UPDATE and DELETE, and three views. Rows are appended and never changed in place: the app writes through window.dai.replicated (insert, change, remove), each returning the row's entity, and never with its own INSERT, UPDATE or DELETE against that table.
+
+What that costs you, and why. Do not write any of these on a replicated table:
+
+  * No PRIMARY KEY, and no AUTOINCREMENT. The key belongs to replication. Two copies both advancing the same counter allocate the same ids for different rows.
+  * No UNIQUE. A UNIQUE(game_id, ply) refuses exactly the rows a merge exists to surface — two people moving at the same turn is a conflict to show a person, not an error to raise at them.
+  * No CHECK. A CHECK that differs between two versions of the app rejects the other copy's honest rows, and it arrives as rejected rows rather than as a refused merge, so nobody can see what happened.
+  * No column names beginning _r_. That prefix is replication's.
+  * No stored derived state. No board, no turn, no total, no "last updated". Derive it by reading the rows, every time. A stored total is a second opinion about what the rows say, and after a merge it is wrong.
+
+Everything else stays local: settings, drafts, which row the screen is showing, anything about this copy rather than about the document. Only what both people must agree on gets the comment.
+
+If you are not sure whether a table is shared, leave the comment off. A local table can be made replicated later with a migration; a replicated one carries the rewrite in every copy already saved.
+
 TIMES
 Store times as SQLite text in UTC (datetime('now')), and show them the way a person reads them: format with strftime and prefer words — "today", "2 hours ago" — over raw timestamps. Never show 2026-09-04 15:01:27 to a person.
 
@@ -211,6 +236,7 @@ Make it look finished: real spacing, a considered empty state, keyboard support,
 
 BEFORE YOU ANSWER, CHECK
 - Every table is in schema.sql, with IF NOT EXISTS, and nowhere else.
+- Any table two people must agree on has -- dai:replicated above it, no PRIMARY KEY, no UNIQUE, no CHECK, and no stored derived state; and it is written only through window.dai.replicated.
 - Seed rows are idempotent (WHERE NOT EXISTS).
 - Every user action writes to the database immediately, and the screen is drawn from the database.
 - No Save button, no dirty flag, no localStorage. One <dai-save> at the bottom, or none.

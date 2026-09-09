@@ -188,7 +188,15 @@ export const CAPABILITY_REGISTRY: readonly string[] = [
  * A document listing nothing — every document that exists today — is
  * unaffected.
  */
-export const IMPLEMENTED_CAPABILITIES: readonly string[] = [];
+/*
+ * `replicated` joins the list with the compiler that emits it: write rules
+ * pushed at mount, union merge over the row set, and the transport that pins
+ * the module a merge runs. The list was empty because nothing was implemented,
+ * not because the field was decorative — a name here is a promise that a
+ * document declaring it opens and behaves, and adding one before the behaviour
+ * exists is the silent degradation the field refuses on a reader's behalf.
+ */
+export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["replicated"];
 
 /**
  * Refuses a document that needs something this reader does not have.
