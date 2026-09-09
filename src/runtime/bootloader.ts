@@ -1210,17 +1210,59 @@ function bridgeMain(): void {
    * document that has been given the surface has already been given the merge,
    * and neither can be a different version of the other.
    */
+  /*
+   * Every way this can fail now says which one it was.
+   *
+   * There were three silent exits — a source that is not a string, a digest
+   * that does not match the pin, and an `import()` that throws — and all three
+   * ended the same way: `mergeModule` null, and the application refusing its
+   * own first write with `WRITE_SURFACE_UNAVAILABLE`. That refusal is accurate
+   * and useless. It names the consequence, in the frame, of something that
+   * went wrong in the host or in this function, and it left a person on a
+   * phone with a code and nothing to try.
+   *
+   * Fail-closed is right and is unchanged: an unstamped or mismatched module
+   * is never imported. Fail-*silent* was the mistake.
+   */
+  const refuseWriteRules = (why: string, detail?: string): void => {
+    try {
+      window.parent.postMessage({ type: "dai:write-rules-refused", why, detail }, "*");
+    } catch {
+      /* Nothing above to tell; the refusal below still stands. */
+    }
+  };
+
   const adoptWriteRules = async (source: unknown): Promise<void> => {
-    if (mergeModule || typeof source !== "string" || source.length === 0) return;
+    if (mergeModule) return;
+    if (typeof source !== "string" || source.length === 0) {
+      refuseWriteRules("NO_SOURCE", `host sent ${typeof source}`);
+      return;
+    }
     const bytes = new TextEncoder().encode(source);
     const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
     const got = Array.prototype.map
       .call(new Uint8Array(digest), (b: number) => b.toString(16).padStart(2, "0"))
       .join("");
-    if (got !== MERGE_DIGEST) return;
+    if (got !== MERGE_DIGEST) {
+      /*
+       * The digests, short, because which two things disagree is the whole
+       * question and a person can read sixteen characters over the phone. An
+       * unstamped build's pin is the placeholder, which is its own answer.
+       */
+      refuseWriteRules(
+        "MERGE_MODULE_MISMATCH",
+        `got ${got.slice(0, 16)} expected ${String(MERGE_DIGEST).slice(0, 16)} over ${bytes.length}B`,
+      );
+      return;
+    }
     const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     try {
       mergeModule = await import(/* @vite-ignore */ url);
+    } catch (error) {
+      // A blob import can be refused by a policy this frame runs under rather
+      // than by anything wrong with the module, and that reads nothing like a
+      // mismatch — so it is reported as itself.
+      refuseWriteRules("MERGE_MODULE_UNUSABLE", (error as Error)?.message ?? String(error));
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -2704,6 +2746,24 @@ async function boot(): Promise<void> {
       if (typeof ground.colour === "string" && ground.colour.length <= 64) {
         window.parent.postMessage({ type: "DAI_HOST_GROUND", sessionNonce, colour: ground.colour }, "*");
       }
+      return;
+    }
+    /*
+     * The write rules were sent and could not be adopted. Relayed rather than
+     * kept in the frame, because the host is the half that chose what to send
+     * and the only half with somewhere to put a sentence.
+     */
+    if (event.source === frame.contentWindow && relay?.type === "dai:write-rules-refused") {
+      const refusal = event.data as { why?: string; detail?: string };
+      window.parent.postMessage(
+        {
+          type: "DAI_HOST_WRITE_RULES_REFUSED",
+          sessionNonce,
+          why: refusal.why,
+          detail: refusal.detail,
+        },
+        "*",
+      );
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:save-state") {

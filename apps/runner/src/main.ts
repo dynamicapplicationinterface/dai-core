@@ -1692,6 +1692,29 @@ window.addEventListener("message", (event) => {
      */
     if (!fromMountedContainer(event, data)) return;
     void sendDocument();
+  } else if (data.type === "DAI_HOST_WRITE_RULES_REFUSED") {
+    /*
+     * The rules were delivered and the frame would not adopt them.
+     *
+     * This host decided the document was replicated and sent the module; the
+     * frame checked it against the digest compiled into its own runtime and
+     * said no. Until now that ended in silence, and the person met
+     * `WRITE_SURFACE_UNAVAILABLE` — the consequence, raised in the frame, of a
+     * disagreement between two halves neither of which had said anything.
+     *
+     * The reason is shown rather than logged. It is the only thing that
+     * separates "this build shipped mismatched parts", which nobody but us can
+     * fix, from "this browser will not run the module", which a different
+     * browser might.
+     */
+    if (!fromMountedContainer(event, data)) return;
+    const why = String(data.why ?? "unknown");
+    const detail = typeof data.detail === "string" ? data.detail : "";
+    say(
+      `This document can be read here but not changed: the app could not load the part ` +
+        `that writes its shared tables (${why}${detail ? ` — ${detail}` : ""}).`,
+      true,
+    );
   } else if (data.type === "DAI_HOST_SAVE_STATE") {
     // The runtime's own account of where the data stands. Shown, never
     // inferred: a green word here means the host acknowledged a write.
