@@ -1117,6 +1117,14 @@ function bridgeMain(): void {
    */
   let mountIsOwnCopy = false;
   let replicaSettled = false;
+  /*
+   * Why the last attempt at rules failed, kept for the write that then
+   * refuses. The host's account of it goes to a line under the mounted
+   * document, where nobody looking at the application can see it; the error
+   * the application shows is the only text on screen, so the reason rides in
+   * that too.
+   */
+  let lastRefusal: string | null = null;
 
   const watched = (db: Any): Any => {
     liveDb = db;
@@ -1274,6 +1282,7 @@ function bridgeMain(): void {
    * is never imported. Fail-*silent* was the mistake.
    */
   const refuseWriteRules = (why: string, detail?: string): void => {
+    lastRefusal = detail ? `${why} — ${detail}` : why;
     try {
       window.parent.postMessage({ type: "dai:write-rules-refused", why, detail }, "*");
     } catch {
@@ -1372,7 +1381,26 @@ function bridgeMain(): void {
      * rather than in the host that decided what to send.
      */
     const rules = (): Any => {
-      if (!mergeModule) throw new Error("WRITE_SURFACE_UNAVAILABLE");
+      if (!mergeModule) {
+        /*
+         * The code, then the reason, in the one place a person is looking.
+         *
+         * `WRITE_SURFACE_UNAVAILABLE` is the registry name and stays first.
+         * What follows is which of the ways to have no rules this was: a
+         * refusal the frame recorded, or nothing recorded at all — in which
+         * case whether the host even said rules were coming is the fact that
+         * splits "the push never happened" from "the frame never expected
+         * one", and both read identically without it.
+         */
+        const reason =
+          lastRefusal ??
+          (expectsRules
+            ? "rules were expected and none arrived"
+            : "the host did not say this document was replicated");
+        const error = new Error(`WRITE_SURFACE_UNAVAILABLE (${reason})`);
+        error.name = "WRITE_SURFACE_UNAVAILABLE";
+        throw error;
+      }
       return mergeModule as Any;
     };
     /*
