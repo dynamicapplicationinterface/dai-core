@@ -79,6 +79,30 @@ async function dumpOf(page: Page): Promise<string> {
   });
 }
 
+/**
+ * The moves a container's database actually carries, read from the file.
+ *
+ * Opened as a database rather than searched as text: a SAN string can appear
+ * in a container for reasons that are not a row — the application's own source
+ * is in there — and a test that matched those would pass on a file with no
+ * moves in it at all.
+ */
+async function movesIn(html: string): Promise<string[]> {
+  const { parseContainer } = await import("../src/container.js");
+  const { DatabaseSync } = await import("node:sqlite");
+  const data = parseContainer(html).archive["document.sqlite"]!;
+  const path = join(mkdtempSync(join(tmpdir(), "dai-chess-read-")), "d.sqlite");
+  writeFileSync(path, data);
+  const db = new DatabaseSync(path);
+  try {
+    return (db.prepare("SELECT san FROM moves_current").all() as { san: string }[]).map(
+      (row) => row.san,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 /** What the person sees: whose move it is, and the moves played so far. */
 async function boardState(app: FrameLocator): Promise<{ turn: string; history: string }> {
   return {
@@ -230,5 +254,49 @@ test.describe("a game of chess played by exchanging files", () => {
 
     await deviceA.close();
     await deviceB.close();
+  });
+
+  test("a move played and sent in the same tick is in the file that leaves", async ({ browser }) => {
+    /*
+     * The silent one.
+     *
+     * Autosave lands a moment after the last edit, and the export read the
+     * stored database without asking for that write first. So playing a move
+     * and immediately sending the board produced a file with the move missing:
+     * valid, complete, correctly signed, and one move stale. Nothing on either
+     * end can see it. The sender's own screen shows the move — it is in their
+     * database — and the recipient has no way to know a move was made, because
+     * the only evidence of it is the thing that went missing.
+     *
+     * So the export is not raced here, it is deliberately caught inside the
+     * window: no wait, no settling, straight from the click to the save. That
+     * is the shape a person makes when they move and reach for Share, and it
+     * is the only shape that fails.
+     */
+    const device = await browser.newContext({ acceptDownloads: true });
+    const page = await device.newPage();
+    const app = await firstOpen(page, container);
+
+    await app.locator("[data-new-game]:visible").first().click();
+    await app.locator("#setup-you").fill("Ada");
+    await app.locator("#setup-them").fill("Bo");
+    await app.locator('input[name="color"][value="w"]').check();
+    await app.locator("#new-game-form button[type=submit]").click();
+
+    await play(app, "d2", "d4");
+    const sent = join(scratch, "same-tick.dai.html");
+    await saveOut(page, sent);
+
+    /*
+     * Read from the file rather than from a second device, so a failure says
+     * "the bytes that left were stale" rather than "something about opening".
+     * The board is derived by replaying `moves`, so the row being present is
+     * the whole of the claim.
+     */
+    const rows = readFileSync(sent, "utf8");
+    const carried = await movesIn(rows);
+    expect(carried, "the move that prompted the send is not in the file").toContain("d4");
+
+    await device.close();
   });
 });

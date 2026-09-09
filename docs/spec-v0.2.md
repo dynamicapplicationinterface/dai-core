@@ -578,6 +578,24 @@ signature therefore still holds.
 A host that has seen a later generation for a document MAY treat an earlier one
 as a rollback.
 
+**Every carrier exports from the flushed state.** Before a host packages a
+document for anything — a file, an inline carrier, a reference link, a share
+sheet, a handoff — it MUST first ask the running application to write whatever
+is pending, and wait for that write to be acknowledged. Autosave lands a moment
+after the last edit; a copy packaged inside that window is the document as it
+stood *before* the thing the person had just done.
+
+This is stated as a rule because the failure has no symptom. The file is valid,
+complete, correctly signed and one edit stale — it verifies, it opens, and
+neither the sender nor the recipient has anything to look at that would tell
+them an edit is missing. It is the only failure in this format where a
+conforming reader cannot help.
+
+It has happened once: two carriers packaged the same document, one flushed
+first and one did not, and the one that did not shipped a game with the move
+that prompted the send missing from it. A carrier author adding a fifth route
+should assume this rule is the reason the other four look repetitive.
+
 A host that read a document at one generation and is asked to save on top of a
 different one MUST refuse with `GENERATION_CONFLICT`, and MUST NOT present the
 refusal as a failure of the application: another window saved first, and the

@@ -601,6 +601,29 @@ Local tables are absent by construction, which is the point: a private table on
 one side is not a reason to refuse, because local tables never travel and never
 merge. Vector `schema-digest-replicated-only`.
 
+**There are two digests over a schema, and they must not be confused.**
+
+`runtime/schema.json` digests the SQL this compiler *executed* — the rewrite,
+`_r_` columns and all. That is right for what it does: the rewrite is what
+shapes the stored database, so a change to it has to demand a migration, and
+digesting the authored text instead would let the shape of every stored
+database change with the digest unmoved. **That digest is lineage-internal**:
+one document, one migration chain, one tool. It answers "is this data the shape
+this build expects".
+
+The sibling test digests what the *author declared* — the `pragma_table_info`
+shape above. It answers a different question, "can these two copies exchange
+rows", and it is asked of two files that may have been built by two different
+tools years apart.
+
+**The sibling test must never consume the rewrite digest.** If it did, two
+copies of one document built by two conforming compilers would stop being
+siblings — which is exactly the failure this decision exists to prevent,
+reintroduced through the migration gate's door. `mergeSibling` reads
+`replicatedSchemaOf` and nothing else; test *a second compiler's rewrite is
+still a sibling* pins it by merging two copies whose declared schemas match and
+whose emitted SQL does not.
+
 **The comparison covers shape, not constraints, and that is a stated
 trade-off.** What a table can be asked for its own columns are names, declared
 types, `NOT NULL`, defaults and key position. `CHECK` constraints and `COLLATE`

@@ -523,9 +523,15 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
      * its own account of when its data was last written, and left an arriving
      * copy with nothing to be newer than. Opening is not saving: `savedAt` is
      * carried across untouched.
+     *
+     * That was fixed by naming `savedAt`, which fixed one field and left the
+     * shape. Standing consent to merge and the shares this copy has issued
+     * were still dropped, so opening a document silently withdrew the answer
+     * the person gave the last time they were asked. The whole record is
+     * carried now, and only what this write owns is overwritten.
      */
     await saveCartridgeToLibrary({
-      ...(item.savedAt !== undefined ? { savedAt: item.savedAt } : {}),
+      ...item,
       documentUuid: loaded.manifest.documentUuid,
       appName: loaded.manifest.appName ?? "container",
       lastOpened: new Date().toISOString(),

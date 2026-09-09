@@ -6,8 +6,8 @@ import {
   rewriteReplicated,
   triggerColumns,
 } from "../src/replicated.js";
-import { mergeSibling } from "../src/replicated-frame.js";
-import { adoptReplica } from "../src/replicated-rows.js";
+import { mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
+import { adoptReplica, ensureReplica } from "../src/replicated-rows.js";
 import {
   applyRow,
   canonicalDump,
@@ -566,6 +566,57 @@ CREATE TABLE cases (
     expect(report.applied).toBe(0);
     // Refused means nothing happened, not that some of it happened.
     expect(a.all("SELECT count(*) c FROM cases")[0]!["c"]).toBe(0);
+    a.close();
+    b.close();
+  });
+
+  test("a second compiler's rewrite is still a sibling (T1-D21)", () => {
+    /*
+     * The distinction the schema digest depends on, asserted rather than
+     * assumed.
+     *
+     * There are two digests over a schema and they answer different questions.
+     * `runtime/schema.json` digests the SQL this compiler *executed* — the
+     * rewrite, because that is what shapes the stored database, and a change
+     * to the rewrite has to demand a migration. That digest is lineage-
+     * internal: one document, one migration chain, one tool.
+     *
+     * The sibling test digests what the *author declared* — `pragma_table_info`
+     * over the author's columns, `_r_*` excluded. Two conforming compilers may
+     * emit the rewrite differently and both be right: different column order
+     * among the replication columns, different whitespace, a different way of
+     * spelling the same constraint. Comparing what was executed would make two
+     * copies of one document, built by two tools, refuse each other as
+     * SCHEMA_MISMATCH — a disagreement about mergeability rather than about a
+     * merge, which is worse, because the rows never get far enough to disagree.
+     *
+     * So this stands in for that second compiler: the same declared schema,
+     * written differently, and the merge must go through.
+     */
+    const a = open();
+    const b = openWith(
+      // Same columns, same types, same defaults — different spelling
+      // throughout. A formatter, a different case convention, extra blank
+      // lines: none of it is a difference of schema.
+      "-- dai:replicated\nCREATE TABLE cases (\n\n  title text  NOT NULL,\n  status   TEXT   NOT NULL DEFAULT 'open',\n\n  weight real\n);\n",
+    );
+
+    ensureReplica(a, A);
+    ensureReplica(b, B);
+    createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: 1.5 });
+
+    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    expect(report.refused).toBeUndefined();
+    expect(report.applied).toBe(1);
+    expect(a.all("SELECT title FROM cases_current")[0]!["title"]).toBe("theirs");
+
+    /*
+     * And the reason it worked: the two copies' *declared* shapes are equal
+     * while the SQL that produced them is not. If this ever fails because the
+     * two strings became equal, the test has stopped testing anything.
+     */
+    expect(replicatedSchemaOf(rowsFor(a))).toBe(replicatedSchemaOf(rowsFor(b)));
+
     a.close();
     b.close();
   });
