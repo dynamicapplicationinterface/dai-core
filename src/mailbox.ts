@@ -25,8 +25,10 @@
 /** The relay, as three calls over opaque bytes. */
 export interface Mailbox {
   /**
-   * Add a sealed batch to the document's mailbox. Ordering is the mailbox's to
-   * assign; the caller does not choose where a batch lands.
+   * Add a sealed batch to the document's mailbox, and answer with the cursor it
+   * landed at — the position a reader who has this batch has read up to.
+   * Ordering is the mailbox's to assign; the caller does not choose where a
+   * batch lands.
    *
    * **Idempotent by the digest of `sealed`.** A second append of the identical
    * bytes is a no-op. This is what makes the durability rule safe: a publisher
@@ -36,8 +38,17 @@ export interface Mailbox {
    * sent again and no reader could recover them: the silent-loss shape the
    * write flush already guards against. Seal once and retry the same bytes; the
    * IV is inside the seal, so re-sealing would defeat the dedup.
+   *
+   * **A deduplicated retry returns the *original* cursor, and never allocates a
+   * new one.** The retry is the same batch, so it must occupy the same position
+   * — `head` does not move, and a reader's cursor cannot skip. The digest is a
+   * store fact, not a happens-before: a mailbox over a shared counter has to
+   * check the digest→cursor index *before* it increments, or a retried batch
+   * that secretly landed becomes a second entry and the mailbox counts a row it
+   * did not gain. The directory adapter gets this for free because the cursor
+   * is written into the batch's own name; a counter-backed relay must earn it.
    */
-  append(documentId: string, sealed: Uint8Array): Promise<void>;
+  append(documentId: string, sealed: Uint8Array): Promise<string>;
 
   /**
    * Where the mailbox is now, as an opaque cursor. Two `head` calls with no

@@ -1063,3 +1063,15 @@ until `append` acks, and the relay is idempotent by the digest of the sealed
 blob: a retry over a batch that secretly landed is a no-op, and a batch that
 never landed is re-sent whole. The IV lives inside the seal, so re-sealing a
 retry would defeat the dedup — seal once, resend the bytes.
+
+`append` answers with the cursor the batch landed at, and **a deduplicated
+retry must return the *original* cursor, never a new one.** The retry is the
+same batch and takes the same position: `head` does not move, and a reader's
+cursor cannot skip a slot that was never really filled. A relay over a shared
+counter earns this only by checking the digest→cursor index *before* it
+increments — otherwise a retried batch that had secretly landed mints a second
+sequence, `head` moves for a row the mailbox did not gain, and the count drifts
+from the content. The directory adapter gets it for free, because the cursor is
+written into the batch's own name; the test *a deduplicated retry returns the
+original cursor* pins it there so the HTTP adapter inherits the invariant
+rather than rediscovering it.

@@ -61,12 +61,16 @@ export function fsMailbox(options: FsMailboxOptions): Mailbox {
       const digest = await digestOf(sealed);
       const present = entries(dir);
       // Idempotent by digest: a retry sends the identical sealed bytes, and a
-      // batch already here is a no-op. This is what lets a caller advance its
+      // batch already here is a no-op that returns its *original* cursor — never
+      // a new one, or `head` would move for a row the mailbox did not gain and a
+      // reader's cursor could skip. This is what lets a caller advance its
       // watermark only after `append` returns and re-send on failure without
       // fear of a duplicate — the same rule the write flush keeps.
-      if (present.some((e) => e.digest === digest)) return;
+      const already = present.find((e) => e.digest === digest);
+      if (already) return String(already.ordinal);
       const next = (present.at(-1)?.ordinal ?? 0) + 1;
       writeFileSync(join(dir, `${String(next).padStart(12, "0")}.${digest}.batch`), sealed);
+      return String(next);
     },
 
     async head(documentId) {

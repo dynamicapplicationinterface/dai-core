@@ -20,7 +20,7 @@ import {
   ensureReplica,
   type Rows,
 } from "../src/replicated-rows.js";
-import { openBatch, sealBatch } from "../src/mailbox.js";
+import { openBatch, sealBatch, type Mailbox } from "../src/mailbox.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
 
 /**
@@ -68,7 +68,7 @@ async function publish(
   replica: Uint8Array,
   watermark: number,
   key: Uint8Array,
-  mailbox: ReturnType<typeof fsMailbox>,
+  mailbox: Mailbox,
   documentId: string,
 ): Promise<number> {
   const entries = authoredSince(db, replica, watermark, tables);
@@ -83,7 +83,7 @@ async function publish(
 async function pull(
   db: Rows,
   key: Uint8Array,
-  mailbox: ReturnType<typeof fsMailbox>,
+  mailbox: Mailbox,
   documentId: string,
   cursor: string,
 ): Promise<string> {
@@ -166,16 +166,16 @@ test("the watermark advances on ack, not on send: a dropped append still arrives
 
   // A relay that drops the first append it is given, then behaves.
   let dropsLeft = 1;
-  const flaky = {
-    async append(documentId: string, sealed: Uint8Array) {
+  const flaky: Mailbox = {
+    async append(documentId, sealed) {
       if (dropsLeft > 0) {
         dropsLeft -= 1;
         throw new Error("relay unreachable");
       }
-      await real.append(documentId, sealed);
+      return real.append(documentId, sealed);
     },
-    head: real.head.bind(real),
-    since: real.since.bind(real),
+    head: (documentId) => real.head(documentId),
+    since: (documentId, cursor) => real.since(documentId, cursor),
   };
 
   const a = open();
@@ -210,21 +210,12 @@ test("the watermark advances on ack, not on send: a dropped append still arrives
   expect(watermark).toBe(1);
 
   // B pulls, and the move that survived a dropped send is there.
-  await pull(b, key, mailbox_of(flaky), id, "");
+  await pull(b, key, flaky, id, "");
   expect(b.all("SELECT san FROM moves_current WHERE ply = 1")[0]?.["san"]).toBe("e4");
 
   a.close();
   b.close();
 });
-
-// A tiny shim so `pull` (typed to the fs mailbox) can read through the flaky one.
-function mailbox_of(m: {
-  head: (id: string) => Promise<string>;
-  since: (id: string, c: string) => Promise<{ cursor: string; batches: Uint8Array[] }>;
-  append: (id: string, b: Uint8Array) => Promise<void>;
-}): ReturnType<typeof fsMailbox> {
-  return m as ReturnType<typeof fsMailbox>;
-}
 
 test("a move changed in place converges through the mailbox too (supersession)", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32));

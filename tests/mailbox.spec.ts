@@ -69,6 +69,31 @@ test.describe("the mailbox: append, head, since", () => {
     expect(batches.map(text)).toEqual(["the same sealed batch"]);
   });
 
+  test("a deduplicated retry returns the original cursor, and head does not move", async () => {
+    /*
+     * The invariant the HTTP relay must inherit. A retry is the same batch, so
+     * it takes the same position: `append` returns the cursor the first attempt
+     * landed at, `head` is unchanged, and a second real batch after it is at
+     * the very next cursor — no gap a reader could skip. A counter-backed relay
+     * that minted a new sequence for the retry would fail this; the directory
+     * adapter passes it because the cursor is in the batch's own name.
+     */
+    const mailbox = box();
+    const first = bytes("batch one");
+    const seqA = await mailbox.append("doc-a", first);
+    const headAfterA = await mailbox.head("doc-a");
+    // The retry: identical bytes, and it must name the same place.
+    const seqAgain = await mailbox.append("doc-a", new Uint8Array(first));
+    expect(seqAgain).toBe(seqA);
+    expect(await mailbox.head("doc-a")).toBe(headAfterA);
+    // A genuinely new batch takes the next cursor, with nothing skipped.
+    const seqB = await mailbox.append("doc-a", bytes("batch two"));
+    expect(Number(seqB)).toBe(Number(seqA) + 1);
+    // And reading from the first batch's cursor yields exactly the second.
+    const { batches } = await mailbox.since("doc-a", seqA);
+    expect(batches.map(text)).toEqual(["batch two"]);
+  });
+
   test("head moves only when something is appended", async () => {
     const mailbox = box();
     const empty = await mailbox.head("doc-a");
