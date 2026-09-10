@@ -51,6 +51,8 @@ import {
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
+import { httpMailbox } from "../../../src/mailbox-http.js";
+import { resolveMailboxKey, startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -603,6 +605,10 @@ function eject(): void {
   cartridgeFrame.src = "about:blank";
   loaded = undefined;
   handshakeEstablished = false;
+  // The mailbox loop belongs to the document that was open; it stops with it.
+  mailboxSession?.stop();
+  mailboxSession = null;
+  arrivedKey = undefined;
   document.body.classList.remove("loaded", "launching", "booting");
   clearLaunchGuard();
   document.documentElement.style.removeProperty("--app-ground");
@@ -1734,6 +1740,11 @@ window.addEventListener("message", (event) => {
     // A sibling that arrived on a cold launch, now that there is a frame to
     // merge it into. See openThenMerge.
     if (pendingMerge) void applyPendingMerge();
+
+    // The mailbox loop, now that there is a frame to publish from and pull into
+    // (Track 5). No-op unless the document is replicated, a relay is set, and
+    // this device holds the key.
+    void startMailboxIfPossible();
 
     // Where the edges of the screen are. The application draws to them now,
     // and is the one document that cannot measure them. See tellInsets.
@@ -2967,6 +2978,63 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
  */
 const STORE_BASE: string | undefined = "https://store.opendai.app/";
 
+/*
+ * The mailbox relay (Track 5), where a document's moves are carried between two
+ * copies with no file passed by hand. Stamped into the page at build from
+ * DAI_RELAY_BASE, the way the build id is (see the `dai-relay` meta in
+ * index.html), so the address is a fact the page carries rather than a bundle
+ * patched after the fact. Empty until the relay is deployed and the value set
+ * on the deploy; a test injects one through `__runner.useRelay`. When it is
+ * unset no session starts and a document behaves exactly as it does today —
+ * carried by file and by link, never by mailbox.
+ */
+let relayBase: string | undefined =
+  document.querySelector('meta[name="dai-relay"]')?.getAttribute("content")?.trim() || undefined;
+
+/** The document key this open carried in its link, if any — the mailbox seals under it. */
+let arrivedKey: string | undefined;
+
+/** The running mailbox loop for the mounted document, or none. */
+let mailboxSession: MailboxSession | null = null;
+
+/**
+ * Starts the mailbox loop for the mounted document, when there is one to start.
+ *
+ * A mailbox needs three things: the document declares replicated tables, a
+ * relay is configured, and this device holds the document's key — from the
+ * link it opened, or kept from a link it opened before. A document that only
+ * ever arrived as a file has no key and so no mailbox; that is the open tier,
+ * not a failure, and the app says as much rather than syncing silently or not
+ * at all.
+ */
+async function startMailboxIfPossible(): Promise<void> {
+  mailboxSession?.stop();
+  mailboxSession = null;
+  if (!loaded || !mountedNonce || !relayBase) return;
+  if (!declaresReplication(loaded.manifest)) return;
+  const frameWindow = cartridgeFrame.contentWindow;
+  if (!frameWindow) return;
+
+  const uuid = loaded.manifest.documentUuid;
+  const key = await resolveMailboxKey(uuid, arrivedKey);
+  if (!key) {
+    // Replicated, but keyless: this copy came by file. Sharing a link is what
+    // gives it a mailbox, and the person is told rather than left wondering.
+    say("Updates from the other copy arrive when you open a shared link for this document.");
+    return;
+  }
+  if (mountedNonce !== null) {
+    mailboxSession = startMailboxSession({
+      documentUuid: uuid,
+      keyBase64Url: key,
+      mailbox: httpMailbox({ base: relayBase, fetch: window.fetch.bind(window) }),
+      frame: frameWindow,
+      sessionNonce: mountedNonce,
+      onNote: (message) => say(message),
+    });
+  }
+}
+
 /**
  * Opens a document a reference link names.
  *
@@ -3029,6 +3097,9 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
   arrivedAsFile = false;
   // The address as it stands, fragment included: that is the document.
   arrivedByLink = location.href;
+  // The document's key, kept for the mailbox — the same key that just decrypted
+  // it. A home-screen launch will not carry it again, so the session records it.
+  arrivedKey = reference.key;
   // Carried in the clear, if the link said so. Held until the card is built.
   arrivedInClear = reference.clear === true;
   const store = reference.url ? where : "this project's store";
@@ -3338,7 +3409,30 @@ Object.defineProperty(window, "__runner", {
     // relaunch is platform-gated). Exposed so the reveal, and the gesture it
     // offers, can be checked where the stall itself cannot be produced.
     guardLaunch,
+    // Track 5: a test points the mailbox at a relay it stands up locally, since
+    // the production relay is a Durable Object this repo does not run, and
+    // supplies the key a file-opened test document has no link to carry.
+    // Setting these after a document is open restarts the session against them.
+    useRelay: (base: string, keyBase64Url?: string): void => {
+      relayBase = base;
+      if (keyBase64Url) arrivedKey = keyBase64Url;
+      void startMailboxIfPossible();
+    },
+    // Pull now, as the foreground poll would.
+    pullMailbox: (): void => mailboxSession?.pull(),
   },
+});
+
+/*
+ * Foreground is when a waiting copy catches up (Track 5, slice one).
+ *
+ * Push is slice two; until then the poll on becoming visible is how a move that
+ * arrived while the app was backgrounded appears. It is also the cheapest
+ * possible trigger — no timer, no socket — and the one a person's own gesture
+ * already provides by bringing the app forward.
+ */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") mailboxSession?.pull();
 });
 
 /**

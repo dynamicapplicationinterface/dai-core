@@ -2,9 +2,12 @@
  * Keys this project publishes, and what a host must say about them.
  *
  * The conformance suite signs its cases with a known key and ships that key, so
- * anybody can regenerate the vectors and get the same bytes. A suite whose key
- * is secret is a suite nobody else can run against, which defeats the purpose
- * of having one.
+ * anybody can regenerate the vectors and verify them against it. The signatures
+ * do not yet reproduce byte for byte — ECDSA draws a fresh nonce each time, so a
+ * rebuild verifies rather than matches; a deterministic signer confined to the
+ * build-time generator would close that, and is a separate change. A suite whose
+ * key is secret is a suite nobody else can run against, which defeats the
+ * purpose of having one.
  *
  * The consequence is that everybody has it. A signature made with it proves
  * only that whoever made the container had a file that is in this repository —

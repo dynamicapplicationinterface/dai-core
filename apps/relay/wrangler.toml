@@ -1,0 +1,31 @@
+# The mailbox relay — a Cloudflare Worker with one Durable Object per document.
+#
+# Deploy is the user's: it needs the Cloudflare account that already holds the
+# R2 store. `npx wrangler deploy` from this directory. The R2 bucket is the one
+# the reference store uses; the mailbox writes under the `mailbox/<doc>/<seq>`
+# prefix and touches nothing else.
+#
+# Retention and entitlement are deferred by the ruling. When retention lands, a
+# lifecycle rule on the `mailbox/` prefix is where it goes.
+
+name = "dai-relay"
+main = "src/worker.ts"
+compatibility_date = "2026-09-01"
+
+# One Durable Object class, one mailbox per document (named by id).
+[[durable_objects.bindings]]
+name = "MAILBOX"
+class_name = "MailboxDO"
+
+# A SQLite-backed object: it is the only kind the free plan will create, and the
+# storage this one uses — the counter and the digest→cursor index — is the same
+# key/value API on either backend, so nothing in the object changes.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MailboxDO"]
+
+# The bytes go to R2 — the same bucket as the reference store, under the
+# `mailbox/` prefix. Set `bucket_name` to that bucket before deploying.
+[[r2_buckets]]
+binding = "MAILBOX_R2"
+bucket_name = "dai-store"

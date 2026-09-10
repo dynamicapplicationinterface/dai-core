@@ -1,3 +1,5 @@
 {
-  "chromium": 835
+  "chromium": 860,
+  "firefox": 848,
+  "webkit": 838
 }

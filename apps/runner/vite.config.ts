@@ -52,9 +52,24 @@ function stamp(): Plugin {
       // Named only when it is not production: the case worth catching is a
       // preview that was never promoted, and those look identical otherwise.
       const where = environment === "production" ? "" : ` · ${environment}`;
-      return html.replace(
+      const stamped = html.replace(
         /<meta name="dai-build" content="[^"]*" \/>/,
         `<meta name="dai-build" content="${commit} · ${built}${where}" />`,
+      );
+      /*
+       * The relay for the document mailbox, from the build environment.
+       *
+       * A global relay for now — one address every document uses. It is known
+       * at build like the id above and carried in the page, so turning the
+       * mailbox on is a value set on the deploy and never a patch of the bundle
+       * afterwards. Empty when unset, which is the mailbox switched off. When a
+       * document needs to name its own relay, that is a field in its link and a
+       * later decision; this is the default it falls back to.
+       */
+      const relay = (process.env.DAI_RELAY_BASE ?? "").trim();
+      return stamped.replace(
+        /<meta name="dai-relay" content="[^"]*" \/>/,
+        `<meta name="dai-relay" content="${relay}" />`,
       );
     },
     closeBundle() {

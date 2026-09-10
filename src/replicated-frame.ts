@@ -212,3 +212,15 @@ export {
   rowId,
   RowRejected,
 } from "./replicated-rows.js";
+
+export {
+  authoredSince,
+  authoredHead,
+  authoredBatchAbove,
+  encodeBatch,
+  decodeBatch,
+  stageBatch,
+  type Batch,
+  type BatchEntry,
+  type Watermark,
+} from "./replicated-batch.js";

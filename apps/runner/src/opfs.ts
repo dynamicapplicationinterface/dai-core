@@ -11,6 +11,8 @@ const LIB_STORE = "cartridges";
 const PIN_STORE = "pins";
 /** Publishers this device has seen sign something, by key (4.3). */
 const PUB_STORE = "publishers";
+/** A document's mailbox state — its key, and where publish and pull have reached (Track 5). */
+const MAILBOX_STORE = "mailboxes";
 
 import type { PinnedKey, TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
@@ -109,7 +111,7 @@ function noteIdbFailure(what: string): void {
 function openIdb(): Promise<IDBDatabase> {
   if (idbConnection) return idbConnection;
   idbConnection = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 5);
+    const request = indexedDB.open(IDB_NAME, 6);
     /*
      * A bound on the open itself. iOS Safari can leave `indexedDB.open`
      * pending with no event ever firing; without this the whole launch waits
@@ -155,6 +157,12 @@ function openIdb(): Promise<IDBDatabase> {
       if (publishers.indexNames.contains("folded")) publishers.deleteIndex("folded");
       if (!publishers.indexNames.contains("skeletons")) {
         publishers.createIndex("skeletons", "skeletons", { unique: false, multiEntry: true });
+      }
+      // Version 6: a document's mailbox state — the key it seals under, and
+      // where publish and pull have reached. Keyed by document UUID, the same
+      // lifetime as the library entry it sits beside (Track 5).
+      if (!db.objectStoreNames.contains(MAILBOX_STORE)) {
+        db.createObjectStore(MAILBOX_STORE, { keyPath: "documentUuid" });
       }
     };
     request.onsuccess = () => {
@@ -381,6 +389,61 @@ export async function deleteCartridgeFromLibrary(
   try {
     const db = await openIdb();
     await committed(db.transaction(LIB_STORE, "readwrite"), (store) => store.delete(documentUuid));
+  } catch {
+    // Ignore error
+  }
+  // The mailbox state shares the document's lifetime and goes with it.
+  await deleteMailbox(documentUuid);
+}
+
+/**
+ * A document's mailbox state (Track 5).
+ *
+ * `key` is the 32-byte document key as base64url — the one that rides in a
+ * share link's fragment — kept here because a home-screen launch arrives with
+ * no key and a held document must still seal and open its mailbox. `watermark`
+ * is how far this copy has published its own rows — a `(replica, seq)` pair,
+ * because a seq counts only within the replica that issued it and a copy that
+ * arrived by file adopts a new one on open; `cursor` is where it has read the
+ * mailbox to; `pending` is a batch sealed and not yet acked, held across an iOS
+ * kill so a publish resumes rather than being lost or re-sealed, and carries the
+ * replica and head the watermark advances to once it acks.
+ */
+export interface MailboxRecord {
+  documentUuid: string;
+  key: string;
+  watermark: { replica: string; seq: number };
+  cursor: string;
+  pending: { sealed: Uint8Array; head: number; replica: string } | null;
+}
+
+export async function loadMailbox(documentUuid: string): Promise<MailboxRecord | null> {
+  try {
+    const db = await openIdb();
+    return await new Promise((resolve) => {
+      const request = db.transaction(MAILBOX_STORE, "readonly").objectStore(MAILBOX_STORE).get(documentUuid);
+      request.onsuccess = () => resolve((request.result as MailboxRecord | undefined) ?? null);
+      request.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function saveMailbox(record: MailboxRecord): Promise<void> {
+  try {
+    const db = await openIdb();
+    await committed(db.transaction(MAILBOX_STORE, "readwrite"), (store) => store.put(record));
+  } catch {
+    // Storage refused; the session keeps its state in memory for now and the
+    // next save may take.
+  }
+}
+
+async function deleteMailbox(documentUuid: string): Promise<void> {
+  try {
+    const db = await openIdb();
+    await committed(db.transaction(MAILBOX_STORE, "readwrite"), (store) => store.delete(documentUuid));
   } catch {
     // Ignore error
   }

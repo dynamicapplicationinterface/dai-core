@@ -23,43 +23,62 @@ import { buildContainer } from "../dist/index.js";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = resolve(root, "website/public");
 
+/*
+ * Two jobs, and only one runs every time.
+ *
+ * The runtime the site serves is staged on every call, because it is
+ * deterministic and must track dist — the staged-runtime guard fails against
+ * git HEAD until it does. The demonstration pair is a *signed* pair, and a
+ * signature is not reproducible: ECDSA draws a fresh nonce each time, and the
+ * runtime it embeds is a signed manifest entry, so the file cannot be re-made
+ * byte for byte and cannot have its runtime swapped without breaking the
+ * signature. So the pair is committed once and regenerated only when this is
+ * run with `--reseed` — the seldom, deliberate act of re-signing the demo,
+ * kept out of the routine restage so a build never rewrites a signed fixture.
+ */
+const RESEED = process.argv.includes("--reseed");
+
+// The site compiles a cartridge live on the walkthrough page, so it needs the
+// shell, the bootloader and the SQLite engine as static assets. Copied here
+// rather than imported from dist/, which would make the site's build depend on
+// the core's having run first — the coupling the standalone layout avoids.
+const runtimeDir = resolve(out, "runtime");
+mkdirSync(runtimeDir, { recursive: true });
+const assets = {
+  "template.html": resolve(root, "dist/template.html"),
+  "dai-runtime.js": resolve(root, "dist/dai-runtime.js"),
+  "sqlite3.wasm": resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm"),
+  "sqlite3.mjs": resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"),
+};
+for (const [name, from] of Object.entries(assets)) {
+  writeFileSync(resolve(runtimeDir, name), readFileSync(from));
+}
+console.log("Copied the shell, bootloader and SQLite engine to website/public/runtime.");
+
+if (!RESEED) {
+  console.log("Left the signed demonstration pair as committed (pass --reseed to re-sign it).");
+  process.exit(0);
+}
+
 const template = readFileSync(resolve(root, "dist/template.html"), "utf8");
 const runtime = readFileSync(resolve(root, "dist/dai-runtime.js"), "utf8");
 
 // A fixed identity and clock, so everything except the signature is stable
-// between builds.
+// between reseeds.
 const DOCUMENT_UUID = "5a1e0b7c-9d2f-4a13-8e6b-71c4d90fa2e3";
 const BUILT_AT = new Date("2026-01-01T00:00:00.000Z");
 
-/**
- * A throwaway key, published on purpose.
+/*
+ * Signed with the conformance suite's published key.
  *
- * It exists so the publisher fingerprint stays stable in the documentation. A
- * freshly generated key would change it on every build.
- *
- * The files still differ byte for byte between runs, and cannot be made not to:
- * ECDSA draws a fresh nonce for every signature, so signing the same bytes twice
- * produces two different signatures. Only unsigned containers are reproducible.
- *
- * Anyone can sign anything with it, which is the point of a demonstration key
- * and the reason it must never sign anything real. It attests to nothing.
+ * The demonstration once used a throwaway key of its own; the suite's key does
+ * the same job — a stable, published identity that attests to nothing — and is
+ * the one this repository already tells hosts to label as a test key and never
+ * as a publisher (src/test-keys.ts). Using it here means the pair carries the
+ * same known fingerprint the conformance cases do, and the compiler will only
+ * sign with it under `allowTestKey`, which is the deliberate act a reseed is.
  */
-const DEMO_KEY = {
-  kty: "EC",
-  crv: "P-256",
-  d: "E9F7dQoKmsOYMSpGdnVsZE8LGcc5H4jkwhXaR7PhpT0",
-  x: "SJwk5VtJ34cDa7wTIAWmPYDq8HDin7Jzntwkzczsv4s",
-  y: "1puN-lDXyW3ZFWUA5jHiLqAWWRQmGc9cBgzOj7nTMhA",
-};
-
-const privateKey = await crypto.subtle.importKey(
-  "jwk",
-  { ...DEMO_KEY, ext: true },
-  { name: "ECDSA", namedCurve: "P-256" },
-  true,
-  ["sign"],
-);
-const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", privateKey)).toString("base64");
+const KEY = readFileSync(resolve(root, "conformance/signing-key.pem"), "utf8");
 
 // The demonstration pair packages the real example, so the file a visitor
 // inspects on the tamper page is the same application the walkthrough builds.
@@ -82,7 +101,8 @@ const built = await buildContainer({
   glue: new Uint8Array(
     readFileSync(resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs")),
   ),
-  signingKey: `-----BEGIN PRIVATE KEY-----\n${pkcs8}\n-----END PRIVATE KEY-----`,
+  signingKey: KEY,
+  allowTestKey: true,
   documentUuid: DOCUMENT_UUID,
   now: () => BUILT_AT,
 });
@@ -109,26 +129,9 @@ const tampered = built.html.replace(
 
 writeFileSync(resolve(out, "sample-tampered.dai"), tampered, "utf8");
 
-// The site compiles a cartridge live on the walkthrough page, so it needs the
-// shell, the bootloader and the SQLite engine as static assets. Copied here
-// rather than imported from dist/, which would make the site's build depend on
-// the core's having run first — the coupling the standalone layout avoids.
-const runtimeDir = resolve(out, "runtime");
-mkdirSync(runtimeDir, { recursive: true });
-
-const assets = {
-  "template.html": resolve(root, "dist/template.html"),
-  "dai-runtime.js": resolve(root, "dist/dai-runtime.js"),
-  "sqlite3.wasm": resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm"),
-  "sqlite3.mjs": resolve(root, "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"),
-};
-for (const [name, from] of Object.entries(assets)) {
-  writeFileSync(resolve(runtimeDir, name), readFileSync(from));
-}
-
-console.log("Wrote the demonstration pair to website/public:");
+console.log("Reseeded the demonstration pair in website/public:");
 console.log("  sample-intact.dai    verifies");
 console.log("  sample-tampered.dai  one entry replaced, every other byte identical");
 console.log(`  document ${DOCUMENT_UUID}`);
-console.log(`  publisher ${built.publicKeyFingerprint}`);
-console.log("Copied the shell, bootloader and SQLite engine to website/public/runtime.");
+console.log(`  publisher ${built.publicKeyFingerprint} (the conformance test key)`);
+console.log("Commit the pair; a signature is not reproducible, so a rebuild differs.");

@@ -62,6 +62,29 @@ export function authorColumnsOf(db: Rows, table: string): string[] {
 }
 
 /**
+ * A stored row, read back into the shape merge and the mailbox both consume.
+ *
+ * One reader, used by `mergeFrom` and by the mailbox's `authoredSince`, so the
+ * two never disagree about what a row is. `_r_superseded` is deliberately not
+ * read — it is derived local state (T1-D11), not part of the row, and the
+ * sender's copy of it is none of the reader's business.
+ */
+export function readRow(stored: Record<string, unknown>, authored: readonly string[]): ReplicatedRow {
+  const columns: Record<string, unknown> = {};
+  for (const name of authored) columns[name] = stored[name];
+  return {
+    _r_replica: stored["_r_replica"] as Uint8Array,
+    _r_seq: Number(stored["_r_seq"]),
+    _r_lc: Number(stored["_r_lc"]),
+    _r_entity: stored["_r_entity"] as Uint8Array,
+    _r_parents: String(stored["_r_parents"]),
+    _r_deleted: Number(stored["_r_deleted"]),
+    _r_sig: (stored["_r_sig"] as Uint8Array | null) ?? null,
+    columns,
+  };
+}
+
+/**
  * Puts one row in, and keeps the supersession flag true of the row set.
  *
  * This is T1-D2, and the second half is the part that looks redundant and is
@@ -456,18 +479,7 @@ export function mergeFrom(
   for (const table of tables) {
     const authored = authorColumnsOf(sibling, table);
     for (const incoming of sibling.all(`SELECT * FROM "${table}"`)) {
-      const columns: Record<string, unknown> = {};
-      for (const name of authored) columns[name] = incoming[name];
-      const row: ReplicatedRow = {
-        _r_replica: incoming["_r_replica"] as Uint8Array,
-        _r_seq: Number(incoming["_r_seq"]),
-        _r_lc: Number(incoming["_r_lc"]),
-        _r_entity: incoming["_r_entity"] as Uint8Array,
-        _r_parents: String(incoming["_r_parents"]),
-        _r_deleted: Number(incoming["_r_deleted"]),
-        _r_sig: (incoming["_r_sig"] as Uint8Array | null) ?? null,
-        columns,
-      };
+      const row = readRow(incoming, authored);
       try {
         if (applyRow(local, table, row) === "added") result.applied += 1;
         else result.duplicate += 1;

@@ -1024,6 +1024,56 @@ things this project actually needs next, not one convenience at the end:
    (`window.dai.replicated`) that the compiler wired, so publishing is not a
    second way to change a row.
 
+**The protocol, decided.** The host owns the watermark — it owns the network
+and the ack, and the durability rule belongs where the ack arrives; the frame
+stays stateless about what has been published. Two message names, neither
+overloading `DAI_HOST_MERGE` (one meaning per name, D20):
+
+- **`dai:authored`** — frame → host, a nudge with no payload, sent on every
+  write through the one write path. The host debounces and replies
+  `DAI_HOST_AUTHORED_SINCE {seq}`; the frame answers with the CBOR batch of
+  rows it authored above that seq. Host-initiated, so the host never trusts a
+  frame's own idea of what is unpublished.
+- **`DAI_HOST_APPLY_BATCH {batch}`** — host → frame, the pull path. Inside the
+  frame the batch is staged into the throwaway sibling and run through the same
+  `mergeSibling` a file takes, then `dai:merged` is dispatched — the app sees
+  one event for both carriers. A distinct name because the *refusals* differ: a
+  batch has no manifest, so the host's check is the seal (that a holder of the
+  document key sent it) and the frame's is shape at staging. Distinct path in,
+  identical merge inside.
+
+Unacked sealed batches are **persisted, not held in memory** — beside the
+library entry, keyed by digest, deleted on ack. iOS kills a backgrounded page
+without warning, and "seal once, resend the bytes" already requires the sealed
+bytes to outlive the attempt; a reload resumes an unacked publish rather than
+losing it.
+
+**The document key lives in the library entry.** A home-screen launch is `#u=`
+with no `k`, so the host must have kept the key from first arrival — which it
+already does, because a held document opens without its link at all. So the
+key sits beside the standing-consent flag and the unacked batches: local, keyed
+by document UUID, the same lifetime as the document, deleted with it, never
+merged. It makes the entry no more sensitive than it already is — the entry
+*is* the document. Two consequences follow:
+
+- A copy that arrived by **file** rather than link has no key, and therefore no
+  mailbox, until someone sends it a link. That is correct — the file tier
+  carries no key — but it must be *said*: the app shows "updates arrive when you
+  open a shared link", not a silent nothing where sync would be.
+- This field is stored only because the key is the link's. When Track 4 makes a
+  document **recipient-bound**, the mailbox key is derived from the recipient's
+  key instead of the fragment, and this field becomes *derived, not stored*.
+  The store is the open tier's shape and expires with it; the note is here so
+  the recipient-bound work knows to remove it rather than carry it.
+
+**The relay is a Durable Object per mailbox, with R2 for the bytes.** A DO is
+single-threaded per mailbox, so "check the digest→cursor index before you
+increment" is two statements with no race — exactly the primitive the cursor
+invariant asks for. A KV counter is eventually consistent and not atomic under
+concurrent appends; it would pass the directory-adapter tests and fail on the
+first simultaneous move. The DO holds the counter and the digest index; blobs
+go to R2 under `mailbox/<doc>/<seq>` through the adapter that already exists.
+
 **Deferred, deliberately:** retention (how long a mailbox keeps a row),
 entitlement (who may append or subscribe, and any dial attached to it), and
 multi-party fan-out beyond the two-party session. Those are dials on a working
@@ -1033,3 +1083,45 @@ refusals — a Level 2 signature (Track 2) or a Track 3 roster still gates what 
 mailbox will accept once those exist; Track 5's minimal form simply does not
 wait for them to carry Level 1 rows between two copies that already trust each
 other.
+
+**The seal is the open tier, not confidentiality.** A mailbox is sealed under
+the document's key, and that key rides in the link fragment — so anyone holding
+the link can read the mailbox, exactly as anyone holding a shared file can read
+it. The AES-GCM keeps the *relay* from reading content and keeps a tampered
+batch from applying; it does not make the mailbox private from a recipient, and
+nothing here should be read as claiming it does. Closing it to a named
+recipient is `recipient-bound`, in Track 4. Until then a mailbox gives what a
+file share gives today and no less.
+
+**Outgoing rows cross frame→host in plaintext; the host seals them.** The
+frame cannot reach the network (`connect-src 'none'`), so it hands the rows it
+authored to the host, which holds the document's key and does the sealing and
+the `append`. That is not the hostile-bytes case: the host is the trust root
+for this document and already holds it in full. The argument that a frame must
+verify what it merges is about *incoming* bytes from a relay, and those are
+merged by the same `mergeSibling` — staged into a throwaway sibling — that
+checks a file, so a bad row is refused there exactly as T1-D13 says.
+
+**Durability: the watermark advances on ack, never on send.** A publisher's
+record of what it has sent is its own high-water mark over `_r_seq`; the batch
+to publish is everything it authored above it. That mark must advance only
+after `append` resolves. Advancing on emit and losing the batch in flight would
+leave those rows never sent again and no reader able to help — the silent-loss
+shape the write flush already guards against (§ "Every carrier exports from the
+flushed state"). So the seal is computed once, the identical bytes are re-sent
+until `append` acks, and the relay is idempotent by the digest of the sealed
+blob: a retry over a batch that secretly landed is a no-op, and a batch that
+never landed is re-sent whole. The IV lives inside the seal, so re-sealing a
+retry would defeat the dedup — seal once, resend the bytes.
+
+`append` answers with the cursor the batch landed at, and **a deduplicated
+retry must return the *original* cursor, never a new one.** The retry is the
+same batch and takes the same position: `head` does not move, and a reader's
+cursor cannot skip a slot that was never really filled. A relay over a shared
+counter earns this only by checking the digest→cursor index *before* it
+increments — otherwise a retried batch that had secretly landed mints a second
+sequence, `head` moves for a row the mailbox did not gain, and the count drifts
+from the content. The directory adapter gets it for free, because the cursor is
+written into the batch's own name; the test *a deduplicated retry returns the
+original cursor* pins it there so the HTTP adapter inherits the invariant
+rather than rediscovering it.
