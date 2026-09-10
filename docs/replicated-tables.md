@@ -1048,6 +1048,24 @@ without warning, and "seal once, resend the bytes" already requires the sealed
 bytes to outlive the attempt; a reload resumes an unacked publish rather than
 losing it.
 
+**The document key lives in the library entry.** A home-screen launch is `#u=`
+with no `k`, so the host must have kept the key from first arrival — which it
+already does, because a held document opens without its link at all. So the
+key sits beside the standing-consent flag and the unacked batches: local, keyed
+by document UUID, the same lifetime as the document, deleted with it, never
+merged. It makes the entry no more sensitive than it already is — the entry
+*is* the document. Two consequences follow:
+
+- A copy that arrived by **file** rather than link has no key, and therefore no
+  mailbox, until someone sends it a link. That is correct — the file tier
+  carries no key — but it must be *said*: the app shows "updates arrive when you
+  open a shared link", not a silent nothing where sync would be.
+- This field is stored only because the key is the link's. When Track 4 makes a
+  document **recipient-bound**, the mailbox key is derived from the recipient's
+  key instead of the fragment, and this field becomes *derived, not stored*.
+  The store is the open tier's shape and expires with it; the note is here so
+  the recipient-bound work knows to remove it rather than carry it.
+
 **The relay is a Durable Object per mailbox, with R2 for the bytes.** A DO is
 single-threaded per mailbox, so "check the digest→cursor index before you
 increment" is two statements with no race — exactly the primitive the cursor
