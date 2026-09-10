@@ -171,3 +171,9 @@ is not a detour.
 - [ ] **No opener chooser on mobile (v1)** — keep people out of the bare opener;
   the app is the entry point. How links/icons land straight in the app without
   ever showing "Open a document somebody sent you".
+- [ ] **Document handoffs and user sessions in the SDK / recipe, with use
+  cases.** How a session is created, invited, joined, closed; how a handoff
+  works (build-and-hand-over, link, sibling merge); worked examples an app
+  builder can follow — chess (two-player game), the client–firm session (the
+  dynamic statement), a shared list. The recipe must show, not just state, how
+  sessions and handoffs are meant to be used.
