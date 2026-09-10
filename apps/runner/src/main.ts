@@ -1205,14 +1205,24 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * arrival: this decides whether to *ask*, never whether to *check*.
      */
     const standing = kin?.sibling === true && heldHere?.mergeStanding === true;
-    if (standing && incomingData) {
+    if (standing && incomingData && heldHere) {
       markStep("merging by standing consent");
-      const report = await mergeSiblingInto(incomingData);
-      slot.classList.remove("busy");
-      // A line, not a card: it says what happened and interrupts nothing.
-      say(describeMerge(report), Boolean(report.refused));
-      if (!report.refused) return;
-      // A refusal is a decision after all, and falls through to the card.
+      if (mountedNonce) {
+        // A document is already open: merge the arriving copy straight into it.
+        const report = await mergeSiblingInto(incomingData);
+        slot.classList.remove("busy");
+        // A line, not a card: it says what happened and interrupts nothing.
+        say(describeMerge(report), Boolean(report.refused));
+        if (!report.refused) return;
+        // A refusal is a decision after all, and falls through to the card.
+      } else {
+        // A cold launch — nothing to merge into yet. Open this device's copy
+        // and fold the arriving one in once it is up, silently, as the
+        // standing choice asks.
+        slot.classList.remove("busy");
+        await openThenMerge(heldHere, incomingData, false);
+        return;
+      }
     }
 
     markStep("choosing how to open");
@@ -1264,6 +1274,14 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
               : ({ offer: false, why: whyNotSibling(kin.because) } as const),
         onMerge: kin?.sibling && incomingData
           ? async () => {
+              // A cold launch has nothing mounted to merge into: open this
+              // device's copy first, then fold the arriving one in, and record
+              // the standing choice once it lands. See openThenMerge.
+              if (!mountedNonce && heldHere) {
+                hideCard();
+                await openThenMerge(heldHere, incomingData, true);
+                return;
+              }
               const report = await mergeSiblingInto(incomingData);
               hideCard();
               say(describeMerge(report), Boolean(report.refused));
@@ -1712,6 +1730,10 @@ window.addEventListener("message", (event) => {
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+
+    // A sibling that arrived on a cold launch, now that there is a frame to
+    // merge it into. See openThenMerge.
+    if (pendingMerge) void applyPendingMerge();
 
     // Where the edges of the screen are. The application draws to them now,
     // and is the one document that cannot measure them. See tellInsets.
@@ -2306,6 +2328,62 @@ async function loadMergeModule(): Promise<string> {
  * because they are somebody else's SQLite file, which is the one thing on this
  * path that has to be treated as hostile.
  */
+/*
+ * An arriving sibling to fold in once this device's copy is open.
+ *
+ * A merge runs inside the frame, over the database the frame has open, so it
+ * needs a document mounted. A cold launch from a link has none — nothing is
+ * mounted yet — and mergeSiblingInto then answers NO_DOCUMENT_OPEN. The older
+ * path read that as a failed merge, said "nothing was merged", and left the
+ * person on the chooser without opening their copy at all. So instead this
+ * device's copy is opened and the arriving one is remembered here; the merge
+ * is applied from the handshake, once there is a frame to merge into.
+ */
+let pendingMerge: { data: Uint8Array; heldItem: LibraryItem; recordStanding: boolean } | null = null;
+
+/** Open this device's copy, then merge the arriving sibling into it. */
+async function openThenMerge(
+  heldItem: LibraryItem,
+  data: Uint8Array,
+  recordStanding: boolean,
+): Promise<void> {
+  pendingMerge = { data, heldItem, recordStanding };
+  await launchFromLibrary(heldItem);
+}
+
+/**
+ * Applies a merge remembered for after the frame is up (see the handshake).
+ *
+ * The frame is mounted but its database may not be open for the first instant,
+ * so this retries until the merge is taken or a bound passes, rather than
+ * racing the application's own open. It never falls back to the chooser on a
+ * failure: the document is already on screen, and ejecting it to say a move
+ * did not arrive would be worse than the silence.
+ */
+async function applyPendingMerge(): Promise<void> {
+  const job = pendingMerge;
+  if (!job) return;
+  pendingMerge = null;
+
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const report = await mergeSiblingInto(job.data);
+    if (report.refused !== "NO_DOCUMENT_OPEN") {
+      // Mounted, so #report is off screen and the application redraws from the
+      // dai:merged event. Not an error say: that would call arrived(false) and
+      // eject the document the person just opened.
+      if (!report.refused && job.recordStanding) {
+        await saveCartridgeToLibrary({ ...job.heldItem, mergeStanding: true }).catch(
+          () => undefined,
+        );
+      }
+      return;
+    }
+    if (Date.now() > deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+}
+
 async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<MergeReport> {
   const target = cartridgeFrame.contentWindow;
   const refused = (why: string): MergeReport => ({
