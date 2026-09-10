@@ -12,6 +12,32 @@
       nothing to open.
     -->
     <script>
+      /*
+       * The error log, opened before anything else can run.
+       *
+       * A phone with no inspector cannot show what went wrong, so the page
+       * keeps its own small ring of the last errors and unhandled rejections,
+       * captured from the first line of the first script. The details panel
+       * under the launch splash reads it. Twenty entries, oldest dropped, each
+       * clipped — enough to fit on one screenshot and never enough to grow.
+       */
+      (function () {
+        var ring = (window.__daiLog = []);
+        function rec(kind, value) {
+          try {
+            var at = new Date().toISOString().slice(11, 23);
+            ring.push(at + " " + kind + ": " + String(value).slice(0, 300));
+            if (ring.length > 20) ring.shift();
+          } catch (e) {}
+        }
+        window.addEventListener("error", function (e) {
+          rec("error", (e && (e.message || (e.error && e.error.message) || e.error)) || "error");
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e && e.reason;
+          rec("reject", (r && (r.message || r)) || "rejection");
+        });
+      })();
       (function () {
         var s = location.search, h = location.hash, p = location.pathname;
         if (/[?&](doc|d)=/.test(s) || /\/[dp]\/[0-9a-f]{64}\/?$/i.test(p) || /^#(a|h|k)=/.test(h) || /[#&](h|k)=/.test(h)) {
@@ -685,9 +711,36 @@
        * Hidden until the launch stalls. Shown by adding `launch-stalled` to the
        * body, so no script runs to reveal them beyond setting one class.
        */
-      #launch-stall-note, #launch-open { display: none; }
+      #launch-stall-note, #launch-open, #launch-details-toggle { display: none; }
       #launch-stall-note { margin: 0; font-size: 15px; color: var(--text-dim, var(--text)); }
       body.launch-stalled #launch-stall-note { display: block; }
+      body.launch-stalled #launch-details-toggle {
+        display: inline-block;
+        appearance: none;
+        border: 0;
+        background: none;
+        padding: 4px;
+        font-size: 13px;
+        color: var(--faint, var(--text));
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      #launch-details {
+        margin: 6px 16px 0;
+        max-width: min(92vw, 520px);
+        max-height: 46vh;
+        overflow: auto;
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--text);
+        background: var(--surface, rgba(127, 127, 127, 0.12));
+        border-radius: 10px;
+        padding: 12px;
+      }
+      #launch-details[hidden] { display: none; }
       body.launch-stalled #launch-open {
         display: inline-block;
         appearance: none;
@@ -1201,6 +1254,15 @@
         -->
         <p id="launch-stall-note">This is taking longer than it should.</p>
         <button id="launch-open" type="button">Tap to open</button>
+        <!--
+          The only inspector a phone has. On a device with no way to open the
+          console, this is how a screenshot carries back what went wrong: the
+          last error, the step the launch is stuck on, the id in the address
+          and whether this device holds it, whether a worker controls the page,
+          and the build. Populated on tap so it costs nothing until asked for.
+        -->
+        <button id="launch-details-toggle" type="button">Show details</button>
+        <pre id="launch-details" hidden></pre>
       </div>
       <div id="slot">
         <!--

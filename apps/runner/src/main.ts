@@ -463,6 +463,69 @@ let launchTarget: string | null = null;
 /** A few seconds: longer than a working mount, short enough to rescue one. */
 const LAUNCH_STALL_MS = 6000;
 
+/*
+ * The step the launch is on, for the details panel below.
+ *
+ * A phone has no inspector, so "it hangs" is all a report can say without
+ * this. Updated at each host-visible step so a stalled splash can name the one
+ * it stopped on — the frame's own later steps it cannot see, but which door
+ * the launch went through and got no further is most of the answer.
+ */
+let launchStep = "starting up";
+function markStep(step: string): void {
+  launchStep = step;
+}
+
+/**
+ * What the launch knows about itself, for a screenshot to carry back.
+ *
+ * Six things and the error ring: the build, the step it is on, the id in the
+ * address and whether this device holds it, whether a worker controls the
+ * page, and the last errors captured since the first line of the first script
+ * (see `__daiLog` in the head). Gathered on demand; nothing here runs until
+ * somebody taps Show details.
+ */
+async function launchDetails(): Promise<string> {
+  const lines: string[] = [];
+  const build =
+    document.querySelector('meta[name="dai-build"]')?.getAttribute("content") ?? "unknown";
+  lines.push(`build: ${build}`);
+  lines.push(`step: ${launchStep}`);
+
+  // The address the launch is aiming at: the guard's target when one is set —
+  // which is where a stalled relaunch was trying to go — otherwise this page's.
+  const address = launchTarget ?? location.href;
+  let uuid = "";
+  try {
+    const url = new URL(address, location.href);
+    uuid = hintedUuid(url.hash, url.search) ?? "";
+  } catch {
+    /* A malformed address is itself worth seeing, below. */
+  }
+  lines.push(`#u=: ${uuid || "(none)"}`);
+  lines.push(`address: ${address.slice(0, 200)}`);
+
+  try {
+    const held = (await listCartridgesFromLibrary()).some((item) => item.documentUuid === uuid);
+    lines.push(`library holds it: ${uuid ? (held ? "yes" : "no") : "n/a"}`);
+  } catch (error) {
+    lines.push(`library holds it: error ${String(error).slice(0, 80)}`);
+  }
+
+  const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
+  lines.push(
+    `service worker controls page: ${sw ? (sw.controller ? "yes" : "no") : "unavailable"}`,
+  );
+
+  const log = (window as unknown as { __daiLog?: string[] }).__daiLog;
+  lines.push("");
+  lines.push(`errors (${log?.length ?? 0}):`);
+  if (log && log.length > 0) for (const entry of log.slice(-8)) lines.push(`  ${entry}`);
+  else lines.push("  (none captured)");
+
+  return lines.join("\n");
+}
+
 function guardLaunch(target: string): void {
   launchTarget = target;
   window.clearTimeout(launchGuard);
@@ -491,6 +554,23 @@ launchOpenButton?.addEventListener("click", () => {
   // takes, and it is known to work; only reaching it by script was the problem.
   clearLaunchGuard();
   location.assign(launchTarget ?? location.href);
+});
+
+const launchDetailsToggle = document.getElementById("launch-details-toggle") as HTMLButtonElement | null;
+const launchDetailsPanel = document.getElementById("launch-details") as HTMLElement | null;
+launchDetailsToggle?.addEventListener("click", () => {
+  if (!launchDetailsPanel) return;
+  if (!launchDetailsPanel.hidden) {
+    launchDetailsPanel.hidden = true;
+    launchDetailsToggle.textContent = "Show details";
+    return;
+  }
+  launchDetailsPanel.textContent = "gathering…";
+  launchDetailsPanel.hidden = false;
+  launchDetailsToggle.textContent = "Hide details";
+  void launchDetails().then((text) => {
+    launchDetailsPanel.textContent = text;
+  });
 });
 
 function eject(): void {
@@ -539,6 +619,7 @@ async function refreshLibrary(): Promise<void> {
 }
 
 async function launchFromLibrary(item: LibraryItem): Promise<void> {
+  markStep("opening this device's own copy");
   // Out of this device's own library: the copy it has been writing.
   mountIsOwnCopy = true;
   slot.classList.add("busy");
@@ -620,6 +701,7 @@ async function deleteApp(documentUuid: string): Promise<void> {
  * Mounts a verified container.
  */
 async function mount(cartridge: Cartridge): Promise<void> {
+  markStep("mounting the application");
   /*
    * The host's own shell around the verified archive — never the container's
    * document. The container's bootloader is the publisher's code, and it
@@ -953,6 +1035,7 @@ type Carrier = {
 };
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
+  markStep("reading the document");
   // Arriving from outside, whatever the carrier: not this device's copy.
   mountIsOwnCopy = false;
   slot.classList.add("busy");
@@ -1347,6 +1430,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // If this relaunch does not complete — the iOS reload bug — the splash
         // stays up on this same page, and the guard turns it into Tap to open
         // pointed at where the reload was trying to go. See guardLaunch.
+        markStep("reloading at the document's address");
         guardLaunch(target);
         if (target.split("#")[0] === location.href.split("#")[0]) {
           location.hash = new URL(target).hash;
@@ -2716,6 +2800,7 @@ async function planSuccession(
  * with the network switched off.
  */
 async function openFromLink(carried: string, consentedFor?: string): Promise<void> {
+  markStep("reading the document from the link");
   slot.classList.add("busy");
   say("Unpacking the document from the link…");
 
@@ -2785,6 +2870,7 @@ const STORE_BASE: string | undefined = "https://store.opendai.app/";
  * well-behaved.
  */
 async function openFromReference(reference: { hash: string; key: string; url?: string }): Promise<void> {
+  markStep("fetching the document from the store");
   const href = reference.url ?? (STORE_BASE ? `${STORE_BASE}${reference.hash}` : undefined);
   if (!href) {
     say(
@@ -2862,6 +2948,7 @@ window.addEventListener("hashchange", () => {
 });
 
 async function start(): Promise<void> {
+  markStep("reading the address");
   /*
    * Loaded already on a document's address — the head script painted the
    * launch splash before any of this ran. If the mount that should follow

@@ -58,6 +58,41 @@ test.describe("the launch fail-safe", () => {
     );
   });
 
+  test("Show details reports the step, the address, the worker, the build, and the error ring", async ({
+    page,
+  }) => {
+    await page.goto(RUNNER_URL);
+
+    // An error thrown before the panel opens must be in the ring: the head
+    // script installs the capture on the first line, so a screenshot taken
+    // minutes later still holds what went wrong at the start.
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new ErrorEvent("error", { message: "boom-from-the-start", error: new Error("boom-from-the-start") }),
+      );
+    });
+
+    const target = `${RUNNER_URL}#u=11111111-1111-4111-8111-111111111111`;
+    await page.evaluate((to) => {
+      document.body.classList.add("launching");
+      (window as unknown as { __runner: { guardLaunch(t: string): void } }).__runner.guardLaunch(to);
+    }, target);
+
+    await expect(page.locator("#launch-details-toggle")).toBeVisible({ timeout: 15_000 });
+    await page.locator("#launch-details-toggle").click();
+
+    const panel = page.locator("#launch-details");
+    await expect(panel).toBeVisible();
+    // The six things a phone with no inspector cannot otherwise report.
+    await expect(panel).toContainText(/build:\s*\S/);
+    await expect(panel).toContainText("step:");
+    await expect(panel).toContainText("#u=: 11111111-1111-4111-8111-111111111111");
+    await expect(panel).toContainText(/library holds it:\s*(yes|no|n\/a)/);
+    await expect(panel).toContainText(/service worker controls page:\s*(yes|no|unavailable)/);
+    // The error captured before the panel ever opened.
+    await expect(panel).toContainText("boom-from-the-start");
+  });
+
   test("a splash that mounts before the wait never shows the control", async ({ page }) => {
     await page.goto(RUNNER_URL);
     await page.evaluate((to) => {
