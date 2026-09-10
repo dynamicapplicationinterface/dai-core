@@ -2320,9 +2320,22 @@ const closedMerges = new Set<string>();
  * with `WRITE_SURFACE_UNAVAILABLE` — on a phone, on the route people actually
  * use, while every test opening from the root passed.
  */
+/** The merge module's digest, stamped in at build (vite `define`); "" in a bare dev server. */
+declare const __DAI_MERGE_DIGEST__: string;
+
 async function loadMergeModule(): Promise<string> {
   if (mergeSource !== null) return mergeSource;
-  const response = await fetch(new URL("runtime/dai-merge.js", document.baseURI), {
+  // Asked for by its digest, so a browser that cached an older merge module
+  // under the plain name — a service worker that never updated on iOS is the
+  // case — cannot answer with it: a new build is a new URL, missed by that
+  // cache and fetched fresh, while a held document asks for the URL it holds and
+  // still opens offline. `force-cache` is safe on a name that means one thing.
+  // The plain name remains the fallback where the digest was not stamped in.
+  const name =
+    typeof __DAI_MERGE_DIGEST__ === "string" && __DAI_MERGE_DIGEST__.length > 0
+      ? `runtime/dai-merge.${__DAI_MERGE_DIGEST__}.js`
+      : "runtime/dai-merge.js";
+  const response = await fetch(new URL(name, document.baseURI), {
     cache: "force-cache",
   });
   if (!response.ok) throw new Error("MERGE_UNAVAILABLE");

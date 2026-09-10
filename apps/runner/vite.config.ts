@@ -1,7 +1,32 @@
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
+
+/**
+ * The merge module's digest, so the opener can ask for it by content.
+ *
+ * The merge module changes across deploys under one fixed name, and a browser
+ * that cached an older one under that name keeps serving it — a service worker
+ * that never updated on iOS is the case that bit. Naming the file by its own
+ * digest ends it: a new build asks for a new URL, which a stale cache cannot
+ * answer, so it fetches fresh; a held document asks for the URL it was built
+ * against, which it has, so it still opens with no network. The same sha256 the
+ * runtime is pinned to (scripts/stamp-merge-digest.mjs), read here so the URL
+ * the host fetches carries exactly the digest the frame will check. Empty when
+ * dist is not built yet (a bare dev server), where the plain name is used.
+ */
+function mergeDigest(): string {
+  try {
+    return createHash("sha256")
+      .update(readFileSync(join(import.meta.dirname, "../../dist/dai-merge.js")))
+      .digest("hex");
+  } catch {
+    return "";
+  }
+}
+const MERGE_DIGEST = mergeDigest();
 
 /**
  * Records which commit a build came from.
@@ -170,6 +195,11 @@ function engine(): Plugin {
         "dai-merge.js": join(repo, "dist/dai-merge.js"),
       };
       for (const [name, from] of Object.entries(files)) copyFileSync(from, join(out, name));
+      // Also under its digest, the immutable name the opener asks for. The plain
+      // copy above stays for any older runtime still requesting it by that name.
+      if (MERGE_DIGEST) {
+        copyFileSync(join(repo, "dist/dai-merge.js"), join(out, `dai-merge.${MERGE_DIGEST}.js`));
+      }
     },
   };
 }
@@ -207,6 +237,8 @@ export default defineConfig({
    * `/d/*` itself. `?d=<id>` and the any-host link form work from anywhere.
    */
   base: "/",
+  // The digest the opener asks the merge module for; see mergeDigest above.
+  define: { __DAI_MERGE_DIGEST__: JSON.stringify(MERGE_DIGEST) },
   plugins: [stamp(), engine(), tableLink()],
   server: { port: 5175, strictPort: true },
   preview: { port: 5175, strictPort: true, headers: productionHeaders() },
