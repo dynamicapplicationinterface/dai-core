@@ -1044,6 +1044,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   startHostTiming();
 
   try {
+    markStep("verifying the container");
     const cartridge = await readCartridge(file);
     hostMark("verified");
 
@@ -1070,6 +1071,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * link carried, and the genuine document then read as an impersonation,
      * with nothing in the library to delete and so no way to undo it.
      */
+    markStep("checking trust");
     const verdict = await trustVerdict(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
       say(verdict.message, true);
@@ -1098,6 +1100,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * the card, shown on it, and recorded only after the person proceeds — so
      * a conflict that was refused never becomes a pin.
      */
+    markStep("checking the publisher");
     const who = await publisherState(publisherStore(), cartridge, await confusables());
     installSuppressed = who.state === "conflict";
 
@@ -1126,6 +1129,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * document being replaced — otherwise anybody could claim to be the next
      * version of anything and walk off with what is in it.
      */
+    markStep("reading the library");
     const library = await listCartridgesFromLibrary();
     const succession = await planSuccession(cartridge, library);
 
@@ -1277,6 +1281,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         return;
       }
     }
+    markStep("recording the publisher");
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     if (succession?.inherit) {
@@ -1306,6 +1311,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * and a skew large enough to matter is a skew a person would already have
      * noticed elsewhere.
      */
+    markStep("reading stored data (OPFS)");
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
     const arriving = savedAtOf(cartridge);
     const heldItem = library.find(
@@ -1318,6 +1324,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       arriving > heldItem.savedAt;
 
     if (opfsDb && opfsDb.byteLength > 0 && !brought) {
+      markStep("preparing the document");
       loaded = await resealCartridge(cartridge, opfsDb);
       if (arriving !== undefined && heldItem?.savedAt !== undefined && arriving < heldItem.savedAt) {
         // Said rather than done silently: somebody who opened an older link
@@ -1334,6 +1341,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       loaded = cartridge;
       const incoming = cartridge.archive["document.sqlite"];
       if (brought && incoming && incoming.byteLength > 0) {
+        markStep("saving the arriving copy (OPFS)");
         await saveDatabaseToOpfs(cartridge.manifest.documentUuid, incoming);
       }
     }
@@ -1341,6 +1349,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     // Kept on this device — and said only once it is. Storage can refuse
     // (a private window, a full quota); the document still opens, and the
     // menu says it was not kept rather than promising it was.
+    markStep("keeping it on this device");
     try {
       await saveCartridgeToLibrary({
         // Standing consent and issued shares belong to the copy, not to this
