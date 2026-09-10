@@ -77,9 +77,55 @@ export interface Share {
   card?: true;
 }
 
+/*
+ * One connection to the library database, opened once and reused.
+ *
+ * This opened a fresh connection on every call and closed none. A session
+ * makes dozens of these calls — every library read, every trust check, every
+ * publisher lookup — and on iOS Safari the leaked connections accumulate until
+ * `indexedDB.open` stops firing any event at all: not onsuccess, not onerror,
+ * not onblocked. The call that reads the library then waits forever with no
+ * error, which is the launch a phone reported stalled at "reading the library".
+ *
+ * A single cached connection opens once and is handed back thereafter; a
+ * version change or a close drops the cache so the next call opens fresh rather
+ * than reusing a dead handle, and a failed or timed-out open drops it too so a
+ * later attempt is not stuck with a rejected promise.
+ */
+let idbConnection: Promise<IDBDatabase> | null = null;
+
+/** A failure the details panel can show, since a caught IDB error is otherwise silent. */
+function noteIdbFailure(what: string): void {
+  try {
+    const ring = (globalThis as unknown as { __daiLog?: string[] }).__daiLog;
+    if (!ring) return;
+    ring.push(`${new Date().toISOString().slice(11, 23)} idb: ${what}`);
+    if (ring.length > 20) ring.shift();
+  } catch {
+    /* The log is a convenience; never let it throw into a storage path. */
+  }
+}
+
 function openIdb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (idbConnection) return idbConnection;
+  idbConnection = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(IDB_NAME, 5);
+    /*
+     * A bound on the open itself. iOS Safari can leave `indexedDB.open`
+     * pending with no event ever firing; without this the whole launch waits
+     * on it. Five seconds is far longer than a working open and still a
+     * failure rather than a hang — the caller falls back to an empty result,
+     * so a document opens (as unfamiliar) rather than not at all.
+     */
+    const timer = setTimeout(() => {
+      noteIdbFailure("open timed out after 5s");
+      reject(new Error("IDB_OPEN_TIMEOUT"));
+    }, 5000);
+    request.onblocked = () => {
+      clearTimeout(timer);
+      noteIdbFailure("open blocked");
+      reject(new Error("IDB_OPEN_BLOCKED"));
+    };
     request.onupgradeneeded = (event) => {
       const db = request.result;
       if (!db.objectStoreNames.contains(DB_STORE)) {
@@ -111,9 +157,30 @@ function openIdb(): Promise<IDBDatabase> {
         publishers.createIndex("skeletons", "skeletons", { unique: false, multiEntry: true });
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      clearTimeout(timer);
+      const db = request.result;
+      // A superseded or closed connection must not be handed out again.
+      db.onversionchange = () => {
+        db.close();
+        idbConnection = null;
+      };
+      db.onclose = () => {
+        idbConnection = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      clearTimeout(timer);
+      reject(request.error);
+    };
+  }).catch((error: unknown) => {
+    // Drop the cache so the next call opens a fresh connection rather than
+    // awaiting the one that already failed.
+    idbConnection = null;
+    throw error;
   });
+  return idbConnection;
 }
 
 /**
@@ -280,6 +347,16 @@ export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
   try {
     const db = await openIdb();
     return new Promise((resolve) => {
+      // The transaction is bounded like the open: a request that never fires
+      // its event resolves to an empty library rather than hanging the launch.
+      const timer = setTimeout(() => {
+        noteIdbFailure("library read timed out after 5s");
+        resolve([]);
+      }, 5000);
+      const done = (items: LibraryItem[]): void => {
+        clearTimeout(timer);
+        resolve(items);
+      };
       const tx = db.transaction(LIB_STORE, "readonly");
       const store = tx.objectStore(LIB_STORE);
       const req = store.getAll();
@@ -289,9 +366,9 @@ export async function listCartridgesFromLibrary(): Promise<LibraryItem[]> {
           (a, b) =>
             new Date(b.lastOpened).getTime() - new Date(a.lastOpened).getTime(),
         );
-        resolve(items);
+        done(items);
       };
-      req.onerror = () => resolve([]);
+      req.onerror = () => done([]);
     });
   } catch {
     return [];
