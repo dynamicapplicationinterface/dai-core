@@ -1262,6 +1262,99 @@ function bridgeMain(): void {
     }
   };
 
+  /** The Rows view of a database handle, the shape the merge module reads. */
+  const frameRows = (db: Any): Any => ({
+    all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
+    run: (sql: string, params: Any[] = []) => {
+      db.exec(sql, { bind: params.slice() });
+    },
+  });
+
+  /**
+   * The batch of rows this copy authored above `sinceSeq`, for the mailbox.
+   *
+   * The frame answers the host's `DAI_HOST_AUTHORED_SINCE` with this — never
+   * volunteering what is unpublished, since the host owns the watermark. Its
+   * own rows only, CBOR-encoded, and `null` when there is nothing new so a
+   * publish over an empty batch never happens.
+   */
+  const authoredBatch = (sinceSeq: number): { batch: Uint8Array | null; head: number } => {
+    if (!liveDb || !mergeModule) return { batch: null, head: sinceSeq };
+    const merge = mergeModule as Any;
+    const held = liveDb.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0];
+    const replica = held && held.id;
+    if (!(replica instanceof Uint8Array)) return { batch: null, head: sinceSeq };
+    const r = frameRows(liveDb);
+    const tables = merge.replicatedTablesOf(r);
+    // The head this copy has authored to, so the host advances its watermark to
+    // exactly where the batch reaches — never past a row it did not receive.
+    const head = merge.authoredHead(r, replica, tables) as number;
+    const entries = merge.authoredSince(r, replica, sinceSeq, tables);
+    if (entries.length === 0) return { batch: null, head };
+    const lc = Number(liveDb.selectObjects("SELECT lc FROM _dai_replica LIMIT 1")[0]?.lc ?? 0);
+    return { batch: merge.encodeBatch({ replica, lc, entries }) as Uint8Array, head };
+  };
+
+  /**
+   * Merges a batch pulled from the mailbox — the same merge a file takes.
+   *
+   * The rows are staged into a throwaway sibling with this document's own
+   * replicated schema and handed to `mergeSibling`. A batch has no manifest, so
+   * unlike a file there is no signature to check here; the host's check was the
+   * seal (that a holder of the document key sent it) and this side's is shape at
+   * staging. What runs after that is identical to a file merge, down to the
+   * `dai:merged` the application already listens for.
+   */
+  const applyBatch = async (batchBytes: Uint8Array): Promise<Any> => {
+    if (!liveDb || !mergeModule) return { applied: 0, duplicate: 0, refused: "NO_DOCUMENT_OPEN" };
+    const merge = mergeModule as Any;
+    const batch = merge.decodeBatch(batchBytes);
+    const api2 = await initSqlite();
+    const staged = new api2.oo1.DB() as Any;
+    try {
+      // This document's replicated schema, rebuilt in the staging sibling, in
+      // the order sqlite stored it so a trigger never precedes its table.
+      for (const entry of liveDb.selectObjects(
+        "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY rowid",
+      )) {
+        staged.exec(String(entry.sql));
+      }
+      const local = frameRows(liveDb);
+      const tables = merge.replicatedTablesOf(local);
+      merge.stageBatch(frameRows(staged), batch, tables);
+      liveDb.exec("BEGIN");
+      try {
+        const report = merge.mergeSibling(local, frameRows(staged), 1);
+        if (report.refused) {
+          liveDb.exec("ROLLBACK");
+          return report;
+        }
+        liveDb.exec("COMMIT");
+        scheduleAutosave(liveDb);
+        window.dispatchEvent(new CustomEvent("dai:merged", { detail: report }));
+        return report;
+      } catch (error) {
+        liveDb.exec("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      try {
+        staged.close();
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
+  /** A nudge to the host that this copy has authored a row worth publishing. */
+  const nudgeAuthored = (): void => {
+    try {
+      window.parent.postMessage({ type: "dai:authored" }, "*");
+    } catch (error) {
+      void error;
+    }
+  };
+
   /**
    * Takes the write rules the host pushed, once they check out.
    *
@@ -1433,17 +1526,20 @@ function bridgeMain(): void {
         const id = entity();
         settleReplica(rows);
         rules().createEntity(rows, table, id, values);
+        nudgeAuthored();
         return hex(id);
       },
       change: (table: string, entityHex: string, values: Any): string => {
         const id = fromHex(entityHex);
         settleReplica(rows);
         rules().changeEntity(rows, table, id, values);
+        nudgeAuthored();
         return entityHex;
       },
       remove: (table: string, entityHex: string): string => {
         settleReplica(rows);
         rules().deleteEntity(rows, table, fromHex(entityHex));
+        nudgeAuthored();
         return entityHex;
       },
     };
@@ -1660,6 +1756,32 @@ function bridgeMain(): void {
       // read-only for its replicated tables rather than writing rows under
       // rules nobody vouched for.
       void adoptWriteRules(data.source);
+      return;
+    }
+    if (data.type === "dai:authored-since") {
+      // The host owns the watermark and is asking for what this copy authored
+      // above it. Answered, never volunteered.
+      const { batch, head } = authoredBatch(Number(data.seq) || 0);
+      // Cloned, not transferred: a batch is a few rows, and a transfer list of
+      // one detached buffer is a footgun for the saving it does not make.
+      window.parent.postMessage(
+        { type: "dai:authored-batch", id: data.id, seq: data.seq, head, batch },
+        "*",
+      );
+      return;
+    }
+    if (data.type === "dai:apply-batch") {
+      const bytes = data.batch instanceof Uint8Array ? data.batch : new Uint8Array(data.batch as ArrayBuffer);
+      void applyBatch(bytes)
+        .then((report: Any) => {
+          window.parent.postMessage({ type: "dai:applied", id: data.id, ...report }, "*");
+        })
+        .catch((error: Any) => {
+          window.parent.postMessage(
+            { type: "dai:applied", id: data.id, applied: 0, refused: (error && error.message) || "APPLY_FAILED" },
+            "*",
+          );
+        });
       return;
     }
     if (data.type === "dai:merge") {
@@ -2713,6 +2835,24 @@ async function boot(): Promise<void> {
       );
       return;
     }
+    // The host asking the frame for what it authored above a watermark (Track 5).
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_AUTHORED_SINCE") {
+      const request = event.data as { id?: string; seq?: number };
+      frame.contentWindow?.postMessage(
+        { type: "dai:authored-since", id: request.id, seq: request.seq },
+        "*",
+      );
+      return;
+    }
+    // The host handing the frame a batch pulled from the mailbox, to merge.
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_APPLY_BATCH") {
+      const request = event.data as { id?: string; batch?: unknown };
+      frame.contentWindow?.postMessage(
+        { type: "dai:apply-batch", id: request.id, batch: request.batch },
+        "*",
+      );
+      return;
+    }
     /*
      * The screen's edges, measured by the host, which is the only document of
      * the three that can see them. Kept here for this shell's own chrome, and
@@ -2890,6 +3030,31 @@ async function boot(): Promise<void> {
         { type: "DAI_HOST_MERGE_RESULT", sessionNonce, ...report },
         "*",
       );
+      return;
+    }
+    // Track 5: the frame's mailbox messages, on their way to the host.
+    if (event.source === frame.contentWindow && relay?.type === "dai:authored") {
+      window.parent.postMessage({ type: "DAI_HOST_AUTHORED", sessionNonce }, "*");
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:authored-batch") {
+      const answer = event.data as { id?: string; seq?: number; head?: number; batch?: Uint8Array | null };
+      window.parent.postMessage(
+        {
+          type: "DAI_HOST_AUTHORED_BATCH",
+          sessionNonce,
+          id: answer.id,
+          seq: answer.seq,
+          head: answer.head,
+          batch: answer.batch ?? null,
+        },
+        "*",
+      );
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:applied") {
+      const { type: _t, ...report } = event.data as Record<string, unknown>;
+      window.parent.postMessage({ type: "DAI_HOST_APPLIED", sessionNonce, ...report }, "*");
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:ground") {

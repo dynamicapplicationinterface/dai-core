@@ -1024,6 +1024,38 @@ things this project actually needs next, not one convenience at the end:
    (`window.dai.replicated`) that the compiler wired, so publishing is not a
    second way to change a row.
 
+**The protocol, decided.** The host owns the watermark — it owns the network
+and the ack, and the durability rule belongs where the ack arrives; the frame
+stays stateless about what has been published. Two message names, neither
+overloading `DAI_HOST_MERGE` (one meaning per name, D20):
+
+- **`dai:authored`** — frame → host, a nudge with no payload, sent on every
+  write through the one write path. The host debounces and replies
+  `DAI_HOST_AUTHORED_SINCE {seq}`; the frame answers with the CBOR batch of
+  rows it authored above that seq. Host-initiated, so the host never trusts a
+  frame's own idea of what is unpublished.
+- **`DAI_HOST_APPLY_BATCH {batch}`** — host → frame, the pull path. Inside the
+  frame the batch is staged into the throwaway sibling and run through the same
+  `mergeSibling` a file takes, then `dai:merged` is dispatched — the app sees
+  one event for both carriers. A distinct name because the *refusals* differ: a
+  batch has no manifest, so the host's check is the seal (that a holder of the
+  document key sent it) and the frame's is shape at staging. Distinct path in,
+  identical merge inside.
+
+Unacked sealed batches are **persisted, not held in memory** — beside the
+library entry, keyed by digest, deleted on ack. iOS kills a backgrounded page
+without warning, and "seal once, resend the bytes" already requires the sealed
+bytes to outlive the attempt; a reload resumes an unacked publish rather than
+losing it.
+
+**The relay is a Durable Object per mailbox, with R2 for the bytes.** A DO is
+single-threaded per mailbox, so "check the digest→cursor index before you
+increment" is two statements with no race — exactly the primitive the cursor
+invariant asks for. A KV counter is eventually consistent and not atomic under
+concurrent appends; it would pass the directory-adapter tests and fail on the
+first simultaneous move. The DO holds the counter and the digest index; blobs
+go to R2 under `mailbox/<doc>/<seq>` through the adapter that already exists.
+
 **Deferred, deliberately:** retention (how long a mailbox keeps a row),
 entitlement (who may append or subscribe, and any dial attached to it), and
 multi-party fan-out beyond the two-party session. Those are dials on a working

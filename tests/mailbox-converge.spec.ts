@@ -217,6 +217,59 @@ test("the watermark advances on ack, not on send: a dropped append still arrives
   b.close();
 });
 
+test("a batch stages into a schema copied from sqlite_schema, as the frame builds it", async () => {
+  /*
+   * The frame's apply path, exercised the way the frame does it.
+   *
+   * In the opener, `applyBatch` cannot call `rewriteReplicated` — it has no
+   * author schema, only the live database — so it rebuilds the staging sibling
+   * from `SELECT sql FROM sqlite_schema`, the rewritten statements sqlite
+   * stored. This proves that copy round-trips: a batch staged into a
+   * schema-copied sibling merges into a real copy exactly as one staged into a
+   * freshly-compiled schema does.
+   */
+  const key = crypto.getRandomValues(new Uint8Array(32));
+  const mailbox = fsMailbox({ root: mkdtempSync(join(tmpdir(), "dai-mb-schema-")) });
+  const id = "game-4";
+
+  const a = open();
+  const b = open();
+  ensureReplica(a, A);
+  ensureReplica(b, B);
+  createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "d4" });
+  await publish(a, A, 0, key, mailbox, id);
+
+  // B pulls, but stages into a sibling built from B's *own* sqlite_schema —
+  // the statements the compiler's rewrite left in the database — rather than
+  // from the author schema, which is what the frame has to do.
+  const raw = new DatabaseSync(":memory:");
+  raw.exec(rewriteReplicated(SCHEMA).sql);
+  const schemaFromDb = raw
+    .prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY rowid")
+    .all()
+    .map((r) => String((r as { sql: unknown }).sql));
+  raw.close();
+
+  const { batches } = await mailbox.since(id, "");
+  const batch = decodeBatch(await openBatch(batches[0]!, key));
+  const stagedDb = new DatabaseSync(":memory:");
+  for (const sql of schemaFromDb) stagedDb.exec(sql);
+  const staged: Rows = {
+    all: (sql, params = []) => stagedDb.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
+    run: (sql, params = []) => {
+      stagedDb.prepare(sql).run(...(params as never[]));
+    },
+  };
+  stageBatch(staged, batch, tables);
+  mergeSibling(b, staged, 1);
+  stagedDb.close();
+
+  expect(b.all("SELECT san FROM moves_current WHERE ply = 1")[0]?.["san"]).toBe("d4");
+
+  a.close();
+  b.close();
+});
+
 test("a move changed in place converges through the mailbox too (supersession)", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32));
   const mailbox = fsMailbox({ root: mkdtempSync(join(tmpdir(), "dai-mb-sup-")) });
