@@ -2679,9 +2679,26 @@ async function sendDocument(): Promise<void> {
       made = await linkToSend(html, true);
     } catch (error) {
       close();
+      const why = error instanceof Error ? error.message : "The store could not be reached.";
+      /*
+       * A replicated app is played together, and a file has no key — it cannot
+       * join the mailbox, so it is not the invite that was asked for. Handing
+       * one over silently is how a friend ended up with a copy that could never
+       * sync. So for a replicated document the link failing is said and stopped;
+       * "Save a copy…" in the menu is still there for a deliberate file. A
+       * document with nothing to sync keeps the old behaviour: the file is an
+       * equal carrier of a snapshot, and going ahead with it is no loss.
+       */
+      if (loaded && declaresReplication(loaded.manifest)) {
+        say(
+          `${why} The invite link could not be made — try again in a moment. ` +
+            `To send this app as a file instead, use "Save a copy…".`,
+          true,
+        );
+        return;
+      }
       say(
-        `${error instanceof Error ? error.message : "The store could not be reached."} ` +
-          `Sharing the file instead — the other person will need to open it at ${OPENER}.`,
+        `${why} Sharing the file instead — the other person will need to open it at ${OPENER}.`,
         true,
       );
       await exportContainer();
