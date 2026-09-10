@@ -495,6 +495,18 @@ export function showCard(input: CardInput): Promise<void> {
 
   card.hidden = false;
   document.body.classList.add("deciding");
+  /*
+   * The launch splash comes down, because a card is a decision and the splash
+   * exists only to cover the gap before a document mounts on its own. When a
+   * card is shown there is no such mount to wait for — the person has to choose
+   * first — and a splash left up over it is a screen the person cannot get
+   * past. On a desktop the card outranks the splash and it merely looked
+   * untidy; on an iOS home-screen launch the service-worker splash stayed on
+   * top, so the merge offer for a document already held arrived invisible and
+   * the open waited forever on a tap that could not land. The trace stopped at
+   * "showing the launch card" for exactly this reason.
+   */
+  document.body.classList.remove("launching", "booting");
   card.scrollTop = 0;
   /*
    * Focus lands at the top of the screen, not on the button.

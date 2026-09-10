@@ -93,6 +93,60 @@ test.describe("the launch fail-safe", () => {
     await expect(panel).toContainText("boom-from-the-start");
   });
 
+  test("showing a card takes the launch splash down, so the card is reachable", async ({ page }) => {
+    /*
+     * The bug the trace finally named. On an iOS home-screen launch the
+     * service worker paints the splash, and when the launch then needs a
+     * decision — a merge offer for a document already held — the card was
+     * shown but the splash stayed on top of it. The person could not tap it,
+     * and the open waited forever on a tap that could not land; the trace
+     * stopped at "showing the launch card". The card must take the splash
+     * down, because a card means there is no auto-mount to wait for.
+     */
+    await page.goto(RUNNER_URL);
+
+    // The launch state, with the stall guard armed as a real launch arms it.
+    await page.evaluate(() => {
+      document.body.classList.add("launching");
+      const runner = window as unknown as {
+        __runner: { guardLaunch(t: string): void; showCard(input: unknown): Promise<void> };
+      };
+      runner.__runner.guardLaunch(location.href);
+      void runner.__runner.showCard({
+        name: "Velvet Chess",
+        does: ["Play a friend at your own pace"],
+        size: 900000,
+        dataBytes: 0,
+        createdAt: new Date().toISOString(),
+        publisher: { state: "anonymous" },
+        applied: [],
+        from: "From a link.",
+        sibling: { offer: true },
+        onMerge: async () => {},
+      });
+    });
+
+    // The card is up and the splash is gone.
+    await expect(page.locator("#card")).toBeVisible();
+    await expect(page.locator("#card-merge")).toBeVisible();
+    await expect(page.locator("body")).not.toHaveClass(/launching/);
+
+    // And past the stall threshold, the fail-safe stays quiet: a card is a
+    // decision, not a stall, so Tap to open must not appear over it.
+    await page.waitForTimeout(8000);
+    await expect(page.locator("body")).not.toHaveClass(/launch-stalled/);
+    await expect(page.locator("#launch-open")).toBeHidden();
+    // The merge control is the top thing at the centre, not the splash.
+    const topId = await page.evaluate(() => {
+      const el = document.elementFromPoint(
+        Math.floor(window.innerWidth / 2),
+        Math.floor(window.innerHeight / 2),
+      );
+      return el?.closest("#card") ? "card" : (el?.id ?? el?.tagName ?? "");
+    });
+    expect(topId).toBe("card");
+  });
+
   test("a splash that mounts before the wait never shows the control", async ({ page }) => {
     await page.goto(RUNNER_URL);
     await page.evaluate((to) => {
