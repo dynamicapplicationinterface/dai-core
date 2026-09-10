@@ -150,6 +150,82 @@ test("two copies converge over the mailbox, with the relay never able to read a 
   b.close();
 });
 
+test("the watermark advances on ack, not on send: a dropped append still arrives", async () => {
+  /*
+   * The durability rule. `authoredSince` is the only record of what has been
+   * published, so if it advances when a batch is *emitted* and the batch never
+   * reaches the relay, those rows are never sent again — the silent-loss shape
+   * the write flush guards against. So the publisher advances the watermark
+   * only after `append` resolves, seals the batch once, and re-sends the
+   * identical bytes on failure; the relay dedups by digest, so the retry is a
+   * no-op if the first attempt secretly landed.
+   */
+  const key = crypto.getRandomValues(new Uint8Array(32));
+  const real = fsMailbox({ root: mkdtempSync(join(tmpdir(), "dai-mb-drop-")) });
+  const id = "game-3";
+
+  // A relay that drops the first append it is given, then behaves.
+  let dropsLeft = 1;
+  const flaky = {
+    async append(documentId: string, sealed: Uint8Array) {
+      if (dropsLeft > 0) {
+        dropsLeft -= 1;
+        throw new Error("relay unreachable");
+      }
+      await real.append(documentId, sealed);
+    },
+    head: real.head.bind(real),
+    since: real.since.bind(real),
+  };
+
+  const a = open();
+  const b = open();
+  ensureReplica(a, A);
+  ensureReplica(b, B);
+
+  createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+
+  // Publish with the rule: seal once, retry the same bytes until acked, and
+  // only then advance the watermark.
+  let watermark = 0;
+  const entries = authoredSince(a, A, watermark, tables);
+  const lc = Number(a.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
+  const sealed = await sealBatch(encodeBatch({ replica: A, lc, entries }), key);
+
+  let acked = false;
+  let attempts = 0;
+  while (!acked) {
+    attempts += 1;
+    try {
+      await flaky.append(id, sealed);
+      acked = true;
+    } catch {
+      // The watermark is untouched: nothing was acked, so nothing is "sent".
+      expect(watermark).toBe(0);
+    }
+  }
+  watermark = authoredHead(a, A, tables);
+
+  expect(attempts).toBe(2); // the first was dropped, the second landed
+  expect(watermark).toBe(1);
+
+  // B pulls, and the move that survived a dropped send is there.
+  await pull(b, key, mailbox_of(flaky), id, "");
+  expect(b.all("SELECT san FROM moves_current WHERE ply = 1")[0]?.["san"]).toBe("e4");
+
+  a.close();
+  b.close();
+});
+
+// A tiny shim so `pull` (typed to the fs mailbox) can read through the flaky one.
+function mailbox_of(m: {
+  head: (id: string) => Promise<string>;
+  since: (id: string, c: string) => Promise<{ cursor: string; batches: Uint8Array[] }>;
+  append: (id: string, b: Uint8Array) => Promise<void>;
+}): ReturnType<typeof fsMailbox> {
+  return m as ReturnType<typeof fsMailbox>;
+}
+
 test("a move changed in place converges through the mailbox too (supersession)", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32));
   const mailbox = fsMailbox({ root: mkdtempSync(join(tmpdir(), "dai-mb-sup-")) });

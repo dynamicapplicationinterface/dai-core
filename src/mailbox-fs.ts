@@ -22,8 +22,17 @@ export interface FsMailboxOptions {
   root: string;
 }
 
-/** A batch file name: a zero-padded ordinal, so a sorted listing is arrival order. */
-const NAME = /^(\d{12})\.batch$/;
+/**
+ * A batch file: a zero-padded ordinal for order, and the blob's own digest for
+ * identity. The ordinal is a cursor `since` can compare; the digest is how a
+ * re-append of the same bytes is recognised as the batch already here.
+ */
+const NAME = /^(\d{12})\.([0-9a-f]{64})\.batch$/;
+
+const digestOf = async (bytes: Uint8Array): Promise<string> => {
+  const hash = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
+};
 
 export function fsMailbox(options: FsMailboxOptions): Mailbox {
   const root = resolve(options.root);
@@ -36,37 +45,42 @@ export function fsMailbox(options: FsMailboxOptions): Mailbox {
     return join(root, documentId);
   };
 
-  const ordinals = (dir: string): number[] =>
+  const entries = (dir: string): { ordinal: number; digest: string; file: string }[] =>
     existsSync(dir)
       ? readdirSync(dir)
-          .map((name) => NAME.exec(name))
-          .filter((match): match is RegExpExecArray => match !== null)
-          .map((match) => Number(match[1]))
-          .sort((a, b) => a - b)
+          .map((file) => ({ file, match: NAME.exec(file) }))
+          .filter((e): e is { file: string; match: RegExpExecArray } => e.match !== null)
+          .map((e) => ({ ordinal: Number(e.match[1]), digest: e.match[2]!, file: e.file }))
+          .sort((a, b) => a.ordinal - b.ordinal)
       : [];
 
   return {
     async append(documentId, sealed) {
       const dir = dirFor(documentId);
       mkdirSync(dir, { recursive: true });
-      const next = (ordinals(dir).at(-1) ?? 0) + 1;
-      writeFileSync(join(dir, `${String(next).padStart(12, "0")}.batch`), sealed);
+      const digest = await digestOf(sealed);
+      const present = entries(dir);
+      // Idempotent by digest: a retry sends the identical sealed bytes, and a
+      // batch already here is a no-op. This is what lets a caller advance its
+      // watermark only after `append` returns and re-send on failure without
+      // fear of a duplicate — the same rule the write flush keeps.
+      if (present.some((e) => e.digest === digest)) return;
+      const next = (present.at(-1)?.ordinal ?? 0) + 1;
+      writeFileSync(join(dir, `${String(next).padStart(12, "0")}.${digest}.batch`), sealed);
     },
 
     async head(documentId) {
-      return String(ordinals(dirFor(documentId)).at(-1) ?? 0);
+      return String(entries(dirFor(documentId)).at(-1)?.ordinal ?? 0);
     },
 
     async since(documentId, cursor) {
       const dir = dirFor(documentId);
       const from = Number.parseInt(cursor, 10);
       const after = Number.isFinite(from) ? from : 0;
-      const present = ordinals(dir);
-      const wanted = present.filter((ordinal) => ordinal > after);
-      const batches = wanted.map(
-        (ordinal) => new Uint8Array(readFileSync(join(dir, `${String(ordinal).padStart(12, "0")}.batch`))),
-      );
-      return { cursor: String(present.at(-1) ?? after), batches };
+      const present = entries(dir);
+      const wanted = present.filter((e) => e.ordinal > after);
+      const batches = wanted.map((e) => new Uint8Array(readFileSync(join(dir, e.file))));
+      return { cursor: String(present.at(-1)?.ordinal ?? after), batches };
     },
   };
 }

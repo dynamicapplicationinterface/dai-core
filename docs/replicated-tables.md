@@ -1033,3 +1033,33 @@ refusals — a Level 2 signature (Track 2) or a Track 3 roster still gates what 
 mailbox will accept once those exist; Track 5's minimal form simply does not
 wait for them to carry Level 1 rows between two copies that already trust each
 other.
+
+**The seal is the open tier, not confidentiality.** A mailbox is sealed under
+the document's key, and that key rides in the link fragment — so anyone holding
+the link can read the mailbox, exactly as anyone holding a shared file can read
+it. The AES-GCM keeps the *relay* from reading content and keeps a tampered
+batch from applying; it does not make the mailbox private from a recipient, and
+nothing here should be read as claiming it does. Closing it to a named
+recipient is `recipient-bound`, in Track 4. Until then a mailbox gives what a
+file share gives today and no less.
+
+**Outgoing rows cross frame→host in plaintext; the host seals them.** The
+frame cannot reach the network (`connect-src 'none'`), so it hands the rows it
+authored to the host, which holds the document's key and does the sealing and
+the `append`. That is not the hostile-bytes case: the host is the trust root
+for this document and already holds it in full. The argument that a frame must
+verify what it merges is about *incoming* bytes from a relay, and those are
+merged by the same `mergeSibling` — staged into a throwaway sibling — that
+checks a file, so a bad row is refused there exactly as T1-D13 says.
+
+**Durability: the watermark advances on ack, never on send.** A publisher's
+record of what it has sent is its own high-water mark over `_r_seq`; the batch
+to publish is everything it authored above it. That mark must advance only
+after `append` resolves. Advancing on emit and losing the batch in flight would
+leave those rows never sent again and no reader able to help — the silent-loss
+shape the write flush already guards against (§ "Every carrier exports from the
+flushed state"). So the seal is computed once, the identical bytes are re-sent
+until `append` acks, and the relay is idempotent by the digest of the sealed
+blob: a retry over a batch that secretly landed is a no-op, and a batch that
+never landed is re-sent whole. The IV lives inside the seal, so re-sealing a
+retry would defeat the dedup — seal once, resend the bytes.

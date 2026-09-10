@@ -27,6 +27,15 @@ export interface Mailbox {
   /**
    * Add a sealed batch to the document's mailbox. Ordering is the mailbox's to
    * assign; the caller does not choose where a batch lands.
+   *
+   * **Idempotent by the digest of `sealed`.** A second append of the identical
+   * bytes is a no-op. This is what makes the durability rule safe: a publisher
+   * advances its watermark — its only record of what it has sent — *only after
+   * this resolves*, and on a failure re-sends the identical sealed bytes. If it
+   * advanced on send and the batch never arrived, those rows would never be
+   * sent again and no reader could recover them: the silent-loss shape the
+   * write flush already guards against. Seal once and retry the same bytes; the
+   * IV is inside the seal, so re-sealing would defeat the dedup.
    */
   append(documentId: string, sealed: Uint8Array): Promise<void>;
 

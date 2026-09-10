@@ -57,6 +57,18 @@ test.describe("the mailbox: append, head, since", () => {
     expect((await mailbox.since("doc-b", "")).batches.map(text)).toEqual(["b1"]);
   });
 
+  test("a second append of the identical bytes is a no-op", async () => {
+    const mailbox = box();
+    const blob = bytes("the same sealed batch");
+    await mailbox.append("doc-a", blob);
+    await mailbox.append("doc-a", new Uint8Array(blob)); // a retry: identical bytes
+    await mailbox.append("doc-a", new Uint8Array(blob)); // and again
+    // One batch, not three: the digest recognised the retry. This is what lets
+    // a publisher re-send after a failure without duplicating.
+    const { batches } = await mailbox.since("doc-a", "");
+    expect(batches.map(text)).toEqual(["the same sealed batch"]);
+  });
+
   test("head moves only when something is appended", async () => {
     const mailbox = box();
     const empty = await mailbox.head("doc-a");
