@@ -100,7 +100,7 @@ function noteIdbFailure(what: string): void {
     const ring = (globalThis as unknown as { __daiLog?: string[] }).__daiLog;
     if (!ring) return;
     ring.push(`${new Date().toISOString().slice(11, 23)} idb: ${what}`);
-    if (ring.length > 20) ring.shift();
+    if (ring.length > 30) ring.shift();
   } catch {
     /* The log is a convenience; never let it throw into a storage path. */
   }

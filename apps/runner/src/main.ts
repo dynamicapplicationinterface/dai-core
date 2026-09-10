@@ -474,6 +474,24 @@ const LAUNCH_STALL_MS = 6000;
 let launchStep = "starting up";
 function markStep(step: string): void {
   launchStep = step;
+  /*
+   * Also a trace, not only the latest.
+   *
+   * The single step field names where a hang stopped, but not the path it took
+   * to get there — and when the same label covers several awaits, that path is
+   * the missing half. Every step is stamped into the same ring the panel reads,
+   * so one screenshot shows the whole sequence and its last entry is the exact
+   * line, without another round of narrowing.
+   */
+  try {
+    const ring = (window as unknown as { __daiLog?: string[] }).__daiLog;
+    if (ring) {
+      ring.push(`${new Date().toISOString().slice(11, 23)} step: ${step}`);
+      if (ring.length > 30) ring.shift();
+    }
+  } catch {
+    /* The trace is a convenience; never let it throw into the launch. */
+  }
 }
 
 /**
@@ -519,8 +537,8 @@ async function launchDetails(): Promise<string> {
 
   const log = (window as unknown as { __daiLog?: string[] }).__daiLog;
   lines.push("");
-  lines.push(`errors (${log?.length ?? 0}):`);
-  if (log && log.length > 0) for (const entry of log.slice(-8)) lines.push(`  ${entry}`);
+  lines.push(`trace (${log?.length ?? 0}):`);
+  if (log && log.length > 0) for (const entry of log.slice(-16)) lines.push(`  ${entry}`);
   else lines.push("  (none captured)");
 
   return lines.join("\n");
@@ -1188,6 +1206,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      */
     const standing = kin?.sibling === true && heldHere?.mergeStanding === true;
     if (standing && incomingData) {
+      markStep("merging by standing consent");
       const report = await mergeSiblingInto(incomingData);
       slot.classList.remove("busy");
       // A line, not a card: it says what happened and interrupts nothing.
@@ -1196,6 +1215,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       // A refusal is a decision after all, and falls through to the card.
     }
 
+    markStep("choosing how to open");
     const familiar =
       !kin?.sibling &&
       verdict.status === "trusted" &&
@@ -1216,6 +1236,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const misdescribed =
       carrier.hinted !== undefined && carrier.hinted !== cartridge.manifest.documentUuid;
     if (!familiar && !consented) {
+      markStep("showing the launch card");
       slot.classList.remove("busy");
       say("");
       await showCard({

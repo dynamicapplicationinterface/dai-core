@@ -27,7 +27,7 @@
           try {
             var at = new Date().toISOString().slice(11, 23);
             ring.push(at + " " + kind + ": " + String(value).slice(0, 300));
-            if (ring.length > 20) ring.shift();
+            if (ring.length > 30) ring.shift();
           } catch (e) {}
         }
         window.addEventListener("error", function (e) {
