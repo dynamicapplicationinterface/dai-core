@@ -65,14 +65,17 @@ Manifest surface, in the signed set so every copy agrees:
 
 ```json
 {
-  "manifestVersion": 4,
+  "manifestVersion": 3,
   "requires": ["replicated"],
   "replication": { "tables": ["cases"], "level": 1 }
 }
 ```
 
-See T1-D5: this is the first writer to emit version 4, and it is what closes
-the "readers before writers" ordering that Track 0 opened.
+The version is `3`, not `4`. T1-D5 specified a bump to `manifestVersion: 4`
+alongside the `requires` registry; what shipped is the registry under `3`, and
+the bump proved unnecessary. See **T1-D24** for what happened and why the
+registry alone was enough to close the "readers before writers" ordering that
+Track 0 opened.
 
 All three fields are written **only when the schema declares a replicated
 table**, and the tables are sorted. A build that declares none emits the
@@ -362,7 +365,10 @@ in conflict; one signed and one not → refuse. This is the weakest link in
 Level 1 and it is a claim, like everything else here.
 
 **T1-D5 — Track 1 is the first writer to emit `manifestVersion: 4`,** with
-`requires: ["replicated"]`. Track 0 shipped the readers and deliberately no
+`requires: ["replicated"]`. *(Corrected by T1-D24: the version bump was not
+needed and did not ship; the `requires` registry shipped under `manifestVersion:
+3`. The reasoning below stands except for the bump itself.)* Track 0 shipped the
+readers and deliberately no
 writer. A document with replicated tables opened by a reader that ignores them
 would merge nothing and silently diverge, which is exactly the degradation the
 `requires` gate exists to refuse. `IMPLEMENTED_CAPABILITIES` gains
@@ -370,10 +376,12 @@ would merge nothing and silently diverge, which is exactly the degradation the
 
 Checked before building against this, because the ordering is only real if the
 readers are actually deployed: the opener serving opendai.app was verified to
-contain the version-4 reader commit. A returning visitor running a shell from
-cache is the remaining case, and it degrades correctly — a pre-v4 shell meets
-a version-4 document and refuses it by name with "update the app", which is
-what the gate is for, rather than opening it without the capability.
+contain the reader that honours `requires`. A returning visitor running a shell
+from cache is the remaining case, and it degrades correctly — a pre-capability
+shell meets a document that requires `replicated` and refuses it by name
+(`UNSUPPORTED_CAPABILITY`, "update the app"), which is what the gate is for,
+rather than opening it without the capability. This is the mechanism whether or
+not the version number moves; T1-D24 records why it did not need to.
 
 **T1-D6 — `_r_seq` is the final tiebreak in `T_current`.** 2.1.1 gives highest
 `_r_lc`, then lexicographic `_r_replica`. Two heads for one entity from the
@@ -722,6 +730,26 @@ shape a gap can have, so: `first_seen` is `_dai_replica.lc` as it stood when
 the merge began, and `rows_seen` stays 0 until something is specified to
 maintain it. Neither is load-bearing; both are pinned so they cannot quietly
 diverge.
+
+**T1-D24 — the `manifestVersion: 4` bump of T1-D5 was not needed and did not
+ship; the `requires` registry shipped under `manifestVersion: 3`.** T1-D5 was a
+decision, not a description: it locked "version 4 plus a `requires` registry" to
+close the readers-before-writers ordering. Only the registry mattered. A reader
+that predates a capability refuses a document that `requires` it by name
+(`UNSUPPORTED_CAPABILITY`, "update the app") whether or not the version number
+also moved — so the `requires` gate alone gives the ordering its guarantee, and
+the version wall was redundant. What shipped: `MANIFEST_VERSION` stayed `3`, a
+replicated build emits `requires: ["replicated"]` and `replication` in the
+signed manifest at version 3, and `IMPLEMENTED_CAPABILITIES` carries
+`"replicated"`. This is the better outcome — no deployed reader had to refuse on
+version, the pre-capability shell refuses on the capability instead, and the
+readers-before-writers property held without a version wall. Recorded rather
+than edited away because several decisions here reference the bump, and the IANA
+media-type registration states the format defines versions 2 and 3 — which this
+makes true by design rather than by accident. A future capability extends the
+registry, which only grows; a version bump is now reserved for a change no
+`requires` gate can express (one that alters bytes a pre-capability reader would
+mis-verify rather than merely fail to use).
 
 ## 9. Level 1 conformance vectors
 
