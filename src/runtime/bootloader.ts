@@ -1156,10 +1156,14 @@ function bridgeMain(): void {
     // this device is creating has not written its schema yet and settles on its
     // first write as before. Idempotent, and a no-op until the module arrives.
     //
-    // After the autosave wrapper above, deliberately: the adoption is a write,
-    // and it has to schedule a save or the new id lives only in memory and a
-    // reopen before the next write reverts to the sender's — D22 through a side
-    // door. It settled here before the wrapper existed, and did not persist.
+    // Load-bearing ordering, and invisible: this settle MUST stay after the
+    // autosave wrapper above. Adoption must be a write the autosave sees — an
+    // arrived copy takes its own replica id here, and if that write does not
+    // schedule a save the new id lives only in memory and a reopen before the
+    // next write reverts to the sender's, which is D22 through a side door.
+    // It sat before the wrapper once and did not persist. `tests/d22-reopen.spec.ts`
+    // is what catches a move back: it reads the id across a reopen, so a settle
+    // that stopped persisting fails it rather than passing quietly.
     settleReplicaAtMount(db);
     // And flushed at once, not on the 800 ms debounce: "before anything can
     // reload it" is the whole point, and a refresh inside that window is exactly

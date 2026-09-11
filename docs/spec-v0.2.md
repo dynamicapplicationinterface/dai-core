@@ -596,6 +596,15 @@ first and one did not, and the one that did not shipped a game with the move
 that prompted the send missing from it. A carrier author adding a fifth route
 should assume this rule is the reason the other four look repetitive.
 
+The same hazard appears wherever a state that looks settled is only in memory
+until a debounced write lands: a reload inside that window reads the older state
+back off disk, with nothing to say it did. The debounce has been the hole twice.
+The second was a copy that arrived from someone else and took its own replica
+identity at mount: held only in memory, a refresh before the next write
+reopened it under the sender's identity and the two collided. So a host MUST
+persist such an adoption at once — flushed at mount, not left to the debounce —
+for the same reason a carrier flushes before it exports.
+
 A host that read a document at one generation and is asked to save on top of a
 different one MUST refuse with `GENERATION_CONFLICT`, and MUST NOT present the
 refusal as a failure of the application: another window saved first, and the
