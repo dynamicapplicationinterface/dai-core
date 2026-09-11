@@ -15,8 +15,10 @@ import {
   createEntity,
   deleteEntity,
   encodeValue,
+  filterToSession,
   mergeFrom,
   RowRejected,
+  SessionExportIncomplete,
   type ReplicatedRow,
   type Rows,
 } from "../src/replicated-rows.js";
@@ -856,5 +858,88 @@ CREATE TABLE moves (
     expect(() => applyRow(local, "moves", orphan)).toThrow(RowRejected);
     local.close();
     sibling.close();
+  });
+});
+
+test.describe("the invite carrier filters to one session (T1-D28)", () => {
+  const FILTER_SCHEMA = `-- dai:profile session max_parties=2
+-- dai:replicated
+CREATE TABLE moves (
+  ply INTEGER NOT NULL,
+  san TEXT NOT NULL
+);
+CREATE TABLE prefs (
+  k TEXT,
+  v TEXT
+);
+`;
+  const openFilter = (): Rows & { close(): void } => openWith(FILTER_SCHEMA);
+  const S1 = bytes(0x51);
+  const S2 = bytes(0x52);
+  const hx = (u: unknown): string => (u instanceof Uint8Array ? Buffer.from(u).toString("hex") : "");
+
+  test("keeps only the chosen session's rows, empties local tables, keeps _dai_replica", () => {
+    const db = openFilter();
+    ensureReplica(db, A);
+    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
+    createEntity(db, "moves", E2, { ply: 1, san: "d4" }, S2);
+    // A local (non-replicated) table with this device's own state.
+    db.run(`INSERT INTO prefs (k, v) VALUES ('theme', 'dark')`);
+
+    filterToSession(db, ["moves"], S1);
+
+    const kept = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
+    expect(kept).toEqual([hx(S1)]); // only S1; S2's game is gone
+
+    // The local table stays as schema, emptied — §4: local never leaves except
+    // in a full export, and an invite is not one.
+    expect(db.all(`SELECT count(*) AS n FROM prefs`)[0]!["n"]).toBe(0);
+    expect(db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name='prefs'`)).toHaveLength(1);
+
+    // The replica identity travels; the opener adopts a fresh id at mount.
+    expect(db.all(`SELECT hex(id) h FROM _dai_replica`)[0]).toBeTruthy();
+    db.close();
+  });
+
+  test("the kept session is a complete document: it still converges into a fresh copy", () => {
+    // What the invite is for. Filter A's copy to S1, then merge it into an empty
+    // copy — the game arrives whole.
+    const a = openFilter();
+    ensureReplica(a, A);
+    createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
+    changeEntity(a, "moves", E1, { ply: 1, san: "e4!" }, S1);
+    createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
+    filterToSession(a, ["moves"], S1);
+
+    const fresh = openFilter();
+    ensureReplica(fresh, B);
+    mergeFrom(fresh, a, ["moves"]);
+    // E1's two rows crossed; E2 (the other session) never left A's invite.
+    const entities = new Set(fresh.all(`SELECT hex(_r_entity) e FROM moves`).map((r) => String(r["e"]).toLowerCase()));
+    expect(entities).toEqual(new Set([hx(E1)]));
+    a.close();
+    fresh.close();
+  });
+
+  test("D4: a session whose kept row names a parent in another session is refused", () => {
+    const db = openFilter();
+    ensureReplica(db, A);
+    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
+    // A change to the same entity stamped under a different session — malformed,
+    // an entity's history crossing sessions. The write rules allow it; the export
+    // boundary is where it is caught.
+    changeEntity(db, "moves", E1, { ply: 1, san: "e4?" }, S2);
+
+    // Filtering to S2 keeps the change, which names an S1 parent: refused.
+    expect(() => filterToSession(db, ["moves"], S2)).toThrow(SessionExportIncomplete);
+    db.close();
+  });
+
+  test("not a session document: filtering refuses rather than shipping the wrong thing", () => {
+    const db = open(); // the plain (non-session) schema from the top of the file
+    ensureReplica(db, A);
+    createEntity(db, "cases", E1, { title: "x", status: "open", weight: null });
+    expect(() => filterToSession(db, ["cases"], S1)).toThrow(SessionExportIncomplete);
+    db.close();
   });
 });

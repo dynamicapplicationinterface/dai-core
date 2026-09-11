@@ -49,6 +49,13 @@ export const REFUSALS = {
       "max_parties that is not a positive integer. The two are one declaration; half of it is " +
       "malformed, not a plain replicated document to open (T1-D27).",
   },
+  SESSION_EXPORT_INCOMPLETE: {
+    recoverable: false,
+    means:
+      "Exporting an invite for one session, a kept row named a parent in another session: the " +
+      "source document is malformed, an entity's history having crossed sessions. Refused rather " +
+      "than shipping an invite with a parent that never arrives (T1-D28).",
+  },
 
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },

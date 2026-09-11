@@ -27,6 +27,14 @@ export class RowRejected extends Error {
   }
 }
 
+export class SessionExportIncomplete extends Error {
+  readonly code = "SESSION_EXPORT_INCOMPLETE";
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionExportIncomplete";
+  }
+}
+
 /** The `_r_` columns as they travel. `_r_superseded` is not among them (T1-D11). */
 export interface ReplicatedRow {
   _r_replica: Uint8Array;
@@ -366,6 +374,70 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array): Repli
   const row = stamp(db, table, entity, heads, columns, 1, session);
   applyRow(db, table, row);
   return row;
+}
+
+/* ---------------------------------------------------- the invite carrier */
+
+/**
+ * Filters a **scratch** database down to one session, for the invite carrier
+ * (T1-D28). Mutates the database it is given, so the caller passes a throwaway
+ * copy of the sender's — never the sender's own, which is append-only and whose
+ * other games must not be touched.
+ *
+ * `tables` are the replicated tables (the manifest's `replication.tables`). What
+ * stays: those tables' rows for `session`, the document-level `_dai_replica` and
+ * `_dai_replicas`, and every table's schema. What goes: other sessions' rows,
+ * and every row of a non-replicated (local) author table — §4 keeps local tables
+ * off any carrier but a full export, and an invite is the app plus one game.
+ *
+ * D4 first: a session's kept rows must be closed under `_r_parents`. An entity
+ * lives in one session by construction, so this holds — and is asserted rather
+ * than assumed, because a kept row naming a parent in another session is a
+ * malformed source (an entity's history crossed sessions) and would export an
+ * invite with a parent that never arrives.
+ */
+export function filterToSession(db: Rows, tables: readonly string[], session: Uint8Array): void {
+  for (const table of tables) {
+    if (!hasSessionColumn(db, table)) {
+      throw new SessionExportIncomplete(
+        `${table} has no session column, so this is not a session document and cannot be ` +
+          "exported to one session.",
+      );
+    }
+
+    // D4: a kept row may not name a parent that belongs to another session.
+    const crossing = db.all(
+      `SELECT count(*) AS n
+         FROM "${table}" k
+         JOIN json_each(k._r_parents) p
+         JOIN "${table}" parent
+           ON lower(hex(parent._r_replica)) || ':' || parent._r_seq = p.value
+        WHERE k._r_session = ? AND parent._r_session != ?`,
+      [session, session],
+    );
+    if (Number(crossing[0]?.["n"] ?? 0) > 0) {
+      throw new SessionExportIncomplete(
+        `In ${table}, a row kept for this session names a parent in another session. The source ` +
+          "document is malformed — an entity's history has crossed sessions — so no honest invite " +
+          "can be exported from it.",
+      );
+    }
+  }
+
+  // The scratch's append-only DELETE guard is dropped so the other sessions can
+  // be removed; the recipient's open re-creates it from the schema block (§3).
+  for (const table of tables) {
+    db.run(`DROP TRIGGER IF EXISTS "${table}__no_delete"`);
+    db.run(`DELETE FROM "${table}" WHERE _r_session != ?`, [session]);
+  }
+
+  // Local (non-replicated) author tables travel as schema, emptied of rows.
+  const replicated = new Set(tables);
+  const localTables = db
+    .all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+    .map((r) => String(r["name"]))
+    .filter((name) => !replicated.has(name) && !name.startsWith("_dai"));
+  for (const table of localTables) db.run(`DELETE FROM "${table}"`);
 }
 
 /* -------------------------------------------------------------- the dump */

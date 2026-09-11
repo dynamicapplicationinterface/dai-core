@@ -940,6 +940,51 @@ compiler emitting the surface and the reader refusing a *malformed* one — the
 writer and the structural guard, ahead of the behaviour, in the readers-before-
 writers order the rest of this document keeps.
 
+**T1-D28 — the invite carrier: export filtered to one session (Step 2).**
+Starting a game shares an invite that carries **only that session** — a
+recipient without the app gets the app with that one game, and a recipient who
+holds the app gets a sibling merge that adds the game and touches nothing else
+(collaborative-play; profiles D4). This is the carrier of the whole idea: a
+session, not a document, is the unit that travels.
+
+*The data section, not the signature.* A container's database is the
+`document.sqlite` entry, which is **outside the signed set** — the data is
+mutable and the signature covers the application and the manifest, never the
+database. So filtering an invite replaces that one entry with a filtered copy and
+reassembles: the schema, the manifest and the signature are byte-identical to the
+sender's, which is exactly what lets the recipient's sibling test recognise it
+and merge the added game without a re-sign and without a schema change.
+
+*What travels, on a scratch copy of the database.*
+- **Replicated tables:** only rows whose `_r_session` equals the chosen session.
+- **Non-replicated (local) author tables:** their schema, **emptied of rows.** §4
+  makes local tables "never leave the copy except in a full export," and an
+  invite is not a full export — it is the app plus one game, and this device's
+  private local state is not part of the game. Carrying it would leak the
+  sender's local state into every invite.
+- **`_dai_replica` / `_dai_replicas`:** kept. The opener adopts a fresh replica
+  id at mount (T1-D22), so carrying the sender's identity is harmless, and
+  dropping it would strip the replica provenance the recipient merges against.
+
+*D4 — same-session-parents.* A session's kept rows must be **closed under
+`_r_parents`**: every parent of a kept row is itself in the session. By
+construction an entity lives in one session — create stamps it, change and delete
+inherit it — so a session partitions the DAG and the closure holds. The filter
+**asserts** it rather than assuming it: a kept row naming a parent outside the
+session means the source document is malformed (an entity's history crossed
+sessions), and the export is refused by name, `SESSION_EXPORT_INCOMPLETE`, rather
+than shipping an invite with a dangling parent that never supersedes. This is the
+export boundary enforcing what the roster (Step 3) will enforce at write time.
+
+*Where it runs.* `filterToSession(db, tables, session)` mutates a **scratch**
+database — never the sender's — through the injected `Rows` interface: the
+append-only triggers are dropped on the scratch so the non-session rows can be
+deleted, and the recipient's open re-creates them from the schema block
+(idempotent, §3). The bytes in and out, and reassembling the container around the
+filtered `document.sqlite`, are the host's; the row logic is engine-injected and
+tested against `node:sqlite` as the write rules are. Vector:
+`session-export-carries-only-that-session`.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -1055,6 +1100,7 @@ merged" sends somebody looking for damage that is not there.
 |---|---|
 | `REPLICATION_SCHEMA_INVALID` | compile: reserved `_r_` prefix, an author's own primary key, `AUTOINCREMENT` (§3), or a session profile with no replicated table or `max_parties` below one (T1-D26) |
 | `MALFORMED_SESSION_PROFILE` | verify: a `session` block without `requires: ["session"]`, `requires: ["session"]` without a block, or a `session` block whose `max_parties` is not a positive integer (T1-D27) |
+| `SESSION_EXPORT_INCOMPLETE` | export: a session's kept rows are not closed under `_r_parents` — a kept row names a parent in another session, so the source document is malformed (T1-D28) |
 | `REPLICATED_TABLE_IMMUTABLE` | runtime: an `UPDATE` or `DELETE` against a replicated table (§4) |
 | `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |
