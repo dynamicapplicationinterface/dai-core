@@ -1131,6 +1131,16 @@ function bridgeMain(): void {
   const watched = (db: Any): Any => {
     liveDb = db;
     lenient(db);
+    // Settle this copy's identity the moment the database and the rules are both
+    // here, not at the first write. A copy that arrived from someone else must
+    // take its own replica id before anything can reload it as this device's
+    // own — a refresh opens it from the library, where "own" keeps the sender's
+    // id, and then two copies allocate the same (replica, seq) and collide
+    // (D22). Only meaningful when the replica table is already present, which is
+    // exactly the arrived case: a copy carries its `_dai_replica`, an own copy
+    // this device is creating has not written its schema yet and settles on its
+    // first write as before. Idempotent, and a no-op until the module arrives.
+    settleReplicaAtMount(db);
     if (!autosaves || typeof db.exec !== "function") return db;
     const exec = db.exec.bind(db);
     db.exec = (...args: Any[]): Any => {
@@ -1422,6 +1432,9 @@ function bridgeMain(): void {
     try {
       mergeModule = await import(/* @vite-ignore */ url);
       settleRules();
+      // The other order: the database was already open when the rules arrived.
+      // Settle now so an arrived copy has its own id before a refresh (D22).
+      if (liveDb) settleReplicaAtMount(liveDb);
     } catch (error) {
       // A blob import can be refused by a policy this frame runs under rather
       // than by anything wrong with the module, and that reads nothing like a
@@ -1456,6 +1469,27 @@ function bridgeMain(): void {
     // moves into `_dai_replicas` with their rows still theirs.
     if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
     else (mergeModule as Any).adoptReplica(rows, fresh);
+  };
+
+  /**
+   * Settle at mount, but only for a copy that already carries a `_dai_replica` —
+   * an arrived copy. That is the case that must not wait for the first write,
+   * because a refresh before that write reopens it as this device's own and
+   * keeps the sender's id (D22). An own copy this device is creating has no
+   * replica table yet — its schema is unwritten — so there is nothing to settle
+   * and it settles on its first write as it always did.
+   */
+  const settleReplicaAtMount = (db: Any): void => {
+    if (replicaSettled || !mergeModule) return;
+    let hasTable = false;
+    try {
+      hasTable =
+        db.selectObjects("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='_dai_replica' LIMIT 1")
+          .length > 0;
+    } catch {
+      hasTable = false;
+    }
+    if (hasTable) settleReplica(frameRows(db));
   };
 
   /**

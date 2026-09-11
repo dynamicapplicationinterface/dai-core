@@ -217,8 +217,17 @@ is not a detour.
   fix. Priority: raise `DAI_PRESIGN_PER_HOUR`, Share→Send. (The file carrier is
   NOT being retired — it is the no-relay fallback, the enterprise self-host path,
   and the offline path. It stays first-class.)
-- [ ] **P1 — `ROW_REJECTED` "A different row already exists": a D22 invariant
-  violation, on any carrier.** Two copies allocated the same `(replica, seq)` for
+- [x] **P1 — `ROW_REJECTED` "A different row already exists": FIXED (adopt at
+  mount).** Two iPhones hit it: whoever moved second got the collision. Root: the
+  arrived copy settled its replica id at the *first write*, but a refresh before
+  that write reopened it as this device's own, so `ensureReplica` no-oped on the
+  sender's inherited id and both wrote under one replica. Fix: an arrived copy
+  (one that already carries `_dai_replica`) adopts its own id at *mount*, before
+  any refresh can intervene; an own copy this device is creating has no replica
+  table yet and settles on first write as before. In the frame runtime, so
+  existing self-contained docs need a recompile. The two-tabs-one-seq case is the
+  same root; a faithful browser test for the library-reopen path is still owed.
+- [ ] **D22 named test still owed.** Two copies allocated the same `(replica, seq)` for
   different moves — which means two copies shared one replica identity. That is
   exactly the case D22 forbids on *every* carrier, and the one the decision
   called worse than a compatibility gap: two honest moves, one refused as
