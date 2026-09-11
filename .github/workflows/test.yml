@@ -12,9 +12,12 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # The non-browser checks, on their own so a compile or reference-reader
+  # failure is reported as itself and does not sit behind twelve minutes of
+  # Playwright.
+  checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -28,32 +31,66 @@ jobs:
 
       - run: npm run typecheck
 
-      # The website has its own dependency tree, and the suite now opens its
-      # pages: a control can vanish from one without any other test noticing.
-      - run: npm --prefix website ci
-
       # A second reader, sharing no code with the one that wrote the cases.
       # This is what tests the specification rather than the implementation: it
       # was written from the document, and the four places the document did not
       # say enough are the four things it could not do until they were fixed.
       - run: python3 conformance/reference/run.py
 
-      # The host's in-place writer, and its own unit tests. Run before the
-      # Playwright suite because one of those tests drives this crate's example
-      # binary: compiling it here means a build failure is reported as a build
-      # failure rather than as a mysterious test timeout.
+      # The host's in-place writer, and its own unit tests. Compiling the
+      # example binary here means a build failure is reported as a build failure
+      # rather than as a mysterious test timeout in the Playwright suite that
+      # drives it.
       - run: cargo test --manifest-path crates/sectioned/Cargo.toml
       - run: cargo build --quiet --example replace-data --manifest-path crates/sectioned/Cargo.toml
 
-      # --with-deps pulls the system libraries WebKit and Firefox need on CI.
-      - run: npx playwright install --with-deps chromium firefox webkit
+  # One browser per job, in parallel. The whole suite on three engines in one
+  # job ran past the 20-minute wall and was killed every time — a timeout that
+  # masks a real failure as an infrastructure hiccup, so a red suite reads as a
+  # flake and nobody looks. Split by engine, each job finishes well inside its
+  # budget and reports a clean pass or fail, and the summary says which engine
+  # broke. `fail-fast: false` so one engine's failure does not cancel the
+  # verdict on the others.
+  #
+  # The one thing this must never become again is a run that cannot finish: a
+  # check that times out is indistinguishable from one nobody looked at, and
+  # neither is a verdict. A single engine runs in about twelve minutes today,
+  # and the budget below is set roughly double that on purpose — headroom, not a
+  # target. When the suite grows and a shard starts brushing the wall, the fix
+  # is to split the shard further (by test group, by directory), NOT to raise
+  # this number: raising the ceiling buys a few months and restores the blind
+  # spot. If you are here to bump the timeout, shard instead.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
 
-      - run: npm test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The website has its own dependency tree, and the suite now opens its
+      # pages: a control can vanish from one without any other test noticing.
+      - run: npm --prefix website ci
+
+      # --with-deps pulls the system libraries this engine needs on CI.
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - run: npm test -- --project=${{ matrix.browser }}
 
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: |
             playwright-report/
             test-results/
