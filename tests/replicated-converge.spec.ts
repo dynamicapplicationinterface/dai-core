@@ -795,8 +795,9 @@ CREATE TABLE moves (
     const db = openSession();
     ensureReplica(db, A);
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
-    changeEntity(db, "moves", E1, { ply: 1, san: "e4!" }, S1);
-    // The delete is not told the session — it takes it from the row it buries.
+    // Change and delete are not told the session — they inherit it from the
+    // entity's head, so an entity keeps one session for its whole history.
+    changeEntity(db, "moves", E1, { ply: 1, san: "e4!" });
     deleteEntity(db, "moves", E1);
 
     const sessions = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
@@ -907,7 +908,7 @@ CREATE TABLE prefs (
     const a = openFilter();
     ensureReplica(a, A);
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
-    changeEntity(a, "moves", E1, { ply: 1, san: "e4!" }, S1);
+    changeEntity(a, "moves", E1, { ply: 1, san: "e4!" });
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
     filterToSession(a, ["moves"], S1);
 
@@ -921,16 +922,29 @@ CREATE TABLE prefs (
     fresh.close();
   });
 
-  test("D4: a session whose kept row names a parent in another session is refused", () => {
+  test("D4: a crossed-session row delivered by a sibling is refused at export", () => {
+    // The honest write rules cannot cross sessions (change and delete inherit the
+    // entity's session), so the crossing can only arrive the way §10 says a
+    // sibling can send anything: through the merge. Here a sibling's change names
+    // the S1 create as its parent but claims S2 — applied through the merge choke
+    // point, then caught at the export boundary.
     const db = openFilter();
     ensureReplica(db, A);
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
-    // A change to the same entity stamped under a different session — malformed,
-    // an entity's history crossing sessions. The write rules allow it; the export
-    // boundary is where it is caught.
-    changeEntity(db, "moves", E1, { ply: 1, san: "e4?" }, S2);
 
-    // Filtering to S2 keeps the change, which names an S1 parent: refused.
+    const parentId = `${Buffer.from(A).toString("hex")}:1`;
+    const crossed: ReplicatedRow = {
+      _r_replica: B,
+      _r_seq: 1,
+      _r_lc: 5,
+      _r_entity: E1,
+      _r_parents: JSON.stringify([parentId]),
+      _r_deleted: 0,
+      _r_session: S2,
+      columns: { ply: 1, san: "e4?" },
+    };
+    applyRow(db, "moves", crossed);
+
     expect(() => filterToSession(db, ["moves"], S2)).toThrow(SessionExportIncomplete);
     db.close();
   });

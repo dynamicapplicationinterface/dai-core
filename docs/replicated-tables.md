@@ -215,13 +215,16 @@ diff.
 author columns copied from the head being deleted.
 
 **In a session document** (T1-D26), every one of these also stamps `_r_session`.
-Create and change carry the session of the write; a delete takes it from the
-head it buries rather than being told it again, since a tombstone belongs to the
-same session as the entity. A row that reaches the write or merge path with no
-session, in a table that declares the profile, is refused (`ROW_REJECTED`) — the
-column is `NOT NULL`, so this is caught with a reason rather than as a constraint
-message. In a plain replicated document there is no `_r_session` column and
-nothing changes.
+A create carries the session of the write; a **change and a delete inherit it
+from the entity's head** rather than being told it again, because an entity
+belongs to one session for its whole history (T1-D28). Deriving it, rather than
+trusting a caller to repeat it, is what makes it impossible for the honest write
+rules to produce a row whose parents are in another session — the crossing D4
+refuses at export. A row that reaches the write or merge path with no session, in
+a table that declares the profile, is refused (`ROW_REJECTED`) — the column is
+`NOT NULL`, so this is caught with a reason rather than as a constraint message.
+In a plain replicated document there is no `_r_session` column and nothing
+changes.
 
 After every write `_dai_replica.seq` and `.lc` advance, and the flag of T1-D2
 is applied. The row insert and both updates are one transaction.
@@ -952,8 +955,20 @@ session, not a document, is the unit that travels.
 mutable and the signature covers the application and the manifest, never the
 database. So filtering an invite replaces that one entry with a filtered copy and
 reassembles: the schema, the manifest and the signature are byte-identical to the
-sender's, which is exactly what lets the recipient's sibling test recognise it
-and merge the added game without a re-sign and without a schema change.
+sender's.
+
+**The consequence, and it is load-bearing: an invite is not re-signed.** Because
+the invite carries the *same signature over the same application* as the sender's
+own copy, the recipient's sibling test sees a familiar publisher and the same
+document, and merges the added game — rather than treating the invite as a new
+document from a stranger. Re-signing an invite under the sender's key is the
+tempting "optimisation" later, and it would break recognition for **every**
+recipient: a fresh signature (ECDSA draws a new nonce) is a different container
+that the sibling test no longer matches to the copy already held. This is the
+same shape as the label rule — the move that looks like tightening is the move
+that breaks it — so it is written here as a rule, not left as a convenience: the
+invite is the sender's bytes with one unsigned entry filtered, and nothing signs
+it again.
 
 *What travels, on a scratch copy of the database.*
 - **Replicated tables:** only rows whose `_r_session` equals the chosen session.
@@ -968,13 +983,27 @@ and merge the added game without a re-sign and without a schema change.
 
 *D4 — same-session-parents.* A session's kept rows must be **closed under
 `_r_parents`**: every parent of a kept row is itself in the session. By
-construction an entity lives in one session — create stamps it, change and delete
-inherit it — so a session partitions the DAG and the closure holds. The filter
-**asserts** it rather than assuming it: a kept row naming a parent outside the
-session means the source document is malformed (an entity's history crossed
-sessions), and the export is refused by name, `SESSION_EXPORT_INCOMPLETE`, rather
-than shipping an invite with a dangling parent that never supersedes. This is the
-export boundary enforcing what the roster (Step 3) will enforce at write time.
+construction an entity lives in one session — create stamps it, and change and
+delete inherit it from the entity's head (T1-D28) — so a session partitions the
+DAG and the closure holds. The filter **asserts** it rather than assuming it: a
+kept row naming a parent outside the session means the source document is
+malformed, and the export is refused by name, `SESSION_EXPORT_INCOMPLETE`, rather
+than shipping an invite with a parent that never arrives.
+
+*Is the refusal reachable, or dead code?* Asked deliberately, because a guard
+against a state that cannot occur reads as an oversight later. The **honest write
+rules cannot produce a crossing**: a create stamps the session, and a change and
+a delete take it from the entity's head, so every row of an entity shares one
+session and no local write can name a parent in another. That is why `changeEntity`
+derives the session rather than accepting it — an earlier draft took it as a
+caller argument, which *could* have crossed sessions, and deriving it closed that
+path (the write rules, not the export, are where an entity's session is made
+immutable). The refusal is **not** dead code, though: the merge path applies a
+sibling's rows and, at Level 1, a replica id is a claim and a sibling can send
+anything (§10). A malformed or hostile sibling can deliver a change in one session
+naming a parent in another; that row merges, and D4 catches it at the export
+boundary. So D4 guards the one boundary that can still deliver a crossing — the
+untrusted sibling — not the local writer, which cannot.
 
 *Where it runs.* `filterToSession(db, tables, session)` mutates a **scratch**
 database — never the sender's — through the injected `Rows` interface: the

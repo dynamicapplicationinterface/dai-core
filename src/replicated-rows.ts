@@ -346,8 +346,24 @@ export function changeEntity(
   table: string,
   entity: Uint8Array,
   columns: Record<string, unknown>,
-  session?: Uint8Array,
 ): ReplicatedRow {
+  // The session is inherited from the entity's head, not supplied by the caller
+  // (T1-D28). An entity belongs to one session for its whole history; letting a
+  // change name a different session is what would produce a row whose parents
+  // are in another session, which the export refuses as malformed. Deriving it
+  // here means the honest write rules cannot construct that crossing at all —
+  // and matches the caller, which passes no session (bootloader `changeEntity`).
+  // Only a session table has `_r_session` to read; a `SELECT` of it against a
+  // plain table is a "no such column" error, so the column check gates the query.
+  let session: Uint8Array | undefined;
+  if (hasSessionColumn(db, table)) {
+    const head = db.all(
+      `SELECT _r_session FROM "${table}" WHERE _r_entity = ? AND _r_superseded = 0
+        ORDER BY _r_lc DESC, hex(_r_replica) ASC, _r_seq ASC LIMIT 1`,
+      [entity],
+    )[0];
+    if (head?.["_r_session"] instanceof Uint8Array) session = head["_r_session"] as Uint8Array;
+  }
   const row = stamp(db, table, entity, headsOf(db, table, entity), columns, 0, session);
   applyRow(db, table, row);
   return row;
