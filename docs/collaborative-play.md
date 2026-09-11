@@ -171,6 +171,20 @@ is not a detour.
 - [ ] **No opener chooser on mobile (v1)** — keep people out of the bare opener;
   the app is the entry point. How links/icons land straight in the app without
   ever showing "Open a document somebody sent you".
+- [ ] **File ping-pong when the mailbox doesn't engage.** First real 2-player
+  test: the invite went out as a *file* (rate limit → file fallback), so no key,
+  no mailbox — every move required re-sending the file. This is the mailbox's
+  whole purpose; the fix is the keyed link, not hardening the file flow. Confirms
+  the priority: get the link working (raise `DAI_PRESIGN_PER_HOUR`, Share→Send).
+- [ ] **`ROW_REJECTED` "A different row already exists" on the file + multi-tab
+  path.** Opening the opponent's file from Messages opened a *new* Safari tab
+  (two copies of one game in one browser), and the merge hit a replica-identity
+  collision (two copies stamped the same `(replica, seq)`). The mailbox path is
+  proven clean (settleReplica fix + e2e); this is specific to file-reopen +
+  multiple tabs. Investigate: (a) opening a file for a document already held
+  should sibling-merge, not open a second tab; (b) whether the file-open replica
+  adoption tangles when the same document is open in two tabs. Retired by the
+  mailbox in practice, but a real bug in the flow we still ship.
 - [ ] **Document handoffs and user sessions in the SDK / recipe, with use
   cases.** How a session is created, invited, joined, closed; how a handoff
   works (build-and-hand-over, link, sibling merge); worked examples an app
