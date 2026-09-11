@@ -1093,6 +1093,19 @@ nothing here should be read as claiming it does. Closing it to a named
 recipient is `recipient-bound`, in Track 4. Until then a mailbox gives what a
 file share gives today and no less.
 
+That key is one stable key per document, minted at the first share and kept in
+the library entry, not a fresh key per share. A fresh key per share was a
+reasonable store choice in isolation — it let one share be forgotten
+independently — but it is incompatible with a mailbox, which needs both parties
+to converge on one key across every share and every move; two shares under two
+keys are two mailboxes that never meet. At the open tier the contract is already
+"everyone with the link can read", so a stable key only makes that true
+consistently; per-share revocation is what `recipient-bound` gives properly in
+Track 4. The mailbox does not seal under the document key directly: it derives
+its key with HKDF(document key, label), so a session (Track 3) keys its own
+mailbox off the same root under the session id, and the document key is a root
+rather than the mailbox key itself.
+
 **Outgoing rows cross frame→host in plaintext; the host seals them.** The
 frame cannot reach the network (`connect-src 'none'`), so it hands the rows it
 authored to the host, which holds the document's key and does the sealing and
