@@ -82,4 +82,31 @@ test.describe("the mailbox over HTTP", () => {
     await expect(mailbox.since("game", "")).rejects.toThrow(/SINCE_503/);
     await expect(mailbox.append("game", bytes("x"))).rejects.toThrow(/APPEND_503/);
   });
+
+  test("an unchanged head is a 304 the poll pays almost nothing for", async () => {
+    // A relay that answers head with the counter as an ETag and 304s a match —
+    // exactly the Durable Object's shape. The client should send the tag it
+    // holds and turn a 304 back into the head it already had.
+    let counter = 0;
+    const sent: (string | null)[] = [];
+    const relay = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      if (url.pathname.endsWith("/head")) {
+        const inm = new Headers(init?.headers).get("if-none-match");
+        sent.push(inm);
+        const tag = `"${counter}"`;
+        if (inm === tag) return new Response(null, { status: 304, headers: { etag: tag } });
+        return new Response(String(counter), { status: 200, headers: { etag: tag } });
+      }
+      counter += 1; // a POST
+      return new Response(String(counter), { status: 200 });
+    }) as typeof fetch;
+    const mailbox = httpMailbox({ base: "https://relay.test/m", fetch: relay });
+
+    expect(await mailbox.head("game")).toBe("0"); // first read, no tag sent
+    expect(await mailbox.head("game")).toBe("0"); // unchanged → 304 → cached "0"
+    expect(sent).toEqual([null, '"0"']); // the second read sent the tag it held
+    await mailbox.append("game", bytes("e4")); // counter → 1
+    expect(await mailbox.head("game")).toBe("1"); // moved → 200 with the new value
+  });
 });

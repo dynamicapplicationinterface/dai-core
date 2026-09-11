@@ -75,6 +75,20 @@ export async function resolveMailboxKey(
 
 const PUBLISH_DEBOUNCE_MS = 500;
 
+/**
+ * How often the app looks for the other copy's moves, and how it backs off.
+ *
+ * Fast in the minute after anyone acts — a reply is usually coming — then it
+ * stretches, because a game is two people thinking for minutes and a fixed
+ * fast tick is almost all wasted requests. It snaps back to fast on a local
+ * write or a pull that found something. The relay is on a request budget; a
+ * timer that never backs off is what spends it. Only while the tab is visible;
+ * hidden, there is nobody to show a move to, so it waits at the slow rate.
+ */
+const POLL_FAST_MS = 3_000;
+const POLL_MED_MS = 15_000;
+const POLL_SLOW_MS = 30_000;
+
 export function startMailboxSession(config: {
   documentUuid: string;
   keyBase64Url: string;
@@ -109,6 +123,8 @@ export function startMailboxSession(config: {
   let publishing = false;
   let publishAgain = false;
   let pulling = false;
+  let pollTimer: number | undefined;
+  let pollMs = POLL_FAST_MS;
   let requestId = 0;
   const pending = new Map<string, (value: Any) => void>();
 
@@ -139,6 +155,7 @@ export function startMailboxSession(config: {
     const type = data["type"];
     if (type === "DAI_HOST_AUTHORED") {
       schedulePublish();
+      pollNow(); // a local move; the reply is likely soon, so poll fast again.
       return;
     }
     if (type === "DAI_HOST_AUTHORED_BATCH" || type === "DAI_HOST_APPLIED") {
@@ -231,6 +248,43 @@ export function startMailboxSession(config: {
     }
   }
 
+  function schedulePoll(ms: number): void {
+    if (stopped) return;
+    window.clearTimeout(pollTimer);
+    pollTimer = window.setTimeout(() => void runPoll(), ms);
+  }
+
+  /** Reset to the fast rate and poll soon — after a local write, or on foreground. */
+  function pollNow(): void {
+    pollMs = POLL_FAST_MS;
+    schedulePoll(0);
+  }
+
+  /**
+   * The cheap check: has the mailbox moved past what we hold? Only `head`, which
+   * the client turns into a 304 when it is unchanged, so an idle poll costs
+   * almost nothing. Pull only when it has actually advanced.
+   */
+  async function runPoll(): Promise<void> {
+    if (stopped) return;
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+      schedulePoll(POLL_SLOW_MS);
+      return;
+    }
+    try {
+      const head = Number(await mailbox.head(documentUuid)) || 0;
+      if (head > (Number(state.cursor) || 0)) {
+        await runPull();
+        pollMs = POLL_FAST_MS; // something arrived; a reply may be next.
+      } else {
+        pollMs = pollMs < POLL_MED_MS ? POLL_MED_MS : POLL_SLOW_MS;
+      }
+    } catch {
+      pollMs = POLL_SLOW_MS; // relay unreachable; do not hammer it.
+    }
+    schedulePoll(pollMs);
+  }
+
   // Resume from what was persisted, re-sending an unacked batch, then read
   // anything that arrived while this copy was away.
   void (async () => {
@@ -254,15 +308,23 @@ export function startMailboxSession(config: {
     void runPull();
     // In case rows were authored before the session was listening.
     schedulePublish();
+    // And from here it looks for the other copy's moves on its own.
+    schedulePoll(pollMs);
   })();
 
   window.addEventListener("message", onMessage);
 
   return {
-    pull: () => void runPull(),
+    pull: () => {
+      // Foreground: catch up now, and go back to the fast rate.
+      pollMs = POLL_FAST_MS;
+      void runPull();
+      schedulePoll(POLL_FAST_MS);
+    },
     stop: () => {
       stopped = true;
       window.clearTimeout(publishTimer);
+      window.clearTimeout(pollTimer);
       window.removeEventListener("message", onMessage);
       pending.clear();
     },

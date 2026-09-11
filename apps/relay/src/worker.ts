@@ -26,7 +26,10 @@ const cors = (origin: string | null): Record<string, string> => {
   return {
     "access-control-allow-origin": allow,
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type",
+    // `if-none-match` so a poll can send the tag; `etag` exposed so the client
+    // can read it back — neither is CORS-safelisted, so both must be named.
+    "access-control-allow-headers": "content-type,if-none-match",
+    "access-control-expose-headers": "etag",
     "access-control-max-age": "86400",
   };
 };

@@ -42,10 +42,24 @@ const json = (value: unknown): Response =>
 
 /** One document's mailbox. Named by the document id via `idFromName`. */
 export class MailboxDO {
+  /**
+   * The counter, held in memory across requests while the object is warm.
+   *
+   * The object is single-threaded, so this cannot race, and a `head` — the poll
+   * every open copy makes on a timer — answers from it without a storage read.
+   * Undefined until the first load, and after an eviction, when it is read once.
+   */
+  private counter?: number;
+
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env,
   ) {}
+
+  private async getCounter(): Promise<number> {
+    if (this.counter === undefined) this.counter = (await this.state.storage.get<number>("counter")) ?? 0;
+    return this.counter;
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -55,7 +69,16 @@ export class MailboxDO {
     if (!doc || !/^[0-9a-zA-Z._-]{1,128}$/.test(doc)) return new Response("bad document id", { status: 400 });
 
     if (request.method === "POST") return this.append(doc, request);
-    if (isHead) return text(String((await this.state.storage.get<number>("counter")) ?? 0));
+    if (isHead) {
+      // The head, with the cursor as an ETag: an unchanged mailbox is a 304
+      // with no body, which is the answer to a poll that found nothing.
+      const counter = await this.getCounter();
+      const tag = `"${counter}"`;
+      if (request.headers.get("if-none-match") === tag) {
+        return new Response(null, { status: 304, headers: { etag: tag } });
+      }
+      return new Response(String(counter), { status: 200, headers: { etag: tag } });
+    }
     return this.since(doc, Number(url.searchParams.get("since") ?? "0") || 0);
   }
 
@@ -74,10 +97,11 @@ export class MailboxDO {
     const already = await this.state.storage.get<number>(`d:${digest}`);
     if (typeof already === "number") return text(String(already));
 
-    const counter = (await this.state.storage.get<number>("counter")) ?? 0;
+    const counter = await this.getCounter();
     const seq = counter + 1;
     await this.env.MAILBOX_R2.put(`mailbox/${doc}/${seq}`, sealed);
     await this.state.storage.put<number>({ counter: seq, [`d:${digest}`]: seq });
+    this.counter = seq; // keep the in-memory copy the head answers from fresh.
     return text(String(seq));
   }
 

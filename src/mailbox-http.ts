@@ -49,6 +49,12 @@ const segment = (documentId: string): string => {
 export function httpMailbox(options: HttpMailboxOptions): Mailbox {
   const base = options.base.replace(/\/$/, "");
   const doFetch = options.fetch;
+  // The last head seen and the tag it came with, so an unchanged mailbox is a
+  // conditional request the relay answers with 304 — no body, no storage read.
+  // Transparent to the caller: a 304 returns the head already held. A relay
+  // that does not send a tag simply always answers 200, and this still works.
+  let lastHead = "0";
+  let lastTag: string | undefined;
 
   return {
     async append(documentId, sealed) {
@@ -62,9 +68,14 @@ export function httpMailbox(options: HttpMailboxOptions): Mailbox {
     },
 
     async head(documentId) {
-      const response = await doFetch(`${base}/${segment(documentId)}/head`);
+      const response = await doFetch(`${base}/${segment(documentId)}/head`, {
+        headers: lastTag ? { "if-none-match": lastTag } : {},
+      });
+      if (response.status === 304) return lastHead;
       if (!response.ok) throw new Error(`MAILBOX_HEAD_${response.status}`);
-      return (await response.text()).trim();
+      lastHead = (await response.text()).trim();
+      lastTag = response.headers.get("etag") ?? undefined;
+      return lastHead;
     },
 
     async since(documentId, cursor) {
