@@ -187,6 +187,23 @@ is not a detour.
   and the session slice: without it the mailbox does not function for real
   sharing at all. Named test must exercise the REAL key path (no injected key):
   two copies, one shares a link, the other opens it, a move crosses.
+- [x] **The key path works on real hardware.** First genuine two-device run
+  after the stable-key fix + deploy (`01bb9e5`): a move crossed the mailbox
+  between a phone and a PC, key carried by the link, no injection. The thing
+  Track 5 slice one set out to do.
+- [ ] **Refreshing a link re-merges instead of pulling.** On PC the friend
+  refreshed the `/d/` URL; that re-runs open-from-link (re-fetch the store
+  snapshot, sibling-merge against the held copy), so he got a merge prompt on
+  every new move — redundant with the mailbox, which was already syncing
+  silently. Fix: refreshing a link for a document already held opens the held
+  copy and pulls the mailbox, not re-merges the link's older snapshot. The link
+  is a first-delivery carrier; once held, the mailbox is the channel. Mostly
+  retired by the session slice (an invite adds a game once, not a snapshot
+  re-merged each refresh). Workaround meanwhile: foreground the tab or reopen
+  from the library, don't refresh the `/d/` URL.
+- [ ] **The familiarity card flashes Get → merge on first receipt.** The card
+  resolves in two passes — "new app" then "sibling, merge" — and the transition
+  shows. Settle the state before painting.
 - [ ] **File ping-pong when the mailbox doesn't engage.** First real 2-player
   test: the invite went out as a *file* (rate limit → file fallback), so no key,
   no mailbox — every move required re-sending the file. The keyed link is the
