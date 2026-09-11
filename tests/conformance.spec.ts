@@ -77,6 +77,19 @@ test.describe("the conformance suite", () => {
       // The reason, by name. A second implementation is held to the same word.
       if (entry.expect.code) expect(code).toBe(entry.expect.code);
 
+      // Some refusals happen before there is a report to give: an archive past
+      // the reader's bound is refused before it is inflated, so parsing it for a
+      // report would only raise the same refusal again. Such a case states no
+      // report expectations, and there is nothing here to check against one.
+      const wantsReport =
+        entry.expect.ok !== undefined ||
+        entry.expect.entries !== undefined ||
+        entry.expect.shell !== undefined ||
+        entry.expect.signature !== undefined ||
+        entry.expect.expiry !== undefined ||
+        entry.expect.sections !== undefined;
+      if (!wantsReport) return;
+
       const report = await auditContainer(parseContainer(source));
       const named = (status: string) =>
         report.entries

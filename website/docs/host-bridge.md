@@ -152,6 +152,7 @@ not what it claims.
 | :--- | :--- | :--- |
 | `NO_PAYLOAD` | no | No payload: probably not a container at all. |
 | `PAYLOAD_UNREADABLE` | no | The payload did not decode or unzip. |
+| `PAYLOAD_TOO_LARGE` | no | The archive declares, or inflates to, more than this reader will hold. |
 | `MANIFEST_MISSING` | no | No manifest, so nothing can be verified. |
 | `MANIFEST_UNREADABLE` | no | The manifest is not valid JSON. |
 | `UNSUPPORTED_ALGORITHM` | no | A digest algorithm this reader does not implement. |
