@@ -890,6 +890,47 @@ it. Where the session id comes from at write time, and the enforcement that read
 it back, belong to Steps 3–6; Step 1 is the column existing and every row
 carrying it.
 
+**T1-D27 — the bound is signed, and the pairing is enforced structurally,
+because signatures alone do not cover the unsigned document.** `max_parties` is
+the number a reader trusts when it drops a third party's rows (Step 3), so a
+bound an attacker can move is no bound. Two guards hold it, and they are needed
+for two different documents:
+
+*Signed documents — symmetry in the encoder.* `session` is added to **both**
+`signedViewOf` (which rebuilds the signed view from a manifest) and `signedBytes`
+(which encodes it). Symmetry is the whole of it: the verifier reconstructs the
+signed bytes from the manifest's current fields, so editing `max_parties`,
+stripping the `session` block, or **adding** one to a plain replicated document
+all recompute to bytes the signature was not made over, and verification fails.
+The failure mode this avoids is the one the very first review found — a
+one-directional reconciliation that checks what is *present* against the
+signature but never notices what is *absent*. Here absence is caught because
+`signedViewOf` reads the field: a missing `session` block reconstructs a view
+without it, against a signature made with it, and the two disagree. A field the
+encoder does not read is a field the signature does not protect, so this only
+works because the field is read on both sides — that is the invariant, and it is
+a test.
+
+*Every document — the structural pairing.* An unsigned document has no signature
+to fail, and unsigned is ordinary here. So the pairing is also refused
+structurally, whether or not the document is signed: a manifest carrying a
+`session` block **without** `requires: ["session"]`, or `requires: ["session"]`
+**without** a `session` block, is **malformed, not degraded** — refused by name
+as `MALFORMED_SESSION_PROFILE`, with the shape of the block checked too
+(`max_parties` a positive integer). Block-without-`requires` is the dangerous
+half: without this check an unsigned replicated document could carry a `session`
+block that a reader ignores, opening as plain replicated while looking like a
+session — exactly the silent degradation `requires` exists to refuse. The check
+runs beside `checkRequires`, at every carrier (§ the capability registry's
+per-carrier rule), so it cannot be enforced on the file and skipped on a link.
+
+`session` stays out of `IMPLEMENTED_CAPABILITIES` until a reader can actually
+hold a session (the enforcement steps), so a well-formed session document is
+refused today by capability, not opened half-built. What Step 1 ships is the
+compiler emitting the surface and the reader refusing a *malformed* one — the
+writer and the structural guard, ahead of the behaviour, in the readers-before-
+writers order the rest of this document keeps.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -1003,7 +1044,8 @@ merged" sends somebody looking for damage that is not there.
 
 | code | when |
 |---|---|
-| `REPLICATION_SCHEMA_INVALID` | compile: reserved `_r_` prefix, an author's own primary key, or `AUTOINCREMENT` (§3) |
+| `REPLICATION_SCHEMA_INVALID` | compile: reserved `_r_` prefix, an author's own primary key, `AUTOINCREMENT` (§3), or a session profile with no replicated table or `max_parties` below one (T1-D26) |
+| `MALFORMED_SESSION_PROFILE` | verify: a `session` block without `requires: ["session"]`, `requires: ["session"]` without a block, or a `session` block whose `max_parties` is not a positive integer (T1-D27) |
 | `REPLICATED_TABLE_IMMUTABLE` | runtime: an `UPDATE` or `DELETE` against a replicated table (§4) |
 | `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |

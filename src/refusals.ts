@@ -42,6 +42,13 @@ export const REFUSALS = {
     recoverable: false,
     means: "Published without its engine, for a host that already holds those exact bytes. This one does not.",
   },
+  MALFORMED_SESSION_PROFILE: {
+    recoverable: false,
+    means:
+      "A session block without requires:[session], the requirement without the block, or a " +
+      "max_parties that is not a positive integer. The two are one declaration; half of it is " +
+      "malformed, not a plain replicated document to open (T1-D27).",
+  },
 
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },

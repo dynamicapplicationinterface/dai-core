@@ -225,6 +225,57 @@ export function checkRequires(manifest: { requires?: unknown }): void {
 }
 
 /**
+ * Refuses a malformed session profile (T1-D27).
+ *
+ * The `session` block and `requires: ["session"]` are two halves of one
+ * declaration, and a document carrying one without the other is malformed, not
+ * degraded — refused by name rather than opened as plain replicated. This is the
+ * guard that holds for an *unsigned* document, which has no signature to fail:
+ * without it, an unsigned replicated document could carry a `session` block a
+ * reader ignores while looking like a session. The block's shape is checked too,
+ * because a bound that is not a positive integer is a bound nobody can enforce.
+ *
+ * Runs at every carrier, beside `checkRequires`, for the reason the registry
+ * gives: a guard enforced on the file and skipped on a link is one
+ * implementation refusing what another opens.
+ */
+export function checkSessionProfile(manifest: {
+  requires?: unknown;
+  session?: unknown;
+}): void {
+  const declaresCapability =
+    Array.isArray(manifest.requires) && manifest.requires.includes("session");
+  const block = manifest.session;
+  const hasBlock = block !== undefined && block !== null;
+
+  if (declaresCapability && !hasBlock) {
+    throw new ContainerError(
+      "MALFORMED_SESSION_PROFILE",
+      "This document requires the session capability but carries no session block. " +
+        "The two are one declaration; a document with only half of it is malformed.",
+    );
+  }
+  if (hasBlock && !declaresCapability) {
+    throw new ContainerError(
+      "MALFORMED_SESSION_PROFILE",
+      "This document carries a session block but does not require the session capability. " +
+        "Without the requirement a reader would open it as a plain replicated document and " +
+        "ignore the session — so it is refused rather than opened half-understood.",
+    );
+  }
+  if (!hasBlock) return;
+
+  const maxParties = (block as { max_parties?: unknown }).max_parties;
+  if (typeof maxParties !== "number" || !Number.isInteger(maxParties) || maxParties < 1) {
+    throw new ContainerError(
+      "MALFORMED_SESSION_PROFILE",
+      `This document's session bound (max_parties=${String(maxParties)}) is not a positive ` +
+        "integer. A bound a reader cannot enforce is not a bound.",
+    );
+  }
+}
+
+/**
  * Refuses a version this reader does not know, by name.
  *
  * Not damage: the file is fine and the person can do something about it,
@@ -745,6 +796,10 @@ export async function auditContainer(parsed: ParsedContainer): Promise<AuditRepo
 
   try {
     checkManifestVersion(manifest);
+    // Structural validity before capability support: a malformed pairing is
+    // named as malformed rather than shadowed by "capability not implemented"
+    // (T1-D27).
+    checkSessionProfile(manifest);
     checkRequires(manifest);
   } catch (error) {
     report.unavailable = (error as Error).message;
@@ -876,6 +931,7 @@ export async function verifyContainer(
 ): Promise<VerifiedContainer> {
   const parsed = parseContainer(source, options);
   checkManifestVersion(parsed.manifest);
+  checkSessionProfile(parsed.manifest);
   checkRequires(parsed.manifest);
   const report = await auditContainer(parsed);
 

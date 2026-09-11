@@ -149,9 +149,13 @@ test.describe("the capability list", () => {
   });
 
   test("a real container declaring a capability is refused rather than opened without it", async () => {
+    // `relay` rather than `session`: session now carries a pairing rule (a block
+    // and the requirement are one declaration, T1-D27), so it is refused as
+    // MALFORMED before the capability gate. `relay` is a plain unimplemented
+    // name — the example has to be an example of the thing being tested here.
     const html = await withManifest((m) => {
       m["manifestVersion"] = 4;
-      m["requires"] = ["session"];
+      m["requires"] = ["relay"];
     });
     await expect(verifyContainer(html)).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
   });
@@ -168,11 +172,12 @@ test.describe("the capability list", () => {
     // A document that declares a dependency is declaring it. Ignoring the
     // field because the version is older would be the silent degradation the
     // whole gate exists to prevent.
-    // A name this reader does not implement, on an older version. `session`
-    // rather than `replicated`, which this reader now does implement — an
-    // example has to be an example of the thing.
+    // A name this reader does not implement, on an older version. `relay`
+    // rather than `replicated` (which this reader implements) or `session`
+    // (which now carries a pairing rule and is refused as MALFORMED first,
+    // T1-D27) — an example has to be an example of the thing.
     const html = await withManifest((m) => {
-      m["requires"] = ["session"];
+      m["requires"] = ["relay"];
     });
     await expect(verifyContainer(html)).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
   });

@@ -214,6 +214,15 @@ export interface ContainerManifest {
    */
   replication?: { tables: string[]; level: number };
   /**
+   * The session bound, present only when the schema declares the session
+   * profile (T1-D26). In the signed set beside `replication`, because
+   * `max_parties` is the bound a reader enforces when it drops a party's rows
+   * past the roster, and an unsigned bound is one an attacker edits (T1-D27).
+   * Paired with `requires: ["session"]`: one without the other is
+   * `MALFORMED_SESSION_PROFILE`, never a document opened as plain replicated.
+   */
+  session?: { max_parties: number };
+  /**
    * The document this one replaces, by UUID. Covered by the signature, and
    * honoured by a host only when this document is signed by the same key the
    * host pinned for that one — otherwise anybody could claim to be the next
@@ -514,6 +523,7 @@ export async function buildContainer(
    * that exists today digests, signs and verifies unchanged.
    */
   let replication: { tables: string[]; level: number } | undefined;
+  let session: { max_parties: number } | undefined;
   let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
   if (schemaSql !== undefined) {
     const rewritten = rewriteReplicated(schemaSql);
@@ -523,6 +533,10 @@ export async function buildContainer(
       // parses says what the signature covers rather than merely re-sorting to
       // the same thing.
       replication = { tables: [...rewritten.tables].sort(), level: REPLICATION_LEVEL };
+      // The session bound rides the same declaration (T1-D26). `rewriteReplicated`
+      // has already refused a profile with no replicated table, so this is only
+      // set when there is something for the session to scope.
+      if (rewritten.session) session = { max_parties: rewritten.session.maxParties };
     }
   }
 
@@ -634,9 +648,15 @@ export async function buildContainer(
    * document by name and keeps opening every other one.
    */
   const version = input.manifestVersion ?? (replication ? 4 : MANIFEST_VERSION);
-  // The capability the document depends on, named so a reader without it
-  // refuses rather than opening a document whose writes it cannot make.
-  const requires = replication ? ["replicated"] : undefined;
+  // The capabilities the document depends on, named so a reader without them
+  // refuses rather than opening a document whose writes it cannot make. `session`
+  // is paired with the `session` block below, and a reader refuses one without
+  // the other by name (T1-D27).
+  const requires = replication
+    ? session
+      ? ["replicated", "session"]
+      : ["replicated"]
+    : undefined;
   // Version 3 (spec §9.2): the shell is an unsigned, self-attesting part and
   // leaves the signed set, so a host with its own shell verifies a signature
   // without reproducing the publisher's, and a template can change without
@@ -669,6 +689,7 @@ export async function buildContainer(
     supersedes,
     requires,
     replication,
+    session,
     generator,
     createdAt,
     algorithm: "SHA-256",
@@ -692,6 +713,7 @@ export async function buildContainer(
     ...(supersedes ? { supersedes } : {}),
     ...(requires ? { requires } : {}),
     ...(replication ? { replication } : {}),
+    ...(session ? { session } : {}),
     ...(generator ? { generator } : {}),
     createdAt,
     algorithm: "SHA-256",
@@ -818,6 +840,8 @@ export interface SignedView {
   requires?: string[];
   /** Present only when the schema declares replicated tables; version 4. */
   replication?: { tables: string[]; level: number };
+  /** Present only when the schema declares the session profile; version 4 (T1-D26). */
+  session?: { max_parties: number };
   /** Present only when set; version 3. */
   generator?: Generator;
   createdAt: string;
@@ -937,6 +961,7 @@ export function signedViewOf(manifest: {
   supersedes?: string;
   requires?: string[];
   replication?: { tables: string[]; level: number };
+  session?: { max_parties: number };
   generator?: Generator;
   createdAt: string;
   algorithm: string;
@@ -955,6 +980,9 @@ export function signedViewOf(manifest: {
     supersedes: manifest.supersedes,
     requires: manifest.requires,
     replication: manifest.replication,
+    // Read here so a stripped or edited block reconstructs to different bytes
+    // than the signature was made over, and fails closed (T1-D27).
+    session: manifest.session,
     generator: manifest.generator,
     createdAt: manifest.createdAt,
     algorithm: manifest.algorithm,
@@ -1016,6 +1044,16 @@ export function signedBytes(view: SignedView): Uint8Array {
         ["level", view.replication.level],
       ]),
     );
+  }
+  /*
+   * The session bound, under the signature (T1-D27). Encoded here and read back
+   * by `signedViewOf` — the symmetry is the guarantee: adding, editing or
+   * stripping the block reconstructs to bytes the signature was not made over.
+   * Absent when the schema declares no session profile, so a plain replicated
+   * document signs exactly the bytes it signed before this field existed.
+   */
+  if (view.session) {
+    fields.set("session", new Map<CborValue, CborValue>([["max_parties", view.session.max_parties]]));
   }
   if (view.generator?.tool) {
     const generator = new Map<CborValue, CborValue>([["tool", view.generator.tool]]);
