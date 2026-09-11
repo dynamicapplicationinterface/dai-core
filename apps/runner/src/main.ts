@@ -2695,6 +2695,10 @@ async function sendDocument(): Promise<void> {
       return;
     }
     close();
+    // Sharing is the moment a solo document becomes a shared one: the key was
+    // just minted, so the mailbox that had nothing to run on can now start. A
+    // no-op unless the document is replicated and a relay is configured.
+    void startMailboxIfPossible();
     // The card and nothing beside it. A line of text under the card was
     // this app talking over the app being sent; the card already says the
     // name, shows the icon, and where it opens.

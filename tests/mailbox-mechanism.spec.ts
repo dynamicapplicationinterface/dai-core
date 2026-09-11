@@ -23,7 +23,15 @@ const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocat
  * frame's nudge, the seal, the append, the pull, and the apply, wired through
  * `main.ts`.
  */
-test.describe("a game continues over the mailbox", () => {
+/*
+ * NOT the key-path proof. This test injects one key into both copies through
+ * `__runner.useRelay(base, key)`, so the two sides trivially share a key and the
+ * batches open. It proves the mechanism — the frame's nudge, the seal, the
+ * append, the pull, the apply — and nothing about how two real people converge
+ * on a key. The key path is proven in mailbox-link-e2e.spec.ts, which shares a
+ * link and opens it, with no injected key. See tests/README.md.
+ */
+test.describe("the mailbox mechanism (with an injected key — not the key path)", () => {
   test.slow();
 
   let server: Server;
