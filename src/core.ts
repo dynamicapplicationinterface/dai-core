@@ -951,6 +951,17 @@ export async function toSectionedContainer(
  * Verifiers reconstruct the signed bytes through this rather than assembling
  * them by hand, so a field added to the signed set reaches every verifier at
  * once instead of only the one that was remembered.
+ *
+ * **The general rule, for whoever adds the next manifest field: a field that is
+ * not read here is not covered by the signature.** The verifier recomputes the
+ * signed bytes from what this function reads out of the manifest, so a field the
+ * compiler signs but this omits verifies fine when edited or stripped — and a
+ * field this omits entirely is unsigned by default, editable by anyone. Covering
+ * a new field is exactly two lines in two places: read it here, encode it in
+ * `signedBytes`. Omit either and the field is decoration. This is the
+ * one-directional-reconciliation lesson (the first review's signature bug)
+ * generalised: what is *absent* is only noticed if the field is read, so the
+ * absence changes the recomputed bytes. `session` (T1-D27) is the worked example.
  */
 export function signedViewOf(manifest: {
   manifestVersion: number;

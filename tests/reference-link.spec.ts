@@ -540,10 +540,10 @@ test.describe("the third carrier and the one rule", () => {
     const archive = { ...parseContainer(built.html).archive };
     const manifest = JSON.parse(new TextDecoder().decode(archive[MANIFEST_ENTRY]!)) as Record<string, unknown>;
     manifest["manifestVersion"] = 4;
-    // `relay`, an unimplemented capability with no pairing rule. `session` now
-    // requires a matching block (T1-D27) and is refused as MALFORMED first, so
-    // it is no longer a clean example of "a capability this reader lacks."
-    manifest["requires"] = ["relay"];
+    // A reserved name that will never be implemented, so the example means "a
+    // capability this reader lacks" and does not borrow a real name — `session`
+    // now requires a matching block (T1-D27) and is MALFORMED without it.
+    manifest["requires"] = ["not-a-capability"];
     archive[MANIFEST_ENTRY] = new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`);
     const html = built.html.replace(
       /(<script type="application\/octet-stream" id="dai-payload">)([\s\S]*?)(<\/script>)/,
@@ -561,7 +561,7 @@ test.describe("the third carrier and the one rule", () => {
     const back = JSON.parse(
       new TextDecoder().decode(parseContainer(returned).archive[MANIFEST_ENTRY]!),
     ) as Record<string, unknown>;
-    expect(back["requires"]).toEqual(["relay"]);
+    expect(back["requires"]).toEqual(["not-a-capability"]);
 
     // And the refusal happens where every carrier's refusal happens.
     await expect(verifyContainer(returned)).rejects.toMatchObject({

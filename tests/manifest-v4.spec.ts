@@ -149,13 +149,13 @@ test.describe("the capability list", () => {
   });
 
   test("a real container declaring a capability is refused rather than opened without it", async () => {
-    // `relay` rather than `session`: session now carries a pairing rule (a block
-    // and the requirement are one declaration, T1-D27), so it is refused as
-    // MALFORMED before the capability gate. `relay` is a plain unimplemented
-    // name — the example has to be an example of the thing being tested here.
+    // A reserved name that will never be implemented, so this test says what it
+    // means — "any capability this reader lacks" — rather than borrowing a real
+    // name that a later track implements (or, like `session`, gives pairing
+    // semantics that make it MALFORMED before the capability gate, T1-D27).
     const html = await withManifest((m) => {
       m["manifestVersion"] = 4;
-      m["requires"] = ["relay"];
+      m["requires"] = ["not-a-capability"];
     });
     await expect(verifyContainer(html)).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
   });
@@ -172,12 +172,12 @@ test.describe("the capability list", () => {
     // A document that declares a dependency is declaring it. Ignoring the
     // field because the version is older would be the silent degradation the
     // whole gate exists to prevent.
-    // A name this reader does not implement, on an older version. `relay`
-    // rather than `replicated` (which this reader implements) or `session`
-    // (which now carries a pairing rule and is refused as MALFORMED first,
-    // T1-D27) — an example has to be an example of the thing.
+    // A reserved name that will never be implemented, on an older version — so
+    // the example stays an example and does not break when the next real
+    // capability lands (`replicated` this reader implements; `session` is
+    // MALFORMED without its block, T1-D27).
     const html = await withManifest((m) => {
-      m["requires"] = ["relay"];
+      m["requires"] = ["not-a-capability"];
     });
     await expect(verifyContainer(html)).rejects.toMatchObject({ code: "UNSUPPORTED_CAPABILITY" });
   });
