@@ -163,6 +163,13 @@ is not a detour.
   wrong guidance for a link recipient. This is the "sixteenth" — device-gated.
 - [ ] Turn/seat model is not yet in the chess app or the recipe — it is the next
   real build once the flow is agreed.
+- [ ] **Automatic in-app refresh (polling) — the missing middle.** Slice one is
+  pull-on-foreground (manual); push is slice two (out-of-app notification). The
+  gap is the app updating itself *while open*, without a manual refresh — which
+  is what made the live test feel broken. Small: while the tab is visible, poll
+  `head()` every few seconds (cheap — the relay's counter), pull when it moves
+  past the cursor, pause while hidden. Slots before or alongside D22; it is the
+  thing that makes the two-phone experience feel live.
 - [ ] "Your move" standing indicator (in-app) — buildable now.
 - [ ] Push ("your turn" when not in the app) = slice two; motivated by this test.
 - [ ] **Version-number update prompt** — app menu compares running build to live
