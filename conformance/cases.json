@@ -615,6 +615,20 @@
         "7",
         "2.2"
       ]
+    },
+    {
+      "name": "oversize",
+      "file": "cases/oversize.dai.html",
+      "form": "viewer",
+      "summary": "The archive declares an entry larger than a reader will hold. Refused before it is inflated, and before any digest — a few compressed bytes can otherwise name an output no host allocates.",
+      "expect": {
+        "mount": false,
+        "code": "PAYLOAD_TOO_LARGE"
+      },
+      "cites": [
+        "7",
+        "7.1"
+      ]
     }
   ]
 }

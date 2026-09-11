@@ -21,7 +21,7 @@
  * which is the primary way a container is opened. See §1 of the Phase 2 spec.
  */
 import { zipSync } from "fflate";
-import { unzipBounded } from "../unzip.js";
+import { unzipBounded, ArchiveTooLarge } from "../unzip.js";
 // Imported rather than reimplemented: the host derives the same value from the
 // same helper, and two spellings of "canonical" would disagree eventually.
 import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
@@ -92,6 +92,7 @@ function randomHex(length: number): string {
 type RefusalReason =
   | "NO_PAYLOAD"
   | "PAYLOAD_UNREADABLE"
+  | "PAYLOAD_TOO_LARGE"
   | "MANIFEST_UNREADABLE"
   | "MANIFEST_MISSING"
   | "UNSUPPORTED_ALGORITHM"
@@ -2538,6 +2539,10 @@ async function boot(): Promise<void> {
     files = unzipBounded(decoded);
     mark("unzipped");
   } catch (error) {
+    if (error instanceof ArchiveTooLarge) {
+      refuse("PAYLOAD_TOO_LARGE", "The archive declares more than this reader will hold.", String(error));
+      return;
+    }
     refuse("PAYLOAD_UNREADABLE", "Payload could not be decoded.", String(error));
     return;
   }

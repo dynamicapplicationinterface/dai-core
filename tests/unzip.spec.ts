@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { zipSync } from "fflate";
-import { ENTRY_COUNT_CAP, unzipBounded } from "../src/unzip.js";
+import { ENTRY_COUNT_CAP, unzipBounded, ArchiveTooLarge } from "../src/unzip.js";
 
 /**
  * An archive is read within bounds.
@@ -41,5 +41,13 @@ test.describe("reading an archive within bounds", () => {
     const started = Date.now();
     expect(() => unzipBounded(archive)).toThrow(/more than an entry may be/);
     expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test("the limits are the reader's: a host may set them lower", () => {
+    // An archive well inside the defaults is refused against a tighter bound a
+    // host under memory pressure chose. Nothing in the file may raise them.
+    const archive = zipSync({ "modest.bin": new Uint8Array(4096) }, { level: 0 });
+    expect(() => unzipBounded(archive, { entry: 1024, archive: 1024, count: 16 })).toThrow(ArchiveTooLarge);
+    expect(Object.keys(unzipBounded(archive))).toEqual(["modest.bin"]);
   });
 });

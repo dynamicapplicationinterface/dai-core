@@ -12,12 +12,27 @@ import { unzipSync } from "fflate";
  * whose real size differs from its declared size comes out truncated and
  * fails its digest, which is a refusal too.
  *
- * The caps are generous for a document: a database of some hundreds of
- * megabytes fits, a decompression bomb does not.
+ * The limits are the reader's, not the file's. These are defaults, generous
+ * for a document: a database of some hundreds of megabytes fits, a
+ * decompression bomb does not. A host under memory pressure MAY pass lower
+ * ones; nothing in the file may raise them.
  */
 export const ENTRY_CAP = 512 * 1024 * 1024;
 export const ARCHIVE_CAP = 768 * 1024 * 1024;
 export const ENTRY_COUNT_CAP = 4096;
+
+/** The bytes a reader will hold. Defaults above; a host may set them lower. */
+export interface ArchiveLimits {
+  entry: number;
+  archive: number;
+  count: number;
+}
+
+export const DEFAULT_LIMITS: ArchiveLimits = {
+  entry: ENTRY_CAP,
+  archive: ARCHIVE_CAP,
+  count: ENTRY_COUNT_CAP,
+};
 
 export class ArchiveTooLarge extends Error {
   constructor(message: string) {
@@ -26,21 +41,24 @@ export class ArchiveTooLarge extends Error {
   }
 }
 
-export function unzipBounded(bytes: Uint8Array): Record<string, Uint8Array> {
+export function unzipBounded(
+  bytes: Uint8Array,
+  limits: ArchiveLimits = DEFAULT_LIMITS,
+): Record<string, Uint8Array> {
   let total = 0;
   let count = 0;
   return unzipSync(bytes, {
     filter: (entry) => {
       count += 1;
-      if (count > ENTRY_COUNT_CAP) {
-        throw new ArchiveTooLarge(`The archive declares more than ${ENTRY_COUNT_CAP} entries.`);
+      if (count > limits.count) {
+        throw new ArchiveTooLarge(`The archive declares more than ${limits.count} entries.`);
       }
-      if (entry.originalSize > ENTRY_CAP) {
+      if (entry.originalSize > limits.entry) {
         throw new ArchiveTooLarge(`${entry.name} declares ${entry.originalSize} bytes, more than an entry may be.`);
       }
       total += entry.originalSize;
-      if (total > ARCHIVE_CAP) {
-        throw new ArchiveTooLarge(`The archive declares more than ${ARCHIVE_CAP} bytes in all.`);
+      if (total > limits.archive) {
+        throw new ArchiveTooLarge(`The archive declares more than ${limits.archive} bytes in all.`);
       }
       return true;
     },

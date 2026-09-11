@@ -11,7 +11,7 @@
  * imports, no DOM types. A host that has a `File` reads the text itself.
  */
 import { zipSync } from "fflate";
-import { unzipBounded } from "./unzip.js";
+import { unzipBounded, ArchiveTooLarge } from "./unzip.js";
 import { isRefusalCode, type RefusalCode } from "./refusals.js";
 import { verifyCountersignatures, verifySign1, type CountersignatureVerdict } from "./cose.js";
 import {
@@ -297,6 +297,9 @@ export function parseContainer(
   try {
     archive = unzipBounded(fromBase64(payload));
   } catch (cause) {
+    if (cause instanceof ArchiveTooLarge) {
+      throw new ContainerError("PAYLOAD_TOO_LARGE", cause.message);
+    }
     throw new ContainerError("PAYLOAD_UNREADABLE", `The container's payload could not be read (${String(cause)}).`);
   }
 
@@ -365,6 +368,9 @@ function parseSectioned(bytes: Uint8Array, options: ParseOptions = {}): ParsedCo
   try {
     archive = unzipBounded(payloadBytes);
   } catch (cause) {
+    if (cause instanceof ArchiveTooLarge) {
+      throw new ContainerError("PAYLOAD_TOO_LARGE", cause.message);
+    }
     throw new ContainerError("PAYLOAD_UNREADABLE", `The container's payload could not be read (${String(cause)}).`);
   }
 

@@ -843,9 +843,9 @@ refuses inside a frame shows its reason to nobody.
 stated in advance — one for each failure this section describes, and several
 that must be accepted. An implementation claiming to read this format SHOULD
 run them and reach the stated verdict for each, including the reason and not
-only the accept-or-refuse. Among them is **oversize** — an archive whose
-declared sizes understate an entry that inflates past them; refused,
-`PAYLOAD_TOO_LARGE`, before any digest is computed.
+only the accept-or-refuse. Among them is **oversize** — an archive that
+declares an entry larger than the reader will hold; refused,
+`PAYLOAD_TOO_LARGE`, before it is inflated and before any digest is computed.
 
 The suite is where this document stops being a description of one program.
 

@@ -21,6 +21,7 @@ export const REFUSALS = {
   // ---- not a container, or not one this reader can read
   NO_PAYLOAD: { recoverable: false, means: "No payload: probably not a container at all." },
   PAYLOAD_UNREADABLE: { recoverable: false, means: "The payload did not decode or unzip." },
+  PAYLOAD_TOO_LARGE: { recoverable: false, means: "The archive declares, or inflates to, more than this reader will hold." },
   MANIFEST_MISSING: { recoverable: false, means: "No manifest, so nothing can be verified." },
   MANIFEST_UNREADABLE: { recoverable: false, means: "The manifest is not valid JSON." },
   UNSUPPORTED_ALGORITHM: { recoverable: false, means: "A digest algorithm this reader does not implement." },

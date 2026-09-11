@@ -142,6 +142,7 @@ const CITES = {
   "sectioned-stale-footer": ["2", "7"],
   "sectioned-missing-data": ["2", "7"],
   "not-a-container": ["7", "2.2"],
+  "oversize": ["7", "7.1"],
 };
 
 /** Section numbers the specification actually has. */
@@ -770,11 +771,35 @@ define(
   }),
 );
 
+define(
+  "oversize",
+  "The archive declares an entry larger than a reader will hold. Refused before it is inflated, and before any digest — a few compressed bytes can otherwise name an output no host allocates.",
+  { mount: false, code: "PAYLOAD_TOO_LARGE" },
+  async () => {
+    // A valid container, then one number changed: the uncompressed size in the
+    // first central-directory record, set past the reader's 512 MiB per-entry
+    // cap. A reader takes the size from the central directory and refuses in the
+    // entry filter, before the local data is read or inflated — so the file
+    // stays a few kilobytes while declaring half a gigabyte.
+    const { html } = await buildContainer(base());
+    const zip = Buffer.from(html.match(PAYLOAD_RE)[2], "base64");
+    // The first central-directory record, reached through the end-of-central-
+    // directory record rather than by scanning for its signature: those four
+    // bytes occur inside compressed data too, and patching one of those
+    // corrupts an entry instead of changing a declared size.
+    const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (eocd < 0) throw new Error("the built archive has no end-of-central-directory record");
+    const cd = zip.readUInt32LE(eocd + 16); // offset of the central directory
+    if (zip.readUInt32LE(cd) !== 0x02014b50) throw new Error("no central-directory record where the archive says it is");
+    zip.writeUInt32LE(0x40000001, cd + 24); // 1 GiB + 1, well over the 512 MiB ENTRY_CAP
+    const body = html.replace(PAYLOAD_RE, (_, open, __, close) => open + zip.toString("base64") + close);
+    return { file: "oversize.dai.html", body };
+  },
+);
+
 /** What our own reader concludes, reduced to the shape the suite states. */
 async function observe(body) {
   const source = typeof body === "string" ? body : new Uint8Array(body);
-  const parsed = parseContainer(source);
-  const report = await auditContainer(parsed);
 
   // Whether a host may run this, taken from the function a host actually calls
   // rather than inferred from the report. The two are meant to agree, and a
@@ -786,6 +811,17 @@ async function observe(body) {
   } catch (error) {
     mount = false;
     code = error && error.code;
+  }
+
+  // The report is the account of why. Some refusals happen before there is a
+  // report to give — an archive past the reader's bound is refused before it is
+  // inflated, so no digest can be spoken about — and then the verdict is
+  // whatever verifyContainer named, and nothing more.
+  let report;
+  try {
+    report = await auditContainer(parseContainer(source));
+  } catch {
+    return code ? { mount, code } : { mount };
   }
 
   const named = (status) =>
