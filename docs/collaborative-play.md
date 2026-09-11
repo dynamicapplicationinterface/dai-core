@@ -173,18 +173,25 @@ is not a detour.
   ever showing "Open a document somebody sent you".
 - [ ] **File ping-pong when the mailbox doesn't engage.** First real 2-player
   test: the invite went out as a *file* (rate limit → file fallback), so no key,
-  no mailbox — every move required re-sending the file. This is the mailbox's
-  whole purpose; the fix is the keyed link, not hardening the file flow. Confirms
-  the priority: get the link working (raise `DAI_PRESIGN_PER_HOUR`, Share→Send).
-- [ ] **`ROW_REJECTED` "A different row already exists" on the file + multi-tab
-  path.** Opening the opponent's file from Messages opened a *new* Safari tab
-  (two copies of one game in one browser), and the merge hit a replica-identity
-  collision (two copies stamped the same `(replica, seq)`). The mailbox path is
-  proven clean (settleReplica fix + e2e); this is specific to file-reopen +
-  multiple tabs. Investigate: (a) opening a file for a document already held
-  should sibling-merge, not open a second tab; (b) whether the file-open replica
-  adoption tangles when the same document is open in two tabs. Retired by the
-  mailbox in practice, but a real bug in the flow we still ship.
+  no mailbox — every move required re-sending the file. The keyed link is the
+  fix. Priority: raise `DAI_PRESIGN_PER_HOUR`, Share→Send. (The file carrier is
+  NOT being retired — it is the no-relay fallback, the enterprise self-host path,
+  and the offline path. It stays first-class.)
+- [ ] **P1 — `ROW_REJECTED` "A different row already exists": a D22 invariant
+  violation, on any carrier.** Two copies allocated the same `(replica, seq)` for
+  different moves — which means two copies shared one replica identity. That is
+  exactly the case D22 forbids on *every* carrier, and the one the decision
+  called worse than a compatibility gap: two honest moves, one refused as
+  tampering. The mailbox sidesteps the *symptom* (settleReplica + e2e); it does
+  not fix the *bug*. Two Safari tabs on one held document is a normal user, not
+  a test artifact. Candidate causes, both host bugs: (a) the new tab mounted a
+  second working copy under the same library entry and the two raced on `seq`;
+  (b) the "own copy returning" check treated a sibling as itself, so it never
+  adopted a fresh replica. Fix, same shape as before: **one document, one replica
+  per host**, plus a cross-tab lock or a single shared connection so a second tab
+  cannot allocate. Named test: **two tabs on one held document never allocate the
+  same `seq`.** Order: fix **after** the link run, **before** the session slice —
+  the slice multiplies documents, and a per-host identity bug scales with them.
 - [ ] **Document handoffs and user sessions in the SDK / recipe, with use
   cases.** How a session is created, invited, joined, closed; how a handoff
   works (build-and-hand-over, link, sibling merge); worked examples an app
