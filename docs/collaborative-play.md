@@ -121,6 +121,16 @@ stale-opener / merge-mismatch class of bug.
 
 ## The session slice — build in order (Chris's spec)
 
+**This is Track 3 of the replicated-tables plan, not a new track.** The session
+profile — its roster, `max_parties`, the D4 export-to-one-session and D6
+compaction rules — was specified in `docs/replicated-tables.md` before any of
+the mailbox, polling or D22 work was built. It is arriving now only because
+chess pulled it forward: the two-phone loop is what needed sessions, not
+documents, as the unit of play. So build the profile the plan already specifies
+— read Track 3 / the D-numbered rules there first — not a fresh design that
+happens to share the word "session". Where this note and the plan differ, the
+plan is the specification; this note is the running order and chess's use of it.
+
 1. **Session id on replicated rows.** Every row carries the session it belongs
    to; roster and close rows are replicated rows in the same tables, signed by
    replica key where Track 2 exists, claimed at Level 1.
