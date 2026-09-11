@@ -795,6 +795,15 @@ last moment the problem costs nothing.
 A host MUST perform these checks, in this order, and MUST NOT mount anything
 until all of them pass.
 
+Before it inflates anything, a reader MUST bound decompression. It sets, in
+advance, a limit on the bytes it will produce for any one entry, on the total
+across entries, and on the number of entries, and it MUST refuse rather than
+allocate when a declared size, the declared total, or the entry count exceeds
+that limit, and MUST stop and refuse if the bytes an entry actually inflates to
+run past the size it declares. Like an unknown version (§9.1) this is reached
+before step 1 and reported as `PAYLOAD_TOO_LARGE`: a few compressed bytes can
+otherwise declare, or inflate to, an output no host can hold.
+
 1. **Structure.** The container parses, and carries every required section.
 2. **Sections** (sectioned form only). Every section matches the digest in the
    table, and the footer matches the database it describes.
@@ -834,7 +843,9 @@ refuses inside a frame shows its reason to nobody.
 stated in advance — one for each failure this section describes, and several
 that must be accepted. An implementation claiming to read this format SHOULD
 run them and reach the stated verdict for each, including the reason and not
-only the accept-or-refuse.
+only the accept-or-refuse. Among them is **oversize** — an archive whose
+declared sizes understate an entry that inflates past them; refused,
+`PAYLOAD_TOO_LARGE`, before any digest is computed.
 
 The suite is where this document stops being a description of one program.
 
@@ -853,6 +864,7 @@ person's work is still in hand.
 |---|---|---|
 | `NO_PAYLOAD` | no | No payload: probably not a container |
 | `PAYLOAD_UNREADABLE` | no | The payload did not decode or unzip |
+| `PAYLOAD_TOO_LARGE` | no | The archive declares, or inflates to, more than the reader will hold (§7) |
 | `MANIFEST_MISSING` | no | No manifest, so nothing can be verified |
 | `MANIFEST_UNREADABLE` | no | The manifest is not valid JSON |
 | `UNSUPPORTED_ALGORITHM` | no | A digest algorithm this reader does not implement |
@@ -879,8 +891,9 @@ person's work is still in hand.
 | `HOST_REFUSED` | no | The host declined for a reason of its own; see the message |
 
 When more than one applies, an implementation MUST report the first in this
-order: unsupported crypto or algorithm; a section that is missing, damaged or
-mismatched; an entry; the shell; expiry; the signature. A section digest covers
+order: a payload that exceeds the reader's bound; unsupported crypto or
+algorithm; a section that is missing, damaged or mismatched; an entry; the
+shell; expiry; the signature. A section digest covers
 every byte of a section and an entry digest only what unzipped out of one, so
 the section is the more precise account when both fail.
 
