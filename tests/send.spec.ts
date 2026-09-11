@@ -256,6 +256,54 @@ test.describe("sending a document", () => {
     await expect(page.locator("#send-retire")).toHaveText(/Stop the link I shared before/);
   });
 
+  /**
+   * A replicated app, too big to fit a link inline — so it needs the store, and
+   * a store that is down forces the fallback this test is about. The filler is
+   * why: a small document travels inside its link and never reaches the store.
+   */
+  async function replicatedDocument(prefix: string): Promise<string> {
+    const filler = Buffer.from(crypto.getRandomValues(new Uint8Array(60 * 1024))).toString("base64");
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    writeFileSync(join(dir, "index.html"), `<!doctype html><meta charset="utf-8"><p>game</p><!-- ${filler} -->`, "utf8");
+    writeFileSync(
+      join(dir, "schema.sql"),
+      "-- dai:replicated\nCREATE TABLE moves (ply INTEGER NOT NULL, san TEXT NOT NULL);\n",
+      "utf8",
+    );
+    const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Played together" });
+    const file = join(dir, "played.dai.html");
+    writeFileSync(file, built.html, "utf8");
+    return file;
+  }
+
+  test("a replicated app is not silently turned into a keyless file when the link fails", async ({ page }) => {
+    test.slow();
+    // A file has no key and cannot join the mailbox, so it is not the invite
+    // that was asked for. The link failing is said and stopped, not swapped.
+    const file = await replicatedDocument("dai-send-repl-down-");
+    await page.route("**/api/presign", (route) =>
+      route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "down" }) }),
+    );
+    await page.addInitScript(() => {
+      delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+    });
+    let exported = false;
+    page.on("download", () => {
+      exported = true;
+    });
+
+    await page.goto(RUNNER_URL);
+    await openFile(page, file);
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.click("#more");
+    await page.click("#send");
+    await page.click("#send-go");
+    await expect(page.locator("#report")).toContainText(/invite link could not be made/i, { timeout: 60_000 });
+    // And no keyless file was handed over in place of the link.
+    await page.waitForTimeout(1000);
+    expect(exported, "a keyless file was exported for a replicated app").toBe(false);
+  });
+
   test("when the store cannot be reached, the file is offered and the person is told", async ({ page }) => {
     test.slow();
     const file = await bigDocument("dai-send-down-", false);
