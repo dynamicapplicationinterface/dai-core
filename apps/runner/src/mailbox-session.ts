@@ -26,6 +26,28 @@ const fromBase64Url = (value: string): Uint8Array => {
   return out;
 };
 
+/**
+ * The key the mailbox seals under, derived from the document's root key.
+ *
+ * The root is never used to seal directly: HKDF derives the mailbox key from it,
+ * so a session (Track 3) can key its own mailbox off the same root by deriving
+ * under the session id. Slice one has one implicit session, so the info is a
+ * fixed label; when sessions land it becomes the session id. Both parties derive
+ * the same key from the same root and label, with no round trip.
+ */
+async function deriveMailboxKey(root: Uint8Array, label: string): Promise<Uint8Array> {
+  const hk = await crypto.subtle.importKey("raw", root as unknown as ArrayBuffer, "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode(label) },
+    hk,
+    256,
+  );
+  return new Uint8Array(bits);
+}
+
+/** The slice-one mailbox label; becomes the session id when Track 3 lands. */
+const MAILBOX_LABEL = "dai:mailbox:v1";
+
 export interface MailboxSession {
   /** Read anything new from the relay and merge it — call on foreground and once on start. */
   pull(): void;
@@ -61,13 +83,18 @@ export function startMailboxSession(config: {
   sessionNonce: string;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
-  let key: Uint8Array;
+  let rootKey: Uint8Array;
   try {
-    key = fromBase64Url(config.keyBase64Url);
-    if (key.byteLength !== 32) return null;
+    rootKey = fromBase64Url(config.keyBase64Url);
+    if (rootKey.byteLength !== 32) return null;
   } catch {
     return null;
   }
+  // Derived once, lazily: the mailbox seals under HKDF(root, label), never the
+  // root itself. See deriveMailboxKey.
+  let mailboxKeyPromise: Promise<Uint8Array> | null = null;
+  const mailboxKey = (): Promise<Uint8Array> =>
+    (mailboxKeyPromise ??= deriveMailboxKey(rootKey, MAILBOX_LABEL));
 
   const { documentUuid, mailbox, frame, sessionNonce } = config;
   let state: MailboxRecord = {
@@ -146,7 +173,7 @@ export function startMailboxSession(config: {
       const head = Number(answer["head"] ?? state.watermark.seq);
       const replica = String(answer["replica"] ?? state.watermark.replica);
       if (batchBytes instanceof Uint8Array && batchBytes.byteLength > 0) {
-        const sealed = await sealBatch(batchBytes, key);
+        const sealed = await sealBatch(batchBytes, await mailboxKey());
         // Persisted before the send, so a kill mid-publish resumes it.
         state = { ...state, pending: { sealed, head, replica } };
         save();
@@ -187,7 +214,7 @@ export function startMailboxSession(config: {
         mailbox,
         documentUuid,
         state.cursor,
-        (sealed) => openBatch(sealed, key),
+        async (sealed) => openBatch(sealed, await mailboxKey()),
         async (plaintext) => {
           await ask({ type: "DAI_HOST_APPLY_BATCH", batch: plaintext }, "DAI_HOST_APPLIED");
         },

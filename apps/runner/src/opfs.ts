@@ -25,6 +25,19 @@ export interface LibraryItem {
   html: string;
   publicKeyFingerprint?: string;
   /**
+   * The document's own key (base64url, 32 bytes), for a replicated document.
+   *
+   * The root the whole exchange runs on: minted once at creation, kept here for
+   * the life of the document, carried in every share link, and the key the
+   * store seal and the mailbox both use. A copy that arrived by link takes the
+   * key from the link and keeps it here; a copy created on this device mints its
+   * own. It is never merged — it is a property of holding the document, not of
+   * its data — and a future recipient-bound tier (Track 4) derives it rather
+   * than storing it. The mailbox does not seal under this directly: it derives a
+   * key from it (HKDF), so a session can key its own mailbox off the same root.
+   */
+  documentKey?: string;
+  /**
    * Counts the saves this device has committed for the document. A tab
    * saving against a revision it did not see last is behind another tab,
    * and its whole-database write would put the newer work back.

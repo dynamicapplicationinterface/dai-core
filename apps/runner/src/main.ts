@@ -52,7 +52,7 @@ import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
-import { resolveMailboxKey, startMailboxSession, type MailboxSession } from "./mailbox-session.js";
+import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -2515,9 +2515,16 @@ async function linkToSend(html: string, preview: boolean): Promise<{ link: strin
    * Inside the link is still what a document does when there is no store
    * to reach: the link goes without a card rather than not at all.
    */
+  // A replicated document seals under its own stable key — the one its mailbox
+  // uses — so every share carries the same key and the two sides converge. A
+  // document with nothing to sync keeps a fresh key per share.
+  const key =
+    loaded && declaresReplication(loaded.manifest)
+      ? await ensureDocumentKey(loaded.manifest.documentUuid)
+      : undefined;
   if (store) {
     try {
-      const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon });
+      const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon, key });
       // Remembered, so the person who shared it can take it back (see retireShares).
       if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
       return { link: withGround(links.known), uploaded: true };
@@ -3010,15 +3017,59 @@ let arrivedKey: string | undefined;
 /** The running mailbox loop for the mounted document, or none. */
 let mailboxSession: MailboxSession | null = null;
 
+/** base64url of 32 random bytes, for a fresh document key. */
+function mintKeyBase64Url(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * The document's root key: the one the store seal and the mailbox both run on.
+ *
+ * The key from the link this copy opened wins and is written into the library
+ * entry, so a later launch that carries no fragment (a home-screen icon) still
+ * has it. Otherwise it is whatever this copy has kept. Null for a copy that has
+ * never been shared and never opened a link — which has no partner yet, so no
+ * mailbox, which is correct and not a failure.
+ */
+async function documentRootKey(documentUuid: string): Promise<string | null> {
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  if (arrivedKey) {
+    if (held && held.documentKey !== arrivedKey) {
+      await saveCartridgeToLibrary({ ...held, documentKey: arrivedKey }).catch(() => undefined);
+    }
+    return arrivedKey;
+  }
+  return held?.documentKey ?? null;
+}
+
+/**
+ * The document's root key, minting one if it has none — for the moment of
+ * sharing, which is where a solo document becomes a shared one.
+ *
+ * Minted at the invite, not before: until then there is no second party, so no
+ * key needs to exist and none is put in a link. From here every share of this
+ * document carries the same key, so the two sides converge on one mailbox.
+ */
+async function ensureDocumentKey(documentUuid: string): Promise<string> {
+  const existing = await documentRootKey(documentUuid);
+  if (existing) return existing;
+  const key = mintKeyBase64Url();
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  if (held) await saveCartridgeToLibrary({ ...held, documentKey: key });
+  return key;
+}
+
 /**
  * Starts the mailbox loop for the mounted document, when there is one to start.
  *
  * A mailbox needs three things: the document declares replicated tables, a
  * relay is configured, and this device holds the document's key — from the
- * link it opened, or kept from a link it opened before. A document that only
- * ever arrived as a file has no key and so no mailbox; that is the open tier,
- * not a failure, and the app says as much rather than syncing silently or not
- * at all.
+ * link it opened, or kept from a link it opened or shared before. A document
+ * that only ever arrived as a file, and was never shared, has no key and so no
+ * mailbox; that is the open tier, not a failure, and the app says as much.
  */
 async function startMailboxIfPossible(): Promise<void> {
   mailboxSession?.stop();
@@ -3029,11 +3080,12 @@ async function startMailboxIfPossible(): Promise<void> {
   if (!frameWindow) return;
 
   const uuid = loaded.manifest.documentUuid;
-  const key = await resolveMailboxKey(uuid, arrivedKey);
+  const key = await documentRootKey(uuid);
   if (!key) {
-    // Replicated, but keyless: this copy came by file. Sharing a link is what
-    // gives it a mailbox, and the person is told rather than left wondering.
-    say("Updates from the other copy arrive when you open a shared link for this document.");
+    // Replicated, but no key yet: this copy came by file and has not been
+    // shared. Sharing a link (or opening one) is what gives it a mailbox, and
+    // the person is told rather than left wondering.
+    say("Updates from the other copy arrive when you invite someone, or open a shared link.");
     return;
   }
   if (mountedNonce !== null) {

@@ -167,6 +167,22 @@ export interface SealOptions {
   /** A PNG for the preview, from a caller that can make one. */
   icon?: PreviewIcon;
   /**
+   * The document's own key (base64url, 32 bytes), used to seal instead of a
+   * fresh one minted here.
+   *
+   * A fresh key per share was a reasonable store choice in isolation — it let
+   * one share be forgotten on its own — but it is incompatible with a mailbox,
+   * which needs both parties to converge on one key across every share and
+   * every move. So a replicated document mints one key at creation, keeps it in
+   * its library entry, and passes it here for every share; the store seal and
+   * the mailbox are the same key. At the open tier the contract is already
+   * "everyone with the link can read"; a stable key only makes that true
+   * consistently. Per-share revocation returns properly in Track 4's
+   * recipient-bound tier. Absent here means the old behaviour: a fresh key,
+   * which is right for a document with nothing to sync.
+   */
+  key?: string;
+  /**
    * Store the document without encrypting it.
    *
    * Off everywhere by default, and refused outright by a store that has not
@@ -298,7 +314,12 @@ export async function sealForStore(html: string, options: SealOptions = {}): Pro
     };
   }
 
-  const rawKey = crypto.getRandomValues(new Uint8Array(32));
+  // The document's own key when it has one (a replicated document, sharing the
+  // key its mailbox seals under), else a fresh one for a document with nothing
+  // to sync. See SealOptions.key.
+  const rawKey =
+    options.key !== undefined ? fromBase64Url(options.key) : crypto.getRandomValues(new Uint8Array(32));
+  if (rawKey.length !== 32) throw new ContainerError("STORE_REFUSED", "A document key must be 32 bytes.");
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await crypto.subtle.importKey("raw", rawKey, { name: "AES-GCM" }, false, ["encrypt"]);
   const ciphertext = new Uint8Array(
