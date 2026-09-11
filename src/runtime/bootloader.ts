@@ -1132,6 +1132,20 @@ function bridgeMain(): void {
   const watched = (db: Any): Any => {
     liveDb = db;
     lenient(db);
+    if (autosaves && typeof db.exec === "function") {
+      const exec = db.exec.bind(db);
+      db.exec = (...args: Any[]): Any => {
+        // Only a write schedules a save. The read helpers go through exec too,
+        // and a first version saved after every SELECT — a document redrawn
+        // every second was being written to storage every second. SQLite's own
+        // change counter says whether rows moved, and the schema version whether
+        // the schema did.
+        const before = storedState(db);
+        const result = exec(...args);
+        if (storedState(db) !== before) scheduleAutosave(db);
+        return result;
+      };
+    }
     // Settle this copy's identity the moment the database and the rules are both
     // here, not at the first write. A copy that arrived from someone else must
     // take its own replica id before anything can reload it as this device's
@@ -1141,20 +1155,17 @@ function bridgeMain(): void {
     // exactly the arrived case: a copy carries its `_dai_replica`, an own copy
     // this device is creating has not written its schema yet and settles on its
     // first write as before. Idempotent, and a no-op until the module arrives.
+    //
+    // After the autosave wrapper above, deliberately: the adoption is a write,
+    // and it has to schedule a save or the new id lives only in memory and a
+    // reopen before the next write reverts to the sender's — D22 through a side
+    // door. It settled here before the wrapper existed, and did not persist.
     settleReplicaAtMount(db);
-    if (!autosaves || typeof db.exec !== "function") return db;
-    const exec = db.exec.bind(db);
-    db.exec = (...args: Any[]): Any => {
-      // Only a write schedules a save. The read helpers go through exec too,
-      // and a first version saved after every SELECT — a document redrawn
-      // every second was being written to storage every second. SQLite's own
-      // change counter says whether rows moved, and the schema version whether
-      // the schema did.
-      const before = storedState(db);
-      const result = exec(...args);
-      if (storedState(db) !== before) scheduleAutosave(db);
-      return result;
-    };
+    // And flushed at once, not on the 800 ms debounce: "before anything can
+    // reload it" is the whole point, and a refresh inside that window is exactly
+    // the reopen the adoption exists to survive. A no-op unless the settle above
+    // adopted and so scheduled a save.
+    void flushAutosave();
     return db;
   };
   /**
@@ -1815,6 +1826,20 @@ function bridgeMain(): void {
         { type: "dai:authored-batch", id: data.id, seq: data.seq, head, replica, batch },
         "*",
       );
+      return;
+    }
+    if (data.type === "dai:replica-id") {
+      // This copy's replica id, hex, from `_dai_replica`. Read only, answered
+      // never volunteered. `null` when the table is not there yet — an own copy
+      // whose schema is unwritten, which settles on its first write.
+      let replica: string | null = null;
+      try {
+        const row = liveDb?.selectObjects("SELECT lower(hex(id)) AS h FROM _dai_replica LIMIT 1")[0];
+        replica = row ? String((row as { h: unknown }).h) : null;
+      } catch {
+        replica = null;
+      }
+      window.parent.postMessage({ type: "dai:replica-id-answer", nonce: data.nonce, replica }, "*");
       return;
     }
     if (data.type === "dai:apply-batch") {
@@ -2838,6 +2863,21 @@ async function boot(): Promise<void> {
       return;
     }
     /*
+     * The mounted copy's replica id, asked by the host and relayed inward to the
+     * frame that holds the database — the answer comes back the same way (see
+     * dai:replica-id-answer below). The one fact that says whether an arrived
+     * copy took its own identity at mount (D22), read rather than inferred from
+     * whether a later exchange collided. This shell has no database to read it
+     * from; the frame one layer in does.
+     */
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_REPLICA_ID") {
+      frame.contentWindow?.postMessage(
+        { type: "dai:replica-id", nonce: (event.data as { nonce?: string }).nonce },
+        "*",
+      );
+      return;
+    }
+    /*
      * A sibling to merge, passed through to the frame that holds the database.
      *
      * Relayed rather than acted on. This shell has no database — the
@@ -3113,6 +3153,14 @@ async function boot(): Promise<void> {
     if (event.source === frame.contentWindow && relay?.type === "dai:applied") {
       const { type: _t, ...report } = event.data as Record<string, unknown>;
       window.parent.postMessage({ type: "DAI_HOST_APPLIED", sessionNonce, ...report }, "*");
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:replica-id-answer") {
+      const answer = event.data as { nonce?: string; replica?: string | null };
+      window.parent.postMessage(
+        { type: "DAI_FRAME_REPLICA_ID", nonce: answer.nonce, replica: answer.replica ?? null },
+        "*",
+      );
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:ground") {

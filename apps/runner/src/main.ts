@@ -3466,6 +3466,39 @@ void start();
 // with is wanted at the first card, not at the first frame.
 void confusables();
 
+/**
+ * The mounted copy's replica id, hex, or null when it has none yet.
+ *
+ * Asks the frame, which reads it from `_dai_replica`. For tests that need to
+ * assert identity directly — that an arrived copy took its own id at mount and
+ * kept it across a reopen (D22), and that an own copy's id does not change —
+ * rather than inferring it from whether a later exchange collided.
+ */
+function requestReplicaId(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const target = cartridgeFrame.contentWindow;
+    if (!target) {
+      resolve(null);
+      return;
+    }
+    const nonce = `rid-${crypto.randomUUID()}`;
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", onReply);
+      resolve(null);
+    }, 5_000);
+    const onReply = (event: MessageEvent): void => {
+      const data = event.data as { type?: string; nonce?: string; replica?: string | null };
+      if (data?.type === "DAI_FRAME_REPLICA_ID" && data.nonce === nonce) {
+        window.clearTimeout(timer);
+        window.removeEventListener("message", onReply);
+        resolve(data.replica ?? null);
+      }
+    };
+    window.addEventListener("message", onReply);
+    target.postMessage({ type: "DAI_HOST_REPLICA_ID", nonce }, "*");
+  });
+}
+
 // Exposed for tests and for the storage layer.
 Object.defineProperty(window, "__runner", {
   value: {
@@ -3506,6 +3539,9 @@ Object.defineProperty(window, "__runner", {
     },
     // Pull now, as the foreground poll would.
     pullMailbox: (): void => mailboxSession?.pull(),
+    // The mounted copy's replica id, for a test that asserts D22 as a fact
+    // about identity rather than the absence of a collision.
+    replicaId: requestReplicaId,
   },
 });
 
