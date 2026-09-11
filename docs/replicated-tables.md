@@ -1106,6 +1106,18 @@ its key with HKDF(document key, label), so a session (Track 3) keys its own
 mailbox off the same root under the session id, and the document key is a root
 rather than the mailbox key itself.
 
+**One root per document, minted by the first sharer — and a link re-seats a
+second one.** A copy that arrived by *file* holds no key. If that person shares
+by link, they mint their own root, and now the original creator and this copy
+publish into mailboxes neither can open — with no error, because each side is
+internally consistent. It is the split-brain form of the mint-at-share rule: two
+roots where there should be one. The link is what closes it: **opening a link
+for a document already held, whose key differs from the one held, adopts the
+link's key.** So the moment either party opens the other's link, both converge
+on that link's root and the split heals itself, no error and no manual step. The
+session slice (Track 3) mostly retires the case, because every invite is a link
+that carries the key, so a second root is never minted blind.
+
 **Outgoing rows cross frame→host in plaintext; the host seals them.** The
 frame cannot reach the network (`connect-src 'none'`), so it hands the rows it
 authored to the host, which holds the document's key and does the sealing and
