@@ -775,3 +775,86 @@ test.describe("a copy that arrived from somebody else", () => {
     mine.close();
   });
 });
+
+test.describe("a session document threads the session onto every row (T1-D26)", () => {
+  const SESSION_SCHEMA = `-- dai:profile session max_parties=2
+-- dai:replicated
+CREATE TABLE moves (
+  ply INTEGER NOT NULL,
+  san TEXT NOT NULL
+);
+`;
+  const openSession = (): Rows & { close(): void } => openWith(SESSION_SCHEMA);
+  const S1 = bytes(0x51);
+  const S2 = bytes(0x52);
+  const hx = (u: unknown): string => (u instanceof Uint8Array ? Buffer.from(u).toString("hex") : "");
+
+  test("create, change and delete all carry the session, delete taking it from the head", () => {
+    const db = openSession();
+    ensureReplica(db, A);
+    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
+    changeEntity(db, "moves", E1, { ply: 1, san: "e4!" }, S1);
+    // The delete is not told the session — it takes it from the row it buries.
+    deleteEntity(db, "moves", E1);
+
+    const sessions = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
+    expect(sessions).toHaveLength(3);
+    expect(new Set(sessions)).toEqual(new Set([hx(S1)]));
+    db.close();
+  });
+
+  test("a write with no session is refused, because every row belongs to one", () => {
+    const db = openSession();
+    ensureReplica(db, A);
+    expect(() => createEntity(db, "moves", E1, { ply: 1, san: "e4" })).toThrow(RowRejected);
+    db.close();
+  });
+
+  test("the session is immutable: an in-place edit is refused like any other _r_ column", () => {
+    const db = openSession();
+    ensureReplica(db, A);
+    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
+    expect(() => db.run(`UPDATE moves SET _r_session = ? WHERE _r_seq = 1`, [S2])).toThrow(
+      /REPLICATED_TABLE_IMMUTABLE/,
+    );
+    db.close();
+  });
+
+  test("one table holds rows from many sessions, and they converge across a merge", () => {
+    // The whole point of a per-row session: a games list is many games in one
+    // table. Two copies each write a different session; a merge carries both.
+    const a = openSession();
+    ensureReplica(a, A);
+    createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
+
+    const b = openSession();
+    ensureReplica(b, B);
+    createEntity(b, "moves", E2, { ply: 1, san: "d4" }, S2);
+
+    mergeFrom(a, b, ["moves"]);
+    mergeFrom(b, a, ["moves"]);
+
+    // Convergent, and the session travelled with each row rather than being lost.
+    expect(canonicalDump(a, ["moves"])).toBe(canonicalDump(b, ["moves"]));
+    const sessions = new Set(a.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"])));
+    expect(sessions).toEqual(new Set([hx(S1), hx(S2)]));
+
+    a.close();
+    b.close();
+  });
+
+  test("a merged row missing its session is rejected, not written half-formed", () => {
+    // The merge path enforces the same rule as the write path: an incoming row
+    // for a session table with no _r_session is refused.
+    const local = openSession();
+    ensureReplica(local, A);
+    const sibling = openSession();
+    ensureReplica(sibling, B);
+    // A hand-made incoming row with no session, applied through the merge choke
+    // point. mergeFrom records it as rejected rather than throwing the exchange.
+    const orphan: ReplicatedRow = row(B, 1, 1, E2, [], { ply: 1, san: "d4" });
+    expect(() => applyRow(local, "moves", orphan)).toThrow(RowRejected);
+    local.close();
+    sibling.close();
+  });
+});

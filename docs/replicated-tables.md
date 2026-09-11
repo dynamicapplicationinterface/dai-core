@@ -214,6 +214,15 @@ diff.
 **Delete entity** — a tombstone: as *change*, with `_r_deleted = 1` and the
 author columns copied from the head being deleted.
 
+**In a session document** (T1-D26), every one of these also stamps `_r_session`.
+Create and change carry the session of the write; a delete takes it from the
+head it buries rather than being told it again, since a tombstone belongs to the
+same session as the entity. A row that reaches the write or merge path with no
+session, in a table that declares the profile, is refused (`ROW_REJECTED`) — the
+column is `NOT NULL`, so this is caught with a reason rather than as a constraint
+message. In a plain replicated document there is no `_r_session` column and
+nothing changes.
+
 After every write `_dai_replica.seq` and `.lc` advance, and the flag of T1-D2
 is applied. The row insert and both updates are one transaction.
 

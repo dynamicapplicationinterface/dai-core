@@ -36,8 +36,19 @@ export interface ReplicatedRow {
   _r_parents: string;
   _r_deleted: number;
   _r_sig?: Uint8Array | null;
+  /**
+   * The session this row belongs to (T1-D26). Present only in a document that
+   * declares the session profile — where the table carries `_r_session` — and
+   * absent everywhere else, so a plain replicated row is exactly what it was.
+   */
+  _r_session?: Uint8Array;
   /** The author's own columns. */
   columns: Record<string, unknown>;
+}
+
+/** Whether a table carries the session column, i.e. the document declares the profile. */
+export function hasSessionColumn(db: Rows, table: string): boolean {
+  return db.all(`SELECT 1 FROM pragma_table_info(?) WHERE name = '_r_session'`, [table]).length > 0;
 }
 
 const hex = (bytes: Uint8Array): string =>
@@ -72,6 +83,9 @@ export function authorColumnsOf(db: Rows, table: string): string[] {
 export function readRow(stored: Record<string, unknown>, authored: readonly string[]): ReplicatedRow {
   const columns: Record<string, unknown> = {};
   for (const name of authored) columns[name] = stored[name];
+  // `_r_session` is read straight from the row: a session table has a Uint8Array
+  // here, a plain one has nothing, so the shape carries the profile with it.
+  const session = stored["_r_session"];
   return {
     _r_replica: stored["_r_replica"] as Uint8Array,
     _r_seq: Number(stored["_r_seq"]),
@@ -80,6 +94,7 @@ export function readRow(stored: Record<string, unknown>, authored: readonly stri
     _r_parents: String(stored["_r_parents"]),
     _r_deleted: Number(stored["_r_deleted"]),
     _r_sig: (stored["_r_sig"] as Uint8Array | null) ?? null,
+    ...(session instanceof Uint8Array ? { _r_session: session } : {}),
     columns,
   };
 }
@@ -98,7 +113,18 @@ export function readRow(stored: Record<string, unknown>, authored: readonly stri
  */
 export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" | "duplicate" {
   const authored = authorColumnsOf(db, table);
+  const session = hasSessionColumn(db, table);
   const id = rowId(row._r_replica, row._r_seq);
+
+  // A session table's rows must carry a session, on both the local write and the
+  // merge path (T1-D26). `_r_session` is NOT NULL, so SQLite would refuse the
+  // insert anyway; caught here with a reason rather than a constraint message.
+  if (session && !(row._r_session instanceof Uint8Array)) {
+    throw new RowRejected(
+      `A row for ${id} carries no session, but ${table} declares the session profile. ` +
+        "Every row in a session document belongs to a session.",
+    );
+  }
 
   const existing = db.all(
     `SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`,
@@ -123,6 +149,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
       hex(existing["_r_entity"] as Uint8Array) === hex(row._r_entity) &&
       String(existing["_r_parents"]) === row._r_parents &&
       Number(existing["_r_deleted"]) === row._r_deleted &&
+      (!session || sameValue(existing["_r_session"], row._r_session)) &&
       authored.every((name) => sameValue(existing[name], row.columns[name]));
     if (same) return "duplicate";
     throw new RowRejected(
@@ -139,7 +166,11 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     [id],
   ).length > 0;
 
-  const names = [...authored, "_r_replica", "_r_seq", "_r_lc", "_r_entity", "_r_parents", "_r_deleted", "_r_superseded", "_r_sig"];
+  const names = [
+    ...authored,
+    "_r_replica", "_r_seq", "_r_lc", "_r_entity", "_r_parents", "_r_deleted", "_r_superseded", "_r_sig",
+    ...(session ? ["_r_session"] : []),
+  ];
   const values = [
     ...authored.map((name) => row.columns[name] ?? null),
     row._r_replica,
@@ -150,6 +181,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     row._r_deleted,
     namedAlready ? 1 : 0,
     row._r_sig ?? null,
+    ...(session ? [row._r_session as Uint8Array] : []),
   ];
   db.run(
     `INSERT INTO "${table}" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
@@ -256,7 +288,15 @@ export function headsOf(db: Rows, table: string, entity: Uint8Array): string[] {
     .sort();
 }
 
-function stamp(db: Rows, table: string, entity: Uint8Array, parents: string[], columns: Record<string, unknown>, deleted: number): ReplicatedRow {
+function stamp(
+  db: Rows,
+  table: string,
+  entity: Uint8Array,
+  parents: string[],
+  columns: Record<string, unknown>,
+  deleted: number,
+  session: Uint8Array | undefined,
+): ReplicatedRow {
   const state = replicaState(db);
   const seq = state.seq + 1;
   const lc = state.lc + 1;
@@ -268,6 +308,7 @@ function stamp(db: Rows, table: string, entity: Uint8Array, parents: string[], c
     _r_entity: entity,
     _r_parents: JSON.stringify([...parents].sort()),
     _r_deleted: deleted,
+    ...(session ? { _r_session: session } : {}),
     columns,
   };
 }
@@ -278,8 +319,9 @@ export function createEntity(
   table: string,
   entity: Uint8Array,
   columns: Record<string, unknown>,
+  session?: Uint8Array,
 ): ReplicatedRow {
-  const row = stamp(db, table, entity, [], columns, 0);
+  const row = stamp(db, table, entity, [], columns, 0, session);
   applyRow(db, table, row);
   return row;
 }
@@ -296,8 +338,9 @@ export function changeEntity(
   table: string,
   entity: Uint8Array,
   columns: Record<string, unknown>,
+  session?: Uint8Array,
 ): ReplicatedRow {
-  const row = stamp(db, table, entity, headsOf(db, table, entity), columns, 0);
+  const row = stamp(db, table, entity, headsOf(db, table, entity), columns, 0, session);
   applyRow(db, table, row);
   return row;
 }
@@ -313,7 +356,14 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array): Repli
   )[0];
   const columns: Record<string, unknown> = {};
   for (const name of authored) columns[name] = head ? head[name] : null;
-  const row = stamp(db, table, entity, heads, columns, 1);
+  // A delete belongs to the same session as the entity it buries, so the session
+  // is taken from the head rather than asked for again — the caller deleting a
+  // row need not know which session it was in (T1-D26).
+  const session =
+    hasSessionColumn(db, table) && head?.["_r_session"] instanceof Uint8Array
+      ? (head["_r_session"] as Uint8Array)
+      : undefined;
+  const row = stamp(db, table, entity, heads, columns, 1, session);
   applyRow(db, table, row);
   return row;
 }
