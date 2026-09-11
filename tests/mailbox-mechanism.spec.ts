@@ -177,4 +177,53 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
     await deviceA.close();
     await deviceB.close();
   });
+
+  test("a reply arrives on its own — the poll delivers it, with no pull", async ({ browser }) => {
+    /*
+     * The other tests stand in for the foreground with an explicit
+     * `pullMailbox()`. This one gives the reader no pull at all: the only thing
+     * that can carry the move onto A's board is A's own poll timer (FAST is 3s;
+     * see mailbox-session.ts). It is the proof of the claim the polling was
+     * built for — that the app looks for the other copy's moves on its own.
+     *
+     * Its own freshly compiled document, so the mailbox on the shared relay is
+     * empty at the start: a mailbox holding an earlier test's moves would land
+     * them whether or not the timer ran, and prove nothing about the timer.
+     */
+    const built = await compileDirectory({
+      sourceDir: join(repo, "tests", "fixture", "chess"),
+      root: repo,
+      appName: "Velvet Chess",
+    });
+    const own = join(mkdtempSync(join(tmpdir(), "dai-autopoll-")), "auto.dai.html");
+    writeFileSync(own, built.html, "utf8");
+
+    const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const deviceB: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openWith(pageA, own);
+    await appA.locator("[data-new-game]:visible").first().click();
+    await appA.locator("#setup-you").fill("Ada");
+    await appA.locator("#setup-them").fill("Bo");
+    await appA.locator('input[name="color"][value="w"]').check();
+    await appA.locator("#new-game-form button[type=submit]").click();
+    await play(appA, "e2", "e4");
+    await pageA.evaluate(([b, k]) => (window as any).__runner.useRelay(b, k), [relayBase, key] as const);
+
+    const seed = join(dirname(own), "seed.dai.html");
+    await saveOut(pageA, seed);
+    const appB = await openWith(pageB, seed);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+    await pageB.evaluate(([b, k]) => (window as any).__runner.useRelay(b, k), [relayBase, key] as const);
+
+    // B replies e5 and publishes on write. A is never told to pull. The generous
+    // ceiling is for a loaded CI machine, not the expected latency.
+    await play(appB, "e7", "e5");
+    await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 30_000 });
+
+    await deviceA.close();
+    await deviceB.close();
+  });
 });
