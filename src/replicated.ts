@@ -19,6 +19,86 @@
 /** The marker an author writes above a table they want replicated. */
 export const REPLICATED_MARKER = "dai:replicated";
 
+/**
+ * The document-level marker that opts a document into sessions (T1-D26).
+ *
+ * Unlike `dai:replicated`, which sits above one table, this applies to the whole
+ * document: every replicated table gains `_r_session`, because a session is a
+ * property of the rows, not of a single table. `-- dai:profile session
+ * max_parties=2`.
+ */
+export const SESSION_PROFILE_MARKER = "dai:profile session";
+
+export interface SessionProfile {
+  maxParties: number;
+}
+
+/**
+ * The session profile a document declares, if any (T1-D26).
+ *
+ * A line comment anywhere in the schema, quote- and comment-aware for the same
+ * reason the rest of this file is: the marker inside a string, or inside a block
+ * comment, is not a declaration. A profile that names a non-integer or a bound
+ * below one is refused rather than read as zero — a session nobody can join is
+ * not what anyone meant.
+ */
+export function parseSessionProfile(sql: string): SessionProfile | null {
+  let quote: string | null = null;
+  let line: string | null = null;
+  const comments: string[] = [];
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index]!;
+    const next = sql[index + 1];
+    if (line !== null) {
+      if (char === "\n") {
+        comments.push(line);
+        line = null;
+      } else {
+        line += char;
+      }
+      continue;
+    }
+    if (quote) {
+      if (char === quote && next === quote) {
+        index += 1;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "-" && next === "-") {
+      line = "";
+      index += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < sql.length && !(sql[index] === "*" && sql[index + 1] === "/")) index += 1;
+      index += 1; // land on the '/', the loop's increment steps past it
+      continue;
+    }
+  }
+  if (line !== null) comments.push(line);
+
+  for (const comment of comments) {
+    const match = /^\s*dai:profile\s+session\s+max_parties\s*=\s*(-?\d+)\s*$/i.exec(comment.trim());
+    if (!match) continue;
+    const maxParties = Number(match[1]);
+    if (!Number.isInteger(maxParties) || maxParties < 1) {
+      throw new ReplicationError(
+        `The session profile declares max_parties=${match[1]}. A session holds at least ` +
+          "one party; a bound below one is a session nobody can join.",
+      );
+    }
+    return { maxParties };
+  }
+  return null;
+}
+
 export class ReplicationError extends Error {
   readonly code = "REPLICATION_SCHEMA_INVALID";
   constructor(message: string) {
@@ -32,6 +112,8 @@ export interface RewrittenSchema {
   sql: string;
   /** The tables declared replicated, in the order they appear. */
   tables: string[];
+  /** The session profile, when the document declares one (T1-D26). */
+  session?: SessionProfile;
 }
 
 /**
@@ -217,8 +299,14 @@ function authorColumns(body: string): string[] {
   return names;
 }
 
-/** The columns, key and table options every replicated table gets. */
-function replicationColumns(): string {
+/**
+ * The columns, key and table options every replicated table gets.
+ *
+ * `_r_session` is added only when the document declares the session profile
+ * (T1-D26). A document without it gets exactly the columns it got before this
+ * existed, so its digest, signature and stored bytes are unchanged.
+ */
+function replicationColumns(session: boolean): string {
   return [
     "  _r_replica    BLOB    NOT NULL CHECK (length(_r_replica) = 16),",
     "  _r_seq        INTEGER NOT NULL CHECK (_r_seq > 0),",
@@ -228,6 +316,7 @@ function replicationColumns(): string {
     "  _r_deleted    INTEGER NOT NULL DEFAULT 0 CHECK (_r_deleted IN (0,1)),",
     "  _r_superseded INTEGER NOT NULL DEFAULT 0 CHECK (_r_superseded IN (0,1)),",
     "  _r_sig        BLOB,",
+    ...(session ? ["  _r_session    BLOB    NOT NULL CHECK (length(_r_session) = 16),"] : []),
     "  PRIMARY KEY (_r_replica, _r_seq)",
   ].join("\n");
 }
@@ -241,7 +330,7 @@ function replicationColumns(): string {
  * clearing it is refused, because two hosts with the same rows and different
  * flags never reconcile.
  */
-function tableObjects(name: string, authored: string[]): string {
+function tableObjects(name: string, authored: string[], session: boolean): string {
   const q = name;
   /*
    * Every column but `_r_superseded`, which is the one thing a write may
@@ -259,6 +348,9 @@ function tableObjects(name: string, authored: string[]): string {
     "_r_parents",
     "_r_deleted",
     "_r_sig",
+    // A row's session is fixed at write and never edited, like every other _r_
+    // column, so the append-only trigger names it too (T1-D26).
+    ...(session ? ["_r_session"] : []),
   ].join(", ");
   return `
 CREATE INDEX IF NOT EXISTS ${q}__r_entity ON ${q}(_r_entity, _r_lc);
@@ -391,7 +483,18 @@ export function triggerColumns(sql: string, table: string): string[] {
 export function rewriteReplicated(sql: string): RewrittenSchema {
   const spans = tableSpans(sql);
   const declared = spans.filter((span) => declaredAbove(sql, span.start));
-  if (declared.length === 0) return { sql, tables: [] };
+  const session = parseSessionProfile(sql);
+  if (declared.length === 0) {
+    // A session profile with nothing to scope is a declaration that does
+    // nothing; refuse it rather than emit a manifest bound over no rows (T1-D26).
+    if (session) {
+      throw new ReplicationError(
+        "The session profile declares a session, but no table is marked -- dai:replicated. " +
+          "A session scopes replicated rows; declare a replicated table, or drop the profile.",
+      );
+    }
+    return { sql, tables: [] };
+  }
 
   let out = "";
   let cursor = 0;
@@ -417,11 +520,15 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     out += /\bIF\s+NOT\s+EXISTS\b/i.test(header)
       ? header
       : header.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
-    out += `${authorBody},\n${replicationColumns()}\n)${tail}`;
-    out += tableObjects(span.name, authorColumns(body));
+    out += `${authorBody},\n${replicationColumns(session !== null)}\n)${tail}`;
+    out += tableObjects(span.name, authorColumns(body), session !== null);
     cursor = span.end;
   }
   out += sql.slice(cursor);
 
-  return { sql: documentTables() + out, tables: declared.map((span) => span.name) };
+  return {
+    sql: documentTables() + out,
+    tables: declared.map((span) => span.name),
+    ...(session ? { session } : {}),
+  };
 }

@@ -821,6 +821,75 @@ This is the version story the session profile builds on: at version 4, a session
 document declares `requires: ["replicated", "session"]` and carries
 `session: { max_parties }` in the signed manifest beside `replication` (T1-D26).
 
+**T1-D26 — the session profile: a declaration, a per-row column, and a signed
+bound.** Track 3 pulled forward, its Step 1. This decision lays the storage and
+the manifest surface the later steps read; it does not itself enforce a roster,
+scope a mailbox, or drop a late row (Steps 3–5).
+
+*The declaration.* A document opts into sessions with a marker in the schema,
+document-level rather than above one table:
+
+```sql
+-- dai:profile session max_parties=2
+```
+
+It reads as a comment and is a declaration, the same trick `-- dai:replicated`
+plays. It is parsed by the compiler and applies to the **whole** document: every
+replicated table gains one column, because a session is a property of the
+document's rows, not of a single table. `max_parties` is a positive integer; the
+compiler refuses the build (`REPLICATION_SCHEMA_INVALID`) on a session profile
+with no replicated table, since a session with nothing to scope is a declaration
+that does nothing.
+
+*The column.* Each replicated table gains
+
+```sql
+_r_session BLOB NOT NULL CHECK (length(_r_session) = 16),
+```
+
+named in the immutability trigger like every other `_r_` column — a row's
+session is fixed when the row is written and never edited. It is **per row**, not
+per table: one `moves` table holds rows from many games, and the games list is
+the list of sessions this copy is party to. This is why it is a column and not a
+second table keyed by session — the fact a merge needs (which session a row
+belongs to, so a close row can drop later rows for it and a roster can drop a
+non-member's) has to travel *in* the row and be as immutable as the rest.
+
+*Only when declared.* The column, its CHECK and its trigger entry are emitted
+**only** when the session profile is declared. A replicated table in a document
+without the profile keeps today's exact bytes — same digest, same signature, same
+stored shape — the invariant `core.ts` already protects ("a schema declaring
+nothing is returned byte for byte"). So no shipped replicated document breaks;
+chess adopting the profile (Step 6) is a new build under a new digest, which the
+sibling test already requires of any schema change.
+
+*The manifest surface.* At version 4 (T1-D25), a session document's signed
+manifest carries, beside `replication`:
+
+```json
+{
+  "manifestVersion": 4,
+  "requires": ["replicated", "session"],
+  "replication": { "tables": ["moves"], "level": 1 },
+  "session": { "max_parties": 2 }
+}
+```
+
+`session` is a capability name — immutable, and the registry only grows;
+`IMPLEMENTED_CAPABILITIES` gains it when a reader can actually hold a session
+(the enforcement steps), not at this one. `max_parties` sits in the **signed**
+set on purpose: it is the bound a reader enforces when it drops rows past the
+roster (Step 3), and an unsigned bound is one an attacker edits to admit a third
+party. `requires: ["session"]` means a reader without the capability refuses the
+document by name rather than opening it and silently ignoring the roster — the
+same non-degradation rule that made `requires` exist.
+
+*Threading.* The write rules (§5) stamp `_r_session` onto every row a session
+document writes, and roster and close rows are ordinary replicated rows carrying
+it. Where the session id comes from at write time, and the enforcement that reads
+it back, belong to Steps 3–6; Step 1 is the column existing and every row
+carrying it.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is

@@ -247,6 +247,98 @@ test.describe("the default build path emits the version the spec says it emits",
   });
 });
 
+test.describe("the session profile (T1-D26)", () => {
+  const SESSION_CASES = `-- dai:profile session max_parties=2
+${CASES}`;
+
+  test("adds _r_session to each replicated table, named in the immutability trigger", () => {
+    const { sql, session } = rewriteReplicated(SESSION_CASES);
+    expect(session).toEqual({ maxParties: 2 });
+
+    // The column, NOT NULL and fixed at 16 bytes.
+    expect(sql).toContain("_r_session    BLOB    NOT NULL CHECK (length(_r_session) = 16)");
+
+    // Named in the append-only trigger, so a row's session cannot be edited in
+    // place any more than its author columns can.
+    expect(sql).toMatch(
+      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig, _r_session ON cases/,
+    );
+  });
+
+  test("applies to every replicated table, because a session is a document property", () => {
+    const two = `-- dai:profile session max_parties=2
+${CASES}
+-- dai:replicated
+CREATE TABLE visits (
+  note TEXT
+);
+`;
+    const { sql, tables } = rewriteReplicated(two);
+    expect(tables).toEqual(["cases", "visits"]);
+    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(2);
+  });
+
+  test("a document without the profile keeps today's exact columns — no _r_session", () => {
+    // The invariant that protects every shipped replicated document: only a
+    // declared profile changes the bytes.
+    const { sql, session } = rewriteReplicated(CASES);
+    expect(session).toBeUndefined();
+    expect(sql).not.toContain("_r_session");
+  });
+
+  test("the engine accepts the session schema, and it is idempotent", () => {
+    const { sql } = rewriteReplicated(SESSION_CASES);
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(sql);
+      expect(() => db.exec(sql)).not.toThrow();
+      const cols = db
+        .prepare("SELECT name FROM pragma_table_info('cases')")
+        .all()
+        .map((r) => String((r as { name: unknown }).name));
+      expect(cols).toContain("_r_session");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a profile with no replicated table is refused", () => {
+    const orphan = `-- dai:profile session max_parties=2
+CREATE TABLE notes (
+  body TEXT
+);
+`;
+    try {
+      rewriteReplicated(orphan);
+      throw new Error("should have refused");
+    } catch (error) {
+      expect((error as ReplicationError).code).toBe("REPLICATION_SCHEMA_INVALID");
+      expect((error as ReplicationError).message).toMatch(/no table is marked/i);
+    }
+  });
+
+  test("max_parties must be a whole number of at least one", () => {
+    for (const bad of ["0", "-1"]) {
+      const sql = `-- dai:profile session max_parties=${bad}\n${CASES}`;
+      try {
+        rewriteReplicated(sql);
+        throw new Error(`should have refused max_parties=${bad}`);
+      } catch (error) {
+        expect((error as ReplicationError).code, bad).toBe("REPLICATION_SCHEMA_INVALID");
+        expect((error as ReplicationError).message, bad).toMatch(/at least one|nobody can join/i);
+      }
+    }
+  });
+
+  test("the marker inside a string or a block comment is not a declaration", () => {
+    const inString = `${CASES.replace("notes  TEXT", "notes  TEXT DEFAULT '-- dai:profile session max_parties=2'")}`;
+    expect(rewriteReplicated(inString).session).toBeUndefined();
+
+    const inBlock = `/* -- dai:profile session max_parties=2 */\n${CASES}`;
+    expect(rewriteReplicated(inBlock).session).toBeUndefined();
+  });
+});
+
 test.describe("what the compiler refuses", () => {
   const refusal = (sql: string): ReplicationError => {
     try {
