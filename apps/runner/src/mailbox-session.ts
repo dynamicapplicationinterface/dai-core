@@ -88,6 +88,12 @@ const PUBLISH_DEBOUNCE_MS = 500;
 const POLL_FAST_MS = 3_000;
 const POLL_MED_MS = 15_000;
 const POLL_SLOW_MS = 30_000;
+// Fast for the minute after anyone acts — that is when a reply comes — then
+// stretch. Timed from the last act, not counted in polls, so the first move of
+// a game (nobody has acted here but the session just started, which counts)
+// arrives fast rather than after a stretch that had already begun.
+const POLL_FAST_WINDOW_MS = 60_000;
+const POLL_MED_WINDOW_MS = 180_000;
 
 export function startMailboxSession(config: {
   documentUuid: string;
@@ -124,7 +130,7 @@ export function startMailboxSession(config: {
   let publishAgain = false;
   let pulling = false;
   let pollTimer: number | undefined;
-  let pollMs = POLL_FAST_MS;
+  let lastActivity = Date.now();
   let requestId = 0;
   const pending = new Map<string, (value: Any) => void>();
 
@@ -254,9 +260,15 @@ export function startMailboxSession(config: {
     pollTimer = window.setTimeout(() => void runPoll(), ms);
   }
 
-  /** Reset to the fast rate and poll soon — after a local write, or on foreground. */
+  /** The rate now, from how long since anyone last acted. */
+  function pollRate(): number {
+    const idle = Date.now() - lastActivity;
+    return idle < POLL_FAST_WINDOW_MS ? POLL_FAST_MS : idle < POLL_MED_WINDOW_MS ? POLL_MED_MS : POLL_SLOW_MS;
+  }
+
+  /** Mark activity — a local move, a received move, or a foreground — and poll now. */
   function pollNow(): void {
-    pollMs = POLL_FAST_MS;
+    lastActivity = Date.now();
     schedulePoll(0);
   }
 
@@ -264,6 +276,12 @@ export function startMailboxSession(config: {
    * The cheap check: has the mailbox moved past what we hold? Only `head`, which
    * the client turns into a 304 when it is unchanged, so an idle poll costs
    * almost nothing. Pull only when it has actually advanced.
+   *
+   * A timer alone is not enough on iOS, which throttles a page's timers when it
+   * is idle — the poll fires late or not at all until the person touches the
+   * screen. So a foreground or an interaction also drives a pull (see main.ts),
+   * and this timer is the steady floor between those. Fully hands-off delivery
+   * on an idle phone is what push (slice two) is for.
    */
   async function runPoll(): Promise<void> {
     if (stopped) return;
@@ -275,14 +293,12 @@ export function startMailboxSession(config: {
       const head = Number(await mailbox.head(documentUuid)) || 0;
       if (head > (Number(state.cursor) || 0)) {
         await runPull();
-        pollMs = POLL_FAST_MS; // something arrived; a reply may be next.
-      } else {
-        pollMs = pollMs < POLL_MED_MS ? POLL_MED_MS : POLL_SLOW_MS;
+        lastActivity = Date.now(); // something arrived; a reply may be next.
       }
     } catch {
-      pollMs = POLL_SLOW_MS; // relay unreachable; do not hammer it.
+      /* Relay unreachable; the next tick tries again at the current rate. */
     }
-    schedulePoll(pollMs);
+    schedulePoll(pollRate());
   }
 
   // Resume from what was persisted, re-sending an unacked batch, then read
@@ -309,15 +325,15 @@ export function startMailboxSession(config: {
     // In case rows were authored before the session was listening.
     schedulePublish();
     // And from here it looks for the other copy's moves on its own.
-    schedulePoll(pollMs);
+    schedulePoll(POLL_FAST_MS);
   })();
 
   window.addEventListener("message", onMessage);
 
   return {
     pull: () => {
-      // Foreground: catch up now, and go back to the fast rate.
-      pollMs = POLL_FAST_MS;
+      // Foreground or interaction: catch up now, and go back to the fast rate.
+      lastActivity = Date.now();
       void runPull();
       schedulePoll(POLL_FAST_MS);
     },

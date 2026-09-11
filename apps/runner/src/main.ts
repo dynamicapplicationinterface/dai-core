@@ -3517,9 +3517,23 @@ Object.defineProperty(window, "__runner", {
  * possible trigger — no timer, no socket — and the one a person's own gesture
  * already provides by bringing the app forward.
  */
+/*
+ * Bring the other copy's moves in whenever the person comes back to the page.
+ *
+ * The mailbox session polls on a timer, but iOS suspends a page's timers while
+ * it is idle, so a move can sit unseen until something wakes the page. Coming
+ * back to it is exactly that wake: switching to the tab (`visibilitychange`),
+ * focusing the window (`focus`), or a back-forward restore (`pageshow`). Each
+ * pulls once and resets the poll to fast. Fully hands-off delivery to an idle
+ * phone — a move arriving with no interaction at all — is what push (slice two)
+ * is for; a timer cannot promise it on iOS.
+ */
+const wakeMailbox = (): void => mailboxSession?.pull();
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") mailboxSession?.pull();
+  if (document.visibilityState === "visible") wakeMailbox();
 });
+window.addEventListener("focus", wakeMailbox);
+window.addEventListener("pageshow", wakeMailbox);
 
 /**
  * Registers the service worker that makes the runner itself work offline.
