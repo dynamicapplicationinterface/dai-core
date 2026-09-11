@@ -1,6 +1,22 @@
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { compileDirectory } from "../src/compile.js";
+import { MANIFEST_ENTRY, type ContainerManifest } from "../src/core.js";
+import { parseContainer } from "../src/container.js";
 import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+async function versionOf(sourceDir: string, appName: string): Promise<ContainerManifest> {
+  const built = await compileDirectory({ sourceDir, root: repoRoot, appName });
+  return JSON.parse(
+    new TextDecoder().decode(parseContainer(built.html).archive[MANIFEST_ENTRY]!),
+  ) as ContainerManifest;
+}
 
 /**
  * The compiler's rewrite, on its own.
@@ -190,6 +206,44 @@ test.describe("a declared table", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+test.describe("the default build path emits the version the spec says it emits", () => {
+  /*
+   * `default-build-emits-declared-version` — T1-D25.
+   *
+   * The version came to mean one capability's storage shape, not a generation
+   * of the format: a replicated build emits 4 because it carries the `_r_`
+   * columns, and a plain build stays at 3 because it does not. That was true in
+   * the code and in the deployed chess container for weeks while T1-D24
+   * described the opposite — and nothing complained, because the readers accept
+   * 2, 3 and 4, so every document opened either way. A correct design masking a
+   * wrong belief about it: the same shape as a CI job that cancels rather than
+   * fails, green by the absence of a verdict.
+   *
+   * The check that catches it is the one the correction was settled by, so it
+   * is a test rather than a technique: build both kinds through the default
+   * path and read the version back off the manifest. No override — the point is
+   * what the path emits on its own, which is what production came from.
+   */
+  test("a replicated build is version 4, a plain build is version 3", async () => {
+    const replicated = await versionOf(resolve(repoRoot, "tests/fixture/chess"), "Chess");
+    expect(replicated.manifestVersion).toBe(4);
+    expect(replicated.requires).toEqual(["replicated"]);
+
+    const dir = mkdtempSync(join(tmpdir(), "dai-plain-"));
+    writeFileSync(
+      join(dir, "index.html"),
+      '<!doctype html><meta charset="utf-8"><p id="app">plain</p>',
+      "utf8",
+    );
+    const plain = await versionOf(dir, "Plain");
+    expect(plain.manifestVersion).toBe(3);
+    // A plain document declares nothing and moves no reader that already opened
+    // it — which is why the bump was cheap and rode only the replicated branch.
+    expect(plain.requires).toBeUndefined();
+    expect(plain.replication).toBeUndefined();
   });
 });
 

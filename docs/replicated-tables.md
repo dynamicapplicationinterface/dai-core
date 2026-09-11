@@ -65,17 +65,17 @@ Manifest surface, in the signed set so every copy agrees:
 
 ```json
 {
-  "manifestVersion": 3,
+  "manifestVersion": 4,
   "requires": ["replicated"],
   "replication": { "tables": ["cases"], "level": 1 }
 }
 ```
 
-The version is `3`, not `4`. T1-D5 specified a bump to `manifestVersion: 4`
-alongside the `requires` registry; what shipped is the registry under `3`, and
-the bump proved unnecessary. See **T1-D24** for what happened and why the
-registry alone was enough to close the "readers before writers" ordering that
-Track 0 opened.
+The version is `4`. T1-D5 specified the bump alongside the `requires` registry;
+both shipped. T1-D24 later claimed the bump was dropped and replication ran
+under `3` — that account was wrong, and **T1-D25** corrects it against the code,
+the tests and the deployed container, all three of which carry `4`. A plain
+build (no replicated table) still emits `3`; the bump rides on the declaration.
 
 All three fields are written **only when the schema declares a replicated
 table**, and the tables are sorted. A build that declares none emits the
@@ -365,9 +365,9 @@ in conflict; one signed and one not → refuse. This is the weakest link in
 Level 1 and it is a claim, like everything else here.
 
 **T1-D5 — Track 1 is the first writer to emit `manifestVersion: 4`,** with
-`requires: ["replicated"]`. *(Corrected by T1-D24: the version bump was not
-needed and did not ship; the `requires` registry shipped under `manifestVersion:
-3`. The reasoning below stands except for the bump itself.)* Track 0 shipped the
+`requires: ["replicated"]`. *(T1-D24 claimed this bump did not ship; T1-D25
+reverses that — it did, and does. A replicated build emits `manifestVersion: 4`.
+The reasoning below stands, bump included.)* Track 0 shipped the
 readers and deliberately no
 writer. A document with replicated tables opened by a reader that ignores them
 would merge nothing and silently diverge, which is exactly the degradation the
@@ -732,7 +732,11 @@ maintain it. Neither is load-bearing; both are pinned so they cannot quietly
 diverge.
 
 **T1-D24 — the `manifestVersion: 4` bump of T1-D5 was not needed and did not
-ship; the `requires` registry shipped under `manifestVersion: 3`.** T1-D5 was a
+ship; the `requires` registry shipped under `manifestVersion: 3`.**
+*(Reversed by T1-D25: the claim below that "what shipped" is version 3 is false
+— the code, the tests and the deployed container all carry version 4. Kept
+unedited so the reasoning that went wrong stays legible; read T1-D25 for what is
+actually true.)* T1-D5 was a
 decision, not a description: it locked "version 4 plus a `requires` registry" to
 close the readers-before-writers ordering. Only the registry mattered. A reader
 that predates a capability refuses a document that `requires` it by name
@@ -750,6 +754,72 @@ makes true by design rather than by accident. A future capability extends the
 registry, which only grows; a version bump is now reserved for a change no
 `requires` gate can express (one that alters bytes a pre-capability reader would
 mis-verify rather than merely fail to use).
+
+**T1-D25 — T1-D24 was wrong: the `manifestVersion: 4` bump did ship, and
+ships.** Settled against three witnesses that agree, with the spec the lone
+dissenter:
+
+- **The code.** `core.ts` computes `version = input.manifestVersion ?? (replication
+  ? 4 : MANIFEST_VERSION)`, with `MANIFEST_VERSION = 3`. A plain build emits `3`;
+  a replicated build takes the `replication ? 4` branch and emits `4`.
+- **The tests.** `sibling.spec.ts` asserts a replicated build's manifest is `4`,
+  and the reader accepts `[2, 3, 4]`, so nothing refuses one.
+- **The deployed artifact.** The chess fixture built through the default path —
+  the same path the production container came from, with no `manifestVersion`
+  override — emits `manifestVersion: 4`, `requires: ["replicated"]`. Production
+  came from that path, so the container in someone's hands carries `4`.
+
+The chain, so the finding is about the decision and not just the doc. T1-D2
+(here, T1-D5) decided *version 4 plus a `requires` registry*. The implementation
+shipped **both** — but the version bump only on the replicated branch, so a plain
+document never left `3`. T1-D24 then read the `MANIFEST_VERSION = 3` constant,
+missed the `replication ? 4` override three hundred lines away, and concluded the
+bump had been dropped. An earlier session inherited that same partial reading and
+reported the file as emitting `3` under `requires`. One file, two readings; only
+the complete one is right.
+
+**What the version came to mean is the real finding.** After the ship, a
+`manifestVersion` is no longer a *generation of the format* — it is a marker for
+**one specific capability's storage shape**. `4` says "this document carries the
+replication columns"; `3` says "it does not." That is why a reader accepting 2,
+3 *and* 4 is correct rather than lax, and why the bump was cheap: a plain
+document never moved, so nothing every reader already opened had to be re-read or
+re-refused. It also sets the rule for what comes next. The **session** capability
+adds a storage shape too (the `_r_session` column, T1-D26), and it does **not**
+get a `5`: it rides the same `4` and is gated by its `requires` name, exactly as
+replication is. A version bump is reserved for a change no `requires` gate can
+express — one that alters bytes a pre-capability reader would *mis-verify* rather
+than merely fail to use. A new column behind a `requires` gate is not that.
+
+**Why the misdescription survived for weeks with no symptom** — worth writing
+down because it is a repeating class. The readers-before-writers ordering did its
+job *so well* that the writer side could be wrong about itself and nothing
+complained: every document opened, every merge converged, so there was no failing
+run to point at the belief. A correct design masked a wrong belief about it —
+the same shape as a CI job that was cancelling rather than passing, green by
+absence of a verdict. The check that catches it is the one this correction was
+settled by, promoted from a technique to a test: **the default build path emits
+the version the spec says it emits.** Build a replicated fixture and a plain one,
+assert `4` and `3`. Named `default-build-emits-declared-version` in
+`tests/replicated-schema.spec.ts`.
+
+The bump stands because it is already deployed. A version stamped into a document
+in someone's hands is not a decision that can be re-taken from a desk: reversing
+it now would make the running chess container a version the corrected compiler no
+longer emits, buying nothing the `requires` gate does not already provide. So the
+code is not changed to match D24; D24 is corrected to match the code. `4` is what
+ships.
+
+One consequence for the record. The IANA media-type registration
+(`docs/media-type-registration.md`) states the format defines versions 2 and 3.
+With `4` shipping, that template now lags its own code. The media type does not
+change per version, so the registration stays as sent; the next spec revision
+documents version 4, and the registration is updated then. This is a note, not an
+action — flagged here so it is not rediscovered as a surprise.
+
+This is the version story the session profile builds on: at version 4, a session
+document declares `requires: ["replicated", "session"]` and carries
+`session: { max_parties }` in the signed manifest beside `replication` (T1-D26).
 
 ## 9. Level 1 conformance vectors
 
