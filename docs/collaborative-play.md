@@ -171,6 +171,22 @@ is not a detour.
 - [ ] **No opener chooser on mobile (v1)** — keep people out of the bare opener;
   the app is the entry point. How links/icons land straight in the app without
   ever showing "Open a document somebody sent you".
+- [ ] **P0 — the mailbox key path was never wired; the mechanism was proven
+  with a fixed key.** The e2e injects one key into both copies via
+  `__runner.useRelay(base, key)`, so the two sides trivially shared a key. Real
+  sharing has no such thing: (a) the store seal key is a *fresh random key per
+  share* (`src/store.ts` ~301), so two shares carry two keys and the parties
+  never converge; (b) the creator's copy never persists a mailbox key —
+  `saveMailbox` is never called from `main.ts`, and `arrivedKey` is set only by
+  *opening* a link, so a creator who shares runs no mailbox session at all. Net:
+  on two real phones nothing ever crosses, which is exactly the observed
+  failure. Fix = the decision already on record but not built: **one stable
+  document key, generated once, kept in the library entry, carried in every link
+  (same key each share), used for both the store seal and the mailbox** — so both
+  parties converge and the creator has a mailbox. This is ahead of the D22 fix
+  and the session slice: without it the mailbox does not function for real
+  sharing at all. Named test must exercise the REAL key path (no injected key):
+  two copies, one shares a link, the other opens it, a move crosses.
 - [ ] **File ping-pong when the mailbox doesn't engage.** First real 2-player
   test: the invite went out as a *file* (rate limit → file fallback), so no key,
   no mailbox — every move required re-sending the file. The keyed link is the
