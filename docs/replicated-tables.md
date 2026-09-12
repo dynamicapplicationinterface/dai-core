@@ -1014,6 +1014,73 @@ filtered `document.sqlite`, are the host's; the row logic is engine-injected and
 tested against `node:sqlite` as the write rules are. Vector:
 `session-export-carries-only-that-session`.
 
+**T1-D29 — the roster is stated by the creator, in two rows with different
+authors (Step 3).** *The model is recorded here to be validated by the
+implementation, not settled ahead of it — the inferred roster this replaced
+looked sound in prose and was a clock race underneath.*
+
+An earlier design inferred the roster from who wrote first, ordered by Lamport
+clock. It was wrong twice over: a Lamport clock does not order events across
+replicas, and at Level 1 it is a **claim** — an integer an attacker chooses — so
+"earliest clock wins" hands the roster to whoever writes the lowest number, and a
+forwarded third party admits itself by picking `1`. That is not a Track 2 gap; it
+is the roster decided by an unsigned field anyone can set.
+
+**The roster is stated, not inferred.** Admission is two replicated rows,
+authored by different parties, and neither authors the other's fact:
+
+- **Seat row — creator-authored.** `{ session, seat, status: invited }`, where
+  `seat` is random bytes the creator mints per invite. Written when the creator
+  makes the invite. It carries **no replica id**: the invitee does not exist yet
+  and does not need to. An **open seat** is a seat with no binding — "share this
+  link with whoever" — expressible without becoming self-claim, because the
+  creator still minted the seat and the count is capped.
+- **Binding row — joiner-authored.** `{ session, seat, replica }`, written by the
+  opener on first open of the invite, under **its own fresh replica id** (T1-D22
+  intact — nothing adopts a shared identity, which is the corruption D22 exists to
+  prevent). The creator states *who may join* (how many seats, which seat this
+  invite is for); the joiner states *which key turned up*.
+
+The creator's own membership is uniform: it mints a seat and binds itself, the
+same pair every member has. `max_parties` — signed, T1-D26 — is the cap; the seat
+rows are the enumeration, and **more seat rows than the cap is malformed**,
+refused `SEATS_EXCEED_CAP`.
+
+*Membership, as a pure function of the row set (so it converges).* A replica is a
+member of session S iff it authored a binding to a seat that (a) S actually
+minted — a binding naming an unminted seat is not a member — and (b) is **not
+contested**. A seat is contested when two or more distinct replicas bind it —
+two parties opened the same invite — and a **contested seat admits neither**,
+refused `SEAT_ALREADY_BOUND`. This is the order-free heart of the correction:
+there is no clock and no tiebreak deciding a contested seat, because either would
+be the forgeable ordering just removed. A data row authored by a non-member is
+dropped at merge — the drop the roster exists to perform.
+
+*What this buys.* A **forwarded copy cannot enter**: the seat is bound, a second
+binding contests it rather than joining, and the app shows "seat taken" before a
+move is possible — so nothing plays and is then silently erased, and **nothing
+drops its own rows**, because a copy that was never named never had a session to
+write into. **Re-enrolment is expressible**: a lost phone is a revoked seat and a
+new invite, and because the rows are a history a changed recipient key shows
+rather than hides. **Level 2 needs no redesign**: seat rows sign under the
+creator's replica key, bindings under the joiner's — claim becomes proof over the
+same rows.
+
+*Cost to Step 2.* The invite carries the seat id alongside the filtered rows —
+a value in the invite, not a change to the section layout, so T1-D28's seam
+invariant (one section plus the footer) holds.
+
+*Level 1 residual, stated honestly.* A replica id is a claim, so a hostile party
+who holds the invite can bind the seat before the intended recipient, or contest
+it. That is the §10 weakness already on record — a replica id is unproven at
+Level 1 — closed at Track 2 when the binding is signed. It is not a new hole, and
+the inferred roster did not avoid it either; the difference is that here the
+thing an attacker must forge is a binding to a seat the creator minted, not a
+free-floating integer, so Track 2's signature closes it exactly.
+
+Vectors: `roster-closes-at-max-parties`, `forwarded-copy-cannot-enter-session`
+(inverting the chess suite's "third copy can enter").
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -1130,6 +1197,8 @@ merged" sends somebody looking for damage that is not there.
 | `REPLICATION_SCHEMA_INVALID` | compile: reserved `_r_` prefix, an author's own primary key, `AUTOINCREMENT` (§3), or a session profile with no replicated table or `max_parties` below one (T1-D26) |
 | `MALFORMED_SESSION_PROFILE` | verify: a `session` block without `requires: ["session"]`, `requires: ["session"]` without a block, or a `session` block whose `max_parties` is not a positive integer (T1-D27) |
 | `SESSION_EXPORT_INCOMPLETE` | export: a session's kept rows are not closed under `_r_parents` — a kept row names a parent in another session, so the source document is malformed (T1-D28) |
+| `SEAT_ALREADY_BOUND` | merge: a session seat carries bindings from two or more replicas (two parties opened one invite); contested, admits neither, order-free (T1-D29) |
+| `SEATS_EXCEED_CAP` | merge: a session declares more seats than its signed `max_parties`, so the enumeration exceeds the creator's signed cap (T1-D29) |
 | `REPLICATED_TABLE_IMMUTABLE` | runtime: an `UPDATE` or `DELETE` against a replicated table (§4) |
 | `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |

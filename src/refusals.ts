@@ -56,6 +56,19 @@ export const REFUSALS = {
       "source document is malformed, an entity's history having crossed sessions. Refused rather " +
       "than shipping an invite with a parent that never arrives (T1-D28).",
   },
+  SEAT_ALREADY_BOUND: {
+    recoverable: false,
+    means:
+      "A session seat carries bindings from two or more replicas — two parties opened the same " +
+      "invite. The seat is contested and admits neither, order-free and without a clock deciding " +
+      "it. The creator can revoke the seat and issue a new invite (T1-D29).",
+  },
+  SEATS_EXCEED_CAP: {
+    recoverable: false,
+    means:
+      "A session declares more seats than its signed max_parties allows. The cap is the creator's " +
+      "signed statement of how many may join, so more seats than the cap is malformed (T1-D29).",
+  },
 
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },
