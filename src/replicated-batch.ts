@@ -51,24 +51,38 @@ export function authoredSince(
   replica: Uint8Array,
   sinceSeq: number,
   tables: readonly string[],
+  session?: Uint8Array,
 ): BatchEntry[] {
   const entries: BatchEntry[] = [];
+  const scope = session ? " AND _r_session = ?" : "";
+  const params = (rest: unknown[]): unknown[] => (session ? [...rest, session] : rest);
   for (const table of tables) {
     const authored = authorColumnsOf(db, table);
     const stored = db.all(
-      `SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq > ? ORDER BY _r_seq ASC`,
-      [replica, sinceSeq],
+      `SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq > ?${scope} ORDER BY _r_seq ASC`,
+      params([replica, sinceSeq]),
     );
     for (const record of stored) entries.push({ table, row: readRow(record, authored) });
   }
   return entries;
 }
 
-/** The highest seq this replica has authored, or 0 — the watermark a publish advances to. */
-export function authoredHead(db: Rows, replica: Uint8Array, tables: readonly string[]): number {
+/**
+ * The highest seq this replica has authored, or 0 — the watermark a publish
+ * advances to. Scoped to a session when one is given (T1-D30): each session's
+ * mailbox carries only that session's rows, so its watermark is over them.
+ */
+export function authoredHead(
+  db: Rows,
+  replica: Uint8Array,
+  tables: readonly string[],
+  session?: Uint8Array,
+): number {
   let head = 0;
+  const scope = session ? " AND _r_session = ?" : "";
   for (const table of tables) {
-    const max = db.all(`SELECT max(_r_seq) AS m FROM "${table}" WHERE _r_replica = ?`, [replica])[0]?.["m"];
+    const params = session ? [replica, session] : [replica];
+    const max = db.all(`SELECT max(_r_seq) AS m FROM "${table}" WHERE _r_replica = ?${scope}`, params)[0]?.["m"];
     if (typeof max === "number") head = Math.max(head, max);
   }
   return head;
@@ -107,14 +121,17 @@ export function authoredBatchAbove(
   db: Rows,
   watermark: Watermark,
   tables: readonly string[],
+  session?: Uint8Array,
 ): { batch: Uint8Array | null; head: number; replica: string } {
   const held = db.all("SELECT id, lc FROM _dai_replica LIMIT 1")[0];
   const replica = held?.["id"];
   if (!(replica instanceof Uint8Array)) return { batch: null, head: watermark.seq, replica: "" };
   const replicaHex = hex(replica);
   const since = watermark.replica === replicaHex ? watermark.seq : 0;
-  const head = authoredHead(db, replica, tables);
-  const entries = authoredSince(db, replica, since, tables);
+  // Scoped to the session when one is given (T1-D30): a copy is in many sessions
+  // and each session's mailbox carries only its own rows.
+  const head = authoredHead(db, replica, tables, session);
+  const entries = authoredSince(db, replica, since, tables, session);
   if (entries.length === 0) return { batch: null, head, replica: replicaHex };
   const lc = Number(held?.["lc"] ?? 0);
   return { batch: encodeBatch({ replica, lc, entries }), head, replica: replicaHex };

@@ -1116,6 +1116,48 @@ Vectors: `roster-closes-at-max-parties`, `forwarded-copy-cannot-enter-session`
 (inverting the chess suite's "third copy can enter"), and
 `contested-seat-drops-earlier-rows`.
 
+**T1-D30 — a mailbox per session, derived so the relay stays a commodity and
+learns nothing (Step 4).** A session is a game; each game has its own mailbox.
+Both the key it seals under and the id it is addressed by derive from the
+document's root key and the session id, by HKDF under two distinct labels:
+
+```
+mailbox key = HKDF(rootKey, "dai:mailbox:key:" ‖ sessionId)
+mailbox id  = HKDF(rootKey, "dai:mailbox:id:"  ‖ sessionId)
+```
+
+Two derivations, two properties, each load-bearing:
+
+- **The key needs the session id, so the document key alone opens nothing.** A
+  party who holds the root key but was never told a session's id cannot derive
+  that session's mailbox key and cannot read its batches. The session id is the
+  capability; it travels in the invite, with the session it names.
+- **The id needs the root key, so the relay cannot correlate.** If the mailbox id
+  were the session id, or anything derived from it alone, a relay serving many
+  documents could see the same id appear under two of them and learn that they
+  share a session — the social graph the format exists not to leak. Derived under
+  the root key, the id is opaque and unlinkable: the relay sees a fresh random
+  name per session and can join nothing.
+
+Both parties derive the same key and id from the same root and session id, with
+no round trip — the convergence property this rests on, and it is a property of
+HKDF being a function, tested directly.
+
+*The batch scope gains the session; the watermark keeps its shape.* A copy is in
+many sessions at once, and each session's mailbox carries only that session's
+rows: `authoredBatchAbove` filters the authored rows to `_r_session = session`
+before sealing. The watermark stays `{replica, seq}` (T1-D22's shape) — it is
+per session because each session's mailbox tracks its own, but its contents are
+unchanged. A plain replicated document with no session profile has no session to
+pass and behaves exactly as slice one did.
+
+*The test that the derivation is right: the relay does not change.* The relay
+was three calls over opaque bytes addressed by an opaque id (Track 5); a mailbox
+per session is a different opaque id under the same three calls. **If Step 4
+needed a relay change, the derivation would be wrong** — the relay must never
+learn what a session is, any more than it learned what a document was. It does
+not: `apps/relay/` is untouched.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is

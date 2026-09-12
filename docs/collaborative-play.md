@@ -237,20 +237,14 @@ is not a detour.
   table yet and settles on first write as before. In the frame runtime, so
   existing self-contained docs need a recompile. The two-tabs-one-seq case is the
   same root; a faithful browser test for the library-reopen path is still owed.
-- [ ] **D22 named test still owed.** Two copies allocated the same `(replica, seq)` for
-  different moves — which means two copies shared one replica identity. That is
-  exactly the case D22 forbids on *every* carrier, and the one the decision
-  called worse than a compatibility gap: two honest moves, one refused as
-  tampering. The mailbox sidesteps the *symptom* (settleReplica + e2e); it does
-  not fix the *bug*. Two Safari tabs on one held document is a normal user, not
-  a test artifact. Candidate causes, both host bugs: (a) the new tab mounted a
-  second working copy under the same library entry and the two raced on `seq`;
-  (b) the "own copy returning" check treated a sibling as itself, so it never
-  adopted a fresh replica. Fix, same shape as before: **one document, one replica
-  per host**, plus a cross-tab lock or a single shared connection so a second tab
-  cannot allocate. Named test: **two tabs on one held document never allocate the
-  same `seq`.** Order: fix **after** the link run, **before** the session slice —
-  the slice multiplies documents, and a per-host identity bug scales with them.
+- [x] **D22 named test — DONE (`8aa8fc1`).** The named test was built and found the
+  real bug: an arrived copy's adopted replica id was **not persisted at mount**
+  (settle ran before the autosave interceptor), so a reopen-before-first-write
+  reverted to the sender's id (`revertedToSender: true`). Fixed by reordering the
+  settle ahead of the interceptor plus an immediate flush, with a `__runner.replicaId()`
+  reader and a §5 spec line on the debounce hazard. The test asserts all three
+  states: an arrived copy takes its own id, keeps it across a reopen-before-write,
+  and an own copy's id does not change. Merged to main.
 - [ ] **Document handoffs and user sessions in the SDK / recipe, with use
   cases.** How a session is created, invited, joined, closed; how a handoff
   works (build-and-hand-over, link, sibling merge); worked examples an app
