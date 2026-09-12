@@ -1,0 +1,1 @@
+$(cat /home/user/dai-core/docs/spec-issue-1-recipient-bound-ownership.md)
