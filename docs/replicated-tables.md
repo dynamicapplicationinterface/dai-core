@@ -1158,6 +1158,64 @@ needed a relay change, the derivation would be wrong** — the relay must never
 learn what a session is, any more than it learned what a document was. It does
 not: `apps/relay/` is untouched.
 
+*What the id does not buy: unlinkable behaviour.* The derivation makes the ids
+unlinkable **by name** — a relay cannot join two mailboxes by comparing their
+addresses. It cannot make them unlinkable by **traffic**. Two mailboxes that only
+ever exchange with each other, alternating, are a two-party session however
+opaque their ids, and a relay watching volume and timing can see that shape. This
+is not a flaw introduced here — §8.2 already accepted that a relay learns volume
+and timing, which is the price of a relay that holds bytes it cannot read — but
+it is written here so the derivation is not read as more than it is: opaque names
+close the by-name correlation and nothing beyond it. Traffic-analysis resistance
+is a different mechanism (cover traffic, batching) and is not claimed.
+
+**T1-D31 — the session close: a stated frontier, not a clock, makes a session
+finite (Step 5).** A game ends — checkmate, resignation, a draw — and the session
+is closed. A closed session is finite: a move authored without having seen the
+close is **late**, and dropped at merge like a non-roster row. The trap is the
+same one the roster had: "late" must not be decided by a Lamport clock, which
+does not order events across replicas and which an author can pick. So the close
+**states what it saw** — a fact with an author — and admission reads that fact.
+
+*The representation, chosen to be a fact and to be expressible.* Closing a
+session writes rows to `_dai_close`, one per replica the closer had seen in the
+session, each recording that replica's highest seq: `{ replica, seq }`, carrying
+`_r_session`. A session is **closed** when any `_dai_close` row names it. A move
+`(R, N)` in a closed session is **late** unless some close row for that session
+records `replica = R` with `seq ≥ N` — that is, unless the closer had already
+seen it. A replica the closer never saw is late in whole; a seq beyond the
+recorded frontier is late. This is the closer's causal frontier — its observed
+`(replica, seq)` set — not its clock: a row is dropped because the close did not
+see it, never because a clock says it came after. seq is per-replica monotonic,
+so an author cannot claim an earlier seq to slip a late move past the frontier
+without colliding with its own rows (`ROW_REJECTED`), which a clock would have let
+it do.
+
+*Convergent, and it composes with the roster.* Late-ness is a pure function of
+the row set — the close rows are fixed data — so every copy drops the same late
+rows regardless of merge order, the same property the roster needs. A row is
+admitted when it is **both** a member's row (T1-D29) **and** not late, and both
+are recomputed by the same admission views (`headsView`), because both can flip
+as rows arrive: a move admitted before its session's close is dropped the moment
+the close arrives, exactly as a member's rows drop when a contest arrives. Two
+concurrent closes union naturally — a move is late only if *no* close row covers
+it — so the more-inclusive frontier wins and no legitimately-seen move is dropped.
+
+*The mechanism the guard was built for.* `_dai_close` is a replicated system
+table and **must** be named in `SESSION_SYSTEM_TABLES`, or `assertMergeCoverage`
+fails the build (T1-D29) — the close rows would otherwise never merge, and a
+session would close on one copy and stay open on another. That the guard fires
+if this is forgotten is the guard working as designed.
+
+*Level 1 residual, and what compaction is for.* At Level 1 the close is a claim,
+like every row; a member states the frontier and is trusted to state it
+honestly, and Track 2 signs it. Dropping late rows is not compaction: the late
+rows are refused admission but still present, the way non-roster rows are.
+Compaction — retiring a closed session's rows to a file so they stop being merged
+and stored — is deferred (profiles D6); the close is what makes it *possible*,
+because a session with a stated end is one whose rows can be retired without
+losing a live game. Vector: `session-closed-drops-late-rows`.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is

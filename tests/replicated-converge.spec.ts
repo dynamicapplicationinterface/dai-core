@@ -1113,15 +1113,15 @@ CREATE TABLE moves (
   test("every replicated table is covered by the merge, and one that is not is a named refusal", () => {
     // mergeTablesOf decides what converges; a replicated table it omits never
     // merges, silently. The negative case proves the guard has teeth: a rogue
-    // replicated system table — the shape of a Step 5 _dai_close added without
-    // extending SESSION_SYSTEM_TABLES — is caught, and it comes back as the
-    // MERGE_COVERAGE refusal from mergeSibling, in the same register as every
-    // other reason a merge does not run, not as a host exception.
+    // replicated system table — a future _dai_* table added without extending
+    // SESSION_SYSTEM_TABLES (as _dai_close was correctly added in Step 5) — is
+    // caught, and comes back as the MERGE_COVERAGE refusal from mergeSibling, in
+    // the same register as every other reason a merge does not run.
     const ok = open3();
     expect(mergeCoverageGap(ok)).toEqual([]);
 
-    ok.run("CREATE TABLE _dai_close (x TEXT, _r_replica BLOB NOT NULL, _r_seq INTEGER NOT NULL)");
-    expect(mergeCoverageGap(ok)).toContain("_dai_close");
+    ok.run("CREATE TABLE _dai_future (x TEXT, _r_replica BLOB NOT NULL, _r_seq INTEGER NOT NULL)");
+    expect(mergeCoverageGap(ok)).toContain("_dai_future");
 
     const other = open3();
     expect(mergeSibling(ok, other).refused).toBe("MERGE_COVERAGE");
@@ -1151,5 +1151,47 @@ CREATE TABLE moves (
     expect(canonicalDump(b, tables)).toBe(canonicalDump(a, tables));
     a.close();
     b.close();
+  });
+
+  test("session-closed-drops-late-rows: a move past the close's frontier is dropped, one within it kept", () => {
+    // The member plays two moves, then the session is closed with a frontier
+    // that saw only the first. The second is late — a move authored without
+    // seeing the close — and drops; the first, which the close saw, stays. Late
+    // is the closer's stated seq frontier, not a clock (T1-D31).
+    const db = open3();
+    e = 0;
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
+    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
+    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" }); // seq 2
+    put(db, "moves", O, 3, 4, { ply: 2, san: "Nf3" }); // seq 3
+    expect(currentMoves(db)).toEqual(["Nf3", "e5"]);
+
+    // Close: the closer had seen O up to seq 2 — the first move, not the second.
+    put(db, "_dai_close", C, 2, 5, { replica: O, seq: 2 });
+
+    // The second move is past the frontier (3 > 2): late, dropped. The first
+    // (2 >= 2) the close saw: kept. Recomputed on read, so the drop appeared the
+    // moment the close arrived.
+    expect(currentMoves(db)).toEqual(["e5"]);
+    db.close();
+  });
+
+  test("a move from a replica the close never saw is late in whole", () => {
+    // The frontier names the replicas the closer saw; a member whose rows the
+    // close does not mention at all is entirely late.
+    const db = open3();
+    e = 0;
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
+    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
+    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
+    put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
+    expect(currentMoves(db)).toEqual(["e4", "e5"]);
+
+    // Close records only C's frontier; O is unmentioned, so O's move is late.
+    put(db, "_dai_close", C, 5, 7, { replica: C, seq: 4 });
+    expect(currentMoves(db)).toEqual(["e4"]);
+    db.close();
   });
 });

@@ -360,8 +360,19 @@ function headsView(q: string, admissionFiltered: boolean): string {
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT * FROM ${q} WHERE _r_superseded = 0;`;
   }
-  const admitted = (row: string): string =>
+  // A row is admitted when it is a member's row (T1-D29) AND not late relative to
+  // its session's close (T1-D31). Both are facts about the current row set, and
+  // both can flip as rows arrive, so both are recomputed here rather than stored.
+  const member = (row: string): string =>
     `EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = ${row}._r_session AND m.replica = ${row}._r_replica)`;
+  // Not late: the session is not closed, or some close row for it recorded this
+  // row's replica with a seq at least this high — the closer had seen it. seq,
+  // not a clock: a row is dropped because the close did not see it (T1-D31).
+  const notLate = (row: string): string =>
+    `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session)` +
+    ` OR EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session` +
+    ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq))`;
+  const admitted = (row: string): string => `(${member(row)}) AND ${notLate(row)}`;
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
@@ -496,11 +507,24 @@ CREATE VIEW IF NOT EXISTS _dai_member AS
             FROM _dai_binding_current b2
            WHERE b2._r_session = b._r_session AND b2.seat = b.seat) = 1;
 `;
-  return base + rosterTable("_dai_seat") + rosterTable("_dai_binding") + member;
+
+  /*
+   * The session close (T1-D31). One row per replica the closer had seen in the
+   * session, recording that replica's highest seq: the closer's stated causal
+   * frontier. A session is closed when any `_dai_close` row names it; a move is
+   * late — dropped by the admission views — unless a close row records its
+   * replica with a seq at least as high. Like the roster tables, its own heads
+   * are not admission-filtered: a close is always visible for deciding late-ness.
+   */
+  const close =
+    `CREATE TABLE IF NOT EXISTS _dai_close (\n  replica BLOB NOT NULL CHECK (length(replica) = 16),\n  seq INTEGER NOT NULL,\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
+    tableObjects("_dai_close", ["replica", "seq"], true, false);
+
+  return base + rosterTable("_dai_seat") + rosterTable("_dai_binding") + close + member;
 }
 
 /** The replicated system tables a session document carries beside its author tables (T1-D29). */
-export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding"] as const;
+export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding", "_dai_close"] as const;
 
 /**
  * What the immutability trigger must name, checked against the table itself.
