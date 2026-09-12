@@ -91,7 +91,7 @@ test.describe("the invite carrier, end to end (T1-D28)", () => {
     const source = await container(twoSessionDatabase());
     const before = readContainerFile(source.bytes);
 
-    const invite = await exportSession(source.bytes, ["moves"], S1, nodeEngine());
+    const invite = await exportSession(source.bytes, S1, nodeEngine());
     const after = readContainerFile(invite);
 
     // The seam: manifest and payload byte-identical, so the signature over the
@@ -119,7 +119,7 @@ test.describe("the invite carrier, end to end (T1-D28)", () => {
     // A stale footer is how a rolled-back or half-written save reads; the invite
     // must not look like one.
     const source = await container(twoSessionDatabase());
-    const invite = await exportSession(source.bytes, ["moves"], S1, nodeEngine());
+    const invite = await exportSession(source.bytes, S1, nodeEngine());
     const file = readContainerFile(invite);
     const { sha256Hex } = await import("../src/core.js");
     const data = sectionBytes(invite, file, SECTION.DATA)!;

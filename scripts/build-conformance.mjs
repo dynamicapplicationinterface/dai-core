@@ -343,7 +343,13 @@ define(
     const archive = archiveOf(html);
     const manifest = JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
     manifest.manifestVersion = 4;
-    manifest.requires = ["session"];
+    // `relay`, an unimplemented capability with no pairing rule. `session` now
+    // carries one (a block and the requirement are one declaration, T1-D27), so
+    // `requires:["session"]` alone is MALFORMED_SESSION_PROFILE, not
+    // UNSUPPORTED_CAPABILITY — and the Python and Rust readers, which do not yet
+    // implement that pairing, would then disagree with this one. `relay` is the
+    // plain "a capability this reader lacks" this vector means.
+    manifest.requires = ["relay"];
     archive["runtime/manifest.json"] = bytes(JSON.stringify(manifest));
     return { file: "version-4-requires-unimplemented.dai.html", body: repack(html, archive) };
   },
@@ -1269,7 +1275,9 @@ for (const entry of written) {
 {
   const html = readFileSync(join(suite, "cases/version-4.dai.html"), "utf8");
   const parsed = parseContainer(html);
-  parsed.manifest.requires = ["session"];
+  // `relay`, not `session`: see the file vector above — session's pairing rule
+  // (T1-D27) makes it MALFORMED here, and would split the readers.
+  parsed.manifest.requires = ["relay"];
   links.push({
     name: "version-4-requires-unimplemented",
     link: `https://opener.example/#a=${await packInline(parsed, host)}`,

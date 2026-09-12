@@ -400,28 +400,61 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array): Repli
  * copy of the sender's — never the sender's own, which is append-only and whose
  * other games must not be touched.
  *
- * `tables` are the replicated tables (the manifest's `replication.tables`). What
- * stays: those tables' rows for `session`, the document-level `_dai_replica` and
- * `_dai_replicas`, and every table's schema. What goes: other sessions' rows,
- * and every row of a non-replicated (local) author table — §4 keeps local tables
- * off any carrier but a full export, and an invite is the app plus one game.
+ * The set of tables is **derived from the database shape, not handed in.** Every
+ * replicated-shaped table — author tables and the roster's `_dai_seat` /
+ * `_dai_binding` alike — is filtered to `session`; the two document tables
+ * (`_dai_replica`, `_dai_replicas`) travel whole as this copy's identity; local
+ * author tables are emptied (§4 keeps them off any carrier but a full export);
+ * and a table that fits none of those paths is refused. This is deliberate and
+ * load-bearing: an earlier version filtered only a caller's list of author
+ * tables, so every *other* session's seat and binding rows travelled in the
+ * invite — the whole roster of every group this person is in, leaving with a
+ * two-person game. A caller cannot hand an incomplete list, because there is no
+ * list to hand; the same structural fix as the merge-coverage guard.
  *
- * D4 first: a session's kept rows must be closed under `_r_parents`. An entity
- * lives in one session by construction, so this holds — and is asserted rather
- * than assumed, because a kept row naming a parent in another session is a
- * malformed source (an entity's history crossed sessions) and would export an
- * invite with a parent that never arrives.
+ * D4: a session's kept rows must be closed under `_r_parents`. An entity lives in
+ * one session by construction, so this holds — and is asserted rather than
+ * assumed, because a kept row naming a parent in another session is a malformed
+ * source (an entity's history crossed sessions) and would export an invite with
+ * a parent that never arrives.
  */
-export function filterToSession(db: Rows, tables: readonly string[], session: Uint8Array): void {
-  for (const table of tables) {
-    if (!hasSessionColumn(db, table)) {
-      throw new SessionExportIncomplete(
-        `${table} has no session column, so this is not a session document and cannot be ` +
-          "exported to one session.",
-      );
-    }
+const DOCUMENT_TABLES = new Set(["_dai_replica", "_dai_replicas"]);
 
-    // D4: a kept row may not name a parent that belongs to another session.
+export function filterToSession(db: Rows, session: Uint8Array): void {
+  const replicated: string[] = [];
+  const local: string[] = [];
+  for (const table of db
+    .all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+    .map((r) => String(r["name"]))) {
+    if (DOCUMENT_TABLES.has(table)) continue; // this copy's identity — travels whole
+    const columns = db.all(`SELECT name FROM pragma_table_info(?)`, [table]).map((c) => String(c["name"]));
+    const isReplicated = columns.includes("_r_replica") && columns.includes("_r_seq");
+    if (isReplicated) {
+      if (!columns.includes("_r_session")) {
+        // Every replicated table in a session document carries `_r_session`; one
+        // without it is either a plain document, or a malformed session one.
+        throw new SessionExportIncomplete(
+          `${table} is a replicated table with no session column, so it cannot be filtered to a ` +
+            "session. Either this is not a session document, or its schema is malformed.",
+        );
+      }
+      replicated.push(table);
+    } else if (table.startsWith("_dai")) {
+      // A system table that is neither a known document table nor replicated fits
+      // no path. Refusing rather than guessing whether it travels is the point:
+      // guessing is what leaked the roster, and a Step 5 system table added
+      // without classifying it here should fail loudly, not travel by default.
+      throw new SessionExportIncomplete(
+        `${table} fits neither the replicated nor the local path, so the export cannot decide ` +
+          "whether it should travel. A new system table must be classified before it can be exported.",
+      );
+    } else {
+      local.push(table);
+    }
+  }
+
+  // D4 over every replicated table — author and roster alike, not a subset.
+  for (const table of replicated) {
     const crossing = db.all(
       `SELECT count(*) AS n
          FROM "${table}" k
@@ -442,18 +475,13 @@ export function filterToSession(db: Rows, tables: readonly string[], session: Ui
 
   // The scratch's append-only DELETE guard is dropped so the other sessions can
   // be removed; the recipient's open re-creates it from the schema block (§3).
-  for (const table of tables) {
+  for (const table of replicated) {
     db.run(`DROP TRIGGER IF EXISTS "${table}__no_delete"`);
     db.run(`DELETE FROM "${table}" WHERE _r_session != ?`, [session]);
   }
 
   // Local (non-replicated) author tables travel as schema, emptied of rows.
-  const replicated = new Set(tables);
-  const localTables = db
-    .all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
-    .map((r) => String(r["name"]))
-    .filter((name) => !replicated.has(name) && !name.startsWith("_dai"));
-  for (const table of localTables) db.run(`DELETE FROM "${table}"`);
+  for (const table of local) db.run(`DELETE FROM "${table}"`);
 }
 
 /* -------------------------------------------------------------- the dump */

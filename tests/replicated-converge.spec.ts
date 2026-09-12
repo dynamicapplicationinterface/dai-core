@@ -6,7 +6,7 @@ import {
   rewriteReplicated,
   triggerColumns,
 } from "../src/replicated.js";
-import { assertMergeCoverage, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
+import { mergeCoverageGap, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
 import { adoptReplica, ensureReplica } from "../src/replicated-rows.js";
 import {
   applyRow,
@@ -879,6 +879,43 @@ CREATE TABLE prefs (
   const S2 = bytes(0x52);
   const hx = (u: unknown): string => (u instanceof Uint8Array ? Buffer.from(u).toString("hex") : "");
 
+  test("no other session's rows travel — in the author tables OR the roster tables", () => {
+    // The leak this exists to prevent: filterToSession once took a caller's list
+    // of author tables and left _dai_seat / _dai_binding untouched, so every
+    // other session's seats and bindings — the membership of every group this
+    // person is in — travelled in a two-person invite. This asserts what a
+    // SECOND session's rows do, in EVERY table, which the earlier tests never did.
+    const db = openFilter();
+    let seq = 0;
+    const putRow = (table: string, session: Uint8Array, columns: Record<string, unknown>): void =>
+      applyRow(db, table, {
+        _r_replica: A,
+        _r_seq: (seq += 1),
+        _r_lc: seq,
+        _r_entity: bytes(0x60 + seq),
+        _r_parents: "[]",
+        _r_deleted: 0,
+        _r_session: session,
+        columns,
+      });
+
+    // Two sessions, each with a seat, a binding and a move.
+    for (const s of [S1, S2]) {
+      putRow("_dai_seat", s, { seat: s });
+      putRow("_dai_binding", s, { seat: s });
+      putRow("moves", s, { ply: 1, san: "e4" });
+    }
+
+    filterToSession(db, S1);
+
+    // Not one row of S2 survives, in any table — author or system.
+    for (const table of ["moves", "_dai_seat", "_dai_binding"]) {
+      const sessions = new Set(db.all(`SELECT _r_session FROM "${table}"`).map((r) => hx(r["_r_session"])));
+      expect([...sessions], `${table} carried another session's rows`).toEqual([hx(S1)]);
+    }
+    db.close();
+  });
+
   test("keeps only the chosen session's rows, empties local tables, keeps _dai_replica", () => {
     const db = openFilter();
     ensureReplica(db, A);
@@ -887,7 +924,7 @@ CREATE TABLE prefs (
     // A local (non-replicated) table with this device's own state.
     db.run(`INSERT INTO prefs (k, v) VALUES ('theme', 'dark')`);
 
-    filterToSession(db, ["moves"], S1);
+    filterToSession(db, S1);
 
     const kept = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
     expect(kept).toEqual([hx(S1)]); // only S1; S2's game is gone
@@ -910,7 +947,7 @@ CREATE TABLE prefs (
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
     changeEntity(a, "moves", E1, { ply: 1, san: "e4!" });
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
-    filterToSession(a, ["moves"], S1);
+    filterToSession(a, S1);
 
     const fresh = openFilter();
     ensureReplica(fresh, B);
@@ -945,7 +982,7 @@ CREATE TABLE prefs (
     };
     applyRow(db, "moves", crossed);
 
-    expect(() => filterToSession(db, ["moves"], S2)).toThrow(SessionExportIncomplete);
+    expect(() => filterToSession(db, S2)).toThrow(SessionExportIncomplete);
     db.close();
   });
 
@@ -953,7 +990,7 @@ CREATE TABLE prefs (
     const db = open(); // the plain (non-session) schema from the top of the file
     ensureReplica(db, A);
     createEntity(db, "cases", E1, { title: "x", status: "open", weight: null });
-    expect(() => filterToSession(db, ["cases"], S1)).toThrow(SessionExportIncomplete);
+    expect(() => filterToSession(db, S1)).toThrow(SessionExportIncomplete);
     db.close();
   });
 });
@@ -1073,19 +1110,23 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("every replicated table is covered by the merge, and one that is not is a build error", () => {
+  test("every replicated table is covered by the merge, and one that is not is a named refusal", () => {
     // mergeTablesOf decides what converges; a replicated table it omits never
-    // merges, silently. So the coverage is asserted, and the negative case
-    // proves the assertion has teeth: a rogue replicated system table — the
-    // shape of a Step 5 _dai_close added without extending SESSION_SYSTEM_TABLES
-    // — is caught rather than discovered as a divergence in the field.
+    // merges, silently. The negative case proves the guard has teeth: a rogue
+    // replicated system table — the shape of a Step 5 _dai_close added without
+    // extending SESSION_SYSTEM_TABLES — is caught, and it comes back as the
+    // MERGE_COVERAGE refusal from mergeSibling, in the same register as every
+    // other reason a merge does not run, not as a host exception.
     const ok = open3();
-    expect(() => assertMergeCoverage(ok)).not.toThrow();
+    expect(mergeCoverageGap(ok)).toEqual([]);
 
     ok.run("CREATE TABLE _dai_close (x TEXT, _r_replica BLOB NOT NULL, _r_seq INTEGER NOT NULL)");
-    expect(() => assertMergeCoverage(ok)).toThrow(/MERGE_COVERAGE/);
-    expect(() => assertMergeCoverage(ok)).toThrow(/_dai_close/);
+    expect(mergeCoverageGap(ok)).toContain("_dai_close");
+
+    const other = open3();
+    expect(mergeSibling(ok, other).refused).toBe("MERGE_COVERAGE");
     ok.close();
+    other.close();
   });
 
   test("the frame merge unions the roster tables, and admission holds after it", () => {

@@ -117,30 +117,24 @@ function everyReplicatedTable(rows: Rows): string[] {
 }
 
 /**
- * Asserts that `mergeTablesOf` covers every replicated table, exactly once.
+ * The replicated tables `mergeTablesOf` does not cover — empty when every one is
+ * accounted for.
  *
  * `mergeTablesOf` decides what converges, so a replicated table it omits is a
  * table that silently never merges — two copies that agree everywhere else and
  * diverge on it, with no error to point at. That is the invisible failure this
- * project keeps finding, so it is a check rather than a comment: every table
- * with the replication columns is in the author list or the roster list, and a
- * table in neither — a new system table added without extending
- * `SESSION_SYSTEM_TABLES`, the way `_dai_close` will be in Step 5 — is a build
- * error, not a divergence discovered in the field.
+ * project keeps finding, so it is checked rather than trusted: every table with
+ * the replication columns must be an author table or a named system table, and
+ * one in neither — a new system table added without extending
+ * `SESSION_SYSTEM_TABLES`, the way `_dai_close` will be in Step 5 — is caught.
  *
- * Called at the top of a merge so a mis-wired schema cannot merge at all rather
- * than merge incompletely.
+ * A gap comes back as the `MERGE_COVERAGE` refusal from `mergeSibling`, in the
+ * same register as every other reason a merge does not run, rather than as a
+ * host exception a caller cannot name.
  */
-export function assertMergeCoverage(rows: Rows): void {
+export function mergeCoverageGap(rows: Rows): string[] {
   const covered = new Set(mergeTablesOf(rows));
-  const uncovered = everyReplicatedTable(rows).filter((name) => !covered.has(name));
-  if (uncovered.length > 0) {
-    throw new Error(
-      `MERGE_COVERAGE: these replicated tables are in neither the author nor the roster set, so ` +
-        `they would never converge: ${uncovered.join(", ")}. A replicated table must be an author ` +
-        `table or a named system table (SESSION_SYSTEM_TABLES).`,
-    );
-  }
+  return everyReplicatedTable(rows).filter((name) => !covered.has(name));
 }
 
 /**
@@ -215,9 +209,12 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
     return { ...empty, conflicts: 0, refused: "UNSUPPORTED_LEVEL" };
   }
 
-  // Refuse to merge a schema whose replicated tables are not all accounted for,
-  // rather than merge some of them and diverge on the rest (T1-D29).
-  assertMergeCoverage(local);
+  // Refuse — by name, like every other reason a merge does not run — a schema
+  // whose replicated tables are not all accounted for, rather than merge some of
+  // them and diverge on the rest (T1-D29).
+  if (mergeCoverageGap(local).length > 0 || mergeCoverageGap(sibling).length > 0) {
+    return { ...empty, conflicts: 0, refused: "MERGE_COVERAGE" };
+  }
 
   // The merge unions author tables and the roster tables together, so seats and
   // bindings converge like moves (T1-D29). Conflicts, below, are reported over

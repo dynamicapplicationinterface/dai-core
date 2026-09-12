@@ -69,6 +69,13 @@ export const REFUSALS = {
       "A session declares more seats than its signed max_parties allows. The cap is the creator's " +
       "signed statement of how many may join, so more seats than the cap is malformed (T1-D29).",
   },
+  MERGE_COVERAGE: {
+    recoverable: false,
+    means:
+      "A replicated table is neither an author table nor a named system table, so a merge would " +
+      "converge some tables and silently diverge on it. Refused rather than merged incompletely — " +
+      "a system table added without wiring it into the merge set (T1-D29).",
+  },
 
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },

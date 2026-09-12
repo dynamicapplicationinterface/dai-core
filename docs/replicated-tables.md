@@ -1234,6 +1234,7 @@ merged" sends somebody looking for damage that is not there.
 | `SESSION_EXPORT_INCOMPLETE` | export: a session's kept rows are not closed under `_r_parents` — a kept row names a parent in another session, so the source document is malformed (T1-D28) |
 | `SEAT_ALREADY_BOUND` | merge: a session seat carries bindings from two or more replicas (two parties opened one invite); contested, admits neither, order-free (T1-D29) |
 | `SEATS_EXCEED_CAP` | merge: a session declares more seats than its signed `max_parties`, so the enumeration exceeds the creator's signed cap (T1-D29) |
+| `MERGE_COVERAGE` | merge: a replicated table is neither an author table nor a named system table, so the merge would converge some tables and diverge on it — refused rather than merged incompletely (T1-D29) |
 | `REPLICATED_TABLE_IMMUTABLE` | runtime: an `UPDATE` or `DELETE` against a replicated table (§4) |
 | `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |

@@ -48,7 +48,6 @@ export interface ScratchEngine {
  */
 export async function exportSession(
   containerBytes: Uint8Array,
-  tables: readonly string[],
   session: Uint8Array,
   engine: ScratchEngine,
 ): Promise<Uint8Array> {
@@ -60,7 +59,9 @@ export async function exportSession(
 
   try {
     const db = engine.open(data);
-    filterToSession(db, tables, session);
+    // The table set is derived from the database, not passed in, so a caller
+    // cannot hand a list that omits the roster tables (T1-D28/D29).
+    filterToSession(db, session);
     const filtered = engine.serialize();
     // replaceData rewrites the DATA section and the footer, and copies the
     // manifest and payload through untouched — the one-section-plus-footer

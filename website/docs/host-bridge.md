@@ -161,6 +161,11 @@ not what it claims.
 | `UNSUPPORTED_MANIFEST_VERSION` | no | A manifestVersion this reader does not know. The file is not damaged; the host needs updating. |
 | `UNSUPPORTED_CAPABILITY` | no | The document names a capability this reader does not implement. The file is not damaged; the host needs updating. Never opened without the capability: for rosters, sessions and confidentiality that is the hole the capability closes. |
 | `RUNTIME_UNAVAILABLE` | no | Published without its engine, for a host that already holds those exact bytes. This one does not. |
+| `MALFORMED_SESSION_PROFILE` | no | A session block without requires:[session], the requirement without the block, or a max_parties that is not a positive integer. The two are one declaration; half of it is malformed, not a plain replicated document to open. |
+| `SESSION_EXPORT_INCOMPLETE` | no | Exporting an invite for one session, a kept row named a parent in another session: the source document is malformed, an entity's history having crossed sessions. Refused rather than shipping an invite with a parent that never arrives. |
+| `SEAT_ALREADY_BOUND` | no | A session seat carries bindings from two or more replicas — two parties opened the same invite. The seat is contested and admits neither, order-free and without a clock deciding it. The creator can revoke the seat and issue a new invite. |
+| `SEATS_EXCEED_CAP` | no | A session declares more seats than its signed max_parties allows. The cap is the creator's signed statement of how many may join, so more seats than the cap is malformed. |
+| `MERGE_COVERAGE` | no | A replicated table is neither an author table nor a named system table, so a merge would converge some tables and silently diverge on it. Refused rather than merged incompletely — a system table added without wiring it into the merge set. |
 | `LINK_DAMAGED` | no | The link does not decode: probably cut or wrapped in transit. |
 | `LINK_UNSUPPORTED` | no | The link names a carrier version or dictionary this reader does not have. |
 | `LINK_UNRECONSTRUCTABLE` | no | The link leaves out an entry expecting this host's copy to match the sealed digest, and it does not. |
