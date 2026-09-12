@@ -1195,3 +1195,50 @@ CREATE TABLE moves (
     db.close();
   });
 });
+
+test.describe("close=creator honors only the creator's close (T1-D32)", () => {
+  const SCHEMA = `-- dai:profile session max_parties=2 close=creator
+-- dai:replicated
+CREATE TABLE moves (
+  ply INTEGER NOT NULL,
+  san TEXT NOT NULL
+);
+`;
+  const open = (): Rows & { close(): void } => openWith(SCHEMA);
+  const S = bytes(0x5e);
+  const C = bytes(0xc0); // creator — authors the seats
+  const O = bytes(0x0b); // opener — a member, not the creator
+  const SEATC = bytes(0xa1);
+  const SEATO = bytes(0xa2);
+  let e = 0;
+  const put = (db: Rows, table: string, replica: Uint8Array, seq: number, lc: number, columns: Record<string, unknown>): void =>
+    applyRow(db, table, {
+      _r_replica: replica, _r_seq: seq, _r_lc: lc, _r_entity: bytes(0x70 + e++),
+      _r_parents: "[]", _r_deleted: 0, _r_session: S, columns,
+    });
+  const moves = (db: Rows): string[] => db.all(`SELECT san FROM moves_current`).map((r) => String(r["san"]));
+
+  test("a non-creator's close is ignored; the creator's closes and drops the late row", () => {
+    const db = open();
+    e = 0;
+    // C authors the seats — so C is the creator. Both C and O are members.
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
+    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
+    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });
+    expect(moves(db)).toEqual(["e5"]);
+
+    // O — a member but NOT the creator — tries to close, with a frontier that
+    // would drop its own move. Under close=creator this close is not authored by
+    // the creator, so it is not honored: the session is not closed and e5 stays.
+    put(db, "_dai_close", O, 2, 6, { replica: O, seq: 0 });
+    expect(moves(db)).toEqual(["e5"]);
+
+    // C — the creator — closes with the same frontier. Now it is honored: e5 is
+    // past it (seq 2 > 0) and drops.
+    put(db, "_dai_close", C, 4, 7, { replica: O, seq: 0 });
+    expect(moves(db)).toEqual([]);
+    db.close();
+  });
+});

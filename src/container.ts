@@ -273,6 +273,15 @@ export function checkSessionProfile(manifest: {
         "integer. A bound a reader cannot enforce is not a bound.",
     );
   }
+  // `close` is optional (absent means `any`, T1-D32); present, it must be a
+  // policy a reader knows, or it is a rule no reader can apply.
+  const close = (block as { close?: unknown }).close;
+  if (close !== undefined && close !== "any" && close !== "creator") {
+    throw new ContainerError(
+      "MALFORMED_SESSION_PROFILE",
+      `This document's close policy (close=${String(close)}) is neither 'any' nor 'creator'.`,
+    );
+  }
 }
 
 /**

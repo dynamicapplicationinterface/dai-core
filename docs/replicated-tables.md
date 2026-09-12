@@ -1207,6 +1207,16 @@ fails the build (T1-D29) — the close rows would otherwise never merge, and a
 session would close on one copy and stay open on another. That the guard fires
 if this is forgotten is the guard working as designed.
 
+*Closed is readable, not gone.* "Drops" does a lot of work in this slice, so
+say plainly what a closed session looks like: closed means **no new rows are
+admitted, not that the session disappears.** The admission views drop only the
+*late* rows — moves the close did not see; every row it did see stays, so a
+finished chess game shows its whole history and its final board, and a closed
+statement session is still there to read. A member reads a closed session exactly
+as before; what they cannot do is add to it. Making a closed session vanish is
+compaction's job, deliberate and deferred (below), never a side effect of the
+close.
+
 *Level 1 residual, and what compaction is for.* At Level 1 the close is a claim,
 like every row; a member states the frontier and is trusted to state it
 honestly, and Track 2 signs it. Dropping late rows is not compaction: the late
@@ -1215,6 +1225,59 @@ Compaction — retiring a closed session's rows to a file so they stop being mer
 and stored — is deferred (profiles D6); the close is what makes it *possible*,
 because a session with a stated end is one whose rows can be retired without
 losing a live game. Vector: `session-closed-drops-late-rows`.
+
+**T1-D32 — who may close: a signed profile policy, defaulting to any (Step 5,
+completing T1-D31).** Whether either party may end a session or only its creator
+may is a product decision, and it differs by profile: in chess a close is a
+resignation, legitimately unilateral — a player may always resign — so **any**
+member closes; for the client–firm statement session a client ending the firm's
+records is wrong, so only the **creator** closes. The mechanism supports both;
+the profile declares which.
+
+*The knob.* The session profile carries `close`, `any` or `creator`, beside
+`max_parties`:
+
+```
+-- dai:profile session max_parties=2 close=creator
+```
+
+It rides in the **signed** manifest with the cap and for the same reason: an
+unsigned close policy is one an attacker edits, and this one decides whether a
+client can end a firm's session. Undeclared, it is **`any`** — slice-one
+behaviour, so every document built before this keeps it, and the block stays
+`{ max_parties }` unless a stricter policy is stated.
+
+*The creator is already distinguished — no new mechanism.* The creator is the
+replica that authored the session's seat rows; the seat model makes seats
+creator-authored by construction and a session has one origin, so `creatorOf(S)`
+is a set function over the same rows `rosterOf` reads. Under `close=creator`, a
+`_dai_close` row counts only when its author is that creator; under `close=any`,
+any member's close counts. The policy is known at compile time, so the admission
+views bake in the right predicate — the SQL honours creator-authored closes only,
+or all closes, per the declared policy.
+
+*A close from a replica the policy does not permit is refused, not ignored.*
+Under `close=creator`, a non-creator writing a close row is authoring a malformed
+contribution — refused at the write, `CLOSE_NOT_PERMITTED`, so a buggy app is
+told rather than quietly writing rows that close nothing forever. (The write-time
+refusal is enforced where closes are authored, in the host/app path of Step 6;
+the convergent safety net is the view, which never honours a close the policy
+forbids, so two copies agree on whether a session is closed regardless of what a
+misbehaving copy wrote.)
+
+*Resignation is not a close — the distinction chess must keep.* A resignation is
+a move in the game: a `resign` event row, from which the result is derived, and
+the loser still reads the final board. A session close is the heavier, separate
+act — no more rows ever, compaction made possible. Conflating them would make "I
+resign" mean "this document is finished" and rob the loser of the final board.
+So under `close=any`, either player resigns (a row in the game) and either may
+then close the session (retire it); the app authors the two separately (Step 6).
+
+*Level 1 residual.* Like the roster and the frontier, the creator is a claim at
+Level 1 — the author of the seat rows is whoever those rows say, unproven — and
+Track 2's signature turns it into proof. The policy being signed means an
+attacker cannot downgrade `creator` to `any`; who the creator *is* remains a
+Level 1 claim until Track 2.
 
 ## 9. Level 1 conformance vectors
 
@@ -1335,6 +1398,7 @@ merged" sends somebody looking for damage that is not there.
 | `SEAT_ALREADY_BOUND` | merge: a session seat carries bindings from two or more replicas (two parties opened one invite); contested, admits neither, order-free (T1-D29) |
 | `SEATS_EXCEED_CAP` | merge: a session declares more seats than its signed `max_parties`, so the enumeration exceeds the creator's signed cap (T1-D29) |
 | `MERGE_COVERAGE` | merge: a replicated table is neither an author table nor a named system table, so the merge would converge some tables and diverge on it — refused rather than merged incompletely (T1-D29) |
+| `CLOSE_NOT_PERMITTED` | write: a session declares `close=creator` and a non-creator tried to close it — only the creator may end this session (T1-D32) |
 | `REPLICATED_TABLE_IMMUTABLE` | runtime: an `UPDATE` or `DELETE` against a replicated table (§4) |
 | `ROW_REJECTED` | a row id already held with different content (T1-D13), or `_r_superseded` cleared (T1-D10) |
 | `SCHEMA_MISMATCH` | merge: the two copies' replicated schemas differ (T1-D14, T1-D21) |

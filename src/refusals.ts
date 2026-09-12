@@ -76,6 +76,13 @@ export const REFUSALS = {
       "converge some tables and silently diverge on it. Refused rather than merged incompletely — " +
       "a system table added without wiring it into the merge set (T1-D29).",
   },
+  CLOSE_NOT_PERMITTED: {
+    recoverable: false,
+    means:
+      "A session declares close=creator, and a replica that is not the creator tried to close it. " +
+      "Only the creator may end this session; the close is refused rather than written as a row " +
+      "that closes nothing (T1-D32).",
+  },
 
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },

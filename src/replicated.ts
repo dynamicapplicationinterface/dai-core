@@ -29,8 +29,13 @@ export const REPLICATED_MARKER = "dai:replicated";
  */
 export const SESSION_PROFILE_MARKER = "dai:profile session";
 
+/** Who may close a session (T1-D32). `any` member, or only the `creator`. */
+export type ClosePolicy = "any" | "creator";
+
 export interface SessionProfile {
   maxParties: number;
+  /** Who may author a close. Defaults to `any` when the profile omits it. */
+  close: ClosePolicy;
 }
 
 /**
@@ -85,8 +90,16 @@ export function parseSessionProfile(sql: string): SessionProfile | null {
   if (line !== null) comments.push(line);
 
   for (const comment of comments) {
-    const match = /^\s*dai:profile\s+session\s+max_parties\s*=\s*(-?\d+)\s*$/i.exec(comment.trim());
-    if (!match) continue;
+    const trimmed = comment.trim();
+    // `dai:profile session max_parties=N` with an optional ` close=any|creator`.
+    const match = /^dai:profile\s+session\s+max_parties\s*=\s*(-?\d+)(\s+close\s*=\s*([a-z]+))?\s*$/i.exec(trimmed);
+    if (!/^dai:profile\s+session\b/i.test(trimmed)) continue;
+    if (!match) {
+      throw new ReplicationError(
+        `The session profile "${trimmed}" is malformed. Expected: ` +
+          "dai:profile session max_parties=N [close=any|creator].",
+      );
+    }
     const maxParties = Number(match[1]);
     if (!Number.isInteger(maxParties) || maxParties < 1) {
       throw new ReplicationError(
@@ -94,7 +107,14 @@ export function parseSessionProfile(sql: string): SessionProfile | null {
           "one party; a bound below one is a session nobody can join.",
       );
     }
-    return { maxParties };
+    const close = (match[3] ?? "any").toLowerCase();
+    if (close !== "any" && close !== "creator") {
+      throw new ReplicationError(
+        `The session profile declares close=${match[3]}. Close is 'any' (any member may end the ` +
+          "session) or 'creator' (only the creator may).",
+      );
+    }
+    return { maxParties, close };
   }
   return null;
 }
@@ -355,7 +375,7 @@ function replicationColumns(session: boolean): string {
  * slow the answer is a materialized membership set recomputed on merge — not a
  * return to the stored flag, which cannot express a membership that changes.
  */
-function headsView(q: string, admissionFiltered: boolean): string {
+function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean): string {
   if (!admissionFiltered) {
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT * FROM ${q} WHERE _r_superseded = 0;`;
@@ -365,13 +385,23 @@ function headsView(q: string, admissionFiltered: boolean): string {
   // both can flip as rows arrive, so both are recomputed here rather than stored.
   const member = (row: string): string =>
     `EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = ${row}._r_session AND m.replica = ${row}._r_replica)`;
-  // Not late: the session is not closed, or some close row for it recorded this
-  // row's replica with a seq at least this high — the closer had seen it. seq,
-  // not a clock: a row is dropped because the close did not see it (T1-D31).
+  // A close counts only if the policy permits its author (T1-D32). Under
+  // close=creator, that is the replica that authored the session's seat rows —
+  // baked in here at compile time, since the policy is known then. Under
+  // close=any the clause is empty and every member's close counts.
+  const authored = (close: string, row: string): string =>
+    closeCreator
+      ? ` AND ${close}._r_replica IN (SELECT s._r_replica FROM _dai_seat_current s` +
+        ` WHERE s._r_session = ${row}._r_session)`
+      : "";
+  // Not late: the session is not closed (by a permitted close), or some permitted
+  // close row for it recorded this row's replica with a seq at least this high —
+  // the closer had seen it. seq, not a clock: a row is dropped because the close
+  // did not see it (T1-D31).
   const notLate = (row: string): string =>
-    `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session)` +
+    `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session${authored("x", row)})` +
     ` OR EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session` +
-    ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq))`;
+    ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq${authored("x", row)}))`;
   const admitted = (row: string): string => `(${member(row)}) AND ${notLate(row)}`;
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
@@ -383,7 +413,13 @@ function headsView(q: string, admissionFiltered: boolean): string {
      );`;
 }
 
-function tableObjects(name: string, authored: string[], session: boolean, admissionFiltered: boolean): string {
+function tableObjects(
+  name: string,
+  authored: string[],
+  session: boolean,
+  admissionFiltered: boolean,
+  closeCreator = false,
+): string {
   const q = name;
   /*
    * Every column but `_r_superseded`, which is the one thing a write may
@@ -420,7 +456,7 @@ CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_supe
   WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-${headsView(q, admissionFiltered)}
+${headsView(q, admissionFiltered, closeCreator)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
@@ -622,9 +658,10 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
       : header.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
     out += `${authorBody},\n${replicationColumns(session !== null)}\n)${tail}`;
     // Author tables are admission-filtered in a session document: their heads
-    // are recomputed over the members' rows (T1-D29). The roster tables that
-    // carry the membership are not — they are emitted by documentTables.
-    out += tableObjects(span.name, authorColumns(body), session !== null, session !== null);
+    // are recomputed over the members' rows (T1-D29), and the close policy is
+    // baked into the late-row predicate (T1-D32). The roster tables that carry
+    // the membership are not admission-filtered — emitted by documentTables.
+    out += tableObjects(span.name, authorColumns(body), session !== null, session !== null, session?.close === "creator");
     cursor = span.end;
   }
   out += sql.slice(cursor);

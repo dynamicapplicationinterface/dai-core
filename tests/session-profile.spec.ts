@@ -84,6 +84,30 @@ test.describe("the manifest surface (T1-D26)", () => {
     expect(manifest.replication?.tables).toEqual(["moves"]);
   });
 
+  test("close=creator rides in the signed block; the default any leaves the block minimal (T1-D32)", async () => {
+    const creator = await build(`-- dai:profile session max_parties=2 close=creator
+-- dai:replicated
+CREATE TABLE moves ( ply INTEGER NOT NULL, san TEXT NOT NULL );
+`);
+    expect(creator.manifest.session).toEqual({ max_parties: 2, close: "creator" });
+
+    // Default (any) is slice-one shape — no close key, so an unrestricted session
+    // signs the bytes it would have before the policy existed.
+    const any = await build(SESSION_SCHEMA);
+    expect(any.manifest.session).toEqual({ max_parties: 2 });
+  });
+
+  test("the close policy is under the signature — stripping or downgrading it moves the signed bytes (T1-D32)", async () => {
+    const { manifest } = await build(`-- dai:profile session max_parties=2 close=creator
+-- dai:replicated
+CREATE TABLE moves ( ply INTEGER NOT NULL, san TEXT NOT NULL );
+`);
+    const base = signedBytes(signedViewOf(manifest));
+    // Downgrade creator -> any: the bytes a verifier recomputes must move.
+    const downgraded = signedBytes(signedViewOf({ ...manifest, session: { max_parties: 2 } }));
+    expect(Buffer.from(downgraded).equals(Buffer.from(base))).toBe(false);
+  });
+
   test("a plain replicated document carries neither the capability nor the block", async () => {
     const { manifest } = await build(PLAIN_SCHEMA);
     expect(manifest.requires).toEqual(["replicated"]);

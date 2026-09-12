@@ -221,7 +221,7 @@ export interface ContainerManifest {
    * Paired with `requires: ["session"]`: one without the other is
    * `MALFORMED_SESSION_PROFILE`, never a document opened as plain replicated.
    */
-  session?: { max_parties: number };
+  session?: { max_parties: number; close?: "any" | "creator" };
   /**
    * The document this one replaces, by UUID. Covered by the signature, and
    * honoured by a host only when this document is signed by the same key the
@@ -523,7 +523,7 @@ export async function buildContainer(
    * that exists today digests, signs and verifies unchanged.
    */
   let replication: { tables: string[]; level: number } | undefined;
-  let session: { max_parties: number } | undefined;
+  let session: { max_parties: number; close?: "any" | "creator" } | undefined;
   let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
   if (schemaSql !== undefined) {
     const rewritten = rewriteReplicated(schemaSql);
@@ -536,7 +536,15 @@ export async function buildContainer(
       // The session bound rides the same declaration (T1-D26). `rewriteReplicated`
       // has already refused a profile with no replicated table, so this is only
       // set when there is something for the session to scope.
-      if (rewritten.session) session = { max_parties: rewritten.session.maxParties };
+      // `close` rides in the signed block only when it is the stricter `creator`
+      // (T1-D32); an `any` session's block stays `{ max_parties }`, so a document
+      // that does not restrict closing signs the bytes it would have before.
+      if (rewritten.session) {
+        session = {
+          max_parties: rewritten.session.maxParties,
+          ...(rewritten.session.close === "creator" ? { close: "creator" as const } : {}),
+        };
+      }
     }
   }
 
@@ -841,7 +849,7 @@ export interface SignedView {
   /** Present only when the schema declares replicated tables; version 4. */
   replication?: { tables: string[]; level: number };
   /** Present only when the schema declares the session profile; version 4 (T1-D26). */
-  session?: { max_parties: number };
+  session?: { max_parties: number; close?: "any" | "creator" };
   /** Present only when set; version 3. */
   generator?: Generator;
   createdAt: string;
@@ -972,7 +980,7 @@ export function signedViewOf(manifest: {
   supersedes?: string;
   requires?: string[];
   replication?: { tables: string[]; level: number };
-  session?: { max_parties: number };
+  session?: { max_parties: number; close?: "any" | "creator" };
   generator?: Generator;
   createdAt: string;
   algorithm: string;
@@ -1064,7 +1072,14 @@ export function signedBytes(view: SignedView): Uint8Array {
    * document signs exactly the bytes it signed before this field existed.
    */
   if (view.session) {
-    fields.set("session", new Map<CborValue, CborValue>([["max_parties", view.session.max_parties]]));
+    {
+      const s = new Map<CborValue, CborValue>([["max_parties", view.session.max_parties]]);
+      // Encoded when present, read back the same way (T1-D32) — the symmetry the
+      // signature rests on: a policy an attacker strips or downgrades recomputes
+      // to different bytes and fails, exactly as max_parties does.
+      if (view.session.close) s.set("close", view.session.close);
+      fields.set("session", s);
+    }
   }
   if (view.generator?.tool) {
     const generator = new Map<CborValue, CborValue>([["tool", view.generator.tool]]);

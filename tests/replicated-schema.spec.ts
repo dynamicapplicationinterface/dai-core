@@ -253,7 +253,7 @@ ${CASES}`;
 
   test("adds _r_session to each replicated table, named in the immutability trigger", () => {
     const { sql, session } = rewriteReplicated(SESSION_CASES);
-    expect(session).toEqual({ maxParties: 2 });
+    expect(session).toEqual({ maxParties: 2, close: "any" }); // close defaults to any (T1-D32)
 
     // The column, NOT NULL and fixed at 16 bytes.
     expect(sql).toContain("_r_session    BLOB    NOT NULL CHECK (length(_r_session) = 16)");
