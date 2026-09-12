@@ -887,6 +887,16 @@ manifest carries, beside `replication`:
 }
 ```
 
+`replication.tables` lists the **author** tables only — `["moves"]`, not the
+roster tables the profile adds (T1-D29's `_dai_seat`, `_dai_binding`). **System
+tables are implied by the profile, never enumerated in the signed manifest**, the
+same as `_dai_replica`. This is a rule, not a convenience: a system table named
+in a signed field is a compatibility commitment for the life of the document, so
+enumerating them would mean a system table could never be renamed or added
+without a new signature over every document ever built. The profile implies its
+system tables; the runtime derives them (T1-D29); the manifest names only what
+the author wrote.
+
 `session` is a capability name — immutable, and the registry only grows;
 `IMPLEMENTED_CAPABILITIES` gains it when a reader can actually hold a session
 (the enforcement steps), not at this one. `max_parties` sits in the **signed**

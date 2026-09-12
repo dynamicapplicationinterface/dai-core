@@ -6,7 +6,7 @@ import {
   rewriteReplicated,
   triggerColumns,
 } from "../src/replicated.js";
-import { mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
+import { assertMergeCoverage, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
 import { adoptReplica, ensureReplica } from "../src/replicated-rows.js";
 import {
   applyRow,
@@ -1071,6 +1071,21 @@ CREATE TABLE moves (
     // The member's move stands; the stranger's supersession does not count.
     expect(currentMoves(db)).toEqual(["e5"]);
     db.close();
+  });
+
+  test("every replicated table is covered by the merge, and one that is not is a build error", () => {
+    // mergeTablesOf decides what converges; a replicated table it omits never
+    // merges, silently. So the coverage is asserted, and the negative case
+    // proves the assertion has teeth: a rogue replicated system table — the
+    // shape of a Step 5 _dai_close added without extending SESSION_SYSTEM_TABLES
+    // — is caught rather than discovered as a divergence in the field.
+    const ok = open3();
+    expect(() => assertMergeCoverage(ok)).not.toThrow();
+
+    ok.run("CREATE TABLE _dai_close (x TEXT, _r_replica BLOB NOT NULL, _r_seq INTEGER NOT NULL)");
+    expect(() => assertMergeCoverage(ok)).toThrow(/MERGE_COVERAGE/);
+    expect(() => assertMergeCoverage(ok)).toThrow(/_dai_close/);
+    ok.close();
   });
 
   test("the frame merge unions the roster tables, and admission holds after it", () => {

@@ -347,6 +347,13 @@ function replicationColumns(session: boolean): string {
  * contest that flips membership recomputes on the next read. It is the Draft 1
  * `json_each` walk again, gated to admitted rows, and it is the price of a
  * roster that changes.
+ *
+ * **Cost, to measure before it ships at scale.** A plain table reads a flag; a
+ * session table walks the parents DAG over the admitted subset on every read of
+ * `_heads`. Chess is small enough that nobody notices; a tracker with thousands
+ * of rows after two years is not. Measure it once at that size, and if it is
+ * slow the answer is a materialized membership set recomputed on merge — not a
+ * return to the stored flag, which cannot express a membership that changes.
  */
 function headsView(q: string, admissionFiltered: boolean): string {
   if (!admissionFiltered) {

@@ -99,6 +99,51 @@ export function mergeTablesOf(rows: Rows): string[] {
 }
 
 /**
+ * Every replicated table by shape, whatever its name — the ground truth
+ * `mergeTablesOf` must cover.
+ *
+ * Unlike `replicatedTablesOf`, this does not exclude `_dai_%`: it finds every
+ * table that carries the replication columns, so a system table that is
+ * replicated but unlisted shows up here and can be caught.
+ */
+function everyReplicatedTable(rows: Rows): string[] {
+  return rows
+    .all("SELECT name FROM sqlite_schema WHERE type = 'table'")
+    .map((row) => String(row["name"]))
+    .filter((name) => {
+      const columns = rows.all("SELECT name FROM pragma_table_info(?)", [name]).map((c) => String(c["name"]));
+      return columns.includes("_r_replica") && columns.includes("_r_seq");
+    });
+}
+
+/**
+ * Asserts that `mergeTablesOf` covers every replicated table, exactly once.
+ *
+ * `mergeTablesOf` decides what converges, so a replicated table it omits is a
+ * table that silently never merges — two copies that agree everywhere else and
+ * diverge on it, with no error to point at. That is the invisible failure this
+ * project keeps finding, so it is a check rather than a comment: every table
+ * with the replication columns is in the author list or the roster list, and a
+ * table in neither — a new system table added without extending
+ * `SESSION_SYSTEM_TABLES`, the way `_dai_close` will be in Step 5 — is a build
+ * error, not a divergence discovered in the field.
+ *
+ * Called at the top of a merge so a mis-wired schema cannot merge at all rather
+ * than merge incompletely.
+ */
+export function assertMergeCoverage(rows: Rows): void {
+  const covered = new Set(mergeTablesOf(rows));
+  const uncovered = everyReplicatedTable(rows).filter((name) => !covered.has(name));
+  if (uncovered.length > 0) {
+    throw new Error(
+      `MERGE_COVERAGE: these replicated tables are in neither the author nor the roster set, so ` +
+        `they would never converge: ${uncovered.join(", ")}. A replicated table must be an author ` +
+        `table or a named system table (SESSION_SYSTEM_TABLES).`,
+    );
+  }
+}
+
+/**
  * The replicated schema of a copy, canonicalised (T1-D21).
  *
  * Over the **author's** columns, recovered from the table itself, and not over
@@ -169,6 +214,10 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
     // be checked would not have been.
     return { ...empty, conflicts: 0, refused: "UNSUPPORTED_LEVEL" };
   }
+
+  // Refuse to merge a schema whose replicated tables are not all accounted for,
+  // rather than merge some of them and diverge on the rest (T1-D29).
+  assertMergeCoverage(local);
 
   // The merge unions author tables and the roster tables together, so seats and
   // bindings converge like moves (T1-D29). Conflicts, below, are reported over
