@@ -1072,4 +1072,28 @@ CREATE TABLE moves (
     expect(currentMoves(db)).toEqual(["e5"]);
     db.close();
   });
+
+  test("the frame merge unions the roster tables, and admission holds after it", () => {
+    // The wiring: mergeSibling includes _dai_seat and _dai_binding in the union,
+    // so a fresh copy that merges the game gets the seats and bindings, and its
+    // admission view resolves the same members.
+    const a = open3();
+    e = 0;
+    put(a, "_dai_seat", C, 1, 1, { seat: SEATO });
+    put(a, "_dai_binding", O, 1, 2, { seat: SEATO });
+    put(a, "moves", O, 2, 3, { ply: 1, san: "e5" });
+
+    const b = open3();
+    const report = mergeSibling(b, a);
+    expect(report.refused).toBeUndefined();
+
+    // The seats and bindings crossed, so b resolves O as a member and shows its
+    // move — admission is not something the merge carried, it is recomputed.
+    expect(currentMoves(b)).toEqual(["e5"]);
+    // And the two copies converged over every replicated table, roster included.
+    const tables = ["moves", "_dai_seat", "_dai_binding"];
+    expect(canonicalDump(b, tables)).toBe(canonicalDump(a, tables));
+    a.close();
+    b.close();
+  });
 });

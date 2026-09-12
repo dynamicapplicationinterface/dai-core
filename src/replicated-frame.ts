@@ -13,6 +13,7 @@
  * interface, and deciding what to refuse before any of it runs.
  */
 import { canonicalDump, mergeFrom, type MergeResult, type Rows } from "./replicated-rows.js";
+import { SESSION_SYSTEM_TABLES } from "./replicated.js";
 
 /** What the host sends. */
 export interface MergeRequest {
@@ -75,6 +76,26 @@ export function replicatedTablesOf(rows: Rows): string[] {
       return columns.includes("_r_replica") && columns.includes("_r_seq");
     })
     .sort();
+}
+
+/**
+ * The roster tables a session document carries, when it is one (T1-D29).
+ *
+ * `replicatedTablesOf` excludes every `_dai_%` table, because the two document
+ * tables are merged specially and must not be row-merged. The roster tables are
+ * the exception: they *are* replicated and must union like any author table, so
+ * they are named explicitly rather than by shape.
+ */
+export function rosterTablesOf(rows: Rows): string[] {
+  const present = new Set(
+    rows.all("SELECT name FROM sqlite_schema WHERE type = 'table'").map((r) => String(r["name"])),
+  );
+  return SESSION_SYSTEM_TABLES.filter((name) => present.has(name));
+}
+
+/** Every table a merge unions: the author tables and the roster tables, in one order. */
+export function mergeTablesOf(rows: Rows): string[] {
+  return [...replicatedTablesOf(rows), ...rosterTablesOf(rows)].sort();
 }
 
 /**
@@ -149,8 +170,11 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
     return { ...empty, conflicts: 0, refused: "UNSUPPORTED_LEVEL" };
   }
 
-  const tables = replicatedTablesOf(local);
-  const theirs = replicatedTablesOf(sibling);
+  // The merge unions author tables and the roster tables together, so seats and
+  // bindings converge like moves (T1-D29). Conflicts, below, are reported over
+  // the author tables only — a contested seat is not the app's conflict to show.
+  const tables = mergeTablesOf(local);
+  const theirs = mergeTablesOf(sibling);
 
   /*
    * Neither copy has a replicated table, so there is nothing a merge could do.
@@ -176,7 +200,7 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
   }
 
   const result = mergeFrom(local, sibling, tables);
-  return { ...result, conflicts: conflictsIn(local, tables) };
+  return { ...result, conflicts: conflictsIn(local, replicatedTablesOf(local)) };
 }
 
 /** Entities with more than one head, across every replicated table. */
