@@ -274,8 +274,14 @@ CREATE TABLE visits (
 );
 `;
     const { sql, tables } = rewriteReplicated(two);
+    // `tables` is the author tables — the manifest surface (T1-D29 keeps the
+    // roster tables out of it, like _dai_replica).
     expect(tables).toEqual(["cases", "visits"]);
-    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(2);
+    // But the profile stamps _r_session onto both author tables and both roster
+    // tables the schema now carries (_dai_seat, _dai_binding) — four in the SQL.
+    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(4);
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_seat");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_binding");
   });
 
   test("a document without the profile keeps today's exact columns — no _r_session", () => {

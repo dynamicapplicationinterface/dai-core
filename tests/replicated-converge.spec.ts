@@ -957,3 +957,119 @@ CREATE TABLE prefs (
     db.close();
   });
 });
+
+test.describe("admission is enforced through the views (T1-D29)", () => {
+  const SCHEMA = `-- dai:profile session max_parties=2
+-- dai:replicated
+CREATE TABLE moves (
+  ply INTEGER NOT NULL,
+  san TEXT NOT NULL
+);
+`;
+  const open3 = (): Rows & { close(): void } => openWith(SCHEMA);
+  const S = bytes(0x5e);
+  const C = bytes(0xc0); // creator
+  const O = bytes(0x0b); // opener
+  const N = bytes(0x0e); // never invited
+  const F = bytes(0xff); // forwarded copy
+  const SEATC = bytes(0xa1);
+  const SEATO = bytes(0xa2);
+  let e = 0;
+  const ent = (): Uint8Array => bytes(0xe0 + e++);
+
+  /** Apply one row straight through the choke point, with an explicit author. */
+  function put(
+    db: Rows,
+    table: string,
+    replica: Uint8Array,
+    seq: number,
+    lc: number,
+    columns: Record<string, unknown>,
+    entity = ent(),
+  ): void {
+    applyRow(db, table, {
+      _r_replica: replica,
+      _r_seq: seq,
+      _r_lc: lc,
+      _r_entity: entity,
+      _r_parents: "[]",
+      _r_deleted: 0,
+      _r_session: S,
+      columns,
+    });
+  }
+
+  const currentMoves = (db: Rows): string[] =>
+    db.all(`SELECT san FROM moves_current ORDER BY san`).map((r) => String(r["san"]));
+
+  test("a member's rows show; a non-member's do not", () => {
+    const db = open3();
+    e = 0;
+    // The creator mints two seats and binds one; the opener binds the other.
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
+    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
+    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+
+    // Two members author a move each; a stranger with no binding authors one too.
+    put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
+    put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
+    put(db, "moves", N, 1, 7, { ply: 1, san: "??" });
+
+    // The stranger's move is not in the game; the members' are.
+    expect(currentMoves(db)).toEqual(["e4", "e5"]);
+    db.close();
+  });
+
+  test("contested-seat-drops-earlier-rows: a later contesting binding retroactively drops a member's rows", () => {
+    const db = open3();
+    e = 0;
+    // The opener binds its seat and plays. It is a member; its move shows.
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
+    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
+    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" });
+    expect(currentMoves(db)).toEqual(["e5"]);
+
+    // A forwarded copy opens the same invite and binds the same seat. The seat
+    // is now contested — no clock picks a winner — so the opener stops being a
+    // member and its earlier move drops, recomputed from the rows, not the
+    // order they arrived in. This is the merge order-independence the whole
+    // correction rests on.
+    put(db, "_dai_binding", F, 1, 4, { seat: SEATO });
+    expect(currentMoves(db)).toEqual([]);
+
+    // And it is symmetric: the forwarded copy cannot enter either.
+    put(db, "moves", F, 2, 5, { ply: 1, san: "e6" });
+    expect(currentMoves(db)).toEqual([]);
+    db.close();
+  });
+
+  test("a non-member row that superseded a member's row does not bury it", () => {
+    // The DAG hazard: a stranger's change names a member's row as parent. If the
+    // stranger's row is merely hidden but still counts as superseding, the
+    // member's row vanishes too. Heads are recomputed over admitted rows, so the
+    // member's row re-emerges.
+    const db = open3();
+    e = 0;
+    const move = bytes(0x30);
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
+    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
+    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" }, move);
+
+    // A stranger (no binding) supersedes the member's move.
+    applyRow(db, "moves", {
+      _r_replica: N,
+      _r_seq: 1,
+      _r_lc: 4,
+      _r_entity: move,
+      _r_parents: JSON.stringify([`${Buffer.from(O).toString("hex")}:2`]),
+      _r_deleted: 0,
+      _r_session: S,
+      columns: { ply: 1, san: "e5??" },
+    });
+
+    // The member's move stands; the stranger's supersession does not count.
+    expect(currentMoves(db)).toEqual(["e5"]);
+    db.close();
+  });
+});

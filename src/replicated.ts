@@ -330,7 +330,42 @@ function replicationColumns(session: boolean): string {
  * clearing it is refused, because two hosts with the same rows and different
  * flags never reconcile.
  */
-function tableObjects(name: string, authored: string[], session: boolean): string {
+/**
+ * The `_heads` view — heads are where admission is enforced (T1-D29).
+ *
+ * A plain replicated table trusts the stored `_r_superseded` flag: a head is a
+ * row nothing supersedes, and the flag is maintained at write (T1-D2).
+ *
+ * A session author table cannot, because **membership is a function of the
+ * current rows, not of when a row arrived.** A member becomes a non-member the
+ * moment a second binding contests its seat, and its rows must vanish — and a
+ * member's row that a *non-member* had superseded must re-emerge. The stored
+ * flag was decided at insert and cannot express either. So a head here is
+ * recomputed over the **admitted** subset: an admitted row (its author is a
+ * member of its session, via `_dai_member`) that no *other admitted* row names
+ * as a parent. A non-member's row neither shows nor hides anything, and a
+ * contest that flips membership recomputes on the next read. It is the Draft 1
+ * `json_each` walk again, gated to admitted rows, and it is the price of a
+ * roster that changes.
+ */
+function headsView(q: string, admissionFiltered: boolean): string {
+  if (!admissionFiltered) {
+    return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
+  SELECT * FROM ${q} WHERE _r_superseded = 0;`;
+  }
+  const admitted = (row: string): string =>
+    `EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = ${row}._r_session AND m.replica = ${row}._r_replica)`;
+  return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
+  SELECT r.* FROM ${q} r
+   WHERE ${admitted("r")}
+     AND NOT EXISTS (
+       SELECT 1 FROM ${q} c, json_each(c._r_parents) p
+        WHERE ${admitted("c")}
+          AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
+     );`;
+}
+
+function tableObjects(name: string, authored: string[], session: boolean, admissionFiltered: boolean): string {
   const q = name;
   /*
    * Every column but `_r_superseded`, which is the one thing a write may
@@ -367,8 +402,7 @@ CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_supe
   WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-CREATE VIEW IF NOT EXISTS ${q}_heads AS
-  SELECT * FROM ${q} WHERE _r_superseded = 0;
+${headsView(q, admissionFiltered)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
@@ -400,8 +434,8 @@ CREATE VIEW IF NOT EXISTS ${q}_current AS
  * in-memory database and runs the schema exactly once; the first thing to hit
  * it was a second person opening a document that had been used.
  */
-function documentTables(): string {
-  return `
+function documentTables(session: boolean): string {
+  const base = `
 CREATE TABLE IF NOT EXISTS _dai_replica (
   id    BLOB PRIMARY KEY CHECK (length(id) = 16),
   seq   INTEGER NOT NULL DEFAULT 0,
@@ -424,7 +458,42 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
   rows_seen  INTEGER NOT NULL DEFAULT 0
 );
 `;
+  if (!session) return base;
+
+  /*
+   * The roster tables and the membership view (T1-D29).
+   *
+   * Both are ordinary replicated tables — they merge, carry `_r_session`, and
+   * are filtered into an invite like any other — but they are the roster
+   * itself, so their own heads are NOT admission-filtered: a seat and a binding
+   * are always visible for computing who is a member. `_dai_seat` carries the
+   * seat the creator minted; `_dai_binding` carries the seat a joiner bound, and
+   * the joiner is `_r_replica` — the author is the key, so nobody can bind a
+   * seat to a replica that is not their own.
+   *
+   * `_dai_member` is the pure rule of `rosterOf` expressed in SQL: a replica is
+   * a member of a session iff it binds a minted seat that exactly one replica
+   * binds. A seat two replicas bind is contested and appears for neither.
+   */
+  const rosterTable = (name: string): string =>
+    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
+    tableObjects(name, ["seat"], true, false);
+
+  const member = `
+CREATE VIEW IF NOT EXISTS _dai_member AS
+  SELECT b._r_session AS session, b._r_replica AS replica
+    FROM _dai_binding_current b
+    JOIN _dai_seat_current s
+      ON s._r_session = b._r_session AND s.seat = b.seat
+   WHERE (SELECT count(DISTINCT hex(b2._r_replica))
+            FROM _dai_binding_current b2
+           WHERE b2._r_session = b._r_session AND b2.seat = b.seat) = 1;
+`;
+  return base + rosterTable("_dai_seat") + rosterTable("_dai_binding") + member;
 }
+
+/** The replicated system tables a session document carries beside its author tables (T1-D29). */
+export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding"] as const;
 
 /**
  * What the immutability trigger must name, checked against the table itself.
@@ -521,13 +590,21 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
       ? header
       : header.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
     out += `${authorBody},\n${replicationColumns(session !== null)}\n)${tail}`;
-    out += tableObjects(span.name, authorColumns(body), session !== null);
+    // Author tables are admission-filtered in a session document: their heads
+    // are recomputed over the members' rows (T1-D29). The roster tables that
+    // carry the membership are not — they are emitted by documentTables.
+    out += tableObjects(span.name, authorColumns(body), session !== null, session !== null);
     cursor = span.end;
   }
   out += sql.slice(cursor);
 
   return {
-    sql: documentTables() + out,
+    sql: documentTables(session !== null) + out,
+    // Author tables only — the manifest's `replication.tables` surface, and what
+    // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
+    // the schema and the digest but not this list; they are implicit in a session
+    // document the way `_dai_replica` is, and the runtime appends them to the
+    // replicated set for merge and export (T1-D29, spec §3 example).
     tables: declared.map((span) => span.name),
     ...(session ? { session } : {}),
   };
