@@ -16,9 +16,12 @@
 --   * A game's identity is the entity of its `games` row. `game_id` in the
 --     other two tables is that entity, as hex.
 --
--- Profile (Track 3, not yet declarable):
---   session, max_parties: 2, roster closes at second party.
---   Until profiles exist, a forwarded copy can enter the game. See README.
+-- Profile (Track 3): each game is a session of two, and either player may end
+--   one (close=any — a resignation, and later a retire). The creator seats
+--   itself and leaves an open seat; the invitee binds it. A forwarded copy that
+--   opens an already-bound invite contests the seat rather than entering, and
+--   the app says so. Every row of a game carries its session.
+-- dai:profile session max_parties=2 close=any
 
 -- dai:replicated
 CREATE TABLE IF NOT EXISTS games (

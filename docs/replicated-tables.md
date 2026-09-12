@@ -689,8 +689,10 @@ now happened after all of them, and a reset clock would sort that row below the
 rows it was written in response to — which is what `_current` picks by.
 
 Reopening your own copy is a no-op, so this is not "a new identity every
-launch". The host knows which case it is: a document from its own library is
-its own, and one that arrived as a file or a link is not.
+launch". The host knows which case it is by the one test that actually
+distinguishes them — is this document's UUID already in this device's library —
+**not** by the carrier it came in on. That boundary is T1-D33; the loose reading
+of "arrived" as "came by a link" is the bug that decision fixes.
 
 **The same person opening their own file on a second device is also a new
 replica, and that is the design rather than an oversight.** A replica is a
@@ -1278,6 +1280,186 @@ Level 1 — the author of the seat rows is whoever those rows say, unproven — 
 Track 2's signature turns it into proof. The policy being signed means an
 attacker cannot downgrade `creator` to `any`; who the creator *is* remains a
 Level 1 claim until Track 2.
+
+**T1-D33 — a fresh replica is minted when a copy *arrives*, never when a copy
+*resumes*; the test is `heldHere`, not the carrier (Step 6, bounding T1-D22).**
+T1-D22 mints a new replica on opening "a copy this device did not write", and
+justified it by the collision two copies sharing a sequence space produce — the
+sender and recipient of a file, or one person's two devices. It then described
+the resume exception loosely, as a document that "arrived as a file or a link"
+being not-yours. That phrasing keys on the **carrier**, and it is wrong: it makes
+reopening the *same* invite link a fresh arrival, so the copy mints a second
+replica and — in a session document — binds the open seat a second time. The
+seat then has two distinct binders, is contested, and admits **neither**, so both
+players' rows on it vanish. Minting there is not the caution T1-D22 intended; it
+is the exact corruption T1-D22 prevents, arriving through the door T1-D22 opened.
+
+The boundary D22 always implied but never had to state, because nothing tested a
+reopen-by-link: **a fresh replica belongs only to an arrival — a document whose
+UUID this device does not yet hold. If we hold it, we resume it, under its stored
+replica, whatever carrier the person came back by.** A link, an icon, a file to a
+document already in this device's library is a resume: same copy, same storage,
+same sequence space, continuing. The operational test is `heldHere` — the UUID is
+in the library — and it is the *only* test; the carrier says nothing about
+identity. Arrival is precisely the case where the UUID is not ours yet.
+
+*The fix is the identity, not the card.* The host resumes its own held copy —
+mounts the stored database **and keeps its replica** — whenever a stored copy for
+this UUID exists and nothing newer is arriving; the write surface is told
+`ownCopy`, so it keeps the id rather than adopting a fresh one. That closes the
+game-killer without touching consent: a resume is `brought = false` (no newer
+rows), so it is not a sibling merge and T1-D23's "the first sibling merge asks"
+is untouched.
+
+*`ownCopy` (`mountIsOwnCopy`) is now set in two places, and they mean one thing:
+this device already holds this document.* The home-screen library launch is a
+resume by definition; the stored-resume branch of an arrival open is a resume
+reached by a carrier. Both keep the replica. If a third open path is ever added,
+it needs the same treatment, and the test is always `heldHere` — the UUID is in
+this device's library — **never** the carrier the person arrived by. That the
+carrier ever entered into it is the imprecision in T1-D22 that let this bug
+through; `heldHere` is the whole of it.
+
+*The resume is silent (§8.2), through the `brought = false` gate — not through
+`mergeStanding`.* "The card is for decisions; an update is not a decision" says a
+reopen of your own game must not stop at a card. The tempting mechanism — set
+`mergeStanding` on first accept — is **wrong**, because `mergeStanding` is the
+*same* flag T1-D23 uses to govern sibling merges from the other party: setting it
+on first open makes the first sibling move merge silently too, which the
+file-exchange conformance (`chess.spec` "the card appears once") pins as wrong.
+The silence a reopen deserves is exactly the `brought = false` case — we hold the
+UUID, stored data is present, and nothing newer is arriving, so there is no merge
+and no new rows and thus nothing to consent to. That gate mounts the resume
+without a card and leaves the first sibling merge's one card intact. It is
+narrower than standing consent, and it is the whole of what §8.2 licenses here.
+
+*Correction: the gate is `not a sibling`, not `brought = false` — the distinction
+is whose copy, not whether it is newer.* The `brought = false` gate above was
+drawn too wide, by the very imprecision this decision corrected in D22: it keys
+on "is it newer" when the question is "whose copy is it". `brought` reads a
+sibling that is not newer, or carries no save stamp, as bringing nothing — so
+opening **the other player's** copy of the same game, when their file is not
+newer than yours, would resume your stored copy as-is and drop their moves and
+their seat binding with no card and no error, when the card is the only place the
+first sibling merge is offered (T1-D23). The gate must therefore also require
+`kin.sibling !== true`: it silences only this device's *own* copy returning, and
+any held **sibling** — the other player's copy — falls through to the card
+whatever its stamp. Two tests passed over this — `chess.spec`'s card-once and the
+reopen guard — because neither exercised "the other player's copy, not newer",
+the case adjacent to the one they tested. The reopen guard now reopens exactly
+that case and requires the card.
+
+*The orphaned binding needs a path back (T1-D29).* A copy of this bug already
+exists wherever someone reopened an invite before this fix — a seat contested by
+one person's two identities, admitting neither, with the game dead and no way
+forward. A contested seat is not repaired by editing rows away (they are
+append-only); it is repaired by the creator minting a **fresh** seat, per T1-D29,
+and the app must *show* the state that calls for it: *this invite was used
+elsewhere — ask for a new one*. The contested-seat card is that path, and this
+incident is the argument for building it in the same pass, not after.
+
+Found by the reopen-idempotence step of the chess carrier e2e: the second open of
+a real `/d/<hash>` link adopted a fresh replica and rebound the open seat, with
+the first identity's binding orphaned in the mailbox — a contested seat one merge
+away. Vector: the e2e itself (`reopening the invite on the same copy binds no
+second seat`); no local-only vector can model it, because a reopen is a carrier
+event, not a merge.
+
+**T1-D34 — a copy binds a seat when it *opens an invite*, never merely because
+seat rows *merged in*; membership is joined, not inherited (Step 6, completing
+T1-D29).** T1-D29 made membership a stated pair of rows — a creator-authored seat
+and a joiner-authored binding — but left unstated *when* the binding is authored.
+The obvious answer, "whenever a copy holds an open seat and is not yet a member,"
+is wrong, and the contested-seat repair is what exposes it: to repair a contested
+seat the creator mints a fresh seat (below), and if binding happened on any
+merge, every ejected copy that received the fresh seat over the shared mailbox
+would re-bind it and contest it again — the repair would not repair. So the rule:
+**a copy binds only when it opens the invite over a carrier — a file or a link —
+and never when the same rows arrive over the background mailbox.** An invite is a
+thing a person opens, not a set of rows a mailbox delivers.
+
+*The signal, because a merge is a merge and the app must tell the two apart.* A
+carrier open lands as a merge too — a fresh arrival mounts the invite, and a link
+opened onto a copy this device already holds merges into it (D33's resume, and
+the sibling-merge path) — so "opened an invite" cannot be read from the presence
+of a merge. The runtime tags the merge it emits: a file or link merge carries
+`via: "carrier"`, a mailbox batch carries `via: "mailbox"`, and the application
+joins on the first and never on the second. That single tag is the whole of the
+distinction; without it, either the repair re-contests (join on every merge) or a
+held copy can never rejoin a reseated invite (join only on a fresh mount, before
+the merged seat is present).
+
+*The default is the safe one: a merge event joins only when it says `carrier`,
+and anything else — `mailbox`, or a source it forgot to name — does not join.*
+The tag is load-bearing, so a dispatch site added later without it must fail
+closed, into background, not into the auto-rebinding this decision removed. It is
+`assertMergeCoverage` one layer up — the join reads a positive signal or stays
+put — and a test dispatches an untagged event at a copy holding an open seat and
+confirms it does not bind.
+
+*The consequence, named because the code now depends on it.* Membership no longer
+travels with the rows. In a multi-game document, a copy is a party to a second
+game only by opening an invite to *that* game — it does not inherit membership
+because the game's rows reached it. This is the shape the seat model already
+implied — the creator names who may join, seat by seat — and it is what makes
+"send a new invite" a real act rather than a formality, but it is stated here so
+no later feature assumes a merge alone can seat someone.
+
+*Stated positively, because it is a property to keep, not only a limit.* An
+invite per game is what keeps the games inside one document isolated from each
+other: a copy sees a game only when it has been invited into it, so one
+document's many games do not bleed membership between themselves. It is the same
+isolation the filtered export gives a carrier (T1-D28), enforced here at
+admission instead — and naming it is what stops a later change from "optimising"
+it away by inheriting membership from merged rows, which would quietly join every
+holder of the document to every game in it.
+
+*The cost, named too: a copy can hold a game's rows and not be in it.* Because
+membership is joined and not inherited, an ordinary act — someone forwards you a
+document, you open it, its games' rows are now yours — leaves you holding rows
+for a game you are not a party to. That is correct, but it is a state a person
+reaches by normal means, so the app must **say** it: *you are not in this game —
+open an invite to join*, never an empty board with no account of itself. An
+unrendered state is the hang, here as everywhere.
+
+*What happens to an ejected copy's moves — the recompute rule keeps them.* A copy
+whose seat is retired or contested stops being a member, and its moves drop from
+the admitted set (T1-D29's `_dai_member` predicate over the current rows). That
+sounds like a live game losing half its moves on repair, and it is not, because
+the predicate keys on `_r_replica`, not on the seat. During a contest neither
+party is a member, so both parties' moves are *already* hidden; when the creator
+reseats and the intended party opens the new invite and rebinds, that party is a
+member again and **its moves re-emerge** — the same rows, re-admitted, because
+membership is a pure function of the current rows and that party's replica is now
+seated. Only the other party's moves stay dropped, which is correct: it was never
+the invited player. So no per-seat move history is kept, D29's recompute stands
+unamended, and the intended player loses nothing across the repair.
+
+*The repair itself.* A contested or forwarded seat is not fixed by editing rows
+away — they are append-only — but by the creator giving the invite's open seat a
+**fresh value** (a `changeEntity` on the open `_dai_seat` row). The old value is
+superseded, so every binding that named it now names an unminted seat and drops
+from the roster (a binding to an unminted seat is not a member, T1-D29); the
+fresh value is open for exactly one new binding, from whoever opens the new
+invite. Seats stay at `max_parties` — the open seat is replaced, not added — so
+nothing goes over the signed cap (`SEATS_EXCEED_CAP`), and only the creator, the
+author of the seats, may do it.
+
+*What each side sees — same condition, different agency.* The contested seat is a
+board state, not an error after a tap: it is found when a second binding merges
+in, so it renders on the board the way an unresolved move conflict does, and a
+copy it ejects has its play blocked *with the reason shown*, never a board that
+silently will not move. The party whose place is gone — contested or retired, one
+message because the remedy is one — is told its moves are not lost by its own
+mistake and that the fix is the creator's to make. The creator is shown the fix:
+that the invite reached two devices, and a button to send a fresh one.
+
+Found by the contested-seat step of the chess carrier e2e: a forwarded invite
+(one link opened on two devices) contests the seat, both copies show the state,
+and the creator's reseat lets the intended player back in while the other stays
+out. Vector: the e2e (`a forwarded invite contests the seat, both copies show it,
+and the creator repairs`); like D33 it is a carrier event no local-only vector
+models.
 
 ## 9. Level 1 conformance vectors
 

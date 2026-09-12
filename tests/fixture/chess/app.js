@@ -88,6 +88,40 @@ function renderConflict(st){
  const choices=$('conflict-choices');choices.replaceChildren();
  for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. Share the board so the other copy agrees.');}));choices.append(b);}
 }
+/**
+ * The contested-seat state, rendered on the board like a conflict — a condition
+ * the copy finds itself in when a second binding merges in, not an error after a
+ * tap (T1-D29). A copy whose seat is contested is told its moves are not lost by
+ * its own mistake and that the repair is the creator's to make; the creator is
+ * shown the repair itself. Returns whether this copy's own play is blocked.
+ */
+function renderContested(st){
+ const banner=$('contested-banner'),invite=$('new-invite'),g=st.game;
+ if(!g||g.is_demo){banner.hidden=true;invite.hidden=true;return false;}
+ const s=store.seatState(g.session);
+ // The creator whose invite is contested is shown the repair; a copy whose own
+ // place is gone is told so and where the fix comes from. Nothing to say to a
+ // creator whose invite is fine, or a member playing normally.
+ if(s.amCreator&&s.contested){
+  banner.hidden=false;invite.hidden=false;
+  $('contested-title').textContent='Two people opened this invite.';
+  $('contested-detail').textContent='The invite reached more than one device, so its seat is contested and neither can play it. Send a fresh invite to the one person you meant to play, then share the game again.';
+  return false; // the creator's own seat is fine
+ }
+ if(!s.amCreator&&s.mineOut){
+  banner.hidden=false;invite.hidden=true;
+  $('contested-title').textContent='This invite was used on another device.';
+  $('contested-detail').textContent='Your seat here has been taken or replaced, so this board is set aside — nothing you did lost your place. '+(playerName(g,g.creator_color)||'Whoever started the game')+' can send a fresh invite; open that to take a seat again.';
+  return true; // not a member: this copy's moves would drop, so it cannot play
+ }
+ if(!s.amCreator&&s.notIn){
+  banner.hidden=false;invite.hidden=true;
+  $('contested-title').textContent='You’re not in this game.';
+  $('contested-detail').textContent='This game reached your device, but you haven’t been invited into it — membership comes from opening an invite, not from the game arriving. Open an invite from '+(playerName(g,g.creator_color)||'the player who started it')+' to take a seat.';
+  return true; // not a member: cannot play until invited in
+ }
+ banner.hidden=true;invite.hidden=true;return false;
+}
 function draw(){
  if(!store)return;
  const s=store.settings(),u=store.ui(),st=store.state();setTheme();
@@ -106,6 +140,7 @@ function draw(){
  else{$('turn-title').textContent=who+'’s Move';$('turn-subtitle').textContent=colorName(st.turn)+' to play · Move '+(Math.floor(st.ply/2)+1)+(st.inCheck?' · In check':'');}
  $('demo-note').hidden=!g.is_demo;
  renderConflict(st);
+ const contestedOut=renderContested(st);
  if(!animating)renderBoard(st,u);
  const last=st.last;
  $('last-description').textContent=last?playerName(g,last.color)+' · '+last.san+' · '+last.from+' → '+last.to:'The story starts with the first move.';
@@ -114,10 +149,15 @@ function draw(){
  renderHistory(st);
  $('draw-banner').hidden=!(st.result==='*'&&st.drawOfferBy&&st.drawOfferBy!==st.turn);
  if(!$('draw-banner').hidden)$('draw-message').textContent=playerName(g,st.drawOfferBy)+' offered a draw. Accept it, or keep the game going.';
- $('play-move').disabled=!d||result||Boolean(st.conflict);
+ $('play-move').disabled=!d||result||Boolean(st.conflict)||contestedOut;
  $('change-move').hidden=!d||result;
  $('game-actions-button').disabled=result||Boolean(st.conflict);
- if(result){$('move-step').textContent='THE FINAL POSITION';$('move-summary').textContent=st.result==='1/2-1/2'?'Honors shared.':'A good game.';$('move-instruction').textContent='Share the result, or start another match. This one stays in your collection.';}
+ // Close is offered only once a game is finished, and never for the practice
+ // board — a resignation ends the game (a game row); a close ends the session
+ // (T1-D31). A session already closed shows as closed and offers nothing more.
+ const closed=result&&!g.is_demo&&store.isClosed(g.session);
+ $('close-match').hidden=!result||g.is_demo||closed;
+ if(result){$('move-step').textContent=closed?'MATCH CLOSED':'THE FINAL POSITION';$('move-summary').textContent=st.result==='1/2-1/2'?'Honors shared.':'A good game.';$('move-instruction').textContent=closed?'This match is closed. The board stays; no new moves can be added.':'Share the result, close the match, or start another. This one stays in your collection.';}
  else if(st.conflict){$('move-step').textContent='CHOOSE A MOVE';$('move-summary').textContent='Which one stands?';$('move-instruction').textContent='Pick one above. Then share the board so both copies agree.';}
  else if(d){$('move-step').textContent='TAKE A SECOND LOOK';$('move-summary').textContent=pv.move.san+'  ·  '+d.from_sq+' → '+d.to_sq;$('move-instruction').textContent='Nothing is final yet. Change your move, or play it.'+(pv.terminal?' '+pv.terminal.reason+' if played.':pv.claim?' '+pv.claim+' can be claimed with this move.':'')+(d.draw_offer?' A draw offer will travel with this move.':'');}
  else{$('move-step').textContent='MAKE YOUR MOVE';$('move-summary').textContent=u.selected_square?'Choose a destination.':'Pick a piece.';$('move-instruction').textContent=u.selected_square?'Only highlighted squares are legal. Tap your piece again to deselect.':'Tap one of your pieces. Its legal destinations will light up. When you play it, share the board.';}
@@ -200,6 +240,8 @@ function wire(){
  bind('accept-draw',()=>{const st=store.state();ask('Call it a draw?','Accept '+playerName(st.game,st.drawOfferBy)+'’s offer and end this game. Share the result afterward.',()=>store.acceptDraw(),{label:'Accept draw'});});
  bind('decline-draw',()=>store.declineDraw());
  bind('resign',()=>{const st=store.state();ask('Resign as '+playerName(st.game,st.turn)+'?','This ends the game and discards any tentative move. '+playerName(st.game,opposite(st.turn))+' wins unless no checkmate is possible. Share the result afterward.',()=>store.resign(),{danger:true,label:'Resign game'});});
+ bind('close-match',()=>{ask('Close this match?','No more moves can be added on either copy, and the match can be tidied away later. The final board stays readable. This does not delete anything.',()=>{store.closeMatch();notify('Match closed. The board stays; no new moves can be added.');},{label:'Close match'});});
+ bind('new-invite',()=>{ask('Send a fresh invite?','This mints a new seat for the game and retires the old invite. Share the game again afterward, and the person you send it to takes the new seat.',()=>{store.newInvite();notify('A fresh invite is ready. Share the game again to send it.');},{label:'Send a new invite'});});
  bind('claim-draw',()=>{const e=store.claimEligibility();if(!e)return;ask('Claim a draw?',e.reason+(e.where==='draft'?' applies to your tentative move. It will be played and the draw claimed.':' applies to the current position. This ends the game.'),()=>store.claimDraw(),{label:'Claim draw'});});
  bind('cancel-promotion',()=>{store.cancelPromotion();closeDialog($('promotion-dialog'));});
  $('promotion-dialog').addEventListener('cancel',run(event=>{event.preventDefault();store.cancelPromotion();closeDialog($('promotion-dialog'));}));
@@ -228,9 +270,17 @@ async function boot(){
  // Every replicated write in store.js goes through this one object, so a different surface is a one-line remap here.
  const writer=window.dai.replicated;
  if(!writer)throw new Error('This document needs the replicated-tables runtime. Open it in a newer DAI opener.');
- store=new Store(window.daiKit.db,writer);store.bootstrap();wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;
+ store=new Store(window.daiKit.db,writer);store.bootstrap();
+ // If this copy arrived at a game somebody shared, take the open seat — once,
+ // after the mount adopted this copy's own identity (T1-D22/D29). Idempotent, so
+ // a reopen or a later merge never binds twice.
+ store.joinActive();wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;
  // After a merge the host tells the frame; redraw so a newly arrived move or conflict shows without a reload.
- window.addEventListener('dai:merged',()=>{store.faceMover();refresh();});
+ // Join ONLY when the merge came from opening a carrier — a file or link (T1-D34).
+ // A mailbox merge, or any event without a source tag, must NOT join: the safe
+ // default is background, so a future dispatch site that forgets the tag cannot
+ // silently reintroduce auto-rebinding. The tag says "carrier" or it does not join.
+ window.addEventListener('dai:merged',e=>{if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();});
  const st=store.state();if(st?.last&&!store.draft(st.game.id))requestAnimationFrame(()=>{replay()?.catch?.(e=>notify(e.message));});
 }
 boot().catch(error=>{console.error(error);$('boot-notice').hidden=false;$('boot-notice').textContent='Your board could not be opened safely. '+error.message;});

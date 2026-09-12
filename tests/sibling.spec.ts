@@ -132,7 +132,11 @@ test.describe("the host works out for itself what is replicated", () => {
     expect(manifest.replication?.tables).toEqual(["game_events", "games", "moves"]);
     expect(manifest.replication?.level).toBe(1);
     expect(manifest.manifestVersion).toBe(4);
-    expect(manifest.requires).toEqual(["replicated"]);
+    // Chess is a session document (Step 6): it declares the session profile, so
+    // its capabilities are replicated *and* session. The replicated tables above
+    // are still only the three author tables — the roster tables merge but are
+    // not the app's, and are not listed here.
+    expect(manifest.requires).toEqual(["replicated", "session"]);
   });
 });
 

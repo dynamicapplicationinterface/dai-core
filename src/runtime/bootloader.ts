@@ -1119,6 +1119,11 @@ function bridgeMain(): void {
    * document from its own library or took delivery of a file.
    */
   let mountIsOwnCopy = false;
+  // The session's close policy, delivered by the host from the signed manifest
+  // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
+  // `"any"` lets any member close; undefined for a document with no session. The
+  // write-time refusal reads it; the admission views are the convergent net.
+  let closePolicy: string | undefined;
   let replicaSettled = false;
   /*
    * Why the last attempt at rules failed, kept for the write that then
@@ -1273,7 +1278,11 @@ function bridgeMain(): void {
          * message channel or polling is needed. One name for one event — the
          * runtime's — rather than a second name at the application boundary.
          */
-        window.dispatchEvent(new CustomEvent("dai:merged", { detail: report }));
+        // `via: "carrier"` — this merge came from opening a file or a link, a
+        // deliberate act, unlike a background mailbox pull. A copy joins a session
+        // (or rejoins a reseated one) only on a carrier open, never on a mailbox
+        // merge (T1-D34), and the application reads this to tell them apart.
+        window.dispatchEvent(new CustomEvent("dai:merged", { detail: { ...report, via: "carrier" } }));
         return report;
       } catch (error) {
         liveDb.exec("ROLLBACK");
@@ -1316,7 +1325,10 @@ function bridgeMain(): void {
     // publishes the sender's rows back. Idempotent: a no-op once settled.
     settleReplica(frameRows(liveDb));
     const r = frameRows(liveDb);
-    const tables = merge.replicatedTablesOf(r);
+    // The roster tables travel too (T1-D29): a copy that binds a seat must send
+    // that binding through the mailbox, or the other side never sees it as a
+    // member and drops its moves. mergeTablesOf is author tables plus the roster.
+    const tables = merge.mergeTablesOf(r);
     // The watermark is a (replica, seq) pair, and the seq is honoured only under
     // the replica this copy now writes as — so a batch is never stranded beneath
     // a count from an identity this copy has shed. The current replica travels
@@ -1353,7 +1365,9 @@ function bridgeMain(): void {
         staged.exec(String(entry.sql));
       }
       const local = frameRows(liveDb);
-      const tables = merge.replicatedTablesOf(local);
+      // Author tables plus the roster (T1-D29), so a binding pulled from the
+      // mailbox is staged and merged like any other replicated row.
+      const tables = merge.mergeTablesOf(local);
       merge.stageBatch(frameRows(staged), batch, tables);
       liveDb.exec("BEGIN");
       try {
@@ -1364,7 +1378,7 @@ function bridgeMain(): void {
         }
         liveDb.exec("COMMIT");
         scheduleAutosave(liveDb);
-        window.dispatchEvent(new CustomEvent("dai:merged", { detail: report }));
+        window.dispatchEvent(new CustomEvent("dai:merged", { detail: { ...report, via: "mailbox" } }));
         return report;
       } catch (error) {
         liveDb.exec("ROLLBACK");
@@ -1565,11 +1579,11 @@ function bridgeMain(): void {
      * does — `window.dai` is built once, and the database is opened later.
      */
     const rows = {
-      all: (sql: string, params: Any[] = []) => {
+      all: (sql: string, params: unknown[] = []) => {
         if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
         return liveDb.selectObjects(sql, params.slice());
       },
-      run: (sql: string, params: Any[] = []) => {
+      run: (sql: string, params: unknown[] = []) => {
         if (!liveDb) throw new Error("NO_DOCUMENT_OPEN");
         liveDb.exec(sql, { bind: params.slice() });
       },
@@ -1579,16 +1593,20 @@ function bridgeMain(): void {
     const entity = (): Uint8Array => crypto.getRandomValues(new Uint8Array(16));
     // Every write settles the identity first; it does the work once.
     return {
-      insert: (table: string, values: Any): string => {
+      insert: (table: string, values: Any, sessionHex?: string): string => {
         const id = entity();
         settleReplica(rows);
-        rules().createEntity(rows, table, id, values);
+        // A session document threads the session onto every row (T1-D26); the
+        // app passes the game's session id. A plain document passes none.
+        rules().createEntity(rows, table, id, values, sessionHex ? fromHex(sessionHex) : undefined);
         nudgeAuthored();
         return hex(id);
       },
       change: (table: string, entityHex: string, values: Any): string => {
         const id = fromHex(entityHex);
         settleReplica(rows);
+        // The session is inherited from the entity's head (T1-D28) — the app
+        // never restates it, so a change cannot move a row to another session.
         rules().changeEntity(rows, table, id, values);
         nudgeAuthored();
         return entityHex;
@@ -1598,6 +1616,134 @@ function bridgeMain(): void {
         rules().deleteEntity(rows, table, fromHex(entityHex));
         nudgeAuthored();
         return entityHex;
+      },
+      /*
+       * The roster, authored as ordinary replicated rows (T1-D29). The app does
+       * not hand-craft `_dai_seat`/`_dai_binding` — it asks for a session and to
+       * join one, and the seat and binding rows are written here so the author of
+       * a binding is always this copy's own key.
+       */
+      session: {
+        // A new session: the creator's seat and the invitee's open seat, plus the
+        // creator's binding to its own seat. Returns the session id and the open
+        // seat, which the host carries in the invite (T1-D30). The three rows are
+        // one transaction, so a failure leaves no half-formed roster.
+        create: (): { session: string; seat: string } => {
+          settleReplica(rows);
+          const sid = entity();
+          const creatorSeat = entity();
+          const openSeat = entity();
+          rows.run("SAVEPOINT dai_session_create");
+          try {
+            rules().createEntity(rows, "_dai_seat", entity(), { seat: creatorSeat }, sid);
+            rules().createEntity(rows, "_dai_seat", entity(), { seat: openSeat }, sid);
+            rules().createEntity(rows, "_dai_binding", entity(), { seat: creatorSeat }, sid);
+            rows.run("RELEASE dai_session_create");
+          } catch (error) {
+            rows.run("ROLLBACK TO dai_session_create");
+            throw error;
+          }
+          nudgeAuthored();
+          return { session: hex(sid), seat: hex(openSeat) };
+        },
+        // Bind the invite's open seat under this copy's own (freshly adopted,
+        // T1-D22) identity. A second opener of the same invite contests the seat
+        // (T1-D29) rather than joining; the app renders that state.
+        join: (sessionHex: string, seatHex: string): void => {
+          settleReplica(rows);
+          rules().createEntity(rows, "_dai_binding", entity(), { seat: fromHex(seatHex) }, fromHex(sessionHex));
+          nudgeAuthored();
+        },
+        // Close a session: no more rows, and it becomes eligible for compaction
+        // (T1-D31). Not a resignation — that is a game row and leaves the board
+        // readable; a close is the heavier, separate act. One `_dai_close` row
+        // per replica this copy has seen in the session, each recording that
+        // replica's highest seq: the closer's stated causal frontier, against
+        // which later rows are late (T1-D31, never a clock).
+        close: (sessionHex: string): void => {
+          settleReplica(rows);
+          const sid = fromHex(sessionHex);
+          const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+          // T1-D32: under close=creator only the replica that authored the seats
+          // may close. Refused by name at write time; the admission views are the
+          // convergent net for a close a misbehaving copy authored anyway. The
+          // check is on the author, so it cannot be forged — the seat rows say
+          // who the creator is, and the key is the author.
+          if (closePolicy === "creator") {
+            const isCreator =
+              rows.all(
+                "SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1",
+                [sid, me],
+              ).length > 0;
+            if (!isCreator) throw new Error("CLOSE_NOT_PERMITTED");
+          }
+          // The frontier: per replica, the highest seq it authored in this
+          // session across every replicated table (author rows and roster rows
+          // alike), as this copy has seen them.
+          const sessionTables = rows
+            .all("SELECT name FROM sqlite_schema WHERE type = 'table'")
+            .map((r: Any) => String(r["name"]))
+            .filter(
+              (name: string) =>
+                rows.all("SELECT 1 FROM pragma_table_info(?) WHERE name = '_r_session'", [name]).length > 0,
+            );
+          const frontier = new Map<string, number>();
+          for (const table of sessionTables) {
+            for (const r of rows.all(
+              `SELECT lower(hex(_r_replica)) AS rep, max(_r_seq) AS m FROM "${table}" WHERE _r_session = ? GROUP BY _r_replica`,
+              [sid],
+            )) {
+              const rep = String((r as Any)["rep"]);
+              const seq = Number((r as Any)["m"]);
+              frontier.set(rep, Math.max(frontier.get(rep) ?? 0, seq));
+            }
+          }
+          rows.run("SAVEPOINT dai_session_close");
+          try {
+            for (const [rep, seq] of frontier) {
+              rules().createEntity(rows, "_dai_close", entity(), { replica: fromHex(rep), seq }, sid);
+            }
+            rows.run("RELEASE dai_session_close");
+          } catch (error) {
+            rows.run("ROLLBACK TO dai_session_close");
+            throw error;
+          }
+          nudgeAuthored();
+        },
+        // Repair a contested seat (T1-D29): the creator gives the invite's open
+        // seat a fresh value. The old value is superseded, so the bindings that
+        // contested it now name an unminted seat and drop out of the roster; the
+        // fresh value is open for one new binding, from whoever opens the new
+        // invite. Seats stay at max_parties — this replaces the open seat, it does
+        // not add one — so nothing goes over the signed cap.
+        reseat: (sessionHex: string): void => {
+          settleReplica(rows);
+          const sid = fromHex(sessionHex);
+          const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+          // Only the creator — the author of the seats — may reseat; a non-creator
+          // authoring a seat change would itself contest the roster.
+          const isCreator =
+            rows.all(
+              "SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1",
+              [sid, me],
+            ).length > 0;
+          if (!isCreator) throw new Error("NOT_SEAT_CREATOR");
+          // The seat to replace is the CONTESTED one — a seat two or more replicas
+          // bound. Reseating drops every binding to the old value, so on a healthy
+          // seat (one honest joiner) it would eject that joiner and vanish their
+          // moves; picking "a seat the creator didn't bind" also depended on
+          // SQLite's row order with more than two seats. So it is refused unless a
+          // seat is actually contested (T1-D29) — a repair, never a boot.
+          const contested = rows.all(
+            "SELECT s._r_entity AS ent FROM _dai_seat_current s WHERE s._r_session = ? AND " +
+              "(SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
+              "WHERE b._r_session = s._r_session AND b.seat = s.seat) > 1 LIMIT 1",
+            [sid],
+          );
+          if (contested.length === 0) throw new Error("CANNOT_RESEAT");
+          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() });
+          nudgeAuthored();
+        },
       },
     };
   };
@@ -1808,6 +1954,7 @@ function bridgeMain(): void {
      */
     if (data.type === "dai:write-rules") {
       mountIsOwnCopy = data.ownCopy === true;
+      closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
       // read-only for its replicated tables rather than writing rows under
@@ -2480,7 +2627,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; ownCopy: unknown } | null = null;
+let pendingRules: { source: unknown; ownCopy: unknown; closePolicy: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -2489,7 +2636,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: "dai:write-rules", source: rules.source, ownCopy: rules.ownCopy },
+    { type: "dai:write-rules", source: rules.source, ownCopy: rules.ownCopy, closePolicy: rules.closePolicy },
     "*",
   );
 }
@@ -2905,10 +3052,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_WRITE_RULES") {
-      const pushed = event.data as { source?: unknown; ownCopy?: unknown };
+      const pushed = event.data as { source?: unknown; ownCopy?: unknown; closePolicy?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy };
+      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy, closePolicy: pushed.closePolicy };
       if (listeningWindow) deliverRules();
       return;
     }

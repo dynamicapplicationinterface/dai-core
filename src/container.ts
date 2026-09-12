@@ -196,7 +196,7 @@ export const CAPABILITY_REGISTRY: readonly string[] = [
  * document declaring it opens and behaves, and adding one before the behaviour
  * exists is the silent degradation the field refuses on a reader's behalf.
  */
-export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["replicated"];
+export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["replicated", "session"];
 
 /**
  * Refuses a document that needs something this reader does not have.

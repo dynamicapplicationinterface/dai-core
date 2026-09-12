@@ -166,6 +166,8 @@ not what it claims.
 | `SEAT_ALREADY_BOUND` | no | A session seat carries bindings from two or more replicas — two parties opened the same invite. The seat is contested and admits neither, order-free and without a clock deciding it. The creator can revoke the seat and issue a new invite. |
 | `SEATS_EXCEED_CAP` | no | A session declares more seats than its signed max_parties allows. The cap is the creator's signed statement of how many may join, so more seats than the cap is malformed. |
 | `MERGE_COVERAGE` | no | A replicated table is neither an author table nor a named system table, so a merge would converge some tables and silently diverge on it. Refused rather than merged incompletely — a system table added without wiring it into the merge set. |
+| `CLOSE_NOT_PERMITTED` | no | A session declares close=creator, and a replica that is not the creator tried to close it. Only the creator may end this session; the close is refused rather than written as a row that closes nothing. |
+| `CANNOT_RESEAT` | no | A reseat was asked for on a session with no contested seat. Reseating replaces a seat's value, dropping every binding to the old one — a repair for a seat two parties opened, and damage to a healthy one. Refused unless a seat is actually contested. |
 | `LINK_DAMAGED` | no | The link does not decode: probably cut or wrapped in transit. |
 | `LINK_UNSUPPORTED` | no | The link names a carrier version or dictionary this reader does not have. |
 | `LINK_UNRECONSTRUCTABLE` | no | The link leaves out an entry expecting this host's copy to match the sealed digest, and it does not. |

@@ -112,9 +112,11 @@ test.describe("the capability list", () => {
      * at mount, union merge over the row set, and a chess game played end to
      * end through the host. A name here is a promise that a document declaring
      * it opens and behaves; adding one earlier would have been the silent
-     * degradation this gate exists to refuse.
+     * degradation this gate exists to refuse. `session` joined with Step 6: the
+     * frame authors seats and bindings, the views enforce the roster and the
+     * close, and chess plays a game through a real invite.
      */
-    expect(IMPLEMENTED_CAPABILITIES).toEqual(["replicated"]);
+    expect(IMPLEMENTED_CAPABILITIES).toEqual(["replicated", "session"]);
     expect(CAPABILITY_REGISTRY).toEqual([
       "session",
       "shared-dataset",
@@ -133,7 +135,7 @@ test.describe("the capability list", () => {
   test("a document requiring what this reader lacks is refused, and the refusal names it", async () => {
     const refusal = (() => {
       try {
-        checkRequires({ requires: ["session", "relay"] });
+        checkRequires({ requires: ["passphrase", "relay"] });
         return null;
       } catch (error) {
         return error as ContainerError;
@@ -142,8 +144,9 @@ test.describe("the capability list", () => {
     expect(refusal).toBeInstanceOf(ContainerError);
     expect(refusal!.code).toBe("UNSUPPORTED_CAPABILITY");
     // Both named: "this app cannot open it" sends somebody looking for damage
-    // that is not there.
-    expect(refusal!.message).toContain("session");
+    // that is not there. Two still-unimplemented capabilities, since `session`
+    // now is (Step 6).
+    expect(refusal!.message).toContain("passphrase");
     expect(refusal!.message).toContain("relay");
     expect(refusal!.message).toMatch(/update the app/i);
   });

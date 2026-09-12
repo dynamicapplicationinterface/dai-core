@@ -54,6 +54,79 @@ export interface ReplicatedRow {
   columns: Record<string, unknown>;
 }
 
+/**
+ * The `_r_` columns a row carries as it travels — the one list every encoder,
+ * decoder and stager derives from, so none of them can drift.
+ *
+ * `_r_session` slipped out of the mailbox format precisely because each of those
+ * kept its own hand-written copy of this list and one copy was short a field: a
+ * bug that surfaced as an empty merge, not an error, because `INSERT OR IGNORE`
+ * swallowed the `NOT NULL` it violated. This is the same class as `mergeTablesOf`
+ * before its coverage guard — a list a caller can get wrong with no complaint —
+ * and gets the same treatment: named once, consumed everywhere, and a round-trip
+ * test that fails the moment a field added here is not carried through.
+ *
+ * `_r_superseded` is absent by design (T1-D11): it is derived local state, not
+ * part of the row, and merge recomputes it. `_r_session` is `optional` — present
+ * only in a session document — and rides the wire as an explicit null when a
+ * plain row has none, so decode never has to guess. `key` is the compact CBOR
+ * label the batch uses; `kind` is how the value is read from a stored row.
+ */
+export interface CarriedRField {
+  /** The column name in the table and on `ReplicatedRow`. */
+  col: keyof ReplicatedRow;
+  /** The compact key the CBOR batch encodes it under. */
+  key: string;
+  /** How to read it from a stored row. */
+  kind: "bytes" | "number" | "string" | "bytesOrNull";
+  /** True for a field only a session document carries; absent → sent as null. */
+  optional?: boolean;
+}
+
+export const CARRIED_R_FIELDS: readonly CarriedRField[] = [
+  { col: "_r_replica", key: "r", kind: "bytes" },
+  { col: "_r_seq", key: "s", kind: "number" },
+  { col: "_r_lc", key: "lc", kind: "number" },
+  { col: "_r_entity", key: "e", kind: "bytes" },
+  { col: "_r_parents", key: "p", kind: "string" },
+  { col: "_r_deleted", key: "d", kind: "number" },
+  { col: "_r_sig", key: "sig", kind: "bytesOrNull" },
+  { col: "_r_session", key: "ss", kind: "bytes", optional: true },
+];
+
+/**
+ * The `_r_` columns the rewrite emits that deliberately do NOT travel, each with
+ * the reason it is held back — so a new column can be excluded only on purpose,
+ * with a reason, and never by omission.
+ *
+ * This is the completeness half of `CARRIED_R_FIELDS`. That list says what a row
+ * carries; a column the schema grows that is in neither is the bug the four
+ * hand-lists made possible — a field that silently does not travel. A test
+ * enumerates every `_r_` column off a rewritten table and asserts each is carried
+ * or named here, so the descriptor can no longer fall behind the schema.
+ */
+export const UNTRANSPORTED_R_COLUMNS: Readonly<Record<string, string>> = {
+  // T1-D11: derived local state, recomputed by merge from the row set. It is not
+  // part of the row, and the sender's copy of it is none of the reader's
+  // business — carrying it would let arrival order, not the rows, decide a head.
+  _r_superseded: "derived local supersession flag, recomputed by merge (T1-D11)",
+};
+
+/** Read one carried field from a stored row, in its declared kind. */
+function readField(stored: Record<string, unknown>, field: CarriedRField): unknown {
+  const raw = stored[field.col];
+  switch (field.kind) {
+    case "bytes":
+      return field.optional ? (raw instanceof Uint8Array ? raw : undefined) : (raw as Uint8Array);
+    case "bytesOrNull":
+      return (raw as Uint8Array | null) ?? null;
+    case "number":
+      return Number(raw);
+    case "string":
+      return String(raw);
+  }
+}
+
 /** Whether a table carries the session column, i.e. the document declares the profile. */
 export function hasSessionColumn(db: Rows, table: string): boolean {
   return db.all(`SELECT 1 FROM pragma_table_info(?) WHERE name = '_r_session'`, [table]).length > 0;
@@ -91,20 +164,17 @@ export function authorColumnsOf(db: Rows, table: string): string[] {
 export function readRow(stored: Record<string, unknown>, authored: readonly string[]): ReplicatedRow {
   const columns: Record<string, unknown> = {};
   for (const name of authored) columns[name] = stored[name];
-  // `_r_session` is read straight from the row: a session table has a Uint8Array
-  // here, a plain one has nothing, so the shape carries the profile with it.
-  const session = stored["_r_session"];
-  return {
-    _r_replica: stored["_r_replica"] as Uint8Array,
-    _r_seq: Number(stored["_r_seq"]),
-    _r_lc: Number(stored["_r_lc"]),
-    _r_entity: stored["_r_entity"] as Uint8Array,
-    _r_parents: String(stored["_r_parents"]),
-    _r_deleted: Number(stored["_r_deleted"]),
-    _r_sig: (stored["_r_sig"] as Uint8Array | null) ?? null,
-    ...(session instanceof Uint8Array ? { _r_session: session } : {}),
-    columns,
-  };
+  // The `_r_` fields come from the one carried-field list, so a field added
+  // there is read here without touching this function. An optional field a plain
+  // row lacks (`_r_session`) reads back as undefined and is left off entirely, so
+  // the shape still carries the profile with it.
+  const row: Record<string, unknown> = { columns };
+  for (const field of CARRIED_R_FIELDS) {
+    const value = readField(stored, field);
+    if (field.optional && value === undefined) continue;
+    row[field.col] = value;
+  }
+  return row as unknown as ReplicatedRow;
 }
 
 /**

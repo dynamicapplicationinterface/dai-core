@@ -83,6 +83,13 @@ export const REFUSALS = {
       "Only the creator may end this session; the close is refused rather than written as a row " +
       "that closes nothing (T1-D32).",
   },
+  CANNOT_RESEAT: {
+    recoverable: false,
+    means:
+      "A reseat was asked for on a session with no contested seat. Reseating replaces a seat's " +
+      "value, dropping every binding to the old one — a repair for a seat two parties opened, and " +
+      "damage to a healthy one. Refused unless a seat is actually contested (T1-D29).",
+  },
 
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },

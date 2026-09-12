@@ -36,6 +36,7 @@
    <p class="turn-subtitle" id="turn-subtitle"></p>
    <div id="demo-note" class="demo-note" hidden>Try the practice board. <button type="button" data-new-game>Start your own game <span aria-hidden="true">↗</span></button></div>
    <div id="conflict-banner" class="notice" hidden><strong id="conflict-title"></strong><p id="conflict-detail"></p><div class="button-row" id="conflict-choices"></div></div>
+   <div id="contested-banner" class="notice" hidden><strong id="contested-title"></strong><p id="contested-detail"></p><div class="button-row" id="contested-actions"><button class="button small" id="new-invite" hidden>Send a new invite</button></div></div>
    <div id="draw-banner" class="notice" hidden><p id="draw-message"></p><div class="button-row"><button class="button small" id="accept-draw">Accept draw</button><button class="button quiet small" id="decline-draw">Keep playing</button></div></div>
    <div id="top-player" class="player-strip"></div>
    <div class="board-scroll"><div id="board" class="board" role="grid" aria-label="Chessboard" aria-describedby="board-help"></div></div>
@@ -47,7 +48,7 @@
     <p id="move-instruction">Tap one of your pieces. Its legal destinations will light up.</p>
     <div class="action-row"><button class="button lock-button" id="play-move"><span data-icon="lock"></span><span id="play-label">Play move</span></button><button class="button primary" id="share"><span data-icon="share"></span><span id="share-label">Share</span></button></div>
    </section>
-   <div class="under-board-actions"><button type="button" class="text-button" id="game-actions-button">Game actions <span aria-hidden="true">⌄</span></button><button type="button" class="text-button" data-new-game><span data-icon="plus"></span>New Game</button></div>
+   <div class="under-board-actions"><button type="button" class="text-button" id="game-actions-button">Game actions <span aria-hidden="true">⌄</span></button><button type="button" class="text-button" id="close-match" hidden><span data-icon="flag"></span>Close match</button><button type="button" class="text-button" data-new-game><span data-icon="plus"></span>New Game</button></div>
    <details id="history-section" class="history-section"><summary><span>Move history</span><span id="history-count"></span></summary><div class="history-head"><span>#</span><span>White</span><span>Black</span></div>
     <div id="move-history"></div>
     <p class="fine-print" id="ignored-note" hidden></p>

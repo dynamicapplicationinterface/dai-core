@@ -14,7 +14,13 @@
  * in a test and under the frame's sqlite-wasm in the opener.
  */
 import { decode as cborDecode, encode as cborEncode, type CborValue } from "./cbor.js";
-import { authorColumnsOf, readRow, type ReplicatedRow, type Rows } from "./replicated-rows.js";
+import {
+  authorColumnsOf,
+  CARRIED_R_FIELDS,
+  readRow,
+  type ReplicatedRow,
+  type Rows,
+} from "./replicated-rows.js";
 
 /** One row, with the table it belongs to. */
 export interface BatchEntry {
@@ -140,17 +146,15 @@ export function authoredBatchAbove(
 function rowToMap(entry: BatchEntry): Map<CborValue, CborValue> {
   const columns = new Map<CborValue, CborValue>();
   for (const [name, value] of Object.entries(entry.row.columns)) columns.set(name, value as CborValue);
-  return new Map<CborValue, CborValue>([
-    ["t", entry.table],
-    ["r", entry.row._r_replica],
-    ["s", entry.row._r_seq],
-    ["lc", entry.row._r_lc],
-    ["e", entry.row._r_entity],
-    ["p", entry.row._r_parents],
-    ["d", entry.row._r_deleted],
-    ["sig", entry.row._r_sig ?? null],
-    ["c", columns],
-  ]);
+  // Every `_r_` field rides here from the one carried-field list, under its
+  // compact key; an optional field a plain row lacks (`_r_session`) is sent as an
+  // explicit null so decode never has to guess whether it was meant to be there.
+  const map = new Map<CborValue, CborValue>([["t", entry.table]]);
+  for (const field of CARRIED_R_FIELDS) {
+    map.set(field.key, (entry.row[field.col] as CborValue) ?? null);
+  }
+  map.set("c", columns);
+  return map;
 }
 
 export function encodeBatch(batch: Batch): Uint8Array {
@@ -187,20 +191,30 @@ export function decodeBatch(bytes: Uint8Array): Batch {
     if (!(columnsMap instanceof Map)) throw new Error("MAILBOX_BATCH_MALFORMED");
     const columns: Record<string, unknown> = {};
     for (const [name, value] of columnsMap) columns[asString(name)] = value;
-    const sig = raw.get("sig");
-    return {
-      table: asString(raw.get("t")),
-      row: {
-        _r_replica: asBytes(raw.get("r")),
-        _r_seq: asNumber(raw.get("s")),
-        _r_lc: asNumber(raw.get("lc")),
-        _r_entity: asBytes(raw.get("e")),
-        _r_parents: asString(raw.get("p")),
-        _r_deleted: asNumber(raw.get("d")),
-        _r_sig: sig instanceof Uint8Array ? sig : null,
-        columns,
-      },
-    };
+    // Every `_r_` field is read from the one carried-field list under its key, so
+    // decode gains a field the moment the list does. A required field that is
+    // missing is a malformed batch; an optional one that is absent (a plain row's
+    // `_r_session`) is simply left off.
+    const row: Record<string, unknown> = { columns };
+    for (const field of CARRIED_R_FIELDS) {
+      const value = raw.get(field.key);
+      switch (field.kind) {
+        case "bytes":
+          if (value instanceof Uint8Array) row[field.col] = value;
+          else if (!field.optional) throw new Error("MAILBOX_BATCH_MALFORMED");
+          break;
+        case "bytesOrNull":
+          row[field.col] = value instanceof Uint8Array ? value : null;
+          break;
+        case "number":
+          row[field.col] = asNumber(value);
+          break;
+        case "string":
+          row[field.col] = asString(value);
+          break;
+      }
+    }
+    return { table: asString(raw.get("t")), row: row as unknown as ReplicatedRow };
   });
   return { replica: asBytes(root.get("replica")), lc: asNumber(root.get("lc")), entries };
 }
@@ -227,30 +241,31 @@ export function stageBatch(staged: Rows, batch: Batch, tables: readonly string[]
   const known = new Set(tables);
   for (const { table, row } of batch.entries) {
     if (!known.has(table)) throw new Error(`MAILBOX_BATCH_UNKNOWN_TABLE:${table}`);
+    // The same row seen twice — same (_r_replica, _r_seq) — is the one expected
+    // no-op, so it is skipped by hand. Everything else inserts plainly and a
+    // constraint violation *throws*: `INSERT OR IGNORE` here was a blanket
+    // amnesty when only a duplicate key was meant to pass, and it swallowed the
+    // `NOT NULL` a short column list violated — the row vanished with no error.
+    // One exception, made explicit, is a mechanism this can be reasoned about.
+    const already = staged.all(`SELECT 1 FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [
+      row._r_replica,
+      row._r_seq,
+    ]);
+    if (already.length > 0) continue;
+
     const names = Object.keys(row.columns);
-    const cols = [
-      ...names,
-      "_r_replica",
-      "_r_seq",
-      "_r_lc",
-      "_r_entity",
-      "_r_parents",
-      "_r_deleted",
-      "_r_sig",
-    ];
+    // The `_r_` columns come from the one carried-field list: a required field
+    // always, an optional one (`_r_session`) only when the row carries it. A
+    // field added to that list is inserted here without touching this function.
+    const carried = CARRIED_R_FIELDS.filter((f) => !f.optional || row[f.col] !== undefined);
+    const cols = [...names, ...carried.map((f) => f.col)];
     const placeholders = cols.map(() => "?").join(", ");
     const values = [
       ...names.map((name) => row.columns[name]),
-      row._r_replica,
-      row._r_seq,
-      row._r_lc,
-      row._r_entity,
-      row._r_parents,
-      row._r_deleted,
-      row._r_sig ?? null,
+      ...carried.map((f) => (f.col === "_r_sig" ? (row._r_sig ?? null) : row[f.col])),
     ];
     staged.run(
-      `INSERT OR IGNORE INTO "${table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`,
+      `INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`,
       values,
     );
   }

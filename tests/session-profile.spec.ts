@@ -176,12 +176,12 @@ test.describe("the pairing is enforced structurally (T1-D27)", () => {
     }
   });
 
-  test("a well-formed session document is refused by capability, not opened half-built", async () => {
-    // Structural check passes; the reader still does not implement `session`, so
-    // it refuses by name rather than opening without the roster (T1-D26).
+  test("a well-formed session document now opens — the reader implements session (Step 6)", async () => {
+    // The reader gained the `session` capability when the frame learned to author
+    // seats and bindings and the views to enforce the roster and the close. A
+    // well-formed session document is no longer refused; it verifies and opens.
     const { html } = await build(SESSION_SCHEMA);
-    const refusal = await verifyContainer(html).catch((e) => e as ContainerError);
-    expect((refusal as ContainerError).code).toBe("UNSUPPORTED_CAPABILITY");
-    expect((refusal as ContainerError).message).toContain("session");
+    const verified = await verifyContainer(html);
+    expect(verified.manifest.requires).toEqual(["replicated", "session"]);
   });
 });

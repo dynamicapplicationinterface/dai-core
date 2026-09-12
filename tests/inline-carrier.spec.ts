@@ -97,8 +97,11 @@ test.describe("the compact inline carrier", () => {
     const round = parseContainer(back);
     expect(round.manifest.replication?.tables).toEqual(["game_events", "games", "moves"]);
     expect(round.manifest.replication?.level).toBe(1);
-    expect(round.manifest.requires).toEqual(["replicated"]);
-    // The signature over the signed set — replication included — still holds.
+    // Chess declares the session profile (Step 6), so it requires session too, and
+    // the session block survives the link byte-identically (asserted above).
+    expect(round.manifest.requires).toEqual(["replicated", "session"]);
+    expect(round.manifest.session).toEqual({ max_parties: 2 });
+    // The signature over the signed set — replication and session included — holds.
     expect((await verifyContainer(back)).signature).toBe("valid");
   });
 

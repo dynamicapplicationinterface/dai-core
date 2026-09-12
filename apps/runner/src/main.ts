@@ -1232,6 +1232,36 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     }
 
     markStep("choosing how to open");
+    /*
+     * A resume of this device's own held copy — the brought=false gate (T1-D33).
+     *
+     * We hold this UUID and nothing newer is arriving, so there is no merge and
+     * no new rows: §8.2 has nothing to ask, and a reopen of your own game must
+     * not stop at a card. It is deliberately *not* `mergeStanding`: that flag is
+     * sibling consent (T1-D23), and a reopen must not pre-consent to the other
+     * party's future merges — the first of those still asks. This is the
+     * narrower gate that silences the reopen and leaves that ask intact.
+     *
+     * The stamp read here is its own load; the mount below loads again after any
+     * succession inherit has been written, which this must not read across. A
+     * succession-adoption is an arrival, not a resume, so it is excluded.
+     */
+    const storedForResume = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    const resumeStamp = savedAtOf(cartridge);
+    const resume =
+      Boolean(heldHere) &&
+      // Not a sibling — the OTHER player's copy of this document. `brought` cannot
+      // stand in for this: a sibling that is not newer, or carries no save stamp,
+      // reads as bringing nothing, and the resume would mount this device's stored
+      // copy as-is and drop the other player's moves and their seat binding with no
+      // card and no error. The card is the only place the first sibling merge is
+      // offered (T1-D23). The distinction is whose copy, not whether it is newer —
+      // the same imprecision D33 corrected in D22's carrier test (T1-D33).
+      kin?.sibling !== true &&
+      who.state !== "conflict" &&
+      !succession?.inherit &&
+      Boolean(storedForResume && storedForResume.byteLength > 0) &&
+      !(resumeStamp !== undefined && heldHere?.savedAt !== undefined && resumeStamp > heldHere.savedAt);
     const familiar =
       !kin?.sibling &&
       verdict.status === "trusted" &&
@@ -1251,7 +1281,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      */
     const misdescribed =
       carrier.hinted !== undefined && carrier.hinted !== cartridge.manifest.documentUuid;
-    if (!familiar && !consented) {
+    if (!familiar && !consented && !resume) {
       markStep("showing the launch card");
       slot.classList.remove("busy");
       say("");
@@ -1369,6 +1399,13 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       arriving > heldItem.savedAt;
 
     if (opfsDb && opfsDb.byteLength > 0 && !brought) {
+      // Resuming this device's own held copy — a stored database for a UUID this
+      // device holds, with nothing newer arriving. It keeps the replica id it has
+      // been writing under (T1-D33): mounting the stored bytes is not enough,
+      // because the write surface adopts a *fresh* replica unless it is told this
+      // is a resume, and a fresh replica rebinds a session's open seat and
+      // contests it — the game-killer this bounds. A resume, not an arrival.
+      mountIsOwnCopy = true;
       markStep("preparing the document");
       loaded = await resealCartridge(cartridge, opfsDb);
       if (arriving !== undefined && heldItem?.savedAt !== undefined && arriving < heldItem.savedAt) {
@@ -1813,6 +1850,10 @@ window.addEventListener("message", (event) => {
           // T1-D22: whether this copy keeps the replica id it holds or takes a
           // new one. See mountIsOwnCopy.
           ownCopy: mountIsOwnCopy,
+          // T1-D32: who may close this session, from the signed manifest. The
+          // frame refuses a close the policy forbids at write time; the views are
+          // the convergent net. Undefined for a document with no session.
+          closePolicy: loaded.manifest.session ? (loaded.manifest.session.close ?? "any") : undefined,
         },
         "*",
       );

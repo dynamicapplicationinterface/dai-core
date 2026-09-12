@@ -230,7 +230,9 @@ test.describe("the default build path emits the version the spec says it emits",
   test("a replicated build is version 4, a plain build is version 3", async () => {
     const replicated = await versionOf(resolve(repoRoot, "tests/fixture/chess"), "Chess");
     expect(replicated.manifestVersion).toBe(4);
-    expect(replicated.requires).toEqual(["replicated"]);
+    // Chess declares the session profile (Step 6), so it requires both the
+    // replicated capability and session.
+    expect(replicated.requires).toEqual(["replicated", "session"]);
 
     const dir = mkdtempSync(join(tmpdir(), "dai-plain-"));
     writeFileSync(

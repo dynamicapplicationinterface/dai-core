@@ -142,6 +142,15 @@ const L = {
    * the identical signed bytes `signedBytes` produces.
    */
   replication: 16,
+  /**
+   * The session profile (`session`, T1-D26/D32), when the document declares one.
+   * In the signed set for the same reason `replication` is: a link that dropped
+   * it would rebuild a manifest missing the block a signed session document
+   * signed over, and fail its signature rather than open as something it is not.
+   * As `[max_parties]` or `[max_parties, close]`, matching the signed block —
+   * `close` present only when declared (an `any` session stays minimal, T1-D32).
+   */
+  session: 17,
 } as const;
 
 const CARRIED = 0;
@@ -291,6 +300,18 @@ export async function packInline(container: ParsedContainer, host: Host): Promis
       manifest.replication.level,
       ...[...manifest.replication.tables].sort(),
     ]);
+  }
+  // The session block, when present — `[max_parties]` or `[max_parties, close]`,
+  // matching the signed encoding so a signed session document round-trips to the
+  // identical signed bytes (T1-D26/D32).
+  const session = (manifest as { session?: { max_parties?: unknown; close?: unknown } }).session;
+  if (session && typeof session.max_parties === "number") {
+    fields.set(
+      L.session,
+      typeof session.close === "string"
+        ? [session.max_parties, session.close]
+        : [session.max_parties],
+    );
   }
   const savedAt = (manifest as { savedAt?: unknown }).savedAt;
   if (typeof savedAt === "string" && savedAt) fields.set(L.savedAt, savedAt);
@@ -542,6 +563,19 @@ export async function unpackInline(
               .slice(1)
               .filter((n): n is string => typeof n === "string"),
             level: Number((fields.get(L.replication) as unknown[])[0]) || 1,
+          },
+        }
+      : {}),
+    ...(Array.isArray(fields.get(L.session)) && (fields.get(L.session) as unknown[]).length >= 1
+      ? {
+          // `{ max_parties, close? }`, in that order and with `close` present only
+          // when it was — the same shape core.ts wrote, so the reserialized
+          // manifest and its signature match byte for byte (T1-D26/D32).
+          session: {
+            max_parties: Number((fields.get(L.session) as unknown[])[0]) || 0,
+            ...(typeof (fields.get(L.session) as unknown[])[1] === "string"
+              ? { close: (fields.get(L.session) as unknown[])[1] as "any" | "creator" }
+              : {}),
           },
         }
       : {}),
