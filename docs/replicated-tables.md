@@ -1078,8 +1078,33 @@ the inferred roster did not avoid it either; the difference is that here the
 thing an attacker must forge is a binding to a seat the creator minted, not a
 free-floating integer, so Track 2's signature closes it exactly.
 
+*The failure state must be visible, or it is a hang.* Contested-admits-neither is
+stricter than it first looks: a hostile holder of an invite binds the seat, the
+honest recipient binds it too, and now **neither is a member and the game is
+dead** — denial rather than intrusion, but a session that cannot be repaired from
+inside itself. The repair is the one the model already supports: the creator
+mints a fresh seat and reissues the invite. What the rule requires of the app is
+that a contested seat is **shown** — "this invite was used elsewhere; send a new
+one" — and not left as nothing happening. A rule with no visible failure state is
+one the person experiences as a hang, so the contested seat is a state the app
+must render, not only a row the merge refuses.
+
+*Membership is a function of the rows, not of when you learned.* Because the
+roster is computed from the current row set, membership can **change as rows
+arrive**: a replica that was a member becomes a non-member the moment a second
+binding contests its seat. So the rows that replica already authored have to be
+dropped **consistently at every copy** — a copy that saw the contest late must
+reach the same answer as one that saw it early, or the two diverge on which rows
+are present. This is the same shape as the supersession flag (T1-D2): the drop
+is a function of the rows, never of arrival order, and the enforcement recomputes
+it rather than remembering a verdict from when a row first arrived. It earns its
+own vector, `contested-seat-drops-earlier-rows`: a member authors rows, a
+contesting binding arrives afterwards, and every copy drops that member's rows
+regardless of the order the contest and the rows were merged in.
+
 Vectors: `roster-closes-at-max-parties`, `forwarded-copy-cannot-enter-session`
-(inverting the chess suite's "third copy can enter").
+(inverting the chess suite's "third copy can enter"), and
+`contested-seat-drops-earlier-rows`.
 
 ## 9. Level 1 conformance vectors
 
