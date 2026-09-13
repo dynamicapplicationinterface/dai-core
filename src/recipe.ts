@@ -296,6 +296,21 @@ And for every shape: the files are handed over as a tool call or as ONE fenced b
 /** The four custom properties a host sets; defined in rules.ts, re-exported for existing readers. */
 export { CSS_VARS } from "./rules.js";
 
+/**
+ * What check_dai_app carries: the constraints the lint enforces, by id.
+ *
+ * The same source as RECIPE, filtered. A tool that only checks does not need
+ * the shape decision, the patterns or the examples — it needs the rules its
+ * findings cite, so a model reading a finding knows what it means. Carrying the
+ * whole model file in both tool descriptions put it in a connected model's
+ * context twice.
+ */
+export const CHECK_TEXT = `What this checks, by constraint. Each finding names the id it enforces; the full text of every constraint, with the shape decision and complete examples, is in create_dai_app's description.
+
+${CONSTRAINTS.filter((c) => c.enforced.includes("lint"))
+  .map((c) => `[${c.id}] ${c.title} — lint: ${(c.lint ?? []).join(", ")}\n  ${c.rule}`)
+  .join("\n\n")}`;
+
 /** One line each, for a reader who wants the surface rather than the argument. */
 export const API: { call: string; does: string }[] = SURFACE.map(({ call, does }) => ({ call, does }));
 

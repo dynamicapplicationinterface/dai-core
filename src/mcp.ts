@@ -26,7 +26,7 @@ import { auditContainer, authoredFiles, looksSectioned, parseContainer } from ".
 import { writeBundle } from "./bundle.js";
 import { SCHEMA_ENTRY } from "./core.js";
 import { advisory, breaking, lintFiles } from "./lint.js";
-import { RECIPE } from "./recipe.js";
+import { CHECK_TEXT, RECIPE } from "./recipe.js";
 import { lastLine, linkFor, type Host } from "./sender.js";
 import type { Store } from "./store.js";
 import { storeFromEnvironment as storeFromEnv } from "./env.js";
@@ -121,7 +121,7 @@ const TOOLS = [
     description:
       "Check application source for things that work on a web page but fail silently inside a " +
       "container. Use this before create_dai_app when adapting existing code.\n\n" +
-      RECIPE,
+      CHECK_TEXT,
     inputSchema: {
       type: "object",
       properties: {

@@ -123,6 +123,24 @@ test.describe("protocol", () => {
     expect(create?.description).toMatch(/type="module"/);
     expect(create?.description).toMatch(/localStorage/);
   });
+
+  test("create carries the whole model file; check carries only what it enforces", async () => {
+    // The model file once sat in both descriptions, so a connected model held
+    // it twice. check_dai_app needs the constraints its findings cite, by id —
+    // not the shape decision, the patterns or the examples.
+    const { RECIPE } = await import("../src/recipe.js");
+    const { CONSTRAINTS } = await import("../src/rules.js");
+    const create = TOOLS.find((tool) => tool.name === "create_dai_app")!;
+    const check = TOOLS.find((tool) => tool.name === "check_dai_app")!;
+    expect(create.description).toContain(RECIPE);
+    expect(check.description).not.toContain("COMPLETE EXAMPLES");
+    expect(check.description).not.toContain("FIRST, THE SHAPE");
+    for (const c of CONSTRAINTS.filter((x) => x.enforced.includes("lint"))) {
+      expect(check.description, c.id).toContain(`[${c.id}]`);
+      expect(check.description, c.id).toContain(c.rule);
+    }
+    expect(check.description.length).toBeLessThan(RECIPE.length / 3);
+  });
 });
 
 test.describe("create_dai_app", () => {
