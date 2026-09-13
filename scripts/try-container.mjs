@@ -31,6 +31,19 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
+/*
+ * This harness drives Chromium, and only Chromium, on purpose.
+ *
+ * It scores whether an application mounts and keeps data — a question about the
+ * application, not about the engine — so it fixes the engine rather than varying
+ * it, and Chromium is the one it fixes. A consequence names itself here so it is
+ * never mistaken for engine coverage: a suite run under --project=firefox or
+ * --project=webkit still scores through Chromium here, and the CI jobs install
+ * Chromium alongside their own engine for exactly that reason (.github/
+ * workflows/test.yml). Whether the application persists on a given engine is a
+ * separate question, answered by tests that run under that engine's project —
+ * e.g. mailbox-link-e2e, whose OPFS resume passes on firefox.
+ */
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function usage(message) {

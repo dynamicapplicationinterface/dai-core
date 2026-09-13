@@ -94,8 +94,16 @@ jobs:
       # pages: a control can vanish from one without any other test noticing.
       - run: npm --prefix website ci
 
-      # --with-deps pulls the system libraries this engine needs on CI.
-      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      # This engine, and chromium — always. Some tests drive a Chromium
+      # subprocess whatever the engine under test: the evaluation and try-harness
+      # score an application by launching it (scripts/try-container.mjs, which can
+      # only drive Chromium), so a job that installed only firefox or webkit
+      # failed them with "chromium is not installed" and read as an engine defect.
+      # Installing it everywhere keeps the coverage the same on every engine —
+      # the alternative, skipping those tests off Chromium, would make "green on
+      # three engines" a claim that is not true. --with-deps pulls the system
+      # libraries each needs.
+      - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
 
