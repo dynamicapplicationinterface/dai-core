@@ -415,6 +415,57 @@ export async function openFromStore(blob: Uint8Array, hash: string, key: string)
   }
 }
 
+/* --------------------------------------------------------------------------
+ * The raw-bytes half of the store's cipher, for the mailbox.
+ *
+ * A mailbox is a store: it seals bytes under the same 32-byte document key and
+ * names its batches by their digest, and admitting a batch verifies its GCM tag
+ * exactly as opening a blob does. So that crypto is the store's, not the
+ * mailbox's — `one-engine` keeps it here rather than letting a second file grow
+ * its own copy. Same format as sealForStore: a 12-byte IV prepended to the
+ * AES-GCM ciphertext (which carries the tag), under a 32-byte key.
+ * ------------------------------------------------------------------------- */
+
+/** AES-GCM seal of arbitrary bytes: `IV(12) || ciphertext||tag`. */
+export async function sealBytes(plaintext: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await crypto.subtle.importKey("raw", rawKey as unknown as ArrayBuffer, { name: "AES-GCM" }, false, [
+    "encrypt",
+  ]);
+  const ciphertext = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext as unknown as ArrayBuffer),
+  );
+  const out = new Uint8Array(iv.byteLength + ciphertext.byteLength);
+  out.set(iv, 0);
+  out.set(ciphertext, iv.byteLength);
+  return out;
+}
+
+/** Opens what sealBytes produced, or throws (a bad tag is a throw, never empty). */
+export async function openBytes(sealed: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey("raw", rawKey as unknown as ArrayBuffer, { name: "AES-GCM" }, false, [
+    "decrypt",
+  ]);
+  return new Uint8Array(
+    await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: sealed.subarray(0, 12) },
+      key,
+      sealed.subarray(12) as unknown as ArrayBuffer,
+    ),
+  );
+}
+
+/** HKDF-SHA-256 from a root key under one info string, `bytes` bytes out. */
+export async function hkdfBytes(root: Uint8Array, info: Uint8Array, bytes: number): Promise<Uint8Array> {
+  const hk = await crypto.subtle.importKey("raw", root as unknown as ArrayBuffer, "HKDF", false, ["deriveBits"]);
+  const derived = await crypto.subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: info as unknown as ArrayBuffer },
+    hk,
+    bytes * 8,
+  );
+  return new Uint8Array(derived);
+}
+
 /**
  * What a store must check before it holds something.
  *

@@ -15,6 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { sha256Hex } from "./core.js";
 import type { Mailbox } from "./mailbox.js";
 
 export interface FsMailboxOptions {
@@ -29,10 +30,9 @@ export interface FsMailboxOptions {
  */
 const NAME = /^(\d{12})\.([0-9a-f]{64})\.batch$/;
 
-const digestOf = async (bytes: Uint8Array): Promise<string> => {
-  const hash = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
-  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
-};
+// The digest that names a batch is the store's hash (one-engine): the same
+// sha256Hex the container and the store name their bytes by.
+const digestOf = (bytes: Uint8Array): Promise<string> => sha256Hex(bytes);
 
 export function fsMailbox(options: FsMailboxOptions): Mailbox {
   const root = resolve(options.root);

@@ -21,6 +21,7 @@
  * fan-out are deliberately absent. They are dials on a working mechanism, and
  * the mechanism ships first.
  */
+import { hkdfBytes, openBytes, sealBytes } from "./store.js";
 
 /** The relay, as three calls over opaque bytes. */
 export interface Mailbox {
@@ -78,17 +79,10 @@ const IV_BYTES = 12;
  */
 export async function sealBatch(plaintext: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array> {
   if (rawKey.byteLength !== 32) throw new Error("MAILBOX_KEY_INVALID");
-  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const key = await crypto.subtle.importKey("raw", rawKey as unknown as ArrayBuffer, { name: "AES-GCM" }, false, [
-    "encrypt",
-  ]);
-  const ciphertext = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext as unknown as ArrayBuffer),
-  );
-  const out = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-  out.set(iv, 0);
-  out.set(ciphertext, iv.byteLength);
-  return out;
+  // The cipher itself is the store's (one-engine): a mailbox seals under the same
+  // key and the same AES-GCM format a blob does. This validates the key and
+  // delegates the crypto.
+  return sealBytes(plaintext, rawKey);
 }
 
 /**
@@ -102,14 +96,8 @@ export async function sealBatch(plaintext: Uint8Array, rawKey: Uint8Array): Prom
 export async function openBatch(sealed: Uint8Array, rawKey: Uint8Array): Promise<Uint8Array> {
   if (rawKey.byteLength !== 32) throw new Error("MAILBOX_KEY_INVALID");
   if (sealed.byteLength <= IV_BYTES) throw new Error("MAILBOX_BATCH_TRUNCATED");
-  const key = await crypto.subtle.importKey("raw", rawKey as unknown as ArrayBuffer, { name: "AES-GCM" }, false, [
-    "decrypt",
-  ]);
-  const iv = sealed.subarray(0, IV_BYTES);
-  const body = sealed.subarray(IV_BYTES);
-  return new Uint8Array(
-    await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, body as unknown as ArrayBuffer),
-  );
+  // Same format the store seals; opening it is the store's cipher (one-engine).
+  return openBytes(sealed, rawKey);
 }
 
 /* ----------------------------------------------------- a mailbox per session */
@@ -117,18 +105,10 @@ export async function openBatch(sealed: Uint8Array, rawKey: Uint8Array): Promise
 const KEY_LABEL = "dai:mailbox:key:";
 const ID_LABEL = "dai:mailbox:id:";
 
-/** HKDF-SHA-256 from a root key under one info string, `bytes` bytes out. */
-async function hkdf(root: Uint8Array, info: Uint8Array, bytes: number): Promise<Uint8Array> {
-  const hk = await crypto.subtle.importKey("raw", root as unknown as ArrayBuffer, "HKDF", false, [
-    "deriveBits",
-  ]);
-  const derived = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: info as unknown as ArrayBuffer },
-    hk,
-    bytes * 8,
-  );
-  return new Uint8Array(derived);
-}
+/** HKDF-SHA-256 from a root key under one info string, `bytes` bytes out. The
+ *  derivation is the store's (one-engine); this names the labels it derives under. */
+const hkdf = (root: Uint8Array, info: Uint8Array, bytes: number): Promise<Uint8Array> =>
+  hkdfBytes(root, info, bytes);
 
 const withLabel = (label: string, sessionId: Uint8Array): Uint8Array => {
   const prefix = new TextEncoder().encode(label);
