@@ -9,6 +9,16 @@ a defect or none, and a record of what any conforming reader must conclude about
 each. If your reader and ours disagree about one of these, one of us is wrong —
 and it is a question with an answer, which is the whole point.
 
+**A vector passes only when both readers *enforce* it.** A reader that never
+checks a clause is not a reader that agrees with it — it is silent about it, and
+silence reads as agreement until the day the clause matters. The `oversize` case
+was green for exactly that reason: the reference reader inflated every archive
+entry and never applied the §7 entry cap the TypeScript reader enforces and the
+media-type registration cites as normative. The pair looked like agreement and
+was not. So when a case passes, confirm the reader *did the check* rather than
+that it did not complain: agreement is enforcement on both sides, not the absence
+of an objection on one.
+
 ## What is here
 
 | | |
