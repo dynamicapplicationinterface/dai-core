@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
 import { base64 } from "../src/mailbox-http.js";
@@ -11,6 +11,20 @@ import { base64 } from "../src/mailbox-http.js";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
 const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocator("iframe");
+
+/**
+ * The app frame (the doubly-nested one), found by depth rather than array order.
+ *
+ * `page.frames().at(-1)` picks the last frame in enumeration order, which is the
+ * app frame on Chromium and is not on WebKit — the order is engine-defined and
+ * not part of the contract. The app is the frame two levels down (main → shell →
+ * app), which is the same on every engine.
+ */
+const appFrame = (page: Page): Frame => {
+  const frame = page.frames().find((f) => f.parentFrame()?.parentFrame() === page.mainFrame());
+  if (!frame) throw new Error("app frame not found (main → shell → app)");
+  return frame;
+};
 
 /**
  * The key path, end to end: no injected key.
@@ -142,7 +156,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     seatBinders: { seat: string; binders: number }[];
     members: string[];
   }> => {
-    const f = page.frames().at(-1)!;
+    const f = appFrame(page);
     return f.evaluate(() => {
       const db = (window as any).daiKit.db;
       const q = (sql: string, bind?: unknown[]) => (bind ? db.selectObjects(sql, bind) : db.selectObjects(sql));
@@ -387,7 +401,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // Closed means no new rows, not invisible: the board and its moves still show.
     await expect(appA.locator("#move-history")).toContainText("e5");
     // A `_dai_close` row now names the session.
-    const closedOnA = await pageA.frames().at(-1)!.evaluate(() =>
+    const closedOnA = await appFrame(pageA).evaluate(() =>
       (window as any).daiKit.db.selectObjects("SELECT count(*) AS n FROM _dai_close_current")[0].n,
     );
     expect(Number(closedOnA), "a close row was authored").toBeGreaterThan(0);
@@ -448,7 +462,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // Refused by name: the toast carries the refusal code, and no close row was
     // written — the session is not closed on B.
     await expect(appB.locator("#toast")).toContainText("CLOSE_NOT_PERMITTED", { timeout: 10_000 });
-    const closedOnB = await pageB.frames().at(-1)!.evaluate(() =>
+    const closedOnB = await appFrame(pageB).evaluate(() =>
       (window as any).daiKit.db.selectObjects("SELECT count(*) AS n FROM _dai_close_current")[0].n,
     );
     expect(Number(closedOnB), "a non-creator's close wrote nothing").toBe(0);
@@ -457,7 +471,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await appA.locator("#close-match").click();
     await appA.locator("#confirm-yes").click();
     await expect(appA.locator("#move-step")).toContainText("MATCH CLOSED", { timeout: 30_000 });
-    const closedOnA = await pageA.frames().at(-1)!.evaluate(() =>
+    const closedOnA = await appFrame(pageA).evaluate(() =>
       (window as any).daiKit.db.selectObjects("SELECT count(*) AS n FROM _dai_close_current")[0].n,
     );
     expect(Number(closedOnA), "the creator's close was honored").toBeGreaterThan(0);
@@ -531,7 +545,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // reintroduce auto-rebinding. (The carrier positive is proven by B, below.)
     await expect(async () => {
       await pull(pageC);
-      const openForC = await pageC.frames().at(-1)!.evaluate(() =>
+      const openForC = await appFrame(pageC).evaluate(() =>
         (window as any).daiKit.db.selectObjects(
           "SELECT 1 FROM _dai_seat_current s WHERE lower(hex(s.seat)) NOT IN " +
             "(SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE b._r_session = s._r_session) LIMIT 1",
@@ -539,7 +553,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
       );
       expect(openForC, "the fresh open seat reached C").toBe(true);
     }).toPass({ timeout: 30_000 });
-    const cMemberAfterUntagged = await pageC.frames().at(-1)!.evaluate(() => {
+    const cMemberAfterUntagged = await appFrame(pageC).evaluate(() => {
       const db = (window as any).daiKit.db;
       window.dispatchEvent(new CustomEvent("dai:merged", { detail: { applied: 1 } })); // no `via`
       const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
@@ -572,7 +586,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB2);
     await expect(appB2.locator("#contested-banner")).toBeHidden({ timeout: 30_000 });
-    const bIsMember = await pageB2.frames().at(-1)!.evaluate(() => {
+    const bIsMember = await appFrame(pageB2).evaluate(() => {
       const db = (window as any).daiKit.db;
       const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
       return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
@@ -587,7 +601,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // invite, does not silently re-enter: it stays out, and stays told so.
     await pull(pageC);
     await expect(appC.locator("#contested-banner")).toBeVisible();
-    const cIsMember = await pageC.frames().at(-1)!.evaluate(() => {
+    const cIsMember = await appFrame(pageC).evaluate(() => {
       const db = (window as any).daiKit.db;
       const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
       return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
@@ -629,7 +643,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     // Call reseat directly on this healthy session. It must refuse by name rather
     // than pick a seat by row order and eject the joiner.
-    const outcome = await pageA.frames().at(-1)!.evaluate(() => {
+    const outcome = await appFrame(pageA).evaluate(() => {
       const db = (window as any).daiKit.db;
       const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
       const sess = db.selectObjects(
@@ -647,7 +661,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     // The joiner keeps their seat and their move: nothing was dropped.
     await expect(appA.locator("#move-history")).toContainText("e5");
-    const bStillMember = await pageA.frames().at(-1)!.evaluate(() =>
+    const bStillMember = await appFrame(pageA).evaluate(() =>
       (window as any).daiKit.db.selectObjects("SELECT count(*) AS n FROM _dai_member")[0].n,
     );
     expect(Number(bStillMember), "both players are still members").toBeGreaterThanOrEqual(2);
