@@ -2108,6 +2108,9 @@ const closeSheet = (): void => {
 openButton.addEventListener("click", () => fileInput.click());
 moreButton.addEventListener("click", () => {
   slideOpen(sheet);
+  // Checked here, on menu open, and never at load: the offline-open guarantee is
+  // that a held document asks the network for nothing (T1 note in showVersion).
+  void checkForUpdate();
 });
 document.getElementById("save-state")?.addEventListener("click", (event) => {
   if ((event.currentTarget as HTMLElement).dataset.state === "failed") slideOpen(sheet);
@@ -3687,3 +3690,67 @@ function showVersion(): void {
 }
 
 showVersion();
+
+/**
+ * On the menu opening — never on load — the stamp becomes a one-tap update when a
+ * newer build is live.
+ *
+ * The check must not touch the network at load: a held document opens with zero
+ * network, and a fetch there broke the test that holds that (see showVersion's
+ * note). So this runs only when the person opens the menu, and on any failure —
+ * offline, no version.json — it leaves the stamp exactly as it was. version.json
+ * is served fresh (the worker excludes it), so it names the *deployed* build; the
+ * meta names the *running* one, cached by the worker and possibly a deploy behind.
+ * Different commits mean the running shell is stale, which is the whole failure
+ * this repository has been bitten by — a phone two deploys back with no way to
+ * know. The remedy is offered, not forced: one tap clears the caches, drops the
+ * old worker, and reloads onto the deployed bytes.
+ */
+async function checkForUpdate(): Promise<void> {
+  const slot = document.getElementById("sheet-version");
+  const stamp = document.querySelector('meta[name="dai-build"]')?.getAttribute("content");
+  if (!slot || !stamp || stamp === "dev") return;
+  const running = stamp.split("·")[0]!.trim();
+  if (!running) return;
+  let live: unknown;
+  try {
+    const response = await fetch(`/version.json?at=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return;
+    live = (await response.json())?.commit;
+  } catch {
+    return; // offline, or no version.json: the stamp stays, and nothing is said.
+  }
+  if (typeof live !== "string" || live.slice(0, running.length) === running) return;
+
+  slot.textContent = "New version — update";
+  slot.classList.add("update-available");
+  slot.setAttribute("role", "button");
+  slot.setAttribute("tabindex", "0");
+  const apply = (): void => void applyUpdate();
+  slot.onclick = apply;
+  slot.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      apply();
+    }
+  };
+}
+
+/** Clear the shell caches and the worker, then reload onto the deployed build. */
+async function applyUpdate(): Promise<void> {
+  try {
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch {
+    /* A browser that will not clear its caches still gets a reload below. */
+  }
+  try {
+    const registrations = (await navigator.serviceWorker?.getRegistrations?.()) ?? [];
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  } catch {
+    /* Same: unregister is best-effort; the reload is the load-bearing step. */
+  }
+  location.reload();
+}
