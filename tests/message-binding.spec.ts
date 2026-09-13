@@ -126,6 +126,16 @@ test.describe("the shell acts only on messages from its own frame", () => {
     });
     expect(before).toBeGreaterThan(0);
 
+    // The one download that is not a forgery: the application is hosted by its
+    // own shell, so its first write autosaves, and this shell is not itself
+    // hosted (the fixture answered no handshake) — so that save falls back to a
+    // file, which downloads on the engines that have no save-file picker
+    // (Firefox, WebKit) and is swallowed by the dismissed picker on Chromium.
+    // That is the no-host fallback doing its job, not a forgery. Count it out by
+    // the same before/after the `seen` snapshot uses: what matters is that the
+    // forged save below adds nothing, not that the number is zero.
+    const downloadsBefore = downloads.length;
+
     await page.evaluate(() => {
       const forge = (window as unknown as { forgeToShell: (d: unknown) => void }).forgeToShell;
       const toApp = (window as unknown as { forgeToApp: (d: unknown) => void }).forgeToApp;
@@ -169,8 +179,11 @@ test.describe("the shell acts only on messages from its own frame", () => {
       fresh,
       `the shell answered a window that is not its frame: ${JSON.stringify(fresh)}`,
     ).toEqual([]);
-    // And nothing was written to disk on the strength of it.
-    expect(downloads).toEqual([]);
+    // And nothing was written to disk on the strength of the forgery: the only
+    // download is the legitimate autosave that landed before it.
+    expect(downloads.length, `a forged save reached the disk: ${JSON.stringify(downloads)}`).toBe(
+      downloadsBefore,
+    );
 
     // The application was not told something only its shell can tell it…
     await expect(app.locator("#mode")).toHaveText("no");

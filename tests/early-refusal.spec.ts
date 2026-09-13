@@ -21,6 +21,17 @@ const RUNNER_URL = "http://localhost:5175/";
  * holds the fix. The window a refusal comes from is its identity until a
  * handshake has given the host a nonce to demand.
  *
+ * That source-only window is real, and it is longer than it looks: it runs from
+ * mount — when `body.loaded` is set — until the frame's handshake arrives, which
+ * is the application's whole boot-to-handshake time and, on a slow engine, long
+ * enough to drive a test through (that is precisely how the Firefox run for the
+ * check below fell into it). Source alone is sufficient inside it because only
+ * the cartridge frame's own window satisfies `event.source === cartridgeFrame
+ * .contentWindow`, and no other page can forge that source — so the sole sender
+ * a source-only check admits is the application's own frame, which is already
+ * trusted to run. "Short on Chromium" was never the argument; "the only window
+ * that passes is the one we mounted" is.
+ *
  * The document here is one the opener's own verifier passes and the shell
  * cannot run: unsigned, with `app/index.html` removed from the archive and
  * from the manifest together, so every digest still agrees and there is
@@ -68,6 +79,20 @@ test.describe("a refusal raised before the handshake", () => {
     await page.goto(RUNNER_URL);
     await openFile(page, resolve(repo, "tests/fixture/fixture.dai.html"));
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+
+    // The nonce forgery below tests the *post-handshake* rule — a refusal from
+    // the frame must carry the nonce the handshake established. `loaded` is set
+    // at mount, before the handshake arrives; waiting only for it left a window
+    // where no nonce was held yet, and there a refusal is trusted on source
+    // alone, by design. On Chromium the handshake landed inside that window and
+    // the test never saw it; on slower Firefox it did not, and the test was
+    // asserting the nonce rule in a state where no nonce existed. Wait for the
+    // handshake, so the rule under test is the one actually in force.
+    await page.waitForFunction(
+      () => (window as unknown as { __runner?: { handshakeEstablished?: boolean } }).__runner?.handshakeEstablished === true,
+      undefined,
+      { timeout: 60_000 },
+    );
 
     // The page posting to itself: the source is not the cartridge frame.
     await page.evaluate(() => {
