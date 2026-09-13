@@ -117,6 +117,39 @@ class ContainerError(Exception):
     """The file cannot be read far enough to be judged."""
 
 
+class PayloadTooLarge(ContainerError):
+    """An archive entry declares more than a reader will hold (§7)."""
+
+
+# The bytes a reader will hold, matching src/unzip.ts. The declared uncompressed
+# size is read from the central directory and refused before inflation, so a few
+# compressed bytes cannot name an output no host allocates (§7). This was a gap:
+# the reader inflated every entry with no cap, so the `oversize` case — which the
+# TypeScript reader refuses — was mounted here, and the conformance pair never
+# actually agreed on the clause the media-type registration cites as normative.
+ENTRY_CAP = 512 * 1024 * 1024
+ARCHIVE_CAP = 768 * 1024 * 1024
+ENTRY_COUNT_CAP = 4096
+
+
+def _read_archive(payload: bytes) -> dict[str, bytes]:
+    """Read a zip, refusing before inflation when it declares more than the caps."""
+    with zipfile.ZipFile(BytesIO(payload)) as zipped:
+        infos = zipped.infolist()
+        if len(infos) > ENTRY_COUNT_CAP:
+            raise PayloadTooLarge(f"The archive declares more than {ENTRY_COUNT_CAP} entries.")
+        total = 0
+        for info in infos:
+            if info.file_size > ENTRY_CAP:
+                raise PayloadTooLarge(
+                    f"{info.filename} declares {info.file_size} bytes, more than an entry may be."
+                )
+            total += info.file_size
+            if total > ARCHIVE_CAP:
+                raise PayloadTooLarge(f"The archive declares more than {ARCHIVE_CAP} bytes in all.")
+        return {name: zipped.read(name) for name in zipped.namelist()}
+
+
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -360,8 +393,7 @@ def _read_sectioned(data: bytes) -> tuple[dict[str, bytes], bytes, dict[str, Any
     payload = sections.get(SECTION_PAYLOAD, b"")
     archive = {}
     if payload:
-        with zipfile.ZipFile(BytesIO(payload)) as zipped:
-            archive = {name: zipped.read(name) for name in zipped.namelist()}
+        archive = _read_archive(payload)
 
     report = {
         "mismatched": sorted(mismatched),
@@ -378,8 +410,7 @@ def _read_viewer(text: str) -> tuple[dict[str, bytes], str]:
         raise ContainerError("This document carries no container payload.")
 
     payload = base64.b64decode(match.group(2))
-    with zipfile.ZipFile(BytesIO(payload)) as zipped:
-        archive = {name: zipped.read(name) for name in zipped.namelist()}
+    archive = _read_archive(payload)
 
     # WAS A GAP: §7 said the shell "matches the sealed copy inside the payload"
     # without saying that the live document carries the payload while the sealed
@@ -621,13 +652,22 @@ def verify(data: bytes, now: int) -> Report:
     report = Report()
     sectioned = data[:4] == MAGIC
 
-    if sectioned:
-        archive, manifest_bytes, sections = _read_sectioned(data)
-        report.sections = sections
-        shell_text = None
-    else:
-        archive, shell_text = _read_viewer(data.decode("utf-8", errors="replace"))
-        manifest_bytes = archive.get(MANIFEST_ENTRY, b"")
+    # An oversize entry is refused before it is inflated, and routed through the
+    # Report (§7): run.py compares report.code with the suite's stated name, so
+    # a raised error would read as the generic "could not be read" instead of the
+    # named PAYLOAD_TOO_LARGE — the same reason the version and capability gates
+    # above set a code rather than raise.
+    try:
+        if sectioned:
+            archive, manifest_bytes, sections = _read_sectioned(data)
+            report.sections = sections
+            shell_text = None
+        else:
+            archive, shell_text = _read_viewer(data.decode("utf-8", errors="replace"))
+            manifest_bytes = archive.get(MANIFEST_ENTRY, b"")
+    except PayloadTooLarge:
+        report.code = "PAYLOAD_TOO_LARGE"
+        return report
 
     if not manifest_bytes:
         raise ContainerError("This container has no manifest.")
