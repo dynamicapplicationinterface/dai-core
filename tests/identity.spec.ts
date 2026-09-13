@@ -162,6 +162,15 @@ test.describe("a Sigstore bundle, verified against a held root", () => {
  * answered by the test, with the conformance suite's root.
  */
 test.describe("identity on the card", () => {
+  // These two drive the opener page and mock `roots.json` with `page.route`.
+  // The runner's service worker claims the page (skipWaiting + clients.claim)
+  // and serves same-origin GETs from its cache-first fetch handler, so a
+  // controlled page's `fetch("roots.json")` never reaches the route — the
+  // identity then reads as unsigned. Whether the SW wins is a timing race, and
+  // on CI it did. Block it so the route is authoritative, as idb-timeout,
+  // launch-failsafe and the write-rules specs already do for the same reason.
+  test.use({ serviceWorkers: "block" });
+
   test("a held root puts the identity on the card; no root, nothing", async ({ page }) => {
     test.slow();
     const { readFileSync } = await import("node:fs");

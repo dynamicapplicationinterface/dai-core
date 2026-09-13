@@ -141,29 +141,42 @@ test.describe("a document published without its engine, in the opener", () => {
     }
   });
 
-  test("a host with no engine to offer refuses it, and does not call it damage", async ({
-    page,
-  }) => {
-    test.slow();
-    const fat = await complete();
-    const thin = thinned(parseContainer(fat.html));
+  // Its own describe so the block below is scoped to it, not to the sibling
+  // above, which mounts a complete build and has no reason to forgo the worker.
+  test.describe("provoked by aborting the staged bytes", () => {
+    // The refusal is provoked by aborting every request for the engine bytes.
+    // The runner's service worker precaches `runtime/sqlite3.*` and, once it
+    // claims the page, serves them from its own cache-first fetch handler — so
+    // the abort route never fires, the engine loads, and the app mounts instead
+    // of refusing. Whether the SW wins is a timing race, and on CI it did.
+    // Block it so the abort is authoritative, as the write-rules specs and
+    // others already do for the same reason.
+    test.use({ serviceWorkers: "block" });
 
-    // This opener holds an engine, so the refusal has to be provoked: every
-    // request for the staged bytes fails, as it would on a build that never
-    // staged them.
-    await page.route("**/runtime/sqlite3.*", (route) => route.abort());
+    test("a host with no engine to offer refuses it, and does not call it damage", async ({
+      page,
+    }) => {
+      test.slow();
+      const fat = await complete();
+      const thin = thinned(parseContainer(fat.html));
 
-    await page.goto(RUNNER_URL);
-    await openFile(page, {
-      name: "Thin.dai.html",
-      mimeType: "text/html",
-      buffer: Buffer.from(thin, "utf8"),
+      // This opener holds an engine, so the refusal has to be provoked: every
+      // request for the staged bytes fails, as it would on a build that never
+      // staged them.
+      await page.route("**/runtime/sqlite3.*", (route) => route.abort());
+
+      await page.goto(RUNNER_URL);
+      await openFile(page, {
+        name: "Thin.dai.html",
+        mimeType: "text/html",
+        buffer: Buffer.from(thin, "utf8"),
+      });
+
+      // Nothing was modified, and saying so would send somebody hunting for an
+      // attacker over a file that arrived exactly as it was published.
+      await expect(page.locator("#report")).toContainText(/engine/i, { timeout: 60_000 });
+      await expect(page.locator("#report")).not.toContainText(/modified/i);
+      await expect(page.locator("body")).not.toHaveClass(/loaded/);
     });
-
-    // Nothing was modified, and saying so would send somebody hunting for an
-    // attacker over a file that arrived exactly as it was published.
-    await expect(page.locator("#report")).toContainText(/engine/i, { timeout: 60_000 });
-    await expect(page.locator("#report")).not.toContainText(/modified/i);
-    await expect(page.locator("body")).not.toHaveClass(/loaded/);
   });
 });
