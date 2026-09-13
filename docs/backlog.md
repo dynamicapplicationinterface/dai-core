@@ -262,6 +262,96 @@ superseded copy needs revocation-by-policy machinery that `main` does not have.
 after Track 4 has landed under it. Until then it is thinking, not work: PR #2 stays
 open and unmerged.
 
+## Later — three surfaces to finish
+
+Not urgent, and in the order to take them. None is a new capability; each is a
+shipped surface that behaves wrong in a way a person meets, and each has the
+same shape underneath — a state that is real but not drawn, so the screen lies
+about what happened.
+
+### L1 — The card must not hand over a container that isn't ready
+
+Pressing Get on a large document while its assets are still loading produces a
+page flash and a return to the card, with no message. A person who taps promptly
+is punished for it, and nothing tells them what happened.
+
+Two parts. **Prepare before the press:** the card fetches and verifies the
+container as soon as it is shown, so for most documents Get is instant, and Get
+stays disabled until the container is at least identified — a press can never
+land on nothing. **Hold if it is not ready:** if preparation is still running
+when Get is pressed, stay on the card and show progress rather than navigating.
+
+One path for every document — do **not** gate on a size threshold. Show the
+progress affordance only when the wait passes a few hundred milliseconds, so a
+small document looks exactly as it does today and a large one stops blinking.
+And the blink is its own defect: a launch that fails must say so **on the card**.
+A card that reappears looking untouched is the unrendered-failure pattern again.
+
+**Exit:** Get is disabled until the container is identified; a slow document
+shows progress on the card and never navigates until it is ready; a launch that
+fails leaves a message on the card rather than a card that looks untouched; a
+small document renders no progress affordance (its prepare finished under the
+threshold).
+
+### L2 — The make-one page's step 3 has four states and one layout
+
+Step 3 shows an empty bordered box beside "Open it now" — the link output
+rendered before a link exists, which reads as a field someone is meant to fill
+in — and "Build my file" stays visible after the file is built, where pressing
+it again is not a legible action. Both are symptoms of one layout serving four
+states.
+
+Step 3 has exactly four states, each needing its own layout:
+
+- **nothing built yet** — Build my file, and nothing else;
+- **building** — progress, the button disabled;
+- **built** — the file's name and size, Open it now, the link with a copy
+  control if there is one, and a quiet Start over that clears the loaded assets;
+- **failed** — what went wrong, in that block, with a way to retry.
+
+**Exit:** no empty link box before a link exists; Build my file is gone once the
+file is built; each of the four states renders its own layout, asserted one per
+state.
+
+### L3 — The recipe is behind the opener, and there is no worked-examples page
+
+The recipe is what a model receives through MCP, so a stale recipe means every
+generated app is built against yesterday's format — the damage is upstream of
+every door. It is materially behind what the opener does. Gaps, in order of how
+much each costs:
+
+- **How to read a replicated table is never stated.** The rewrite adds three
+  views and the recipe never names them, so an author queries the base table and
+  gets superseded rows, tombstones and non-member rows mixed together. Reads come
+  from `_current`.
+- **Conflicts are absent entirely** — `_conflicts`, `_r_conflicted`, two people
+  acting at the same point. The recipe implies conflicts exist (it explains why
+  UNIQUE is wrong) and never tells the author to surface them, so a generated app
+  silently shows one of two conflicting rows.
+- **Sessions are absent** — the profile declaration, seats, bindings, invites,
+  close, the contested-seat state.
+- **Updates arriving are absent** — the merge event and its source tag, so a
+  generated app draws once and never redraws when the other party's row lands.
+- **The shape decision is missing from the top.** Solo, passable, session,
+  broadcast — chosen before a single table is written. That is the question
+  nobody asked the model that wrote the first chess app, which is why it stored
+  the board.
+
+Then a worked-examples page: one app per shape, with the decision that led to it
+stated first, and a section on what each shape costs — no UPDATE, no DELETE, no
+PRIMARY KEY, no UNIQUE, no CHECK, no stored derived state, reads from `_current`.
+The best teaching artifact available is the first chess app beside the second:
+the diff is the lesson.
+
+**Recipe before examples** — a model with a stale recipe writes a broken app
+however good the examples page is.
+
+**Exit:** the recipe names the three views and says reads come from `_current`;
+it covers conflicts, sessions, arriving updates, and opens with the shape
+decision; a worked-examples page ships one app per shape with its decision and
+its costs stated; a test greps the recipe for `_current`, `_conflicts` and the
+shape question so it cannot silently fall behind again.
+
 ## Phase 0 — Make "open from a stranger" true
 
 ### 0.2 The host owns the runtime
