@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Agree on terms with one other person, by message" />
+  <meta name="dai:does" content="Write the terms of a lease or house rules together, each on your own phone" />
+  <meta name="dai:does" content="Shows when you have both accepted the same wording, and voids it if anything changes" />
+  <meta name="dai:does" content="Seal it once agreed so nothing in it can change" />
+  <meta name="theme-color" content="#f5f2ea" />
+  <title>Agreement</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only. Shared rows are never seeded with SQL.
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+  </script>
+
+  <main>
+    <header>
+      <h1>Agreement</h1>
+      <select id="agreement-list" aria-label="Which agreement"></select>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <p id="empty-state" class="empty" hidden>
+      No agreements yet. Start one below: give it a name, say who it is between,
+      then add the terms and send the invite to the other person.
+    </p>
+
+    <section id="view" hidden>
+      <div class="title-block">
+        <h2 id="agreement-title"></h2>
+        <p id="parties" class="parties"></p>
+        <p id="agreement-status" class="status" data-state="open" aria-live="polite"></p>
+      </div>
+
+      <div id="seat" class="panel" hidden>
+        <p id="seat-text"></p>
+        <div class="choices">
+          <button id="reseat" type="button" hidden>Send a fresh invite</button>
+        </div>
+      </div>
+
+      <section class="panel">
+        <h3>Terms</h3>
+        <ol id="terms" class="terms"></ol>
+        <p id="terms-empty" class="empty" hidden>No terms yet.</p>
+
+        <form id="add-term-form" class="add-term" autocomplete="off">
+          <label for="new-term">Add a term</label>
+          <textarea id="new-term" rows="3" maxlength="1000" placeholder="e.g. Rent is due on the 1st of each month." required></textarea>
+          <div class="choices">
+            <button id="add-term" type="submit">Add term</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h3>Acceptance</h3>
+        <ul id="acceptances" class="acceptances"></ul>
+        <p id="accept-hint" class="hint" hidden></p>
+        <div class="choices">
+          <button id="accept" type="button">I accept it as it stands</button>
+          <button id="withdraw" type="button" class="quiet" hidden>Withdraw my acceptance</button>
+          <button id="seal" type="button" hidden>Seal it</button>
+        </div>
+        <div id="seal-confirm" class="confirm" hidden>
+          <p>Seal this agreement? After it is sealed, neither of you can add, change or remove a term, or accept anything, ever again.</p>
+          <div class="choices">
+            <button id="seal-confirm-yes" type="button">Yes, seal it</button>
+            <button id="seal-cancel" type="button" class="quiet">Not yet</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="invite" type="button">Invite the other person</button>
+        <button id="send" type="button" class="quiet" hidden>Send it back</button>
+      </div>
+      <p id="invite-hint" class="hint" hidden>
+        Keep this agreement on screen when you send the invite: it opens on
+        whichever agreement is showing. The invite carries this whole document,
+        including any other agreements in it.
+      </p>
+    </section>
+
+    <form id="new-agreement" class="panel" autocomplete="off">
+      <h2>Start an agreement</h2>
+      <label>What it is <input id="agreement-name" required maxlength="80" placeholder="e.g. Lease for 12 Elm St" /></label>
+      <label>You <input id="you" required maxlength="40" placeholder="Your name" /></label>
+      <label>The other person <input id="them" required maxlength="40" placeholder="Their name" /></label>
+      <button id="start-agreement" type="submit">Start agreement</button>
+    </form>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

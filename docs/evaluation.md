@@ -131,7 +131,12 @@ it on more than one device in the real host, through the paths an author cannot
 check alone: the mailbox, a close, a conflict the person must settle.
 
 The first run (Connect Four, 13 September) found seven real gaps, each fixed in
-the change that recorded it.
+the change that recorded it. The second (a two-person agreement, unlike any
+example) showed the model reasoning from the constraints to a design no example
+had, and, driven over the mailbox on three engines, found a bug the first could
+not: a redraw on `dai:merged` that threw away what the person was typing —
+traced to SHARED-REDRAW-ON-MERGE saying nothing about work in progress. Both
+runs are in `eval/candidates/`.
 
 ## Reading the result
 
