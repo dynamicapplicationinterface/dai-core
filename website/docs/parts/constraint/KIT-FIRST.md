@@ -3,7 +3,7 @@
 ::: info KIT-FIRST
 **Prefer the kit for local tables**
 
-Use dai-kit for local tables: &lt;dai-rows&gt;, &lt;dai-value&gt;, &lt;dai-form&gt;, &lt;dai-attach&gt; and &lt;dai-save&gt;, with &lt;script type="module" src="./dai-kit.js"&gt;&lt;/script&gt; at the end of the body. Reach for JavaScript only for what the kit cannot express.
+Use dai-kit for local tables: &lt;dai-rows&gt;, &lt;dai-value&gt;, &lt;dai-form&gt;, &lt;dai-attach&gt; and &lt;dai-save&gt;, with &lt;script type="module" src="./dai-kit.js"&gt;&lt;/script&gt; at the end of the body. Reach for JavaScript only for what the kit cannot express. Do not write dai-kit.js yourself or put it in the bundle: the compiler adds it to every container.
 
 **Why.** The kit removes the dangerous sinks by construction — no statement built from a value, text-only rendering — and does the querying, rendering and redrawing a hand-written application gets wrong.
 

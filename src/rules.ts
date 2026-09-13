@@ -465,7 +465,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "shared",
     rule:
-      "Keep in ordinary local tables everything about this copy rather than the document: settings, drafts, which item the screen is showing, what this person has hidden, the name this person goes by. Local tables are never merged, so they may use PRIMARY KEY, UNIQUE and CHECK freely.",
+      "Keep in ordinary local tables everything about this copy rather than the document: settings, drafts, which item the screen is showing, what this person has hidden, the name this person goes by. Local tables are never merged, so they may use PRIMARY KEY, UNIQUE and CHECK freely. They do travel inside a copy that is sent — a person opening a document for the first time starts from the sender's local rows — but a copy that already exists keeps its own local rows when another copy's shared rows are merged into it.",
     why: "A setting in a shared table changes the other person's screen, and a draft in one is sent before it is finished.",
     enforced: ["prose"],
     anchors: [{ file: "tests/fixture/chess/schema.sql", contains: "Local tables. Never merged" }],
@@ -530,7 +530,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Start each game, match or agreement with `const { session, seat } = window.dai.replicated.session.create()`. It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex), `seat` is the open seat. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them.",
+      "Start each game, match or agreement with `const { session, seat } = window.dai.replicated.session.create()`. It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex), `seat` is the open seat. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them: `session.create()` and `insert` work inside a `BEGIN` … `COMMIT` you open. The creator is a member from the moment the session exists, so the creator's rows are admitted before anyone has joined — the first move can be made before the invite is sent.",
     why: "A session is the unit of membership. Rows written outside one belong to nobody, and a second game in the same session would share the first game's roster.",
     enforced: ["prose"],
     anchors: [{ file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string } =>" }],
@@ -557,7 +557,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === \"carrier\"` — never for \"mailbox\". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds.",
+      "When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === \"carrier\"` — never for \"mailbox\". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds. Join the session of the item the sent copy was showing — the local setting that records it arrived with the copy (SHARED-LOCAL-STAYS-LOCAL). Because an invite carries the whole document, the sender must have the game they are inviting to on screen when they share; say so beside the Invite button.",
     why:
       "Membership comes from opening an invite, not from rows arriving. A copy that joined on every background merge would re-take a seat it had lost, and a copy that joined twice would contest its own seat.",
     enforced: ["prose"],
@@ -612,12 +612,13 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Invite the other party by asking the host to share: a button that calls `window.dai.requestShare()`. There is no invite call of your own. Today the link carries the whole document — every session in it, not only the one being shared — so do not tell a person an invite contains only one game.",
+      "Invite the other party by asking the host to share: a button that calls `window.dai.requestShare()`. There is no invite call of your own. Today the link carries the whole document — every session in it, not only the one being shared — so do not tell a person an invite contains only one game. After a copy has been shared by link, the host moves new rows between the copies on its own, and they arrive as `dai:merged` with `via` \"mailbox\"; a copy handed over as a file carries its rows when it is opened. The application never sends rows itself; a \"send\" button that calls `requestShare()` again is only needed where copies travel as files.",
     why: "The host mints the key that lets the two copies exchange rows and makes the link; the application only asks. Per-session invites exist in the code but no host uses them yet.",
     enforced: ["prose"],
     anchors: [
       { file: "src/runtime/bootloader.ts", contains: 'window.parent.postMessage({ type: "dai:request-share" }, "*");' },
       { file: "src/replicated-export.ts", contains: "export async function exportSession(" },
+      { file: "apps/runner/src/main.ts", contains: "Sharing is the moment a solo document becomes a shared one" },
     ],
   },
 
@@ -628,10 +629,13 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "kit",
     rule:
-      "Use dai-kit for local tables: <dai-rows>, <dai-value>, <dai-form>, <dai-attach> and <dai-save>, with <script type=\"module\" src=\"./dai-kit.js\"></script> at the end of the body. Reach for JavaScript only for what the kit cannot express.",
+      "Use dai-kit for local tables: <dai-rows>, <dai-value>, <dai-form>, <dai-attach> and <dai-save>, with <script type=\"module\" src=\"./dai-kit.js\"></script> at the end of the body. Reach for JavaScript only for what the kit cannot express. Do not write dai-kit.js yourself or put it in the bundle: the compiler adds it to every container.",
     why: "The kit removes the dangerous sinks by construction — no statement built from a value, text-only rendering — and does the querying, rendering and redrawing a hand-written application gets wrong.",
     enforced: ["prose"],
-    anchors: [{ file: "src/kit.ts", contains: "customElements.define('dai-rows', DaiRows);" }],
+    anchors: [
+      { file: "src/kit.ts", contains: "customElements.define('dai-rows', DaiRows);" },
+      { file: "tests/kit.spec.ts", contains: 'archive["app/dai-kit.js"]' },
+    ],
   },
   {
     id: "SHARED-KIT-READS",
@@ -722,7 +726,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "handover",
     rule:
-      "When a tool is available, call it with the files as its arguments. Otherwise write the whole application as ONE fenced code block in the bundle format shown under HOW TO HAND IT OVER — one fence around every file, each file starting with a line \"--- file: <path>\". index.html is the entry point; other files are referenced from it by relative path.",
+      "When a tool is available, call it with the files as its arguments. Otherwise write the whole application as ONE fenced code block in the bundle format shown under HOW TO HAND IT OVER — one fence around every file, each file starting with a line \"--- file: <path>\". The bundle's second line is name: followed by the application's name, which becomes its title and file name. index.html is the entry point; other files are referenced from it by relative path.",
     why: "Outside a fence a chat window draws the file markers as dividing lines and breaks the application into pieces nobody can copy.",
     enforced: ["prose"],
     anchors: [{ file: "src/bundle.ts", contains: "dai bundle v1" }],
@@ -939,7 +943,7 @@ export const VIEWS: readonly ViewEntry[] = [
   {
     name: "_dai_replica",
     shapes: SHARED,
-    holds: "This copy's own identity: id (16 bytes), seq, lc, label. One row.",
+    holds: "This copy's own identity: id (16 bytes), seq, lc, label. One row once this copy has written anything or arrived from somebody else; empty in a brand-new document before its first write, so read it as possibly absent.",
     read: "SELECT lower(hex(id)) AS id FROM _dai_replica — this copy's replica id.",
     anchor: { file: "src/replicated.ts", contains: "CREATE TABLE IF NOT EXISTS _dai_replica" },
   },

@@ -3,7 +3,7 @@
 ::: info SESSION-INVITE
 **An invite is a shared link**
 
-Invite the other party by asking the host to share: a button that calls `window.dai.requestShare()`. There is no invite call of your own. Today the link carries the whole document — every session in it, not only the one being shared — so do not tell a person an invite contains only one game.
+Invite the other party by asking the host to share: a button that calls `window.dai.requestShare()`. There is no invite call of your own. Today the link carries the whole document — every session in it, not only the one being shared — so do not tell a person an invite contains only one game. After a copy has been shared by link, the host moves new rows between the copies on its own, and they arrive as `dai:merged` with `via` "mailbox"; a copy handed over as a file carries its rows when it is opened. The application never sends rows itself; a "send" button that calls `requestShare()` again is only needed where copies travel as files.
 
 **Why.** The host mints the key that lets the two copies exchange rows and makes the link; the application only asks. Per-session invites exist in the code but no host uses them yet.
 

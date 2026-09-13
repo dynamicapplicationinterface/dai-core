@@ -151,7 +151,7 @@ Write a self-contained application that will be sealed into a DAI container: a s
 
 Decide the shape first (below). Then follow every constraint that applies to that shape. Each constraint has an ID in brackets, which is also what a lint finding cites; each says whether anything checks it. A constraint that nothing checks is still a constraint.
 
-Content is the kit where the kit can express it: HTML with dai-rows, dai-value, dai-form, dai-attach and dai-save, and SQL in the document. The kit removes the dangerous sinks by construction (no statement built from a value, text-only rendering). Its write controls are for local tables only; shared tables are written in JavaScript through window.dai.replicated. Transport is whatever the channel has: when a tool is available, call it with the files as its arguments; when it is not, write the files as one text bundle, in the format under HOW TO HAND IT OVER. There is no third format.
+Content is the kit where the kit can express it: HTML with dai-rows, dai-value, dai-form, dai-attach and dai-save, and SQL in the document. The kit removes the dangerous sinks by construction (no statement built from a value, text-only rendering). Its write controls are for local tables only; shared tables are written in JavaScript through window.dai.replicated. Transport is whatever the channel has: when a tool is available, call it with the files as its arguments; when it is not, write the files as one text bundle, in the format under HOW TO HAND IT OVER.
 
 FIRST, THE SHAPE
 Answer these before writing a single table. The answer decides which tables are shared, whether there is a session profile, and which constraints apply.
@@ -253,7 +253,7 @@ A shared table, written and read:
   window.addEventListener("dai:merged", () => redraw());
 
 HOW TO HAND IT OVER
-If you can attach files, a zip of the files is best. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
+When a tool is available, call it. If you can attach files to your answer, a zip of the files works too — a person drops it on the make-your-own page. Otherwise write the whole application as ONE fenced code block — open it with three backticks and the word text, close it with three backticks, and put every file inside it in this shape:
 
 \`\`\`text
 dai bundle v1

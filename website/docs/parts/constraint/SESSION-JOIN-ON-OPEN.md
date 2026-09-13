@@ -3,7 +3,7 @@
 ::: info SESSION-JOIN-ON-OPEN
 **Take the open seat when an invite is opened**
 
-When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === "carrier"` — never for "mailbox". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds.
+When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === "carrier"` — never for "mailbox". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds. Join the session of the item the sent copy was showing — the local setting that records it arrived with the copy (SHARED-LOCAL-STAYS-LOCAL). Because an invite carries the whole document, the sender must have the game they are inviting to on screen when they share; say so beside the Invite button.
 
 **Why.** Membership comes from opening an invite, not from rows arriving. A copy that joined on every background merge would re-take a seat it had lost, and a copy that joined twice would contest its own seat.
 

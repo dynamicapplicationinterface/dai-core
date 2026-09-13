@@ -3,7 +3,7 @@
 ::: info HANDOVER-BUNDLE
 **One bundle, or a tool call**
 
-When a tool is available, call it with the files as its arguments. Otherwise write the whole application as ONE fenced code block in the bundle format shown under HOW TO HAND IT OVER — one fence around every file, each file starting with a line "--- file: &lt;path&gt;". index.html is the entry point; other files are referenced from it by relative path.
+When a tool is available, call it with the files as its arguments. Otherwise write the whole application as ONE fenced code block in the bundle format shown under HOW TO HAND IT OVER — one fence around every file, each file starting with a line "--- file: &lt;path&gt;". The bundle's second line is name: followed by the application's name, which becomes its title and file name. index.html is the entry point; other files are referenced from it by relative path.
 
 **Why.** Outside a fence a chat window draws the file markers as dividing lines and breaks the application into pieces nobody can copy.
 
