@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
+import { reloadPage } from "./reload.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -45,7 +46,7 @@ test.describe("the device probe", () => {
     // The reload is the point: a CryptoKey that survives structured cloning
     // into IndexedDB but cannot sign afterwards would read as success to
     // anything that only checked the record was there.
-    await page.reload();
+    await reloadPage(page);
     await expect(page.locator("#persist")).toContainText("Still signs");
     await expect(page.locator("#persist")).toContainText("yes");
   });
@@ -157,7 +158,7 @@ test.describe("which build this is", () => {
       timeout: 60_000,
     });
     await context.setOffline(true);
-    await page.reload();
+    await reloadPage(page);
     await expect(page.locator("#chooser-version")).toHaveText(/^[0-9a-f]{7} · /);
   });
 });

@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { encodeInline } from "../src/link.js";
 import { openFile } from "./open.js";
+import { reloadPage } from "./reload.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -69,7 +70,7 @@ test.describe("the hint only says which entry to try", () => {
     // Now a link carrying the *other* document, hinted as the held one.
     const value = await encodeInline(other.html, HOST);
     await page.goto(`${RUNNER_URL}#a=${value}&u=${held.uuid}`);
-    await page.reload();
+    await reloadPage(page);
 
     // The card, not a mount: this is a document this device has not seen.
     const card = page.locator("#card-open");
@@ -128,7 +129,7 @@ test.describe("an icon for a document this device holds", () => {
     // The icon's address, launched with nothing available to fetch.
     await context.setOffline(true);
     await page.goto(`${RUNNER_URL}#u=${held.uuid}`);
-    await page.reload();
+    await reloadPage(page);
 
     // Straight in: a document this device holds is not a document from a
     // stranger, so there is no card to press through.

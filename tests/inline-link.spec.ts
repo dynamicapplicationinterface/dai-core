@@ -6,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { readFileSync } from "node:fs";
 import { INLINE_CAP, decodeInline, encodeInline, inlineFrom, inlineLink } from "../src/link.js";
+import { reloadPage } from "./reload.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -121,7 +122,7 @@ test.describe("a document in the link", () => {
      * this test is about the fresh open, so it forces one.
      */
     await page.goto(`${RUNNER_URL}#a=${value}`);
-    await page.reload();
+    await reloadPage(page);
 
     // The card first: a document from a link is a document from a stranger,
     // and nothing mounts until somebody asks for it.
@@ -144,7 +145,7 @@ test.describe("a document in the link", () => {
     const value = await encodeInline(built.html, HOST);
 
     await page.goto(`${RUNNER_URL}#a=${value.slice(0, Math.floor(value.length / 2))}`);
-    await page.reload();
+    await reloadPage(page);
 
     // The likely cause named, because the alternative reading — that this
     // opener is broken — is the one somebody reaches on their own.

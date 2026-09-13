@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
+import { reloadPage } from "./reload.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -52,7 +53,7 @@ test.describe("opening a document you already have, with no network", () => {
     page.on("requestfailed", (request) => attempted.push(request.url()));
 
     await context.setOffline(true);
-    await page.reload();
+    await reloadPage(page);
 
     // The document comes back by itself: an app that opened on an empty
     // chooser would have remembered nothing, whatever it had stored.
