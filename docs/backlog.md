@@ -1141,6 +1141,26 @@ Recorded here so the next session does not spend an hour rediscovering it.
 
 ---
 
+## Flaky on Firefox CI, watched — one of them guards the game-killer
+
+A cluster of tests fails on Firefox in CI and passes on retry or when run
+locally: `cli:88`, `mcp:129`, `website-checks:93`, and — the one that matters —
+`d22-reopen:137`. They read as CI load and timing, not product defects, so they
+are watched rather than chased: a test that passes on retry costs less than a
+consistent red, and the hard cross-engine failures came first.
+
+**`d22-reopen:137` is the exception worth naming.** It failed twice on one
+Firefox CI run (both attempts) and passes on Firefox locally, twice — so it is
+being treated as flaky. But it is the test that guards the bug that killed games:
+a reopened arrived copy must keep its own replica id (T1-D22/D33), and the
+failure mode it caught was a fresh replica adopted on reopen, which is the
+contested-game-killer. Its assertion is timing-sensitive — it turns on merge and
+resume ordering — which is exactly the kind of thing that fails under CI load
+without being wrong, and also exactly the kind of thing that would fail for real
+if the ordering regressed. So: watched, not dismissed. If it fails again,
+reproduce it under artificial load rather than assuming flake — the cost of a
+wrong "flaky" call here is a game that loses moves in the field.
+
 ## Not doing
 
 - Native phone apps as a prerequisite for first use.
