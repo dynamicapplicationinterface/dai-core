@@ -68,7 +68,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D2 | Refusal registry lacks the app-facing codes | [ ] |
 | D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
 | D4 | An invite carries every session | [ ] the filter (`exportSession`) exists and is unused — wire it, don't rebuild it |
-| D5 | Comment after a shared table's last column breaks the rewrite | [~] rewrite fixed; the build still does not execute the rewritten schema |
+| D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
+| D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
 
 ---
 
@@ -480,6 +481,27 @@ The documentation says what happens today — the share sheet sends the document
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
 
+### D6 — A session seats two people, whatever max_parties says
+
+`-- dai:profile session max_parties=N` signs N into the document, and the
+roster treats it as a ceiling (`rosterOf` flags more seats than N,
+`src/replicated-roster.ts`; `SEATS_EXCEED_CAP`). But nothing reads N to mint
+seats: `session.create()` takes no arguments and mints the creator's seat and
+one open seat (`src/runtime/bootloader.ts`), and the surface has no call that
+adds a seat — `reseat` replaces the open one. So a document declaring
+`max_parties=4` can only ever seat two members, and the other two people have
+no seat to bind. Found while choosing a prompt for the second blind run; the
+documentation claimed "one open seat per other party" until corrected.
+
+Documented meanwhile: `SESSION-PROFILE` and the session shape say a session
+seats two today, and to declare `max_parties=2`.
+
+**Exit:** a session can seat up to `max_parties` people — either `create()`
+mints `max_parties - 1` open seats, or a creator-only `session.invite()` mints
+one more up to the cap — with an invite per seat (which D4's per-session invite
+is the natural carrier for); an end-to-end test seats three; the documentation
+drops the two-person limit in the same change.
+
 ### D5 — A comment after a shared table's last column builds, then will not open
 
 Run, not read (13 September): when the last column of a `-- dai:replicated`
@@ -507,10 +529,14 @@ opened before rewrites to the same text. The stopgap constraint
 `tests/rules.spec.ts` now asserts such a table opens, in a session document too,
 and that a schema without the comment rewrites byte for byte as before.
 
-**Still open: change 2.** The build does not execute the rewritten schema, so
-the next rewrite defect of this kind would again build clean and fail at open.
-
-**Exit:** the build refuses a rewrite SQLite rejects, with its reason.
+**Change 2 is done** (13 September): `compileDirectory` loads the rewritten
+schema of any document with shared tables into `node:sqlite`, twice (as every
+open does), and refuses the build with SQLite's reason when it does not load
+(`tests/build-loads-schema.spec.ts`). That covers the command line, the MCP
+server and every test. **One door is not covered:** the website's in-browser
+compiler (`compileInBrowser`) has no engine at build time, so a rewrite defect
+there would still fail at open. On a Node older than 22.5 the check is skipped
+with a warning rather than failing the build.
 
 ---
 

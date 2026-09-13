@@ -31,6 +31,7 @@ import {
   type BuildContainerResult,
 } from "./core.js";
 import { looksSectioned, parseContainer } from "./container.js";
+import { rewriteReplicated } from "./replicated.js";
 import { SchemaError, type SchemaDeclaration, declareSchema } from "./schema.js";
 
 /** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
@@ -147,6 +148,54 @@ export function packagedAsset(name: string): string {
   return candidates.find((path) => existsSync(path)) ?? candidates[0]!;
 }
 
+/**
+ * Loads the schema the compiler will seal into a real SQLite engine, and
+ * refuses the build if it does not load.
+ *
+ * For a document with replicated tables, what SQLite executes on open is not
+ * what the author wrote but the rewrite — author columns plus the replication
+ * columns, a key, triggers and views. A defect in that rewrite used to build
+ * clean and fail only when somebody opened the file, on their device, with
+ * SQLite's own message and nobody who could fix it. Running it here moves that
+ * failure to the build, where the author is.
+ *
+ * Twice, because an open runs the schema on every open, and a statement that
+ * loads once and not again is the same failure a day later.
+ *
+ * Only replicated schemas: an ordinary one is sealed exactly as written, and
+ * this build has always left those to the author. `node:sqlite` arrived in
+ * Node 22.5 while the package supports 18, so an older Node builds with a
+ * warning rather than failing to start.
+ */
+async function loadRewrittenSchema(files: Record<string, Uint8Array>, warnings: string[]): Promise<void> {
+  const source = files["schema.sql"];
+  if (!source) return;
+  const rewritten = rewriteReplicated(new TextDecoder().decode(source));
+  if (rewritten.tables.length === 0) return;
+  let DatabaseSync: (new (path: string) => { exec(sql: string): void; close(): void }) | undefined;
+  try {
+    ({ DatabaseSync } = (await import("node:sqlite")) as unknown as { DatabaseSync: typeof DatabaseSync });
+  } catch {
+    warnings.push(
+      "This Node has no built-in SQLite (it needs 22.5 or later), so the rewritten schema was not " +
+        "test-loaded before sealing. It will be loaded when the document is opened.",
+    );
+    return;
+  }
+  const db = new DatabaseSync!(":memory:");
+  try {
+    db.exec(rewritten.sql);
+    db.exec(rewritten.sql);
+  } catch (error) {
+    throw new CompileError(
+      `schema.sql does not load in SQLite once its shared tables are rewritten: ${(error as Error).message}. ` +
+        "The document would build and then fail to open, so it is refused here instead.",
+    );
+  } finally {
+    db.close();
+  }
+}
+
 export async function compileDirectory(options: CompileOptions): Promise<CompileResult> {
   const root = options.root ?? process.cwd();
   const sourceDir = resolve(root, options.sourceDir);
@@ -201,6 +250,8 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
 
   const previous = readPrevious(options.upgradeOf);
   const declared = await declareSchema(files, previous?.schema);
+
+  await loadRewrittenSchema(files, warnings);
 
   const sqlite = readOptional(root, options.sqlitePath);
   if (options.sqlitePath && !sqlite) {
