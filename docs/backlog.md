@@ -1106,38 +1106,52 @@ about other people's documents.
 
 ---
 
-## Known red, and not from anything here
+## The engine week — all three engines green (closed 13 September)
 
-Nine tests fail on this machine on every run — eight in webkit and firefox,
-and one in chromium.
-They were failing before any of the September work and they fail on a clean
-checkout with everything stashed — checked, rather than assumed, because
-"pre-existing" is what somebody says about a failure they caused.
+This section recorded nine long-standing reds across chromium, firefox and
+webkit. They are cleared: CI is green on all three engines (chromium, firefox,
+and webkit sharded 1/2 + 2/2), with one firefox test occasionally flaky on retry
+(see the flaky-cluster note above). What the week found and did, worst-mattering
+first, so the reasoning stays with the record:
 
-    chromium sender.spec             Make one offers a link, and the link opens it
-    firefox  identity.spec           a held root puts the identity on the card
-    firefox  sender.spec             Make one offers a link, and the link opens it
-    webkit   identity.spec           a held root puts the identity on the card
-    webkit   inline-link.spec        a real app opens from a link, network off
-    webkit   offline-second-open     comes back on its own, engine and all
-    webkit   opener-thin.spec        a host with no engine refuses it
-    webkit   runner.spec             two saves at once both land
-    webkit   sender.spec             Make one offers a link, and the link opens it
+- **A false CI verdict, three times over.** The project had acted on CI readings
+  that did not hold (a count gate, a cancellation, a "chromium green" that never
+  was). Fixed the reading first: `scripts/ci-verdict.mjs` reports each browser
+  job's own pass/fail tally and flags a no-verdict job, used every commit since.
 
-The chromium `Make one` failure is a shell-elision mismatch: the inline link
-leaves out `runtime/container.html` expecting the opener to rebuild the same
-one, and the opener's differs. Checked against a clean stash — it fails there
-too, so it is not from the September work — but unlike the rest of this list it
-is a real disagreement between two of our own builds rather than a browser
-capability, and it is the one here worth an afternoon first.
+- **The dominant cause was the service worker versus `page.route`.** A same-origin
+  request the worker serves cache-first never reaches a page route, so a mock is
+  bypassed non-deterministically — green on one machine, red on another. It had
+  cost the project three separate times. Now a rule in `tests/README.md` and a
+  lint (`scripts/check-routes.mjs`, run by `npm run typecheck`) that fails the
+  build on a same-origin `page.route` without `serviceWorkers: "block"`.
 
-The rest: two of them — both `Make one` on other browsers — are
-`grantPermissions(["clipboard-read"])`, which only chromium implements, so
-those are the harness rather than the code. The other six are worth an
-afternoon with a webkit build; none is a claim this project makes on the
-platform anybody has been asked to use it on.
+- **The session slice's own e2e is verified on WebKit.** `mailbox-link-e2e` mocked
+  the store with `context.route`, which the worker bypassed on WebKit (the "store
+  refused this upload" 404). Restructured to a real local store server on its own
+  origin (`window.__daiStore`, the scenery move `useRelay` already uses) — the six
+  reds cleared, and the feature is now proven on the engine iPhone users run.
 
-Recorded here so the next session does not spend an hour rediscovering it.
+- **Offline done faithfully, gated where the driver cannot.** The offline tests
+  cut the network with `setOffline` and assert (via `requestfailed`) nothing
+  escaped the cache; WebKit cannot drive a navigation while offline
+  (playwright#34450), so those four are skipped on WebKit by name, verified on
+  Chromium and Firefox.
+
+- **The rest were Playwright-engine limits, restructured or named.** sender reads
+  the copied link by capturing the page's clipboard write (no Chromium-only
+  permission); runner guards the OPFS read WebKit's context lacks; reference-head
+  is Chromium-only (it tests a request the worker itself makes, which only
+  Chromium's `context.route` intercepts); version-update skips WebKit (its
+  no-store `version.json` fetch is not intercepted there).
+
+- **One genuine cross-engine finding, filed not asserted away:** Firefox loads the
+  thin-link engine network-first (see "Small, undisputed, cheap").
+
+- **No product security bug.** Two tests looked like a forged-message bypass on
+  Firefox/WebKit; instrumentation showed the guards hold on all three engines and
+  the tests waited for the wrong signal (`loaded` before the handshake) — fixed as
+  test-timing bugs, with the pre-handshake window named in `early-refusal`.
 
 ---
 
