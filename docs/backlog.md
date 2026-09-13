@@ -337,9 +337,13 @@ state.
 
 ### L3 — The recipe is behind the opener, and there is no worked-examples page
 
-*Done (13 September): `f3887da`, `08bfd70`, `64eb2b2`. Not yet done: running a
-model on the session prompt with only the model file, which is what the exit's
-first half actually asks. The documentation overhaul: The recipe is replaced
+*Done (13 September): `f3887da`, `08bfd70`, `64eb2b2`. The success test has run
+once: a fresh model given only the model file wrote a Connect Four session
+application that linted clean, built, and played a whole game across devices
+in the real host — see `eval/candidates/claude-opus-5-blind/README.md` for
+what it did and did not cover (chiefly: it followed the tic-tac-toe example
+closely, so a prompt unlike any example is the stronger next test). The
+documentation overhaul: The recipe is replaced
 by `src/rules.ts` — constraints with stable IDs, from which the model file, the
 MCP text and the human reference pages are generated, and each constraint is
 tied to its code anchor by a test. What it found that is not documentation is

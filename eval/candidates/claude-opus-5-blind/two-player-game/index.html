@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Connect Four with one other person, by message" />
+  <meta name="dai:does" content="Start a game and send the invite to the one person you want to play" />
+  <meta name="dai:does" content="Drop a disc when it is your turn, then send the game back" />
+  <meta name="dai:does" content="Shows whose turn it is and lights up the winning four" />
+  <meta name="theme-color" content="#14213d" />
+  <title>Connect Four</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only. Shared rows are never seeded with SQL.
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+  </script>
+
+  <main>
+    <header>
+      <h1>Connect Four</h1>
+      <select id="game-list" aria-label="Game"></select>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="empty" class="empty">
+      <p>No games yet. Start one below, then send the invite to the person you want to play.</p>
+    </section>
+
+    <section id="play" hidden>
+      <p id="players" class="players"></p>
+      <p id="status" class="status" aria-live="polite"></p>
+
+      <div class="board-wrap">
+        <div id="board" class="board" role="group" aria-label="Board: seven columns. Use the arrow keys to choose a column and Enter to drop."></div>
+      </div>
+
+      <div id="collision" class="panel warn" hidden>
+        <p id="collision-text"></p>
+        <div id="collision-choices" class="choices"></div>
+      </div>
+
+      <div id="names-conflict" class="panel warn" hidden>
+        <p>The player names were changed on both copies. Keep one:</p>
+        <div id="name-versions" class="choices"></div>
+      </div>
+
+      <div id="seat" class="panel" hidden>
+        <p id="seat-text"></p>
+        <div class="choices">
+          <button id="reseat" type="button" hidden>Send a fresh invite</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="invite" type="button">Invite</button>
+        <button id="send" type="button" class="quiet">Send the game</button>
+        <button id="rename" type="button" class="quiet">Edit names</button>
+        <button id="close-match" type="button" class="quiet" hidden>Close match</button>
+      </div>
+
+      <form id="rename-form" class="panel" autocomplete="off" hidden>
+        <label>Red <input id="rename-red" required maxlength="24" /></label>
+        <label>Yellow <input id="rename-yellow" required maxlength="24" /></label>
+        <div class="choices">
+          <button type="submit">Save names</button>
+          <button id="rename-cancel" type="button" class="quiet">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <form id="new-game" class="panel" autocomplete="off">
+      <h2>New game</h2>
+      <label>You <input id="you" required maxlength="24" placeholder="Your name" /></label>
+      <label>Them <input id="them" required maxlength="24" placeholder="Their name" /></label>
+      <button type="submit">Start — you are Red and go first</button>
+    </form>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

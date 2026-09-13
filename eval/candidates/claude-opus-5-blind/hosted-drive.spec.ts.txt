@@ -1,0 +1,128 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
+import { compileDirectory } from "../src/compile.js";
+
+// One-off: the blind success test's Connect Four candidate, played on real
+// devices in the real host. Skipped unless CANDIDATE_DIR names it.
+const DIR = process.env.CANDIDATE_DIR;
+const RUNNER_URL = "http://localhost:5175/";
+
+const appIn = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocator("iframe");
+
+async function saveOut(page: Page, to: string): Promise<string> {
+  await page.evaluate(() => {
+    delete (window as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+  });
+  const downloading = page.waitForEvent("download", { timeout: 60_000 });
+  await page.evaluate(() =>
+    (window as unknown as { __runner: { exportContainer(): Promise<void> } }).__runner.exportContainer(),
+  );
+  writeFileSync(to, readFileSync(await (await downloading).path()));
+  return to;
+}
+
+async function firstOpen(page: Page, file: string): Promise<FrameLocator> {
+  await page.goto(RUNNER_URL);
+  await page.setInputFiles("#file", file);
+  await page.locator("#card-open").waitFor({ timeout: 60_000 });
+  await page.locator("#card-open").click();
+  const app = appIn(page);
+  await expect(app.locator("#status, #empty").first()).toBeVisible({ timeout: 60_000 });
+  return app;
+}
+
+test.skip(!DIR, "CANDIDATE_DIR not set");
+
+test("the candidate plays a whole game across two devices", async ({ browser }) => {
+  test.slow();
+  const scratch = mkdtempSync(join(tmpdir(), "dai-candidate-"));
+  const built = await compileDirectory({ sourceDir: DIR!, root: process.cwd(), appName: "Connect Four" });
+  const container = join(scratch, "c4.dai.html");
+  writeFileSync(container, built.html, "utf8");
+
+  const contexts: BrowserContext[] = [];
+  const pages: Page[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const context = await browser.newContext({ acceptDownloads: true });
+    contexts.push(context);
+    const page = await context.newPage();
+    page.on("pageerror", (error) => process.stdout.write(`[device ${i} pageerror] ${error.message}\n`));
+    page.on("console", (m) => {
+      if (m.type() === "error") process.stdout.write(`[device ${i} console.error] ${m.text()}\n`);
+    });
+    pages.push(page);
+  }
+  const [pageA, pageB, pageC, pageD] = pages as [Page, Page, Page, Page];
+  const col = (app: FrameLocator, n: number) => app.locator("#board .col").nth(n);
+  const discs = (app: FrameLocator) => app.locator("#board .disc");
+
+  // A starts, and as Red drops first, before anyone has joined.
+  await pageA.goto(RUNNER_URL);
+  await pageA.setInputFiles("#file", container);
+  await pageA.locator("#card-open").click();
+  const appA = appIn(pageA);
+  await expect(appA.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+  await appA.locator("#you").fill("Ada");
+  await appA.locator("#them").fill("Bo");
+  await appA.locator("#new-game button[type=submit]").click();
+  await expect(appA.locator("#status")).toContainText("Your turn, Ada.", { timeout: 30_000 });
+  await col(appA, 0).click();
+  await expect(discs(appA)).toHaveCount(1);
+  const invite = await saveOut(pageA, join(scratch, "a1.dai.html"));
+
+  // B opens the invite: takes the open seat, sees Red's disc, and it is Yellow's turn.
+  const appB = await firstOpen(pageB, invite);
+  await expect(appB.locator("#status")).toContainText("Your turn, Bo.", { timeout: 30_000 });
+  await expect(discs(appB)).toHaveCount(1);
+
+  // Red stacks column 0, Yellow column 1; Red's fourth wins. Files cross each turn.
+  let file: string;
+  let firstMergeA = true;
+  let firstMergeB = true;
+  for (let round = 1; round <= 3; round += 1) {
+    await col(appB, 1).click();
+    await expect(discs(appB)).toHaveCount(round * 2);
+    file = await saveOut(pageB, join(scratch, `b${round}.dai.html`));
+    await pageA.setInputFiles("#file", file);
+    if (firstMergeA) {
+      await pageA.locator("#card-merge").click({ timeout: 60_000 });
+      firstMergeA = false;
+    }
+    await expect(discs(appA)).toHaveCount(round * 2, { timeout: 60_000 });
+    await expect(appA.locator("#status")).toContainText("Your turn, Ada.");
+    await col(appA, 0).click();
+    await expect(discs(appA)).toHaveCount(round * 2 + 1);
+    if (round < 3) {
+      file = await saveOut(pageA, join(scratch, `a${round + 1}.dai.html`));
+      await pageB.setInputFiles("#file", file);
+      if (firstMergeB) {
+        await pageB.locator("#card-merge").click({ timeout: 60_000 });
+        firstMergeB = false;
+      }
+      await expect(discs(appB)).toHaveCount(round * 2 + 1, { timeout: 60_000 });
+    }
+  }
+  await expect(appA.locator("#status")).toContainText("You win, Ada!");
+  await expect(appA.locator(".slot.win")).toHaveCount(4);
+
+  // B learns it lost when the last file arrives.
+  const finalA = await saveOut(pageA, join(scratch, "a-final.dai.html"));
+  await pageB.setInputFiles("#file", finalA);
+  await expect(appB.locator("#status")).toContainText("Ada wins.", { timeout: 60_000 });
+  await expect(col(appB, 5)).toBeDisabled();
+
+  // C was forwarded B's copy and never invited: told so, cannot play.
+  const appC = await firstOpen(pageC, finalA);
+  await expect(appC.locator("#seat-text")).toContainText("not invited", { timeout: 30_000 });
+
+  // D opens A's original invite too: the seat B holds is now contested, and A sees the repair.
+  await firstOpen(pageD, invite);
+  const d1 = await saveOut(pageD, join(scratch, "d1.dai.html"));
+  await pageA.setInputFiles("#file", d1);
+  await expect(appA.locator("#seat-text")).toContainText("Two devices opened this invite", { timeout: 60_000 });
+  await expect(appA.locator("#reseat")).toBeVisible();
+
+  for (const context of contexts) await context.close();
+});
