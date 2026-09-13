@@ -3149,6 +3149,31 @@ async function boot(): Promise<void> {
      * `dai:timing` had the check from the beginning, which is why the shape of
      * it was already here to copy.
      */
+    // TEMPORARY INSTRUMENTATION (fix/shell-frame-channel): the source guard
+    // below holds on Chromium and is bypassed on Firefox/WebKit. Log what
+    // event.source actually is at the moment of the check, for every app-
+    // protocol message, so one Firefox CI run says why two nulls or two
+    // proxies compare the way they do. Removed before the real fix lands.
+    {
+      const t = (event.data as { type?: unknown } | null)?.type;
+      if (typeof t === "string" && (t.startsWith("dai:") || t.startsWith("DAI_"))) {
+        // eslint-disable-next-line no-console
+        console.log(
+          "[frameguard] " +
+            JSON.stringify({
+              type: t,
+              sourceNull: event.source === null,
+              sourceIsFrame: event.source === frame.contentWindow,
+              sourceIsParent: event.source === window.parent,
+              sourceIsSelf: event.source === window,
+              frameWindowNull: frame.contentWindow === null,
+              guardPasses: event.source === frame.contentWindow,
+              origin: event.origin,
+            }),
+        );
+      }
+    }
+
     if (event.source !== frame.contentWindow) return;
 
     const reported = event.data as { type?: string; phase?: string; took?: number };

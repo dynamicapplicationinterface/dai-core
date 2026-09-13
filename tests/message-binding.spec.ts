@@ -83,6 +83,12 @@ test.describe("the shell acts only on messages from its own frame", () => {
     const downloads: string[] = [];
     page.on("download", (download) => downloads.push(download.suggestedFilename()));
 
+    // TEMPORARY (fix/shell-frame-channel): surface the shell's [frameguard]
+    // instrumentation to the CI log, from every frame.
+    page.on("console", (message) => {
+      if (message.text().includes("[frameguard]")) console.log("CONSOLE:", message.text());
+    });
+
     await page.goto(HOST);
 
     /*
