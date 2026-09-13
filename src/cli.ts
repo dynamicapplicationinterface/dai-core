@@ -322,7 +322,9 @@ async function check(parsed: Parsed): Promise<number> {
     const collected = await collectFiles(root);
     fileCount = collected.length;
     for (const file of collected) {
-      if (!/\.(?:html?|m?js|ts|css)$/i.test(file.entry)) continue;
+      // schema.sql too: the shared-table checks need to know which tables
+      // are replicated, and only the schema says.
+      if (!/\.(?:html?|m?js|ts|css|sql)$/i.test(file.entry)) continue;
       sources[file.entry] = readFileSync(file.absolute, "utf8");
     }
   }

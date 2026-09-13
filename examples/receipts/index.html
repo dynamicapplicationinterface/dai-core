@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Receipts two people share, and who owes whom" />
+  <meta name="dai:does" content="Add a receipt the moment you pay, on your own phone" />
+  <meta name="dai:does" content="Pass it back and forth and every receipt from both of you is kept" />
+  <meta name="dai:does" content="Shows who has paid more, and by how much" />
+  <meta name="theme-color" content="#f6f3ec" />
+  <title>Receipts</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only. Shared rows are never seeded with SQL.
+    INSERT OR IGNORE INTO me (id) VALUES (1);
+  </script>
+
+  <main>
+    <header>
+      <h1>Receipts</h1>
+      <label class="me">
+        <span>I am</span>
+        <input id="me" autocomplete="off" maxlength="30" placeholder="Your name" />
+      </label>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="balance" class="balance" aria-live="polite"></section>
+
+    <form id="entry" class="entry" autocomplete="off">
+      <h2 id="entry-title">Add a receipt</h2>
+      <div class="fields">
+        <label>Date <input id="spent-on" type="date" required /></label>
+        <label>Store <input id="store" required maxlength="60" placeholder="Where" /></label>
+        <label>Amount <input id="amount" required inputmode="decimal" placeholder="0.00" /></label>
+        <label>Paid by <input id="paid-by" required maxlength="30" /></label>
+      </div>
+      <div class="actions">
+        <button id="save-entry" type="submit">Add</button>
+        <button id="cancel-edit" type="button" class="quiet" hidden>Cancel</button>
+      </div>
+    </form>
+
+    <section>
+      <div class="list-head">
+        <h2>All receipts</h2>
+        <button id="share" type="button" class="quiet">Share</button>
+      </div>
+      <ul id="list" class="list"></ul>
+      <p id="empty" class="empty" hidden>No receipts yet. Add the first one above, then share this with whoever you split costs with.</p>
+    </section>
+
+    <dialog id="conflict">
+      <h2>Changed on two copies</h2>
+      <p>This receipt was edited on both copies before they met. Keep the version that is right.</p>
+      <ul id="versions" class="versions"></ul>
+      <button id="conflict-close" type="button" class="quiet">Decide later</button>
+    </dialog>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

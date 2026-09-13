@@ -17,6 +17,8 @@
  * what the reader will actually do next.
  */
 
+import { rewriteReplicated } from "./replicated.js";
+
 export interface Finding {
   /** Stable identifier, for callers that want to filter or count. */
   id: string;
@@ -210,11 +212,174 @@ export function lintSource(source: string): Finding[] {
 
 /** The same, across a set of files, keeping track of which file each came from. */
 export function lintFiles(files: Record<string, string>): (Finding & { file: string })[] {
-  return Object.entries(files)
-    .filter(([name]) => /\.(?:html?|m?js|ts)$/i.test(name))
-    .flatMap(([name, source]) =>
+  const code = Object.entries(files).filter(([name]) => /\.(?:html?|m?js|ts)$/i.test(name));
+  return [
+    ...code.flatMap(([name, source]) =>
       lintSource(source).map((finding) => ({ ...finding, file: name })),
-    );
+    ),
+    ...lintShared(files),
+  ];
+}
+
+/*
+ * The shared-table checks.
+ *
+ * These need to know which tables are replicated, which only schema.sql says,
+ * so they look across the files rather than at one. Each finding names the
+ * constraint in src/rules.ts it enforces, so a person or a model reading the
+ * finding can find the reason — and a constraint that says "enforced by the
+ * lint" is held to it by tests/rules.spec.ts.
+ *
+ * Deliberately textual, like the checks above. They look for the statement as
+ * written, so SQL assembled from pieces at run time is not seen; the runtime
+ * still refuses those writes, and the text is what a model writes.
+ */
+const SHARED_CHECKS = {
+  "shared-raw-write": {
+    what: "It writes to a shared table with its own INSERT, UPDATE or DELETE.",
+    why:
+      "A replicated table is append-only and is written only through window.dai.replicated. An UPDATE or " +
+      "DELETE is refused with REPLICATED_TABLE_IMMUTABLE; an INSERT fails for want of the replication " +
+      "columns. A kit data-run or dai-form control runs its SQL directly, so it fails the same way, and " +
+      "nothing on screen says so. See SHARED-WRITE-SURFACE and SHARED-KIT-READS.",
+    fix:
+      "Write the row with window.dai.replicated.insert, .change or .remove in JavaScript, and keep kit " +
+      "write controls for local tables.",
+  },
+  "shared-base-read": {
+    what: "It reads a shared table directly instead of through its _current view.",
+    why:
+      "The table itself holds every version of every row — superseded edits, deleted rows, and in a " +
+      "session rows from non-members — so reading it shows them all at once. See SHARED-READ-CURRENT.",
+    fix: "Read the table's _current view: SELECT … FROM moves_current rather than FROM moves.",
+  },
+  "shared-no-merge-listener": {
+    what: "It has shared tables and never listens for dai:merged.",
+    why:
+      "Nothing else tells the application that the other copy's rows arrived, so it never redraws when " +
+      "they do and looks broken in exactly the case it exists for. See SHARED-REDRAW-ON-MERGE.",
+    fix: 'Add window.addEventListener("dai:merged", () => redraw()) — and call window.daiKit.refresh() in it if the page uses the kit.',
+  },
+  "shared-conflicts-unshown": {
+    what: "It changes or removes shared rows and never shows a conflict.",
+    why:
+      "When the same row is edited on two copies, _current shows one version with _r_conflicted set and " +
+      "the other version waits in _heads. An application that never reads either silently shows one of " +
+      "two edits. See SHARED-SURFACE-CONFLICTS.",
+    fix: "Read _r_conflicted from the _current view, show the competing versions from _heads, and let the person choose.",
+  },
+  "shared-trailing-comment": {
+    what: "The last column of a shared table ends with a -- comment.",
+    why:
+      "The compiler adds its own columns after your last one, and a line comment there swallows the comma " +
+      "between them: the document builds, then fails to open with near \"_r_replica\": syntax error. " +
+      "See SHARED-NO-TRAILING-COMMENT.",
+    fix: "Move that comment above the table, or onto an earlier column's line.",
+  },
+  "shared-table-constraint": {
+    what: "A shared table declares UNIQUE or CHECK.",
+    why:
+      "A UNIQUE refuses exactly the rows a merge exists to surface as a conflict, and a CHECK that differs " +
+      "between two versions of the application rejects the other copy's honest rows. See SHARED-NO-UNIQUE-CHECK.",
+    fix: "Remove the UNIQUE and CHECK constraints from the -- dai:replicated table; keep them on local tables if you want them.",
+  },
+} as const;
+
+type SharedCheck = keyof typeof SHARED_CHECKS;
+
+function sharedFinding(id: SharedCheck, file: string): Finding & { file: string } {
+  return { id, ...SHARED_CHECKS[id], file };
+}
+
+/**
+ * Source with its comments blanked: HTML, block and line comments.
+ *
+ * Only for the shared checks, which read SQL out of code and would otherwise
+ * find it in prose. A `//` inside a string survives (the lookbehind skips a
+ * colon or a quote before it), which is the case that matters: a URL.
+ */
+function withoutComments(source: string): string {
+  return source
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+}
+
+/** The body of `CREATE TABLE <name> ( … );` as written, or null. */
+function tableBody(schema: string, name: string): string | null {
+  const start = new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?["\`]?${name}["\`]?\\s*\\(`, "i").exec(schema);
+  if (!start) return null;
+  let depth = 1;
+  let index = start.index + start[0].length;
+  const begin = index;
+  while (index < schema.length && depth > 0) {
+    const char = schema[index];
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    index += 1;
+  }
+  return schema.slice(begin, index - 1);
+}
+
+function lintShared(files: Record<string, string>): (Finding & { file: string })[] {
+  const schemaName = Object.keys(files).find((name) => name === "schema.sql" || name.endsWith("/schema.sql"));
+  if (!schemaName) return [];
+  const schema = files[schemaName] ?? "";
+  let tables: string[];
+  try {
+    tables = rewriteReplicated(schema).tables;
+  } catch {
+    // A schema the rewrite refuses is the compiler's to report, with its reason.
+    return [];
+  }
+  if (tables.length === 0) return [];
+
+  const findings: (Finding & { file: string })[] = [];
+  const bodyWithoutComments = (body: string): string => body.replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  if (
+    tables.some((table) => {
+      const body = tableBody(schema, table);
+      return body !== null && /\b(?:UNIQUE|CHECK)\b/i.test(bodyWithoutComments(body));
+    })
+  ) {
+    findings.push(sharedFinding("shared-table-constraint", schemaName));
+  }
+  if (
+    tables.some((table) => {
+      const body = tableBody(schema, table);
+      if (body === null) return false;
+      // The line the rewrite appends its comma to, as src/replicated.ts trims it.
+      const last = body.replace(/[\s,]+$/, "").split("\n").pop() ?? "";
+      return last.replace(/'(?:[^']|'')*'/g, "''").includes("--");
+    })
+  ) {
+    findings.push(sharedFinding("shared-trailing-comment", schemaName));
+  }
+
+  const code = Object.entries(files).filter(([name]) => /\.(?:html?|m?js|ts)$/i.test(name));
+  const names = tables.map((table) => table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const quote = "[\"'`]?";
+  const rawWrite = new RegExp(
+    `\\b(?:INSERT(?:\\s+OR\\s+\\w+)?\\s+INTO|UPDATE(?:\\s+OR\\s+\\w+)?|DELETE\\s+FROM|REPLACE\\s+INTO)\\s+${quote}(?:${names})${quote}(?![\\w])`,
+    "i",
+  );
+  // A read is a FROM or JOIN inside a SELECT, with no statement boundary
+  // between: "derived from marks" in a comment or a sentence is not a query.
+  const baseRead = new RegExp(`\\bSELECT\\b[^;]{0,800}?\\b(?:FROM|JOIN)\\s+${quote}(?:${names})${quote}(?![\\w])`, "i");
+
+  for (const [name, raw] of code) {
+    const source = withoutComments(raw);
+    if (rawWrite.test(source)) findings.push(sharedFinding("shared-raw-write", name));
+    if (baseRead.test(source)) findings.push(sharedFinding("shared-base-read", name));
+  }
+
+  const everything = code.map(([, source]) => source).join("\n");
+  const entry = code.find(([name]) => /(?:^|\/)index\.html?$/i.test(name))?.[0] ?? code[0]?.[0] ?? schemaName;
+  if (!/["'`]dai:merged["'`]/.test(everything)) findings.push(sharedFinding("shared-no-merge-listener", entry));
+  if (/\.(?:change|remove)\s*\(/.test(everything) && !/_r_conflicted|_conflicts\b/.test(everything)) {
+    findings.push(sharedFinding("shared-conflicts-unshown", entry));
+  }
+  return findings;
 }
 
 /** True when the source stores data in a way that survives being sent to someone. */

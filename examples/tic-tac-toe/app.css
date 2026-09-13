@@ -1,0 +1,50 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f3f1fb;
+  --card: #ffffff;
+  --ink: #1d2340;
+  --muted: #666d8a;
+  --line: #dcd9ec;
+  --accent: #4a45c4;
+  --win: #e9e6ff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14172a; --card: #1d2340; --ink: #eceaff; --muted: #a2a6c4; --line: #2d3357; --accent: #a8a4ff; --win: #2f3470; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); }
+main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: calc(20px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px))
+    calc(32px + var(--dai-safe-bottom, 0px)) calc(16px + var(--dai-safe-left, 0px));
+}
+/* The top right corner belongs to the host's menu button. */
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding-right: 56px; }
+h1 { margin: 0; font-size: 26px; flex: 1; }
+h2 { margin: 0 0 12px; font-size: 16px; }
+select, input {
+  font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; min-height: 44px; padding: 0 12px;
+}
+button {
+  font: inherit; min-height: 44px; padding: 0 16px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--bg);
+}
+button.quiet { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+.notice { background: var(--card); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; }
+.players { color: var(--muted); margin: 16px 0 4px; }
+.status { font-size: 20px; font-weight: 600; margin: 0 0 16px; }
+.board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; aspect-ratio: 1; }
+.cell {
+  font-size: clamp(32px, 12vw, 64px); font-weight: 700; aspect-ratio: 1; min-height: 64px;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line);
+}
+.cell:disabled { opacity: 1; }
+.cell.win { background: var(--win); }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 16px; }
+.panel label { display: grid; gap: 6px; margin-bottom: 12px; color: var(--muted); }
+.choices, .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions { margin-top: 16px; }

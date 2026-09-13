@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Tic-tac-toe with one other person, by message" />
+  <meta name="dai:does" content="Start a game and send the invite to one person" />
+  <meta name="dai:does" content="Take turns on your own phones, sending it back and forth" />
+  <meta name="dai:does" content="Keeps every game you have played together" />
+  <meta name="theme-color" content="#1d2340" />
+  <title>Tic-tac-toe</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only. Shared rows are never seeded with SQL.
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+  </script>
+
+  <main>
+    <header>
+      <h1>Tic-tac-toe</h1>
+      <select id="game-list" aria-label="Game"></select>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="play" hidden>
+      <p id="players" class="players"></p>
+      <p id="status" class="status" aria-live="polite"></p>
+      <div id="board" class="board" role="grid" aria-label="Board"></div>
+
+      <div id="names-conflict" class="panel" hidden>
+        <p>The player names were changed on both copies. Keep one:</p>
+        <div id="name-versions" class="choices"></div>
+      </div>
+
+      <div id="collision" class="panel" hidden>
+        <p id="collision-text"></p>
+        <div id="collision-choices" class="choices"></div>
+      </div>
+
+      <div id="seat" class="panel" hidden>
+        <p id="seat-text"></p>
+        <div class="choices">
+          <button id="reseat" type="button" hidden>Send a fresh invite</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="invite" type="button">Invite</button>
+        <button id="rename" type="button" class="quiet">Edit names</button>
+        <button id="close-match" type="button" class="quiet" hidden>Close match</button>
+      </div>
+
+      <form id="rename-form" class="panel" autocomplete="off" hidden>
+        <label>X <input id="rename-x" required maxlength="24" /></label>
+        <label>O <input id="rename-o" required maxlength="24" /></label>
+        <div class="choices">
+          <button type="submit">Save names</button>
+          <button id="rename-cancel" type="button" class="quiet">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <form id="new-game" class="panel" autocomplete="off">
+      <h2>New game</h2>
+      <label>You <input id="you" required maxlength="24" placeholder="Your name" /></label>
+      <label>Them <input id="them" required maxlength="24" placeholder="Their name" /></label>
+      <button type="submit">Start — you are X</button>
+    </form>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

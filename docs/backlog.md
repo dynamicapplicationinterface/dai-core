@@ -68,6 +68,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D2 | Refusal registry lacks the app-facing codes | [ ] |
 | D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
 | D4 | An invite carries every session | [ ] `exportSession` has no caller |
+| D5 | Comment after a shared table's last column breaks the rewrite | [ ] documented and linted meanwhile |
 
 ---
 
@@ -469,6 +470,34 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D5 — A comment after a shared table's last column builds, then will not open
+
+Run, not read (13 September): when the last column of a `-- dai:replicated`
+table ends with a line comment, the rewrite emits invalid SQL. It trims the
+body (`authorBody = body.replace(/[\s,]+$/, "")`, `src/replicated.ts`) and
+appends `,\n` and its own columns directly after it, so the comma lands inside
+the comment — `b TEXT NOT NULL -- note,`. The build does not execute the
+rewritten schema, so it succeeds; the document then fails to open with SQLite's
+unnamed `near "_r_replica": syntax error`. Found because two of the new shared
+examples commented their last column, the style the chess fixture teaches.
+
+Two changes:
+
+1. **The rewrite puts the comma before a trailing line comment** (or on its own
+   line). Every schema that works today has no such comment, so its rewritten
+   text — and therefore every existing document's schema digest — is unchanged;
+   only schemas that cannot open today change.
+2. **The build executes the rewritten schema** in SQLite, so a rewrite that
+   produces invalid SQL is refused at build with its reason rather than at open.
+
+Documented meanwhile as constraint `SHARED-NO-TRAILING-COMMENT`, enforced by
+the lint (`shared-trailing-comment`).
+
+**Exit:** a replicated table whose last column carries a line comment builds
+and opens; the build refuses a rewrite SQLite rejects; the constraint and the
+lint check are removed in the same commit — `tests/rules.spec.ts` asserts the
+defect still exists, so it fails first and forces that.
 
 ---
 
