@@ -332,7 +332,7 @@ Expect shared tables to be writable only when the document is opened by a host â
 
 **Applies to** session. **Enforcement:** refused at build.
 
-Declare a session document with one line comment in schema.sql: -- dai:profile session max\_parties=N close=any|creator. N is the number of people, at least 1. close=any lets any member close a session; close=creator lets only the person who created it; it defaults to any. The document must also have at least one table marked -- dai:replicated. Every replicated table then carries the session of each row.
+Declare a session document with one line comment in schema.sql: -- dai:profile session max\_parties=N close=any|creator. N is the most people the document allows, at least 1 â€” but today a session seats two whatever N says: `session.create()` mints the creator's seat and one open seat, and no call adds another (backlog D6). Declare max\_parties=2, and do not build an application that needs a third member. close=any lets any member close a session; close=creator lets only the person who created it; it defaults to any. The document must also have at least one table marked -- dai:replicated. Every replicated table then carries the session of each row.
 
 **Why.** The profile is signed into the document, so the size of the group is the creator's stated limit rather than something the application decides. A malformed profile, or one with no replicated table, is refused at build.
 

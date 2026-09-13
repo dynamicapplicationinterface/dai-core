@@ -112,10 +112,10 @@ export const SHAPES: readonly ShapeInfo[] = [
   {
     id: "session",
     title: "Session",
-    who: "A closed group: a fixed number of people, admitted by invite.",
+    who: "A closed group admitted by invite — today, two people: the creator and one invitee.",
     declares: "Tables marked -- dai:replicated, plus the profile line -- dai:profile session max_parties=N.",
     mechanism:
-      "Everything in passable, plus seats: the creator mints them, an invitee binds one, and only members' rows are read. A forwarded copy cannot join.",
+      "Everything in passable, plus seats: the creator mints its own and one open seat, an invitee binds the open one, and only members' rows are read. A forwarded copy cannot join. There is no way yet to seat a third person, so a group larger than two cannot be a session.",
     examples: "a game by message, a two-party agreement, anything turn-based",
     example: "examples/tic-tac-toe",
   },
@@ -515,7 +515,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Declare a session document with one line comment in schema.sql: -- dai:profile session max_parties=N close=any|creator. N is the number of people, at least 1. close=any lets any member close a session; close=creator lets only the person who created it; it defaults to any. The document must also have at least one table marked -- dai:replicated. Every replicated table then carries the session of each row.",
+      "Declare a session document with one line comment in schema.sql: -- dai:profile session max_parties=N close=any|creator. N is the most people the document allows, at least 1 — but today a session seats two whatever N says: `session.create()` mints the creator's seat and one open seat, and no call adds another (backlog D6). Declare max_parties=2, and do not build an application that needs a third member. close=any lets any member close a session; close=creator lets only the person who created it; it defaults to any. The document must also have at least one table marked -- dai:replicated. Every replicated table then carries the session of each row.",
     why:
       "The profile is signed into the document, so the size of the group is the creator's stated limit rather than something the application decides. A malformed profile, or one with no replicated table, is refused at build.",
     enforced: ["compiler"],

@@ -11,10 +11,15 @@ application. The rules themselves are under
 
 ## Seats and bindings
 
-The creator mints the seats: one for itself and one open seat per other party,
-up to the `max_parties` the document declares. A person joins by **binding** an
-open seat from their own copy. Both are ordinary shared rows, so they travel
-and merge like everything else.
+The creator mints the seats: one for itself and one open seat. A person joins
+by **binding** the open seat from their own copy. Both are ordinary shared rows,
+so they travel and merge like everything else.
+
+Today that is the whole roster: `session.create()` mints exactly two seats, and
+no call mints another, so a session seats two people whatever `max_parties`
+declares. The profile's number is enforced as a ceiling — a document holding
+more seats than it is refused — but nothing yet fills seats beyond the second.
+A group of three or more cannot be a session until that exists (backlog D6).
 
 A copy is a **member** of a session when it binds a seat the creator minted and
 no other copy binds the same seat. Only members' rows are read: the `_current`
