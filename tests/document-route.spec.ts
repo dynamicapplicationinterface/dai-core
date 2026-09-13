@@ -70,11 +70,15 @@ test.describe("a document opened at its own address", () => {
      */
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
 
-    // And the exact failure, named: asked for at the root, never under /d/.
+    // And the exact failure, named: asked for at the root, never under /d/. The
+    // merge module is fetched by digest (`dai-merge.<sha256>.js`) so a stale cache
+    // cannot answer with an older module; what matters here is that it is fetched
+    // from the site root, not resolved relative to /d/ where it would 404.
     expect(asked.filter((path) => path.includes("/d/runtime/"))).toEqual([]);
-    expect(asked, "the write rules were never fetched at all").toContain(
-      "/runtime/dai-merge.js",
-    );
+    expect(
+      asked.some((path) => /^\/runtime\/dai-merge\.[0-9a-f]{64}\.js$/.test(path)),
+      `the write rules were never fetched from the site root: ${JSON.stringify(asked)}`,
+    ).toBe(true);
 
     // A move, because "it booted" and "it can write" are different claims.
     await app(page).locator("[data-new-game]:visible").first().click();

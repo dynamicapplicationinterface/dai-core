@@ -59,7 +59,7 @@ test.describe("write rules that arrive before the frame is listening", () => {
   test("are held until the bridge announces itself, then delivered", async ({ page, context }) => {
     // The host's own push never completes: the only rules the frame can get
     // are the ones this test posts early.
-    await context.route("**/runtime/dai-merge.js", () => new Promise(() => undefined));
+    await context.route("**/runtime/dai-merge.*.js", () => new Promise(() => undefined));
 
     await page.goto(RUNNER_URL);
 
@@ -115,7 +115,7 @@ test.describe("write rules that arrive before the frame is listening", () => {
      * document opens, the reason is on screen, and the first write refuses by
      * name rather than by silence.
      */
-    await context.route("**/runtime/dai-merge.js", () => new Promise(() => undefined));
+    await context.route("**/runtime/dai-merge.*.js", () => new Promise(() => undefined));
 
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", container);

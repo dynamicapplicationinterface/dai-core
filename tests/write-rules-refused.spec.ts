@@ -65,7 +65,7 @@ test.describe("the write rules are refused out loud", () => {
      * through `context.route` rather than `page.route`, because the fetch can
      * go through the service worker and `page.route` does not see those.
      */
-    await context.route("**/runtime/dai-merge.js", async (route) => {
+    await context.route("**/runtime/dai-merge.*.js", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "text/javascript",
@@ -111,7 +111,7 @@ test.describe("the write rules are refused out loud", () => {
     const plain = join(source, "notes.dai.html");
     writeFileSync(plain, built.html, "utf8");
 
-    await context.route("**/runtime/dai-merge.js", async (route) => {
+    await context.route("**/runtime/dai-merge.*.js", async (route) => {
       await route.fulfill({ status: 200, contentType: "text/javascript", body: "export const x=1;\n" });
     });
 
