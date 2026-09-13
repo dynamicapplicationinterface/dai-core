@@ -105,6 +105,34 @@ const { files } = parseBundle(completion);
 Write those files into that directory. Record the model
 and the date beside it, because a score without them is a rumour.
 
+## A blind run: the documentation's own defect list
+
+The most useful thing a run produces is often not the application. Give a fresh
+model **only the model file** — no repository, no earlier conversation — ask it
+for something hard, and ask it to report, quoting the passage, everything in
+the instructions it found unclear, contradictory or missing. Treat that list as
+a defect list:
+
+1. **Verify each point against the code**, not against the documentation — the
+   documentation is the thing under test. Some points will be the model's
+   misreading; those are worth a sentence too, since the next model will
+   misread the same way.
+2. **Fix the real ones in `src/rules.ts`**, so the model file and the pages
+   change together, and anchor any new claim to the code it depends on.
+3. **Commit the run** under `eval/candidates/<model>-blind/` with the model, the
+   date, the exact input, the output unedited, and what the run did and did not
+   cover.
+
+Two cautions, both learned from the first run. Ask for something **unlike every
+example** in the model file: an application that mirrors the nearest example
+shows the instructions teach by imitation, not that a model can reason from the
+constraints. And a candidate that lints clean has not been shown to work — drive
+it on more than one device in the real host, through the paths an author cannot
+check alone: the mailbox, a close, a conflict the person must settle.
+
+The first run (Connect Four, 13 September) found seven real gaps, each fixed in
+the change that recorded it.
+
 ## Reading the result
 
 The number to publish is the `usable` rate. The number to *act* on is the stage
