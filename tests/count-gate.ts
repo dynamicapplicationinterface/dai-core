@@ -59,6 +59,12 @@ export default class CountGate implements Reporter {
     // files, or -g — is smaller by intent and says nothing about the suite.
     const filtered =
       process.argv.some((argument) => argument === "-g" || argument === "--grep") ||
+      // A `--shard=i/n` run holds only its slice of the suite, so its passing
+      // count is a fraction of the floor by intent — gating it would fail every
+      // shard. The unsharded engines (chromium, firefox) stay gated, and a test
+      // that stops being collected drops their counts too, so the shrink guard
+      // still bites; a sharded engine is covered by them.
+      process.argv.some((argument) => argument === "--shard" || argument.startsWith("--shard=")) ||
       process.argv.slice(2).some((argument) => !argument.startsWith("-") && argument.includes("spec"));
 
     let held: Record<string, number> = {};

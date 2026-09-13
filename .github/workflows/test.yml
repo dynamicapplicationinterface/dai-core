@@ -54,19 +54,31 @@ jobs:
   #
   # The one thing this must never become again is a run that cannot finish: a
   # check that times out is indistinguishable from one nobody looked at, and
-  # neither is a verdict. A single engine runs in about twelve minutes today,
-  # and the budget below is set roughly double that on purpose — headroom, not a
-  # target. When the suite grows and a shard starts brushing the wall, the fix
-  # is to split the shard further (by test group, by directory), NOT to raise
-  # this number: raising the ceiling buys a few months and restores the blind
-  # spot. If you are here to bump the timeout, shard instead.
+  # neither is a verdict. The budget below is set roughly double a single
+  # engine's time on purpose — headroom, not a target. When a shard starts
+  # brushing the wall, the fix is to split the shard further (by test group, by
+  # directory), NOT to raise this number: raising the ceiling buys a few months
+  # and restores the blind spot. If you are here to bump the timeout, shard
+  # instead.
+  #
+  # webkit is that case: it alone ran past 25 minutes and was cancelled every
+  # round — a cancelled job is no verdict, so webkit was effectively ungated and
+  # its reds sat unseen. So webkit is split into two `--shard` halves that each
+  # finish well inside the budget and each report a verdict; chromium and firefox
+  # still run whole, one job each. The count gate skips a sharded run (its count
+  # is a fraction by intent) and is carried by the two whole engines, which drop
+  # the same count when a test stops being collected.
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        include:
+          - { browser: chromium, part: whole }
+          - { browser: firefox, part: whole }
+          - { browser: webkit, part: "1", shard: "1/2" }
+          - { browser: webkit, part: "2", shard: "2/2" }
 
     steps:
       - uses: actions/checkout@v4
@@ -85,12 +97,12 @@ jobs:
       # --with-deps pulls the system libraries this engine needs on CI.
       - run: npx playwright install --with-deps ${{ matrix.browser }}
 
-      - run: npm test -- --project=${{ matrix.browser }}
+      - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
 
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.browser }}
+          name: playwright-report-${{ matrix.browser }}-${{ matrix.part }}
           path: |
             playwright-report/
             test-results/
