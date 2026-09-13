@@ -19,6 +19,12 @@ const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocat
  * app frame on Chromium and is not on WebKit — the order is engine-defined and
  * not part of the contract. The app is the frame two levels down (main → shell →
  * app), which is the same on every engine.
+ *
+ * Note for the record: this was NOT the cause of the WebKit reds in this file.
+ * Those fail earlier, at the share step, with the store returning HTTP 404 — a
+ * test-relay reachability problem, not frame enumeration. This helper is kept
+ * because it is strictly more robust (structure, not array order), not because
+ * it fixed those failures; it did not.
  */
 const appFrame = (page: Page): Frame => {
   const frame = page.frames().find((f) => f.parentFrame()?.parentFrame() === page.mainFrame());
