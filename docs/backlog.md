@@ -240,6 +240,28 @@ Three hazards, worst first:
   proposition, so capabilities are gated on publisher trust — which means the
   trust and identity work has to be finished first, not shipped alongside.
 
+## Later — transferable ownership
+
+Not scheduled. Recorded because the shape is decided
+(`docs/transferable-ownership.md`, TO-D1) and issue
+[#1](https://github.com/dynamicapplicationinterface/dai-core/issues/1) asks for
+it — and because doing it the other way, a hosted account or ownership carried in
+the signed manifest, would be expensive to undo.
+
+**The park, and the sentence that un-parks it.** Transfer is re-encryption plus a
+signed transfer row: a chain of transfers verified offline by anyone holding the
+file, with a witnessed relay tier as an opt-in service. The cryptographic claim (a
+holder without the key cannot open it) is absolute; the social claim (only one
+party holds it) is conditional and, offline, detectable rather than prevented —
+the decision keeps those two apart. It sits on `recipient-bound` (Track 4,
+registered and unimplemented) and on a key-holder identity that does not exist yet
+— no enrollment, no passkey-derived key in use, no way for one opener to learn
+another opener's public key — so it cannot be built before those, and refusing a
+superseded copy needs revocation-by-policy machinery that `main` does not have.
+**Un-parks when an enterprise use case needs a transferable instrument**, and only
+after Track 4 has landed under it. Until then it is thinking, not work: PR #2 stays
+open and unmerged.
+
 ## Phase 0 — Make "open from a stranger" true
 
 ### 0.2 The host owns the runtime
