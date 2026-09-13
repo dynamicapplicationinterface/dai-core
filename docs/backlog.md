@@ -275,7 +275,17 @@ Pressing Get on a large document while its assets are still loading produces a
 page flash and a return to the card, with no message. A person who taps promptly
 is punished for it, and nothing tells them what happened.
 
-Two parts. **Prepare before the press:** the card fetches and verifies the
+**Measure first, before any UI.** A trace of a slow Get showed ~5.29 s between
+having the container bytes and having a mountable blob, and it is not what it
+looks like: the service worker fulfils the asset requests, so transfer sizes in
+that view read 0 B and say nothing about download volume; and the engine is not
+the delay — `sqlite3.wasm` and `sqlite3.mjs` are 304s at 38 ms. So the time is
+inside the mount path itself — inflate, digest, assemble, or blob construction —
+and one profile run locating it decides the whole item: whether
+preparation-before-Get is enough on its own, or whether the mount path needs the
+streaming work regardless. Do this before touching the card.
+
+Then two parts. **Prepare before the press:** the card fetches and verifies the
 container as soon as it is shown, so for most documents Get is instant, and Get
 stays disabled until the container is at least identified — a press can never
 land on nothing. **Hold if it is not ready:** if preparation is still running
@@ -287,11 +297,12 @@ small document looks exactly as it does today and a large one stops blinking.
 And the blink is its own defect: a launch that fails must say so **on the card**.
 A card that reappears looking untouched is the unrendered-failure pattern again.
 
-**Exit:** Get is disabled until the container is identified; a slow document
-shows progress on the card and never navigates until it is ready; a launch that
-fails leaves a message on the card rather than a card that looks untouched; a
-small document renders no progress affordance (its prepare finished under the
-threshold).
+**Exit:** the profile run has named where the ~5.29 s goes in the mount path and
+which fix that implies; Get is disabled until the container is identified; a slow
+document shows progress on the card and never navigates until it is ready; a
+launch that fails leaves a message on the card rather than a card that looks
+untouched; a small document renders no progress affordance (its prepare finished
+under the threshold).
 
 ### L2 — The make-one page's step 3 has four states and one layout
 
