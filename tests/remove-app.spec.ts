@@ -69,8 +69,20 @@ test.describe("removing a document from this device", () => {
     // the same thing as staying on screen: somebody opening an app saw the
     // pitch and a blue button flash between the screen they answered and the
     // app they answered it for.
+    //
+    // The invariant is that the chooser's own pitch (#open) does not linger
+    // while a document is opening — true across both the familiarity card and
+    // the mount. The earlier version asserted the transient `busy` class on
+    // #slot instead, which is present only for the milliseconds of the pre-card
+    // ingest and, on the card path, not at all before Open is pressed: an
+    // implementation detail that happened to be observable, and a flake once the
+    // card became a legitimate step. Assert the invariant, not the detail.
     const source = mkdtempSync(join(tmpdir(), "dai-busy-"));
-    writeFileSync(join(source, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">here</p>', "utf8");
+    // Unique body per run, so the document is unfamiliar to whatever device the
+    // test lands on and deterministically takes the familiarity-card path — its
+    // uuid follows its bytes. Without this the flow forked on leftover storage.
+    const token = Math.random().toString(36).slice(2);
+    writeFileSync(join(source, "index.html"), `<!doctype html><meta charset="utf-8"><p id="app">here ${token}</p>`, "utf8");
     const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Quiet" });
     const file = join(source, "quiet.dai.html");
     writeFileSync(file, built.html, "utf8");
@@ -79,10 +91,16 @@ test.describe("removing a document from this device", () => {
     await expect(page.locator("#open")).toBeVisible();
     await page.setInputFiles("#file", file);
 
-    // From the moment it is reading, nothing of the opener's own pitch shows.
-    await expect(page.locator("#slot")).toHaveClass(/busy/, { timeout: 30_000 });
+    // An unfamiliar document lands on the familiarity card first (see
+    // tests/open.ts); the chooser's pitch is already gone. Its Open begins the
+    // mount, through which the pitch stays gone.
+    const cardOpen = page.locator("#card-open");
+    await cardOpen.click({ timeout: 30_000 });
+
+    // Nothing of the opener's own pitch shows while the document opens, and it
+    // opens: the application reaches the screen.
     await expect(page.locator("#open")).toBeHidden();
-    // The report line is the exception: it is what says how far it has got.
-    await expect(page.locator("#report")).toBeVisible();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 30_000 });
+    await expect(page.locator("#open")).toBeHidden();
   });
 });

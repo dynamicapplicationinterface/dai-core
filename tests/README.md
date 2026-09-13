@@ -29,3 +29,31 @@ So, for any test that claims to prove an end-to-end flow:
 `mailbox-mechanism.spec.ts` proves the mechanism with an injected key.
 `mailbox-link-e2e.spec.ts` proves the key path: one copy shares a link, the
 other opens it, a move crosses, no injected key.
+
+## The rule for mocking a same-origin request
+
+**A test that mocks a same-origin request with `page.route` must block service
+workers: `test.use({ serviceWorkers: "block" })`.**
+
+The runner registers a service worker that claims the page and answers same-origin
+GETs from a cache-first `fetch` handler. When it controls the page, a request the
+app makes is served by the worker and never reaches `page.route` — so the mock is
+silently bypassed. Whether the worker wins is a timing race (it depends on when the
+worker activates relative to the fetch), so the test passes locally, where the
+worker is often not yet in control, and fails on CI, where it is — or the reverse.
+A non-deterministic bypass is the worst kind of flake: it reads as a product bug on
+one machine and green on another.
+
+This has cost the project three separate times — the reference-link head, stale
+route globs, and the identity/opener-thin reds where a mocked `roots.json` and an
+aborted `runtime/sqlite3.*` were both served by the worker instead. The knowledge
+lived in four tests that already carried the mitigation and did not travel; it
+lives here now, and `scripts/check-routes.mjs` (run by `npm run typecheck`) fails
+the build on a `page.route` for a same-origin path in a file that does not block
+the worker.
+
+Blocking is the right call precisely because these tests are not testing the
+worker — they are testing what the page does when a given request returns a given
+thing, and the mock is how they say what it returns. A test that *is* about the
+worker keeps it and does not mock through it. `idb-timeout`, `launch-failsafe` and
+the `write-rules` specs are the standing examples.

@@ -59,6 +59,13 @@ async function bigDocument(prefix: string, withIcon: boolean): Promise<string> {
 }
 
 test.describe("sending a document", () => {
+  // These mock the store handshake (`api/presign`, the bucket PUT) with
+  // page.route to drive the share down each of its paths. The runner's service
+  // worker serves same-origin requests cache-first and would answer those
+  // before the route sees them, non-deterministically — so block it, and the
+  // mock is authoritative. Sharing is what is under test here, not the worker.
+  test.use({ serviceWorkers: "block" });
+
   test("the link carries the colour under the clock, and the other end paints it before its first frame", async ({ page }) => {
     test.slow();
     await page.route("**/api/presign", (route) => void route.fulfill({ status: 500, body: "{}" }));

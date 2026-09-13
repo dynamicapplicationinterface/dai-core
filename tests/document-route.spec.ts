@@ -31,6 +31,14 @@ const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocat
 test.describe("a document opened at its own address", () => {
   test.slow();
 
+  // The one test below that opens a page mocks the document route with
+  // page.route and asserts which paths the runtime is fetched from. The runner's
+  // service worker serves same-origin requests cache-first and would answer some
+  // before the route or the request listener sees them, non-deterministically —
+  // block it so the mock and the path assertion are authoritative. What is under
+  // test is base-relative resolution, not the worker.
+  test.use({ serviceWorkers: "block" });
+
   let container: string;
 
   test.beforeAll(async () => {
