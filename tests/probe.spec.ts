@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
-import { cutTheNetwork } from "./offline.js";
+import { cutTheNetwork, WEBKIT_CANNOT_DRIVE_OFFLINE_NAV } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -140,7 +140,9 @@ test.describe("which build this is", () => {
   test("it names the bytes that are running, not the bytes that were deployed", async ({
     page,
     context,
+    browserName,
   }) => {
+    test.skip(browserName === "webkit", WEBKIT_CANNOT_DRIVE_OFFLINE_NAV);
     /*
      * The stamp rides in the shell, so a stale worker serving a stale shell
      * reports the stale id — and that is the wanted behaviour, not a caveat.

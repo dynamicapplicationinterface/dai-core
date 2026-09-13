@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { encodeInline } from "../src/link.js";
 import { openFile } from "./open.js";
-import { cutTheNetwork } from "./offline.js";
+import { cutTheNetwork, WEBKIT_CANNOT_DRIVE_OFFLINE_NAV } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -101,7 +101,8 @@ test.describe("the hint only says which entry to try", () => {
 });
 
 test.describe("an icon for a document this device holds", () => {
-  test("install-held-document-opens-offline", async ({ page, context }) => {
+  test("install-held-document-opens-offline", async ({ page, context, browserName }) => {
+    test.skip(browserName === "webkit", WEBKIT_CANNOT_DRIVE_OFFLINE_NAV);
     test.slow();
 
     /*

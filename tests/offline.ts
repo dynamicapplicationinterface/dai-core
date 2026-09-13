@@ -1,6 +1,25 @@
 import type { BrowserContext, Page } from "@playwright/test";
 
 /**
+ * Why an offline-reload test does not run on WebKit.
+ *
+ * Cutting the network and then navigating cannot be driven on WebKit through
+ * Playwright, by either route into it: offline emulation crashes the driver on
+ * the navigation ("WebKit encountered an internal error",
+ * microsoft/playwright#34450, #27337), and aborting the network with a route
+ * instead blocks the reload ("page.reload: Blocked by Web Inspector"). Both are
+ * the Playwright/WebKit driver, not the product: the offline-serving property is
+ * real and is verified on Chromium and Firefox, where the same test runs. Stated
+ * here, and skipped by name in each test, rather than hidden in a project filter
+ * — a green suite that silently skips the engine users are on is the false
+ * comfort this week exists to end.
+ */
+export const WEBKIT_CANNOT_DRIVE_OFFLINE_NAV =
+  "WebKit: Playwright cannot drive a reload while the network is cut — offline " +
+  "emulation crashes the driver (playwright#34450, #27337) and route interception " +
+  "blocks the reload. Offline serving is verified on Chromium and Firefox.";
+
+/**
  * Cut the network off, and record anything that actually tried to reach it.
  *
  * What "a held document opens offline" claims is that nothing reaches the

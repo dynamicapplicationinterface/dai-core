@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
-import { cutTheNetwork } from "./offline.js";
+import { cutTheNetwork, WEBKIT_CANNOT_DRIVE_OFFLINE_NAV } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -23,7 +23,8 @@ const RUNNER_URL = "http://localhost:5175/";
  * Switching the network off cannot be satisfied by a cache we did not mean.
  */
 test.describe("opening a document you already have, with no network", () => {
-  test("comes back on its own, engine and all", async ({ page, context }) => {
+  test("comes back on its own, engine and all", async ({ page, context, browserName }) => {
+    test.skip(browserName === "webkit", WEBKIT_CANNOT_DRIVE_OFFLINE_NAV);
     test.slow();
 
     const built = await compileDirectory({

@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { readFileSync } from "node:fs";
 import { INLINE_CAP, decodeInline, encodeInline, inlineFrom, inlineLink } from "../src/link.js";
-import { cutTheNetwork } from "./offline.js";
+import { cutTheNetwork, WEBKIT_CANNOT_DRIVE_OFFLINE_NAV } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -85,7 +85,8 @@ test.describe("a document in the link", () => {
     expect(link!.length).toBeLessThan(4 * 1024);
   });
 
-  test("a real app opens from a link with the network switched off", async ({ page, context }) => {
+  test("a real app opens from a link with the network switched off", async ({ page, context, browserName }) => {
+    test.skip(browserName === "webkit", WEBKIT_CANNOT_DRIVE_OFFLINE_NAV);
     test.slow();
 
     /*
