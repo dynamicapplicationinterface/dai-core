@@ -1088,6 +1088,17 @@ about other people's documents.
   next time, which is what makes a publisher pinnable across documents. Until
   then `/desktop` says plainly that it does not.
 
+- **Firefox loads the thin engine network-first.** A thin link carries no engine,
+  so the opener supplies `runtime/sqlite3.wasm` and `.mjs` from its own cache.
+  Chromium serves them cache-first; Firefox requests them from the network first
+  and falls back to cache, so a thin document opened offline still runs but makes
+  two failed engine requests on the way (found by the strict offline assertion in
+  `tests/offline.ts`, which is why `inline-link` asserts only that it opens, while
+  the full-document offline tests assert nothing reached the network). Minor —
+  the app works offline on both — but it is a real difference on the primary
+  carrier, so worth a look at how the engine is loaded on the thin path (WASM /
+  module fetch versus a cache-first fetch the worker answers).
+
 - Register the media type; serve `.dai` as it. Independent of everything.
 - The desktop window shows the document's own icon, not the host's.
 - The example apps: the packing list's date is editable or gone.
