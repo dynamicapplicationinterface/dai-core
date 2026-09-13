@@ -275,15 +275,20 @@ Pressing Get on a large document while its assets are still loading produces a
 page flash and a return to the card, with no message. A person who taps promptly
 is punished for it, and nothing tells them what happened.
 
-**Measure first, before any UI.** A trace of a slow Get showed ~5.29 s between
-having the container bytes and having a mountable blob, and it is not what it
-looks like: the service worker fulfils the asset requests, so transfer sizes in
-that view read 0 B and say nothing about download volume; and the engine is not
-the delay — `sqlite3.wasm` and `sqlite3.mjs` are 304s at 38 ms. So the time is
-inside the mount path itself — inflate, digest, assemble, or blob construction —
-and one profile run locating it decides the whole item: whether
-preparation-before-Get is enough on its own, or whether the mount path needs the
-streaming work regardless. Do this before touching the card.
+**Measure first, before any UI.** A trace of a slow Get (a large game) put the
+~5.29 s on one row: the `blob:` **document load** of the mounted container, with
+the blob URL already created before that row began. So the delay is **not** the
+pre-mount work — inflate, digest, assemble and blob construction all finished
+before it — and it is not download or engine: the service worker fulfils the
+asset requests so their sizes read 0 B (not a volume signal), and `sqlite3.wasm`
+/`sqlite3.mjs` are 304s at ~38 ms. The scripts *inside* the container frame
+(`blob:null/…`, `about:srcdoc`) are 1–98 ms. What is left is the frame's own boot
+— HTML parse plus main-script execution before the document's `load` fires. So
+the profile must attach **inside that frame boot**, and it decides the whole
+item: because the 5.29 s lands after navigation, preparation-before-Get cannot
+move it, which points at the mount/boot path (or the app's own startup for a
+large document) needing the work — streaming or otherwise. Confirm with the
+profile before touching the card.
 
 Then two parts. **Prepare before the press:** the card fetches and verifies the
 container as soon as it is shown, so for most documents Get is instant, and Get
