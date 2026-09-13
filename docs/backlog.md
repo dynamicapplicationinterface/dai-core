@@ -63,7 +63,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | — | QR for a reference link | [ ] only useful once a store is ordinary; see 2.5 |
 | — | Desktop signs with a key it keeps | [ ] it builds unsigned today; the page says so |
 | — | Trusted Types | [x] `eec29fe` — on for kit-only apps; advice for the rest |
-| L3 | Documentation overhaul (the recipe is behind) | [~] `rules.ts`, generated pages and model file |
+| L3 | Documentation overhaul (the recipe is behind) | [x] `f3887da` constraints + model file, `08bfd70` pages, `64eb2b2` session eval — a model run against it is still to do |
 | D1 | Kit writes shared tables; kit redraws on merge | [ ] documented as local-only meanwhile |
 | D2 | Refusal registry lacks the app-facing codes | [ ] |
 | D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
@@ -337,7 +337,9 @@ state.
 
 ### L3 — The recipe is behind the opener, and there is no worked-examples page
 
-*In progress (13 September): the documentation overhaul. The recipe is replaced
+*Done (13 September): `f3887da`, `08bfd70`, `64eb2b2`. Not yet done: running a
+model on the session prompt with only the model file, which is what the exit's
+first half actually asks. The documentation overhaul: The recipe is replaced
 by `src/rules.ts` — constraints with stable IDs, from which the model file, the
 MCP text and the human reference pages are generated, and each constraint is
 tied to its code anchor by a test. What it found that is not documentation is
