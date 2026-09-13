@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
-import { API, CSS_VARS, RECIPE_AS_PROMPT } from '../../src/recipe.js';
+import { API, CSS_VARS, RECIPE, RECIPE_AS_PROMPT } from '../../src/recipe.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,17 +32,21 @@ export default defineConfig({
     ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
     ['meta', { name: 'theme-color', content: '#3b82f6' }]
   ],
+  // Fragments generated from src/rules.ts and included into pages; not pages.
+  srcExclude: ['**/parts/**'],
   buildEnd(config) {
     /*
-     * The same instructions, as plain text, at a stable address.
+     * The same instructions, as plain text, at stable addresses.
      *
      * A model asked to write one of these should not have to scrape a
-     * documentation page and guess which parts are the rules. /recipe.txt is
-     * what the MCP server hands a model, byte for byte, and /llms.txt is the
-     * index that points at it. Written from the shared constants at build
-     * time so the published text cannot drift from the taught text — the same
-     * reason the recipe page renders rather than restates.
+     * documentation page and guess which parts are the rules. /llms-full.txt
+     * is the model file, byte for byte what the MCP server hands a model;
+     * /recipe.txt is the same text with a line inviting the reader to finish
+     * it, kept at the address links already use; /llms.txt is the index. All
+     * written from the shared constants at build time, so the published text
+     * cannot drift from the taught text.
      */
+    writeFileSync(path.join(config.outDir, 'llms-full.txt'), RECIPE.endsWith('\n') ? RECIPE : RECIPE + '\n');
     writeFileSync(
       path.join(config.outDir, 'recipe.txt'),
       RECIPE_AS_PROMPT.endsWith('\n') ? RECIPE_AS_PROMPT : RECIPE_AS_PROMPT + '\n',
@@ -58,8 +62,11 @@ export default defineConfig({
         '',
         'Writing an application that runs inside a container:',
         '',
-        '- [The recipe](https://www.dynamicapplicationinterface.io/recipe.txt): the full instructions, as given to a model. Start here.',
-        '- [Writing apps](https://www.dynamicapplicationinterface.io/docs/writing-apps): the same rules with the reasoning behind them.',
+        '- [The model file](https://www.dynamicapplicationinterface.io/llms-full.txt): everything needed to write an application, in one pass — the shape decision, every constraint with its reason, the surface, and one complete application per shape. Start here.',
+        '- [The same, for pasting into a chat](https://www.dynamicapplicationinterface.io/recipe.txt): the model file with a last line inviting you to say what you want.',
+        '- [Choose a shape](https://www.dynamicapplicationinterface.io/docs/choose-a-shape): the decision before any table is written.',
+        '- [Constraints](https://www.dynamicapplicationinterface.io/docs/constraints): every rule by id, with its reason and what enforces it.',
+        '- [Writing apps](https://www.dynamicapplicationinterface.io/docs/writing-apps): tutorials, how-to guides and explanations for people.',
         '',
         'The surface an application is given:',
         '',
@@ -117,10 +124,12 @@ export default defineConfig({
       {
         text: 'Documentation',
         items: [
-          { text: 'Making files', link: '/docs/making-files' },
+          { text: 'Choose a shape', link: '/docs/choose-a-shape' },
           { text: 'Writing apps', link: '/docs/writing-apps' },
+          { text: 'Constraints', link: '/docs/constraints' },
+          { text: 'For AI models', link: '/docs/the-recipe' },
+          { text: 'Making files', link: '/docs/making-files' },
           { text: 'Desktop app', link: '/desktop' },
-          { text: 'The recipe (for AI)', link: '/docs/the-recipe' },
           { text: 'Quickstart', link: '/docs/quickstart' },
           { text: 'Specification', link: '/docs/specification' },
           { text: 'Host bridge', link: '/docs/host-bridge' },
@@ -137,9 +146,53 @@ export default defineConfig({
           { text: 'Introduction', link: '/docs/introduction' },
           { text: '5-Minute Quickstart', link: '/docs/quickstart' },
           { text: 'Making Files', link: '/docs/making-files' },
-          { text: 'Writing Apps', link: '/docs/writing-apps' },
-          { text: 'The Recipe (for AI)', link: '/docs/the-recipe' },
           { text: 'Architecture & Boundaries', link: '/docs/architecture' }
+        ]
+      },
+      {
+        text: 'Writing Apps',
+        items: [
+          { text: 'Choose a Shape', link: '/docs/choose-a-shape' },
+          { text: 'Overview', link: '/docs/writing-apps' },
+          {
+            text: 'Tutorials',
+            collapsed: false,
+            items: [
+              { text: 'Your First App', link: '/docs/first-app' },
+              { text: 'Your First Two-Player App', link: '/docs/two-player-app' }
+            ]
+          },
+          {
+            text: 'How-to',
+            collapsed: false,
+            items: [
+              { text: 'Share a Table', link: '/docs/share-a-table' },
+              { text: 'Run a Session', link: '/docs/run-a-session' },
+              { text: 'Show a Conflict', link: '/docs/show-a-conflict' },
+              { text: 'Redraw When Rows Arrive', link: '/docs/redraw-on-merge' }
+            ]
+          },
+          {
+            text: 'Reference',
+            collapsed: false,
+            items: [
+              { text: 'Constraints', link: '/docs/constraints' },
+              { text: 'Runtime API', link: '/docs/runtime-api' },
+              { text: 'Schema', link: '/docs/schema-reference' },
+              { text: 'Refusals', link: '/docs/refusals' }
+            ]
+          },
+          {
+            text: 'Explanation',
+            collapsed: false,
+            items: [
+              { text: 'Why Rows Never Change', link: '/docs/why-rows-never-change' },
+              { text: 'Why Nothing Derived Is Stored', link: '/docs/why-nothing-derived' },
+              { text: 'Seats and Contested Seats', link: '/docs/seats-and-contested-seats' }
+            ]
+          },
+          { text: 'Examples', link: '/docs/examples' },
+          { text: 'For AI Models', link: '/docs/the-recipe' }
         ]
       },
       {

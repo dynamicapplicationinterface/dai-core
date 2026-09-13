@@ -19,6 +19,12 @@ test.describe("the recipe, as published", () => {
     expect((await response.text()).trim()).toBe(RECIPE_AS_PROMPT.trim());
   });
 
+  test("/llms-full.txt is the model file, byte for byte", async ({ request }) => {
+    const response = await request.get(new URL("llms-full.txt", SITE_URL).href);
+    expect(response.status()).toBe(200);
+    expect((await response.text()).trim()).toBe(RECIPE.trim());
+  });
+
   test("/llms.txt points at it and lists the surface", async ({ request }) => {
     const response = await request.get(new URL("llms.txt", SITE_URL).href);
     expect(response.status()).toBe(200);
@@ -26,6 +32,7 @@ test.describe("the recipe, as published", () => {
 
     // The index's job: send a model to the full text rather than to a page it
     // would have to scrape.
+    expect(text).toContain("/llms-full.txt");
     expect(text).toContain("/recipe.txt");
     expect(text).toContain("/docs/writing-apps");
 

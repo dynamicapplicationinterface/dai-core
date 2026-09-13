@@ -1,44 +1,30 @@
 ---
-title: The recipe
+title: For AI models
 ---
 
-# What to tell an AI
+# For AI models
 
-An assistant writing an app for a DAI container needs to know three things it
-would not otherwise assume: there is no network, storage goes through SQLite
-inside the file, and top-level `await` needs a module script. Give it this and
-it will produce something that works the first time.
+Everything an assistant needs to write an application that works inside a
+container, as one plain text it can read in a single pass: the shape decision,
+every constraint with its reason, the surface, the views, the refusals it may
+meet, and one complete application per shape.
 
-If you use the [MCP server](/docs/making-files#with-an-assistant), you do not
-need this page — the model receives these instructions with the tools, and the
-server refuses code that would open blank. This is the same text, for anyone
-working with an assistant that has no connection to it.
+It is not written separately from these pages. The [constraints](/docs/constraints),
+the [runtime API](/docs/runtime-api), the [schema reference](/docs/schema-reference)
+and the model file are all generated from one source, `src/rules.ts`, and a test
+holds that source to the code — so the text a model follows and the page a person
+reads cannot disagree.
+
+**Fetch it rather than scraping this page:**
+
+- [`/llms-full.txt`](/llms-full.txt) — the model file, in full.
+- [`/llms.txt`](/llms.txt) — the index, pointing at it.
+- [`/recipe.txt`](/recipe.txt) — the same text with a last line that invites
+  you to say what you want, for pasting into a chat. The address is kept
+  because links to it exist.
+
+If you use the [MCP server](/docs/making-files#with-an-assistant) you do not
+need any of these: the model receives the same text with the tools, and the
+server refuses code that would break in a container.
 
 <Recipe />
-
-## Why these rules exist
-
-**No network.** The container declares its permitted connections as none, and
-the browser enforces it. A CDN script does not load slowly — it never arrives,
-and the app does nothing. Because that failure is silent, it lands on whoever
-opened the file rather than on whoever built it.
-
-**SQLite, not browser storage.** `localStorage` belongs to the browser, not to
-the document. Data kept there stays on the machine that created it, so a file
-sent to somebody else arrives empty — which defeats the point of a format whose
-whole purpose is to travel.
-
-**`type="module"` for top-level `await`.** Without it the script is a syntax
-error and the page renders nothing at all. It is the single most common way an
-otherwise correct app opens blank.
-
-## A worked example
-
-[`examples/tasks`](https://github.com/dynamicapplicationinterface/dai-core/tree/main/examples/tasks)
-in the repository is a complete application built to these rules — projects,
-priorities, tags, filtering and sorting, all in SQL, saved back into its own
-file. It is the app the [walkthrough](/make-one) compiles.
-
-```bash
-npx dai build ./examples/tasks -n Tasks
-```

@@ -24,10 +24,12 @@ listed.
 | `recipient-bound` | Open only for a named recipient, on a key that recipient holds. |
 | `relay` | Move updates between replicas through a store that cannot read them. |
 
-None is implemented yet. Track 0 shipped the gate before any of the
-capabilities, so today every document lists nothing and is unaffected, and a
-document listing anything is refused. Each track adds its own name to the
-reader as it lands.
+Two are implemented: `replicated` and `session`. The other four are
+registered and not implemented, so a document requiring any of them is refused
+by name. Track 0 shipped the gate before any of the capabilities, and each
+track adds its own name to the reader as it lands — `replicated` with the
+replicated tables, `session` with the session profile. A document that lists
+nothing is unaffected by any of this.
 
 ## The rules
 

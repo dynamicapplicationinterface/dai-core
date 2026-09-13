@@ -171,6 +171,37 @@ test.describe("the model file carries every constraint", () => {
   });
 });
 
+test.describe("the pages a person reads come from the same source", () => {
+  const pages = readdirSync(resolve(repo, "website", "docs")).filter((name) => name.endsWith(".md"));
+
+  test("every generated page and fragment is current", () => {
+    execFileSync(process.execPath, [join(repo, "scripts", "build-docs.mjs"), "--check"], { cwd: repo });
+  });
+
+  test("every included fragment exists, and every constraint link names a constraint", () => {
+    for (const name of pages) {
+      const text = read(`website/docs/${name}`);
+      for (const [, part] of text.matchAll(/<!--@include: \.\/(parts\/[^\s>]+?)-->/g)) {
+        expect(readdirSync(resolve(repo, "website", "docs", dirname(part!))), `${name} includes ${part}`).toContain(
+          part!.split("/").pop(),
+        );
+      }
+      for (const [, id] of text.matchAll(/\/docs\/constraints#([A-Za-z0-9-]+)/g)) {
+        if (id!.startsWith("topic-")) continue;
+        expect(CONSTRAINT_BY_ID.has(id!), `${name} links to constraints#${id}, which does not exist`).toBe(true);
+      }
+    }
+  });
+
+  test("every constraint has a heading on the Constraints page and a fragment of its own", () => {
+    const page = read("website/docs/constraints.md");
+    for (const c of CONSTRAINTS) {
+      expect(page, c.id).toContain(`{#${c.id}}`);
+      expect(read(`website/docs/parts/constraint/${c.id}.md`), c.id).toContain(`::: info ${c.id}`);
+    }
+  });
+});
+
 function filesOf(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
   for (const name of readdirSync(resolve(repo, dir))) {
