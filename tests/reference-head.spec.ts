@@ -23,7 +23,14 @@ const RUNNER_URL = "http://localhost:5175/";
  * device has never held and has no manifest for.
  */
 test.describe("the head a reference link arrives with", () => {
-  test("survives an active worker, which is when the bug appeared", async ({ page, context }) => {
+  test("survives an active worker, which is when the bug appeared", async ({ page, context, browserName }) => {
+    // The request under test is made by the service worker, and intercepting a
+    // worker's own request with context.route is supported only on Chromium; on
+    // Firefox and WebKit the worker answers from the cached shell and the mock
+    // never applies, so the per-document head cannot be exercised there through
+    // Playwright. Named here rather than hidden in a filter: this is a harness
+    // limitation, and the behaviour it guards is verified on Chromium.
+    test.skip(browserName !== "chromium", "context.route cannot intercept a service worker's own request off Chromium");
     test.slow();
 
     // The edge, stood in for: the dev server applies no rewrite and injects

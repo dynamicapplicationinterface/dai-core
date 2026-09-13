@@ -232,7 +232,25 @@ test.describe("the share sheet", () => {
 test.describe("Make one", () => {
   test("offers a link for what it just built, and the link opens it", async ({ page, context }) => {
     test.slow();
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    // Capture what the page copies rather than reading the system clipboard.
+    // Playwright grants clipboard permission only on Chromium, and the value the
+    // page writes is all this test needs — recording it works on every engine,
+    // where grantPermissions("clipboard-read") throws "Unknown permission".
+    await context.addInitScript(() => {
+      (window as unknown as { __copied: string[] }).__copied = [];
+      const clip = navigator.clipboard as Clipboard | undefined;
+      const orig = clip?.writeText?.bind(clip);
+      if (clip) {
+        clip.writeText = async (text: string): Promise<void> => {
+          (window as unknown as { __copied: string[] }).__copied.push(text);
+          try {
+            await orig?.(text);
+          } catch {
+            /* No clipboard permission is fine: the value is already captured. */
+          }
+        };
+      }
+    });
     await page.goto("http://localhost:5176/make-one");
 
     // Build the first example, as somebody would.
@@ -247,7 +265,7 @@ test.describe("Make one", () => {
     await page.locator("button", { hasText: "Copy a link" }).click();
     await expect(page.locator("button", { hasText: "Link copied" })).toBeVisible();
 
-    const link = await page.evaluate(() => navigator.clipboard.readText());
+    const link = await page.evaluate(() => (window as unknown as { __copied: string[] }).__copied.at(-1) ?? "");
     expect(link).toMatch(/#a=/);
 
     // And it is this document: the fragment decodes to a container that verifies.

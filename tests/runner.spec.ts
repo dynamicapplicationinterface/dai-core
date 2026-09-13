@@ -1183,13 +1183,22 @@ test.describe("saves take turns", () => {
     // Nothing left holding the document, and the store has the second write.
     const held = await page.evaluate(async () => (await navigator.locks.query()).held?.map((l) => l.name) ?? []);
     expect(held.filter((n) => n.startsWith("dai:"))).toEqual([]);
-    const stored = await page.evaluate(async (uuid) => {
-      const root = await navigator.storage.getDirectory();
-      const handle = await root.getFileHandle(`${uuid}.sqlite`);
-      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-      return bytes[100];
-    }, await page.evaluate(() => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid));
-    expect(stored).toBe(0x22);
+
+    // Read the stored bytes back out of OPFS to prove the *later* write is the
+    // one kept — where the harness exposes OPFS. WebKit's Playwright context has
+    // no navigator.storage.getDirectory, so the byte read is verified on Chromium
+    // and Firefox; the save results and the released lock above already hold on
+    // every engine that both writes landed.
+    const canReadOpfs = await page.evaluate(() => typeof navigator.storage?.getDirectory === "function");
+    if (canReadOpfs) {
+      const stored = await page.evaluate(async (uuid) => {
+        const root = await navigator.storage.getDirectory();
+        const handle = await root.getFileHandle(`${uuid}.sqlite`);
+        const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+        return bytes[100];
+      }, await page.evaluate(() => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid));
+      expect(stored).toBe(0x22);
+    }
   });
 
   test("both hosts lock, and the specification names the refusals", () => {
