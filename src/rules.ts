@@ -437,14 +437,15 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "shared",
     rule:
-      "Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener(\"dai:merged\", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — \"carrier\" when a file or link was opened, \"mailbox\" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener.",
+      "Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener(\"dai:merged\", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — \"carrier\" when a file or link was opened, \"mailbox\" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener. A redraw must never discard what the person is in the middle of — text typed into a field, an editor that is open, a selection: rows arrive whenever the other copy's changes do, including mid-sentence. Keep work in progress outside what the redraw rebuilds — in a form written once in the HTML rather than recreated on every draw, or in a local drafts table the redraw reads back — or leave the element being edited untouched until it is saved or cancelled.",
     why:
-      "Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for.",
+      "Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for. And a redraw that rebuilds an open editor from the stored wording throws away what was being typed, silently — found by running a blind candidate over the mailbox, where a background merge landed while a term was being edited.",
     enforced: ["lint"],
     lint: ["shared-no-merge-listener"],
     anchors: [
       { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent("dai:merged", { detail: { ...report, via: "carrier" } })' },
       { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent("dai:merged", { detail: { ...report, via: "mailbox" } })' },
+      { file: "tests/fixture/chess/schema.sql", contains: "A tentative move lives here until the player commits it" },
     ],
   },
   {
@@ -476,7 +477,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "shared",
     rule:
-      "Refer to a shared row by the entity the write surface returned: 32 lowercase hex characters. Read it back as `lower(hex(_r_entity))`. To point one shared row at another (a move at its game), store that hex string in an ordinary TEXT column and compare it with `lower(hex(_r_entity))`.",
+      "Refer to a shared row by the entity the write surface returned: 32 lowercase hex characters. Read it back as `lower(hex(_r_entity))`. To point one shared row at another (a move at its game), store that hex string in an ordinary TEXT column and compare it with `lower(hex(_r_entity))`. A particular version of a row is its key, `(_r_replica, _r_seq)` — the same on every copy — so an application that needs to name \"this exact wording\" (what a person accepted, say) can use it.",
     why: "The entity is the same on every copy, where an id of your own would be allocated separately on each.",
     enforced: ["prose"],
     anchors: [{ file: "tests/fixture/chess/schema.sql", contains: "hex entity of the games row" }],
@@ -598,7 +599,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which rows written later than what the closer had seen are not admitted. Offer it only on a finished session, never as the way to end a live one. Read whether a session is closed from `_dai_close_current` (any row for the session). Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
+      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which rows written later than what the closer had seen are not admitted. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read whether a session is closed from `_dai_close_current` (any row for the session). Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
     why: "A close is final for the group, and it is decided by what the closer had seen rather than by a clock. Folding it into \"resign\" would end a session the other person had not finished with.",
     enforced: ["runtime", "prose"],
     anchors: [

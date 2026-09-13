@@ -100,10 +100,14 @@ test.describe("receipts, a passable document", () => {
     };
 
     const appA = await firstOpen(pageA, container, "#entry");
+    // Ready means app.js has run (its handlers attach after openDatabase), not
+    // that the static form is showing; resetForm() fills in today's date.
+    await expect(appA.locator("#spent-on")).not.toHaveValue("", { timeout: 60_000 });
     await addReceipt(appA, "Grocer", "30", "Ada");
     const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
 
     const appB = await firstOpen(pageB, a1, "#entry");
+    await expect(appB.locator("#spent-on")).not.toHaveValue("", { timeout: 60_000 });
     await expect(appB.locator("#list")).toContainText("Grocer", { timeout: 30_000 });
     await addReceipt(appB, "Hardware", "10", "Bo");
     // Derived from both rows: nothing about the balance is stored.
@@ -136,6 +140,58 @@ test.describe("receipts, a passable document", () => {
     await appA.locator("#versions li", { hasText: "$32.00" }).getByRole("button", { name: "Keep this" }).click();
     await expect(grocer).toContainText("$32.00", { timeout: 30_000 });
     await expect(grocer.getByRole("button", { name: /Changed twice/ })).toHaveCount(0);
+
+    for (const context of contexts) await context.close();
+  });
+});
+
+test.describe("receipts keeps what a person is typing when rows arrive", () => {
+  test.slow();
+
+  test("a half-finished edit survives the other copy's receipts being merged in", async ({ browser }) => {
+    // SHARED-REDRAW-ON-MERGE: a redraw must not discard work in progress. A blind
+    // candidate rebuilt its editor on every merge and lost what was being typed;
+    // the receipts form is written once in the HTML, so a redraw leaves it alone.
+    const scratch = mkdtempSync(join(tmpdir(), "dai-receipts-draft-"));
+    const container = await build("examples/receipts", "Receipts", scratch);
+    const { contexts, pages } = await devices(browser, 2);
+    const [pageA, pageB] = pages as [Page, Page];
+
+    // Ready means app.js has run, not that the static form is visible: its
+    // handlers attach only after openDatabase resolves, and resetForm() is what
+    // fills in today's date.
+    const ready = (app: FrameLocator) => expect(app.locator("#spent-on")).not.toHaveValue("", { timeout: 60_000 });
+
+    const appA = await firstOpen(pageA, container, "#entry");
+    await ready(appA);
+    await appA.locator("#store").fill("Grocer");
+    await appA.locator("#amount").fill("30");
+    await appA.locator("#paid-by").fill("Ada");
+    await appA.locator("#save-entry").click();
+    await expect(appA.locator("#list")).toContainText("Grocer", { timeout: 30_000 });
+    const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
+
+    const appB = await firstOpen(pageB, a1, "#entry");
+    await ready(appB);
+    await expect(appB.locator("#list")).toContainText("Grocer", { timeout: 30_000 });
+    // A adds a receipt B has not seen. Union merge needs no common ancestry
+    // beyond the document, so B can take A's copy directly.
+    await appA.locator("#store").fill("Hardware");
+    await appA.locator("#amount").fill("10");
+    // Paid by is required, and resetForm() sets it back to this copy's name,
+    // which nobody set here — so it is filled each time, as addReceipt does.
+    await appA.locator("#paid-by").fill("Ada");
+    await appA.locator("#save-entry").click();
+    await expect(appA.locator("#list")).toContainText("Hardware", { timeout: 30_000 });
+    const a2 = await saveOut(pageA, join(scratch, "a2.dai.html"));
+
+    // B is halfway through editing Grocer when A's receipt arrives.
+    await appB.locator(".receipt", { hasText: "Grocer" }).getByRole("button", { name: "Edit" }).click();
+    await appB.locator("#amount").fill("31.75");
+    await mergeIn(pageB, a2, true);
+    await expect(appB.locator("#list")).toContainText("Hardware", { timeout: 60_000 });
+    await expect(appB.locator("#amount")).toHaveValue("31.75");
+    await expect(appB.locator("#save-entry")).toHaveText("Save changes");
 
     for (const context of contexts) await context.close();
   });

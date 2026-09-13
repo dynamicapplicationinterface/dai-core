@@ -3,7 +3,7 @@
 ::: info SHARED-ENTITY-IDENTITY
 **A shared row's identity is its entity**
 
-Refer to a shared row by the entity the write surface returned: 32 lowercase hex characters. Read it back as `lower(hex(_r_entity))`. To point one shared row at another (a move at its game), store that hex string in an ordinary TEXT column and compare it with `lower(hex(_r_entity))`.
+Refer to a shared row by the entity the write surface returned: 32 lowercase hex characters. Read it back as `lower(hex(_r_entity))`. To point one shared row at another (a move at its game), store that hex string in an ordinary TEXT column and compare it with `lower(hex(_r_entity))`. A particular version of a row is its key, `(_r_replica, _r_seq)` — the same on every copy — so an application that needs to name "this exact wording" (what a person accepted, say) can use it.
 
 **Why.** The entity is the same on every copy, where an id of your own would be allocated separately on each.
 

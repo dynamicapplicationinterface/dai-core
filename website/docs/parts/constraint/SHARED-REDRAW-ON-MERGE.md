@@ -3,9 +3,9 @@
 ::: info SHARED-REDRAW-ON-MERGE
 **Redraw when the other copy's rows arrive**
 
-Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener("dai:merged", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — "carrier" when a file or link was opened, "mailbox" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener.
+Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener("dai:merged", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — "carrier" when a file or link was opened, "mailbox" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener. A redraw must never discard what the person is in the middle of — text typed into a field, an editor that is open, a selection: rows arrive whenever the other copy's changes do, including mid-sentence. Keep work in progress outside what the redraw rebuilds — in a form written once in the HTML rather than recreated on every draw, or in a local drafts table the redraw reads back — or leave the element being edited untouched until it is saved or cancelled.
 
-**Why.** Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for.
+**Why.** Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for. And a redraw that rebuilds an open editor from the stored wording throws away what was being typed, silently — found by running a blind candidate over the mailbox, where a background merge landed while a term was being edited.
 
 <small>Applies to passable, session · checked by the lint (`shared-no-merge-listener`) · [SHARED-REDRAW-ON-MERGE in Constraints](/docs/constraints#SHARED-REDRAW-ON-MERGE)</small>
 :::
