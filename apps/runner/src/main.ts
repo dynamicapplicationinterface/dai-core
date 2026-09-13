@@ -2539,9 +2539,8 @@ async function previewIcon(favicon: string | undefined): Promise<{ png: Uint8Arr
  * sheet can say whether anything left the device.
  */
 async function linkToSend(html: string, preview: boolean): Promise<{ link: string; uploaded: boolean }> {
-  const store = STORE_BASE
-    ? presignedStore({ presignUrl: new URL("/api/presign", location.origin).href, publicBase: STORE_BASE })
-    : undefined;
+  const cfg = storeConfig();
+  const store = cfg ? presignedStore(cfg) : undefined;
   const icon = preview && loaded ? await previewIcon(loaded.manifest.favicon) : undefined;
   /*
    * Through the store, whatever the size.
@@ -2686,7 +2685,7 @@ async function sendDocument(): Promise<void> {
   };
 
   // Through the store when there is one, whatever the size (see linkToSend).
-  const viaStore = Boolean(STORE_BASE);
+  const viaStore = Boolean(storeConfig());
   const canShare = typeof navigator.share === "function";
   const url = faviconUrl(loaded.manifest.favicon);
   icon.hidden = !url;
@@ -3064,6 +3063,30 @@ async function openFromLink(carried: string, consentedFor?: string): Promise<voi
 const STORE_BASE: string | undefined = "https://store.opendai.app/";
 
 /*
+ * A store pointed somewhere else, for a test that stands one up locally.
+ *
+ * The same move as `useRelay`: the production store is a bucket this repo does
+ * not run, so an end-to-end test serves its own — presign, PUT and GET — and
+ * points the opener at it through `window.__daiStore`, injected before the page
+ * loads. Setting the base is scenery; the key still crosses in the link, which
+ * is the fact the key-path e2e exists to prove. Deliberately a different origin
+ * than the opener, so the opener's own service worker (scoped to this origin)
+ * does not intercept the presign the way it would a same-origin `/api/presign`
+ * — the interception that made the mocked store read as a 404 on WebKit, and the
+ * reason the test serves a real store rather than routing to a fake one.
+ */
+function storeConfig(): { presignUrl: string; publicBase: string } | undefined {
+  const injected = (window as unknown as { __daiStore?: { presignUrl?: string; publicBase?: string } })
+    .__daiStore;
+  if (injected?.presignUrl && injected.publicBase) {
+    return { presignUrl: injected.presignUrl, publicBase: injected.publicBase };
+  }
+  return STORE_BASE
+    ? { presignUrl: new URL("/api/presign", location.origin).href, publicBase: STORE_BASE }
+    : undefined;
+}
+
+/*
  * The mailbox relay (Track 5), where a document's moves are carried between two
  * copies with no file passed by hand. Stamped into the page at build from
  * DAI_RELAY_BASE, the way the build id is (see the `dai-relay` meta in
@@ -3177,7 +3200,7 @@ async function startMailboxIfPossible(): Promise<void> {
  */
 async function openFromReference(reference: { hash: string; key: string; url?: string }): Promise<void> {
   markStep("fetching the document from the store");
-  const href = reference.url ?? (STORE_BASE ? `${STORE_BASE}${reference.hash}` : undefined);
+  const href = reference.url ?? (storeConfig() ? `${storeConfig()!.publicBase}${reference.hash}` : undefined);
   if (!href) {
     say(
       "This link points at a store this app does not have an address for yet. " +

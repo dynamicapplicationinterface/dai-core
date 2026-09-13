@@ -48,6 +48,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
   let relay: Server;
   let relayBase: string;
+  let store: Server;
+  let storeBase: string;
   let container: string;
   let creatorContainer: string;
   const bucket = new Map<string, Buffer>();
@@ -90,6 +92,57 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await new Promise<void>((r) => relay.listen(0, r));
     relayBase = `http://localhost:${(relay.address() as { port: number }).port}/m`;
 
+    // A real store, on its own origin, standing in for the R2 bucket this repo
+    // does not run: presign, the PUT, and the public read, backed by `bucket`.
+    // A real server rather than a route because the opener's service worker
+    // intercepts a same-origin request before a page route sees it — which is
+    // what made the mocked store read as a 404 on WebKit. A different port is a
+    // different origin, outside the worker's scope, so the opener reaches it.
+    store = createServer((req, res) => {
+      const cors = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET,PUT,POST,OPTIONS,HEAD",
+        "access-control-allow-headers": "content-type",
+      };
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, cors);
+        res.end();
+        return;
+      }
+      const url = new URL(req.url ?? "/", "http://localhost");
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c as Buffer));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks);
+        if (req.method === "POST" && url.pathname === "/presign") {
+          const ask = JSON.parse(body.toString()) as { hash: string; kind: string };
+          const name = ask.kind === "sidecar" ? `${ask.hash}.json` : ask.kind === "icon" ? `${ask.hash}.png` : ask.hash;
+          res.writeHead(200, { ...cors, "content-type": "application/json" });
+          res.end(
+            JSON.stringify({ url: `${storeBase}/__put/${name}`, method: "PUT", headers: {}, href: `${storeBase}/${name}`, token: "t.link" }),
+          );
+        } else if (req.method === "PUT" && url.pathname.startsWith("/__put/")) {
+          bucket.set(decodeURIComponent(url.pathname.slice("/__put/".length)), body);
+          res.writeHead(200, cors);
+          res.end();
+        } else if (req.method === "GET" || req.method === "HEAD") {
+          const held = bucket.get(decodeURIComponent(url.pathname.slice(1)));
+          if (!held) {
+            res.writeHead(404, cors);
+            res.end();
+            return;
+          }
+          res.writeHead(200, { ...cors, "content-length": String(held.length) });
+          res.end(req.method === "HEAD" ? undefined : held);
+        } else {
+          res.writeHead(404, cors);
+          res.end();
+        }
+      });
+    });
+    await new Promise<void>((r) => store.listen(0, r));
+    storeBase = `http://localhost:${(store.address() as { port: number }).port}`;
+
     const built = await compileDirectory({
       sourceDir: join(repo, "tests", "fixture", "chess"),
       root: repo,
@@ -117,29 +170,26 @@ test.describe("a game continues over a shared link (the key path)", () => {
     writeFileSync(creatorContainer, builtCreator.html, "utf8");
   });
 
-  test.afterAll(() => relay?.close());
+  test.afterAll(() => {
+    relay?.close();
+    store?.close();
+  });
 
-  /** The store the opener seals to and reads from: presign, the PUT, and the read. */
+  /**
+   * Point every page in this context at the local store, before it loads.
+   *
+   * `window.__daiStore` is read by the opener's storeConfig(); injected here so
+   * the opener seals to and reads from the server stood up in beforeAll rather
+   * than the production bucket. Setting the base is scenery — the key still
+   * crosses in the link, which is the fact this e2e proves.
+   */
   async function mountStore(context: BrowserContext): Promise<void> {
-    await context.route("**/api/presign", async (route) => {
-      const body = route.request().postDataJSON() as { hash: string; kind: string };
-      const name = body.kind === "sidecar" ? `${body.hash}.json` : body.kind === "icon" ? `${body.hash}.png` : body.hash;
-      await route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({ url: `https://store.opendai.app/__put/${name}`, method: "PUT", headers: {}, href: `https://store.opendai.app/${name}`, token: "t.link" }),
-      });
-    });
-    await context.route("https://store.opendai.app/__put/**", async (route) => {
-      const name = new URL(route.request().url()).pathname.slice("/__put/".length);
-      bucket.set(name, route.request().postDataBuffer() ?? Buffer.alloc(0));
-      await route.fulfill({ status: 200, body: "" });
-    });
-    await context.route("https://store.opendai.app/*", async (route) => {
-      const name = new URL(route.request().url()).pathname.slice(1);
-      const held = bucket.get(name);
-      if (!held) return route.fulfill({ status: 404, body: "" });
-      await route.fulfill({ status: 200, headers: { "access-control-allow-origin": "*" }, body: held });
-    });
+    await context.addInitScript(
+      (cfg) => {
+        (window as unknown as { __daiStore: unknown }).__daiStore = cfg;
+      },
+      { presignUrl: `${storeBase}/presign`, publicBase: `${storeBase}/` },
+    );
   }
 
   const useRelay = (page: Page): Promise<void> =>
