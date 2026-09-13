@@ -63,6 +63,11 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | — | QR for a reference link | [ ] only useful once a store is ordinary; see 2.5 |
 | — | Desktop signs with a key it keeps | [ ] it builds unsigned today; the page says so |
 | — | Trusted Types | [x] `eec29fe` — on for kit-only apps; advice for the rest |
+| L3 | Documentation overhaul (the recipe is behind) | [~] `rules.ts`, generated pages and model file |
+| D1 | Kit writes shared tables; kit redraws on merge | [ ] documented as local-only meanwhile |
+| D2 | Refusal registry lacks the app-facing codes | [ ] |
+| D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
+| D4 | An invite carries every session | [ ] `exportSession` has no caller |
 
 ---
 
@@ -331,6 +336,12 @@ state.
 
 ### L3 — The recipe is behind the opener, and there is no worked-examples page
 
+*In progress (13 September): the documentation overhaul. The recipe is replaced
+by `src/rules.ts` — constraints with stable IDs, from which the model file, the
+MCP text and the human reference pages are generated, and each constraint is
+tied to its code anchor by a test. What it found that is not documentation is
+the section below.*
+
 The recipe is what a model receives through MCP, so a stale recipe means every
 generated app is built against yesterday's format — the damage is upstream of
 every door. It is materially behind what the opener does. Gaps, in order of how
@@ -367,6 +378,99 @@ it covers conflicts, sessions, arriving updates, and opens with the shape
 decision; a worked-examples page ships one app per shape with its decision and
 its costs stated; a test greps the recipe for `_current`, `_conflicts` and the
 shape question so it cannot silently fall behind again.
+
+## Later — what the documentation overhaul found in the code
+
+Found while verifying every documented claim against `main`. Each is a code or
+specification change, not a documentation one, so the documentation states the
+behavior as it is today and these are where it changes.
+
+### D1 — The kit writes shared tables with raw SQL, and never redraws on a merge
+
+Run, not read (13 September, against the rewrite in `node:sqlite`): a kit write
+control — `data-run` or `<dai-form run=…>` — against a replicated table fails.
+An INSERT throws SQLite's own `NOT NULL constraint failed: <table>._r_replica`,
+which is not a named refusal; an UPDATE or DELETE of an existing row throws
+`REPLICATED_TABLE_IMMUTABLE`. The same in a session document. The kit catches
+none of them (`src/kit.ts` `run`), so the throw escapes the click handler, a
+form keeps what was typed, and the person sees nothing. And the kit redraws only
+after its own writes (`refresh`), never on `dai:merged`.
+
+Documented for now as: the kit's write controls are for local tables; shared
+tables are written through `window.dai.replicated`; the kit's reading elements
+work over the `_current` views, and an app redraws them on a merge with
+`window.daiKit.refresh()`.
+
+That undermines the kit's own argument — most of an app as HTML and SQL rather
+than code — exactly where the format is most distinctive. Two changes:
+
+1. **The kit listens for `dai:merged` and calls `refresh`.** Small, and it helps
+   every app, shared or not. No trigger needed: take it with the next kit change.
+2. **A kit write control that targets a replicated table goes through the write
+   surface** instead of raw SQL — `INSERT` to `insert`, and a change or remove
+   addressed by the row's entity rather than by `WHERE id =`. This needs a
+   design for how a control names an entity and, in a session document, a
+   session. **Trigger:** the first eval candidate for a shared prompt that fails
+   `shared-raw-write` through a kit control, or the next shared example that
+   would be shorter in the kit — whichever comes first.
+
+**Exit:** a kit-only shared app (the receipts example rewritten in the kit)
+inserts, changes and removes a shared row and redraws when the other copy's row
+arrives, with no JavaScript of its own; the constraint text changes to match in
+the same commit.
+
+### D2 — The refusal registry omits the codes an app author actually meets
+
+`src/refusals.ts` is the registry, and `tests/site-claims.spec.ts` holds the
+host-bridge table to it — every registered name is in the table. The check runs
+one way only. The codes a developer writing an application meets are thrown in
+the frame and are not registered: `REPLICATED_TABLE_IMMUTABLE` and `ROW_REJECTED`
+(the replicated-table triggers, `src/replicated.ts`), `NOT_SEAT_CREATOR`,
+`WRITE_SURFACE_UNAVAILABLE`, `WRITE_RULES_NOT_DELIVERED`, `NO_DOCUMENT_OPEN`
+(`src/runtime/bootloader.ts`), `NOT_REPLICATED`, `SCHEMA_MISMATCH`,
+`UNSUPPORTED_LEVEL` (`src/replicated-frame.ts`), `REPLICATION_SCHEMA_INVALID`,
+the `MAILBOX_*` family and the `MERGE_*` family. So `site-claims` passes while
+the codes a developer sees are undocumented — a checker that covers less than
+it appears to.
+
+**Exit:** every code the source can throw or return as a refusal is in the
+registry, and a test enumerates them from the source (the `RAISE(ABORT, …)`
+strings and the thrown and returned code strings) and fails on one the registry
+lacks — so the next code cannot be added without its entry.
+
+### D3 — The specification is behind the code to the point of contradiction
+
+`docs/spec-v0.2.md` §9 says a reader MUST accept `manifestVersion` 2 and 3 and
+MUST refuse any other value; the code accepts `[2, 3, 4]`
+(`SUPPORTED_MANIFEST_VERSIONS`, `src/container.ts`) and a replicated build emits
+4 (T1-D25). There is no normative text for version 4, replicated tables, the
+`_heads` / `_conflicts` / `_current` views, the session profile, seats and
+bindings, the close, or `dai:merged`. The website's `docs/specification.md` is
+headed v0.1. The design record for all of it is
+`docs/profiles-and-confidentiality-2.1.1.md`, superseded in places by the
+numbered decisions in `docs/replicated-tables.md`.
+
+Scoped separately, when asked for: a v0.3 that is normative for version 4,
+with the Python reader implemented from its text as version 3 was.
+
+### D4 — An invite carries every session in the document, not only the one
+
+T1-D28 decides that an invite is the document filtered to one session, and the
+filter exists — `exportSession` (`src/replicated-export.ts`) over
+`filterToSession` (`src/replicated-rows.ts`). Nothing calls it outside
+`tests/session-export.spec.ts`. The runner's share sheet packages the whole
+document (`currentHtml(withData)`, `apps/runner/src/main.ts`), so a person who
+invites someone into one game sends every game the file holds, and 2.1.1 §5.2
+rule 4 ("export is one session") does not hold in the shipped host.
+
+The documentation says what happens today — the share sheet sends the document
+— and does not promise per-session invites.
+
+**Exit:** sharing from inside a session document produces the filtered invite
+through `exportSession`; an end-to-end test opens the invite and finds only
+that session's rows.
+
+---
 
 ## Phase 0 — Make "open from a stranger" true
 
