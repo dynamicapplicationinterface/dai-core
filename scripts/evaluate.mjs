@@ -30,14 +30,91 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cli = join(repo, "dist", "bin.js");
 const harness = join(repo, "scripts", "try-container.mjs");
+const { rewriteReplicated } = await import(pathToFileURL(join(repo, "dist", "replicated.js")).href);
 
-/** The stages an application passes through, in order. */
-const STAGES = ["checked", "built", "mounted", "usable"];
+/**
+ * The stages an application passes through, in order.
+ *
+ * `shaped` applies only to a shared prompt (passable or session): does the
+ * source declare the shape the prompt needs, and store nothing it should
+ * derive? A shared prompt stops there, because a shared document writes only
+ * under a host and try-container opens the file without one — so its mounted
+ * and usable stages are reported as not measured rather than run and failed.
+ */
+const STAGES = ["checked", "built", "shaped", "mounted", "usable"];
+
+const isShared = (prompt) => prompt.shape === "passable" || prompt.shape === "session";
+
+/** The stage a prompt counts as passing at: as far as this harness can honestly see. */
+const targetOf = (prompt) => (isShared(prompt) ? "shaped" : "usable");
+
+/** The body of `CREATE TABLE <name> ( … )` as written, or null. */
+function tableBody(schema, name) {
+  const start = new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?["\`]?${name}["\`]?\\s*\\(`, "i").exec(schema);
+  if (!start) return null;
+  let depth = 1;
+  let index = start.index + start[0].length;
+  const begin = index;
+  while (index < schema.length && depth > 0) {
+    if (schema[index] === "(") depth += 1;
+    else if (schema[index] === ")") depth -= 1;
+    index += 1;
+  }
+  return schema.slice(begin, index - 1);
+}
+
+/** The column names a CREATE TABLE body declares, table constraints skipped. */
+function columnNames(body) {
+  const bare = body.replace(/--[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const parts = [];
+  let depth = 0;
+  let current = "";
+  for (const char of bare) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth -= 1;
+    if (char === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  parts.push(current);
+  return parts
+    .map((part) => /^\s*["`]?([A-Za-z_][A-Za-z0-9_]*)/.exec(part)?.[1])
+    .filter((name) => name && !/^(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN)$/i.test(name));
+}
+
+/** Why a shared candidate's source does not have the shape its prompt needs, or null. */
+function notShaped(prompt, directory) {
+  const path = join(directory, "schema.sql");
+  if (!existsSync(path)) return "no schema.sql, so no table is shared";
+  const schema = readFileSync(path, "utf8");
+  let rewritten;
+  try {
+    rewritten = rewriteReplicated(schema);
+  } catch (error) {
+    return error.message;
+  }
+  if (rewritten.tables.length === 0) return "no table is marked -- dai:replicated, so nothing is shared (SHARED-MARKER)";
+  if (prompt.shape === "session" && !rewritten.session) {
+    return "no -- dai:profile session line, so a forwarded copy could take part (SESSION-PROFILE)";
+  }
+  if (prompt.shape === "passable" && rewritten.session) return "a session profile on a passable document";
+  const derived = (prompt.expect?.derived ?? []).map((name) => name.toLowerCase());
+  for (const table of rewritten.tables) {
+    const stored = columnNames(tableBody(schema, table) ?? "").filter((name) => derived.includes(name.toLowerCase()));
+    if (stored.length) {
+      return `${table} stores ${stored.join(", ")}, which should be derived from the rows (SHARED-NO-DERIVED-STATE)`;
+    }
+  }
+  return null;
+}
 
 function run(command, args, options = {}) {
   try {
@@ -67,7 +144,7 @@ function run(command, args, options = {}) {
  * things wrong with it.
  */
 function score(prompt, directory) {
-  const result = { id: prompt.id, reached: null, failedAt: null, why: null };
+  const result = { id: prompt.id, target: targetOf(prompt), reached: null, failedAt: null, why: null };
 
   // 1. Would this work inside a container at all?
   const checked = run(process.execPath, [cli, "check", directory, "--json"]);
@@ -91,7 +168,21 @@ function score(prompt, directory) {
   }
   result.reached = "built";
 
-  // 3. Does it open, and can somebody use it?
+  // 3, for a shared prompt only. Declared the shape it needs, derived what it should?
+  if (isShared(prompt)) {
+    const why = notShaped(prompt, directory);
+    if (why) {
+      result.failedAt = "shaped";
+      result.why = why;
+      return result;
+    }
+    result.reached = "shaped";
+    result.unmeasured =
+      "mounted and usable: a shared document writes only under a host, and this harness opens the file without one";
+    return result;
+  }
+
+  // 4. Does it open, and can somebody use it?
   const tried = run(process.execPath, [
     harness,
     directory,
@@ -163,18 +254,21 @@ function main(argv) {
       // Recorded rather than skipped. A model that produced nothing for a
       // prompt failed that prompt, and quietly dropping it would score the
       // ones it managed and call that the rate.
-      results.push({ id: prompt.id, reached: null, failedAt: "missing", why: "no candidate" });
+      results.push({ id: prompt.id, target: targetOf(prompt), reached: null, failedAt: "missing", why: "no candidate" });
       continue;
     }
     results.push(score(prompt, directory));
   }
 
   const usable = results.filter((result) => result.reached === "usable").length;
+  // A prompt passes at its target: usable for a solo one, shaped for a shared one.
+  const passed = results.filter((result) => result.reached !== null && result.reached === result.target).length;
   const summary = {
     candidates: root,
     prompts: results.length,
     usable,
-    rate: results.length ? Math.round((usable / results.length) * 100) : 0,
+    passed,
+    rate: results.length ? Math.round((passed / results.length) * 100) : 0,
     byStage: Object.fromEntries(
       STAGES.map((stage) => [
         stage,
@@ -191,12 +285,15 @@ function main(argv) {
 
   process.stdout.write(
     `${root}\n` +
-      `  ${usable} of ${results.length} usable (${summary.rate}%)\n` +
+      `  ${passed} of ${results.length} reached their target (${summary.rate}%); ${usable} usable\n` +
       STAGES.map((stage) => `  ${stage.padEnd(8)} ${summary.byStage[stage]}`).join("\n") +
       "\n\n",
   );
   for (const result of results) {
-    if (result.reached === "usable") continue;
+    if (result.reached !== null && result.reached === result.target) {
+      if (result.unmeasured) process.stdout.write(`  ${result.id}: reached ${result.reached}; not measured — ${result.unmeasured}\n`);
+      continue;
+    }
     process.stdout.write(`  ${result.id}: failed at ${result.failedAt} — ${result.why}\n`);
   }
 

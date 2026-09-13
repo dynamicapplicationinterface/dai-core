@@ -80,6 +80,16 @@
         "sql": "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_dai_meta'",
         "atLeast": 1
       }
+    },
+    {
+      "id": "two-player-game",
+      "shape": "session",
+      "ask": "Connect Four for two people who play by sending the document back and forth, each on their own phone: start a game against someone, invite them, drop a disc in a column when it is your turn, and see whose turn it is and who has won. Only the two people in a game may play it.",
+      "note": "Scored as far as a harness without a host can see: a shared document writes only under a host, and this harness opens the file without one. So it stops at shaped — the lint's shared-table checks at checked, the build, then the declared shape and no stored derived state — and mounted and usable are reported as not measured, never as passed. The same application driven across two devices in the real host is what tests/examples-shared.spec.ts does for the examples.",
+      "expect": {
+        "derived": ["board", "grid", "cells", "winner", "result", "status", "current_player", "next_player", "to_move", "whose_turn", "updated_at", "last_move", "move_count", "moves_count"],
+        "why": "The session constraints, where they can be read from the source: a -- dai:profile session line, at least one shared table, and no shared column holding what should be derived from the moves. Reading _current, listening for dai:merged, showing conflicts and writing through window.dai.replicated are the lint's, at checked."
+      }
     }
   ]
 }
