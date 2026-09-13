@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
-import { reloadPage } from "./reload.js";
+import { cutTheNetwork } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -45,15 +45,14 @@ test.describe("opening a document you already have, with no network", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
     /*
-     * Anything that reaches the network from here is a failure, whether or not
-     * it is fatal. Recorded rather than asserted immediately so the report
-     * names what asked, instead of only that something did.
+     * Every request aborted from here on, and each one recorded. "Comes back on
+     * its own" means nothing reaches the network — the service worker serves it
+     * all from cache — so an aborting route proves the claim directly, and any
+     * request at all becomes a named failure rather than an invisible one. See
+     * tests/offline.ts for why this replaced offline emulation.
      */
-    const attempted: string[] = [];
-    page.on("requestfailed", (request) => attempted.push(request.url()));
-
-    await context.setOffline(true);
-    await reloadPage(page);
+    const net = await cutTheNetwork(context, page);
+    await page.reload();
 
     // The document comes back by itself: an app that opened on an empty
     // chooser would have remembered nothing, whatever it had stored.
@@ -64,6 +63,6 @@ test.describe("opening a document you already have, with no network", () => {
 
     // The engine included, which is the megabyte that would otherwise be the
     // one thing standing between this and working on a train.
-    expect(attempted, `these went to the network: ${attempted.join(", ")}`).toEqual([]);
+    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
   });
 });

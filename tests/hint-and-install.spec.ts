@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { encodeInline } from "../src/link.js";
 import { openFile } from "./open.js";
-import { reloadPage } from "./reload.js";
+import { cutTheNetwork } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -70,7 +70,7 @@ test.describe("the hint only says which entry to try", () => {
     // Now a link carrying the *other* document, hinted as the held one.
     const value = await encodeInline(other.html, HOST);
     await page.goto(`${RUNNER_URL}#a=${value}&u=${held.uuid}`);
-    await reloadPage(page);
+    await page.reload();
 
     // The card, not a mount: this is a document this device has not seen.
     const card = page.locator("#card-open");
@@ -126,10 +126,12 @@ test.describe("an icon for a document this device holds", () => {
     });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
-    // The icon's address, launched with nothing available to fetch.
-    await context.setOffline(true);
+    // The icon's address, launched with nothing available to fetch: every
+    // request aborted and recorded, so a held open that touches the network
+    // fails by name (see tests/offline.ts).
+    const net = await cutTheNetwork(context, page);
     await page.goto(`${RUNNER_URL}#u=${held.uuid}`);
-    await reloadPage(page);
+    await page.reload();
 
     // Straight in: a document this device holds is not a document from a
     // stranger, so there is no card to press through.
@@ -137,6 +139,7 @@ test.describe("an icon for a document this device holds", () => {
     await expect(
       page.frameLocator("#cartridge").frameLocator("#dai-app").locator("body"),
     ).toContainText(/chore/i, { timeout: 60_000 });
+    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
   });
 
   test("the offer to keep it appears only for a document that is held", async ({ page }) => {

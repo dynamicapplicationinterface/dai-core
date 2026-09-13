@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
-import { reloadPage } from "./reload.js";
+import { cutTheNetwork } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -46,7 +46,7 @@ test.describe("the device probe", () => {
     // The reload is the point: a CryptoKey that survives structured cloning
     // into IndexedDB but cannot sign afterwards would read as success to
     // anything that only checked the record was there.
-    await reloadPage(page);
+    await page.reload();
     await expect(page.locator("#persist")).toContainText("Still signs");
     await expect(page.locator("#persist")).toContainText("yes");
   });
@@ -157,8 +157,9 @@ test.describe("which build this is", () => {
     await page.waitForFunction(() => navigator.serviceWorker?.controller !== null, undefined, {
       timeout: 60_000,
     });
-    await context.setOffline(true);
-    await reloadPage(page);
+    const net = await cutTheNetwork(context, page);
+    await page.reload();
     await expect(page.locator("#chooser-version")).toHaveText(/^[0-9a-f]{7} · /);
+    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
   });
 });

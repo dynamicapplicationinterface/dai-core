@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { readFileSync } from "node:fs";
 import { INLINE_CAP, decodeInline, encodeInline, inlineFrom, inlineLink } from "../src/link.js";
-import { reloadPage } from "./reload.js";
+import { cutTheNetwork } from "./offline.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -111,7 +111,7 @@ test.describe("a document in the link", () => {
       timeout: 60_000,
     });
 
-    await context.setOffline(true);
+    const net = await cutTheNetwork(context, page);
     /*
      * Reloaded, not merely navigated.
      *
@@ -122,7 +122,7 @@ test.describe("a document in the link", () => {
      * this test is about the fresh open, so it forces one.
      */
     await page.goto(`${RUNNER_URL}#a=${value}`);
-    await reloadPage(page);
+    await page.reload();
 
     // The card first: a document from a link is a document from a stranger,
     // and nothing mounts until somebody asks for it.
@@ -130,10 +130,12 @@ test.describe("a document in the link", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
     // And it ran, with no network at all: the engine came from this app's own
-    // cache, and the application from the address bar.
+    // cache, and the application from the address bar. Nothing reached the
+    // network, and the recorder proves it (see tests/offline.ts).
     await expect(
       page.frameLocator("#cartridge").frameLocator("#dai-app").locator("body"),
     ).toContainText(/chore/i, { timeout: 60_000 });
+    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
   });
 
   test("a link cut in transit says so, rather than failing silently", async ({ page }) => {
@@ -145,7 +147,7 @@ test.describe("a document in the link", () => {
     const value = await encodeInline(built.html, HOST);
 
     await page.goto(`${RUNNER_URL}#a=${value.slice(0, Math.floor(value.length / 2))}`);
-    await reloadPage(page);
+    await page.reload();
 
     // The likely cause named, because the alternative reading — that this
     // opener is broken — is the one somebody reaches on their own.
