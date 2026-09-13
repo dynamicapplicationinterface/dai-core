@@ -1896,6 +1896,26 @@ window.addEventListener("message", (event) => {
       message?: string;
       detail?: string;
     };
+    // TEMPORARY INSTRUMENTATION (fix/shell-frame-channel): a forged refusal
+    // reaches the report ("Forged.") on Firefox. Log what the two guards below
+    // actually see — the source identity and whether a nonce is held — so one
+    // CI run says which forgery got through and why, before the fix.
+    // eslint-disable-next-line no-console
+    console.log(
+      "[refusalguard] " +
+        JSON.stringify({
+          message: refusal.message,
+          sourceNull: event.source === null,
+          sourceIsFrame: event.source === cartridgeFrame.contentWindow,
+          sourceIsSelf: event.source === window,
+          frameWindowNull: cartridgeFrame.contentWindow === null,
+          sourcePasses: event.source === cartridgeFrame.contentWindow,
+          mountedNonce: mountedNonce === null ? null : "set",
+          refusalNonce: refusal.sessionNonce ?? null,
+          noncePasses: !(mountedNonce && refusal.sessionNonce !== mountedNonce),
+        }),
+    );
+
     if (event.source !== cartridgeFrame.contentWindow) return;
     if (mountedNonce && refusal.sessionNonce !== mountedNonce) return;
     if (refusal.reason === "MOUNT_TIMEOUT") {

@@ -65,6 +65,10 @@ test.describe("a refusal raised before the handshake", () => {
 
   test("from a window that is not the cartridge is ignored, before and after a handshake", async ({ page }) => {
     test.slow();
+    // TEMPORARY (fix/shell-frame-channel): surface the runner's [refusalguard].
+    page.on("console", (message) => {
+      if (message.text().includes("[refusalguard]")) console.log("CONSOLE:", message.text());
+    });
     await page.goto(RUNNER_URL);
     await openFile(page, resolve(repo, "tests/fixture/fixture.dai.html"));
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
