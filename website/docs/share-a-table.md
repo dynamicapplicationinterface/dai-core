@@ -21,8 +21,6 @@ setting, a draft, which item is showing — in ordinary local tables beside it.
 
 <!--@include: ./parts/constraint/SHARED-NO-UNIQUE-CHECK.md-->
 
-<!--@include: ./parts/constraint/SHARED-NO-TRAILING-COMMENT.md-->
-
 <!--@include: ./parts/constraint/SHARED-LOCAL-STAYS-LOCAL.md-->
 
 ## Write through the write surface

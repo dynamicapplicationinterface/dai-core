@@ -257,6 +257,22 @@ function declaredAbove(sql: string, start: number): boolean {
   return lastLine.slice(2).trim().toLowerCase() === REPLICATED_MARKER;
 }
 
+/** True when the last line of `text` ends in a `--` comment outside any quote. */
+function endsInLineComment(text: string): boolean {
+  const line = text.slice(text.lastIndexOf("\n") + 1);
+  let quote: string | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") quote = char;
+    else if (char === "-" && line[index + 1] === "-") return true;
+  }
+  return false;
+}
+
 /** The three things §3 refuses, checked against the author's own column list. */
 function checkAuthorColumns(name: string, body: string): void {
   const bare = [...scan(body)].map((c) => (c.code ? c.char : " ")).join("");
@@ -656,7 +672,12 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     out += /\bIF\s+NOT\s+EXISTS\b/i.test(header)
       ? header
       : header.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
-    out += `${authorBody},\n${replicationColumns(session !== null)}\n)${tail}`;
+    // A line comment on the author's last line would swallow a comma appended
+    // after it, and the table would build and then refuse to open. The comma
+    // goes on its own line in that case only, so every schema that already
+    // worked rewrites to exactly the text it did before — and its digest with it.
+    const separator = endsInLineComment(authorBody) ? "\n," : ",";
+    out += `${authorBody}${separator}\n${replicationColumns(session !== null)}\n)${tail}`;
     // Author tables are admission-filtered in a session document: their heads
     // are recomputed over the members' rows (T1-D29), and the close policy is
     // baked into the late-row predicate (T1-D32). The roster tables that carry

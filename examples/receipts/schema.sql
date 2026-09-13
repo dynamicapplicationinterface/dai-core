@@ -17,14 +17,12 @@
 --   * Which name this copy's person goes by is about this copy, not the
 --     document, so it lives in a local table.
 
--- paid_by is the name of whoever paid. (No comment after the last column:
--- see SHARED-NO-TRAILING-COMMENT.)
 -- dai:replicated
 CREATE TABLE IF NOT EXISTS receipts (
   spent_on TEXT NOT NULL,     -- the date on the receipt, YYYY-MM-DD, as entered
   store    TEXT NOT NULL,
   cents    INTEGER NOT NULL,  -- the amount, in cents
-  paid_by  TEXT NOT NULL
+  paid_by  TEXT NOT NULL      -- the name of whoever paid
 );
 
 -- Local: never merged. May use keys and checks freely.

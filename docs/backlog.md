@@ -67,8 +67,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D1 | Kit writes shared tables; kit redraws on merge | [ ] documented as local-only meanwhile |
 | D2 | Refusal registry lacks the app-facing codes | [ ] |
 | D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
-| D4 | An invite carries every session | [ ] `exportSession` has no caller |
-| D5 | Comment after a shared table's last column breaks the rewrite | [ ] documented and linted meanwhile |
+| D4 | An invite carries every session | [ ] the filter (`exportSession`) exists and is unused — wire it, don't rebuild it |
+| D5 | Comment after a shared table's last column breaks the rewrite | [~] rewrite fixed; the build still does not execute the rewritten schema |
 
 ---
 
@@ -458,10 +458,13 @@ with the Python reader implemented from its text as version 3 was.
 
 ### D4 — An invite carries every session in the document, not only the one
 
-T1-D28 decides that an invite is the document filtered to one session, and the
-filter exists — `exportSession` (`src/replicated-export.ts`) over
-`filterToSession` (`src/replicated-rows.ts`). Nothing calls it outside
-`tests/session-export.spec.ts`. The runner's share sheet packages the whole
+T1-D28 decides that an invite is the document filtered to one session, and
+**the filter is built, reviewed and tested — and unused.** `exportSession`
+(`src/replicated-export.ts`) over `filterToSession` (`src/replicated-rows.ts`)
+does the whole job, including refusing a malformed source with
+`SESSION_EXPORT_INCOMPLETE`, and `tests/session-export.spec.ts` covers it. Both
+halves were needed and only one landed: nothing on the invite path calls it.
+**Do not rebuild the filter** — wire it. The runner's share sheet packages the whole
 document (`currentHtml(withData)`, `apps/runner/src/main.ts`), so a person who
 invites someone into one game sends every game the file holds, and 2.1.1 §5.2
 rule 4 ("export is one session") does not hold in the shipped host.
@@ -493,13 +496,17 @@ Two changes:
 2. **The build executes the rewritten schema** in SQLite, so a rewrite that
    produces invalid SQL is refused at build with its reason rather than at open.
 
-Documented meanwhile as constraint `SHARED-NO-TRAILING-COMMENT`, enforced by
-the lint (`shared-trailing-comment`).
+**Change 1 is done** (13 September): the comma goes on its own line when the
+author's last line ends in a comment, and only then, so every schema that
+opened before rewrites to the same text. The stopgap constraint
+`SHARED-NO-TRAILING-COMMENT` and its lint check came out in the same change;
+`tests/rules.spec.ts` now asserts such a table opens, in a session document too,
+and that a schema without the comment rewrites byte for byte as before.
 
-**Exit:** a replicated table whose last column carries a line comment builds
-and opens; the build refuses a rewrite SQLite rejects; the constraint and the
-lint check are removed in the same commit — `tests/rules.spec.ts` asserts the
-defect still exists, so it fails first and forces that.
+**Still open: change 2.** The build does not execute the rewritten schema, so
+the next rewrite defect of this kind would again build clean and fail at open.
+
+**Exit:** the build refuses a rewrite SQLite rejects, with its reason.
 
 ---
 

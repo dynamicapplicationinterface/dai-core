@@ -268,14 +268,6 @@ const SHARED_CHECKS = {
       "two edits. See SHARED-SURFACE-CONFLICTS.",
     fix: "Read _r_conflicted from the _current view, show the competing versions from _heads, and let the person choose.",
   },
-  "shared-trailing-comment": {
-    what: "The last column of a shared table ends with a -- comment.",
-    why:
-      "The compiler adds its own columns after your last one, and a line comment there swallows the comma " +
-      "between them: the document builds, then fails to open with near \"_r_replica\": syntax error. " +
-      "See SHARED-NO-TRAILING-COMMENT.",
-    fix: "Move that comment above the table, or onto an earlier column's line.",
-  },
   "shared-table-constraint": {
     what: "A shared table declares UNIQUE or CHECK.",
     why:
@@ -343,17 +335,6 @@ function lintShared(files: Record<string, string>): (Finding & { file: string })
     })
   ) {
     findings.push(sharedFinding("shared-table-constraint", schemaName));
-  }
-  if (
-    tables.some((table) => {
-      const body = tableBody(schema, table);
-      if (body === null) return false;
-      // The line the rewrite appends its comma to, as src/replicated.ts trims it.
-      const last = body.replace(/[\s,]+$/, "").split("\n").pop() ?? "";
-      return last.replace(/'(?:[^']|'')*'/g, "''").includes("--");
-    })
-  ) {
-    findings.push(sharedFinding("shared-trailing-comment", schemaName));
   }
 
   const code = Object.entries(files).filter(([name]) => /\.(?:html?|m?js|ts)$/i.test(name));

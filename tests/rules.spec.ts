@@ -296,17 +296,20 @@ test.describe("what the constraints claim, run against the rewrite", () => {
     expect(failure(() => db.exec("DELETE FROM items"))).toContain("REPLICATED_TABLE_IMMUTABLE");
   });
 
-  test("SHARED-NO-TRAILING-COMMENT: a comment on the last shared column still breaks the rewrite", () => {
-    // A known defect, documented rather than fixed here (backlog D5). When the
-    // rewrite is fixed this fails — and the constraint and the lint check that
-    // work around it come out in the same change.
-    const commented = "-- dai:replicated\nCREATE TABLE IF NOT EXISTS t (\n  a TEXT NOT NULL,\n  b TEXT NOT NULL -- note\n);\n";
-    expect(failure(() => open(commented))).toContain('near "_r_replica": syntax error');
-    expect(failure(() => open(commented.replace(" -- note", "")))).toBe("(no error)");
-    expect(lintFiles({ "schema.sql": commented }).map((f) => f.id)).toContain("shared-trailing-comment");
-    const earlierOnly = commented.replace(" -- note", "").replace("NOT NULL,", "NOT NULL, -- fine here");
-    expect(lintFiles({ "schema.sql": earlierOnly }).map((f) => f.id)).not.toContain("shared-trailing-comment");
-    expect(failure(() => open(earlierOnly))).toBe("(no error)");
+  test("a comment after the last shared column opens, and a schema without one rewrites exactly as before (D5)", () => {
+    // It used to build and then refuse to open: the appended comma landed inside
+    // the comment. Now it opens — in a session document too, whose extra column
+    // is appended the same way — and a row can be written to it.
+    const commented = "-- dai:replicated\nCREATE TABLE IF NOT EXISTS t (\n  a TEXT NOT NULL,\n  b TEXT NOT NULL -- note, with 'quotes'\n);\n";
+    expect(failure(() => open(commented))).toBe("(no error)");
+    expect(failure(() => open(`-- dai:profile session max_parties=2\n${commented}`))).toBe("(no error)");
+    // A -- inside a string is not a comment, and must not move the comma.
+    const quoted = "-- dai:replicated\nCREATE TABLE IF NOT EXISTS t (\n  a TEXT NOT NULL DEFAULT '--'\n);\n";
+    expect(rewriteReplicated(quoted).sql).toContain("DEFAULT '--',\n  _r_replica");
+    // The unchanged case is byte-for-byte the old text, so no existing digest moves.
+    const plain = "-- dai:replicated\nCREATE TABLE IF NOT EXISTS t (\n  a TEXT NOT NULL\n);\n";
+    expect(rewriteReplicated(plain).sql).toContain("a TEXT NOT NULL,\n  _r_replica");
+    expect(rewriteReplicated(read("tests/fixture/chess/schema.sql")).sql).not.toContain("\n,\n  _r_replica");
   });
 
   test("SESSION-ROW-CARRIES-SESSION: an insert without its session is refused, with one it is written", () => {

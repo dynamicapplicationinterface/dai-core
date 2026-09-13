@@ -24,13 +24,11 @@ CREATE TABLE IF NOT EXISTS games (
   o_name TEXT NOT NULL
 );
 
--- cell is 0..8, left to right, top to bottom. (No comment after the last
--- column: see SHARED-NO-TRAILING-COMMENT.)
 -- dai:replicated
 CREATE TABLE IF NOT EXISTS marks (
   game_id TEXT NOT NULL,     -- the games row's entity, as hex
   turn    INTEGER NOT NULL,  -- 1-based; X plays odd turns, O even
-  cell    INTEGER NOT NULL
+  cell    INTEGER NOT NULL   -- 0..8, left to right, top to bottom
 );
 
 -- Local: never merged.

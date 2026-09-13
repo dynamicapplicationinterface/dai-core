@@ -377,22 +377,6 @@ export const CONSTRAINTS: readonly Constraint[] = [
     anchors: [{ file: "src/lint.ts", contains: '"shared-table-constraint": {' }],
   },
   {
-    id: "SHARED-NO-TRAILING-COMMENT",
-    title: "No comment after a shared table's last column",
-    shapes: SHARED,
-    topic: "shared",
-    rule:
-      "In a table marked -- dai:replicated, end the last column definition with nothing after it — no -- comment on that line. Put a comment about the last column above the table, or on an earlier column's line. Comments on other columns are fine.",
-    why:
-      "A defect in the compiler today (backlog D5): the rewrite appends its own columns after your last one, and a line comment there swallows the comma between them. The document builds, and then fails to open with SQLite's near \"_r_replica\": syntax error. This constraint goes when the defect is fixed.",
-    enforced: ["lint"],
-    lint: ["shared-trailing-comment"],
-    anchors: [
-      { file: "src/replicated.ts", contains: 'const authorBody = body.replace(/[\\s,]+$/, "");' },
-      { file: "src/replicated.ts", contains: "out += `${authorBody},\\n${replicationColumns(session !== null)}\\n)${tail}`;" },
-    ],
-  },
-  {
     id: "SHARED-NO-R-COLUMNS",
     title: "No column names beginning _r_",
     shapes: SHARED,
