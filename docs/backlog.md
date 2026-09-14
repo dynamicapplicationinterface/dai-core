@@ -89,6 +89,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D23 | The inline dictionary is frozen, and the corpus it was built from has moved | [ ] replacing it strands every link made since 5 September; needs an opener that holds two |
 | D24 | Five isolation tests skipped in CI on every push, and only arithmetic noticed | [~] the probe is committed (`af4584f`); a skip for a missing build step still passes in CI |
 | D25 | `website/public/demo.dai.html`: tracked, written by nothing, read by nothing | [ ] identify before deciding; do not delete on "nothing references it" |
+| D26 | Webkit has no count floor in CI: its runs are sharded, and the gate skips a shard | [ ] its tests run and report failures; one that stops being collected goes unseen |
 
 ---
 
@@ -549,6 +550,25 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D26 — Webkit has no count floor in CI
+
+CI runs webkit in two `--shard` halves, so each finishes inside its budget, and
+the count gate skips a sharded run: a shard's count is a fraction of the whole
+by intent, and holding it to the whole floor would fail every shard. Chromium
+and firefox run whole and are gated. So the floor covers two engines of the
+three. Webkit's number in `tests/count-floor.json` (644) comes from local whole
+runs and is never compared with anything in CI.
+
+Nothing is broken today: webkit's specs still run in CI and still report
+failures. What is missing is the other half of what the gate is for. A webkit
+test that stops being collected — or a webkit-only spec that starts skipping for
+a reason nobody checks, the way the isolation probe's tests did (D24) — passes
+in silence. It is a check that appears to cover three engines and covers two.
+
+**Exit:** gate the sum. Each shard reports its passing count; a step after both
+adds them and holds the total to webkit's floor, which is then what CI passes,
+like the others.
 
 ### D25 — `website/public/demo.dai.html`: tracked, written by nothing, read by nothing
 
