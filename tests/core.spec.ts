@@ -852,6 +852,27 @@ test.describe("parsing bytes and malformed input", () => {
 test.describe("expiry boundaries", () => {
   const now = () => Math.floor(Date.now() / 1000);
 
+  /*
+   * The audit, as it would read at one instant.
+   *
+   * The expiry check reads the real clock (Date.now() > validUntil * 1000).
+   * A test that chose a deadline a fraction of a second away and then built,
+   * signed and parsed before auditing was racing its own machine: on CI under
+   * two workers the audit came after the deadline and a correct container
+   * read as expired. A 1.2-second pause between build and audit makes that
+   * fail every time. What these tests pin is the semantics at the boundary,
+   * so the audit is asked about the instant the deadline was chosen from.
+   */
+  async function auditAt(instant: number, html: string) {
+    const real = Date.now;
+    Date.now = () => instant;
+    try {
+      return await auditContainer(parseContainer(html));
+    } finally {
+      Date.now = real;
+    }
+  }
+
   async function signedInput() {
     const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
       "sign",
@@ -867,8 +888,9 @@ test.describe("expiry boundaries", () => {
   }
 
   test("a second before expiry still runs", async () => {
-    const built = await buildContainer({ ...(await signedInput()), validUntil: now() + 1 });
-    const report = await auditContainer(parseContainer(built.html));
+    const instant = Date.now();
+    const built = await buildContainer({ ...(await signedInput()), validUntil: Math.floor(instant / 1000) + 1 });
+    const report = await auditAt(instant, built.html);
     expect(report.expiry.status).toBe("current");
     expect(report.ok).toBe(true);
   });
@@ -890,15 +912,16 @@ test.describe("expiry boundaries", () => {
     // stamped with the current second is already past it by however many
     // milliseconds have elapsed within that second — it does not stay live
     // until the second ends.
-    const nextSecond = Math.ceil(Date.now() / 1000);
+    const instant = Date.now();
+    const nextSecond = Math.ceil(instant / 1000);
     const live = await buildContainer({ ...(await signedInput()), validUntil: nextSecond });
-    expect((await auditContainer(parseContainer(live.html))).expiry.status).toBe("current");
+    expect((await auditAt(instant, live.html)).expiry.status).toBe("current");
 
     const past = await buildContainer({
       ...(await signedInput()),
-      validUntil: Math.floor(Date.now() / 1000) - 1,
+      validUntil: Math.floor(instant / 1000) - 1,
     });
-    expect((await auditContainer(parseContainer(past.html))).expiry.status).toBe("expired");
+    expect((await auditAt(instant, past.html)).expiry.status).toBe("expired");
   });
 
   test("a far-future expiry is not treated as an error", async () => {
