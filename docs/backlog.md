@@ -90,6 +90,9 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D24 | Five isolation tests skipped in CI on every push, and only arithmetic noticed | [~] the probe is committed (`af4584f`); a skip for a missing build step still passes in CI |
 | D25 | `website/public/demo.dai.html`: tracked, written by nothing, read by nothing | [ ] identify before deciding; do not delete on "nothing references it" |
 | D26 | Webkit has no count floor in CI: its runs are sharded, and the gate skips a shard | [ ] its tests run and report failures; one that stops being collected goes unseen |
+| D27 | CI discarded the trace of every test that failed and passed on retry | [x] `5d71345` — a passed job now keeps each retried test's trace |
+| D28 | A test's browser is sometimes already closed when it starts | [ ] three sightings, at 1, 2 and 7 workers; passes on retry; traces now kept (D27) |
+| D29 | An offline reopen sometimes fetches the document's icon from the network | [ ] a real leak in the offline promise; intermittent |
 
 ---
 
@@ -550,6 +553,67 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D29 — An offline reopen sometimes fetches the document's icon from the network
+
+`offline-second-open.spec.ts:26` ("comes back on its own, engine and all") reopens
+a document this device already holds with the network cut, and requires that
+nothing reaches it. On Firefox in CI (run 34889745158, 14 September) its first
+attempt failed: this was requested, twice —
+
+    http://localhost:5175/doc-icons/6d4410af-bbf0-4cc0-840c-97a46ded3904.png
+
+It passed on retry.
+
+That is not test noise. The test's claim is the offline promise — a document you
+have opens with no network — and the document's own icon went to the network
+anyway. That it happens only sometimes suggests a race between the icon's
+request and the service worker being ready to answer it from its cache.
+
+**Exit:** find what asks for `/doc-icons/` during an offline open, and answer it
+from the cache or do not ask offline; the test then holds it every time.
+
+### D28 — A test's browser is sometimes already closed when it starts
+
+Three sightings, each failing on the first thing the test does, before any of
+its own code: `browser.newContext: Target page, context or browser has been
+closed`.
+
+- CI, chromium, one worker (13 September, run 34788946898): `runner.spec.ts:507`,
+  after runner specs 465 to 498.
+- Locally, chromium, seven workers (14 September): `launch-card.spec.ts:187`,
+  directly after another test in the same file passed.
+- CI, chromium, two workers (14 September, run 34889745158):
+  `host-profile.spec.ts:49`, the first test in its stretch to ask for a browser
+  context, after four that never open a page.
+
+Each passed on retry, and 78 repeats of launch-card under the same load never
+reproduced it. It is not parallelism: it happened at one worker too. Nothing in
+the repository closes or kills a browser. Chromium only, so far.
+
+Until D27 there was nothing to investigate with: the trace of a test that fails
+and then passes on retry was discarded with the passed job.
+
+**Exit:** the next sighting's kept trace says what closed the browser — a crash,
+a worker's teardown, or something the test before it did — and the fix follows
+from that.
+
+### D27 — CI discarded the trace of every test that failed and passed on retry (fixed)
+
+The workflow uploaded the report and traces only when a job failed, and a job
+whose failures all pass on retry is a passed job. So every flake's evidence went
+with it. The run for `41528e1` needed four retries and left nothing to examine:
+a timeout in `returning-document`, a spec changed that morning, could neither be
+cleared nor blamed, and the third sighting of D28 had no more to go on than the
+first two.
+
+`trace: "retain-on-failure"` already kept the failed attempt's trace, including
+one that then passed; it was just never uploaded. `5d71345` adds an upload on a
+passed job, of only what a failed attempt leaves — each `trace.zip` and
+`error-context.md` — so a clean run uploads nothing.
+
+Fixed first, before D28 and D29, because it is what makes them solvable: a flake
+whose evidence is thrown away is investigated again and again and never solved.
 
 ### D26 — Webkit has no count floor in CI
 
