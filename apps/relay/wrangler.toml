@@ -35,5 +35,5 @@ bucket_name = "dai-store"
 # the private one in a secret: `npx wrangler secret put VAPID_PRIVATE_JWK`.
 # Empty is push off: subscriptions are kept and nobody is woken.
 [vars]
-VAPID_PUBLIC_KEY = ""
+VAPID_PUBLIC_KEY = "BLSvgDVvBYa_zvgTPDxD2DfGGJLzQNNziR3ODT1OoNC1AXGBK327aBgKuefUWt9Y7RmHKAhhVpzVeB_a0w8jXac"
 VAPID_SUBJECT = "https://opendai.app"
