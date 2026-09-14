@@ -603,6 +603,21 @@ happens only sometimes, to a different asset each time, points at a race
 between the page's requests during an open and the service worker being ready to
 answer them from its cache, not at any one asset.
 
+**Lead (14 September, from a kept trace):** both assets are ones the *browser*
+fetches for itself from the page's head, not ones the page's code asks for. The
+built opener page carries `<link rel="prefetch" href="./confusables.<id>.json">`
+(injected by `apps/runner/vite.config.ts`), and a document's icon address
+`/doc-icons/<uuid>.png` is what its per-document manifest names for the icon —
+the service worker answers that path from its own cache (`sw.js`), but a
+manifest's icons and a prefetch are fetched by the browser. A trace from a
+different spec (static-opener, Firefox, run 34903935645) shows the prefetch in
+action: the confusable table requested once and aborted (`NS_BINDING_ABORTED`),
+then fetched again 77 ms later by the page itself and answered 200. If Firefox
+makes those browser-initiated fetches without passing through the service
+worker, that is exactly how they would reach the network during an offline
+reopen. Not yet proven: the next D29 trace should show whether the request that
+escaped was the prefetch or manifest fetch, or the page's own.
+
 **Exit:** find why the page's requests can reach the network during an offline
 open — a worker not yet controlling the page, or a request made before its cache
 is consulted — and close that for every asset; the test then holds it every time.
