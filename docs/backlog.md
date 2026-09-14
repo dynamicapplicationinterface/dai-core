@@ -586,13 +586,26 @@ attempt failed: this was requested, twice —
 
 It passed on retry.
 
-That is not test noise. The test's claim is the offline promise — a document you
-have opens with no network — and the document's own icon went to the network
-anyway. That it happens only sometimes suggests a race between the icon's
-request and the service worker being ready to answer it from its cache.
+A second sighting, the same day (run 34900932214, Firefox, 889b3b4), and it
+widened what this is: the request that reached the network was not the icon but
+the confusable table —
 
-**Exit:** find what asks for `/doc-icons/` during an offline open, and answer it
-from the cache or do not ask offline; the test then holds it every time.
+    http://localhost:5175/confusables.bd086572.json
+
+so it is not about icons. An offline reopen sometimes lets *whatever the page
+asks for during the open* reach the network — the icon one time, the confusable
+table the next. The trace of this attempt was kept (`retried-firefox-whole`,
+D27).
+
+That is not test noise. The test's claim is the offline promise — a document you
+have opens with no network — and assets went to the network anyway. That it
+happens only sometimes, to a different asset each time, points at a race
+between the page's requests during an open and the service worker being ready to
+answer them from its cache, not at any one asset.
+
+**Exit:** find why the page's requests can reach the network during an offline
+open — a worker not yet controlling the page, or a request made before its cache
+is consulted — and close that for every asset; the test then holds it every time.
 
 ### D28 — A test's browser is sometimes already closed when it starts
 
@@ -614,6 +627,9 @@ closed`.
   at "reopen mounted the stored database". No crash, exit or signal line; then
   the next test found it closed. What the browser's last work was is a fact;
   whether it matters is not yet known.
+- CI, chromium, two workers (14 September, run 34900932214):
+  `runner.spec.ts:498`, the same spec whose neighbour failed on 13 September.
+  The first CI sighting with its trace kept (`retried-chromium-whole`, D27).
 
 Each passed on retry, and 78 repeats of launch-card under the same load never
 reproduced it. It is not parallelism: it happened at one worker too. Nothing in
