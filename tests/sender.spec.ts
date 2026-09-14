@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { parseContainer } from "../src/container.js";
 import { INLINE_CAP, decodeInline, inlineFrom } from "../src/link.js";
 import { linkFor, lastLine, type Host } from "../src/sender.js";
 import { fsStore } from "../src/store-fs.js";
@@ -216,9 +217,27 @@ test.describe("the share sheet", () => {
     expect(shared?.text).toContain("Tap to open it");
     expect(shared?.text).not.toMatch(/Open it at opendai\.app/);
 
-    // And it is this document: the fragment decodes back to what was opened.
+    /*
+     * And it is this document: the fragment decodes to the same document —
+     * its identity, and every byte of its application and runtime.
+     *
+     * Not byte-equal to the file that was built. Packing-list seeds its rows
+     * the moment it opens, and that write is saved; an export after the save
+     * carries it, which is what a shared document should do. Comparing against
+     * the unopened build made the test a race between the seed's save and the
+     * export, and under load the save won.
+     */
     const value = /#a=([A-Za-z0-9_-]+)/.exec(shared!.text!)![1]!;
-    expect(await decodeInline(value, HOST, engine)).toBe(built.html);
+    const sent = parseContainer(await decodeInline(value, HOST, engine));
+    const opened = parseContainer(built.html);
+    expect(sent.manifest.documentUuid).toBe(opened.manifest.documentUuid);
+    const moves = new Set(["document.sqlite", "runtime/manifest.json"]);
+    const fixed = Object.keys(opened.archive).filter((name) => !moves.has(name)).sort();
+    expect(Object.keys(sent.archive).filter((name) => !moves.has(name)).sort()).toEqual(fixed);
+    for (const name of fixed) {
+      expect(Buffer.compare(sent.archive[name]!, opened.archive[name]!), `${name} differs`).toBe(0);
+      expect(sent.manifest.hashes?.[name], `${name} hash`).toBe(opened.manifest.hashes?.[name]);
+    }
   });
 });
 
