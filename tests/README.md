@@ -30,6 +30,34 @@ So, for any test that claims to prove an end-to-end flow:
 `mailbox-link-e2e.spec.ts` proves the key path: one copy shares a link, the
 other opens it, a move crosses, no injected key.
 
+## The rule for waiting
+
+**Wait for the state your next action depends on, not for the first state that
+happens to be observable.**
+
+A test that waits for something visible and then acts is claiming the thing it
+waited for is what makes the action safe. Three times now it was not:
+
+- `body.loaded` instead of the handshake — the document was drawn before the
+  host and the frame could talk, so the next message had nobody to answer it.
+- The transient `busy` class — present for a moment, gone before a slow machine
+  looked, so the wait was either instant or never.
+- The move in the history while the board was still replaying it — the chess app
+  replays the last move on open and ignores a tap until the replay ends. The
+  history is right from the first frame; the board is not ready for a tap until
+  later. Under load the gap is long enough to swallow the tap, and the test then
+  waited fifteen seconds on a Play button that could never enable.
+
+Each passed on a fast machine and failed on a loaded one, which is what a wait on
+the wrong signal looks like: correct ordering by luck.
+
+So before a wait, name what the next action needs, and wait for that. To play a
+move, the need is "this piece is picked up" — so tap and wait for the board to
+show it selected (`mailbox-link-e2e.spec.ts`, `play()`), not "the move before it
+has arrived." If the app gives no signal for the state you need, that is worth
+knowing on its own: a person has the same problem, and the fix may belong in the
+app.
+
 ## The rule for mocking a same-origin request
 
 **A test that mocks a same-origin request with `page.route` must block service
