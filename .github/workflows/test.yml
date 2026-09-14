@@ -138,3 +138,20 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+      # The evidence for a test that failed and then passed on retry. The step
+      # above runs only when the job fails, and a job whose failures all pass on
+      # retry is a passed job, so every trace of a flake was thrown away — a
+      # flake investigated three times with nothing to look at. `trace:
+      # "retain-on-failure"` already keeps the failed attempt's trace; this keeps
+      # it past the job. Only what a failed attempt leaves, so a clean run
+      # uploads nothing.
+      - if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retried-${{ matrix.browser }}-${{ matrix.part }}
+          path: |
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 14
