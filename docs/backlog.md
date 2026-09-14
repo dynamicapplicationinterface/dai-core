@@ -71,7 +71,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
 | D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
-| D8 | The host runs one mailbox per document | [~] wiring the per-session mailbox, then push on it |
+| D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`6509e41`) |
 | D9 | A tested building block with no caller is not done | [ ] three in one pass; a caller check and a definition of done |
 
 ---
