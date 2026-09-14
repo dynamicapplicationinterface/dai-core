@@ -39,6 +39,7 @@ button:disabled { opacity: 0.5; cursor: default; }
   padding: calc(28px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px)) 0 calc(16px + var(--dai-safe-left, 0px));
   text-align: center;
 }
+.opening.failed { color: var(--ink); text-align: left; max-width: 36em; margin: 0 auto; }
 .notice { background: var(--card); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; }
 .players { color: var(--muted); margin: 16px 0 4px; }
 .status { font-size: 20px; font-weight: 600; margin: 0 0 16px; }

@@ -3,7 +3,7 @@
 // never stored; a merge redraws; a conflict is shown, not decided silently.
 
 const $ = (id) => document.getElementById(id);
-const db = await window.dai.openDatabase();
+let db; // opened by the start-up at the end of this file
 const shared = window.dai.replicated;
 
 /** The entity of the receipt being edited, or null when adding. */
@@ -260,9 +260,18 @@ $("conflict-close").addEventListener("click", () => $("conflict").close());
 // Nothing else says the other person's receipts arrived.
 window.addEventListener("dai:merged", () => draw());
 
-resetForm();
-draw();
-
-// Started: only now is there anything to type into (NO-INPUT-LOST-WHILE-OPENING).
-$("opening").hidden = true;
-$("app").hidden = false;
+// Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be typed into until this
+// has finished, and if it fails the person is told, not left at "Opening…".
+try {
+  db = await window.dai.openDatabase();
+  resetForm();
+  draw();
+  $("opening").hidden = true;
+  $("app").hidden = false;
+  $("app").inert = false;
+} catch (error) {
+  $("opening").classList.add("failed");
+  $("opening").textContent =
+    `These receipts could not be opened: ${error?.message ?? error}. ` +
+    "Try opening the document again in the DAI opener, or ask whoever sent it for a new copy.";
+}

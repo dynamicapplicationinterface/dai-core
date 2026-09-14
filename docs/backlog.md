@@ -70,6 +70,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D4 | An invite carries every session | [ ] the filter (`exportSession`) exists and is unused — wire it, don't rebuild it |
 | D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
+| D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
 
 ---
 
@@ -480,6 +481,19 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D7 — The walkthrough's example shows its forms before it has started
+
+`examples/tasks` — the application the make-one walkthrough compiles — puts two
+`<form>`s on screen (`index.html`, the new-project and compose forms) while
+`app.js` is still waiting on its top-level `await dai.openDatabase()`. That is
+the window NO-INPUT-LOST-WHILE-OPENING closes: whatever a person types there is
+lost, by a replaced page or a reset form depending on the browser. Out of the
+change that added the rule, which fixed the receipts and tic-tac-toe examples.
+
+**Exit:** `examples/tasks` keeps its page hidden and inert until start-up has
+finished, shows what went wrong if it fails, and the walkthrough still builds
+and opens it.
 
 ### D6 — A session seats two people, whatever max_parties says
 

@@ -218,32 +218,78 @@ test.describe("nothing a person does while the app is opening is lost", () => {
   const stillHere = (app: FrameLocator): Promise<boolean> =>
     app.locator("body").evaluate(() => (window as unknown as { __stillHere?: boolean }).__stillHere === true);
 
-  test("while opening there is nothing to type into, and the page is never reloaded", async ({ page }) => {
-    const scratch = mkdtempSync(join(tmpdir(), "dai-opening-"));
-    const container = await build("examples/receipts", "Receipts", scratch);
-    const app = await openWithoutHost(page, container);
+  /** An example copied and changed, then built — the gate under a condition the example does not have. */
+  async function variant(dir: string, name: string, change: (copy: string) => void): Promise<string> {
+    const copy = mkdtempSync(join(tmpdir(), "dai-variant-"));
+    cpSync(join(repo, dir), copy, { recursive: true });
+    change(copy);
+    const built = await compileDirectory({ sourceDir: copy, root: repo, appName: name });
+    const out = join(mkdtempSync(join(tmpdir(), "dai-variant-out-")), "variant.dai.html");
+    writeFileSync(out, built.html, "utf8");
+    return out;
+  }
+  const edit = (path: string, from: string, to: string): void => {
+    const before = readFileSync(path, "utf8");
+    const after = before.replace(from, to);
+    expect(after, `${path}: the change applied`).not.toBe(before);
+    writeFileSync(path, after);
+  };
 
-    await expect(app.locator("#opening")).toBeVisible();
-    await expect(app.locator("#entry")).toBeHidden();
-    // A person trying anyway: keys reach nothing that can submit.
-    await page.keyboard.type("Grocer");
-    await page.keyboard.press("Enter");
+  for (const example of [
+    { dir: "examples/receipts", name: "Receipts", field: "#store", page: "#entry" },
+    { dir: "examples/tic-tac-toe", name: "Tic-tac-toe", field: "#you", page: "#new-game" },
+  ]) {
+    test(`${example.name}: while opening nothing can be typed or submitted, even when a style rule undoes hidden`, async ({ page }) => {
+      // `main { display: flex }` beats the browser's [hidden] rule — the case
+      // hidden alone does not survive, and the one inert is there for.
+      const container = await variant(example.dir, example.name, (copy) => {
+        const css = join(copy, "app.css");
+        writeFileSync(css, `${readFileSync(css, "utf8")}\nmain { display: flex; flex-direction: column; }\n`);
+      });
+      const app = await openWithoutHost(page, container);
 
-    // Started: the form appears, live and empty, in the same page it began in.
-    await expect(app.locator("#entry")).toBeVisible({ timeout: 30_000 });
-    await expect(app.locator("#opening")).toBeHidden();
-    expect(await stillHere(app), "the app frame was reloaded").toBe(true);
-    await expect(app.locator("#store")).toHaveValue("");
-  });
+      await expect(app.locator("#opening")).toBeVisible();
+      await expect(app.locator(example.page), "the style rule really did undo hidden").toBeVisible();
+      // A person trying anyway: focus the field, type, press Enter.
+      await app.locator(example.field).focus().catch(() => undefined);
+      await page.keyboard.type("typed while opening");
+      await page.keyboard.press("Enter");
+      await expect(app.locator(example.field)).toHaveValue("");
+      expect(await app.locator("body").evaluate(() => document.activeElement?.id ?? "")).not.toBe(example.field.slice(1));
 
-  test("without the gate, a submit in that window reloads the app and loses what was typed", async ({ page }) => {
+      // Started: the page is live, in the same frame it began in, and empty.
+      await expect(app.locator("#opening")).toBeHidden({ timeout: 30_000 });
+      expect(await app.locator("#app").evaluate((el) => (el as HTMLElement).inert)).toBe(false);
+      expect(await stillHere(app), "the app frame was reloaded").toBe(true);
+      await expect(app.locator(example.field)).toHaveValue("");
+      await app.locator(example.field).fill("typed once started");
+      await expect(app.locator(example.field)).toHaveValue("typed once started");
+    });
+
+    test(`${example.name}: a start-up that fails says what went wrong instead of "Opening…"`, async ({ page }) => {
+      const container = await variant(example.dir, example.name, (copy) =>
+        edit(
+          join(copy, "app.js"),
+          "db = await window.dai.openDatabase();",
+          'db = await window.dai.openDatabase();\n  throw new Error("start-up broke on purpose");',
+        ),
+      );
+      const app = await openWithoutHost(page, container);
+      await expect(app.locator("#opening")).toContainText("could not be opened", { timeout: 30_000 });
+      await expect(app.locator("#opening")).toContainText("start-up broke on purpose");
+      await expect(app.locator("#opening")).not.toContainText("Opening…");
+      expect(await app.locator("#app").evaluate((el) => (el as HTMLElement).inert), "the page stays out of reach").toBe(true);
+    });
+  }
+
+  test("without the gate, a submit in that window loses what was typed — the page is replaced, or start-up clears the form", async ({ page }) => {
     // The same example with the gate taken out — the pattern both blind
     // candidates copied. Kept as the demonstration that the test above can fail.
     const ungated = mkdtempSync(join(tmpdir(), "dai-ungated-"));
     cpSync(join(repo, "examples", "receipts"), ungated, { recursive: true });
     const index = join(ungated, "index.html");
     const before = readFileSync(index, "utf8");
-    const after = before.replace('<main id="app" hidden>', '<main id="app">');
+    const after = before.replace('<main id="app" hidden inert>', '<main id="app">');
     expect(after, "the gate was removed").not.toBe(before);
     writeFileSync(index, after);
     const built = await compileDirectory({ sourceDir: ungated, root: repo, appName: "Receipts" });

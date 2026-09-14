@@ -41,6 +41,7 @@ button.warn { background: transparent; color: var(--warn); border-color: var(--w
   padding: calc(28px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px)) 0 calc(16px + var(--dai-safe-left, 0px));
   text-align: center;
 }
+.opening.failed { color: var(--ink); text-align: left; max-width: 36em; margin: 0 auto; }
 .notice { background: var(--card); border-left: 4px solid var(--warn); padding: 10px 12px; border-radius: 8px; }
 .balance { margin: 20px 0; }
 .balance p { margin: 4px 0; color: var(--muted); }

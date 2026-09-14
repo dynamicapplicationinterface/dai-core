@@ -4,7 +4,7 @@
 // written through window.dai.replicated and read from the _current views.
 
 const $ = (id) => document.getElementById(id);
-const db = await window.dai.openDatabase();
+let db; // opened by the start-up at the end of this file
 const shared = window.dai.replicated;
 const rows = (sql, bind) => (bind === undefined ? db.selectObjects(sql) : db.selectObjects(sql, bind));
 const one = (sql, bind) => rows(sql, bind)[0] ?? null;
@@ -364,9 +364,18 @@ window.addEventListener("dai:merged", (event) => {
   draw();
 });
 
-joinIfInvited();
-draw();
-
-// Started: only now is there anything to press (NO-INPUT-LOST-WHILE-OPENING).
-$("opening").hidden = true;
-$("app").hidden = false;
+// Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
+// finished, and if it fails the person is told, not left at "Opening…".
+try {
+  db = await window.dai.openDatabase();
+  joinIfInvited();
+  draw();
+  $("opening").hidden = true;
+  $("app").hidden = false;
+  $("app").inert = false;
+} catch (error) {
+  $("opening").classList.add("failed");
+  $("opening").textContent =
+    `This game could not be opened: ${error?.message ?? error}. ` +
+    "Try opening the document again in the DAI opener, or ask whoever sent it for a new copy.";
+}
