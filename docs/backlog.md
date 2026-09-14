@@ -72,7 +72,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
 | D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
 | D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`de2be4f`); older session documents are D10 |
-| D9 | A tested building block with no caller is not done | [~] check in `npm run typecheck`, definition of done in `CONTRIBUTING.md`; found and fixed tic-tac-toe's trigger hole; seven exports await a verdict |
+| D9 | A tested building block with no caller is not done | [x] check in `npm run typecheck`, definition of done in `CONTRIBUTING.md`; found tic-tac-toe's trigger hole on its first run; every finding decided |
 | D10 | Session documents built before per-session mailboxes stay readable by any link holder | [x] decided: cannot be repaired in place; re-create — the app says so |
 | D11 | A large document crashes Safari on iPhone | [ ] not measured; no ceiling, no refusal |
 | D12 | A relay deploy has a window where a post lands in old code | [~] rule in the relay README; one junk item in the bucket |
@@ -84,6 +84,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D18 | Nothing can tell a hole in a mailbox history from an empty stretch | [ ] the property that makes D17 silent; the relay is the one place that can |
 | D19 | The published spec says a reader must refuse version 4 | [ ] one sentence; goes with the next docs change |
 | D20 | A table constraint in a shared table rewrites to SQL that will not load | [ ] refused at build with SQLite's message, not by name; the in-browser compiler would ship it |
+| D21 | A new confusable table leaves untouched publisher pins on the old one | [ ] a pin is re-indexed only when it is saved again |
 
 ---
 
@@ -545,6 +546,30 @@ The documentation says what happens today — the share sheet sends the document
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
 
+### D21 — A new confusable table leaves untouched publisher pins on the old one
+
+Found deciding D9's `refreshed`. A publisher pin stores its name's lookalike
+"skeletons", computed against the confusable table the opener held when the pin
+was saved, and the lookup that warns "this name looks like one you know" searches
+by those stored skeletons (`bySkeleton`). Every save recomputes them against the
+current table (`src/publisher.ts`), so a pin that is used again is brought up to
+date. A pin nobody touches after the opener ships a new table keeps skeletons
+from the old one — and a lookalike the new table would catch is not found,
+because the stale pin is filed under the old skeleton.
+
+`refreshed` was meant to cover this, one pin at a time as a host met them. It
+could not: the pins that matter are exactly the ones a lookup never finds. It
+was never called and is deleted.
+
+Why it matters: the lookalike warning is the defence against a name impersonating
+a publisher somebody already trusts, and a table update is when it is meant to
+get better. Rare — the table changes only when the opener ships a new one — and
+silent.
+
+**Un-parks with the next change to the confusable table**: when the opener loads
+a table whose id differs from a pin's, re-index every pin once (the store needs a
+way to list them), then carry on.
+
 ### D20 — A table constraint in a shared table rewrites to SQL that will not load
 
 Found by building every shipped example through the Node build (15 September).
@@ -865,8 +890,48 @@ the build now refuses any recurrence.
 Dead code it found, removed: `rowsOf`, `batchReplicaHex`, `constraintsFor`.
 `fsMailbox` is allowed, with its reason (the tests' file-backed relay).
 
-**Awaiting a verdict — wire or delete**, each on the allow-list marked pending,
-so nothing new can join them and each drops off the list when it is resolved:
+**Verdicts, 15 September — nothing left pending.** The check first read only
+`.ts`, `.js` and `.html`, and the website's Vue components and VitePress pages
+import code too — so two of its seven "orphans" were live, and it has read
+`.vue` and `.md` since. What each was, what was meant to call it, and what
+happened:
+
+- `exportSession` — the invite carrier. D4 wired the runner to `filterToSession`
+  directly and left this orphaned, the bug this entry describes. **Wired:**
+  reshaped around the form an invite leaves in (the opened document, its
+  database, the session, an injected engine; resealed with `resealContainer`),
+  and the runner's share sheet makes every invite through it, supplying only the
+  wasm engine. Its test builds invites from the signed fixture: the invite
+  verifies under the same publisher key, every application file is identical,
+  only the chosen session remains.
+- `rosterOf` — **no longer exported.** Membership is enforced by the
+  `_dai_member` view; this is the rule's plain statement, kept beside it. Its
+  tests now write seats and bindings the way the runtime does, in each party's
+  own copy, merge the copies, and read the view — convergence tested as "merged
+  in any order, the same members". One property had no SQL counterpart: more
+  seats than `max_parties`. Nothing enforces it (D6).
+- `fsMailbox` — **allowed**: the tests' file-backed relay and the reference
+  adapter; its callers are tests by design.
+- `verifyClaim` — the judge of a host's claimed isolation clauses against the
+  isolation probe's results. Meant to be called wherever the probe runs; it is,
+  by `host-profile.spec`, which mounts the probe in the real runner and holds the
+  runner's own handshake claim against it. **Allowed**, with that reason.
+- `handOffToOpener` — hands a freshly built document to an opener tab. **Live**:
+  the website's `MakeYourOwn.vue` and `MakerWalkthrough.vue` call it, and the
+  runner receives on `#handoff`. Not an orphan; the check could not see `.vue`.
+- `appNameFrom` — names an app from a dropped file or folder. **Live**:
+  `MakeYourOwn.vue` calls it. Same blind spot.
+- `storePreview` — made the `/p/` card for a document carried in its link. Its
+  caller went on 7 September, when every share moved to the store. **Deleted.**
+  The edge still reads and serves `/p/` cards already sent, and its test now
+  writes one the way they were written.
+- `refreshed` — was to bring one publisher pin's lookalike data up to a new
+  confusable table, "lazily, one pin at a time". No host called it, and it could
+  not have done the job: every save already recomputes a pin's skeletons, and a
+  pin never touched again is never found by the lookup that would refresh it.
+  **Deleted**; the real gap is D21.
+
+The list as it was, for the record:
 `exportSession` (the invite path filters and reseals in the runner instead),
 `rosterOf` (membership is enforced by SQL views; this is the rule's pure
 statement, used only as a test oracle), `verifyClaim` (a host's claims against
@@ -929,6 +994,13 @@ documentation claimed "one open seat per other party" until corrected.
 
 Documented meanwhile: `SESSION-PROFILE` and the session shape say a session
 seats two today, and to declare `max_parties=2`.
+
+And the cap is not enforced anywhere (found 15 September, deciding D9's
+`rosterOf`). More seats than `max_parties` was flagged only by `rosterOf`, a
+TypeScript statement of the roster rule that nothing on the real path called; the
+`_dai_member` view that decides membership has no cap, and neither has any write
+path. So "`SEATS_EXCEED_CAP`" is registered and raised by nothing. Enforcing the
+cap is part of this item's exit, in the view, where membership is decided.
 
 **Exit:** a session can seat up to `max_parties` people — either `create()`
 mints `max_parties - 1` open seats, or a creator-only `session.invite()` mints

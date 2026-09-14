@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 import middleware from "../apps/runner/middleware.js";
 import { compileDirectory } from "../src/compile.js";
 import { descriptionOf, documentIdFrom, injectPreview, previewIdFrom } from "../src/unfurl.js";
-import { publish, storePreview } from "../src/store.js";
+import { publish } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -187,22 +187,22 @@ test.describe("a crawler fetching /d/<id>", () => {
     }
   });
 
-  test("a document inside its link gets a card of its own, and losing the card loses nothing else", async () => {
-    // Nothing of the document reaches the store: a preview under a random id,
-    // beside no blob, is all that is written.
-    const built = await compileDirectory({
-      sourceDir: resolve(repo, "examples/packing-list"),
-      root: repo,
-      appName: "Beach trip",
+  test("a card already sent for a document inside its link is still served, and losing it loses nothing else", async () => {
+    // No new cards like this are made — every share goes through the store now
+    // — but links carrying `/p/<id>` are already in people's messages, and the
+    // edge must keep serving them. So one is written the way they were: a
+    // preview under a random id, beside no blob.
+    const card = { id: "c".repeat(64) };
+    const sidecar = {
+      size: 0,
+      inline: true as const,
+      preview: { name: "Beach trip", description: "Everything for a week at the beach.", icon: true },
+    };
+    await fsStore({ root, baseUrl: storeOrigin }).put(card.id, undefined, sidecar, {
+      png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
     });
-    const card = await storePreview(built.html, fsStore({ root, baseUrl: storeOrigin }), {
-      icon: { png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) },
-    });
-    expect(card.id).toMatch(/^[0-9a-f]{64}$/);
     expect(existsSync(join(root, card.id))).toBe(false);
     expect(existsSync(join(root, `${card.id}.json`))).toBe(true);
-    expect(card.sidecar).toMatchObject({ size: 0, inline: true, preview: { name: "Beach trip", icon: true } });
-    expect(card.sidecar.preview?.description).toContain("beach");
 
     const response = await middleware(
       new Request(`${openerOrigin}/p/${card.id}`, { headers: { "user-agent": CRAWLERS[0]! } }),

@@ -6,7 +6,7 @@
  * The runner inverts that: the *player* is the installable PWA, and containers
  * are opened from the user's own files. The console, not the cartridge.
  */
-import { ContainerError, readCartridge, resealCartridge, type Cartridge } from "./cartridge.js";
+import { ContainerError, readCartridge, resealCartridge, reverify, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
 import { decodeInline, hasLegacyHint, hintedUuid, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
 import type { PastHost } from "../../../src/inline.js";
@@ -55,7 +55,7 @@ import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
 import { listMailboxes } from "./opfs.js";
-import { filterToOneSession } from "./invite.js";
+import { inviteFor } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -2549,8 +2549,9 @@ async function inviteHtml(session: string): Promise<string> {
   await flushDocument();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
-  const filtered = await filterToOneSession(opfsDb, session);
-  const invite = await resealCartridge(loaded, filtered);
+  // Made by the one invite function every host shares (exportSession), then
+  // re-verified before it leaves, as any resealed document is.
+  const invite = await reverify(await inviteFor(loaded, opfsDb, session));
   return invite.supplied.length > 0 ? refatten(invite) : invite.html;
 }
 

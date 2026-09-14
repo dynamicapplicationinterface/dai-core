@@ -127,7 +127,7 @@ export function presignedStore(options: PresignedStoreOptions): Store {
         token = blob.token;
         href = blob.href;
       } else {
-        // A card beside no document: see storePreview.
+        // A card beside no document (an `inline` sidecar; see Sidecar).
         token = await mintPreview(hash);
         href = publicHrefFor(publicBase, `${hash}.json`);
       }

@@ -84,3 +84,13 @@ export async function resealCartridge(
   // only route by which unverified bytes reach the frame.
   return verifyContainer(resealed.html);
 }
+
+/**
+ * Verifies a document this app resealed somewhere else — an invite, made by
+ * `exportSession` — before it is handed on. The same pass `resealCartridge`
+ * makes, for the same reason: resealed bytes are not the bytes that were
+ * checked on the way in.
+ */
+export function reverify(container: { html: string }): Promise<Cartridge> {
+  return verifyContainer(container.html);
+}

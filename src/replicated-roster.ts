@@ -9,28 +9,32 @@
  * correction over the inferred roster that decided admission by a forgeable
  * Lamport integer.
  *
- * This module knows nothing about SQLite. A caller reads the seat and binding
- * rows for a session out of the database and passes them here; the enforcement
- * (dropping a non-member's rows at merge) reads the answer. Kept pure so the
- * rule can be tested as a set function, which is exactly what convergence needs
- * it to be.
+ * The rule is enforced in SQL, not here: the `_dai_member` view
+ * (`src/replicated.ts`) is this function expressed as a query, and it is what
+ * every admission view reads. Two implementations of one rule drift, and this
+ * one had no caller but its own tests — so it is not exported. It stays as the
+ * rule's plain statement, the thing `_dai_member` is written to match, and the
+ * rule is tested through the view (`tests/roster.spec.ts`).
+ *
+ * One property here has no SQL counterpart: `overCap` — more seats than the
+ * signed `max_parties`. Nothing on the real path checks it (backlog D6).
  */
 
 const hex = (bytes: Uint8Array): string =>
   [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
 /** A seat the creator minted for one invite. `seat` is random bytes. */
-export interface Seat {
+interface Seat {
   seat: Uint8Array;
 }
 
 /** A joiner binding its own replica id to a seat it was invited to. */
-export interface Binding {
+interface Binding {
   seat: Uint8Array;
   replica: Uint8Array;
 }
 
-export interface Roster {
+interface Roster {
   /** The replica ids that are members, as lowercase hex. */
   members: Set<string>;
   /** Seats bound by two or more distinct replicas: contested, `SEAT_ALREADY_BOUND`. */
@@ -50,7 +54,8 @@ export interface Roster {
  * `maxParties` is the signed bound; a caller that cannot supply it (a document
  * with no session block) has no roster to compute.
  */
-export function rosterOf(seats: readonly Seat[], bindings: readonly Binding[], maxParties: number): Roster {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept as the rule's statement; see the header.
+function rosterOf(seats: readonly Seat[], bindings: readonly Binding[], maxParties: number): Roster {
   const minted = new Set(seats.map((s) => hex(s.seat)));
 
   // Which distinct replicas bind each minted seat.
@@ -78,9 +83,4 @@ export function rosterOf(seats: readonly Seat[], bindings: readonly Binding[], m
   }
 
   return { members, contested, overCap: seats.length > maxParties };
-}
-
-/** Whether a replica is admitted by the roster. */
-export function isMember(roster: Roster, replica: Uint8Array): boolean {
-  return roster.members.has(hex(replica));
 }

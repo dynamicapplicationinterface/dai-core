@@ -73,7 +73,10 @@ export interface Sidecar {
    * A document small enough to travel in a fragment never reaches a store,
    * and so never had a card in a chat: there was nothing at the edge to build
    * one from. This sidecar is that something - a preview under an id that
-   * names nothing else - stored beside no blob at all. See `storePreview`.
+   * names nothing else - stored beside no blob at all. No new ones are made:
+   * since 7 September every share goes through the store, so the document is
+   * there and its card beside it. Cards already made, at `/p/<id>`, are still
+   * read and served by the edge, for links already sent.
    */
   inline?: true;
   /**
@@ -235,45 +238,6 @@ function previewOf(container: ParsedContainer, description: string | undefined, 
 function descriptionIn(container: ParsedContainer): string | undefined {
   const appIndex = container.archive["app/index.html"];
   return appIndex ? descriptionOf(new TextDecoder().decode(appIndex)) : undefined;
-}
-
-/**
- * A card for a document that travels inside its link.
- *
- * The document never reaches the store - it is in the fragment, which no
- * server sees - so a chat fetching the link found only the opener's own tags
- * and showed the generic card. This stores what a card needs and nothing
- * else: the preview, under a random id that names no document, beside no
- * blob. The link is then `/p/<id>#a=…`, and the edge builds the card from
- * the sidecar exactly as it does for a stored document.
- *
- * Retired the same way a stored document is, with a token the sender keeps;
- * the store holds its digest. The id is random rather than a digest of the
- * document so that the public name of the card says nothing about what is
- * inside the link.
- */
-export async function storePreview(
-  html: string,
-  store: Store,
-  options: { icon?: PreviewIcon } = {},
-): Promise<{ id: string; retire: string; sidecar: Sidecar }> {
-  const container = parseContainer(html);
-  const id = toHex(crypto.getRandomValues(new Uint8Array(32)));
-  const retire = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
-  const sidecar: Sidecar = {
-    size: 0,
-    inline: true,
-    retire: await retireDigest(retire),
-    preview: previewOf(container, descriptionIn(container), options.icon),
-  };
-  await store.put(id, undefined, sidecar, options.icon);
-  return { id, retire, sidecar };
-}
-
-function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 export async function sealForStore(html: string, options: SealOptions = {}): Promise<Sealed> {

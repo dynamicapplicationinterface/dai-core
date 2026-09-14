@@ -1,22 +1,32 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { verifyContainer } from "../src/container.js";
+import { MANIFEST_ENTRY, sha256Hex } from "../src/core.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
 import { exportSession, type ScratchEngine } from "../src/replicated-export.js";
-import { readContainerFile, sectionBytes, SECTION, writeContainerFile } from "../src/format.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+/** Built and signed by the global setup, so the signature under test is a real one. */
+const FIXTURE = resolve(here, "fixture/fixture.dai.html");
+const DATABASE = "document.sqlite";
 
 /**
- * The invite carrier, end to end: a container filtered to one session.
+ * The invite carrier: a document filtered to one session (T1-D28).
  *
- * The property that matters is the seam. An invite must differ from the sender's
- * copy in exactly one section (the database) and the footer; the manifest and
- * payload — and so the signature over the manifest — must be byte-identical, or
- * the recipient's sibling test will not recognise it. These build a two-session
- * database, wrap it in a container, export one session, and check both halves:
- * the right rows survived, and nothing but the data and the footer moved.
+ * The property that matters is the seam. An invite must be the sender's
+ * document with only its database changed: every application file byte for
+ * byte, and the same publisher signature still verifying — or the recipient's
+ * sibling test will not recognise it as the same document. These wrap a
+ * two-session database in the signed fixture, export one session, and check
+ * both halves: the right rows survived, and nothing but the database moved.
+ * The opener's share sheet makes its invites through this same function
+ * (`apps/runner/src/invite.ts`); `invite-one-session.spec.ts` follows one
+ * through the real share.
  */
 
 const SESSION_SCHEMA = `-- dai:profile session max_parties=2
@@ -79,50 +89,43 @@ function nodeEngine(): ScratchEngine {
   };
 }
 
-async function container(data: Uint8Array): Promise<{ bytes: Uint8Array; manifest: Uint8Array; payload: Uint8Array }> {
-  const manifest = new TextEncoder().encode('{"documentUuid":"abc","manifestVersion":4}');
-  const payload = new TextEncoder().encode("PAYLOAD-BYTES-stand-in-for-the-app-zip");
-  const bytes = await writeContainerFile({ manifest, payload, data });
-  return { bytes, manifest, payload };
+function sessionsIn(database: Uint8Array): string[] {
+  const path = join(mkdtempSync(join(tmpdir(), "dai-check-")), "document.sqlite");
+  writeFileSync(path, database);
+  const check = new DatabaseSync(path);
+  const sessions = check
+    .prepare("SELECT _r_session FROM moves")
+    .all()
+    .map((r) => hx((r as { _r_session: unknown })._r_session));
+  check.close();
+  return sessions;
 }
 
 test.describe("the invite carrier, end to end (T1-D28)", () => {
-  test("exports one session, and moves only the data section and the footer", async () => {
-    const source = await container(twoSessionDatabase());
-    const before = readContainerFile(source.bytes);
+  test("an invite is the sender's document with only its database changed, and it still verifies", async () => {
+    const source = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+    expect(source.publicKeyFingerprint, "the fixture is signed, so a real signature is under test").toBeTruthy();
 
-    const invite = await exportSession(source.bytes, S1, nodeEngine());
-    const after = readContainerFile(invite);
+    const invite = await exportSession(source, twoSessionDatabase(), S1, nodeEngine());
+    const reread = await verifyContainer(invite.html);
 
-    // The seam: manifest and payload byte-identical, so the signature over the
-    // manifest still holds and the sibling test still recognises the document.
-    expect(Buffer.from(sectionBytes(invite, after, SECTION.MANIFEST)!)).toEqual(Buffer.from(source.manifest));
-    expect(Buffer.from(sectionBytes(invite, after, SECTION.PAYLOAD)!)).toEqual(Buffer.from(source.payload));
-
-    // The data section and the footer are the only things that moved.
-    expect(after.dataDigest).not.toBe(before.dataDigest);
-    expect(after.generation).toBe(before.generation + 1);
-
-    // And the data now holds only the chosen session's game.
-    const path = join(mkdtempSync(join(tmpdir(), "dai-check-")), "document.sqlite");
-    writeFileSync(path, sectionBytes(invite, after, SECTION.DATA)!);
-    const check = new DatabaseSync(path);
-    const sessions = check
-      .prepare("SELECT _r_session FROM moves")
-      .all()
-      .map((r) => hx((r as { _r_session: unknown })._r_session));
-    check.close();
-    expect(sessions).toEqual([hx(S1)]);
+    // The same publisher's signature, still verifying: the sibling test's seam.
+    expect(reread.publicKeyFingerprint).toBe(source.publicKeyFingerprint);
+    // Every application file byte for byte; only the database and the
+    // manifest's record of it differ.
+    for (const [name, bytes] of Object.entries(source.archive)) {
+      if (name === DATABASE || name === MANIFEST_ENTRY) continue;
+      expect(Buffer.from(reread.archive[name]!), name).toEqual(Buffer.from(bytes));
+    }
+    // And the database now holds only the chosen session's game.
+    expect(sessionsIn(reread.archive[DATABASE]!)).toEqual([hx(S1)]);
   });
 
-  test("the footer's data digest matches the filtered database it describes", async () => {
-    // A stale footer is how a rolled-back or half-written save reads; the invite
-    // must not look like one.
-    const source = await container(twoSessionDatabase());
-    const invite = await exportSession(source.bytes, S1, nodeEngine());
-    const file = readContainerFile(invite);
-    const { sha256Hex } = await import("../src/core.js");
-    const data = sectionBytes(invite, file, SECTION.DATA)!;
-    expect(await sha256Hex(data)).toBe(file.dataDigest);
+  test("the manifest's record of the database matches the filtered database it describes", async () => {
+    // A stale digest is how a rolled-back or half-written save reads; the
+    // invite must not look like one.
+    const source = await verifyContainer(readFileSync(FIXTURE, "utf8"));
+    const invite = await exportSession(source, twoSessionDatabase(), S1, nodeEngine());
+    expect(invite.manifest.hashes[DATABASE]).toBe(await sha256Hex(invite.archive[DATABASE]!));
   });
 });

@@ -42,16 +42,11 @@ const ALLOWED = [
     name: "fsMailbox",
     why: "the file-backed relay the end-to-end tests stand up, and the reference adapter for a self-hosted relay; its callers are tests by design",
   },
-  // D9 findings from the first run (15 September), each awaiting a verdict —
-  // wire it to the real path, or delete it. The stale-entry check below takes
-  // each off this list the moment it gains a caller or goes.
-  { file: "src/replicated-export.ts", name: "exportSession", why: "D9 finding, verdict pending: the invite path filters with filterToSession and reseals in the runner instead" },
-  { file: "src/replicated-roster.ts", name: "rosterOf", why: "D9 finding, verdict pending: membership is enforced by SQL views; this is the pure statement of the rule, used only as a test oracle" },
-  { file: "src/host-profile.ts", name: "verifyClaim", why: "D9 finding, verdict pending: meant to hold a host's claims against the probe's results" },
-  { file: "src/handoff-tab.ts", name: "handOffToOpener", why: "D9 finding, verdict pending: a handoff into an opener tab that no page calls" },
-  { file: "src/browser.ts", name: "appNameFrom", why: "D9 finding, verdict pending: the in-browser compiler's naming helper, called by nothing" },
-  { file: "src/store.ts", name: "storePreview", why: "D9 finding, verdict pending: the /p/ preview-only card, kept in core since every share moved to the store on 7 September" },
-  { file: "src/publisher.ts", name: "refreshed", why: "D9 finding, verdict pending: says a host calls it to bring a pin's lookalike skeletons up to a new confusable table; no host does" },
+  {
+    file: "src/host-profile.ts",
+    name: "verifyClaim",
+    why: "the judge of the isolation conformance run: host-profile.spec mounts the probe in the real runner and holds the runner's own handshake claim against what the probe found; its caller is that run, by design",
+  },
 ];
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "hosts", "test-results", "target", ".git", "generated"]);
@@ -70,7 +65,10 @@ function walk(dir, out = []) {
     const path = join(dir, name);
     if (SKIP_PATHS.some((skip) => path.includes(skip))) continue;
     if (statSync(path).isDirectory()) walk(path, out);
-    else if (/\.(ts|tsx|mts|js|mjs|cjs|html)$/.test(name) && !name.endsWith(".d.ts")) out.push(path);
+    // Vue components and VitePress pages import code too: the website's build
+    // and walkthrough pages are the callers of the in-browser helpers. Leaving
+    // them out reported two live exports as uncalled.
+    else if (/\.(ts|tsx|mts|js|mjs|cjs|html|vue|md)$/.test(name) && !name.endsWith(".d.ts")) out.push(path);
   }
   return out;
 }

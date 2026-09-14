@@ -344,12 +344,3 @@ export async function labelPublisher(
   const next = { ...pinned, hostLabel: hostLabel.trim() || undefined };
   await store.save({ ...next, skeletons: skeletonsOf(next, table), table: table.unicode });
 }
-
-/**
- * Brings a pin's skeletons up to the table in hand, when the table changed.
- * Called by a host lazily, one pin at a time as it meets them.
- */
-export function refreshed(pin: PublisherPin, table: ConfusableTable): PublisherPin {
-  if (pin.table === table.unicode) return pin;
-  return { ...pin, skeletons: skeletonsOf(pin, table), table: table.unicode };
-}
