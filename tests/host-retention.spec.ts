@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
@@ -46,17 +47,34 @@ async function appSealedBy(template: string): Promise<string> {
 
 test.describe("what the opener used to rebuild from", () => {
   test("the current host is kept, so a deploy does not orphan the links before it", () => {
-    // Fails when the runtime, template or kit changed and `npm run build` was
-    // not run (it retains) or what it wrote was not committed.
+    /*
+     * Fails when the runtime, template or kit changed and what `npm run build`
+     * retained was not committed.
+     *
+     * Read from HEAD, not the working tree. `npm run build` writes the entry
+     * and the files, and the build runs before this test — in CI as well — so
+     * a guard reading the disk was satisfied by the very build it asks for,
+     * and a host that was built and never committed passed. That happened:
+     * the runtime changed, the host was retained on disk, and nothing failed.
+     * A deploy builds from what is committed, so that is what is read.
+     */
     const id = hostId(currentHost());
-    const index = JSON.parse(readFileSync(join(HOSTS_DIR, "index.json"), "utf8")) as string[];
-    expect(index, `host ${id} is not in apps/runner/public/hosts/index.json — run npm run build and commit apps/runner/public/hosts`).toContain(id);
+    const atHead = (path: string): string | null => {
+      try {
+        return execFileSync("git", ["show", `HEAD:${path}`], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        return null;
+      }
+    };
+    const dir = relative(repo, HOSTS_DIR).split(sep).join("/");
+    const index = JSON.parse(atHead(`${dir}/index.json`) ?? "[]") as string[];
+    expect(index, `host ${id} is not in the committed apps/runner/public/hosts/index.json — run npm run build and commit apps/runner/public/hosts`).toContain(id);
     for (const name of ["template.html", "runtime.js", "kit.js"]) {
-      expect(existsSync(join(HOSTS_DIR, id, name)), name).toBe(true);
+      expect(atHead(`${dir}/${id}/${name}`), `${name} is not committed`).not.toBeNull();
     }
     // And what is kept is what the opener is built from, byte for byte.
-    expect(readFileSync(join(HOSTS_DIR, id, "runtime.js"), "utf8")).toBe(HOST.runtime);
-    expect(readFileSync(join(HOSTS_DIR, id, "kit.js"), "utf8")).toBe(KIT_SOURCE);
+    expect(atHead(`${dir}/${id}/runtime.js`)).toBe(HOST.runtime);
+    expect(atHead(`${dir}/${id}/kit.js`)).toBe(KIT_SOURCE);
   });
 
   test("a link made against an earlier host opens on a later one that kept it", async () => {
