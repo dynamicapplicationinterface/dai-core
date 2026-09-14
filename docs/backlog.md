@@ -85,6 +85,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D19 | The published spec says a reader must refuse version 4 | [ ] one sentence; goes with the next docs change |
 | D20 | A table constraint in a shared table rewrites to SQL that will not load | [ ] refused at build with SQLite's message, not by name; the in-browser compiler would ship it |
 | D21 | A new confusable table leaves untouched publisher pins on the old one | [ ] a pin is re-indexed only when it is saved again |
+| D22 | The runtime's own save zips without the fixed timestamp | [ ] the one place of its kind; nothing compares its bytes yet |
+| D23 | The inline dictionary is frozen, and the corpus it was built from has moved | [ ] replacing it strands every link made since 5 September; needs an opener that holds two |
 
 ---
 
@@ -545,6 +547,44 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D23 — The inline dictionary is frozen, and the corpus it was built from has moved
+
+Found by giving `scripts/build-dictionary.mjs` a check mode (14 September). The
+dictionary (`f19f8e91`) was built on 5 September from the recipe, the shell
+template, the kit and the example apps; every one of them has changed since,
+and a rebuild today gives `4abb6072`.
+
+It must not be rebuilt as things stand. A link names the dictionary it was
+compressed against, and the opener holds exactly one (`src/inline.ts`), so a
+new dictionary refuses every link made against the old one — every document
+shared by link since 5 September. Until the check, one bare run of the script
+did exactly that, silently. It now refuses without `--replace`, and its check
+holds that the committed dictionary is whole rather than that it matches the
+corpus.
+
+What the drift costs: links compress a little worse against text the apps no
+longer contain. Small.
+
+**Un-parks when a better ratio matters, or a carrier change is due anyway**: the
+opener must accept the old dictionary and the new one side by side before a new
+one ships, so a link made against the old one keeps opening.
+
+### D22 — The runtime's own save zips without the fixed timestamp
+
+Found looking at the share-sheet race (14 September). Every place that builds a
+payload zips with `mtime: ZIP_EPOCH`, so the same entries always make the same
+bytes — except `resealContainer` in `src/runtime/bootloader.ts` (line 643), the
+save a document makes inside a browser with no host, which stamps the current
+time. It was not the cause of the race it was found beside: that export went
+through the host's reseal, which pins the timestamp.
+
+Why it matters: two saves of the same data give different bytes, so anything
+that compares saved documents by their bytes — a digest, a de-duplication, a
+test — sees a change where there is none. Nothing does that today.
+
+**Un-parks with the next change to the runtime's save path**: `mtime: ZIP_EPOCH`
+there, as everywhere else.
 
 ### D21 — A new confusable table leaves untouched publisher pins on the old one
 
