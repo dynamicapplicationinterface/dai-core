@@ -2065,8 +2065,9 @@ first, so the reasoning stays with the record:
 ## Flaky on Firefox CI, watched — one of them guards the game-killer
 
 A cluster of tests fails on Firefox in CI and passes on retry or when run
-locally: `cli:88`, `mcp:129`, `website-checks:93`, and — the one that matters —
-`d22-reopen:137`. They read as CI load and timing, not product defects, so they
+locally: `cli:88`, `mcp:129`, `mcp:147` (twice on 14 September: the list item
+never appeared after a form submit), `website-checks:93`, and — the one that
+matters — `d22-reopen:132`. They read as CI load and timing, not product defects, so they
 are watched rather than chased: a test that passes on retry costs less than a
 consistent red, and the hard cross-engine failures came first.
 
