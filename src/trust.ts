@@ -51,17 +51,43 @@ export interface TrustStore {
   forget(documentUuid: string): Promise<void>;
 }
 
+/**
+ * Thrown by a store that could not reach its storage at all — a database
+ * that never answered, not a record that is absent.
+ *
+ * The difference is the whole point. "No pin" and "could not look" must not be
+ * the same answer: "no pin" after a pin was written means another open got its
+ * pin in first, and that open's loser must be refused (see `pinTrust`); "could
+ * not look" means nothing was written anywhere, so there is no pin to race
+ * against. A store throws this only for the second.
+ */
+export class TrustStorageUnavailable extends Error {
+  constructor(message = "This device's storage did not answer.") {
+    super(message);
+    this.name = "TrustStorageUnavailable";
+  }
+}
+
 export type TrustVerdict =
   | { status: "pinned"; fingerprint?: string }
   | { status: "trusted"; fingerprint?: string; firstSeen: number }
-  | { status: "mismatch"; message: string; expected?: string; received?: string };
+  | { status: "mismatch"; message: string; expected?: string; received?: string }
+  /**
+   * Opened as a first sighting that could not be remembered: the store could
+   * not be reached, so no key was recorded and none could have been raced.
+   * The next open is a first use again.
+   */
+  | { status: "unpinned"; fingerprint?: string };
 
 /**
  * What a host sees before it has decided anything: the verdicts above, or
  * `unknown` for a document this host has never met, which the host may pin
  * once the person has agreed to open it — and not before.
  */
-export type TrustLook = TrustVerdict | { status: "unknown"; fingerprint?: string };
+export type TrustLook =
+  | TrustVerdict
+  // `unavailable` when the store could not be reached rather than found nothing.
+  | { status: "unknown"; fingerprint?: string; unavailable?: true };
 
 /** The key a container presents, for comparison with a pin. */
 function presentedKey(container: VerifiedContainer): string | null {
@@ -81,12 +107,18 @@ function presentedKey(container: VerifiedContainer): string | null {
  * nothing in the library to delete, and so no way to undo it.
  */
 export async function pinTrust(store: TrustStore, container: VerifiedContainer): Promise<TrustVerdict> {
-  await store.pin(container.manifest.documentUuid, {
-    publicKey: presentedKey(container),
-    fingerprint: container.publicKeyFingerprint ?? null,
-    appName: container.manifest.appName ?? null,
-    firstSeen: Date.now(),
-  });
+  try {
+    await store.pin(container.manifest.documentUuid, {
+      publicKey: presentedKey(container),
+      fingerprint: container.publicKeyFingerprint ?? null,
+      appName: container.manifest.appName ?? null,
+      firstSeen: Date.now(),
+    });
+  } catch (error) {
+    // Unreachable storage is decided by the read-back below, which must also
+    // find it unreachable. Anything else is a real failure and stays one.
+    if (!(error instanceof TrustStorageUnavailable)) throw error;
+  }
   /*
    * The pin that is there is the one that counts — and it may not be this
    * one. Two opens of one document with two keys, both finding no pin, both
@@ -96,6 +128,17 @@ export async function pinTrust(store: TrustStore, container: VerifiedContainer):
    */
   const look = await trustVerdict(store, container);
   if (look.status === "trusted") return { status: "pinned", fingerprint: look.fingerprint };
+  /*
+   * The one way through without a pin: the read-back could not reach storage
+   * at all. Nothing was written, so no other open's pin exists to lose to,
+   * and a slow database on a first open — the open that creates it — opens
+   * the document as unfamiliar instead of refusing it. A read-back that
+   * reached storage and found a different key is refused above as a
+   * mismatch; one that reached it and found nothing is refused below.
+   */
+  if (look.status === "unknown" && look.unavailable) {
+    return { status: "unpinned", fingerprint: container.publicKeyFingerprint };
+  }
   if (look.status === "unknown") {
     return {
       status: "mismatch",
@@ -120,7 +163,14 @@ export async function trustVerdict(
   const uuid = container.manifest.documentUuid;
   const presented = presentedKey(container);
 
-  const pinned = await store.get(uuid);
+  let pinned: PinnedKey | null;
+  try {
+    pinned = await store.get(uuid);
+  } catch (error) {
+    if (!(error instanceof TrustStorageUnavailable)) throw error;
+    // Could not look: shown the card as unfamiliar, and said so, never trusted.
+    return { status: "unknown", fingerprint: container.publicKeyFingerprint, unavailable: true };
+  }
 
   if (!pinned) return { status: "unknown", fingerprint: container.publicKeyFingerprint };
 

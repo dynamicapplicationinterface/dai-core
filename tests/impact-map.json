@@ -2336,6 +2336,21 @@
       "tests/open.ts",
       "tests/trust-consent.spec.ts"
     ],
+    "tests/trust-storage.spec.ts": [
+      "src/cbor.ts",
+      "src/container.ts",
+      "src/core.ts",
+      "src/cose.ts",
+      "src/format.ts",
+      "src/kit.ts",
+      "src/refusals.ts",
+      "src/replicated.ts",
+      "src/schema.ts",
+      "src/test-keys.ts",
+      "src/trust.ts",
+      "src/unzip.ts",
+      "tests/trust-storage.spec.ts"
+    ],
     "tests/trust.spec.ts": [
       "apps/desktop/src/",
       "src/cbor.ts",

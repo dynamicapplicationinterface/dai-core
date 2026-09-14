@@ -14,7 +14,7 @@ const PUB_STORE = "publishers";
 /** A document's mailbox state — its key, and where publish and pull have reached (Track 5). */
 const MAILBOX_STORE = "mailboxes";
 
-import type { PinnedKey, TrustStore } from "../../../src/trust.js";
+import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/identity.js";
 import { releasePush } from "./push.js";
@@ -517,18 +517,58 @@ async function deleteMailbox(documentUuid: string): Promise<void> {
  * shape of trust on first use: a pin means "the key this browser saw the first
  * time", not a claim anybody else can check.
  */
+/*
+ * The trust and publisher stores sit on the path a file opens by, and a slow
+ * database must not stop that path. The bound on `openIdb` promises that a
+ * document opens as unfamiliar rather than not at all; the library read kept
+ * it and these did not, so a first open on a slow device — the open that
+ * creates the database — said "This file could not be opened".
+ *
+ * The publisher store degrades: a lookup that cannot be answered is "not seen
+ * before", a record that cannot be written is "not remembered", both noted for
+ * the details panel.
+ *
+ * The trust store must not degrade the same way, because for trust "no pin"
+ * and "could not look" mean different things: `pinTrust` reads its own pin
+ * back, and finding none after writing it is how the loser of a race between
+ * two keys is caught and refused. So a trust read or write that cannot reach
+ * storage throws `TrustStorageUnavailable` instead of answering "none", and
+ * `src/trust.ts` decides — opening the document unpinned only when storage
+ * could not be reached at all. `forget` still throws plainly: a removal that
+ * silently did not happen would tell somebody something false.
+ */
+async function orNone<T>(what: string, none: T, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    noteIdbFailure(`${what} failed (${(error as Error)?.message ?? error}); carried on without it`);
+    return none;
+  }
+}
+
+async function reachOrSay<T>(what: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    noteIdbFailure(`${what} could not reach storage (${(error as Error)?.message ?? error})`);
+    throw new TrustStorageUnavailable();
+  }
+}
+
 export function trustStore(): TrustStore {
   return {
-    async get(documentUuid) {
-      const db = await openIdb();
-      return new Promise((resolve, reject) => {
-        const request = db.transaction(PIN_STORE, "readonly").objectStore(PIN_STORE).get(documentUuid);
-        request.onsuccess = () => resolve((request.result as PinnedKey | undefined) ?? null);
-        request.onerror = () => reject(request.error);
-      });
-    },
+    get: (documentUuid) =>
+      reachOrSay("trust read", async () => {
+        const db = await openIdb();
+        return new Promise<PinnedKey | null>((resolve, reject) => {
+          const request = db.transaction(PIN_STORE, "readonly").objectStore(PIN_STORE).get(documentUuid);
+          request.onsuccess = () => resolve((request.result as PinnedKey | undefined) ?? null);
+          request.onerror = () => reject(request.error);
+        });
+      }),
 
-    async pin(documentUuid, key) {
+    pin: (documentUuid, key) =>
+      reachOrSay("trust pin", async () => {
       const db = await openIdb();
       await new Promise<void>((resolve, reject) => {
         const write = db.transaction(PIN_STORE, "readwrite");
@@ -545,7 +585,7 @@ export function trustStore(): TrustStore {
         write.onabort = () => resolve();
         write.onerror = () => reject(write.error);
       });
-    },
+      }),
 
     async forget(documentUuid) {
       const db = await openIdb();
@@ -566,38 +606,43 @@ export function trustStore(): TrustStore {
  * shared with the desktop; this is only where this host keeps the records.
  */
 export function publisherStore(): PublisherStore {
+  // Same rule as the trust store above: unanswered is "not seen before", an
+  // unmade write is "not remembered", and the file still opens.
   return {
-    async byKey(publicKey) {
-      const db = await openIdb();
-      return new Promise((resolve, reject) => {
-        const request = db.transaction(PUB_STORE, "readonly").objectStore(PUB_STORE).get(publicKey);
-        request.onsuccess = () => resolve((request.result as PublisherPin | undefined) ?? null);
-        request.onerror = () => reject(request.error);
-      });
-    },
+    byKey: (publicKey) =>
+      orNone("publisher read", null, async () => {
+        const db = await openIdb();
+        return new Promise<PublisherPin | null>((resolve, reject) => {
+          const request = db.transaction(PUB_STORE, "readonly").objectStore(PUB_STORE).get(publicKey);
+          request.onsuccess = () => resolve((request.result as PublisherPin | undefined) ?? null);
+          request.onerror = () => reject(request.error);
+        });
+      }),
 
-    async bySkeleton(skeleton) {
-      const db = await openIdb();
-      return new Promise((resolve, reject) => {
-        const request = db
-          .transaction(PUB_STORE, "readonly")
-          .objectStore(PUB_STORE)
-          .index("skeletons")
-          .getAll(skeleton);
-        request.onsuccess = () => resolve((request.result as PublisherPin[]) ?? []);
-        request.onerror = () => reject(request.error);
-      });
-    },
+    bySkeleton: (skeleton) =>
+      orNone("publisher lookup", [] as PublisherPin[], async () => {
+        const db = await openIdb();
+        return new Promise<PublisherPin[]>((resolve, reject) => {
+          const request = db
+            .transaction(PUB_STORE, "readonly")
+            .objectStore(PUB_STORE)
+            .index("skeletons")
+            .getAll(skeleton);
+          request.onsuccess = () => resolve((request.result as PublisherPin[]) ?? []);
+          request.onerror = () => reject(request.error);
+        });
+      }),
 
-    async save(pin) {
-      const db = await openIdb();
-      await new Promise<void>((resolve, reject) => {
-        const write = db.transaction(PUB_STORE, "readwrite");
-        write.objectStore(PUB_STORE).put(pin);
-        write.oncomplete = () => resolve();
-        write.onerror = () => reject(write.error);
-      });
-    },
+    save: (pin) =>
+      orNone("publisher record", undefined, async () => {
+        const db = await openIdb();
+        await new Promise<void>((resolve, reject) => {
+          const write = db.transaction(PUB_STORE, "readwrite");
+          write.objectStore(PUB_STORE).put(pin);
+          write.oncomplete = () => resolve();
+          write.onerror = () => reject(write.error);
+        });
+      }),
 
     roots: rootList,
   };
