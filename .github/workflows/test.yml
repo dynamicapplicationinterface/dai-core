@@ -75,7 +75,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { browser: chromium, part: whole }
+          # The specs that open no browser are their own project (see
+          # playwright.config.ts) and run once, here, where the count gate
+          # holds them — not once per engine.
+          - { browser: chromium, part: whole, extra: "--project=node" }
           - { browser: firefox, part: whole }
           - { browser: webkit, part: "1", shard: "1/2" }
           - { browser: webkit, part: "2", shard: "2/2" }
@@ -105,7 +108,7 @@ jobs:
       # libraries each needs.
       - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
 
-      - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
+      - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
 
       - if: failure()
         uses: actions/upload-artifact@v4

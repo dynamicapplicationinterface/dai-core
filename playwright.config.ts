@@ -1,4 +1,22 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
+
+/*
+ * Specs that never open a browser, run once instead of once per engine.
+ *
+ * Decided by reading each spec, so a new one lands on the right side without
+ * anybody keeping a list. The rule errs toward the browser: a spec is node-only
+ * only if the words page, browser, context and browserName appear nowhere in
+ * it, comments included. A wrong call the other way would be silent — a spec
+ * that needs an engine, run on one where it used to run on three — so a spec
+ * that merely mentions "the page" in prose stays on all three.
+ */
+const specs = fileURLToPath(new URL("./tests/", import.meta.url));
+const NODE_ONLY = readdirSync(specs)
+  .filter((file) => file.endsWith(".spec.ts"))
+  .filter((file) => !/\b(page|browser|context|browserName)\b/.test(readFileSync(specs + file, "utf8")))
+  .map((file) => `**/${file}`);
 
 export default defineConfig({
   testDir: "./tests",
@@ -68,8 +86,9 @@ export default defineConfig({
     },
   ],
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
-    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: NODE_ONLY },
+    { name: "firefox", use: { ...devices["Desktop Firefox"] }, testIgnore: NODE_ONLY },
+    { name: "webkit", use: { ...devices["Desktop Safari"] }, testIgnore: NODE_ONLY },
+    { name: "node", testMatch: NODE_ONLY },
   ],
 });
