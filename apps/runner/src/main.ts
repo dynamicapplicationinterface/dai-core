@@ -688,6 +688,13 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
     } else {
       loaded = cartridge;
     }
+    // Permanent, on purpose (D22): which database a reopen mounts as its own
+    // is the other half of which replica id it keeps.
+    console.info(
+      opfsDb && opfsDb.byteLength > 0
+        ? `dai: reopen mounted the stored database (${opfsDb.byteLength} bytes)`
+        : "dai: reopen mounted the library's own copy (no stored database)",
+    );
 
     /*
      * Update last opened time in library.
@@ -1428,6 +1435,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       mountIsOwnCopy = true;
       markStep("preparing the document");
       loaded = await resealCartridge(cartridge, opfsDb);
+      console.info(`dai: resumed this device's own copy from the stored database (${opfsDb.byteLength} bytes)`);
       if (arriving !== undefined && heldItem?.savedAt !== undefined && arriving < heldItem.savedAt) {
         // Said rather than done silently: somebody who opened an older link
         // and saw their own game is owed the reason it did not change.
@@ -2040,12 +2048,16 @@ window.addEventListener("message", (event) => {
     // is answered only for the container that handshook.
     if (!fromMountedContainer(event, data)) return;
     hostSaves += 1;
+    const saveNumber = hostSaves;
     // Echoed on the reply so the container can tell this answer from any
     // other message that happens to be shaped like one.
     const requestId = typeof data.requestId === "string" ? data.requestId : undefined;
     const { databaseBytes, documentUuid } = data.payload || {};
     if (databaseBytes && documentUuid) {
       const bytes = new Uint8Array(databaseBytes);
+      // Permanent, on purpose (D22): "asked" is not "written", and a kept
+      // trace of a lost replica id has to be able to tell which one happened.
+      console.info(`dai: save ${saveNumber} asked (${bytes.byteLength} bytes)`);
       /*
        * One save at a time per document, across every tab of this origin.
        * Two tabs on one document each write the whole database; without the
@@ -2110,12 +2122,14 @@ window.addEventListener("message", (event) => {
         knownRevision.set(documentUuid, next);
       })
         .then(async () => {
+          console.info(`dai: save ${saveNumber} written`);
           (event.source as Window | null)?.postMessage(
             { type: "DAI_HOST_SAVE_ACK", status: "ok", requestId },
             "*",
           );
         })
         .catch((error: unknown) => {
+          console.info(`dai: save ${saveNumber} refused: ${String(error)}`);
           (event.source as Window | null)?.postMessage(
             { type: "DAI_HOST_SAVE_ACK", status: "error", error: String(error), requestId },
             "*",

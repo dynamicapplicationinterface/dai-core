@@ -1529,15 +1529,36 @@ function bridgeMain(): void {
    * database whenever it is ready. First write is the first moment both are
    * certainly present, and it is early enough — nothing has been stamped yet.
    */
+  /** This copy's replica id as hex — the same read `dai:replica-id` answers with. */
+  const replicaHex = (): string | null => {
+    try {
+      const row = liveDb?.selectObjects("SELECT lower(hex(id)) AS h FROM _dai_replica LIMIT 1")[0];
+      return row ? String((row as { h: unknown }).h) : null;
+    } catch {
+      return null;
+    }
+  };
+
   const settleReplica = (rows: Any): void => {
     if (replicaSettled || !mergeModule) return;
     replicaSettled = true;
     const fresh = crypto.getRandomValues(new Uint8Array(16));
+    const before = replicaHex();
     // Reopening this device's own copy keeps the id it has been writing under;
     // anything that arrived from elsewhere takes a new one, and the sender's
     // moves into `_dai_replicas` with their rows still theirs.
     if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
     else (mergeModule as Any).adoptReplica(rows, fresh);
+    /*
+     * Permanent, on purpose (D22). A copy has come back from a reopen writing
+     * under the sender's id, only in CI and only rarely, and a kept trace
+     * could show that it happened but not why: the decision is made here,
+     * inside the frame, where nothing else can see it. The console is what a
+     * kept trace records, and a person using the app never sees it.
+     */
+    console.info(
+      `dai: replica ${mountIsOwnCopy ? "kept (own copy)" : "adopted (arrived copy)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
+    );
   };
 
   /**

@@ -328,6 +328,8 @@ export async function loadDatabaseFromOpfs(
       const file = await fileHandle.getFile();
       const buffer = await file.arrayBuffer();
       if (buffer.byteLength > 0) {
+        // Permanent, on purpose (D22): where a stored database came from.
+        console.info(`dai: stored database read from OPFS (${buffer.byteLength} bytes)`);
         return new Uint8Array(buffer);
       }
     } catch {
@@ -335,7 +337,13 @@ export async function loadDatabaseFromOpfs(
     }
   }
 
-  return loadFromIdb(documentUuid);
+  const fallback = await loadFromIdb(documentUuid);
+  console.info(
+    fallback
+      ? `dai: stored database read from IndexedDB (${fallback.byteLength} bytes)`
+      : "dai: no stored database, in OPFS or IndexedDB",
+  );
+  return fallback;
 }
 
 export async function deleteDatabaseFromOpfs(documentUuid: string): Promise<void> {
