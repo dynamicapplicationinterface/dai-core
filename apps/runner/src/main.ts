@@ -468,6 +468,18 @@ let launchTarget: string | null = null;
 /** A few seconds: longer than a working mount, short enough to rescue one. */
 const LAUNCH_STALL_MS = 6000;
 
+/**
+ * The stall wait, shortened for a test through `window.__daiTimers`, injected
+ * before the page loads — the same move as `__daiStore`. The opener's own
+ * timing and nothing else: a document's runtime has no such seam and gets
+ * none. What the fail-safe tests check is what happens after the wait, and
+ * each of them used to sit out six real seconds to reach it.
+ */
+function launchStallMs(): number {
+  const injected = (window as unknown as { __daiTimers?: { launchStallMs?: number } }).__daiTimers;
+  return typeof injected?.launchStallMs === "number" ? injected.launchStallMs : LAUNCH_STALL_MS;
+}
+
 /*
  * The step the launch is on, for the details panel below.
  *
@@ -561,7 +573,7 @@ function guardLaunch(target: string): void {
     // The splash is aria-hidden while it is only decoration; now it holds the
     // one control on screen, so it must reach assistive technology.
     document.getElementById("launch")?.setAttribute("aria-hidden", "false");
-  }, LAUNCH_STALL_MS);
+  }, launchStallMs());
 }
 
 function clearLaunchGuard(): void {

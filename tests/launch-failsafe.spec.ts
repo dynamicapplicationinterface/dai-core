@@ -26,6 +26,15 @@ test.describe("the launch fail-safe", () => {
   test.slow();
   test.use({ serviceWorkers: "block" });
 
+  // The stall wait, one second instead of six (see `launchStallMs` in the
+  // opener). Scenery: what is under test is what the guard does when it fires
+  // and when it must not, not how long it waits first.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as unknown as { __daiTimers: { launchStallMs: number } }).__daiTimers = { launchStallMs: 1000 };
+    });
+  });
+
   test("a stalled splash reveals Tap to open, and the tap navigates to the launch address", async ({
     page,
   }) => {
@@ -44,8 +53,11 @@ test.describe("the launch fail-safe", () => {
     // first second.
     await expect(page.locator("#launch-open")).toBeHidden();
 
-    // After the wait, the sentence and the control.
-    await expect(page.locator("#launch-open")).toBeVisible({ timeout: 15_000 });
+    // After the wait, the sentence and the control. Inside five seconds, which
+    // only the shortened wait can meet: this is what proves the opener reads
+    // `__daiTimers`, and the two tests below that watch the guard stay quiet
+    // for 2.5s mean something only if it does.
+    await expect(page.locator("#launch-open")).toBeVisible({ timeout: 5_000 });
     await expect(page.locator("#launch-stall-note")).toBeVisible();
     await expect(page.locator("#launch-open")).toHaveText("Tap to open");
     // The splash reaches assistive technology now that it holds the one control.
@@ -133,7 +145,7 @@ test.describe("the launch fail-safe", () => {
 
     // And past the stall threshold, the fail-safe stays quiet: a card is a
     // decision, not a stall, so Tap to open must not appear over it.
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(2500);
     await expect(page.locator("body")).not.toHaveClass(/launch-stalled/);
     await expect(page.locator("#launch-open")).toBeHidden();
     // The merge control is the top thing at the centre, not the splash.
@@ -161,7 +173,7 @@ test.describe("the launch fail-safe", () => {
 
     // The guard fires well after the mount; because the document loaded, it must
     // do nothing. Waited past the stall threshold to be sure it stays quiet.
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(2500);
     await expect(page.locator("#launch-open")).toBeHidden();
     await expect(page.locator("body")).not.toHaveClass(/launch-stalled/);
   });
