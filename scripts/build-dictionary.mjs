@@ -25,7 +25,7 @@
  * reader in another language that has to inflate the same links.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,8 +86,67 @@ export const DICTIONARY = fromBase64(
 );
 `;
 
-writeFileSync(resolve(root, "src/dictionary.ts"), out, "utf8");
+const TS = resolve(root, "src/dictionary.ts");
+const BIN = resolve(root, "conformance/inline-dictionary.bin");
+
+/*
+ * The dictionary is a format constant, not a build output.
+ *
+ * A link names the dictionary it was compressed against, and an opener holds
+ * exactly one (src/inline.ts). Rebuilding from a corpus that has moved gives a
+ * new id, and every link made against the old one is then refused — every
+ * document shared by link since the dictionary was built. So it is not rebuilt
+ * because the corpus moved; it changes only on purpose, as a carrier change,
+ * with `--replace`.
+ *
+ * `--check` holds what that depends on: the committed dictionary is whole — its
+ * id is the first four bytes of its digest, and the module and the raw bytes a
+ * reader in another language uses are the same bytes. It also says, without
+ * failing, when the corpus has moved since, which is expected and is what a
+ * deliberate replacement would pick up.
+ */
+const hex = (value) => Buffer.from(value).toString("hex");
+const committedTs = existsSync(TS) ? readFileSync(TS, "utf8") : "";
+const committedBin = existsSync(BIN) ? new Uint8Array(readFileSync(BIN)) : new Uint8Array();
+const committedId = (/DICTIONARY_ID = Uint8Array\.from\(\[([\d, ]+)\]\)/.exec(committedTs)?.[1] ?? "")
+  .split(",")
+  .filter((part) => part.trim())
+  .map(Number);
+const committedB64 = /fromBase64\(\s*"([A-Za-z0-9+/=]+)"/.exec(committedTs)?.[1] ?? "";
+
+if (process.argv.includes("--check")) {
+  const problems = [];
+  const digestId = createHash("sha256").update(committedBin).digest().subarray(0, 4);
+  if (committedBin.length === 0) problems.push("conformance/inline-dictionary.bin is missing or empty");
+  if (hex(committedId) !== hex(digestId)) {
+    problems.push(`src/dictionary.ts names id ${hex(committedId)}, but the bytes hash to ${hex(digestId)}`);
+  }
+  if (!Buffer.from(committedB64, "base64").equals(Buffer.from(committedBin))) {
+    problems.push("src/dictionary.ts and conformance/inline-dictionary.bin hold different bytes");
+  }
+  if (problems.length > 0) {
+    console.error("The inline dictionary is not whole:\n" + problems.map((problem) => `  ${problem}\n`).join(""));
+    process.exit(1);
+  }
+  const moved = hex(id) !== hex(committedId);
+  console.log(
+    `dictionary: whole (id ${hex(committedId)}, ${committedBin.length} bytes)` +
+      (moved ? `; the corpus has moved since (it would now build ${hex(id)}) — expected; replacing it is a carrier change` : ""),
+  );
+  process.exit(0);
+}
+
+if (committedId.length > 0 && hex(id) !== hex(committedId) && !process.argv.includes("--replace")) {
+  console.error(
+    `This would replace dictionary ${hex(committedId)} with ${hex(id)}. Every link made against ` +
+      `${hex(committedId)} would then be refused by an opener holding the new one. ` +
+      "Pass --replace if that is the intent.",
+  );
+  process.exit(1);
+}
+
+writeFileSync(TS, out, "utf8");
 mkdirSync(resolve(root, "conformance"), { recursive: true });
-writeFileSync(resolve(root, "conformance/inline-dictionary.bin"), bytes);
+writeFileSync(BIN, bytes);
 
 console.log(`dictionary: ${bytes.length} bytes, id ${Buffer.from(id).toString("hex")}`);
