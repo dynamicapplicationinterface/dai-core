@@ -196,11 +196,34 @@ test.describe("a /d/ link on a plain static host", () => {
         `http://127.0.0.1:${openerPort}/d/${sealed.hash}` +
         `#h=${sealed.hash}&u=${encodeURIComponent(`${storeOrigin}/${sealed.hash}`)}&k=${sealed.key}`;
 
-      // Nothing may 404 under /d/: every relative URL in the page — the
-      // engine, the confusable table, the worker — resolves against the base
-      // tag, not against the path the document was served at.
+      /*
+       * Nothing may 404 under /d/: every relative URL in the page — the
+       * engine, the confusable table, the worker — resolves against the base
+       * tag, not against the path the document was served at. A wrong
+       * resolution is a 404 *response*, so that is what is collected.
+       *
+       * A request that failed in flight is a different thing, and this used
+       * to report it as a 404. On Firefox in CI the page's prefetch hint for
+       * the confusable table was aborted (NS_BINDING_ABORTED) when the page's
+       * own fetch asked for the same file 77 ms later and got a 200 — a
+       * correctly addressed request, cancelled and satisfied. So an aborted
+       * request passes only if the same URL then loaded; any other failure,
+       * and any abort that never loaded, still fails.
+       */
       const missing: string[] = [];
-      page.on("requestfailed", (r) => missing.push(new URL(r.url()).pathname));
+      const failed: string[] = [];
+      const aborted = new Set<string>();
+      const loadedOk = new Set<string>();
+      page.on("response", (r) => {
+        const url = new URL(r.url());
+        if (r.status() === 404 && url.port === String(openerPort)) missing.push(url.pathname);
+        if (r.ok()) loadedOk.add(r.url());
+      });
+      page.on("requestfailed", (r) => {
+        const reason = r.failure()?.errorText ?? "";
+        if (/ABORTED|cancelled|canceled/i.test(reason)) aborted.add(r.url());
+        else failed.push(`${new URL(r.url()).pathname} (${reason})`);
+      });
       await page.goto(link);
       // Served plainly: the placeholder is untouched and the generic tags stand.
       const head = await page.evaluate(() => document.head.innerHTML);
@@ -211,6 +234,9 @@ test.describe("a /d/ link on a plain static host", () => {
       await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
       await expect(page.locator("#title")).toContainText("Beach trip");
       expect(missing, `404 under /d/: ${missing.join(", ")}`).toEqual([]);
+      expect(failed, `failed in flight: ${failed.join(", ")}`).toEqual([]);
+      const neverLoaded = [...aborted].filter((url) => !loadedOk.has(url)).map((url) => new URL(url).pathname);
+      expect(neverLoaded, `aborted and never loaded: ${neverLoaded.join(", ")}`).toEqual([]);
     } finally {
       await new Promise<void>((done) => opener.close(() => done()));
       await new Promise<void>((done) => store.close(() => done()));
