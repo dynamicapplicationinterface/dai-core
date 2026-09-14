@@ -28,6 +28,15 @@ Set `bucket_name` in `wrangler.toml` to the store bucket first (it defaults to
 `dai-store`). Point the opener's `httpMailbox({ base })` at the deployed
 worker's `/m` path, e.g. `https://relay.opendai.app/m`.
 
+**After a deploy, check with a read before you post anything.** The worker and
+its Durable Objects do not change version at the same instant: for a short
+window new routing can be live while a mailbox object still runs the old code,
+and a POST meant for a new route lands in the old object as an append — a batch
+in somebody's mailbox. That is how a junk item was written on 14 September. A
+GET is a read in both versions, so it is safe in the window; use one that tells
+the versions apart (for a new route, compare what the old and new code would
+each return) and post only once it reads new.
+
 ## Push (slice two)
 
     POST  /m/<doc>/subscribe    body = { endpoint } → "ok"

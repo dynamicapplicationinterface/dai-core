@@ -74,6 +74,13 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`de2be4f`); older session documents are D10 |
 | D9 | A tested building block with no caller is not done | [ ] three in one pass; a caller check and a definition of done |
 | D10 | Session documents built before per-session mailboxes stay readable by any link holder | [x] decided: cannot be repaired in place; re-create — the app says so |
+| D11 | A large document crashes Safari on iPhone | [ ] not measured; no ceiling, no refusal |
+| D12 | A relay deploy has a window where a post lands in old code | [~] rule in the relay README; one junk item in the bucket |
+| D13 | The in-browser compiler skips the build-time schema check | [ ] the open half of D5 |
+| D14 | Two blind runs is not a rate | [ ] both passed, both found real defects |
+| D15 | Asymmetric roles inside a session | [ ] the enterprise demo needs it; parked on the dynamic statement |
+| D16 | A native iOS host: App Clip and Messages extension | [ ] parked until after the enterprise demo |
+| D17 | Mailbox batches expire with the bucket's 90-day rule | [ ] retention decided by accident |
 
 ---
 
@@ -272,6 +279,16 @@ superseded copy needs revocation-by-policy machinery that `main` does not have.
 **Un-parks when an enterprise use case needs a transferable instrument**, and only
 after Track 4 has landed under it. Until then it is thinking, not work: PR #2 stays
 open and unmerged.
+
+**The customer it is actually for** is not abstract: the character-file product.
+A collectible character is a file its holder owns; its habitat works offline in
+the file, its game runs on a server, and holders trade characters with each
+other. Trading is transfer — the one party who holds a character must stop being
+able to after they trade it — so this is the product that pulls transferable
+ownership, and the enterprise instrument is the second customer. **So the
+un-park sentence reads: when the character-file product is being built, or an
+enterprise use case needs a transferable instrument — whichever comes first, and
+only after Track 4.**
 
 ## Later — three surfaces to finish
 
@@ -497,6 +514,176 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D17 — Mailbox batches expire with the bucket's 90-day rule
+
+Found while checking whether the junk item (D12) would be cleaned up. The
+lifecycle rule on `dai-store` — `shared-documents-90-days`, written in
+`infra/r2-lifecycle.json` and confirmed applied to the live bucket on 14
+September (`wrangler r2 bucket lifecycle list`) — has an empty prefix. It was
+written for shared documents, but it covers everything in the bucket, and the
+relay writes every mailbox batch there under `mailbox/<id>/<seq>`. So every
+batch is deleted 90 days after it was written.
+
+Why it matters: the relay's counter lives in the Durable Object and does not
+expire, so after 90 days `head` still reports every batch while `since` quietly
+skips the ones that are gone (`mailbox-do.ts` skips a missing object). A copy
+that is up to date loses nothing. A device that comes to a game late — a new
+phone, a reinstalled app, a copy that was offline for three months — catches up
+from a history with holes in it, and nothing says so. Retention was deferred by
+the ruling ("retention and entitlement are deferred"); this decided it by
+accident.
+
+**Un-parks before any game is expected to outlive 90 days, or before a device can
+join a long-running game from the mailbox rather than by an invite.** Then the
+decision is made on purpose: either a prefix-scoped rule that leaves `mailbox/`
+alone, or a relay that says "history before cursor N has expired" so a late copy
+knows to ask for a fresh invite rather than merging a partial past.
+
+### D16 — A native iOS host: App Clip and Messages extension
+
+Two things a web opener cannot do on an iPhone. An **App Clip** is the seamless
+first open: a QR code or link goes straight to the card, with no browser tab and
+no "add to home screen" step in between. A **Messages extension** is how a game
+reaches somebody inside the conversation it was sent in, without asking them to
+install anything — today a move on iOS is only delivered by push to an
+installed web app (see Track 5 slice two), which is an instruction a person has
+to follow first.
+
+Why it matters: onboarding is where the format loses people, and on iOS the web
+route's best case still has a step a person can refuse. Why it waits: it is a
+second host — a native app, its own review, its own release — and the web opener
+has to be right first. "Native phone apps as a prerequisite for first use" stays
+in *Not doing*; this is an addition for people who already have one.
+
+**Un-parks after the enterprise demo, or when onboarding friction is what blocks
+a pilot.**
+
+### D15 — Asymmetric roles inside a session
+
+An advisor writes and a client answers, and neither can write the other's rows.
+Today a roster member can write any table in the session, so an app can only
+fake a role in its interface — which the rules themselves forbid (an app must not
+enforce what only the roster can). The enterprise demo's "firm and client" beat
+depends on the real thing: a client's copy that cannot author a firm's advice
+row, refused at the merge rather than hidden by the screen.
+
+Why it matters: without it, a two-party document is two peers, and any document
+whose value is *who said it* — advice, an instruction, a signed-off figure —
+carries only the app's word for it.
+
+The cheaper alternative, recorded so it is weighed rather than forgotten: a
+firm's server in the path that admits rows by role. It needs no format change and
+holds exactly where that server is in the path — a copy exchanged directly, or a
+mailbox the server does not front, bypasses it. That is a deployment choice, not
+a property of the document.
+
+A hub with many private spokes (one firm, many clients, each unable to see the
+others) may fold into this entry rather than being its own shape; see *Not
+doing*.
+
+**Un-parks when the dynamic statement needs enforced roles.**
+
+### D14 — Two blind runs is not a rate
+
+The documentation's success test is a model building an app it has never seen
+from the published pages alone. Two such runs exist
+(`eval/candidates/claude-opus-5-blind`, `…-blind-agreement`). Both passed, and
+both found real defects the pages had hidden: the first, the places its agent
+found the model file unclear, each checked and fixed; the second, a WebKit
+failure that turned out to be the documentation's cause — the redraw-on-merge
+rule (`SHARED-REDRAW-ON-MERGE`), which the first run's rows could not have hit.
+That is a good sign and says the method works; it is not a measure of how often
+a model succeeds, and nothing can be claimed from it as one.
+
+Why it matters: the documentation is written for models as much as people, and
+"a model can build from it" is the claim it is judged by. Two runs cannot tell a
+page that works from a page that got lucky twice.
+
+**Un-parks when a claim about how reliably a model builds from the pages is about
+to be made in public, or before the next large rewrite of the model file** — run
+enough prompts across shapes to state a rate, with the method in
+`docs/evaluation.md` ("A blind run: the documentation's own defect list"), and
+commit every run under `eval/candidates/` as the method says.
+
+### D13 — The in-browser compiler skips the build-time schema check
+
+The open half of D5, recorded there under Change 2: the Node build loads a
+shared-table document's rewritten schema into SQLite and refuses to build if it
+does not load, but the website's in-browser compiler (`compileInBrowser`) has no
+engine at build time, so a rewrite defect there still builds and then fails at
+open. D5's scoreboard row reads done, which is why this has its own line.
+
+Why it matters: the in-browser compiler is the door a person uses on the
+website, so the check that now protects every other door does not protect the
+public one.
+
+**Un-parks with the next change to the rewrite, or when the website compiler
+builds shared-table documents for anyone but us** — load the opener's already
+staged SQLite engine in the compiler page and run the same two-open check.
+
+### D12 — A relay deploy has a window where a post lands in old code
+
+Found deploying push on 14 September. The worker and its Durable Objects change
+version at different moments: for a short window after `wrangler deploy`, new
+routing was live while a mailbox object still ran the old code, which treats
+every POST as an append. A check that posted to the new `/subscribe` route in
+that window was stored as a batch instead — `mailbox/subscribe/1` in
+`dai-store`, 36 bytes, unreferenced by anything.
+
+The rule is in `apps/relay/README.md`: after a relay deploy, check with a read —
+a GET is a read in both versions — and post only once it answers as the new code.
+
+The junk item: left in place. The bucket's lifecycle rule has an empty prefix and
+deletes objects at 90 days, so it covers `mailbox/` and will remove it (see D17
+for what that same rule means for real batches). Whether the rule is applied to
+the live bucket, not only written in `infra/r2-lifecycle.json`, is recorded in
+D17.
+
+Why it matters: the window is short, but it is exactly when somebody verifies a
+deploy, and a relay write is somebody's mailbox.
+
+**Un-parks as a code change if a deploy ever needs a new route used by clients
+the moment it ships** — then the worker must refuse a route its objects do not
+yet know, or the object must reject a path segment that is a verb.
+
+### D11 — A large document crashes Safari on iPhone
+
+Found with Moon Garden, an asset-heavy game: a 50 MB container kills the Safari
+tab on an iPhone. The trace L1 records is the same document — the whole 5.29 s
+lands on the `blob:` document load with the blob already built, so it is the
+frame's own boot, not the assembly before mount, and preparing before Get cannot
+move it. What kills the tab has not been measured.
+
+Why it matters: a crashed tab looks, to the person holding the phone, like their
+phone is broken. There is no message, no card, nothing to report — and the
+document never said it was too big.
+
+Three parts:
+
+1. **The measurement that is not done.** Build containers at 5, 10, 25 and
+   50 MB; open each on a phone and on a desktop; report where each dies and
+   with what (tab reload, an out-of-memory page, a hang). Then profile one that
+   dies: peak heap, how many copies of the payload are alive at once, and when
+   each is released. Suspects to check, in the order they are cheap to rule
+   out: inflating the whole archive at mount rather than per entry; holding the
+   compressed and the inflated bytes at the same time; minting a blob URL for
+   every asset whether the app asks for it or not; reading every entry into
+   memory to digest it rather than digesting a stream.
+2. **The two card defects** are L1's: Get disabled until the container is
+   identified, and a failed launch that says so on the card instead of flashing
+   back to it looking untouched. They are not repeated here.
+3. **The refusal.** Whatever the ceiling turns out to be, a document too large
+   for the device is refused by name with a sentence, before the tab dies.
+
+What this is **not**. Not a reason to move assets to a server: a game that needs a
+CDN is a web game, and a file that carries its own assets is the format working
+as intended. Not a media-in-the-database question: Moon Garden's database was
+20 KB; the size is all archive entries.
+
+**Un-parks now, as a measurement** — it is the next thing on the phone after the
+Wednesday sitting, and the ladder above needs nothing built first. The fix
+un-parks from what the profile names.
 
 ### D10 — Session documents built before per-session mailboxes stay readable by any link holder
 
@@ -1460,6 +1647,16 @@ replay. Its `play()` now taps the piece until the board shows it picked up.
   has a dependency and cannot be self-hosted in an afternoon.
 - A marketplace as the distribution model.
 - Real-time sync or two-person editing. Succession plus export, never a CRDT.
+- **Shapes a session deliberately does not support**, listed so nobody proposes
+  them as oversights:
+  - *Open participation* — anyone with the link may write. That is the abuse
+    surface with no roster to close it: a forwarded link is a new writer, and
+    nothing can take the pen back.
+  - *Time-bounded participation* — "you may write until Friday." The parties have
+    no clock they agree on; an offline copy's clock is whatever it says.
+  - *A hub with many private spokes* — one party, many others, each unable to see
+    the rest. Not ruled out as a need; it may fold into asymmetric roles (D15)
+    rather than become a shape of its own.
 
 ## Decided, 5 September (the four that were undecided)
 
