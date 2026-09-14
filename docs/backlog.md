@@ -93,6 +93,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D27 | CI discarded the trace of every test that failed and passed on retry | [x] `5d71345` — a passed job now keeps each retried test's trace |
 | D28 | A test's browser is sometimes already closed when it starts | [ ] three sightings, at 1, 2 and 7 workers; passes on retry; traces now kept (D27) |
 | D29 | An offline reopen sometimes fetches the document's icon from the network | [ ] a real leak in the offline promise; intermittent |
+| D30 | Locally, a runtime change reaches the opener's tests one run late | [ ] the runner bundles the previous build; CI has no lag |
 
 ---
 
@@ -553,6 +554,26 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D30 — Locally, a runtime change reaches the opener's tests one run late
+
+Found adding the D22 breadcrumbs (14 September): the frame's line was missing
+from a traced run's console and present on the next run of the same code.
+
+The opener bundles `dist/dai-runtime.js` into its own build. Playwright starts
+the web servers — which build the opener — before global setup runs `npm run
+build`. So each local run's opener carries the runtime from the build before it:
+the first run after a change to `src/runtime/` tests the old runtime inside the
+opener, while the opener's own code is fresh. Nothing says so; the run passes or
+fails against code that is no longer there.
+
+CI has no lag: `npm ci` runs `prepare`, which builds `dist/` before the tests. It
+matters locally, and it matters most for exactly the tier meant to be trusted
+before a push.
+
+**Exit:** build `dist/` inside the opener's web-server command, before the vite
+build, so the runtime it bundles is always the one on disk — or have global setup
+fail if the opener's bundle does not carry the runtime `dist/` holds.
 
 ### D29 — An offline reopen sometimes fetches the document's icon from the network
 
@@ -2011,17 +2032,45 @@ locally: `cli:88`, `mcp:129`, `website-checks:93`, and — the one that matters 
 are watched rather than chased: a test that passes on retry costs less than a
 consistent red, and the hard cross-engine failures came first.
 
-**`d22-reopen:137` is the exception worth naming.** It failed twice on one
-Firefox CI run (both attempts) and passes on Firefox locally, twice — so it is
-being treated as flaky. But it is the test that guards the bug that killed games:
-a reopened arrived copy must keep its own replica id (T1-D22/D33), and the
-failure mode it caught was a fresh replica adopted on reopen, which is the
-contested-game-killer. Its assertion is timing-sensitive — it turns on merge and
-resume ordering — which is exactly the kind of thing that fails under CI load
-without being wrong, and also exactly the kind of thing that would fail for real
-if the ordering regressed. So: watched, not dismissed. If it fails again,
-reproduce it under artificial load rather than assuming flake — the cost of a
-wrong "flaky" call here is a game that loses moves in the field.
+**`d22-reopen:132` is not a flake. It is a confirmed corruption, not yet
+explained.** It guards the bug that killed games: a reopened arrived copy must
+keep its own replica id (T1-D22/D33), because a copy that writes under another
+replica's id collides with that replica's rows.
+
+On 14 September (run 34896291954, Firefox, two workers) it failed once and passed
+on retry, and for the first time CI kept the trace (D27). The trace shows device B
+open the arrived copy and adopt its own id (`ba40f82d…`), and after a reload come
+back as **`4e5cbefd…` — device A's id.** That is matched by call, not by value:
+`4e5cbefd…` is what page A's own reads returned, before and after A's own reopen.
+So this is not "the id changed". **The copy came back as the sender** — the exact
+corruption the test exists for, where B's next move collides with A's rows. It
+had happened before: 13 September (run 34791102890), the same assertion, Firefox
+CI, passing on retry.
+
+Ruled out, each by evidence — do not propose them again without new evidence:
+
+- **A slow library read turning the reopen into an arrival.** A reload remounts
+  through `launchFromLibrary`, which sets "own copy" directly; it never makes
+  the storage-dependent resume decision.
+- **The reload beating the adoption's save to storage.** Twelve runs, chromium
+  and Firefox at four workers, reloading B with no wait for any save at all:
+  every one kept B's id.
+- **The two-tabs revision guard refusing the save.** The trace has no refusal
+  message, no error acknowledgement and no failed save state. (The one "Not
+  saved" in it is a comment in the page source.)
+
+Not reproduced locally: twelve runs on Firefox at four workers passed ten; the
+two failures were at a different step (the first open), not the id.
+
+What the trace could not show is *why*: the replica decision is made inside the
+frame, and which database the reopen mounted and whether the save landed were
+visible nowhere. `2eb401e` logs all three to the console, permanently — the
+frame's decision with the id before and after, each save asked and written, and
+which database a reopen mounted and where it was read from — and D27 keeps the
+trace. The next sighting should read `kept (own copy): <A's id> -> <A's id>`,
+next to the database that reopen mounted. Until then, leave it: the evidence has
+been taken as far as it goes. The cost of a wrong "flaky" call here is a game that
+loses moves in the field.
 
 **`mailbox-link-e2e`'s forwarded-invite test was treated that way, and it was
 the test.** It retried once on Firefox in CI (14 Sep), the day a mailbox change
