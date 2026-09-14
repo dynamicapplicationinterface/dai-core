@@ -64,10 +64,30 @@ async function settled(page: Page): Promise<void> {
   await page.waitForTimeout(600);
 }
 
-/** Answers the launch card if one appears, and waits until the app is running. */
+/**
+ * Answers the launch card if one appears, and waits until the app is running.
+ *
+ * Waits for whichever comes first — the card, or the app already running —
+ * because that is the state the next step depends on. It used to wait up to
+ * twenty seconds for the card and then carry on, so the tests where the right
+ * outcome is *no* card (a reopen, a link older than what this device holds)
+ * sat out the whole twenty seconds every time: a quarter of a minute per open,
+ * a sixth of the suite in one file.
+ *
+ * Polled rather than `card.or(body.loaded)`: the card is hidden, not removed,
+ * once it has been answered, so both can match at once and a locator refuses
+ * an ambiguous match.
+ */
 async function through(page: Page): Promise<boolean> {
   const card = page.locator("#card-open");
-  await card.waitFor({ state: "visible", timeout: 20_000 }).catch(() => undefined);
+  await expect
+    .poll(
+      async () =>
+        (await card.isVisible()) ||
+        (await page.evaluate(() => document.body.classList.contains("loaded"))),
+      { timeout: 60_000 },
+    )
+    .toBe(true);
   const shown = await card.isVisible();
   if (shown) await card.click();
   await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
