@@ -53,6 +53,7 @@ import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
+import { askForPush, pushSender, setPushKey, wantPush } from "./push.js";
 import { filterToOneSession } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
@@ -1301,6 +1302,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
             "Nothing is uploaded — it runs on this device."
           : (carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here."),
         succession: succession?.card,
+        // Opening an invite is choosing to play with whoever sent it: the
+        // moment, inside the gesture, to ask whether this device may be told
+        // when they move (Track 5, slice two).
+        onOpen: arrivedKey && declaresReplication(cartridge.manifest) ? askForPush : undefined,
         // Narrowed on the discriminant rather than on its truthiness, which
         // TypeScript does not follow through a nested conditional.
         sibling:
@@ -2749,6 +2754,9 @@ async function sendDocument(inviteSession?: string): Promise<void> {
   };
 
   go.onclick = async () => {
+    // Inviting someone is choosing to hear from them: the moment, inside the
+    // gesture, to ask whether this device may be told when they move.
+    if (loaded && declaresReplication(loaded.manifest)) askForPush();
     go.disabled = true;
     go.textContent = viaStore ? "Sealing…" : "Preparing…";
     let made: { link: string; uploaded: boolean };
@@ -3209,14 +3217,18 @@ async function startMailboxIfPossible(): Promise<void> {
     return;
   }
   if (mountedNonce !== null) {
+    const relay = relayBase;
     mailboxSession = startMailboxSession({
       documentUuid: uuid,
       keyBase64Url: key,
-      mailbox: httpMailbox({ base: relayBase, fetch: window.fetch.bind(window) }),
+      mailbox: httpMailbox({ base: relay, fetch: window.fetch.bind(window), sender: pushSender }),
       frame: frameWindow,
       sessionNonce: mountedNonce,
       // A session document's rows travel in one mailbox per session (T1-D30).
       sessions: Boolean(loaded.manifest.session),
+      // And each mailbox wakes this device when it moves, if it may (slice two).
+      relay,
+      onLane: (address) => wantPush(address, relay),
       onNote: (message) => say(message),
     });
   }
@@ -3640,6 +3652,12 @@ Object.defineProperty(window, "__runner", {
     },
     // Pull now, as the foreground poll would.
     pullMailbox: (): void => mailboxSession?.pull(),
+    // Track 5, slice two: the relay's public push key, which a deploy stamps
+    // into the page and a test supplies for the relay it stands up.
+    usePush: (publicKey: string): void => {
+      setPushKey(publicKey);
+      void startMailboxIfPossible();
+    },
     // The mounted copy's replica id, for a test that asserts D22 as a fact
     // about identity rather than the absence of a collision.
     replicaId: requestReplicaId,
@@ -3710,6 +3728,12 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
    * next launch is current anyway, because the cache already is.
    */
   navigator.serviceWorker.addEventListener("message", (event) => {
+    // A push woke a mailbox while this page was showing: read it now rather
+    // than at the next poll (see sw.js).
+    if ((event.data as { type?: string } | null)?.type === "dai:mailbox-moved") {
+      wakeMailbox();
+      return;
+    }
     if ((event.data as { type?: string } | null)?.type !== "dai:shell-updated") return;
     if (reloaded || document.body.classList.contains("loaded")) return;
     reloaded = true;

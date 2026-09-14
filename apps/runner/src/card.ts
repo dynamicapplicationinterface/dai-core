@@ -86,6 +86,11 @@ export interface CardInput {
   sibling?: { offer: true } | { offer: false; why: string };
   /** Chosen instead of opening. Resolves when the merge has been attempted. */
   onMerge?: () => void | Promise<void>;
+  /**
+   * Run synchronously inside the Get click, before the card resolves: the only
+   * place a browser lets a question like notification permission be asked.
+   */
+  onOpen?: () => void;
   /** The §4 clauses this host applies. */
   applied: readonly string[];
   /**
@@ -522,6 +527,7 @@ export function showCard(input: CardInput): Promise<void> {
   return new Promise<void>((asked) => {
     const go = (): void => {
       open.removeEventListener("click", go);
+      input.onOpen?.();
       card.hidden = true;
       document.body.classList.remove("deciding");
       asked();

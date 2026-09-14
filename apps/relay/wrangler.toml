@@ -29,3 +29,11 @@ new_sqlite_classes = ["MailboxDO"]
 [[r2_buckets]]
 binding = "MAILBOX_R2"
 bucket_name = "dai-store"
+
+# Push (slice two). Make the keys with `node apps/relay/scripts/vapid-keys.mjs`,
+# put the public one here and on the opener's build (DAI_PUSH_PUBLIC_KEY), and
+# the private one in a secret: `npx wrangler secret put VAPID_PRIVATE_JWK`.
+# Empty is push off: subscriptions are kept and nobody is woken.
+[vars]
+VAPID_PUBLIC_KEY = ""
+VAPID_SUBJECT = "https://opendai.app"

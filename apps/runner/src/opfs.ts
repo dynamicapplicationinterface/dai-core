@@ -428,6 +428,14 @@ export interface MailboxRecord {
   watermark: { replica: string; seq: number };
   cursor: string;
   pending: { sealed: Uint8Array; head: number; replica: string } | null;
+  /**
+   * The mailbox's name at the relay, and the relay. Written down for the
+   * service worker: a push names no mailbox (its registration's scope does),
+   * and the worker asks this relay's `head` whether that mailbox moved past
+   * `cursor` before it says anything. Absent on records kept before push.
+   */
+  address?: string;
+  relay?: string;
 }
 
 export async function loadMailbox(documentUuid: string): Promise<MailboxRecord | null> {

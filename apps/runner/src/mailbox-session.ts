@@ -140,6 +140,10 @@ export function startMailboxSession(config: {
   sessionNonce: string;
   /** The document declares a session profile, so its rows travel per session. */
   sessions?: boolean;
+  /** The relay's base, written into each lane's record for the service worker's push check. */
+  relay?: string;
+  /** A lane this session writes to is running: the place to ask for push on its address. */
+  onLane?: (address: string) => void;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
   let rootKey: Uint8Array;
@@ -214,15 +218,27 @@ export function startMailboxSession(config: {
       session,
       inboundOnly,
       key,
-      state: { documentUuid: name, key: config.keyBase64Url, watermark: { replica: "", seq: 0 }, cursor: "", pending: null },
+      state: {
+        documentUuid: name,
+        key: config.keyBase64Url,
+        watermark: { replica: "", seq: 0 },
+        cursor: "",
+        pending: null,
+        address,
+        ...(config.relay ? { relay: config.relay } : {}),
+      },
       ready: Promise.resolve(),
       publishing: false,
       publishAgain: false,
     };
     lane.ready = (async () => {
       const saved = await loadMailbox(name);
-      if (saved && saved.key === config.keyBase64Url) lane.state = saved;
-      else save(lane); // first time, or a re-keyed document: write the key down.
+      if (saved && saved.key === config.keyBase64Url) {
+        // Kept state, with where it lives written down for the service worker.
+        lane.state = { ...saved, address, ...(config.relay ? { relay: config.relay } : {}) };
+        if (saved.address !== address || saved.relay !== config.relay) save(lane);
+      } else save(lane); // first time, or a re-keyed document: write the key down.
+      if (!lane.inboundOnly) config.onLane?.(address);
       if (lane.inboundOnly) {
         // Drained, never written: an unacked batch for it is dropped, because the
         // rows it held are published again to their session's own mailbox.

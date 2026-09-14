@@ -39,6 +39,17 @@
 const BUILD = "__DAI_BUILD__";
 const CACHE = "dai-runner-" + (BUILD.indexOf("__") === 0 ? "dev" : BUILD.slice(0, 12));
 
+/*
+ * This same script, registered once per mailbox at `/push/<address>/` with
+ * `?push=1` (see src/push.ts), does push and nothing else. One registration
+ * per mailbox is what gives each mailbox its own push endpoint, so the relay
+ * holds no identifier tying one game's mailbox to another's. Such a worker
+ * caches nothing, sweeps nothing and answers no fetch: there are no pages in
+ * its scope, and its install must not repeat the shell's precache or its
+ * activate sweep the shell's cache.
+ */
+const PUSH_ONLY = new URL(self.location.href).searchParams.has("push");
+
 // The shell, by stable URL. Hashed asset URLs are unknown here and are picked
 // up by the runtime cache on first use instead.
 // The engine is here because a document published without one (spec §6.2)
@@ -91,6 +102,10 @@ async function appAssets() {
 }
 
 self.addEventListener("install", (event) => {
+  if (PUSH_ONLY) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   event.waitUntil(
     caches
       .open(CACHE)
@@ -114,6 +129,7 @@ self.addEventListener("install", (event) => {
 const OURS = "dai-runner-";
 
 self.addEventListener("activate", (event) => {
+  if (PUSH_ONLY) return;
   event.waitUntil(
     caches
       .keys()
@@ -239,7 +255,107 @@ async function describedAs(response, url) {
  */
 const SHARED = "dai-shared-v1";
 
+/**
+ * The mailbox record the page kept for `address` (see MailboxRecord in
+ * src/opfs.ts), read from the page's own database. Null if there is none —
+ * the document was deleted, or the record predates push.
+ */
+function mailboxRecord(address) {
+  return new Promise((resolve) => {
+    let request;
+    try {
+      request = indexedDB.open("dai_runner_storage");
+    } catch {
+      resolve(null);
+      return;
+    }
+    request.onerror = () => resolve(null);
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const all = db.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
+        all.onsuccess = () => {
+          resolve((all.result || []).find((record) => record && record.address === address) || null);
+          db.close();
+        };
+        all.onerror = () => {
+          resolve(null);
+          db.close();
+        };
+      } catch {
+        resolve(null);
+        db.close();
+      }
+    };
+  });
+}
+
+/*
+ * A push: some mailbox this device reads has moved.
+ *
+ * The push carries nothing, so the worker finds out what it means. The scope
+ * names the mailbox; the page's record for it says which document, which
+ * relay, and how far this device has read; the relay's `head` says whether
+ * there is anything past that. If a page is on screen it is told to read now
+ * and nobody is interrupted. Otherwise a notification names the document and
+ * opens it — and what arrived merges there without a card, because the
+ * shared mailbox was already the consent.
+ */
+self.addEventListener("push", (event) => {
+  event.waitUntil(
+    (async () => {
+      const address = new URL(self.registration.scope).pathname.split("/").filter(Boolean).pop();
+      const record = address ? await mailboxRecord(address) : null;
+      if (!record || !record.relay) return;
+      let head = NaN;
+      try {
+        head = Number((await (await fetch(`${record.relay.replace(/\/$/, "")}/${address}/head`)).text()).trim());
+      } catch {
+        /* Unreachable just now: say so anyway; opening the document reads it. */
+      }
+      if (Number.isFinite(head) && head <= (Number(record.cursor) || 0)) return; // already read here.
+
+      const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const page of pages) page.postMessage({ type: "dai:mailbox-moved" });
+      if (pages.some((page) => page.visibilityState === "visible" && page.focused)) return;
+
+      const uuid = String(record.documentUuid || "").split("/")[0];
+      let name = "A shared document";
+      try {
+        const hit = await caches.match(new URL(`/doc-manifests/${uuid}.webmanifest`, self.location.origin).href);
+        if (hit) name = (await hit.json()).name || name;
+      } catch {
+        /* The generic name, then. */
+      }
+      await self.registration.showNotification(name, {
+        body: "Something new arrived.",
+        // One notification per document: a second move replaces the first.
+        tag: uuid,
+        data: { url: `/#u=${uuid}` },
+      });
+    })(),
+  );
+});
+
+/* Tapping the notification opens the document it named — focused if it is already open. */
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  event.waitUntil(
+    (async () => {
+      const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const already = pages.find((page) => page.url === url);
+      if (already) {
+        await already.focus();
+        return;
+      }
+      await self.clients.openWindow(url);
+    })(),
+  );
+});
+
 self.addEventListener("fetch", (event) => {
+  if (PUSH_ONLY) return;
   const request = event.request;
   const target = new URL(request.url);
 

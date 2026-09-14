@@ -181,7 +181,11 @@ is not a detour.
   past the cursor, pause while hidden. Slots before or alongside D22; it is the
   thing that makes the two-phone experience feel live.
 - [ ] "Your move" standing indicator (in-app) — buildable now.
-- [ ] Push ("your turn" when not in the app) = slice two; motivated by this test.
+- [x] Push ("your turn" when not in the app) = slice two; motivated by this test.
+  Landed on the per-session mailbox: one push endpoint per mailbox, a
+  payloadless wake from the relay, a notification that opens the document, and
+  a silent merge (`tests/push-e2e.spec.ts`, `tests/relay-push.spec.ts`). Still a
+  phone check: the tap itself, a real push service, and iOS (home-screen only).
 - [ ] **Version-number update prompt** — app menu compares running build to live
   `version.json`; if newer, "New version — update" one-tap (cache-bust + reload).
   Also the user-facing fix for stale-opener / merge-mismatch. Buildable now.

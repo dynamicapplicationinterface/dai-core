@@ -19,14 +19,26 @@
  *   POST  /<doc>          body = sealed bytes → the cursor, as text
  *   GET   /<doc>/head     → the head cursor, as text
  *   GET   /<doc>?since=N  → { cursor, batches: [base64, …] }
+ *
+ * And push (slice two), payloadless — see `push.ts`:
+ *   POST  /<doc>/subscribe    body = { endpoint } → "ok"
+ *   POST  /<doc>/unsubscribe  body = { endpoint } → "ok"
+ * An append with `x-dai-sender: <sha256 of an endpoint>` wakes every other
+ * subscription, not that one.
  */
+
+import { acceptableEndpoint, endpointId, sendPush, type Vapid } from "./push.js";
 
 interface Env {
   MAILBOX_R2: R2Bucket;
+  /** VAPID keys (Worker vars/secrets). Without them the relay stores subscriptions and wakes nobody. */
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_JWK?: string;
+  VAPID_SUBJECT?: string;
 }
 
 const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
-  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };
 
@@ -64,11 +76,16 @@ export class MailboxDO {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean);
-    const isHead = parts[parts.length - 1] === "head";
-    const doc = isHead ? parts[parts.length - 2] : parts[parts.length - 1];
+    const last = parts[parts.length - 1];
+    const verb = last === "head" || last === "subscribe" || last === "unsubscribe" ? last : undefined;
+    const isHead = verb === "head";
+    const doc = verb ? parts[parts.length - 2] : last;
     if (!doc || !/^[0-9a-zA-Z._-]{1,128}$/.test(doc)) return new Response("bad document id", { status: 400 });
 
-    if (request.method === "POST") return this.append(doc, request);
+    if (request.method === "POST" && (verb === "subscribe" || verb === "unsubscribe")) {
+      return this.subscription(request, verb === "subscribe");
+    }
+    if (request.method === "POST" && !verb) return this.append(doc, request);
     if (isHead) {
       // The head, with the cursor as an ETag: an unchanged mailbox is a 304
       // with no body, which is the answer to a poll that found nothing.
@@ -102,7 +119,59 @@ export class MailboxDO {
     await this.env.MAILBOX_R2.put(`mailbox/${doc}/${seq}`, sealed);
     await this.state.storage.put<number>({ counter: seq, [`d:${digest}`]: seq });
     this.counter = seq; // keep the in-memory copy the head answers from fresh.
+    // Only a new batch wakes anyone; a retried one already did.
+    this.state.waitUntil(this.wake(doc, request.headers.get("x-dai-sender")));
     return text(String(seq));
+  }
+
+  /**
+   * Subscribe or unsubscribe a push endpoint to this mailbox.
+   *
+   * Stored under the SHA-256 of the endpoint, so the sender header can name a
+   * subscription without the relay handing endpoints back to anyone. Nothing
+   * asks who is subscribing: entitlement is deferred by the ruling, and a
+   * subscriber learns only that this mailbox moved — which polling `head`
+   * already tells anyone who knows the address.
+   */
+  private async subscription(request: Request, add: boolean): Promise<Response> {
+    let endpoint: unknown;
+    try {
+      endpoint = ((await request.json()) as { endpoint?: unknown }).endpoint;
+    } catch {
+      return new Response("bad subscription", { status: 400 });
+    }
+    if (!acceptableEndpoint(endpoint)) return new Response("bad subscription", { status: 400 });
+    const name = `s:${await endpointId(endpoint)}`;
+    if (add) await this.state.storage.put<string>(name, endpoint);
+    else await this.state.storage.delete(name);
+    return text("ok");
+  }
+
+  /** Wakes every subscription but the appender's own; forgets the ones the push service says are gone. */
+  private async wake(doc: string, sender: string | null): Promise<void> {
+    const vapid = this.vapid();
+    if (!vapid) return;
+    const subscriptions = await this.state.storage.list<string>({ prefix: "s:" });
+    await Promise.all(
+      [...subscriptions].map(async ([name, endpoint]) => {
+        if (sender && name === `s:${sender}`) return;
+        if ((await sendPush(endpoint, vapid, doc)) === "gone") await this.state.storage.delete(name);
+      }),
+    );
+  }
+
+  private vapid(): Vapid | null {
+    const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_JWK, VAPID_SUBJECT } = this.env;
+    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_JWK) return null;
+    try {
+      return {
+        publicKey: VAPID_PUBLIC_KEY,
+        privateKey: JSON.parse(VAPID_PRIVATE_JWK) as JsonWebKey,
+        subject: VAPID_SUBJECT || "https://opendai.app",
+      };
+    } catch {
+      return null;
+    }
   }
 
   private async since(doc: string, since: number): Promise<Response> {

@@ -28,7 +28,9 @@ const cors = (origin: string | null): Record<string, string> => {
     "access-control-allow-methods": "GET,POST,OPTIONS",
     // `if-none-match` so a poll can send the tag; `etag` exposed so the client
     // can read it back — neither is CORS-safelisted, so both must be named.
-    "access-control-allow-headers": "content-type,if-none-match",
+    // `x-dai-sender` names the appender's own push subscription, so a move does
+    // not wake the device that made it.
+    "access-control-allow-headers": "content-type,if-none-match,x-dai-sender",
     "access-control-expose-headers": "etag",
     "access-control-max-age": "86400",
   };
@@ -42,8 +44,9 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
     const url = new URL(request.url);
-    // /m/<doc> or /m/<doc>/head — the document id is the segment after /m/.
-    const match = /^\/m\/([0-9a-zA-Z._-]{1,128})(?:\/head)?\/?$/.exec(url.pathname);
+    // /m/<doc>, /m/<doc>/head, /m/<doc>/subscribe, /m/<doc>/unsubscribe — the
+    // mailbox id is the segment after /m/.
+    const match = /^\/m\/([0-9a-zA-Z._-]{1,128})(?:\/head|\/subscribe|\/unsubscribe)?\/?$/.exec(url.pathname);
     if (!match) return new Response("not found", { status: 404, headers });
 
     const doc = match[1]!;

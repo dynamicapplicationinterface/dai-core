@@ -92,10 +92,12 @@ function stamp(): Plugin {
        * later decision; this is the default it falls back to.
        */
       const relay = (process.env.DAI_RELAY_BASE ?? "").trim();
-      return stamped.replace(
-        /<meta name="dai-relay" content="[^"]*" \/>/,
-        `<meta name="dai-relay" content="${relay}" />`,
-      );
+      // And the relay's public push key, the same way: set on the deploy with
+      // the relay's VAPID secret, empty (push off) until then.
+      const pushKey = (process.env.DAI_PUSH_PUBLIC_KEY ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "");
+      return stamped
+        .replace(/<meta name="dai-relay" content="[^"]*" \/>/, `<meta name="dai-relay" content="${relay}" />`)
+        .replace(/<meta name="dai-push-key" content="[^"]*" \/>/, `<meta name="dai-push-key" content="${pushKey}" />`);
     },
     closeBundle() {
       const commit = commitId();

@@ -25,6 +25,12 @@ export interface HttpMailboxOptions {
   base: string;
   /** The fetch to use. Injected for tests; the opener passes `window.fetch`. */
   fetch: typeof fetch;
+  /**
+   * This device's own push subscription for a mailbox, if it has one, sent
+   * with an append as `x-dai-sender` so the relay does not wake the device
+   * that made the move (Track 5, slice two).
+   */
+  sender?: (documentId: string) => string | undefined;
 }
 
 const toBase64 = (bytes: Uint8Array): string => {
@@ -58,9 +64,10 @@ export function httpMailbox(options: HttpMailboxOptions): Mailbox {
 
   return {
     async append(documentId, sealed) {
+      const sender = options.sender?.(documentId);
       const response = await doFetch(`${base}/${segment(documentId)}`, {
         method: "POST",
-        headers: { "content-type": "application/octet-stream" },
+        headers: { "content-type": "application/octet-stream", ...(sender ? { "x-dai-sender": sender } : {}) },
         body: sealed as never,
       });
       if (!response.ok) throw new Error(`MAILBOX_APPEND_${response.status}`);
