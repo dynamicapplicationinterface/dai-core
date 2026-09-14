@@ -91,6 +91,133 @@ export const REFUSALS = {
       "damage to a healthy one. Refused unless a seat is actually contested (T1-D29).",
   },
 
+  // ---- shared tables, while a document is open
+  REPLICATED_TABLE_IMMUTABLE: {
+    recoverable: false,
+    means:
+      "A write tried to change or delete a row of a shared table in place. Shared tables are " +
+      "append-only: a change is a new row and a removal a tombstone, both through " +
+      "window.dai.replicated. What SQLite says when an application writes one with plain SQL.",
+  },
+  ROW_REJECTED: {
+    recoverable: false,
+    means:
+      "A row that breaks the replication rules: a second, different row under an id already " +
+      "used (a replica issues each sequence number once), a row with no session in a session " +
+      "document, a superseded row made current again, or a write before this copy has a replica.",
+  },
+  WRITE_SURFACE_UNAVAILABLE: {
+    recoverable: false,
+    means:
+      "window.dai.replicated is not in place, so a shared table cannot be written. The reason " +
+      "follows in parentheses: the write rules were refused, never arrived, or the host did not " +
+      "say the document is replicated. The document is still readable.",
+  },
+  WRITE_RULES_NOT_DELIVERED: {
+    recoverable: false,
+    means:
+      "The host said this document has shared tables and then sent no write rules within the " +
+      "wait, so the document opens read-only rather than writing shared rows it cannot check.",
+  },
+  NO_SOURCE: {
+    recoverable: false,
+    means: "The host sent write rules with no module in them.",
+  },
+  MERGE_MODULE_MISMATCH: {
+    recoverable: false,
+    means:
+      "The write-rules and merge module the host supplied is not the one this runtime is pinned " +
+      "to, by digest. Refused rather than run: it is the code that decides which rows are kept.",
+  },
+  MERGE_MODULE_UNUSABLE: {
+    recoverable: false,
+    means:
+      "The module matched its digest and could not be loaded — a policy the frame runs under " +
+      "refused it. Reported as itself, because it reads nothing like a mismatch.",
+  },
+  NO_DOCUMENT_OPEN: {
+    recoverable: false,
+    means: "A write, a merge or a mailbox batch arrived while no database was open to take it.",
+  },
+  NOT_SEAT_CREATOR: {
+    recoverable: false,
+    means: "A seat change only a session's creator may make was asked for by another replica.",
+  },
+
+  // ---- merging another copy
+  MERGE_UNAVAILABLE: {
+    recoverable: false,
+    means: "A merge was asked for and the host supplied no merge module to run it.",
+  },
+  NOT_A_DATABASE: {
+    recoverable: false,
+    means: "The other copy's data section is empty or is not a SQLite database.",
+  },
+  NOT_REPLICATED: {
+    recoverable: false,
+    means:
+      "Neither copy declares shared tables, so there is nothing a merge could combine — refused " +
+      "as an answer rather than reported as a merge that changed nothing.",
+  },
+  SCHEMA_MISMATCH: {
+    recoverable: false,
+    means:
+      "The other copy's shared tables are not the same tables with the same columns as this " +
+      "one's, so its rows cannot be merged in.",
+  },
+  UNSUPPORTED_LEVEL: {
+    recoverable: false,
+    means:
+      "The other copy asks for a replication level this runtime does not implement. Refused " +
+      "rather than merged as though it were the level this one knows — checks it expected would " +
+      "not have run.",
+  },
+  MERGE_FAILED: {
+    recoverable: false,
+    means: "A merge failed for a reason with no name of its own; the message says what.",
+  },
+  APPLY_FAILED: {
+    recoverable: false,
+    means: "A batch from the mailbox failed to apply for a reason with no name of its own; the message says what.",
+  },
+
+  // ---- the mailbox
+  MAILBOX_KEY_INVALID: {
+    recoverable: false,
+    means: "A mailbox key that is not 32 bytes: the key in the link was cut or edited.",
+  },
+  MAILBOX_BATCH_TRUNCATED: {
+    recoverable: false,
+    means: "A sealed batch shorter than its own header, so it cannot be opened. Dropped; the next one is read.",
+  },
+  MAILBOX_BATCH_MALFORMED: {
+    recoverable: false,
+    means: "A batch that opened under its key and is not the shape a batch has. Dropped; the next one is read.",
+  },
+  MAILBOX_BATCH_UNKNOWN_TABLE: {
+    recoverable: false,
+    means:
+      "A batch carries rows for a table this document does not have as a shared table — from a " +
+      "copy with a different schema. Refused rather than guessing where its rows belong; the " +
+      "message names the table.",
+  },
+  MAILBOX_APPEND_FAILED: {
+    recoverable: true,
+    means:
+      "The relay did not accept a batch after every retry. The move is kept on this device and " +
+      "sent when the connection returns.",
+  },
+
+  // ---- building a document
+  REPLICATION_SCHEMA_INVALID: {
+    recoverable: false,
+    means:
+      "The schema's shared tables break a rule the build enforces — a column with the reserved " +
+      "_r_ prefix, a PRIMARY KEY or AUTOINCREMENT of the author's own, a session profile with " +
+      "nothing to scope, or an append-only trigger that does not name every column. Refused at " +
+      "build, where the author is.",
+  },
+
   // ---- a link, rather than a file
   LINK_DAMAGED: { recoverable: false, means: "The link does not decode: probably cut or wrapped in transit." },
   LINK_UNSUPPORTED: { recoverable: false, means: "The link names a carrier version or dictionary this reader does not have." },

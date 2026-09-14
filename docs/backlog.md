@@ -65,7 +65,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | — | Trusted Types | [x] `eec29fe` — on for kit-only apps; advice for the rest |
 | L3 | Documentation overhaul (the recipe is behind) | [x] `f3887da` constraints + model file, `08bfd70` pages, `64eb2b2` session eval — a model run against it is still to do |
 | D1 | Kit writes shared tables; kit redraws on merge | [ ] documented as local-only meanwhile |
-| D2 | Refusal registry lacks the app-facing codes | [ ] |
+| D2 | Refusal registry lacks the app-facing codes | [~] 22 codes registered; a test reads them out of `src/` and fails on a missing one |
 | D3 | Specification v0.3, normative for version 4 | [ ] scope when asked; its one wrong sentence is D19 |
 | D4 | An invite carries every session | [x] `requestShare(session)` → host filters with `filterToSession` |
 | D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
@@ -469,6 +469,33 @@ it appears to.
 registry, and a test enumerates them from the source (the `RAISE(ABORT, …)`
 strings and the thrown and returned code strings) and fails on one the registry
 lacks — so the next code cannot be added without its entry.
+
+**Landing (15 September).** `tests/refusal-registry.spec.ts` reads the codes out
+of `src/` in the positions where a code is raised — `new …Error("CODE")`
+(including a code leading a template message), `refused: "CODE"` and its
+`|| "CODE"` fallbacks, `RAISE(ABORT, 'CODE')`, `refuse…("CODE")`, and an error
+class's `code = "CODE"` — and fails on one the registry lacks. Positions rather
+than every upper-case string, because the bridge's message names and the
+environment variables are strings too. It also fails if it finds fewer codes
+than it did when written, so a pattern that stops matching cannot pass by
+finding nothing. The scope is `src/` — the library and the runtime inside every
+container; the opener's own internal failures, such as an IndexedDB open that
+never answers, are the host's business. `src/rules.ts` quotes codes as
+documentation and is not read.
+
+Twenty-two codes were raised and unregistered — twenty-one found by searching
+by hand, and the twenty-second, `MAILBOX_BATCH_UNKNOWN_TABLE`, found only by the
+test, which is the case for having it: the shared tables' two
+(`REPLICATED_TABLE_IMMUTABLE`, `ROW_REJECTED`), the write surface and its rules
+(`WRITE_SURFACE_UNAVAILABLE`, `WRITE_RULES_NOT_DELIVERED`, `NO_SOURCE`,
+`MERGE_MODULE_MISMATCH`, `MERGE_MODULE_UNUSABLE`, `NO_DOCUMENT_OPEN`,
+`NOT_SEAT_CREATOR`), the merge (`MERGE_UNAVAILABLE`, `NOT_A_DATABASE`,
+`NOT_REPLICATED`, `SCHEMA_MISMATCH`, `UNSUPPORTED_LEVEL`, `MERGE_FAILED`,
+`APPLY_FAILED`), the mailbox (`MAILBOX_KEY_INVALID`, `MAILBOX_BATCH_TRUNCATED`,
+`MAILBOX_BATCH_MALFORMED`, `MAILBOX_BATCH_UNKNOWN_TABLE`, `MAILBOX_APPEND_FAILED`) and the build
+(`REPLICATION_SCHEMA_INVALID`). Each is registered with what it means, and
+`website/docs/host-bridge.md` has a second table, *While a document is open*,
+for them — the first table's heading is about refusals before mounting.
 
 ### D3 — The specification is behind the code to the point of contradiction
 
