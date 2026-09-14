@@ -1315,6 +1315,7 @@ function bridgeMain(): void {
    */
   const authoredBatch = (
     watermark: { replica: string; seq: number },
+    session?: Uint8Array,
   ): { batch: Uint8Array | null; head: number; replica: string } => {
     if (!liveDb || !mergeModule) return { batch: null, head: watermark.seq, replica: watermark.replica };
     const merge = mergeModule as Any;
@@ -1333,7 +1334,24 @@ function bridgeMain(): void {
     // the replica this copy now writes as — so a batch is never stranded beneath
     // a count from an identity this copy has shed. The current replica travels
     // back with the head, so the host rebinds its watermark to what it advanced.
-    return merge.authoredBatchAbove(r, watermark, tables);
+    // Scoped to one session when the host asks for one (T1-D30): each session's
+    // mailbox carries only that session's rows.
+    return merge.authoredBatchAbove(r, watermark, tables, session);
+  };
+
+  /** The sessions this copy holds seats for, as hex — each has a mailbox of its own. */
+  const heldSessions = (): string[] => {
+    if (!liveDb) return [];
+    try {
+      const present = liveDb.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = '_dai_seat'");
+      if (present.length === 0) return [];
+      return liveDb
+        .selectObjects("SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_seat")
+        .map((row: Any) => String(row.s))
+        .filter((s: string) => /^[0-9a-f]{32}$/.test(s));
+    } catch {
+      return [];
+    }
   };
 
   /**
@@ -1967,10 +1985,17 @@ function bridgeMain(): void {
       // above it. The watermark is a (replica, seq) pair; the reply carries the
       // replica this copy actually authored under, so the host rebinds. Answered,
       // never volunteered.
-      const { batch, head, replica } = authoredBatch({
-        replica: String(data.replica ?? ""),
-        seq: Number(data.seq) || 0,
-      });
+      const sessionHex = typeof data.session === "string" && /^[0-9a-f]{32}$/.test(data.session) ? data.session : "";
+      const session = sessionHex
+        ? new Uint8Array(sessionHex.match(/../g)!.map((pair: string) => parseInt(pair, 16)))
+        : undefined;
+      const { batch, head, replica } = authoredBatch(
+        {
+          replica: String(data.replica ?? ""),
+          seq: Number(data.seq) || 0,
+        },
+        session,
+      );
       // Cloned, not transferred: a batch is a few rows, and a transfer list of
       // one detached buffer is a footgun for the saving it does not make.
       window.parent.postMessage(
@@ -1991,6 +2016,13 @@ function bridgeMain(): void {
         replica = null;
       }
       window.parent.postMessage({ type: "dai:replica-id-answer", nonce: data.nonce, replica }, "*");
+      return;
+    }
+    if (data.type === "dai:sessions") {
+      // The host asking which sessions this copy holds, so it can run one mailbox
+      // for each (T1-D30). A frame older than this never answers, which is how
+      // the host knows to keep one mailbox for the whole document.
+      window.parent.postMessage({ type: "dai:sessions-answer", id: data.id, sessions: heldSessions() }, "*");
       return;
     }
     if (data.type === "dai:apply-batch") {
@@ -3083,11 +3115,18 @@ async function boot(): Promise<void> {
     }
     // The host asking the frame for what it authored above a watermark (Track 5).
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_AUTHORED_SINCE") {
-      const request = event.data as { id?: string; seq?: number; replica?: string };
+      const request = event.data as { id?: string; seq?: number; replica?: string; session?: unknown };
+      const session = typeof request.session === "string" && /^[0-9a-f]{32}$/.test(request.session) ? request.session : undefined;
       frame.contentWindow?.postMessage(
-        { type: "dai:authored-since", id: request.id, seq: request.seq, replica: request.replica },
+        { type: "dai:authored-since", id: request.id, seq: request.seq, replica: request.replica, ...(session ? { session } : {}) },
         "*",
       );
+      return;
+    }
+    // The host asking which sessions this copy holds (T1-D30).
+    if (event.source === window.parent && fromHost?.type === "DAI_HOST_SESSIONS") {
+      const request = event.data as { id?: string };
+      frame.contentWindow?.postMessage({ type: "dai:sessions", id: request.id }, "*");
       return;
     }
     // The host handing the frame a batch pulled from the mailbox, to merge.
@@ -3281,6 +3320,14 @@ async function boot(): Promise<void> {
     // Track 5: the frame's mailbox messages, on their way to the host.
     if (event.source === frame.contentWindow && relay?.type === "dai:authored") {
       window.parent.postMessage({ type: "DAI_HOST_AUTHORED", sessionNonce }, "*");
+      return;
+    }
+    if (event.source === frame.contentWindow && relay?.type === "dai:sessions-answer") {
+      const answer = event.data as { id?: string; sessions?: unknown };
+      const sessions = Array.isArray(answer.sessions)
+        ? answer.sessions.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s))
+        : [];
+      window.parent.postMessage({ type: "DAI_HOST_SESSIONS_ANSWER", sessionNonce, id: answer.id, sessions }, "*");
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:authored-batch") {

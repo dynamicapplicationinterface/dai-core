@@ -3215,6 +3215,8 @@ async function startMailboxIfPossible(): Promise<void> {
       mailbox: httpMailbox({ base: relayBase, fetch: window.fetch.bind(window) }),
       frame: frameWindow,
       sessionNonce: mountedNonce,
+      // A session document's rows travel in one mailbox per session (T1-D30).
+      sessions: Boolean(loaded.manifest.session),
       onNote: (message) => say(message),
     });
   }

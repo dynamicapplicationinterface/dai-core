@@ -457,6 +457,10 @@ async function deleteMailbox(documentUuid: string): Promise<void> {
   try {
     const db = await openIdb();
     await committed(db.transaction(MAILBOX_STORE, "readwrite"), (store) => store.delete(documentUuid));
+    // And each of its sessions' mailboxes, kept as `<uuid>/<session>` (T1-D30).
+    await committed(db.transaction(MAILBOX_STORE, "readwrite"), (store) =>
+      store.delete(IDBKeyRange.bound(`${documentUuid}/`, `${documentUuid}/\uffff`)),
+    );
   } catch {
     // Ignore error
   }

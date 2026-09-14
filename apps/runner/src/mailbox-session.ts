@@ -1,5 +1,5 @@
 /**
- * The host's mailbox loop for one mounted document (Track 5, slice one).
+ * The host's mailbox loop for one mounted document (Track 5).
  *
  * The frame authors rows and merges them; this carries them, because the frame
  * cannot reach the network. It is kept out of the mount lifecycle on purpose —
@@ -10,12 +10,36 @@
  * nudge, debounced, asks the frame for the rows above the watermark, seals
  * them, and re-sends the same bytes until the relay acks — persisting the
  * unacked batch first so an iOS kill resumes rather than loses it, and
- * advancing the watermark only on the ack. Pull, on foreground, reads what is
- * new, opens each batch with the document key, and hands the plaintext to the
- * frame to merge the same way a file merges.
+ * advancing the watermark only on the ack. Pull reads what is new, opens each
+ * batch, and hands the plaintext to the frame to merge the same way a file
+ * merges.
+ *
+ * **One mailbox per session (T1-D30, backlog D8).** A session document's rows
+ * travel in one mailbox per session, each addressed and keyed by
+ * `deriveSessionMailbox(root, sessionId)`: the key needs the session id, so
+ * the document key alone opens nothing, and the address needs the root, so a
+ * relay cannot tell that two sessions share a document or a person. Each is a
+ * "lane" below, with its own watermark and cursor. A plain replicated document
+ * has no sessions and keeps one lane, as slice one did.
+ *
+ * **Moving a device over, decided rather than discovered.** A device that ran
+ * the per-document mailbox kept state for it. For a session document that state
+ * is not carried over: each session lane starts at watermark 0, so its whole
+ * history is published once to the new address — harmless, because a merge
+ * ignores a row it already holds — and a peer on the new opener catches up from
+ * it. The old per-document mailbox is still *drained* (read, never written) on
+ * a device that kept state for it, so nothing a not-yet-updated peer sent is
+ * lost. A peer still on the old opener stops hearing new moves until it
+ * reopens, which updates it (the shell is network-first); re-sharing a link is
+ * the recovery that does not wait for that.
+ *
+ * **Older documents keep what they had.** A document runs the runtime it was
+ * built with, and a frame older than this does not answer the sessions
+ * question — so when no answer comes, the document keeps its single
+ * per-document mailbox, and two copies of it still agree with each other.
  */
 import { catchUp, publishSealed } from "../../../src/mailbox-sync.js";
-import { openBatch, sealBatch, type Mailbox } from "../../../src/mailbox.js";
+import { deriveSessionMailbox, openBatch, sealBatch, type Mailbox } from "../../../src/mailbox.js";
 import { loadMailbox, saveMailbox, type MailboxRecord } from "./opfs.js";
 
 const fromBase64Url = (value: string): Uint8Array => {
@@ -26,14 +50,16 @@ const fromBase64Url = (value: string): Uint8Array => {
   return out;
 };
 
+const fromHex = (text: string): Uint8Array => {
+  const out = new Uint8Array(text.length / 2);
+  for (let i = 0; i < out.length; i += 1) out[i] = parseInt(text.slice(i * 2, i * 2 + 2), 16);
+  return out;
+};
+
 /**
- * The key the mailbox seals under, derived from the document's root key.
- *
- * The root is never used to seal directly: HKDF derives the mailbox key from it,
- * so a session (Track 3) can key its own mailbox off the same root by deriving
- * under the session id. Slice one has one implicit session, so the info is a
- * fixed label; when sessions land it becomes the session id. Both parties derive
- * the same key from the same root and label, with no round trip.
+ * The key the per-document mailbox seals under, derived from the document's
+ * root key under a fixed label. Kept for plain replicated documents, for older
+ * documents, and to drain what a session document's old mailbox still holds.
  */
 async function deriveMailboxKey(root: Uint8Array, label: string): Promise<Uint8Array> {
   const hk = await crypto.subtle.importKey("raw", root as unknown as ArrayBuffer, "HKDF", false, ["deriveBits"]);
@@ -45,7 +71,7 @@ async function deriveMailboxKey(root: Uint8Array, label: string): Promise<Uint8A
   return new Uint8Array(bits);
 }
 
-/** The slice-one mailbox label; becomes the session id when Track 3 lands. */
+/** The per-document mailbox's label. Session lanes derive their own (T1-D30). */
 const MAILBOX_LABEL = "dai:mailbox:v1";
 
 export interface MailboxSession {
@@ -58,11 +84,6 @@ export interface MailboxSession {
 /**
  * The key a document's mailbox seals under: the one from the link if this open
  * carried it, otherwise the one kept from first arrival.
- *
- * A home-screen launch is `#u=` with no `k`, so most opens rely on the stored
- * key; a link open both uses and (through the session) records it. Returns null
- * for a document that has never arrived by link and so has no mailbox — which
- * is correct, not a failure.
  */
 export async function resolveMailboxKey(
   documentUuid: string,
@@ -80,20 +101,36 @@ const PUBLISH_DEBOUNCE_MS = 500;
  *
  * Fast in the minute after anyone acts — a reply is usually coming — then it
  * stretches, because a game is two people thinking for minutes and a fixed
- * fast tick is almost all wasted requests. It snaps back to fast on a local
- * write or a pull that found something. The relay is on a request budget; a
- * timer that never backs off is what spends it. Only while the tab is visible;
+ * fast tick is almost all wasted requests. Only while the tab is visible;
  * hidden, there is nobody to show a move to, so it waits at the slow rate.
  */
 const POLL_FAST_MS = 3_000;
 const POLL_MED_MS = 15_000;
 const POLL_SLOW_MS = 30_000;
-// Fast for the minute after anyone acts — that is when a reply comes — then
-// stretch. Timed from the last act, not counted in polls, so the first move of
-// a game (nobody has acted here but the session just started, which counts)
-// arrives fast rather than after a stretch that had already begun.
 const POLL_FAST_WINDOW_MS = 60_000;
 const POLL_MED_WINDOW_MS = 180_000;
+
+/** How long to wait for a frame to say which sessions it holds before treating it as older. */
+const SESSIONS_ANSWER_MS = 3_000;
+
+type Any = Record<string, unknown>;
+
+/** One mailbox, with its own place in it. */
+interface Lane {
+  /** Where its state is kept: the document's uuid, or `<uuid>/<session hex>`. */
+  name: string;
+  /** Its name at the relay. */
+  address: string;
+  /** The session it carries, as hex, for a session lane. */
+  session?: string;
+  /** The old per-document mailbox of a session document: drained, never written. */
+  inboundOnly: boolean;
+  key: () => Promise<Uint8Array>;
+  state: MailboxRecord;
+  ready: Promise<void>;
+  publishing: boolean;
+  publishAgain: boolean;
+}
 
 export function startMailboxSession(config: {
   documentUuid: string;
@@ -101,6 +138,8 @@ export function startMailboxSession(config: {
   mailbox: Mailbox;
   frame: Window;
   sessionNonce: string;
+  /** The document declares a session profile, so its rows travel per session. */
+  sessions?: boolean;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
   let rootKey: Uint8Array;
@@ -110,37 +149,28 @@ export function startMailboxSession(config: {
   } catch {
     return null;
   }
-  // Derived once, lazily: the mailbox seals under HKDF(root, label), never the
-  // root itself. See deriveMailboxKey.
-  let mailboxKeyPromise: Promise<Uint8Array> | null = null;
-  const mailboxKey = (): Promise<Uint8Array> =>
-    (mailboxKeyPromise ??= deriveMailboxKey(rootKey, MAILBOX_LABEL));
+  let documentKeyPromise: Promise<Uint8Array> | null = null;
+  const documentMailboxKey = (): Promise<Uint8Array> =>
+    (documentKeyPromise ??= deriveMailboxKey(rootKey, MAILBOX_LABEL));
 
   const { documentUuid, mailbox, frame, sessionNonce } = config;
-  let state: MailboxRecord = {
-    documentUuid,
-    key: config.keyBase64Url,
-    watermark: { replica: "", seq: 0 },
-    cursor: "",
-    pending: null,
-  };
+  const lanes = new Map<string, Lane>();
+  /** Decided once: this document's frame runs one mailbox per session, or one for the whole document. */
+  let mode: "unknown" | "sessions" | "document" = config.sessions ? "unknown" : "document";
+  let legacyChecked = false;
   let stopped = false;
   let publishTimer: number | undefined;
-  let publishing = false;
-  let publishAgain = false;
   let pulling = false;
   let pollTimer: number | undefined;
   let lastActivity = Date.now();
   let requestId = 0;
   const pending = new Map<string, (value: Any) => void>();
 
-  type Any = Record<string, unknown>;
-
   const post = (message: Any): void => {
     frame.postMessage({ ...message, sessionNonce }, "*");
   };
 
-  /** Post a request to the frame and wait for the reply carrying the same id. */
+  /** Post a request to the frame and wait for the reply carrying the same id; `{}` if none comes. */
   const ask = (message: Any, replyType: string, timeoutMs = 15_000): Promise<Any> =>
     new Promise((resolve) => {
       const id = `mb${(requestId += 1)}`;
@@ -164,7 +194,7 @@ export function startMailboxSession(config: {
       pollNow(); // a local move; the reply is likely soon, so poll fast again.
       return;
     }
-    if (type === "DAI_HOST_AUTHORED_BATCH" || type === "DAI_HOST_APPLIED") {
+    if (type === "DAI_HOST_AUTHORED_BATCH" || type === "DAI_HOST_APPLIED" || type === "DAI_HOST_SESSIONS_ANSWER") {
       const resolver = pending.get(String(data["id"]) + String(type));
       if (resolver) {
         pending.delete(String(data["id"]) + String(type));
@@ -173,54 +203,138 @@ export function startMailboxSession(config: {
     }
   };
 
-  const save = (): void => {
-    void saveMailbox(state);
+  const save = (lane: Lane): void => {
+    void saveMailbox(lane.state);
   };
 
-  async function runPublish(): Promise<void> {
-    if (stopped || publishing) {
-      publishAgain = true;
+  function makeLane(name: string, address: string, key: () => Promise<Uint8Array>, session: string | undefined, inboundOnly: boolean): Lane {
+    const lane: Lane = {
+      name,
+      address,
+      session,
+      inboundOnly,
+      key,
+      state: { documentUuid: name, key: config.keyBase64Url, watermark: { replica: "", seq: 0 }, cursor: "", pending: null },
+      ready: Promise.resolve(),
+      publishing: false,
+      publishAgain: false,
+    };
+    lane.ready = (async () => {
+      const saved = await loadMailbox(name);
+      if (saved && saved.key === config.keyBase64Url) lane.state = saved;
+      else save(lane); // first time, or a re-keyed document: write the key down.
+      if (lane.inboundOnly) {
+        // Drained, never written: an unacked batch for it is dropped, because the
+        // rows it held are published again to their session's own mailbox.
+        if (lane.state.pending) {
+          lane.state = { ...lane.state, pending: null };
+          save(lane);
+        }
+        return;
+      }
+      if (lane.state.pending) {
+        try {
+          await publishSealed(mailbox, lane.address, lane.state.pending.sealed);
+          lane.state = {
+            ...lane.state,
+            watermark: { replica: lane.state.pending.replica, seq: lane.state.pending.head },
+            pending: null,
+          };
+          save(lane);
+        } catch {
+          /* Still unreachable; stays pending. */
+        }
+      }
+    })();
+    return lane;
+  }
+
+  /** Brings the set of lanes up to date with the sessions the frame holds now. */
+  async function refreshLanes(): Promise<void> {
+    if (stopped) return;
+    if (mode === "document") {
+      if (!lanes.has(documentUuid)) lanes.set(documentUuid, makeLane(documentUuid, documentUuid, documentMailboxKey, undefined, false));
       return;
     }
-    publishing = true;
+    const answer = await ask({ type: "DAI_HOST_SESSIONS" }, "DAI_HOST_SESSIONS_ANSWER", SESSIONS_ANSWER_MS);
+    if (stopped) return;
+    if (!Array.isArray(answer["sessions"])) {
+      // An older frame, which cannot scope a batch to a session: the whole
+      // document keeps one mailbox, and both copies of it agree.
+      if (mode === "unknown") mode = "document";
+      if (mode === "document") return refreshLanes();
+      return; // a later question unanswered; keep the lanes already running.
+    }
+    mode = "sessions";
+    if (!legacyChecked) {
+      legacyChecked = true;
+      const legacy = await loadMailbox(documentUuid);
+      if (legacy && legacy.key === config.keyBase64Url) {
+        lanes.set(documentUuid, makeLane(documentUuid, documentUuid, documentMailboxKey, undefined, true));
+      }
+    }
+    for (const session of answer["sessions"] as unknown[]) {
+      if (typeof session !== "string" || !/^[0-9a-f]{32}$/.test(session)) continue;
+      const name = `${documentUuid}/${session}`;
+      if (lanes.has(name)) continue;
+      const derived = await deriveSessionMailbox(rootKey, fromHex(session));
+      lanes.set(name, makeLane(name, derived.id, async () => derived.key, session, false));
+    }
+  }
+
+  async function publishLane(lane: Lane): Promise<void> {
+    if (stopped || lane.inboundOnly) return;
+    await lane.ready;
+    if (lane.publishing) {
+      lane.publishAgain = true;
+      return;
+    }
+    lane.publishing = true;
     try {
-      // Ask the frame for the rows it authored above the watermark. The
-      // watermark is a (replica, seq) pair; the frame answers with the replica
-      // this copy actually authored under, so the watermark rebinds to it and a
-      // seq is never carried across an identity this copy has shed.
+      // Ask the frame for the rows it authored above the watermark — in this
+      // session only, for a session lane. The frame answers with the replica
+      // this copy authored under, so the watermark rebinds to it.
       const answer = await ask(
-        { type: "DAI_HOST_AUTHORED_SINCE", seq: state.watermark.seq, replica: state.watermark.replica },
+        {
+          type: "DAI_HOST_AUTHORED_SINCE",
+          seq: lane.state.watermark.seq,
+          replica: lane.state.watermark.replica,
+          ...(lane.session ? { session: lane.session } : {}),
+        },
         "DAI_HOST_AUTHORED_BATCH",
       );
       const batchBytes = answer["batch"];
-      const head = Number(answer["head"] ?? state.watermark.seq);
-      const replica = String(answer["replica"] ?? state.watermark.replica);
+      const head = Number(answer["head"] ?? lane.state.watermark.seq);
+      const replica = String(answer["replica"] ?? lane.state.watermark.replica);
       if (batchBytes instanceof Uint8Array && batchBytes.byteLength > 0) {
-        const sealed = await sealBatch(batchBytes, await mailboxKey());
+        const sealed = await sealBatch(batchBytes, await lane.key());
         // Persisted before the send, so a kill mid-publish resumes it.
-        state = { ...state, pending: { sealed, head, replica } };
-        save();
+        lane.state = { ...lane.state, pending: { sealed, head, replica } };
+        save(lane);
         try {
-          await publishSealed(mailbox, documentUuid, sealed);
-          state = { ...state, watermark: { replica, seq: head }, pending: null };
-          save();
+          await publishSealed(mailbox, lane.address, sealed);
+          lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
+          save(lane);
         } catch {
-          // Left pending; retried on the next nudge, foreground, or start.
           config.onNote?.("A move could not be sent yet; it will send when the connection returns.");
         }
-      } else if (replica !== state.watermark.replica || head > state.watermark.seq) {
-        // Nothing new to send, but the identity or head moved (a merge caught us
-        // up, or this copy took its own id): rebind so the next ask is scoped.
-        state = { ...state, watermark: { replica, seq: head } };
-        save();
+      } else if (replica !== lane.state.watermark.replica || head > lane.state.watermark.seq) {
+        lane.state = { ...lane.state, watermark: { replica, seq: head } };
+        save(lane);
       }
     } finally {
-      publishing = false;
-      if (publishAgain && !stopped) {
-        publishAgain = false;
-        void runPublish();
+      lane.publishing = false;
+      if (lane.publishAgain && !stopped) {
+        lane.publishAgain = false;
+        void publishLane(lane);
       }
     }
+  }
+
+  async function runPublish(): Promise<void> {
+    await refreshLanes().catch(() => undefined);
+    // One at a time: each is a question to the frame and a request to the relay.
+    for (const lane of [...lanes.values()]) await publishLane(lane);
   }
 
   function schedulePublish(): void {
@@ -229,29 +343,52 @@ export function startMailboxSession(config: {
     publishTimer = window.setTimeout(() => void runPublish(), PUBLISH_DEBOUNCE_MS);
   }
 
-  async function runPull(): Promise<void> {
-    if (stopped || pulling) return;
+  async function pullLane(lane: Lane): Promise<void> {
+    await lane.ready;
+    const next = await catchUp(
+      mailbox,
+      lane.address,
+      lane.state.cursor,
+      async (sealed) => openBatch(sealed, await lane.key()),
+      async (plaintext) => {
+        await ask({ type: "DAI_HOST_APPLY_BATCH", batch: plaintext }, "DAI_HOST_APPLIED");
+      },
+    );
+    if (next !== lane.state.cursor) {
+      lane.state = { ...lane.state, cursor: next };
+      save(lane);
+    }
+  }
+
+  /**
+   * Every lane, one after another — never two at once, because each batch is a
+   * merge transaction in the frame and two cannot be open together.
+   */
+  async function runPull(onlyIfMoved = false): Promise<boolean> {
+    if (stopped || pulling) return false;
     pulling = true;
+    let moved = false;
     try {
-      const next = await catchUp(
-        mailbox,
-        documentUuid,
-        state.cursor,
-        async (sealed) => openBatch(sealed, await mailboxKey()),
-        async (plaintext) => {
-          await ask({ type: "DAI_HOST_APPLY_BATCH", batch: plaintext }, "DAI_HOST_APPLIED");
-        },
-      );
-      if (next !== state.cursor) {
-        state = { ...state, cursor: next };
-        save();
+      await refreshLanes().catch(() => undefined);
+      for (const lane of [...lanes.values()]) {
+        if (stopped) break;
+        try {
+          if (onlyIfMoved) {
+            // The cheap check: only `head`, a 304 when unchanged.
+            await lane.ready;
+            const head = Number(await mailbox.head(lane.address)) || 0;
+            if (head <= (Number(lane.state.cursor) || 0)) continue;
+          }
+          await pullLane(lane);
+          moved = true;
+        } catch {
+          // That mailbox was unreachable; its cursor is unmoved and the next tick tries again.
+        }
       }
-    } catch {
-      // The relay was unreachable; the cursor is unmoved and the next
-      // foreground tries again.
     } finally {
       pulling = false;
     }
+    return moved;
   }
 
   function schedulePoll(ms: number): void {
@@ -273,15 +410,10 @@ export function startMailboxSession(config: {
   }
 
   /**
-   * The cheap check: has the mailbox moved past what we hold? Only `head`, which
-   * the client turns into a 304 when it is unchanged, so an idle poll costs
-   * almost nothing. Pull only when it has actually advanced.
-   *
-   * A timer alone is not enough on iOS, which throttles a page's timers when it
-   * is idle — the poll fires late or not at all until the person touches the
-   * screen. So a foreground or an interaction also drives a pull (see main.ts),
-   * and this timer is the steady floor between those. Fully hands-off delivery
-   * on an idle phone is what push (slice two) is for.
+   * The steady floor between foregrounds and interactions: pull only where a
+   * mailbox has moved past what this copy holds. A timer alone is not enough on
+   * iOS, which throttles an idle page's timers — hands-off delivery to an idle
+   * phone is what push is for.
    */
   async function runPoll(): Promise<void> {
     if (stopped) return;
@@ -289,42 +421,16 @@ export function startMailboxSession(config: {
       schedulePoll(POLL_SLOW_MS);
       return;
     }
-    try {
-      const head = Number(await mailbox.head(documentUuid)) || 0;
-      if (head > (Number(state.cursor) || 0)) {
-        await runPull();
-        lastActivity = Date.now(); // something arrived; a reply may be next.
-      }
-    } catch {
-      /* Relay unreachable; the next tick tries again at the current rate. */
-    }
+    if (await runPull(true)) lastActivity = Date.now(); // something arrived; a reply may be next.
     schedulePoll(pollRate());
   }
 
-  // Resume from what was persisted, re-sending an unacked batch, then read
-  // anything that arrived while this copy was away.
+  // Find the mailboxes, read anything that arrived while this copy was away,
+  // publish anything authored before the session was listening, then look for
+  // the other copy's moves on its own.
   void (async () => {
-    const saved = await loadMailbox(documentUuid);
-    if (stopped) return;
-    if (saved && saved.key === config.keyBase64Url) state = saved;
-    else save(); // first time, or a re-keyed document: write the key down.
-    if (state.pending) {
-      try {
-        await publishSealed(mailbox, documentUuid, state.pending.sealed);
-        state = {
-          ...state,
-          watermark: { replica: state.pending.replica, seq: state.pending.head },
-          pending: null,
-        };
-        save();
-      } catch {
-        /* Still unreachable; stays pending. */
-      }
-    }
-    void runPull();
-    // In case rows were authored before the session was listening.
+    await runPull();
     schedulePublish();
-    // And from here it looks for the other copy's moves on its own.
     schedulePoll(POLL_FAST_MS);
   })();
 

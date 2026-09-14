@@ -71,7 +71,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
 | D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
-| D8 | The host runs one mailbox per document | [ ] `deriveSessionMailbox` built and tested, unused — decides what push attaches to |
+| D8 | The host runs one mailbox per document | [~] wiring the per-session mailbox, then push on it |
+| D9 | A tested building block with no caller is not done | [ ] three in one pass; a caller check and a definition of done |
 
 ---
 
@@ -495,6 +496,28 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D9 — A tested building block with no caller is not done
+
+Three times in one pass: `filterToSession` and `exportSession` (the invite
+filter, D4) and `deriveSessionMailbox` (the per-session mailbox, D8). Each was
+correct, reviewed and tested, and shipped without anything on the real path
+calling it — and each gap was invisible for the same reason: the tests exercised
+the block, not the path a person takes. One layer down, the same thing again:
+the filter's tests built their own databases, so its first run against a
+document an application had opened met `_dai_meta` and refused.
+
+Two ways to stop the fourth, cheapest first:
+
+1. **A slice is not done until "what calls this?" has an answer on the real
+   path** — a host, an application, the compiler — and a carrier-first test goes
+   through that caller. Written into the definition of done, not left to review.
+2. **A check** that every export of `src/` has a caller outside its own file and
+   its own tests, with an explicit allow-list for the package's public API
+   (what `src/index.ts` re-exports). It would have flagged all three.
+
+**Exit:** the definition of done says (1); the check in (2) runs in CI and fails
+on an uncalled export that is not on the public list.
 
 ### D8 — The host runs one mailbox per document; the per-session mailbox is unused
 
