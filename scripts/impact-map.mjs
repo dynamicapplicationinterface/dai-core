@@ -110,6 +110,30 @@ const OTHER_CHECKS = [
     run: "cargo test --manifest-path crates/sectioned/Cargo.toml",
     claims: ["crates/sectioned/"],
   },
+  {
+    run: "node scripts/build-conformance.mjs --check",
+    claims: ["scripts/build-conformance.mjs"],
+  },
+  {
+    run: "node scripts/build-dictionary.mjs --check",
+    claims: ["scripts/build-dictionary.mjs", "conformance/inline-dictionary.bin"],
+  },
+  {
+    run: "node scripts/build-confusables.mjs --check",
+    claims: ["scripts/build-confusables.mjs", "conformance/confusables.txt", "conformance/confusables.bd086572.json"],
+  },
+  {
+    run: "npm run fixtures:check",
+    claims: ["scripts/build-merge-fixtures.mjs", "conformance/merge/"],
+  },
+  {
+    run: "python3 conformance/reference/dai_merge.py",
+    claims: ["conformance/reference/dai_merge.py", "conformance/merge/"],
+  },
+  {
+    run: "cargo run --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge",
+    claims: ["conformance/readers/rust-merge/", "conformance/merge/"],
+  },
 ];
 
 /**
@@ -117,7 +141,36 @@ const OTHER_CHECKS = [
  * Keep it short and specific: an entry is a claim that nothing automatic can
  * check the file, not that nobody got round to it.
  */
-const ALLOWED = [];
+const ALLOWED = [
+  // The desktop shell. Its TypeScript is claimed (one-engine, trust); the rest
+  // is a Tauri application no CI job builds or drives.
+  { path: "apps/desktop/src-tauri/", why: "the native Tauri host; no CI job builds it, and nothing can drive it headless" },
+  { path: "apps/desktop/index.html", why: "the desktop shell's page, served only inside the Tauri host" },
+  { path: "apps/desktop/package.json", why: "the desktop shell's own manifest, used only to build the Tauri host" },
+  { path: "apps/desktop/package-lock.json", why: "the desktop shell's own lockfile, used only to build the Tauri host" },
+  { path: "apps/desktop/vite.config.ts", why: "builds the desktop shell's page for the Tauri host only" },
+  { path: "apps/desktop/scripts/stage-runtime.mjs", why: "stages the runtime into the Tauri host's build; runs only there" },
+  // The relay's deploy configuration: applied by hand to Cloudflare.
+  { path: "apps/relay/wrangler.toml", why: "deploy configuration for the relay, applied to Cloudflare by hand" },
+  { path: "apps/relay/README.md", why: "the relay's deploy instructions; prose" },
+  { path: "apps/relay/scripts/vapid-keys.mjs", why: "makes and verifies the push key pair against the deployed config, by hand" },
+  // Records of evaluation runs, kept as evidence, not code anything runs.
+  { path: "eval/candidates/", why: "the output of past evaluation runs, kept as the record of what they produced" },
+  { path: "eval/prompts.json", why: "the prompts past evaluation runs were given, kept with their output" },
+  // Operator tools: run by a person against live systems or on demand.
+  { path: "scripts/ci-verdict.mjs", why: "reads a CI run's result for a person; talks to GitHub" },
+  { path: "scripts/measure.mjs", why: "a timing measurement a person runs; its output is a number, not a verdict" },
+  { path: "scripts/check-deploys.mjs", why: "checks the live deploys; needs the network and the production hosts" },
+  { path: "scripts/check-store.mjs", why: "checks a live store bucket; needs the network and a real bucket" },
+  { path: "scripts/capture-screenshots.mjs", why: "makes the site's screenshots for a person to review" },
+  { path: "scripts/make-icons.mjs", why: "generates icon images a person reviews and commits" },
+  { path: "scripts/generate-desktop-icons.js", why: "generates the desktop host's icons for the Tauri build" },
+  {
+    path: "scripts/build-demo-cartridge.js",
+    why: "writes a demo document with a fresh key each run, to two paths that are not committed; there is nothing committed for a check to hold",
+  },
+  { path: "conformance/README.md", why: "describes the conformance suite; prose" },
+];
 
 // ------------------------------------------------------------------ files
 
@@ -382,10 +435,13 @@ if (mode === "--write" || mode === "--check") {
     );
   }
 
+  // An allowed entry outlives its reason once a check covers every file it
+  // names; then it comes off, or the list grows into a place nothing is checked.
   for (const entry of ALLOWED) {
-    if (!files.some((file) => covers([entry.path], file))) problems.push(`ALLOWED names ${entry.path}, which no longer exists.`);
-    else if (Object.values(map.specs).some((claims) => under(entry.path.endsWith("/") ? entry.path : "").length === 0 && covers(claims, entry.path))) {
-      problems.push(`ALLOWED names ${entry.path}, which a spec claims now: take it off.`);
+    const named = files.filter((file) => covers([entry.path], file));
+    if (named.length === 0) problems.push(`ALLOWED names ${entry.path}, which no longer exists.`);
+    else if (named.every((file) => claimLists.some((claims) => covers(claims, file)))) {
+      problems.push(`ALLOWED names ${entry.path}, which a check covers now: take it off.`);
     }
   }
 
