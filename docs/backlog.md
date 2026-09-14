@@ -607,6 +607,13 @@ closed`.
 - CI, chromium, two workers (14 September, run 34889745158):
   `host-profile.spec.ts:49`, the first test in its stretch to ask for a browser
   context, after four that never open a page.
+- Locally, chromium, four workers (14 September, a push-tier run):
+  `launch-card.spec.ts:211`. The first with any evidence: the error context
+  carries the dead browser's own process log (pid 37192), and it was alive and
+  logging to its last line — which was a `d22-reopen` run's breadcrumbs, ending
+  at "reopen mounted the stored database". No crash, exit or signal line; then
+  the next test found it closed. What the browser's last work was is a fact;
+  whether it matters is not yet known.
 
 Each passed on retry, and 78 repeats of launch-card under the same load never
 reproduced it. It is not parallelism: it happened at one worker too. Nothing in
