@@ -1,10 +1,12 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FullResult, Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FLOOR = join(repo, "tests", "count-floor.json");
+/** Written only when the gate checked a whole run; see the end of onEnd. */
+export const REPORT = join(repo, "test-results", "count-gate.json");
 
 /**
  * A run that quietly got smaller is a failed run.
@@ -115,6 +117,18 @@ export default class CountGate implements Reporter {
     for (const name of this.unexplained) {
       complaints.push(`skipped with no reason given: ${name} — use test.skip(condition, "why").`);
     }
+
+    // Proof the gate ran, for the push tier (scripts/test-tier.mjs): it
+    // deletes this before the run and refuses to pass without it, so a run
+    // where the gate silently did not happen — a --reporter flag, a filter —
+    // cannot be mistaken for a checked one.
+    mkdirSync(dirname(REPORT), { recursive: true });
+    writeFileSync(
+      REPORT,
+      `${JSON.stringify({ checked: true, passed: Object.fromEntries(this.passed), complaints }, null, 2)}\n`,
+      "utf8",
+    );
+
     if (complaints.length === 0) return;
 
     for (const complaint of complaints) console.error(`count gate: ${complaint}`);

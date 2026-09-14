@@ -90,6 +90,9 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json && node scripts/check-symbols.mjs && node scripts/check-routes.mjs && node scripts/check-callers.mjs",
     "prepublishOnly": "npm run build",
     "test": "playwright test",
+    "test:iterate": "node scripts/test-tier.mjs iterate",
+    "test:commit": "node scripts/test-tier.mjs commit",
+    "test:push": "node scripts/test-tier.mjs push",
     "test:headed": "playwright test --headed"
   },
   "dependencies": {
