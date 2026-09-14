@@ -110,9 +110,6 @@ const POLL_SLOW_MS = 30_000;
 const POLL_FAST_WINDOW_MS = 60_000;
 const POLL_MED_WINDOW_MS = 180_000;
 
-/** How long to wait for a frame to say which sessions it holds before treating it as older. */
-const SESSIONS_ANSWER_MS = 3_000;
-
 type Any = Record<string, unknown>;
 
 /** One mailbox, with its own place in it. */
@@ -130,6 +127,10 @@ interface Lane {
   ready: Promise<void>;
   publishing: boolean;
   publishAgain: boolean;
+  /** The frame had nothing above the watermark at the last ask, and nothing has been authored since. */
+  upToDate: boolean;
+  /** Its session closed and it has published and read all it will: no more polling, no push. */
+  retired: boolean;
 }
 
 export function startMailboxSession(config: {
@@ -140,6 +141,20 @@ export function startMailboxSession(config: {
   sessionNonce: string;
   /** The document declares a session profile, so its rows travel per session. */
   sessions?: boolean;
+  /**
+   * The mounted runtime announced (in its handshake) that it scopes a batch to
+   * one session. Without it a session document's runtime is older than
+   * per-session mailboxes and keeps the one per-document mailbox it has always
+   * had. This is the only thing that chooses between the two: no timer does.
+   */
+  sessionLanes?: boolean;
+  /** A lane's session closed and the lane has stopped: release its push. */
+  onLaneClosed?: (address: string) => void;
+  /**
+   * Writes the document to this device's storage and says whether it landed.
+   * A pull calls it before its cursor moves: see `pullLane`.
+   */
+  persist?: () => Promise<boolean>;
   /** The relay's base, written into each lane's record for the service worker's push check. */
   relay?: string;
   /** A lane this session writes to is running: the place to ask for push on its address. */
@@ -159,8 +174,27 @@ export function startMailboxSession(config: {
 
   const { documentUuid, mailbox, frame, sessionNonce } = config;
   const lanes = new Map<string, Lane>();
-  /** Decided once: this document's frame runs one mailbox per session, or one for the whole document. */
-  let mode: "unknown" | "sessions" | "document" = config.sessions ? "unknown" : "document";
+  /**
+   * One mailbox per session, or one for the whole document — decided here, once,
+   * from what the runtime is. It used to be decided by a three-second wait for
+   * the frame's answer, and a late answer on a slow phone sent the whole visit
+   * back to the per-document mailbox, publishing every game's rows under the
+   * document key: a privacy regression triggered by timing. Now a runtime that
+   * can scope batches waits for its answer however long it takes, and syncs
+   * nothing until it has one.
+   */
+  const mode: "sessions" | "document" = config.sessions && config.sessionLanes ? "sessions" : "document";
+  if (config.sessions && !config.sessionLanes) {
+    // A session document built before per-session mailboxes: its runtime cannot
+    // keep one game's rows out of another's mailbox, and nothing here can change
+    // that for the file as built. Said, not hidden.
+    config.onNote?.(
+      "Every game in this copy shares one mailbox, so anyone with a link to it can read them all. " +
+        "Games in a copy made with the current version each have their own.",
+    );
+  }
+  /** Sessions the frame says have closed. */
+  let closed = new Set<string>();
   let legacyChecked = false;
   let stopped = false;
   let publishTimer: number | undefined;
@@ -194,6 +228,7 @@ export function startMailboxSession(config: {
     if (!data || data["sessionNonce"] !== sessionNonce) return;
     const type = data["type"];
     if (type === "DAI_HOST_AUTHORED") {
+      for (const lane of lanes.values()) lane.upToDate = false;
       schedulePublish();
       pollNow(); // a local move; the reply is likely soon, so poll fast again.
       return;
@@ -230,6 +265,8 @@ export function startMailboxSession(config: {
       ready: Promise.resolve(),
       publishing: false,
       publishAgain: false,
+      upToDate: false,
+      retired: false,
     };
     lane.ready = (async () => {
       const saved = await loadMailbox(name);
@@ -238,6 +275,12 @@ export function startMailboxSession(config: {
         lane.state = { ...saved, address, ...(config.relay ? { relay: config.relay } : {}) };
         if (saved.address !== address || saved.relay !== config.relay) save(lane);
       } else save(lane); // first time, or a re-keyed document: write the key down.
+      if (lane.state.closed) {
+        // Stopped on an earlier visit: it stays stopped, and its push stays released.
+        lane.retired = true;
+        config.onLaneClosed?.(address);
+        return;
+      }
       if (!lane.inboundOnly) config.onLane?.(address);
       if (lane.inboundOnly) {
         // Drained, never written: an unacked batch for it is dropped, because the
@@ -272,16 +315,14 @@ export function startMailboxSession(config: {
       if (!lanes.has(documentUuid)) lanes.set(documentUuid, makeLane(documentUuid, documentUuid, documentMailboxKey, undefined, false));
       return;
     }
-    const answer = await ask({ type: "DAI_HOST_SESSIONS" }, "DAI_HOST_SESSIONS_ANSWER", SESSIONS_ANSWER_MS);
+    const answer = await ask({ type: "DAI_HOST_SESSIONS" }, "DAI_HOST_SESSIONS_ANSWER");
     if (stopped) return;
-    if (!Array.isArray(answer["sessions"])) {
-      // An older frame, which cannot scope a batch to a session: the whole
-      // document keeps one mailbox, and both copies of it agree.
-      if (mode === "unknown") mode = "document";
-      if (mode === "document") return refreshLanes();
-      return; // a later question unanswered; keep the lanes already running.
+    // No answer yet: keep the lanes already running and ask again next time.
+    // Never a reason to fall back to the per-document mailbox.
+    if (!Array.isArray(answer["sessions"])) return;
+    if (Array.isArray(answer["closed"])) {
+      closed = new Set((answer["closed"] as unknown[]).filter((s): s is string => typeof s === "string"));
     }
-    mode = "sessions";
     if (!legacyChecked) {
       legacyChecked = true;
       const legacy = await loadMailbox(documentUuid);
@@ -298,9 +339,25 @@ export function startMailboxSession(config: {
     }
   }
 
+  /**
+   * A lane whose session has closed stops, once nothing of it is left to send or
+   * read: the close row this copy authored has been published (the frame had
+   * nothing above the watermark and nothing is pending), and the last pull has
+   * run. Its record is kept, marked closed, so it does not start again.
+   */
+  function retireIfDone(lane: Lane): void {
+    if (lane.retired || lane.inboundOnly || !lane.session || !closed.has(lane.session)) return;
+    if (!lane.upToDate || lane.publishing || lane.state.pending) return;
+    lane.retired = true;
+    lane.state = { ...lane.state, closed: true };
+    save(lane);
+    config.onLaneClosed?.(lane.address);
+  }
+
   async function publishLane(lane: Lane): Promise<void> {
     if (stopped || lane.inboundOnly) return;
     await lane.ready;
+    if (lane.retired) return;
     if (lane.publishing) {
       lane.publishAgain = true;
       return;
@@ -331,18 +388,25 @@ export function startMailboxSession(config: {
           await publishSealed(mailbox, lane.address, sealed);
           lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
           save(lane);
+          lane.upToDate = !lane.publishAgain;
         } catch {
           config.onNote?.("A move could not be sent yet; it will send when the connection returns.");
         }
-      } else if (replica !== lane.state.watermark.replica || head > lane.state.watermark.seq) {
-        lane.state = { ...lane.state, watermark: { replica, seq: head } };
-        save(lane);
+      } else {
+        if (replica !== lane.state.watermark.replica || head > lane.state.watermark.seq) {
+          lane.state = { ...lane.state, watermark: { replica, seq: head } };
+          save(lane);
+        }
+        // Answered, and nothing to send.
+        if ("head" in answer) lane.upToDate = !lane.publishAgain;
       }
     } finally {
       lane.publishing = false;
       if (lane.publishAgain && !stopped) {
         lane.publishAgain = false;
         void publishLane(lane);
+      } else {
+        retireIfDone(lane);
       }
     }
   }
@@ -361,6 +425,7 @@ export function startMailboxSession(config: {
 
   async function pullLane(lane: Lane): Promise<void> {
     await lane.ready;
+    if (lane.retired) return;
     const next = await catchUp(
       mailbox,
       lane.address,
@@ -371,9 +436,24 @@ export function startMailboxSession(config: {
       },
     );
     if (next !== lane.state.cursor) {
+      /*
+       * The cursor moves only once what it moves past is stored.
+       *
+       * A batch merges into the frame's database in memory, and the frame saves
+       * that to this device a moment later on its own timer. The cursor used to
+       * be written straight after the merge, so a page killed in between — which
+       * is what iOS does to a page in the background — kept a cursor saying the
+       * move was read and a stored database without it, and every later pull
+       * started after the move: lost on this device for good. So the document is
+       * flushed first, and a flush that does not confirm leaves the cursor
+       * where it was; the next pull fetches those batches again, and the merge
+       * skips the rows it already has.
+       */
+      if (config.persist && !(await config.persist())) return;
       lane.state = { ...lane.state, cursor: next };
       save(lane);
     }
+    retireIfDone(lane);
   }
 
   /**
@@ -389,9 +469,15 @@ export function startMailboxSession(config: {
       for (const lane of [...lanes.values()]) {
         if (stopped) break;
         try {
+          await lane.ready;
+          if (lane.retired) continue;
           if (onlyIfMoved) {
-            // The cheap check: only `head`, a 304 when unchanged.
-            await lane.ready;
+            // The cheap check: only `head`, a 304 when unchanged. A closed
+            // session that has not stopped yet is read in full, so that it can.
+            if (lane.session && closed.has(lane.session)) {
+              await pullLane(lane);
+              continue;
+            }
             const head = Number(await mailbox.head(lane.address)) || 0;
             if (head <= (Number(lane.state.cursor) || 0)) continue;
           }

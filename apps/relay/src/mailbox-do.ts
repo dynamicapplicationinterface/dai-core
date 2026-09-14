@@ -35,7 +35,17 @@ interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_JWK?: string;
   VAPID_SUBJECT?: string;
+  /** "1" admits a loopback push endpoint. For tests only; a deploy never sets it. */
+  PUSH_ALLOW_LOOPBACK?: string;
 }
+
+/**
+ * How many subscriptions one mailbox holds. A game has two players, each with a
+ * device or a few; eight is room for that and a bound on how many pushes one
+ * append can cause, so an allowlisted push service is the most a hostile
+ * subscriber can aim the relay at, and only this many times per move.
+ */
+const MAX_SUBSCRIPTIONS = 8;
 
 const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
   const hash = await crypto.subtle.digest("SHA-256", bytes as unknown as ArrayBuffer);
@@ -128,9 +138,16 @@ export class MailboxDO {
    * Subscribe or unsubscribe a push endpoint to this mailbox.
    *
    * Stored under the SHA-256 of the endpoint, so the sender header can name a
-   * subscription without the relay handing endpoints back to anyone. Nothing
-   * asks who is subscribing: entitlement is deferred by the ruling, and a
-   * subscriber learns only that this mailbox moved — which polling `head`
+   * subscription without the relay handing endpoints back to anyone. Only a
+   * real push service's endpoint is accepted, and only MAX_SUBSCRIPTIONS of
+   * them per mailbox (see `acceptableEndpoint`).
+   *
+   * Nothing asks who is subscribing, or who is appending: entitlement is
+   * deferred by the ruling, and this is the open tier — anyone who holds a
+   * mailbox's address can append to it, subscribe to it, and name any
+   * subscription as the sender of an append to spare it the wake. That last is
+   * the same property as anyone-with-the-link-can-append, not a new one. A
+   * subscriber learns only that this mailbox moved, which polling `head`
    * already tells anyone who knows the address.
    */
   private async subscription(request: Request, add: boolean): Promise<Response> {
@@ -140,10 +157,19 @@ export class MailboxDO {
     } catch {
       return new Response("bad subscription", { status: 400 });
     }
-    if (!acceptableEndpoint(endpoint)) return new Response("bad subscription", { status: 400 });
+    if (!acceptableEndpoint(endpoint, this.env.PUSH_ALLOW_LOOPBACK === "1")) {
+      return new Response("bad subscription", { status: 400 });
+    }
     const name = `s:${await endpointId(endpoint)}`;
-    if (add) await this.state.storage.put<string>(name, endpoint);
-    else await this.state.storage.delete(name);
+    if (!add) {
+      await this.state.storage.delete(name);
+      return text("ok");
+    }
+    const held = await this.state.storage.get<string>(name);
+    if (held === undefined && (await this.state.storage.list<string>({ prefix: "s:" })).size >= MAX_SUBSCRIPTIONS) {
+      return new Response("too many subscriptions", { status: 429 });
+    }
+    await this.state.storage.put<string>(name, endpoint);
     return text("ok");
   }
 
@@ -155,7 +181,7 @@ export class MailboxDO {
     await Promise.all(
       [...subscriptions].map(async ([name, endpoint]) => {
         if (sender && name === `s:${sender}`) return;
-        if ((await sendPush(endpoint, vapid, doc)) === "gone") await this.state.storage.delete(name);
+        if ((await sendPush(endpoint, vapid)) === "gone") await this.state.storage.delete(name);
       }),
     );
   }

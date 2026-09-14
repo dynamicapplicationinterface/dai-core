@@ -245,5 +245,31 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   // B, who never held the other game's id, wrote nowhere new.
   expect([...appended].sort()).toEqual([boMailbox.id, cyMailbox.id].sort());
 
+  // A move read from the mailbox is on this device to stay, even if the page is
+  // gone the moment it shows. The cursor used to be written before the merged
+  // rows were stored, so a page killed in between kept a cursor past the move
+  // and a database without it — and no later pull could bring it back. Closed
+  // straight away here, and reopened with no relay at all, so the move can only
+  // come from what was stored.
+  const uuid = await pageA.evaluate(
+    (address) =>
+      new Promise<string>((resolve) => {
+        const open = indexedDB.open("dai_runner_storage");
+        open.onsuccess = () => {
+          const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
+          all.onsuccess = () =>
+            resolve(String((all.result as { documentUuid: string; address?: string }[]).find((r) => r.address === address)!.documentUuid).split("/")[0]!);
+        };
+      }),
+    boMailbox.id,
+  );
+  await pageA.close();
+  const reopened = await ctxA.newPage();
+  await reopened.goto(`${RUNNER_URL}#u=${uuid}`);
+  const appAgain = appIn(reopened);
+  await expect(appAgain.locator("#game-list")).toBeVisible({ timeout: 60_000 });
+  await appAgain.locator("#game-list").selectOption({ label: "Ada v Bo" });
+  await expect(cell(appAgain, 1), "the pulled move was stored before its cursor moved").toHaveText("O", { timeout: 30_000 });
+
   for (const context of [ctxA, ctxB]) await context.close();
 });

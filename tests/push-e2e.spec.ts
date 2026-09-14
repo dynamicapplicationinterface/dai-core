@@ -149,24 +149,48 @@ async function device(browser: Browser, name: string): Promise<{ context: Browse
       (window as unknown as { __daiStore: unknown }).__daiStore = cfg.store;
       // The push service's half of subscribe: an endpoint per registration,
       // on the stand-in, named so a push to it can find its way back here.
-      const held = new Map<string, { endpoint: string }>();
+      // Kept in storage, as a browser keeps a subscription across reloads.
+      const KEY = "__stand_in_push_subscriptions";
+      const held = {
+        read: (): Record<string, string> => JSON.parse(localStorage.getItem(KEY) ?? "{}") as Record<string, string>,
+        get(scope: string) {
+          const endpoint = this.read()[scope];
+          return endpoint ? { endpoint } : undefined;
+        },
+        set(scope: string, value: { endpoint: string }) {
+          localStorage.setItem(KEY, JSON.stringify({ ...this.read(), [scope]: value.endpoint }));
+        },
+        delete(scope: string) {
+          const all = this.read();
+          delete all[scope];
+          localStorage.setItem(KEY, JSON.stringify(all));
+        },
+      };
       const registrationOf = async (manager: PushManager): Promise<ServiceWorkerRegistration> => {
         for (const registration of await navigator.serviceWorker.getRegistrations()) {
           if (registration.pushManager === manager) return registration;
         }
         throw new Error("no registration for this push manager");
       };
-      const subscription = (endpoint: string) =>
-        ({ endpoint, toJSON: () => ({ endpoint }), unsubscribe: async () => true }) as unknown as PushSubscription;
+      const subscription = (scope: string, endpoint: string) =>
+        ({
+          endpoint,
+          toJSON: () => ({ endpoint }),
+          unsubscribe: async () => {
+            held.delete(scope);
+            return true;
+          },
+        }) as unknown as PushSubscription;
       PushManager.prototype.getSubscription = async function (this: PushManager) {
-        const held1 = held.get((await registrationOf(this)).scope);
-        return held1 ? subscription(held1.endpoint) : null;
+        const scope = (await registrationOf(this)).scope;
+        const held1 = held.get(scope);
+        return held1 ? subscription(scope, held1.endpoint) : null;
       };
       PushManager.prototype.subscribe = async function (this: PushManager) {
         const scope = (await registrationOf(this)).scope;
         const endpoint = `${cfg.pushBase}/${encodeURIComponent(cfg.name)}/${encodeURIComponent(scope)}`;
         held.set(scope, { endpoint });
-        return subscription(endpoint);
+        return subscription(scope, endpoint);
       };
     },
     { store: { presignUrl: `${storeBase}/presign`, publicBase: `${storeBase}/` }, pushBase, name },
@@ -255,11 +279,13 @@ test("a move made while the other app is closed arrives as a notification that o
   for (const push of pushes) expect(push).toEqual({ device: "ada", scope, delivered: true });
 
   // Ada's service worker asked the relay what moved and raised a notification
-  // naming the document. Read from a page opened afterward, on the chooser.
-  const later = await ctxA.newPage();
-  await later.goto(RUNNER_URL);
+  // naming the document. Read from a page on the opener's origin that is not
+  // the opener — an icon — so reading cannot itself put the document on screen,
+  // which would rightly make the worker take the notification down.
+  const inspector = await ctxA.newPage();
+  await inspector.goto(`${RUNNER_URL}icons/icon-192.png`);
   const readNotes = () =>
-    later.evaluate(async (s) => {
+    inspector.evaluate(async (s) => {
       const registration = await navigator.serviceWorker.getRegistration(s);
       const notes = registration ? await registration.getNotifications() : [];
       return notes.map((n) => ({ title: n.title, body: n.body, tag: n.tag, url: (n.data as { url?: string } | null)?.url ?? "" }));
@@ -271,6 +297,8 @@ test("a move made while the other app is closed arrives as a notification that o
   expect(note!.tag).toBe(note!.url.slice("/#u=".length));
 
   // Following it opens the game with Bo's move in it, and asks nothing.
+  await inspector.close();
+  const later = await ctxA.newPage();
   await later.goto(new URL(note!.url, RUNNER_URL).href);
   const appLater = appIn(later);
   await expect(appLater.locator("#board")).toBeVisible({ timeout: 60_000 });
@@ -278,6 +306,163 @@ test("a move made while the other app is closed arrives as a notification that o
   await expect(cell(appLater, 1)).toHaveText("O", { timeout: 30_000 });
   await expect(later.locator("#card"), "a relayed move raises no card").toBeHidden();
   await expect(later.locator("#card-merge")).toBeHidden();
+  const uuid = note!.tag;
+
+  // A wake with nothing new behind it — the second batch of a move already
+  // read — still ends in a notification, because a push that shows none is
+  // what gets a subscription revoked. Silent, and it says so.
+  // The page writes down how far it has read after the merge lands, so wait for
+  // that before closing it: "read" here means read and recorded.
+  const savedCursor = () =>
+    later.evaluate(
+      (a) =>
+        new Promise<string>((resolve) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
+            all.onsuccess = () => resolve(String((all.result as { address?: string; cursor?: string }[]).find((r) => r.address === a)?.cursor ?? ""));
+          };
+        }),
+      address!,
+    );
+  const head = async () => (await fetch(`${relay.base}/${address}/head`)).text();
+  await expect.poll(async () => (await savedCursor()) === (await head()), { timeout: 30_000 }).toBe(true);
+  await later.close();
+  const ada = devices.get("ada")!;
+  await ada.cdp.send("ServiceWorker.deliverPushMessage", {
+    origin: RUNNER_ORIGIN,
+    registrationId: ada.registrations.get(scope)!,
+    data: "",
+  });
+  const chooser = await ctxA.newPage();
+  await chooser.goto(`${RUNNER_URL}icons/icon-192.png`);
+  // Every notification on every registration, so nothing else was raised either.
+  const notesOn = (page: Page) =>
+    page.evaluate(async () => {
+      const out: { scope: string; body: string; tag: string; silent: boolean | null; error?: string }[] = [];
+      for (const registration of await navigator.serviceWorker.getRegistrations()) {
+        for (const n of await registration.getNotifications()) {
+          // `error` is set only by the worker's catch-all, and says what failed.
+          const error = (n.data as { error?: string } | null)?.error;
+          out.push({ scope: registration.scope, body: n.body, tag: n.tag, silent: n.silent, ...(error ? { error } : {}) });
+        }
+      }
+      return out;
+    });
+  await expect
+    .poll(() => notesOn(chooser), { timeout: 30_000 })
+    .toEqual([{ scope, body: "You're up to date.", tag: uuid, silent: true }]);
+  await chooser.close();
+
+  // The game plays to its end and is closed. A closed game stops: each device
+  // releases its push once the last row is sent and read, and stops asking the
+  // relay about that mailbox at all.
+  const adaGame = await ctxA.newPage();
+  await adaGame.goto(`${RUNNER_URL}#u=${uuid}`);
+  const appAda = appIn(adaGame);
+  await expect(appAda.locator("#board")).toBeVisible({ timeout: 60_000 });
+  await adaGame.evaluate(({ base, key }) => {
+    (window as any).__runner.useRelay(base);
+    (window as any).__runner.usePush(key);
+  }, { base: relay.base, key: vapid.publicKey });
+  const arrives = async (page: Page, app: FrameLocator, at: number, mark: string) =>
+    expect(async () => {
+      await page.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(cell(app, at)).toHaveText(mark, { timeout: 2_000 });
+    }).toPass({ timeout: 45_000 });
+  await arrives(adaGame, appAda, 1, "O");
+  for (const [page, app, other, otherApp, at, mark] of [
+    [adaGame, appAda, pageB, appB, 3, "X"],
+    [pageB, appB, adaGame, appAda, 4, "O"],
+    [adaGame, appAda, pageB, appB, 6, "X"],
+  ] as const) {
+    await cell(app, at).click();
+    await expect(cell(app, at)).toHaveText(mark);
+    await arrives(other, otherApp, at, mark);
+  }
+  // The app keeps the result on the board; Close goes away once the match is
+  // closed, on the closer's copy and then, when the close row arrives, on the other.
+  await expect(appAda.locator("#close-match")).toBeVisible({ timeout: 30_000 });
+  await appAda.locator("#close-match").click();
+  await expect(appAda.locator("#close-match")).toBeHidden({ timeout: 30_000 });
+  await expect(async () => {
+    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+    await expect(appB.locator("#close-match")).toBeHidden({ timeout: 2_000 });
+  }).toPass({ timeout: 45_000 });
+
+  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 45_000 }).toBe(0);
+  await expect.poll(() => devices.get("ada")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
+  await expect.poll(() => devices.get("bo")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
+  // Both pages are still open and visible, which is when the poll runs fastest
+  // (every three seconds). A request already in flight when a lane stopped may
+  // still land, so give that a moment; after it, nothing more may come.
+  await adaGame.waitForTimeout(3_000);
+  const before = relay.requests(address!);
+  await adaGame.waitForTimeout(10_000);
+  const since = relay.requestLog(address!).slice(before);
+  expect(since, `nobody polls a closed game's mailbox; it received: ${since.join(", ")}`).toEqual([]);
 
   for (const context of [ctxA, ctxB]) await context.close();
+});
+
+test("an opener update keeps push; removing the document releases it", async ({ browser }) => {
+  test.slow();
+  const { context, page } = await device(browser, "cy");
+  await page.goto(RUNNER_URL);
+  await page.setInputFiles("#file", container);
+  await page.locator("#card-open").click();
+  const app = appIn(page);
+  await expect(app.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+  await app.locator("#you").fill("Cy");
+  await app.locator("#them").fill("Di");
+  await app.locator("#new-game button[type=submit]").click();
+  await expect(app.locator("#players")).toContainText("Di (O)", { timeout: 30_000 });
+  await page.evaluate(({ base, key }) => {
+    (window as any).__runner.useRelay(base);
+    (window as any).__runner.usePush(key);
+  }, { base: relay.base, key: vapid.publicKey });
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async () => undefined;
+    navigator.share = async () => undefined;
+  });
+  const already = new Set(relay.appended);
+  await app.locator("#invite").click();
+  await page.click("#send-go");
+  await expect.poll(() => [...relay.appended].filter((a) => !already.has(a)).length, { timeout: 45_000 }).toBe(1);
+  const [address] = [...relay.appended].filter((a) => !already.has(a));
+  const scope = `${RUNNER_URL}push/${address}/`;
+  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(1);
+  const uuid = await page.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        const open = indexedDB.open("dai_runner_storage");
+        open.onsuccess = () => {
+          const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
+          all.onsuccess = () => resolve(String((all.result[0] as { documentUuid: string }).documentUuid).split("/")[0]!);
+        };
+      }),
+  );
+
+  // The menu's update: caches and the shell's worker go, and the page reloads.
+  // The mailbox's push worker is not the shell's, and it stays.
+  await context.route("**/version.json*", (route) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify({ commit: "0000000deadbeefcafe" }) }),
+  );
+  await page.locator("#more").click();
+  await expect(page.locator("#sheet-version")).toHaveText("New version — update", { timeout: 15_000 });
+  await Promise.all([page.waitForEvent("load"), page.locator("#sheet-version").click()]);
+  await context.unroute("**/version.json*");
+  await expect.poll(() => devices.get("cy")!.registrations.has(scope), { timeout: 10_000 }).toBe(true);
+  expect(relay.subscriptions(address!).length, "still subscribed at the relay").toBe(1);
+
+  // Removing the document from this device releases its push everywhere.
+  await page.goto(`${RUNNER_URL}#u=${uuid}`);
+  await expect(appIn(page).locator("#board")).toBeVisible({ timeout: 60_000 });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.locator("#more").click();
+  await page.locator("#remove").click();
+  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(0);
+  await expect.poll(() => devices.get("cy")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
+
+  await context.close();
 });

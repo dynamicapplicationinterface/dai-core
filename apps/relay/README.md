@@ -35,12 +35,24 @@ worker's `/m` path, e.g. `https://relay.opendai.app/m`.
 
 A new batch wakes every subscription on that mailbox except the appender's
 own (named by `x-dai-sender: <sha256 of its endpoint>`). The push is
-payloadless Web Push signed with VAPID: it carries no body, so nothing about
-the move reaches the push service, and the woken service worker asks this
+payloadless Web Push signed with VAPID: it carries no body and one constant
+`Topic` for every mailbox, so nothing about the move — not even which mailbox
+it was in — reaches the push service, and the woken service worker asks this
 relay's `head` what moved. A subscription the push service answers 404 or 410
 for is forgotten. The opener registers one service worker per mailbox, so each
 mailbox has its own endpoint and the relay holds nothing tying one game's
 mailbox to another's.
+
+The relay sends only to HTTPS endpoints on the real push services' hosts
+(Firebase Cloud Messaging, Mozilla autopush, Apple web push, the Windows
+notification service), and a mailbox holds at most eight subscriptions, so it
+cannot be aimed at an arbitrary host or made to send without bound. The test
+environment variable `PUSH_ALLOW_LOOPBACK=1` admits a local push service; a
+deploy never sets it.
+
+Open tier, stated: anyone holding a mailbox's address can append, subscribe,
+and name any subscription as the sender of an append to spare it the wake. That
+is the same property as anyone-with-the-link-can-append, not a new one.
 
 To switch it on (yours):
 

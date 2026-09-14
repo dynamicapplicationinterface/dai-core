@@ -73,6 +73,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
 | D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`6509e41`) |
 | D9 | A tested building block with no caller is not done | [ ] three in one pass; a caller check and a definition of done |
+| D10 | Session documents built before per-session mailboxes stay readable by any link holder | [x] decided: cannot be repaired in place; re-create — the app says so |
 
 ---
 
@@ -496,6 +497,24 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D10 — Session documents built before per-session mailboxes stay readable by any link holder
+
+D8 gives each game its own mailbox only for documents built with a runtime
+that can scope a batch to one session (it says so in its handshake,
+`sessionLanes`). A document carries its runtime inside the signed file, so a
+session document built earlier can never do that: it keeps the single
+per-document mailbox, sealed under a key derived from the document root. Anyone
+holding any link to it can read every game in it — history and future moves —
+and its batches name every game's id, from which the per-session keys and
+addresses of those games follow too. The relay has no delete, and a delete would
+not unread what was already read.
+
+**Decided:** such a document cannot be repaired in place. The remedy is to
+re-create it and play in a copy built with the current version; the opener tells
+anyone who opens one ("Every game in this copy shares one mailbox…"). Nothing is
+changed about how those documents sync: they already use that mailbox, and
+cutting it off would break live games without unexposing anything.
 
 ### D9 — A tested building block with no caller is not done
 

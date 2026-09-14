@@ -290,50 +290,179 @@ function mailboxRecord(address) {
   });
 }
 
+/** The mailbox this push registration is for: the last segment of its scope. */
+function scopeAddress() {
+  return new URL(self.registration.scope).pathname.split("/").filter(Boolean).pop() || null;
+}
+
+/** The name a document's own manifest gives it, if this device kept one. */
+async function documentName(uuid) {
+  try {
+    const hit = await caches.match(new URL(`/doc-manifests/${uuid}.webmanifest`, self.location.origin).href);
+    if (hit) return (await hit.json()).name || "A shared document";
+  } catch {
+    /* The generic name, then. */
+  }
+  return "A shared document";
+}
+
+/**
+ * Whether a focused, visible window is showing this document right now.
+ *
+ * Asked of each page rather than guessed: a page answers with the document it
+ * has mounted (main.ts, `dai:which-document`), and a page that does not answer
+ * within a second counts as showing nothing — so the worst a slow page costs
+ * is a notification about a move it was about to show anyway.
+ */
+async function showing(uuid) {
+  const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const looking = pages.filter((page) => page.visibilityState === "visible" && page.focused);
+  const answers = await Promise.all(
+    looking.map(
+      (page) =>
+        new Promise((resolve) => {
+          const channel = new MessageChannel();
+          const timer = setTimeout(() => resolve(null), 1000);
+          channel.port1.onmessage = (event) => {
+            clearTimeout(timer);
+            resolve(event.data && event.data.uuid);
+          };
+          page.postMessage({ type: "dai:which-document" }, [channel.port2]);
+        }),
+    ),
+  );
+  return answers.includes(uuid);
+}
+
+/** Stops this registration waking anything: at the relay if it can say where, at the push service, and here. */
+async function releaseSelf(record, address) {
+  try {
+    const subscription = await self.registration.pushManager.getSubscription();
+    if (subscription && record && record.relay) {
+      await fetch(`${record.relay.replace(/\/$/, "")}/${address}/unsubscribe`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      }).catch(() => {});
+    }
+    // Without a record the relay's address is gone with it; unsubscribing at
+    // the push service is then what stops it — the relay's next send gets a
+    // 410 and forgets this endpoint.
+    if (subscription) await subscription.unsubscribe().catch(() => {});
+  } catch {
+    /* Unregistered below regardless. */
+  }
+  await self.registration.unregister().catch(() => {});
+}
+
 /*
  * A push: some mailbox this device reads has moved.
  *
- * The push carries nothing, so the worker finds out what it means. The scope
- * names the mailbox; the page's record for it says which document, which
- * relay, and how far this device has read; the relay's `head` says whether
- * there is anything past that. If a page is on screen it is told to read now
- * and nobody is interrupted. Otherwise a notification names the document and
- * opens it — and what arrived merges there without a card, because the
+ * **Every push ends in a notification.** Subscriptions are `userVisibleOnly`,
+ * and a push handled without one is what Safari's published policy revokes a
+ * subscription for (Chrome shows its own "updated in the background" notice
+ * instead). The relay cannot avoid a wake that has nothing to say: by design
+ * it knows nothing about what a device has read, and one move can travel as
+ * more than one batch, so the second wake often lands after the first was read.
+ * So the choice is not whether to notify but which notification:
+ *
+ * - something new, and the document not on screen: an alerting notification
+ *   naming the document, whose address opens it;
+ * - nothing new past what this device read, or the document on screen and
+ *   being read now (the page is told to pull): the same notification shown
+ *   silently under the document's tag — replacing any earlier one, which is
+ *   stale — and, when the document is on screen, taken down at once;
+ * - no open record for this mailbox (the document was removed here, or its
+ *   game has closed): one silent notification saying it will not happen again,
+ *   and this registration releases itself so that it does not.
+ *
+ * What arrived merges when the document opens, without a card, because the
  * shared mailbox was already the consent.
  */
 self.addEventListener("push", (event) => {
   event.waitUntil(
-    (async () => {
-      const address = new URL(self.registration.scope).pathname.split("/").filter(Boolean).pop();
+    handlePush().catch(async (error) => {
+      // Whatever failed — storage, the network, the notifications API — the
+      // push still ends in a notification, or the subscription is at risk.
+      await self.registration
+        .showNotification("DAI", { body: "Something new arrived.", data: { error: String(error) } })
+        .catch(() => {});
+    }),
+  );
+});
+
+async function handlePush() {
+      const address = scopeAddress();
       const record = address ? await mailboxRecord(address) : null;
-      if (!record || !record.relay) return;
+      if (!record || record.closed || !record.relay) {
+        await self.registration.showNotification("DAI", {
+          body:
+            record && record.closed
+              ? "That game is over. It won't notify you again."
+              : "A document removed from this device was updated. It won't notify you again.",
+          tag: "dai-released",
+          silent: true,
+        });
+        await releaseSelf(record, address);
+        return;
+      }
+
+      const uuid = String(record.documentUuid || "").split("/")[0];
       let head = NaN;
       try {
         head = Number((await (await fetch(`${record.relay.replace(/\/$/, "")}/${address}/head`)).text()).trim());
       } catch {
-        /* Unreachable just now: say so anyway; opening the document reads it. */
+        /* Unreachable just now: treat it as news; opening the document reads it. */
       }
-      if (Number.isFinite(head) && head <= (Number(record.cursor) || 0)) return; // already read here.
+      const fresh = !(Number.isFinite(head) && head <= (Number(record.cursor) || 0));
 
       const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const page of pages) page.postMessage({ type: "dai:mailbox-moved" });
-      if (pages.some((page) => page.visibilityState === "visible" && page.focused)) return;
+      const onScreen = await showing(uuid);
+      const name = await documentName(uuid);
+      const data = { url: `/#u=${uuid}` };
 
-      const uuid = String(record.documentUuid || "").split("/")[0];
-      let name = "A shared document";
-      try {
-        const hit = await caches.match(new URL(`/doc-manifests/${uuid}.webmanifest`, self.location.origin).href);
-        if (hit) name = (await hit.json()).name || name;
-      } catch {
-        /* The generic name, then. */
+      if (fresh && !onScreen) {
+        await self.registration.showNotification(name, { body: "Something new arrived.", tag: uuid, renotify: true, data });
+        return;
       }
-      await self.registration.showNotification(name, {
-        body: "Something new arrived.",
-        // One notification per document: a second move replaces the first.
-        tag: uuid,
-        data: { url: `/#u=${uuid}` },
-      });
-    })(),
+      await self.registration.showNotification(name, { body: "You're up to date.", tag: uuid, silent: true, data });
+      if (onScreen) {
+        for (const notice of await self.registration.getNotifications({ tag: uuid })) notice.close();
+      }
+}
+
+/*
+ * The browser rotated this registration's subscription (or dropped it).
+ *
+ * Re-subscribe under the same options where the browser hands them over, tell
+ * the relay the new endpoint, and withdraw the old one. Where it does not (no
+ * old options), the page re-subscribes on the next open of the document. A
+ * registration whose mailbox this device no longer reads releases itself.
+ */
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    (async () => {
+      const address = scopeAddress();
+      const record = address ? await mailboxRecord(address) : null;
+      if (!record || record.closed || !record.relay) {
+        await releaseSelf(record, address);
+        return;
+      }
+      const base = record.relay.replace(/\/$/, "");
+      const post = (verb, endpoint) =>
+        fetch(`${base}/${address}/${verb}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ endpoint }),
+        }).catch(() => {});
+      const old = event.oldSubscription;
+      const fresh =
+        event.newSubscription ||
+        (old && old.options ? await self.registration.pushManager.subscribe(old.options).catch(() => null) : null);
+      if (fresh) await post("subscribe", fresh.endpoint);
+      if (old && (!fresh || old.endpoint !== fresh.endpoint)) await post("unsubscribe", old.endpoint);
+    })().catch(() => {}),
   );
 });
 

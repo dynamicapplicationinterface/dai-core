@@ -1355,6 +1355,27 @@ function bridgeMain(): void {
   };
 
   /**
+   * The sessions that have closed, as hex. The host stops their mailboxes once
+   * the last row is published and read: a closed session's late rows are
+   * dropped by the merge anyway, so polling for them is waste.
+   */
+  const closedSessions = (): string[] => {
+    if (!liveDb) return [];
+    try {
+      const present = liveDb.selectObjects(
+        "SELECT 1 AS x FROM sqlite_schema WHERE type IN ('view', 'table') AND name = '_dai_close_current'",
+      );
+      if (present.length === 0) return [];
+      return liveDb
+        .selectObjects("SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_close_current")
+        .map((row: Any) => String(row.s))
+        .filter((s: string) => /^[0-9a-f]{32}$/.test(s));
+    } catch {
+      return [];
+    }
+  };
+
+  /**
    * Merges a batch pulled from the mailbox — the same merge a file takes.
    *
    * The rows are staged into a throwaway sibling with this document's own
@@ -1946,7 +1967,12 @@ function bridgeMain(): void {
       // is written now, and the answer waits for the host to have it.
       const pending = flushAutosave();
       void Promise.resolve(pending).then(() => {
-        window.parent.postMessage({ type: "dai:flushed", id: data.id }, "*");
+        // Whether it landed, not just that the attempt is over: a failed save
+        // settles this too (it is retried, not thrown), and a host that moves a
+        // mailbox cursor on this answer must not move it past rows still only
+        // in memory.
+        const saved = autosaveDb === null && saveStatus !== "failed";
+        window.parent.postMessage({ type: "dai:flushed", id: data.id, saved }, "*");
       });
       return;
     }
@@ -2020,9 +2046,12 @@ function bridgeMain(): void {
     }
     if (data.type === "dai:sessions") {
       // The host asking which sessions this copy holds, so it can run one mailbox
-      // for each (T1-D30). A frame older than this never answers, which is how
-      // the host knows to keep one mailbox for the whole document.
-      window.parent.postMessage({ type: "dai:sessions-answer", id: data.id, sessions: heldSessions() }, "*");
+      // for each (T1-D30), and which of them have closed. The host knows this
+      // runtime answers from `sessionLanes` in the handshake, never by timing.
+      window.parent.postMessage(
+        { type: "dai:sessions-answer", id: data.id, sessions: heldSessions(), closed: closedSessions() },
+        "*",
+      );
       return;
     }
     if (data.type === "dai:apply-batch") {
@@ -3297,7 +3326,10 @@ async function boot(): Promise<void> {
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
-      window.parent.postMessage({ type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id }, "*");
+      window.parent.postMessage(
+        { type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id, saved: (event.data as { saved?: unknown }).saved !== false },
+        "*",
+      );
       return;
     }
     /*
@@ -3323,11 +3355,13 @@ async function boot(): Promise<void> {
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:sessions-answer") {
-      const answer = event.data as { id?: string; sessions?: unknown };
-      const sessions = Array.isArray(answer.sessions)
-        ? answer.sessions.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s))
-        : [];
-      window.parent.postMessage({ type: "DAI_HOST_SESSIONS_ANSWER", sessionNonce, id: answer.id, sessions }, "*");
+      const answer = event.data as { id?: string; sessions?: unknown; closed?: unknown };
+      const hex = (list: unknown): string[] =>
+        Array.isArray(list) ? list.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)) : [];
+      window.parent.postMessage(
+        { type: "DAI_HOST_SESSIONS_ANSWER", sessionNonce, id: answer.id, sessions: hex(answer.sessions), closed: hex(answer.closed) },
+        "*",
+      );
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:authored-batch") {
@@ -3519,6 +3553,12 @@ async function boot(): Promise<void> {
             documentUuid: manifest?.documentUuid ?? null,
             verified: policy === "required",
             payloadFingerprint: fingerprint,
+            // This runtime scopes a mailbox batch to one session and says which
+            // sessions it holds (T1-D30). Announced here, once, so the host
+            // decides per-session mailboxes from what the runtime is and never
+            // from how fast it answers: a slow answer must not send a whole
+            // visit back to the one mailbox every game can be read from.
+            sessionLanes: true,
             // Handed over rather than kept: a host is the only party that can
             // compare one open against another, or against a target.
             timings: timingTable(),

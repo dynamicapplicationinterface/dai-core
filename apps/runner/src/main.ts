@@ -53,7 +53,8 @@ import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
-import { askForPush, pushSender, setPushKey, wantPush } from "./push.js";
+import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
+import { listMailboxes } from "./opfs.js";
 import { filterToOneSession } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
@@ -607,6 +608,7 @@ function eject(): void {
   cartridgeFrame.src = "about:blank";
   loaded = undefined;
   handshakeEstablished = false;
+  frameSessionLanes = false;
   // The mailbox loop belongs to the document that was open; it stops with it.
   mailboxSession?.stop();
   mailboxSession = null;
@@ -1779,6 +1781,7 @@ window.addEventListener("message", (event) => {
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+    frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
     // merge it into. See openThenMerge.
@@ -2231,22 +2234,24 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * been acknowledged. A shell that does not answer — an older one — is given
  * a moment and then not waited for.
  */
-function flushDocument(): Promise<void> {
+/** Resolves true once the frame confirms its pending writes are stored, false if it did not say so in time. */
+function flushDocument(): Promise<boolean> {
   const target = cartridgeFrame.contentWindow;
-  if (!target || !mountedNonce) return Promise.resolve();
+  if (!target || !mountedNonce) return Promise.resolve(false);
   const id = Math.random().toString(36).slice(2);
   return new Promise((resolve) => {
     const timer = window.setTimeout(() => {
       window.removeEventListener("message", onFlushed);
-      resolve();
+      resolve(false);
     }, 2500);
     const onFlushed = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; id?: string; sessionNonce?: string } | null;
+      const data = event.data as { type?: string; id?: string; sessionNonce?: string; saved?: boolean } | null;
       if (!data || data.type !== "DAI_HOST_FLUSHED" || data.id !== id) return;
       if (!fromMountedContainer(event, data)) return;
       window.clearTimeout(timer);
       window.removeEventListener("message", onFlushed);
-      resolve();
+      // An older runtime does not say; its answer meant "done" and is taken so.
+      resolve(data.saved !== false);
     };
     window.addEventListener("message", onFlushed);
     target.postMessage({ type: "DAI_HOST_FLUSH", id }, "*");
@@ -3145,6 +3150,13 @@ let arrivedKey: string | undefined;
 /** The running mailbox loop for the mounted document, or none. */
 let mailboxSession: MailboxSession | null = null;
 
+/**
+ * The mounted runtime said, in its handshake, that it scopes a batch to one
+ * session (T1-D30). Decided from what the runtime is, never from how quickly it
+ * answers a question: see startMailboxSession's `sessionLanes`.
+ */
+let frameSessionLanes = false;
+
 /** base64url of 32 random bytes, for a fresh document key. */
 function mintKeyBase64Url(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -3208,6 +3220,8 @@ async function startMailboxIfPossible(): Promise<void> {
   if (!frameWindow) return;
 
   const uuid = loaded.manifest.documentUuid;
+  // The person has this document open: a notification about it has done its job.
+  void clearNotices(uuid);
   const key = await documentRootKey(uuid);
   if (!key) {
     // Replicated, but no key yet: this copy came by file and has not been
@@ -3224,11 +3238,17 @@ async function startMailboxIfPossible(): Promise<void> {
       mailbox: httpMailbox({ base: relay, fetch: window.fetch.bind(window), sender: pushSender }),
       frame: frameWindow,
       sessionNonce: mountedNonce,
-      // A session document's rows travel in one mailbox per session (T1-D30).
+      // A session document's rows travel in one mailbox per session (T1-D30),
+      // when its runtime can scope a batch to one — said in its handshake.
       sessions: Boolean(loaded.manifest.session),
-      // And each mailbox wakes this device when it moves, if it may (slice two).
+      sessionLanes: frameSessionLanes,
+      // And each mailbox wakes this device when it moves, if it may (slice
+      // two), until its game closes.
       relay,
       onLane: (address) => wantPush(address, relay),
+      onLaneClosed: (address) => void releasePush(address, relay),
+      // A pulled move is stored on this device before the cursor passes it.
+      persist: flushDocument,
       onNote: (message) => say(message),
     });
   }
@@ -3698,6 +3718,10 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     void navigator.serviceWorker.register("./sw.js", { scope: "./" }).catch((error: unknown) => {
       console.warn("DAI Runner: offline support unavailable.", error);
     });
+    // Push registrations nothing on this device accounts for any more — a
+    // document removed before its release ran, a game closed while offline —
+    // are released here, once per start (see push.ts).
+    void listMailboxes().then((records) => (records ? sweepPush(records, relayBase) : undefined));
   });
 
   /*
@@ -3732,6 +3756,12 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     // than at the next poll (see sw.js).
     if ((event.data as { type?: string } | null)?.type === "dai:mailbox-moved") {
       wakeMailbox();
+      return;
+    }
+    // The push worker asking whether this page is showing a document, so it
+    // can tell a move the person is looking at from one they are not.
+    if ((event.data as { type?: string } | null)?.type === "dai:which-document") {
+      event.ports[0]?.postMessage({ uuid: loaded?.manifest.documentUuid ?? null });
       return;
     }
     if ((event.data as { type?: string } | null)?.type !== "dai:shell-updated") return;
@@ -3828,8 +3858,16 @@ async function applyUpdate(): Promise<void> {
     /* A browser that will not clear its caches still gets a reload below. */
   }
   try {
+    // The shell's worker only. The per-mailbox push workers (/push/<address>/)
+    // hold this device's subscriptions; unregistering them switched push off
+    // for every document but the next one opened. They cache nothing, so an
+    // update has nothing of theirs to clear.
     const registrations = (await navigator.serviceWorker?.getRegistrations?.()) ?? [];
-    await Promise.all(registrations.map((registration) => registration.unregister()));
+    await Promise.all(
+      registrations
+        .filter((registration) => !new URL(registration.scope).pathname.startsWith("/push/"))
+        .map((registration) => registration.unregister()),
+    );
   } catch {
     /* Same: unregister is best-effort; the reload is the load-bearing step. */
   }

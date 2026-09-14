@@ -90,6 +90,10 @@ export interface ServedRelay {
   appended: Set<string>;
   /** The subscription names a mailbox holds (`s:<sha256 of endpoint>`). */
   subscriptions: (address: string) => string[];
+  /** How many requests of any kind have reached a mailbox — a poll is one. */
+  requests: (address: string) => number;
+  /** Those requests, oldest first, as "METHOD route" — e.g. "GET head", "POST append". */
+  requestLog: (address: string) => string[];
   /** Waits for every push wake the relay has started. */
   settled: () => Promise<void>;
   close: () => Promise<void>;
@@ -104,6 +108,8 @@ export async function serveRelay(vapid?: Vapid): Promise<ServedRelay> {
       const memory = memoryState();
       const env = {
         MAILBOX_R2: bucket,
+        // The push service a test stands up is on loopback.
+        PUSH_ALLOW_LOOPBACK: "1",
         ...(vapid ? { VAPID_PUBLIC_KEY: vapid.publicKey, VAPID_PRIVATE_JWK: JSON.stringify(vapid.privateKey) } : {}),
       };
       held = { relay: new MailboxDO(memory.state, env), memory };
@@ -112,6 +118,7 @@ export async function serveRelay(vapid?: Vapid): Promise<ServedRelay> {
     return held;
   };
   const appended = new Set<string>();
+  const logs = new Map<string, string[]>();
   const cors = {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
@@ -135,6 +142,8 @@ export async function serveRelay(vapid?: Vapid): Promise<ServedRelay> {
           res.end();
           return;
         }
+        const route = match[2] ? match[2].slice(1) : req.method === "POST" ? "append" : "since";
+        logs.set(match[1]!, [...(logs.get(match[1]!) ?? []), `${req.method} ${route}`]);
         if (req.method === "POST" && !match[2]) appended.add(match[1]!);
         const headers = new Headers();
         for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v);
@@ -158,6 +167,8 @@ export async function serveRelay(vapid?: Vapid): Promise<ServedRelay> {
     base: `http://localhost:${(server.address() as { port: number }).port}/m`,
     appended,
     subscriptions: (address) => objects.get(address)?.memory.keys().filter((k) => k.startsWith("s:")) ?? [],
+    requests: (address) => logs.get(address)?.length ?? 0,
+    requestLog: (address) => [...(logs.get(address) ?? [])],
     settled: async () => {
       for (const { memory } of objects.values()) await memory.settled();
     },

@@ -17,6 +17,7 @@ const MAILBOX_STORE = "mailboxes";
 import type { PinnedKey, TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/identity.js";
+import { releasePush } from "./push.js";
 
 export interface LibraryItem {
   documentUuid: string;
@@ -436,6 +437,33 @@ export interface MailboxRecord {
    */
   address?: string;
   relay?: string;
+  /**
+   * The session this lane carries has closed, and this device has published
+   * and read everything it will: the lane no longer polls and its push
+   * registration is released. Kept, not deleted, so a later open does not
+   * start the lane again.
+   */
+  closed?: boolean;
+}
+
+/**
+ * Every mailbox record this device holds, or null if storage could not be read.
+ *
+ * Null and not an empty list: a caller that releases whatever no record
+ * accounts for (the push sweep) must not read a failed read as "nothing here"
+ * and release every subscription on the device.
+ */
+export async function listMailboxes(): Promise<MailboxRecord[] | null> {
+  try {
+    const db = await openIdb();
+    return await new Promise((resolve) => {
+      const request = db.transaction(MAILBOX_STORE, "readonly").objectStore(MAILBOX_STORE).getAll();
+      request.onsuccess = () => resolve((request.result as MailboxRecord[] | undefined) ?? []);
+      request.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
 }
 
 export async function loadMailbox(documentUuid: string): Promise<MailboxRecord | null> {
@@ -462,6 +490,13 @@ export async function saveMailbox(record: MailboxRecord): Promise<void> {
 }
 
 async function deleteMailbox(documentUuid: string): Promise<void> {
+  // A removed document's mailboxes stop waking this device: each push
+  // registration is unsubscribed at the relay and released, before the records
+  // that say where those mailboxes are go with the document.
+  const held = ((await listMailboxes()) ?? []).filter(
+    (record) => record.documentUuid === documentUuid || record.documentUuid.startsWith(`${documentUuid}/`),
+  );
+  await Promise.all(held.map((record) => (record.address ? releasePush(record.address, record.relay) : undefined)));
   try {
     const db = await openIdb();
     await committed(db.transaction(MAILBOX_STORE, "readwrite"), (store) => store.delete(documentUuid));

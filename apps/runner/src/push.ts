@@ -17,6 +17,24 @@
  * else: no cache, no fetch handling. The scope also tells the woken worker
  * which mailbox the push was for.
  *
+ * **The lifecycle is one rule.** A push registration exists for a mailbox
+ * exactly while this device holds an open record for it (and may notify):
+ *
+ * - a lane that starts asks for one (`wantPush`);
+ * - a game that closes releases its lane's (`releasePush`, from the session
+ *   loop, once the last row is published and read);
+ * - a document removed from this device releases all of its own (opfs.ts);
+ * - anything left over — a removal that ran before this code, a crash between
+ *   the two halves — is released by `sweepPush` when the opener starts;
+ * - an opener update leaves them alone (main.ts `applyUpdate` unregisters the
+ *   shell's worker only);
+ * - a subscription the browser rotates is re-subscribed by the worker itself
+ *   (`pushsubscriptionchange`, sw.js), and one the push service drops is
+ *   forgotten by the relay on its next 404 or 410.
+ *
+ * Releasing is three steps in order: unsubscribe at the relay (so it stops
+ * sending), unsubscribe at the push service, unregister the worker.
+ *
  * **Permission is asked on a gesture, once.** Inviting someone and opening an
  * invite are the two moments a person has just chosen to play with somebody;
  * both call `askForPush` from inside the click. Nothing is asked for on load.
@@ -52,6 +70,30 @@ const sha256Hex = async (text: string): Promise<string> => {
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 };
+
+const PUSH_PATH = "/push/";
+
+/** The registration scope a mailbox's push worker lives at. */
+function pushScope(address: string): string {
+  return new URL(`${PUSH_PATH}${address}/`, location.origin).href;
+}
+
+/** The mailbox a push registration is for, or null for any other registration. */
+function addressOf(registration: ServiceWorkerRegistration): string | null {
+  const path = new URL(registration.scope).pathname;
+  if (!path.startsWith(PUSH_PATH)) return null;
+  const address = path.slice(PUSH_PATH.length).replace(/\/$/, "");
+  return /^[0-9a-zA-Z._-]{1,128}$/.test(address) ? address : null;
+}
+
+async function pushRegistrations(): Promise<ServiceWorkerRegistration[]> {
+  if (!("serviceWorker" in navigator)) return [];
+  try {
+    return (await navigator.serviceWorker.getRegistrations()).filter((registration) => addressOf(registration) !== null);
+  } catch {
+    return [];
+  }
+}
 
 function available(): boolean {
   return Boolean(publicKey) && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -89,6 +131,64 @@ export function pushSender(address: string): string | undefined {
   return subscribed.get(address);
 }
 
+/**
+ * Stop a mailbox waking this device: at the relay, at the push service, and
+ * here. Safe to call for a mailbox that never had a registration.
+ */
+export async function releasePush(address: string, relay?: string): Promise<void> {
+  wanted.delete(address);
+  subscribed.delete(address);
+  const registration = (await pushRegistrations()).find((candidate) => addressOf(candidate) === address);
+  if (!registration) return;
+  try {
+    const subscription = await registration.pushManager.getSubscription().catch(() => null);
+    if (subscription && relay) {
+      await fetch(`${relay.replace(/\/$/, "")}/${address}/unsubscribe`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      }).catch(() => undefined);
+    }
+    await subscription?.unsubscribe().catch(() => false);
+    await registration.unregister();
+  } catch {
+    // Left for the next sweep, or for the relay to drop on the push service's 410.
+  }
+}
+
+/**
+ * Release every push registration no open record accounts for. Run once as the
+ * opener starts, with every mailbox record this device holds; `relay` is the
+ * fallback for a registration whose record is already gone.
+ */
+export async function sweepPush(
+  records: readonly { address?: string; relay?: string; closed?: boolean }[],
+  relay?: string,
+): Promise<void> {
+  const open = new Map<string, string | undefined>();
+  const known = new Map<string, string | undefined>();
+  for (const record of records) {
+    if (!record.address) continue;
+    known.set(record.address, record.relay);
+    if (!record.closed) open.set(record.address, record.relay);
+  }
+  for (const registration of await pushRegistrations()) {
+    const address = addressOf(registration)!;
+    if (!open.has(address)) await releasePush(address, known.get(address) ?? relay);
+  }
+}
+
+/** Takes down any notification about a document, once the person has it open. */
+export async function clearNotices(documentUuid: string): Promise<void> {
+  for (const registration of await pushRegistrations()) {
+    try {
+      for (const notice of await registration.getNotifications({ tag: documentUuid })) notice.close();
+    } catch {
+      /* Nothing to clear here. */
+    }
+  }
+}
+
 async function activated(registration: ServiceWorkerRegistration): Promise<void> {
   const worker = registration.installing ?? registration.waiting ?? registration.active;
   if (!worker || worker.state === "activated") return;
@@ -107,8 +207,7 @@ async function subscribe(address: string, relay: string): Promise<void> {
   if (!/^[0-9a-zA-Z._-]{1,128}$/.test(address)) return;
   inFlight.add(address);
   try {
-    const scope = new URL(`/push/${address}/`, location.origin).href;
-    const registration = await navigator.serviceWorker.register("/sw.js?push=1", { scope });
+    const registration = await navigator.serviceWorker.register("/sw.js?push=1", { scope: pushScope(address) });
     await activated(registration);
     const subscription =
       (await registration.pushManager.getSubscription()) ??
@@ -121,6 +220,11 @@ async function subscribe(address: string, relay: string): Promise<void> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ endpoint: subscription.endpoint }),
     });
+    // Released while this was in flight: undo it rather than leave it live.
+    if (!wanted.has(address)) {
+      await releasePush(address, relay);
+      return;
+    }
     if (response.ok) subscribed.set(address, await sha256Hex(subscription.endpoint));
   } catch {
     // No push here — refused, unsupported, or the relay unreachable. The poll
