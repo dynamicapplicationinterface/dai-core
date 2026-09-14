@@ -3,8 +3,19 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   globalSetup: "./tests/global-setup.ts",
+  /*
+   * Four workers here, two per engine job in CI, each spec file kept whole on
+   * one worker. Set from evidence, not hope: three full chromium passes on
+   * different schedules — four workers with files whole, four with tests
+   * split across workers, three with tests split — each ran every test with
+   * no failures. Seven workers did not: one run found a test racing its own
+   * save (fixed), the next lost a worker's browser between two tests for no
+   * reason the log records. So the ceiling is four until a clean run says
+   * otherwise. A spec that cannot share the machine is serialized by name,
+   * never hidden by dropping this back to one.
+   */
   fullyParallel: false,
-  workers: 1,
+  workers: process.env.CI ? 2 : 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   // "github" annotates each failure on the run's summary page, so a red build
