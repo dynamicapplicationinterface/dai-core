@@ -7,6 +7,7 @@ import { expect, test, type BrowserContext, type FrameLocator, type Page } from 
 import { compileDirectory } from "../src/compile.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
 import { base64 } from "../src/mailbox-http.js";
+import { play } from "./chess-play.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -104,12 +105,6 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
     return app(page);
   }
 
-  async function play(a: FrameLocator, from: string, to: string): Promise<void> {
-    await a.locator(`[data-square="${from}"]`).click();
-    await a.locator(`[data-square="${to}"]`).click();
-    await expect(a.locator("#play-move")).toBeEnabled({ timeout: 15_000 });
-    await a.locator("#play-move").click();
-  }
 
   async function saveOut(page: Page, to: string): Promise<void> {
     await page.evaluate(() => {

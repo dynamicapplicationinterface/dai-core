@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { play } from "./chess-play.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -111,13 +112,6 @@ async function boardState(app: FrameLocator): Promise<{ turn: string; history: s
   };
 }
 
-/** Selects a square, selects another, and commits the move that results. */
-async function play(app: FrameLocator, from: string, to: string): Promise<void> {
-  await app.locator(`[data-square="${from}"]`).click();
-  await app.locator(`[data-square="${to}"]`).click();
-  await expect(app.locator("#play-move")).toBeEnabled({ timeout: 15_000 });
-  await app.locator("#play-move").click();
-}
 
 /** Saves this copy out as a file, the way the Share card does. */
 async function saveOut(page: Page, to: string): Promise<string> {

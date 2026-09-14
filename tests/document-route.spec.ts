@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { play } from "./chess-play.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -93,10 +94,7 @@ test.describe("a document opened at its own address", () => {
     await app(page).locator("#setup-you").fill("Ada");
     await app(page).locator("#setup-them").fill("Bo");
     await app(page).locator("#new-game-form button[type=submit]").click();
-    await app(page).locator('[data-square="e2"]').click();
-    await app(page).locator('[data-square="e4"]').click();
-    await expect(app(page).locator("#play-move")).toBeEnabled({ timeout: 30_000 });
-    await app(page).locator("#play-move").click();
+    await play(app(page), "e2", "e4");
     await expect(app(page).locator("#move-history")).toContainText("e4", { timeout: 30_000 });
   });
 

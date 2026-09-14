@@ -7,6 +7,7 @@ import { expect, test, type BrowserContext, type Frame, type FrameLocator, type 
 import { compileDirectory } from "../src/compile.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
 import { base64 } from "../src/mailbox-http.js";
+import { play } from "./chess-play.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -195,22 +196,6 @@ test.describe("a game continues over a shared link (the key path)", () => {
   const useRelay = (page: Page): Promise<void> =>
     page.evaluate((b) => (window as any).__runner.useRelay(b), relayBase);
 
-  async function play(a: FrameLocator, from: string, to: string): Promise<void> {
-    // Pick the piece up and see it picked up, then choose where it goes — what
-    // a person does. The board ignores a tap while it is still animating a move
-    // that just arrived, so a tap straight after an open can land in nothing;
-    // under load that animation runs long, and the test used to tap blind and
-    // then wait on a Play button that could never enable. Tapped again only if
-    // it is not already highlighted: tapping a picked-up piece puts it down.
-    const piece = a.locator(`[data-square="${from}"]`);
-    await expect(async () => {
-      if ((await piece.getAttribute("aria-selected")) !== "true") await piece.click();
-      await expect(piece).toHaveAttribute("aria-selected", "true", { timeout: 2_000 });
-    }).toPass({ timeout: 15_000 });
-    await a.locator(`[data-square="${to}"]`).click();
-    await expect(a.locator("#play-move")).toBeEnabled({ timeout: 15_000 });
-    await a.locator("#play-move").click();
-  }
 
   /** The roster as this copy holds it: its own id, its bindings, and how many
    *  distinct binders each seat has — the number that reads 2 for a contested seat. */
