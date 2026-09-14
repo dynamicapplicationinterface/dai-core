@@ -87,6 +87,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D21 | A new confusable table leaves untouched publisher pins on the old one | [ ] a pin is re-indexed only when it is saved again |
 | D22 | The runtime's own save zips without the fixed timestamp | [ ] the one place of its kind; nothing compares its bytes yet |
 | D23 | The inline dictionary is frozen, and the corpus it was built from has moved | [ ] replacing it strands every link made since 5 September; needs an opener that holds two |
+| D24 | Five isolation tests skipped in CI on every push, and only arithmetic noticed | [~] the probe is committed (`af4584f`); a skip for a missing build step still passes in CI |
+| D25 | `website/public/demo.dai.html`: tracked, written by nothing, read by nothing | [ ] identify before deciding; do not delete on "nothing references it" |
 
 ---
 
@@ -547,6 +549,50 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D25 — `website/public/demo.dai.html`: tracked, written by nothing, read by nothing
+
+Found giving the generators check modes (14 September). `scripts/build-demo-cartridge.js`
+writes a demo document to the repo root and to `apps/runner/public/`, neither of
+them committed. The tracked demo is a third file, `website/public/demo.dai.html`,
+which no script writes and nothing in the repository names.
+
+It stays. "Nothing references it" is what the caller check said about two live
+Vue exports (D9) — the site can link a public file from somewhere a text search
+of this repository does not reach, and a person can have been given its URL. A
+stale demo costs nothing; a wrongly deleted one costs an afternoon.
+
+**Exit:** find out what it is — where it came from, whether the live site or
+anyone links it — and then keep it on purpose, regenerate it from a script, or
+remove it with the reason.
+
+### D24 — Five isolation tests skipped in CI on every push, and only arithmetic noticed
+
+The isolation probe (`conformance/isolation-probe.dai.html`) is built by
+`scripts/build-conformance.mjs` and read by three specs — `static-opener`,
+`isolation-conformance`, `host-profile`. A broad ignore rule (`*.dai.html`) kept
+it out of git, and nothing in CI builds it. So in CI those five tests skipped,
+each with a reason ("run `npm run conformance` to build the probe"), on every
+push, very likely since they were written. The isolation run against a plain
+static host — the check that the opener's claimed boundaries hold with none of
+production's headers — has never happened on CI.
+
+A skip with a reason is accepted by the count gate, so nothing failed. It
+surfaced only because the floors were re-based from a local run, where the probe
+existed, and CI then came in seven short. The gate caught it by an accident of
+arithmetic, not by design.
+
+It is the same shape as the jobs that were cancelled and read as flakes, and the
+reader that never enforced its bound: a test that cannot run looks exactly like a
+test that passes. The probe is committed now (`af4584f`), with an ignore
+exception, and `build-conformance --check` reports a built file git does not
+track. But the class is still open: any spec that skips on "build this first"
+passes in CI when the thing was never built, and the count gate is the only thing
+between that and silence.
+
+**Exit:** in CI, a skip whose reason is a missing build step fails the run — a
+skip there must be something CI genuinely cannot do (another platform, a
+credential it does not hold), never something it did not bother to build.
 
 ### D23 — The inline dictionary is frozen, and the corpus it was built from has moved
 
