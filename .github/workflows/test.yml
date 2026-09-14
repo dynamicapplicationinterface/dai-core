@@ -31,11 +31,31 @@ jobs:
 
       - run: npm run typecheck
 
+      # Every generated file that is committed, held to what generates it. A
+      # generator whose output is committed and never compared drifts in
+      # silence: the conformance suite had carried an older shell than the
+      # build makes, and nothing said so. Each builds from dist/, so the
+      # library is built first. The inline dictionary is the exception by
+      # design — a link names the dictionary it was made against — so its
+      # check holds that it is whole, not that it matches today's corpus.
+      - run: npm run build
+      - run: node scripts/build-conformance.mjs --check
+      - run: node scripts/build-dictionary.mjs --check
+      - run: node scripts/build-confusables.mjs --check
+      - run: npm run fixtures:check
+
       # A second reader, sharing no code with the one that wrote the cases.
       # This is what tests the specification rather than the implementation: it
       # was written from the document, and the four places the document did not
       # say enough are the four things it could not do until they were fixed.
       - run: python3 conformance/reference/run.py
+
+      # The merge, by the two readers that did not write the fixtures. Two
+      # readers agreeing is the whole premise of the merge conformance, and a
+      # reader nothing runs agrees with nothing: the Rust reader's README said
+      # the conformance gate ran it, and until this step nothing did.
+      - run: python3 conformance/reference/dai_merge.py
+      - run: cargo run --release --quiet --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge
 
       # The host's in-place writer, and its own unit tests. Compiling the
       # example binary here means a build failure is reported as a build failure
