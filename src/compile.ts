@@ -31,7 +31,7 @@ import {
   type BuildContainerResult,
 } from "./core.js";
 import { looksSectioned, parseContainer } from "./container.js";
-import { rewriteReplicated } from "./replicated.js";
+import { checkTriggerCoverage, rewriteReplicated, triggerColumns } from "./replicated.js";
 import { SchemaError, type SchemaDeclaration, declareSchema } from "./schema.js";
 
 /** Where @sqlite.org/sqlite-wasm keeps the engine binary. */
@@ -172,7 +172,13 @@ async function loadRewrittenSchema(files: Record<string, Uint8Array>, warnings: 
   if (!source) return;
   const rewritten = rewriteReplicated(new TextDecoder().decode(source));
   if (rewritten.tables.length === 0) return;
-  let DatabaseSync: (new (path: string) => { exec(sql: string): void; close(): void }) | undefined;
+  let DatabaseSync:
+    | (new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { all(...params: unknown[]): unknown[] };
+        close(): void;
+      })
+    | undefined;
   try {
     ({ DatabaseSync } = (await import("node:sqlite")) as unknown as { DatabaseSync: typeof DatabaseSync });
   } catch {
@@ -184,13 +190,34 @@ async function loadRewrittenSchema(files: Record<string, Uint8Array>, warnings: 
   }
   const db = new DatabaseSync!(":memory:");
   try {
-    db.exec(rewritten.sql);
-    db.exec(rewritten.sql);
-  } catch (error) {
-    throw new CompileError(
-      `schema.sql does not load in SQLite once its shared tables are rewritten: ${(error as Error).message}. ` +
-        "The document would build and then fail to open, so it is refused here instead.",
-    );
+    try {
+      db.exec(rewritten.sql);
+      db.exec(rewritten.sql);
+    } catch (error) {
+      throw new CompileError(
+        `schema.sql does not load in SQLite once its shared tables are rewritten: ${(error as Error).message}. ` +
+          "The document would build and then fail to open, so it is refused here instead.",
+      );
+    }
+    /*
+     * Each shared table's immutability trigger has to name every column but
+     * `_r_superseded`, and that list comes from parsing the author's column
+     * declarations — so the parse is not trusted. The engine says which columns
+     * the table really has, and one the trigger missed is a column that could be
+     * edited in place in a table whose contract is that it cannot: a refused
+     * build, not a quiet hole (`checkTriggerCoverage`). The check existed and was
+     * tested, and nothing ran it until this (backlog D9).
+     */
+    for (const table of rewritten.tables) {
+      const fromEngine = (db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as { name: string }[]).map(
+        (row) => row.name,
+      );
+      try {
+        checkTriggerCoverage(table, fromEngine, triggerColumns(rewritten.sql, table));
+      } catch (error) {
+        throw new CompileError(`schema.sql: ${(error as Error).message}`);
+      }
+    }
   } finally {
     db.close();
   }

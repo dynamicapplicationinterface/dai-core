@@ -144,7 +144,7 @@ export interface RewrittenSchema {
  * does not close anything. Getting this wrong would rewrite a table nobody
  * asked to replicate, or truncate one that is.
  */
-function* scan(sql: string): Generator<{ index: number; char: string; code: boolean }> {
+function* scan(sql: string): Generator<{ index: number; char: string; code: boolean; comment?: boolean }> {
   let quote: string | null = null;
   let comment: "line" | "block" | null = null;
   for (let index = 0; index < sql.length; index += 1) {
@@ -152,18 +152,18 @@ function* scan(sql: string): Generator<{ index: number; char: string; code: bool
     const next = sql[index + 1];
     if (comment === "line") {
       if (char === "\n") comment = null;
-      yield { index, char, code: false };
+      yield { index, char, code: false, comment: char !== "\n" };
       continue;
     }
     if (comment === "block") {
       if (char === "*" && next === "/") {
-        yield { index, char, code: false };
+        yield { index, char, code: false, comment: true };
         index += 1;
-        yield { index, char: "/", code: false };
+        yield { index, char: "/", code: false, comment: true };
         comment = null;
         continue;
       }
-      yield { index, char, code: false };
+      yield { index, char, code: false, comment: true };
       continue;
     }
     if (quote) {
@@ -185,12 +185,12 @@ function* scan(sql: string): Generator<{ index: number; char: string; code: bool
     }
     if (char === "-" && next === "-") {
       comment = "line";
-      yield { index, char, code: false };
+      yield { index, char, code: false, comment: true };
       continue;
     }
     if (char === "/" && next === "*") {
       comment = "block";
-      yield { index, char, code: false };
+      yield { index, char, code: false, comment: true };
       continue;
     }
     yield { index, char, code: true };
@@ -321,7 +321,7 @@ function authorColumns(body: string): string[] {
     if (/^(CONSTRAINT|PRIMARY|UNIQUE|CHECK|FOREIGN)$/i.test(name)) return;
     names.push(name);
   };
-  for (const { char, code } of chars) {
+  for (const { char, code, comment } of chars) {
     if (code && char === "(") depth += 1;
     else if (code && char === ")") depth -= 1;
     if (code && char === "," && depth === 0) {
@@ -329,7 +329,13 @@ function authorColumns(body: string): string[] {
       item = "";
       continue;
     }
-    item += char;
+    // A comment is blank space here. Kept as text, one written after a comma —
+    // `game_id TEXT NOT NULL, -- note` — began the next item, the name was
+    // looked for at the start of the comment, and the next column was dropped
+    // from the immutability trigger without a sound. Tic-tac-toe shipped that
+    // way: `marks.turn` and `marks.cell` could be edited in place, found only
+    // when the build started holding the trigger against the engine.
+    item += comment ? " " : char;
   }
   take(item);
   return names;

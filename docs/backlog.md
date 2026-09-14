@@ -72,7 +72,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
 | D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
 | D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`de2be4f`); older session documents are D10 |
-| D9 | A tested building block with no caller is not done | [ ] three in one pass; a caller check and a definition of done |
+| D9 | A tested building block with no caller is not done | [~] check in `npm run typecheck`, definition of done in `CONTRIBUTING.md`; found and fixed tic-tac-toe's trigger hole; seven exports await a verdict |
 | D10 | Session documents built before per-session mailboxes stay readable by any link holder | [x] decided: cannot be repaired in place; re-create — the app says so |
 | D11 | A large document crashes Safari on iPhone | [ ] not measured; no ceiling, no refusal |
 | D12 | A relay deploy has a window where a post lands in old code | [~] rule in the relay README; one junk item in the bucket |
@@ -83,6 +83,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D17 | Mailbox batches are deleted at 90 days — silent data loss, first on ~8 Dec | [~] scoped rule written in `infra/r2-lifecycle.json`; Chris applies it; retention then decided on purpose |
 | D18 | Nothing can tell a hole in a mailbox history from an empty stretch | [ ] the property that makes D17 silent; the relay is the one place that can |
 | D19 | The published spec says a reader must refuse version 4 | [ ] one sentence; goes with the next docs change |
+| D20 | A table constraint in a shared table rewrites to SQL that will not load | [ ] refused at build with SQLite's message, not by name; the in-browser compiler would ship it |
 
 ---
 
@@ -517,6 +518,31 @@ The documentation says what happens today — the share sheet sends the document
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
 
+### D20 — A table constraint in a shared table rewrites to SQL that will not load
+
+Found by building every shipped example through the Node build (15 September).
+The rewrite appends the replication columns after the author's column list. When
+that list ends in a table-level constraint — `UNIQUE (game_id, ply)`, a table
+`CHECK (…)`, a `FOREIGN KEY` — the columns land after the constraint, and SQLite
+refuses the table: `near "_r_replica": syntax error`. `examples/chess-foil` is
+the instance; it is wrong on purpose and never meant to open, and the test now
+asserts the build refuses it.
+
+Why it matters: the Node build refuses it, but with SQLite's grammar error rather
+than a sentence about the rule, and the in-browser compiler (D13) has no engine,
+so it would seal the document and it would fail on the device of whoever opened
+it. The D5 family again: the rewrite's text assumed a shape the author's SQL
+does not have to take.
+
+Two fixes, either sufficient: place the replication columns before the first
+table constraint, keeping the author's constraints; or refuse a table
+constraint in a shared table by name. A `UNIQUE` there is already wrong by the
+rules — it refuses the very conflict a merge exists to show — so refusing it by
+name is the cheaper and clearer of the two for that case; a table `CHECK` may be
+legitimate and argues for placement.
+
+**Un-parks with D13, or the next change to the rewrite** — whichever comes first.
+
 ### D19 — The published specification says a reader must refuse version 4
 
 `docs/spec-v0.2.md` §9 (line 957): "A reader MUST accept `manifestVersion` 2 and
@@ -788,6 +814,40 @@ Two ways to stop the fourth, cheapest first:
 
 **Exit:** the definition of done says (1); the check in (2) runs in CI and fails
 on an uncalled export that is not on the public list.
+
+**Landed (15 September).** `CONTRIBUTING.md` holds the definition of done, with
+(1) as its first line. `scripts/check-callers.mjs` is (2), run by `npm run
+typecheck`: every exported function and class of `src/` needs a caller that is
+not its own file and not a test, with the published API — every module
+`package.json` exports, and every name `src/index.ts` re-exports — read from the
+package rather than listed. A block its own module calls counts as on the path;
+constants, types and error classes are left out. An allow-list entry must carry
+its reason, and the check fails on an entry that is no longer needed.
+
+The first run found **a fourth instance, and the only one with a live
+consequence.** `checkTriggerCoverage` — the guard that holds each shared table's
+immutability trigger against the columns SQLite reports, so a column the parser
+misses is a refused build — was written and tested and never called. Wired into
+the build, it refused tic-tac-toe at once: `marks.turn` and `marks.cell` were
+missing from the trigger. The column parser kept comment text in each item, so a
+comment written after a column's comma — tic-tac-toe's own style — began the next
+item and hid that column. In every tic-tac-toe built before this, those two
+columns of an append-only table could be edited in place. The parser is fixed and
+the build now refuses any recurrence.
+
+Dead code it found, removed: `rowsOf`, `batchReplicaHex`, `constraintsFor`.
+`fsMailbox` is allowed, with its reason (the tests' file-backed relay).
+
+**Awaiting a verdict — wire or delete**, each on the allow-list marked pending,
+so nothing new can join them and each drops off the list when it is resolved:
+`exportSession` (the invite path filters and reseals in the runner instead),
+`rosterOf` (membership is enforced by SQL views; this is the rule's pure
+statement, used only as a test oracle), `verifyClaim` (a host's claims against
+the probe's results), `handOffToOpener` (a handoff into an opener tab no page
+makes), `appNameFrom` (the in-browser compiler's naming helper), `storePreview`
+(the `/p/` preview-only card, unused since every share moved to the store) and
+`refreshed` (brings a publisher pin's lookalike data up to a new confusable
+table — no host calls it, so a changed table leaves pins on the old one).
 
 ### D8 — The host runs one mailbox per document; the per-session mailbox is unused
 

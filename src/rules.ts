@@ -757,11 +757,6 @@ export const CONSTRAINT_BY_ID: ReadonlyMap<string, Constraint> = new Map(
   CONSTRAINTS.map((constraint) => [constraint.id, constraint]),
 );
 
-/** The constraints a given shape must follow, in the order they are listed. */
-export function constraintsFor(shape: Shape): Constraint[] {
-  return CONSTRAINTS.filter((constraint) => constraint.shapes.includes(shape));
-}
-
 /* ----------------------------------------------------------- the surface */
 
 export interface SurfaceEntry {

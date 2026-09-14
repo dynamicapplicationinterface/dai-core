@@ -43,27 +43,6 @@ export interface Connection {
   close?(): void;
 }
 
-/**
- * A sqlite-wasm `oo1.DB` behind the `Rows` interface.
- *
- * `selectObjects` and `exec` are the two calls the write rules make. Bound
- * parameters go through as an array, which is what both engines take.
- */
-export function rowsOf(db: Connection): Rows {
-  return {
-    all: (sql, params = []) =>
-      db.selectObjects
-        ? db.selectObjects(sql, [...params])
-        : (db.exec(sql, { bind: [...params], rowMode: "object", returnValue: "resultRows" }) as Record<
-            string,
-            unknown
-          >[]),
-    run: (sql, params = []) => {
-      db.exec(sql, { bind: [...params] });
-    },
-  };
-}
-
 /** The replicated tables a connection carries, by their shape (T1-D18). */
 export function replicatedTablesOf(rows: Rows): string[] {
   return rows

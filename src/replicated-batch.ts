@@ -273,6 +273,3 @@ export function stageBatch(staged: Rows, batch: Batch, tables: readonly string[]
 
 const authoredHeadOf = (batch: Batch): number =>
   batch.entries.reduce((max, entry) => Math.max(max, entry.row._r_seq), 0);
-
-/** A batch's own document id, when the caller wants to check what it holds. */
-export const batchReplicaHex = (batch: Batch): string => hex(batch.replica);
