@@ -19,7 +19,8 @@
  * Run: node scripts/build-conformance.mjs
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { unzipSync, zipSync } from "fflate";
@@ -29,8 +30,20 @@ import { SECTION, readContainerFile } from "../dist/index.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(repo, "dist");
-const suite = join(repo, "conformance");
+/*
+ * Where the suite's committed inputs are read from — its keys, the isolation
+ * probe's source — and where this run writes. The same directory unless told
+ * otherwise: `--out=<dir>` writes elsewhere, and `--check` writes to a scratch
+ * directory and compares, so a check never touches the committed suite.
+ */
+const source = join(repo, "conformance");
+const checking = process.argv.includes("--check");
+const outArg = process.argv.find((arg) => arg.startsWith("--out="))?.slice("--out=".length);
+const suite = checking ? mkdtempSync(join(tmpdir(), "dai-conformance-")) : outArg ? resolve(outArg) : source;
 const cases = join(suite, "cases");
+// A check builds into scratch; its "written to conformance/" lines would be false.
+const report = console.log.bind(console);
+if (checking) console.log = () => {};
 
 const TEMPLATE = readFileSync(join(dist, "template.html"), "utf8");
 const RUNTIME = readFileSync(join(dist, "dai-runtime.js"), "utf8");
@@ -49,7 +62,7 @@ const UUID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
  * to be checked. A key that could not be published would make the suite
  * unrebuildable by anyone else, which is the opposite of what it is for.
  */
-const KEY = readFileSync(join(suite, "signing-key.pem"), "utf8");
+const KEY = readFileSync(join(source, "signing-key.pem"), "utf8");
 
 const app = {
   "index.html": bytes(
@@ -938,10 +951,13 @@ console.log(`${written.length} cases written to conformance/cases.json`);
 {
   const { countersign, countersignerHeader } = await import("../dist/cose.js");
   const { signedBytes, signedViewOf, fromBase64, toBase64, sha256Hex } = await import("../dist/core.js");
-  const csKeyPath = join(suite, "countersign-key.pem");
+  const csKeyPath = join(source, "countersign-key.pem");
   let csPem;
   if (existsSync(csKeyPath)) {
     csPem = readFileSync(csKeyPath, "utf8");
+  } else if (checking || outArg) {
+    // A new key would change every countersignature vector; only a real build may make one.
+    throw new Error("conformance/countersign-key.pem is missing; only a build into conformance/ may generate it.");
   } else {
     const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
     const pkcs8 = Buffer.from(await crypto.subtle.exportKey("pkcs8", pair.privateKey)).toString("base64");
@@ -1021,8 +1037,8 @@ console.log(`${written.length} cases written to conformance/cases.json`);
    * here — the point of a conformance suite is that anybody can reproduce it —
    * and they are for these vectors and nothing else.
    */
-  const publisherA = readFileSync(join(suite, "trust-publisher-a-key.pem"), "utf8");
-  const publisherB = readFileSync(join(suite, "trust-publisher-b-key.pem"), "utf8");
+  const publisherA = readFileSync(join(source, "trust-publisher-a-key.pem"), "utf8");
+  const publisherB = readFileSync(join(source, "trust-publisher-b-key.pem"), "utf8");
   const steps = [
     { name: "first", key: publisherA, publisherName: "Ace Space", expect: { state: "new" }, record: true },
     { name: "second", key: publisherA, publisherName: "Ace Space", expect: { state: "known", count: 1 }, record: true },
@@ -1307,7 +1323,7 @@ const probe = await buildContainer(
     files: Object.fromEntries(
       ["index.html", "probe.js", "probe.css"].map((name) => [
         name,
-        readFileSync(join(suite, "isolation", name)),
+        readFileSync(join(source, "isolation", name)),
       ]),
     ),
     appName: "Isolation probe",
@@ -1317,3 +1333,150 @@ const probe = await buildContainer(
 
 writeFileSync(join(suite, "isolation-probe.dai.html"), probe.html);
 console.log("isolation probe written to conformance/isolation-probe.dai.html");
+
+/*
+ * `--check`: the suite this run just built, in scratch, against the committed one.
+ *
+ * Built from fixed inputs, so nearly everything must match exactly. Three
+ * things cannot, and are compared by what they must be rather than by bytes —
+ * found by building the suite twice and keeping only what differed:
+ *
+ *   - Signatures (ECDSA draws a fresh nonce), and identity bundles and roots
+ *     (a test Sigstore is minted per run). Left out of the manifest and the
+ *     vectors that carry them; that each is present where it was is still
+ *     compared. That the committed signatures verify and reach their stated
+ *     verdicts is what run.py and the conformance spec check, in both readers.
+ *   - The ZIP framing of a case repacked after building, which has no fixed
+ *     timestamp. Compared entry by entry instead.
+ *   - A link carrying a signed case: its carrier version and dictionary are
+ *     compared, and the case it carries is compared as a case.
+ *
+ * Everything else — every entry, the shell, every other manifest field, every
+ * expectation, every vector — must be what the committed suite holds. A
+ * template or runtime change moves the shell every case carries, and this fails
+ * until the suite is rebuilt and committed with it.
+ */
+if (checking) {
+  const { readdirSync } = await import("node:fs");
+  const walk = (dir, base = "") =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? walk(join(dir, entry.name), `${base}${entry.name}/`) : [`${base}${entry.name}`],
+    );
+  // What this script writes, and nothing else in conformance/.
+  const produced = (name) =>
+    name.startsWith("cases/") ||
+    name === "cases.json" ||
+    name === "vectors.json" ||
+    name === "inline-links.json" ||
+    name === "isolation-probe.dai.html" ||
+    /^[a-z-]+-vectors\.json$/.test(name);
+  const built = walk(suite).filter(produced);
+  // Committed means tracked. A file left on disk by an earlier build is not
+  // in a checkout, and a check that counted it would pass here and fail in CI
+  // — which is how the untracked isolation probe went unseen.
+  const { execFileSync } = await import("node:child_process");
+  const committed = execFileSync("git", ["ls-files", "-z", "--", "conformance"], { cwd: repo, encoding: "utf8" })
+    .split("\0")
+    .filter(Boolean)
+    .map((file) => file.slice("conformance/".length))
+    .filter(produced);
+
+  const RANDOM_MANIFEST = ["signature", "identity"];
+  const manifestOf = (archive) => JSON.parse(new TextDecoder().decode(archive["runtime/manifest.json"]));
+  const shellOf = (html) => html.replace(PAYLOAD_RE, "").replace(/\r\n/g, "\n");
+  const compareCase = (fresh, held) => {
+    const problems = [];
+    if (shellOf(fresh) !== shellOf(held)) problems.push("the shell around the payload");
+    const a = archiveOf(fresh);
+    const b = archiveOf(held);
+    for (const name of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (!a[name] || !b[name]) {
+        problems.push(`entry ${name} ${a[name] ? "is not committed" : "is no longer produced"}`);
+      } else if (name === "runtime/manifest.json") {
+        const ma = manifestOf(a);
+        const mb = manifestOf(b);
+        for (const key of new Set([...Object.keys(ma), ...Object.keys(mb)])) {
+          if (RANDOM_MANIFEST.includes(key)) {
+            if (key in ma !== key in mb) problems.push(`manifest ${key} is present in only one`);
+          } else if (JSON.stringify(ma[key]) !== JSON.stringify(mb[key])) {
+            problems.push(`manifest ${key}`);
+          }
+        }
+      } else if (!Buffer.from(a[name]).equals(Buffer.from(b[name]))) {
+        problems.push(`entry ${name}`);
+      }
+    }
+    return problems;
+  };
+  const strip = (name, value) => {
+    const v = structuredClone(value);
+    if (name === "vectors.json") {
+      // Everything computed over the signed bytes. The inline carrier deflates
+      // a signed container, so its length and its first bytes move with the
+      // signature too (575 in three builds, 576 in a fourth); only its carrier
+      // version and dictionary are fixed.
+      for (const [part, field] of [
+        ["envelope", "base64"],
+        ["envelope", "cbor"],
+        ["envelope", "tagged"],
+        ["countersignStructure", "cbor"],
+        ["inlineCarrier", "fragment"],
+        ["inlineCarrier", "length"],
+        ["inlineCarrier", "head"],
+      ]) {
+        if (v[part]) delete v[part][field];
+      }
+    }
+    if (name === "identity-vectors.json") {
+      for (const root of v.roots ?? []) {
+        delete root.fulcioRoots;
+        delete root.rekorKeys;
+      }
+    }
+    if (name === "inline-links.json") {
+      for (const link of v.links ?? []) {
+        if (link.expect?.signature === "unsigned" || typeof link.link !== "string") continue;
+        const raw = Buffer.from(link.link.split("#a=")[1].replace(/-/g, "+").replace(/_/g, "/"), "base64");
+        link.link = `carrier ${raw[0]}, dictionary ${raw.subarray(1, 5).toString("hex")}`;
+      }
+    }
+    return v;
+  };
+
+  const problems = [];
+  for (const name of [...new Set([...built, ...committed])].sort()) {
+    if (!built.includes(name)) {
+      problems.push(`${name}: committed, but the suite no longer produces it`);
+      continue;
+    }
+    if (!committed.includes(name)) {
+      problems.push(`${name}: produced, but not committed`);
+      continue;
+    }
+    const fresh = readFileSync(join(suite, name));
+    const held = readFileSync(join(source, name));
+    if (fresh.equals(held)) continue;
+    if (name.endsWith(".dai.html")) {
+      const found = compareCase(fresh.toString("utf8"), held.toString("utf8"));
+      if (found.length > 0) problems.push(`${name}: ${found.join(", ")}`);
+    } else if (name.endsWith(".json")) {
+      const a = JSON.stringify(strip(name, JSON.parse(fresh.toString("utf8"))));
+      const b = JSON.stringify(strip(name, JSON.parse(held.toString("utf8"))));
+      if (a !== b) problems.push(`${name}: differs`);
+    } else {
+      problems.push(`${name}: differs`);
+    }
+  }
+  rmSync(suite, { recursive: true, force: true });
+
+  if (problems.length > 0) {
+    console.error(
+      "The conformance suite is out of date with what builds it — run node scripts/build-conformance.mjs and commit it:\n" +
+        problems.map((problem) => `  ${problem}\n`).join(""),
+    );
+    process.exit(1);
+  }
+  report(
+    `conformance suite: current (${built.length} files; signatures and minted roots compared by presence, not bytes)`,
+  );
+}

@@ -38,6 +38,10 @@ apps/runner/public/runtime/
 !conformance/cases/*.dai
 !conformance/cases/*.dai.html
 !conformance/cases/*.html
+# The isolation probe is built by the same script and read by three specs.
+# Untracked, CI never had it: those specs skipped there with a reason, every
+# push, and the isolation run against a plain host never happened in CI.
+!conformance/isolation-probe.dai.html
 
 # A signing key is never committed. The one exception is conformance/signing-key.pem,
 # which signs documents that exist only to be checked, and says so in its README.
