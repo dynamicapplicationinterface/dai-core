@@ -53,6 +53,7 @@ import { platform } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
+import { filterToOneSession } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -1937,7 +1938,10 @@ window.addEventListener("message", (event) => {
      * application chose the moment; the person still chooses what happens.
      */
     if (!fromMountedContainer(event, data)) return;
-    void sendDocument();
+    // A session id makes the sheet an invite into that one session (T1-D28).
+    // Checked again here: a malformed one is ignored, never guessed at.
+    const session = typeof data.session === "string" && /^[0-9a-f]{32}$/.test(data.session) ? data.session : undefined;
+    void sendDocument(session);
   } else if (data.type === "DAI_HOST_WRITE_RULES_REFUSED") {
     /*
      * The rules were delivered and the frame would not adopt them.
@@ -2523,6 +2527,23 @@ async function currentHtml(withData = true): Promise<string> {
   return current.supplied.length > 0 ? refatten(current) : current.html;
 }
 
+/**
+ * An invite into one session: this document with its database filtered to that
+ * session's rows — the other sessions gone, local tables emptied — around the
+ * same application and the same signature (T1-D28). Nothing is re-signed: the
+ * database is outside the signed set, and a fresh signature would stop the
+ * recipient's copy recognizing this as the same document.
+ */
+async function inviteHtml(session: string): Promise<string> {
+  if (!loaded) throw new Error("nothing open");
+  await flushDocument();
+  const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+  if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
+  const filtered = await filterToOneSession(opfsDb, session);
+  const invite = await resealCartridge(loaded, filtered);
+  return invite.supplied.length > 0 ? refatten(invite) : invite.html;
+}
+
 /** The preview icon, as a PNG under the store's cap, or none. */
 async function previewIcon(favicon: string | undefined): Promise<{ png: Uint8Array } | undefined> {
   for (const size of [512, 256, 128]) {
@@ -2644,8 +2665,10 @@ function retireLabel(shares: Share[]): string {
   return n === 1 ? "Stop the link I shared before" : `Stop the ${n} links I shared before`;
 }
 
-async function sendDocument(): Promise<void> {
+async function sendDocument(inviteSession?: string): Promise<void> {
   if (!loaded) return;
+  // An invite into one session means something only for a session document.
+  const invite = inviteSession && loaded.manifest.session ? inviteSession : undefined;
   const name = loaded.manifest.appName ?? "this document";
   const sheetEl = document.getElementById("send-sheet");
   const icon = document.getElementById("send-icon") as HTMLImageElement | null;
@@ -2690,15 +2713,24 @@ async function sendDocument(): Promise<void> {
   const url = faviconUrl(loaded.manifest.favicon);
   icon.hidden = !url;
   if (url) icon.src = url;
-  titleEl.textContent = `Share ${name}`;
+  titleEl.textContent = invite ? "Invite someone into this game" : `Share ${name}`;
   sub.textContent = viaStore
     ? "Sealed with a key that only the link holds, then put in the store, which cannot read it."
     : "The whole app travels inside the link. Nothing is uploaded.";
   withData.checked = true;
+  // An invite always carries its one game, so there is no data choice to make.
+  // Set on the style rather than `hidden`: the row is a flex label, and a
+  // display rule beats the hidden attribute.
+  const toggle = withData.closest("label") as HTMLElement | null;
+  if (toggle) toggle.style.display = invite ? "none" : "";
   const describe = (): void => {
-    note.textContent = withData.checked
-      ? "Anyone with the link can open it, with what is in it now."
-      : "Anyone with the link gets the app as it arrived, with none of your entries.";
+    note.textContent = invite
+      ? "Only this game goes. Your other games, and this device's own settings, stay here."
+      : loaded?.manifest.session && withData.checked
+        ? "This sends the whole document, with every game in it. To invite someone into one game, use that game's own Invite."
+        : withData.checked
+          ? "Anyone with the link can open it, with what is in it now."
+          : "Anyone with the link gets the app as it arrived, with none of your entries.";
   };
   describe();
   withData.onchange = describe;
@@ -2723,7 +2755,7 @@ async function sendDocument(): Promise<void> {
     try {
       // Packaged now, not when the sheet opened: what goes is what the
       // person sees at the moment they press Share.
-      const html = await currentHtml(withData.checked);
+      const html = invite ? await inviteHtml(invite) : await currentHtml(withData.checked);
       // The name and icon go with it, as they do when a phone shares any
       // app; the person can take the card off in the share sheet itself.
       made = await linkToSend(html, true);

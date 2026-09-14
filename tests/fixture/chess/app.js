@@ -219,7 +219,8 @@ function share(){
  if(typeof window.dai?.requestShare!=='function')throw new Error('Sharing is available in the DAI opener. Open this document there to share its card.');
  const st=store.state();if(st?.game.is_demo)throw new Error('This is a practice board. Start your own game to share it.');
  if(store.draft(st?.game.id))notify('Your tentative move stays with you. Play it first if you want it to travel.');
- return window.dai.requestShare();
+ // The game's session makes this an invite into this game only (T1-D28).
+ return window.dai.requestShare(st?.game.session);
 }
 function wire(){
  wireIcons();

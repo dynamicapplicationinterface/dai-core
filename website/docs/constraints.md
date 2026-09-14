@@ -300,7 +300,7 @@ Store in a shared table only the facts people enter or acts they take — a rece
 
 **Applies to** passable, session. **Enforcement:** not checked by anything.
 
-Keep in ordinary local tables everything about this copy rather than the document: settings, drafts, which item the screen is showing, what this person has hidden, the name this person goes by. Local tables are never merged, so they may use PRIMARY KEY, UNIQUE and CHECK freely. They do travel inside a copy that is sent — a person opening a document for the first time starts from the sender's local rows — but a copy that already exists keeps its own local rows when another copy's shared rows are merged into it.
+Keep in ordinary local tables everything about this copy rather than the document: settings, drafts, which item the screen is showing, what this person has hidden, the name this person goes by. Local tables are never merged, so they may use PRIMARY KEY, UNIQUE and CHECK freely. They travel only in a whole-document copy — a file, or the host menu's share — where a person opening it for the first time starts from the sender's local rows. An invite into one session carries none of them, and a copy that already exists keeps its own local rows when another copy's shared rows are merged into it.
 
 **Why.** A setting in a shared table changes the other person's screen, and a draft in one is sent before it is finished.
 
@@ -372,7 +372,7 @@ In a session document, pass the session id as the third argument of every insert
 
 **Applies to** session. **Enforcement:** not checked by anything.
 
-When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === "carrier"` — never for "mailbox". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds. Join the session of the item the sent copy was showing — the local setting that records it arrived with the copy (SHARED-LOCAL-STAYS-LOCAL). Because an invite carries the whole document, the sender must have the game they are inviting to on screen when they share; say so beside the Invite button.
+When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === "carrier"` — never for "mailbox". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds. Join the session the invite was sent for. An invite carries only that session and none of the sender's local rows (SESSION-INVITE), so it is a session with an open seat that this copy did not create and is not a member of — in a fresh copy made from an invite there is exactly one. That includes a copy whose seat was contested or replaced: opening the creator's fresh invite is how it gets back in, and excluding copies that were ever seated would lock it out for good. Prefer the item that is showing when it is joinable (a copy that arrived as a whole document carries the sender's local rows, including which item was showing), otherwise take the newest joinable one, and make it the item showing.
 
 **Why.** Membership comes from opening an invite, not from rows arriving. A copy that joined on every background merge would re-take a seat it had lost, and a copy that joined twice would contest its own seat.
 
@@ -412,11 +412,11 @@ Ending the activity is an ordinary row: a resignation, a final mark, a signature
 
 **Applies to** session. **Enforcement:** not checked by anything.
 
-Invite the other party by asking the host to share: a button that calls `window.dai.requestShare()`. There is no invite call of your own. Today the link carries the whole document — every session in it, not only the one being shared — so do not tell a person an invite contains only one game. After a copy has been shared by link, the host moves new rows between the copies on its own, and they arrive as `dai:merged` with `via` "mailbox"; a copy handed over as a file carries its rows when it is opened. The application never sends rows itself; a "send" button that calls `requestShare()` again is only needed where copies travel as files.
+Invite the other party by asking the host to share, naming the session: a button that calls `window.dai.requestShare(session)`. There is no invite call of your own. The copy that travels holds only that session's rows — none of the document's other sessions, and none of this copy's local tables — so the recipient gets this one game and nothing else of the sender's. Without a session, `requestShare()` offers the whole document, every session in it, as the host's own menu does; use it for that, never for an invite. After a copy has been shared by link, the host moves new rows between the copies on its own, and they arrive as `dai:merged` with `via` "mailbox"; a copy handed over as a file carries its rows when it is opened. The application never sends rows itself; a "send" button that calls `requestShare()` again is only needed where copies travel as files.
 
-**Why.** The host mints the key that lets the two copies exchange rows and makes the link; the application only asks. Per-session invites exist in the code but no host uses them yet.
+**Why.** The host mints the key that lets the two copies exchange rows and makes the link; the application only asks, and only the application knows which game it is inviting to. Filtering to that game is what keeps a person's other games — and whatever they keep only on their own device — out of every invite they send.
 
-<small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`src/replicated-export.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/replicated-export.ts), [`apps/runner/src/main.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/apps/runner/src/main.ts).</small>
+<small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`apps/runner/src/main.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/apps/runner/src/main.ts).</small>
 
 ## The kit {#topic-kit}
 

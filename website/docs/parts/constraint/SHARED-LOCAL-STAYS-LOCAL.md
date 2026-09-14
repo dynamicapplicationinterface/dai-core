@@ -3,7 +3,7 @@
 ::: info SHARED-LOCAL-STAYS-LOCAL
 **What belongs to one copy stays local**
 
-Keep in ordinary local tables everything about this copy rather than the document: settings, drafts, which item the screen is showing, what this person has hidden, the name this person goes by. Local tables are never merged, so they may use PRIMARY KEY, UNIQUE and CHECK freely. They do travel inside a copy that is sent — a person opening a document for the first time starts from the sender's local rows — but a copy that already exists keeps its own local rows when another copy's shared rows are merged into it.
+Keep in ordinary local tables everything about this copy rather than the document: settings, drafts, which item the screen is showing, what this person has hidden, the name this person goes by. Local tables are never merged, so they may use PRIMARY KEY, UNIQUE and CHECK freely. They travel only in a whole-document copy — a file, or the host menu's share — where a person opening it for the first time starts from the sender's local rows. An invite into one session carries none of them, and a copy that already exists keeps its own local rows when another copy's shared rows are merged into it.
 
 **Why.** A setting in a shared table changes the other person's screen, and a draft in one is sent before it is finished.
 

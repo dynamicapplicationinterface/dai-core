@@ -144,11 +144,22 @@ function state(game) {
  * invite was sent from.
  */
 function joinIfInvited() {
-  const game = activeGame();
-  if (!game) return;
-  const s = seats(game.session);
-  if (s.member || s.amCreator || s.seatLost || !s.openSeat) return;
-  write(() => shared.session.join(game.session, s.openSeat));
+  // An invite carries only the game it was sent for, and none of the sender's
+  // local rows — so the game to join is one this copy can join: not its own,
+  // not one it is already in, with a seat open. That includes a copy whose seat
+  // was contested and replaced: opening the creator's fresh invite is how it
+  // gets back in. Prefer the game showing, if it is one.
+  const joinable = (g) => {
+    const s = seats(g.session);
+    return !s.member && !s.amCreator && !!s.openSeat;
+  };
+  const active = activeGame();
+  const target = active && joinable(active) ? active : [...games()].reverse().find(joinable);
+  if (!target) return;
+  const seat = seats(target.session).openSeat;
+  if (write(() => shared.session.join(target.session, seat))) {
+    db.exec({ sql: "UPDATE settings SET active_game = ? WHERE id = 1", bind: [target.id] });
+  }
 }
 
 // ---- drawing ------------------------------------------------------------
@@ -316,12 +327,17 @@ $("game-list").addEventListener("change", () => {
   draw();
 });
 
-// The host makes the invite: it mints the key and the link.
-$("invite").addEventListener("click", () => window.dai.requestShare());
+// The host makes the invite: it mints the key and the link. Naming the game's
+// session makes it an invite into this game only — the other games and this
+// device's settings stay here.
+$("invite").addEventListener("click", () => {
+  const game = activeGame();
+  if (game) window.dai.requestShare(game.session);
+});
 
 $("reseat").addEventListener("click", () => {
   const game = activeGame();
-  if (game && write(() => shared.session.reseat(game.session))) window.dai.requestShare();
+  if (game && write(() => shared.session.reseat(game.session))) window.dai.requestShare(game.session);
   draw();
 });
 

@@ -3,9 +3,9 @@
 ::: info SESSION-INVITE
 **An invite is a shared link**
 
-Invite the other party by asking the host to share: a button that calls `window.dai.requestShare()`. There is no invite call of your own. Today the link carries the whole document — every session in it, not only the one being shared — so do not tell a person an invite contains only one game. After a copy has been shared by link, the host moves new rows between the copies on its own, and they arrive as `dai:merged` with `via` "mailbox"; a copy handed over as a file carries its rows when it is opened. The application never sends rows itself; a "send" button that calls `requestShare()` again is only needed where copies travel as files.
+Invite the other party by asking the host to share, naming the session: a button that calls `window.dai.requestShare(session)`. There is no invite call of your own. The copy that travels holds only that session's rows — none of the document's other sessions, and none of this copy's local tables — so the recipient gets this one game and nothing else of the sender's. Without a session, `requestShare()` offers the whole document, every session in it, as the host's own menu does; use it for that, never for an invite. After a copy has been shared by link, the host moves new rows between the copies on its own, and they arrive as `dai:merged` with `via` "mailbox"; a copy handed over as a file carries its rows when it is opened. The application never sends rows itself; a "send" button that calls `requestShare()` again is only needed where copies travel as files.
 
-**Why.** The host mints the key that lets the two copies exchange rows and makes the link; the application only asks. Per-session invites exist in the code but no host uses them yet.
+**Why.** The host mints the key that lets the two copies exchange rows and makes the link; the application only asks, and only the application knows which game it is inviting to. Filtering to that game is what keeps a person's other games — and whatever they keep only on their own device — out of every invite they send.
 
 <small>Applies to session · not checked by anything · [SESSION-INVITE in Constraints](/docs/constraints#SESSION-INVITE)</small>
 :::

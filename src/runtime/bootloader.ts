@@ -2243,8 +2243,12 @@ function bridgeMain(): void {
      * the two taps to find that menu; it does not skip anything the menu
      * requires.
      */
-    requestShare: () => {
-      window.parent.postMessage({ type: "dai:request-share" }, "*");
+    requestShare: (session?: string) => {
+      // A session id (hex) makes this an invite into that one session: the host
+      // filters the copy it sends to that session's rows (T1-D28). Without one,
+      // the host offers the whole document, as its own menu does.
+      const invite = typeof session === "string" && /^[0-9a-f]{32}$/i.test(session) ? session.toLowerCase() : undefined;
+      window.parent.postMessage({ type: "dai:request-share", ...(invite ? { session: invite } : {}) }, "*");
     },
   };
 
@@ -3242,7 +3246,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const relay = event.data as { type?: string; id?: string };
+    const relay = event.data as { type?: string; id?: string; session?: unknown };
     // Asked for by the application as it starts, and answered with whatever
     // the host has said so far.
     if (event.source === frame.contentWindow && relay?.type === "dai:insets?") {
@@ -3354,7 +3358,12 @@ async function boot(): Promise<void> {
     // exactly as asked — no data of the application's choosing rides along,
     // because none is needed: the host reads the document it already has.
     if (event.source === frame.contentWindow && relay?.type === "dai:request-share") {
-      window.parent.postMessage({ type: "DAI_HOST_REQUEST_SHARE", sessionNonce }, "*");
+      // The session rides through unchanged when it is well-formed, and is
+      // dropped when it is not: the host must never filter on something the
+      // application did not plainly say.
+      const session =
+        typeof relay.session === "string" && /^[0-9a-f]{32}$/.test(relay.session) ? relay.session : undefined;
+      window.parent.postMessage({ type: "DAI_HOST_REQUEST_SHARE", sessionNonce, ...(session ? { session } : {}) }, "*");
       return;
     }
 

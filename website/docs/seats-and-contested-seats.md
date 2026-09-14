@@ -54,12 +54,14 @@ had seen from that copy. Rows written later than that are not admitted. It is a
 statement of what the closer knew, not a time — the same refusal to trust a
 clock.
 
-## What is not true yet
+## An invite is one session
 
-An invite today carries the whole document, every session in it, not only the
-one being shared. The code to filter an invite to one session exists and no
-host uses it yet (backlog D4), so an application should not tell a person that
-an invite contains only one game.
+An invite made with `requestShare(session)` carries that session and nothing
+else: the other sessions in the document stay on the sender's device, and so
+do the sender's local tables. The recipient's copy holds one game, and the
+session to join is the one with an open seat it did not create. The host's own
+menu share is different — it cannot know which game is meant, so it sends the
+whole document and says so.
 
 The design record for all of this is in
 [`docs/replicated-tables.md`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/docs/replicated-tables.md),

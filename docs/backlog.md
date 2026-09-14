@@ -67,10 +67,11 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D1 | Kit writes shared tables; kit redraws on merge | [ ] documented as local-only meanwhile |
 | D2 | Refusal registry lacks the app-facing codes | [ ] |
 | D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
-| D4 | An invite carries every session | [ ] the filter (`exportSession`) exists and is unused — wire it, don't rebuild it |
+| D4 | An invite carries every session | [x] `requestShare(session)` → host filters with `filterToSession` |
 | D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
 | D7 | examples/tasks shows its forms before start-up | [ ] breaks NO-INPUT-LOST-WHILE-OPENING |
+| D8 | The host runs one mailbox per document | [ ] `deriveSessionMailbox` built and tested, unused — decides what push attaches to |
 
 ---
 
@@ -464,6 +465,19 @@ with the Python reader implemented from its text as version 3 was.
 
 ### D4 — An invite carries every session in the document, not only the one
 
+**Done (13 September).** `window.dai.requestShare(session)` names the session;
+the shell passes it through only when well-formed; the host's share sheet, in
+invite mode, filters a scratch copy of the database with `filterToSession`
+(`apps/runner/src/invite.ts`, on the engine the opener already stages) and
+reseals it around the same signature. The host's own menu share still sends the
+whole document — it cannot know which game is meant — and says so on the sheet.
+Because an invite now carries none of the sender's local rows, the join rule
+changed with it: a copy joins the session it can join (an open seat it did not
+create), preferring the one showing. `tests/invite-one-session.spec.ts` shares
+one game from a document holding two, through the game's own Invite, and finds
+nothing of the other in any table of the copy that arrives; a whole-document
+share opened on a third device is the control.
+
 T1-D28 decides that an invite is the document filtered to one session, and
 **the filter is built, reviewed and tested — and unused.** `exportSession`
 (`src/replicated-export.ts`) over `filterToSession` (`src/replicated-rows.ts`)
@@ -481,6 +495,32 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D8 — The host runs one mailbox per document; the per-session mailbox is unused
+
+T1-D30 decides a mailbox per session: its key and its relay address both
+derived from the document's root key and the session id, so the document key
+alone opens nothing and a relay cannot correlate a session across documents.
+The derivation is built and tested — `deriveSessionMailbox` (`src/mailbox.ts`),
+`tests/session-mailbox.spec.ts`, and `authoredBatchAbove` can already scope a
+batch to one session. Nothing in the host calls it. `apps/runner/src/mailbox-session.ts`
+addresses the relay by the document's uuid (`publishSealed(mailbox, documentUuid, …)`,
+`mailbox.head(documentUuid)`) and derives its key from a fixed label
+(`"dai:mailbox:v1"`, whose comment says it "becomes the session id when Track 3
+lands"). So today every session in a document shares one mailbox, the relay sees
+one stable address per document, and every copy holding the document key can
+read every session's batches. The same shape as D4: both halves were needed and
+one landed.
+
+Found while scoping push delivery (Track 5 slice two), which attaches a push
+subscription to a mailbox — so which mailbox is decided here, first.
+
+**Exit:** a session document's host runs one mailbox per session, addressed and
+keyed by `deriveSessionMailbox`, publishing only that session's rows; a plain
+replicated document keeps its single mailbox; an end-to-end test shows two
+sessions in one document using two relay addresses, neither of them the
+document's uuid, and a copy that holds the document key but not a session's id
+unable to read that session's batches.
 
 ### D7 — The walkthrough's example shows its forms before it has started
 

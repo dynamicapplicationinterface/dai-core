@@ -488,7 +488,15 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array): Repli
  * source (an entity's history crossed sessions) and would export an invite with
  * a parent that never arrives.
  */
-const DOCUMENT_TABLES = new Set(["_dai_replica", "_dai_replicas"]);
+/*
+ * `_dai_meta` joined when the filter first ran on a document an application had
+ * opened: the runtime creates it on every open to record the schema digest the
+ * data was made under, and reads it back on the next open to decide whether the
+ * data needs migrating. It describes the document's data, not any session, and
+ * an invite carries the same application and schema — so it travels whole. The
+ * filter's earlier tests built their databases directly and never had one.
+ */
+const DOCUMENT_TABLES = new Set(["_dai_replica", "_dai_replicas", "_dai_meta"]);
 
 export function filterToSession(db: Rows, session: Uint8Array): void {
   const replicated: string[] = [];

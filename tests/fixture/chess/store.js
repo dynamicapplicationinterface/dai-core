@@ -59,7 +59,25 @@ export class Store {
   if(seat)this.w.session.join(session,seat.seat);
  }
  /** Join the active game's session if this copy has arrived at one it is not in. */
- joinActive(){const g=this.game();if(g&&!g.is_demo)this.joinIfNeeded(g.session);}
+ /**
+  * Join the game this copy was invited into, if any.
+  *
+  * An invite carries only its own game and none of the sender's local rows
+  * (T1-D28), so on a fresh copy the active game is this copy's own practice
+  * board and the invited game is simply the one it can join. Prefer the active
+  * game when it is joinable (a whole-document copy says which game was showing);
+  * otherwise take the newest game this copy did not start and is not in —
+  * never sat in, or sat in and lost the seat to a contest the creator then
+  * repaired, which is exactly the copy a fresh invite exists to bring back.
+  */
+ joinActive(){
+  const joinable=g=>{if(!g||g.is_demo)return false;const s=this.seatState(g.session);return s.notIn||s.mineOut;};
+  const active=this.game();
+  const target=joinable(active)?active:[...this.games()].reverse().find(joinable);
+  if(!target)return;
+  this.joinIfNeeded(target.session);
+  if(target!==active)this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[target.id]);
+ }
  /**
   * The seat picture for a session: is a seat contested, am I the creator, is
   * MY seat the contested one (T1-D29). A contested seat has two or more distinct
