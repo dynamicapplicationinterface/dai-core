@@ -119,15 +119,24 @@ test.describe("a sectioned document mounts with its data", () => {
     await expect(app.locator("#state")).toHaveText("0", { timeout: 30_000 });
     await app.locator("#tick").click();
     await expect(app.locator("#state")).toHaveText("1");
-    await page.waitForTimeout(1500);
-    const databaseB64 = await page.evaluate(() => {
-      const bytes = (window as unknown as { __runner: { loaded: { archive: Record<string, Uint8Array> } } }).__runner.loaded.archive["document.sqlite"]!;
-      let s = "";
-      for (const b of bytes) s += String.fromCharCode(b);
-      return btoa(s);
-    });
-    const database = fromBase64(databaseB64);
-    expect(database.byteLength).toBeGreaterThan(1024);
+    /*
+     * Wait for the save to be written, not for time to pass. The opener
+     * replaces `loaded` only once the save has reached storage, and this
+     * used to sleep 1.5s and read it: on WebKit in CI the kept trace showed
+     * the save asked for and not yet written when the read came, and the
+     * database read back empty. What the next step needs is a database with
+     * the row in it, so that is what is waited for — and a save that never
+     * lands still fails here.
+     */
+    const readDatabase = () =>
+      page.evaluate(() => {
+        const bytes = (window as unknown as { __runner: { loaded: { archive: Record<string, Uint8Array> } } }).__runner.loaded.archive["document.sqlite"]!;
+        let s = "";
+        for (const b of bytes) s += String.fromCharCode(b);
+        return btoa(s);
+      });
+    await expect.poll(async () => fromBase64(await readDatabase()).byteLength, { timeout: 30_000 }).toBeGreaterThan(1024);
+    const database = fromBase64(await readDatabase());
 
     // Wrap that real database in a sectioned file, and open it somewhere new.
     const sectioned = await sectionedFrom(readFileSync(file, "utf8"), database);
