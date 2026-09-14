@@ -1443,6 +1443,15 @@ if the ordering regressed. So: watched, not dismissed. If it fails again,
 reproduce it under artificial load rather than assuming flake — the cost of a
 wrong "flaky" call here is a game that loses moves in the field.
 
+**`mailbox-link-e2e`'s forwarded-invite test was treated that way, and it was
+the test.** It retried once on Firefox in CI (14 Sep), the day a mailbox change
+landed, so it was reproduced under load (three copies at once) before anything
+else: 1 failure in 6, always the joiner's first move. Switching the new mailbox
+change off did not help (3 in 12), so it was not that. The chess app replays the
+last move on the frame after it starts and ignores a tap while the replay runs;
+the test tapped as soon as the history showed the move and, under load, into the
+replay. Its `play()` now taps the piece until the board shows it picked up.
+
 ## Not doing
 
 - Native phone apps as a prerequisite for first use.
