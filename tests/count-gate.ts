@@ -91,6 +91,17 @@ export default class CountGate implements Reporter {
     if (filtered) return;
 
     const complaints: string[] = [];
+    // A project that ran and has no floor is a project nothing holds: every
+    // test in it could stop being collected and this gate would say nothing.
+    // Adding a project means adding its floor in the same change.
+    for (const project of this.passed.keys()) {
+      if (held[project] === undefined) {
+        complaints.push(
+          `${project}: ran, and has no floor in tests/count-floor.json, so a drop in it would go unseen. ` +
+            "Set one from a whole run with DAI_UPDATE_FLOOR=1.",
+        );
+      }
+    }
     for (const [project, minimum] of Object.entries(held)) {
       // A project that did not run this time is not a project that shrank.
       const ran = this.passed.get(project);
