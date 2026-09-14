@@ -493,6 +493,13 @@ export function startMailboxSession(config: {
     return moved;
   }
 
+  /**
+   * Timer ticks that have run to the end, counted so a test can wait for the
+   * poll to have actually happened rather than for time to pass and hope it
+   * did.
+   */
+  let polls = 0;
+
   function schedulePoll(ms: number): void {
     if (stopped) return;
     window.clearTimeout(pollTimer);
@@ -524,6 +531,7 @@ export function startMailboxSession(config: {
       return;
     }
     if (await runPull(true)) lastActivity = Date.now(); // something arrived; a reply may be next.
+    polls += 1;
     schedulePoll(pollRate());
   }
 
@@ -539,6 +547,9 @@ export function startMailboxSession(config: {
   window.addEventListener("message", onMessage);
 
   return {
+    get polls() {
+      return polls;
+    },
     pull: () => {
       // Foreground or interaction: catch up now, and go back to the fast rate.
       lastActivity = Date.now();

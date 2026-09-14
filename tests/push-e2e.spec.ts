@@ -393,12 +393,25 @@ test("a move made while the other app is closed arrives as a notification that o
   await expect.poll(() => relay.subscriptions(address!).length, { timeout: 45_000 }).toBe(0);
   await expect.poll(() => devices.get("ada")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
   await expect.poll(() => devices.get("bo")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
-  // Both pages are still open and visible, which is when the poll runs fastest
-  // (every three seconds). A request already in flight when a lane stopped may
-  // still land, so give that a moment; after it, nothing more may come.
-  await adaGame.waitForTimeout(3_000);
+  /*
+   * Nobody polls it now. Waited on the poll itself, not on the clock: a tick
+   * on each page first, which settles any request already in flight when the
+   * lane stopped, then two more on each — the timer demonstrably ran, twice,
+   * on both copies — and not one request may have reached the mailbox. The
+   * sleeps this replaces assumed the timer fired inside them.
+   */
+  const polls = (page: Page) => page.evaluate(() => (window as any).__runner.mailboxPolls as number);
+  const ticks = async (count: number) => {
+    const from = [await polls(adaGame), await polls(pageB)] as const;
+    await expect
+      .poll(async () => (await polls(adaGame)) >= from[0] + count && (await polls(pageB)) >= from[1] + count, {
+        timeout: 60_000,
+      })
+      .toBe(true);
+  };
+  await ticks(1);
   const before = relay.requests(address!);
-  await adaGame.waitForTimeout(10_000);
+  await ticks(2);
   const since = relay.requestLog(address!).slice(before);
   expect(since, `nobody polls a closed game's mailbox; it received: ${since.join(", ")}`).toEqual([]);
 

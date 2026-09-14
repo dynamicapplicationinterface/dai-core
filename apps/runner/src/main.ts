@@ -3685,6 +3685,11 @@ Object.defineProperty(window, "__runner", {
     },
     // Pull now, as the foreground poll would.
     pullMailbox: (): void => mailboxSession?.pull(),
+    // How many timer polls have run, so a test that must show nothing is
+    // polled can wait for polls to happen instead of for time to pass.
+    get mailboxPolls(): number | undefined {
+      return mailboxSession?.polls;
+    },
     // Track 5, slice two: the relay's public push key, which a deploy stamps
     // into the page and a test supplies for the relay it stands up.
     usePush: (publicKey: string): void => {
