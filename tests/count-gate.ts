@@ -22,7 +22,15 @@ export const REPORT = join(repo, "test-results", "count-gate.json");
  * exact figure, so adding tests never needs a ceremony and removing them
  * always does. Raise the floor when the suite grows —
  * `DAI_UPDATE_FLOOR=1 npm test` writes what actually ran — and lowering it is a
- * deliberate edit somebody has to justify in a diff. An environment variable
+ * deliberate edit somebody has to justify in a diff.
+ *
+ * The floor is what CI passes, because CI is where it gates. A run on Windows
+ * passes more: some tests are Windows-only by design (drive letters, UNC paths,
+ * directory junctions) and skip on CI's Linux, so a floor written from a
+ * Windows run sits above anything CI can reach and fails every CI run. Re-base
+ * from a CI run's count, or subtract the tests that only run here.
+ *
+ * An environment variable
  * and not a flag: Playwright rejects command-line options it does not know,
  * and exits zero while doing it. Held per project, so a run of one engine is still a
  * whole run of that engine and still gated.
