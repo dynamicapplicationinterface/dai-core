@@ -103,6 +103,31 @@ if (tier === "push" || process.argv[2] === "push") {
     );
     process.exit(2);
   }
+  /*
+   * What CI's checks job checks, before any browser starts. Without this the
+   * push tier ran green on a tree CI then failed: a runtime change moved the
+   * shell every conformance case carries, and only CI ran the check that
+   * holds the suite to its build. The library is built first, since each of
+   * these reads dist/.
+   */
+  const checks = [
+    ["npm", ["run", "build"]],
+    [process.execPath, [join(repo, "scripts", "build-conformance.mjs"), "--check"]],
+    [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"]],
+    [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"]],
+    ["npm", ["run", "fixtures:check"]],
+  ];
+  for (const [command, args] of checks) {
+    // A shell only for npm, which is npm.cmd on Windows. Node itself is spawned
+    // directly: through a shell its path ("C:\Program Files\...") is split at
+    // the space, node never starts, and every tree is refused.
+    const run = spawnSync(command, args, { cwd: repo, stdio: "inherit", shell: command === "npm" && process.platform === "win32" });
+    if (run.status !== 0) {
+      console.error(`test-tier push: ${[command, ...args].join(" ")} failed — CI's checks job would refuse this too.`);
+      process.exit(1);
+    }
+  }
+
   rmSync(REPORT, { force: true });
   const status = playwright(rest);
   if (!existsSync(REPORT)) {

@@ -37,7 +37,7 @@ Four tiers, each run less often than the one before it and each checking more.
 | --- | --- | --- | --- |
 | Iterate | while editing | `npm run test:iterate -- tests/x.spec.ts` | the specs named, chromium and node, reusing the last build if nothing it reads changed |
 | Commit | before a commit | `npm run test:commit` | the specs that claim what changed against `HEAD` (`scripts/impact.mjs`), or everything when a shared file changed |
-| Push | before a push | `npm run test:push` | the whole suite on chromium and node, through the count gate |
+| Push | before a push | `npm run test:push` | the checks CI's checks job runs (the build, then the conformance, dictionary, confusable-table and merge-fixture checks), then the whole suite on chromium and node, through the count gate |
 | CI | every push | `.github/workflows/test.yml` | the whole suite on all three engines, the node project once, typecheck and the reference readers |
 
 Three engines are CI's job. Running them all locally is what made the loop
