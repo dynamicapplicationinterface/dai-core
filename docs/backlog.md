@@ -66,7 +66,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | L3 | Documentation overhaul (the recipe is behind) | [x] `f3887da` constraints + model file, `08bfd70` pages, `64eb2b2` session eval — a model run against it is still to do |
 | D1 | Kit writes shared tables; kit redraws on merge | [ ] documented as local-only meanwhile |
 | D2 | Refusal registry lacks the app-facing codes | [ ] |
-| D3 | Specification v0.3, normative for version 4 | [ ] scope when asked |
+| D3 | Specification v0.3, normative for version 4 | [ ] scope when asked; its one wrong sentence is D19 |
 | D4 | An invite carries every session | [x] `requestShare(session)` → host filters with `filterToSession` |
 | D5 | Comment after a shared table's last column breaks the rewrite | [x] rewrite fixed, and the Node build loads the rewritten schema; the in-browser compiler does not |
 | D6 | A session seats two, whatever max_parties says | [ ] documented as a two-person limit meanwhile |
@@ -80,7 +80,9 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D14 | Two blind runs is not a rate | [ ] both passed, both found real defects |
 | D15 | Asymmetric roles inside a session | [ ] the enterprise demo needs it; parked on the dynamic statement |
 | D16 | A native iOS host: App Clip and Messages extension | [ ] parked until after the enterprise demo |
-| D17 | Mailbox batches expire with the bucket's 90-day rule | [ ] retention decided by accident |
+| D17 | Mailbox batches are deleted at 90 days — silent data loss, first on ~8 Dec | [~] scoped rule written in `infra/r2-lifecycle.json`; Chris applies it; retention then decided on purpose |
+| D18 | Nothing can tell a hole in a mailbox history from an empty stretch | [ ] the property that makes D17 silent; the relay is the one place that can |
+| D19 | The published spec says a reader must refuse version 4 | [ ] one sentence; goes with the next docs change |
 
 ---
 
@@ -515,30 +517,92 @@ The documentation says what happens today — the share sheet sends the document
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
 
-### D17 — Mailbox batches expire with the bucket's 90-day rule
+### D19 — The published specification says a reader must refuse version 4
+
+`docs/spec-v0.2.md` §9 (line 957): "A reader MUST accept `manifestVersion` 2 and
+3, and MUST refuse any other value." Version 4 is what a document with shared
+tables is built as (T1-D25), and every reader here accepts it. So a published,
+normative sentence contradicts shipped code, in the specification the media-type
+registration points to.
+
+Why it matters: a third implementer reading the spec would build a reader that
+refuses every shared document, and be right by the text. The full v0.3 (D3) is
+the real fix and stays parked; this sentence cannot wait for it.
+
+This is its own small item, split out of D3 so it does not sit with a track it
+is not part of. The change: accept 2, 3 and 4; say version 4 is defined by the
+design record until v0.3 (`docs/replicated-tables.md`); refuse any other value.
+
+**Un-parks with the next docs change** — it rides with whatever touches the
+documentation next.
+
+### D18 — Nothing can tell a hole in a mailbox history from an empty stretch
+
+The property that makes D17 silent. The relay's `since` returns the batches whose
+objects it can find and the cursor at the end (`mailbox-do.ts` skips a missing
+object); the host's `catchUp` moves its cursor to that cursor
+(`src/mailbox-sync.ts`); and the merge has no way to notice rows that never
+arrived. It could not use the sequence numbers either: a replica's rows are
+numbered across every session it writes in, and an invite carries one session's
+rows, so a gap in the numbers is normal and says nothing. The only
+`…Gap` check in the merge (`mergeCoverageGap`) is about tables, not history.
+
+Why it matters: a missing batch and a batch never written look the same from
+every side, so any loss in the relay — an expiry, a failed write, an operator's
+mistake — arrives as a quietly incomplete game rather than an error.
+
+The relay is the one place that can tell: it holds the counter and knows which
+numbers it cannot serve. **Un-parks with D17's retention decision, or with the
+first relay change that could lose an object** — `since` names the numbers it
+cannot serve, and the host refuses to move its cursor past a hole and says so
+("this game's history has gaps here; ask for a new invite") instead of merging a
+partial past.
+
+### D17 — Mailbox batches are deleted at 90 days: silent data loss on a fuse
 
 Found while checking whether the junk item (D12) would be cleaned up. The
-lifecycle rule on `dai-store` — `shared-documents-90-days`, written in
-`infra/r2-lifecycle.json` and confirmed applied to the live bucket on 14
-September (`wrangler r2 bucket lifecycle list`) — has an empty prefix. It was
-written for shared documents, but it covers everything in the bucket, and the
-relay writes every mailbox batch there under `mailbox/<id>/<seq>`. So every
-batch is deleted 90 days after it was written.
+lifecycle rule on `dai-store` — `shared-documents-90-days`, confirmed applied to
+the live bucket on 14 September (`wrangler r2 bucket lifecycle list`) — has an
+empty prefix. It was written for shared documents, but it covers everything in
+the bucket, and the relay writes every mailbox batch there under
+`mailbox/<id>/<seq>`. So every batch is deleted 90 days after it was written.
+The mailbox has been live since 10 September: **the first real batches go on or
+about 8 December.**
 
-Why it matters: the relay's counter lives in the Durable Object and does not
-expire, so after 90 days `head` still reports every batch while `since` quietly
-skips the ones that are gone (`mailbox-do.ts` skips a missing object). A copy
-that is up to date loses nothing. A device that comes to a game late — a new
-phone, a reinstalled app, a copy that was offline for three months — catches up
-from a history with holes in it, and nothing says so. Retention was deferred by
-the ruling ("retention and entitlement are deferred"); this decided it by
-accident.
+This is silent data loss, the same shape as the lost-move bug: the cursor says one
+thing and the rows say another. The relay's counter lives in the Durable Object
+and does not expire, so `head` keeps reporting every batch while `since` quietly
+skips the ones that are gone. A copy that is up to date loses nothing; a device
+that comes to a game late — a new phone, a reinstalled app, a copy offline for a
+season — catches up from a history with holes in it, and nothing complains,
+because a missing row is indistinguishable from a row never written (D18).
 
-**Un-parks before any game is expected to outlive 90 days, or before a device can
-join a long-running game from the mailbox rather than by an invite.** Then the
-decision is made on purpose: either a prefix-scoped rule that leaves `mailbox/`
-alone, or a relay that says "history before cursor N has expired" so a late copy
-knows to ask for a fresh invite rather than merging a partial past.
+**Stop the clock first** — a console change, not code. `infra/r2-lifecycle.json`
+now holds the rule scoped to the store's own objects: sixteen rules, one per hex
+digit `0`–`f`. Every store key is a lowercase 64-hex hash (the presign route
+refuses anything else), with `.json` and `.png` beside it, and preview ids are
+random 64-hex, so these cover every stored document and never match
+`mailbox/`. Mailbox batches then stop expiring; batches already written keep
+their age but no longer match a rule. **Chris applies it** — it is production
+bucket configuration:
+
+    cd apps/relay
+    npx wrangler r2 bucket lifecycle set dai-store --file ../../infra/r2-lifecycle.json
+    npx wrangler r2 bucket lifecycle list dai-store
+
+— and the list should show sixteen `shared-documents-90-days-<digit>` rules and
+no rule with an empty prefix.
+
+**What stays open: retention must be decided deliberately.** Keeping every batch
+for ever is safe while the question is open and is not an answer. The decision
+is how long a mailbox keeps its history, and what a copy that arrives after that
+is told — which needs D18's relay that can say "these numbers are gone".
+Retention was deferred by the ruling; this rule decided it by accident, and the
+scoped rule un-decides it.
+
+**Un-parks before 8 December if the scoped rule is not applied — and otherwise
+before any game is expected to outlive a retention limit, or a device can join a
+long-running game from the mailbox rather than by an invite.**
 
 ### D16 — A native iOS host: App Clip and Messages extension
 
@@ -634,11 +698,11 @@ that window was stored as a batch instead — `mailbox/subscribe/1` in
 The rule is in `apps/relay/README.md`: after a relay deploy, check with a read —
 a GET is a read in both versions — and post only once it answers as the new code.
 
-The junk item: left in place. The bucket's lifecycle rule has an empty prefix and
-deletes objects at 90 days, so it covers `mailbox/` and will remove it (see D17
-for what that same rule means for real batches). Whether the rule is applied to
-the live bucket, not only written in `infra/r2-lifecycle.json`, is recorded in
-D17.
+The junk item: left in place. Under the bucket's current lifecycle rule (empty
+prefix, 90 days) it would expire with everything else; once D17's scoped rule is
+applied, `mailbox/` stops expiring and it stays until somebody deletes it — a
+36-byte object nothing reads. Deleting it is Chris's (`npx wrangler r2 object
+delete dai-store/mailbox/subscribe/1`), and nothing depends on it.
 
 Why it matters: the window is short, but it is exactly when somebody verifies a
 deploy, and a relay write is somebody's mailbox.

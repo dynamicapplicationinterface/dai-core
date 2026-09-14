@@ -1,15 +1,20 @@
 {
   "rules": [
-    {
-      "id": "shared-documents-90-days",
-      "enabled": true,
-      "conditions": { "prefix": "" },
-      "deleteObjectsTransition": {
-        "condition": { "type": "Age", "maxAge": 7776000 }
-      },
-      "abortMultipartUploadsTransition": {
-        "condition": { "type": "Age", "maxAge": 86400 }
-      }
-    }
+    { "id": "shared-documents-90-days-0", "enabled": true, "conditions": { "prefix": "0" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-1", "enabled": true, "conditions": { "prefix": "1" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-2", "enabled": true, "conditions": { "prefix": "2" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-3", "enabled": true, "conditions": { "prefix": "3" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-4", "enabled": true, "conditions": { "prefix": "4" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-5", "enabled": true, "conditions": { "prefix": "5" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-6", "enabled": true, "conditions": { "prefix": "6" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-7", "enabled": true, "conditions": { "prefix": "7" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-8", "enabled": true, "conditions": { "prefix": "8" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-9", "enabled": true, "conditions": { "prefix": "9" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-a", "enabled": true, "conditions": { "prefix": "a" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-b", "enabled": true, "conditions": { "prefix": "b" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-c", "enabled": true, "conditions": { "prefix": "c" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-d", "enabled": true, "conditions": { "prefix": "d" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-e", "enabled": true, "conditions": { "prefix": "e" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } },
+    { "id": "shared-documents-90-days-f", "enabled": true, "conditions": { "prefix": "f" }, "deleteObjectsTransition": { "condition": { "type": "Age", "maxAge": 7776000 } }, "abortMultipartUploadsTransition": { "condition": { "type": "Age", "maxAge": 86400 } } }
   ]
 }
