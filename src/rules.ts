@@ -296,6 +296,22 @@ export const CONSTRAINTS: readonly Constraint[] = [
     anchors: [{ file: "src/runtime/bootloader.ts", contains: "Only a write schedules a save" }],
   },
   {
+    id: "NO-INPUT-LOST-WHILE-OPENING",
+    title: "Nothing a person does while the app is opening is lost",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "Until the application's script has finished starting — the database open, the handlers attached, the first draw done — show nothing a person can type into or submit. Put the interactive part of the page in an element with the hidden attribute, `<main id=\"app\" hidden>`, beside a short line such as \"Opening…\", and at the end of the script's start-up hide the line and show the page. A page built only from the kit's elements is already safe: they are not `<form>` elements, so a button inside them submits nothing before the kit has started. A `<form>` of your own is not.",
+    why:
+      "The script's start-up waits on `await window.dai.openDatabase()`, which in a shared document waits for the host's write rules. A form on screen before then takes a person's typing while the application cannot yet handle it. Pressing Enter or its button then either makes the browser submit the form itself and replace the page, or does nothing at all — and the script's own start-up resets the form a moment later. Which of the two depends on the browser; either way what they typed is gone, with nothing to say why. Both blind runs copied examples that showed their forms early. The same failure arriving mid-edit, when another copy's rows land, is SHARED-REDRAW-ON-MERGE.",
+    enforced: ["prose"],
+    anchors: [
+      { file: "tests/fixture/chess/app.js", contains: "$('boot-notice').hidden=true;$('app').hidden=false;" },
+      { file: "examples/receipts/index.html", contains: '<main id="app" hidden>' },
+      { file: "src/kit.ts", contains: "class DaiForm extends HTMLElement {" },
+    ],
+  },
+  {
     id: "NO-SAVE-BUTTON",
     title: "Saving is automatic",
     shapes: ALL,
@@ -437,7 +453,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "shared",
     rule:
-      "Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener(\"dai:merged\", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — \"carrier\" when a file or link was opened, \"mailbox\" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener. A redraw must never discard what the person is in the middle of — text typed into a field, an editor that is open, a selection: rows arrive whenever the other copy's changes do, including mid-sentence. Keep work in progress outside what the redraw rebuilds — in a form written once in the HTML rather than recreated on every draw, or in a local drafts table the redraw reads back — or leave the element being edited untouched until it is saved or cancelled.",
+      "Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener(\"dai:merged\", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — \"carrier\" when a file or link was opened, \"mailbox\" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener. A redraw must never discard what the person is in the middle of — text typed into a field, an editor that is open, a selection: rows arrive whenever the other copy's changes do, including mid-sentence. Keep work in progress outside what the redraw rebuilds — in a form written once in the HTML rather than recreated on every draw, or in a local drafts table the redraw reads back — or leave the element being edited untouched until it is saved or cancelled. The same failure arriving at start-up rather than mid-edit is NO-INPUT-LOST-WHILE-OPENING.",
     why:
       "Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for. And a redraw that rebuilds an open editor from the stored wording throws away what was being typed, silently — found by running a blind candidate over the mailbox, where a background merge landed while a term was being edited.",
     enforced: ["lint"],

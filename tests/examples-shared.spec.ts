@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 
@@ -194,6 +194,91 @@ test.describe("receipts keeps what a person is typing when rows arrive", () => {
     await expect(appB.locator("#save-entry")).toHaveText("Save changes");
 
     for (const context of contexts) await context.close();
+  });
+});
+
+test.describe("nothing a person does while the app is opening is lost", () => {
+  test.slow();
+
+  /*
+   * NO-INPUT-LOST-WHILE-OPENING. The window between the page appearing and
+   * app.js finishing its start-up is milliseconds under a host, and the full
+   * rules wait — about ten seconds — when a shared document is opened with no
+   * host at all. That long window makes the moment deterministic to test.
+   */
+  async function openWithoutHost(page: Page, file: string): Promise<FrameLocator> {
+    await page.goto(pathToFileURL(file).href);
+    await page.locator("body.dai-mounted").waitFor({ timeout: 30_000 });
+    const app = page.frameLocator("#dai-app");
+    await app.locator("body").evaluate(() => {
+      (window as unknown as { __stillHere: boolean }).__stillHere = true;
+    });
+    return app;
+  }
+  const stillHere = (app: FrameLocator): Promise<boolean> =>
+    app.locator("body").evaluate(() => (window as unknown as { __stillHere?: boolean }).__stillHere === true);
+
+  test("while opening there is nothing to type into, and the page is never reloaded", async ({ page }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-opening-"));
+    const container = await build("examples/receipts", "Receipts", scratch);
+    const app = await openWithoutHost(page, container);
+
+    await expect(app.locator("#opening")).toBeVisible();
+    await expect(app.locator("#entry")).toBeHidden();
+    // A person trying anyway: keys reach nothing that can submit.
+    await page.keyboard.type("Grocer");
+    await page.keyboard.press("Enter");
+
+    // Started: the form appears, live and empty, in the same page it began in.
+    await expect(app.locator("#entry")).toBeVisible({ timeout: 30_000 });
+    await expect(app.locator("#opening")).toBeHidden();
+    expect(await stillHere(app), "the app frame was reloaded").toBe(true);
+    await expect(app.locator("#store")).toHaveValue("");
+  });
+
+  test("without the gate, a submit in that window reloads the app and loses what was typed", async ({ page }) => {
+    // The same example with the gate taken out — the pattern both blind
+    // candidates copied. Kept as the demonstration that the test above can fail.
+    const ungated = mkdtempSync(join(tmpdir(), "dai-ungated-"));
+    cpSync(join(repo, "examples", "receipts"), ungated, { recursive: true });
+    const index = join(ungated, "index.html");
+    const before = readFileSync(index, "utf8");
+    const after = before.replace('<main id="app" hidden>', '<main id="app">');
+    expect(after, "the gate was removed").not.toBe(before);
+    writeFileSync(index, after);
+    const built = await compileDirectory({ sourceDir: ungated, root: repo, appName: "Receipts" });
+    const container = join(mkdtempSync(join(tmpdir(), "dai-ungated-out-")), "receipts.dai.html");
+    writeFileSync(container, built.html, "utf8");
+
+    const app = await openWithoutHost(page, container);
+    await expect(app.locator("#entry")).toBeVisible();
+    await app.locator("#store").fill("Grocer");
+    await app.locator("#amount").fill("30");
+    await app.locator("#paid-by").fill("Ada");
+    await app.locator("#spent-on").fill("2026-09-13");
+    await app.locator("#store").press("Enter");
+
+    /*
+     * The loss arrives by one of two routes, and which depends on the engine:
+     * the browser submits the form itself and the frame is replaced, or the
+     * press is ignored and app.js, once it has started, resets the form. Either
+     * way what was typed is gone and nothing was added — which is what is
+     * asserted. The route taken is printed, because it is the finding.
+     */
+    let outcome = "waiting";
+    await expect
+      .poll(
+        async () => {
+          if (!(await stillHere(app).catch(() => false))) return (outcome = "the frame was replaced");
+          if (!(await app.locator("#empty").isVisible().catch(() => false))) return (outcome = "waiting");
+          const typed = await app.locator("#store").inputValue();
+          const listed = await app.locator("#list").innerText();
+          return (outcome = typed === "" && !listed.includes("Grocer") ? "the press was ignored and start-up cleared the form" : "kept");
+        },
+        { timeout: 30_000 },
+      )
+      .toMatch(/replaced|cleared/);
+    process.stdout.write(`[${test.info().project.name}] ungated submit while opening: ${outcome}\n`);
   });
 });
 

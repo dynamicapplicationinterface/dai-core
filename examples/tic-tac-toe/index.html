@@ -17,7 +17,11 @@
     INSERT OR IGNORE INTO settings (id) VALUES (1);
   </script>
 
-  <main>
+  <!-- Nothing to press until app.js has started: a form on screen before then
+       takes typing the app cannot handle yet, and loses it. -->
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden>
     <header>
       <h1>Tic-tac-toe</h1>
       <select id="game-list" aria-label="Game"></select>

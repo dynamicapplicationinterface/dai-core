@@ -366,3 +366,7 @@ window.addEventListener("dai:merged", (event) => {
 
 joinIfInvited();
 draw();
+
+// Started: only now is there anything to press (NO-INPUT-LOST-WHILE-OPENING).
+$("opening").hidden = true;
+$("app").hidden = false;

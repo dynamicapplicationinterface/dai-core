@@ -262,3 +262,7 @@ window.addEventListener("dai:merged", () => draw());
 
 resetForm();
 draw();
+
+// Started: only now is there anything to type into (NO-INPUT-LOST-WHILE-OPENING).
+$("opening").hidden = true;
+$("app").hidden = false;

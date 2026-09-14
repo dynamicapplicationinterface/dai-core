@@ -17,7 +17,11 @@
     INSERT OR IGNORE INTO me (id) VALUES (1);
   </script>
 
-  <main>
+  <!-- Nothing to type into until app.js has started: a form on screen before
+       then takes typing the app cannot handle yet, and loses it. -->
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden>
     <header>
       <h1>Receipts</h1>
       <label class="me">

@@ -34,6 +34,11 @@ button {
 }
 button.quiet { background: transparent; color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: default; }
+.opening {
+  margin: 0; color: var(--muted);
+  padding: calc(28px + var(--dai-safe-top, 0px)) calc(16px + var(--dai-safe-right, 0px)) 0 calc(16px + var(--dai-safe-left, 0px));
+  text-align: center;
+}
 .notice { background: var(--card); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: 8px; }
 .players { color: var(--muted); margin: 16px 0 4px; }
 .status { font-size: 20px; font-weight: 600; margin: 0 0 16px; }

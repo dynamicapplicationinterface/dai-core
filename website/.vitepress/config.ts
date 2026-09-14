@@ -188,7 +188,8 @@ export default defineConfig({
             items: [
               { text: 'Why Rows Never Change', link: '/docs/why-rows-never-change' },
               { text: 'Why Nothing Derived Is Stored', link: '/docs/why-nothing-derived' },
-              { text: 'Seats and Contested Seats', link: '/docs/seats-and-contested-seats' }
+              { text: 'Seats and Contested Seats', link: '/docs/seats-and-contested-seats' },
+              { text: 'While a Person Is Working', link: '/docs/while-a-person-is-working' }
             ]
           },
           { text: 'Examples', link: '/docs/examples' },
