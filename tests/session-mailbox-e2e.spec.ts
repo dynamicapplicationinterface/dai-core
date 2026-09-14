@@ -245,12 +245,15 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   // B, who never held the other game's id, wrote nowhere new.
   expect([...appended].sort()).toEqual([boMailbox.id, cyMailbox.id].sort());
 
-  // A move read from the mailbox is on this device to stay, even if the page is
-  // gone the moment it shows. The cursor used to be written before the merged
-  // rows were stored, so a page killed in between kept a cursor past the move
-  // and a database without it — and no later pull could bring it back. Closed
-  // straight away here, and reopened with no relay at all, so the move can only
-  // come from what was stored.
+  // A move read from the mailbox is never lost, even if the page is gone the
+  // moment it shows. A move is drawn when it merges, and stored a moment later,
+  // so a page killed in between may not have stored it — that is allowed. What
+  // is not allowed is what used to happen: the cursor was written before the
+  // rows were stored, so the device kept a cursor past the move and a database
+  // without it, and no later pull could bring it back. Now the cursor moves only
+  // once the rows are stored. So: closed straight away, reopened with the relay,
+  // and the move must be there — from storage, or pulled again because the
+  // cursor never passed it.
   const uuid = await pageA.evaluate(
     (address) =>
       new Promise<string>((resolve) => {
@@ -269,7 +272,11 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   const appAgain = appIn(reopened);
   await expect(appAgain.locator("#game-list")).toBeVisible({ timeout: 60_000 });
   await appAgain.locator("#game-list").selectOption({ label: "Ada v Bo" });
-  await expect(cell(appAgain, 1), "the pulled move was stored before its cursor moved").toHaveText("O", { timeout: 30_000 });
+  await reopened.evaluate((b) => (window as any).__runner.useRelay(b), relayBase);
+  await expect(async () => {
+    await reopened.evaluate(() => (window as any).__runner.pullMailbox());
+    await expect(cell(appAgain, 1)).toHaveText("O", { timeout: 2_000 });
+  }, "the move survives a killed page: its cursor never passed it unstored").toPass({ timeout: 45_000 });
 
   for (const context of [ctxA, ctxB]) await context.close();
 });
