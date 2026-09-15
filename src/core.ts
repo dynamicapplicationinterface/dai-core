@@ -1230,11 +1230,26 @@ export function toBase64(bytes: Uint8Array): string {
   return out;
 }
 
-/** Decodes base64, ignoring whitespace and padding. */
+/**
+ * Decodes base64, ignoring whitespace and padding.
+ *
+ * Counted first, then written straight into bytes of exactly the right size.
+ * It used to push each decoded byte onto a `number[]` and copy that into bytes
+ * at the end. A JS number array spends several bytes an element, so a large
+ * document's payload was held several times over, the largest single copy an
+ * opening made (backlog D11). The first pass skips exactly what the second
+ * does, so the length is exact and the output is unchanged.
+ */
 export function fromBase64(value: string): Uint8Array {
+  let symbols = 0;
+  for (let i = 0; i < value.length; i++) {
+    if (!(BASE64_LOOKUP[value.charCodeAt(i)]! < 0)) symbols++;
+  }
+
+  const out = new Uint8Array(Math.floor((symbols * 6) / 8));
   let bits = 0;
   let accumulator = 0;
-  const out: number[] = [];
+  let at = 0;
 
   for (let i = 0; i < value.length; i++) {
     const code = BASE64_LOOKUP[value.charCodeAt(i)]!;
@@ -1243,11 +1258,11 @@ export function fromBase64(value: string): Uint8Array {
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
-      out.push((accumulator >> bits) & 0xff);
+      out[at++] = (accumulator >> bits) & 0xff;
     }
   }
 
-  return Uint8Array.from(out);
+  return out;
 }
 
 function normalizePrefix(prefix: string): string {

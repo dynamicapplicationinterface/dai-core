@@ -316,11 +316,26 @@ function watchBoot(): () => void {
   return clearBootWatch;
 }
 
+/**
+ * Decodes the payload in pieces, straight into bytes of the right size.
+ *
+ * One `atob` over the whole payload built a binary string as long as the
+ * archive before a byte of it was kept, and for a large document that string
+ * was one of the largest things alive while it opened (backlog D11). A piece is
+ * a multiple of four characters, so each decodes on its own. Anything that is
+ * not base64 is stripped first, only if there is any, as `atob` would reject it.
+ */
 function decodeBase64(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
+  const clean = /[^A-Za-z0-9+/=]/.test(b64) ? b64.replace(/[^A-Za-z0-9+/=]/g, "") : b64;
+  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4) - padding);
+  const PIECE = 1 << 20; // characters: a multiple of four
+  let at = 0;
+  for (let start = 0; start < clean.length; start += PIECE) {
+    const bin = atob(clean.slice(start, start + PIECE));
+    for (let i = 0; i < bin.length; i++) out[at++] = bin.charCodeAt(i);
+  }
+  return at === out.length ? out : out.subarray(0, at);
 }
 
 /**

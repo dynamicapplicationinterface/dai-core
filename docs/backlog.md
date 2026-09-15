@@ -74,7 +74,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`de2be4f`); older session documents are D10 |
 | D9 | A tested building block with no caller is not done | [x] check in `npm run typecheck`, definition of done in `CONTRIBUTING.md`; found tic-tac-toe's trigger hole on its first run; every finding decided |
 | D10 | Session documents built before per-session mailboxes stay readable by any link holder | [x] decided: cannot be repaired in place; re-create — the app says so |
-| D11 | A large document crashes Safari on iPhone | [ ] measured 14 Sep: a phone fails near 34 MB, desktop opens 67.5 MB, heap about 20× assets; profile against a named copy list next; no refusal yet |
+| D11 | A large document crashes Safari on iPhone | [ ] measured 14 Sep: a phone fails near 34 MB; first fix (no giant decode string) built 15 Sep: −20% heap at 25 MB and −7 to −22% at 50 MB on desktop; 5 MB rose, unexplained; device ceiling not re-measured; next fixes wait for a ruling |
 | D12 | A relay deploy has a window where a post lands in old code | [~] rule in the relay README; one junk item in the bucket |
 | D13 | The in-browser compiler skips the build-time schema check | [ ] the open half of D5 |
 | D14 | Two blind runs is not a rate | [ ] both passed, both found real defects |
@@ -1579,6 +1579,44 @@ The first three are plumbing inside code this project owns. Each will have a num
 
 The fourth is different in kind, and it is also the most work:
 - **Assets on demand.** Keep assets as Blob slices and make a URL only when the app asks for one, so the first screen costs only what it shows. This addresses copy 8. It does not raise the ceiling; it separates document size from memory. Choose it after the three above have their numbers, not before, and not because it is the most interesting.
+
+**The first fix, built 15 September: no giant decode string.** What reading the
+code found, and what was built:
+- **The core's `fromBase64`** pushed every decoded byte onto a `number[]`,
+  then copied it into bytes. A JS number array spends several bytes an
+  element, so this was probably the largest copy of all. It belonged to copy 3
+  ("verification copies in the core"), not to the text decode. It now counts,
+  then writes into one exactly-sized `Uint8Array`, with identical output.
+- **The shell's `decodeBase64`** ran one `atob` over the whole payload (copy 4).
+  It now decodes in 1 M-character pieces into one pre-sized `Uint8Array`.
+- **Not removed: the whole-file text decode (copy 2).** `parseContainer`
+  returns the page as `html`, a string, and the opener depends on it: the
+  shell-seal check compares it and the library stores it. Removing that string
+  changes what the opener keeps for every document. It is bigger than this fix
+  and is not done.
+
+Measured before and after, on the same ladder documents, peak JS heap in
+desktop chromium, two runs each:
+
+| Assets | Before | After | Change |
+|---|---|---|---|
+| 5 MB | 144 / 125 MB | 195 / 196 MB | about 60 MB higher, not explained |
+| 10 MB | 312 / 359 MB | 247 / 199 MB | about −110 MB (−35%) |
+| 25 MB | 615 / 615 MB | 492 / 492 MB | −123 MB (−20%) |
+| 50 MB | 1316 / 1099 MB | 1020 / 1026 MB | −80 to −290 MB (−7% to −22%) |
+
+Time to ready fell slightly at the larger sizes (50 MB: 11.8–12.3 s to 10.6 s).
+
+**What this does not say:**
+- **The 5 MB rise is real in the numbers and unexplained.** A 200 ms sampler
+  on a small page mostly measures when collection runs, but it is reported as
+  measured, not written off, and is the first thing to look at next.
+- **The device ceiling was not measured.** It is desktop chromium only. If a
+  phone gains in proportion, the ceiling moves by roughly a fifth at the sizes
+  that matter, which is a hypothesis for the next phone sitting, not a result.
+
+The remaining fixes (hash in place, transfer instead of duplicate, assets on
+demand) and the refusal threshold wait for a ruling.
 
 **An option, not a step: large documents held in the sectioned form.** The opener could store a large document as a sectioned `.dai` (no base64, with a table of sections) so a reopen reads only the sections it needs. That is a storage-format change with its own consequences, and it pays only once the simpler copies are gone.
 
