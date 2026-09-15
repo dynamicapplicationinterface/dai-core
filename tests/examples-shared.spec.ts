@@ -59,8 +59,8 @@ async function firstOpen(page: Page, file: string, ready: string): Promise<Frame
 async function mergeIn(page: Page, file: string, first: boolean): Promise<void> {
   await page.setInputFiles("#file", file);
   if (first) {
-    await expect(page.locator("#card-merge")).toBeVisible({ timeout: 60_000 });
-    await page.locator("#card-merge").click();
+    await expect(page.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await page.locator("#card-open").click();
   }
 }
 

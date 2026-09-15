@@ -1221,6 +1221,26 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         : undefined;
 
     /*
+     * The same id, from somebody else, for a replicated document held here.
+     *
+     * It cannot be merged — the publishers differ — and it cannot be opened
+     * beside the copy here either: this host keeps one copy per document, so
+     * opening it would mean replacing the person's own. Refused before the
+     * card, in words, with nothing changed. (It used to be offered as *Open as
+     * a separate copy*, which is exactly the replacement it named as avoided.)
+     */
+    if (heldHere && declaresReplication(cartridge.manifest) && kin?.sibling === false) {
+      slot.classList.remove("busy");
+      say(
+        `This link carries a copy of ${cartridge.manifest.appName ?? "a document"} published by somebody else, ` +
+          `under the same id as the one on this device. It cannot be opened here without replacing yours, ` +
+          `so it was not opened, and nothing on this device was changed.`,
+        true,
+      );
+      return;
+    }
+
+    /*
      * A sibling the person has already said yes to (T1-D23).
      *
      * §8.2 requires the person to choose, and a choice can be standing. The
@@ -1252,6 +1272,26 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         await openThenMerge(heldHere, incomingData, false);
         return;
       }
+    }
+
+    /*
+     * An icon for a replicated document held here: this device's own copy.
+     *
+     * The address an icon launches with carries the document's id and the link
+     * it first came by. For a document held here that is a return to it, not
+     * an arrival — so it opens from the library, as every other return does,
+     * and never through the mount decision below, which a held replicated
+     * document must not reach (see the guard there).
+     */
+    if (
+      heldHere &&
+      kin?.sibling === true &&
+      carrier.consentedFor === cartridge.manifest.documentUuid &&
+      who.state !== "conflict"
+    ) {
+      slot.classList.remove("busy");
+      await launchFromLibrary(heldHere);
+      return;
     }
 
     markStep("choosing how to open");
@@ -1413,6 +1453,34 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * and a skew large enough to matter is a skew a person would already have
      * noticed elsewhere.
      */
+    /*
+     * The guard: a replicated document held here is merged into, never mounted over.
+     *
+     * Past this point the choice is "which whole copy mounts" — the stored one
+     * or the arriving one, by `savedAt`. For a document with replicated tables
+     * held on this device both answers lose something: the stored copy drops
+     * everything the arrival carries (a new game, a seat, the name step), and
+     * the arriving copy is written over the person's own and takes their other
+     * games with it. Both happened, silently, to a person following a second
+     * invite. Every path above sends such an arrival to a merge or to the
+     * library, so this is unreachable — and it is here so that the next change
+     * that reopens a path is refused out loud instead of costing somebody a
+     * game. Permanent, on purpose; the console line is what a test and a trace
+     * look for.
+     */
+    if (heldHere && declaresReplication(cartridge.manifest)) {
+      console.error(
+        `dai: refused to mount an arriving copy of ${cartridge.manifest.documentUuid} over this device's copy without merging it`,
+      );
+      slot.classList.remove("busy");
+      say(
+        `This could not be added to your copy of ${cartridge.manifest.appName ?? "this document"}, so it was not opened, ` +
+          `and nothing on this device was changed. Try the link again.`,
+        true,
+      );
+      return;
+    }
+
     markStep("reading stored data (OPFS)");
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
     const arriving = savedAtOf(cartridge);
@@ -2476,6 +2544,13 @@ async function applyPendingMerge(): Promise<void> {
   const deadline = Date.now() + 15_000;
   for (;;) {
     const report = await mergeSiblingInto(job.data);
+    // Permanent, on purpose: a merge folded in after a cold launch has no other
+    // trace, and "it did not land" looked exactly like "nothing to merge".
+    console.info(
+      report.refused
+        ? `dai: pending merge refused: ${report.refused}`
+        : `dai: pending merge applied (${report.applied} rows, ${report.duplicate} already here)`,
+    );
     if (report.refused !== "NO_DOCUMENT_OPEN") {
       // Mounted, so #report is off screen and the application redraws from the
       // dai:merged event. Not an error say: that would call arrived(false) and

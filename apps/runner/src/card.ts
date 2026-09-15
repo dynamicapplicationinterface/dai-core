@@ -79,9 +79,11 @@ export interface CardInput {
   /**
    * Another copy of a document this device already holds (§7).
    *
-   * `offer` puts *Merge into my copy* beside *Get*; anything else replaces it
-   * with a sentence saying why not, and *Get* stays as *Open as a separate
-   * copy* — a refusal to merge is never a refusal to open.
+   * `offer` makes the one action *Open in my copy*, and pressing it merges:
+   * this host keeps one copy of a document, so opening another copy of it
+   * means adding what it carries, or it means replacing the person's own, and
+   * replacing is never what they asked for. Anything else puts a sentence
+   * saying why not above the ordinary action.
    */
   sibling?: { offer: true } | { offer: false; why: string };
   /** Chosen instead of opening. Resolves when the merge has been attempted. */
@@ -208,7 +210,6 @@ export function showCard(input: CardInput): Promise<void> {
   const safety = document.getElementById("card-safety");
   const succession = document.getElementById("card-succession");
   const sibling = document.getElementById("card-sibling");
-  const merge = document.getElementById("card-merge") as HTMLButtonElement | null;
   const identity = document.getElementById("card-identity");
   const clear = document.getElementById("card-clear");
   const alert = document.getElementById("card-alert");
@@ -473,21 +474,25 @@ export function showCard(input: CardInput): Promise<void> {
    */
   const kin = input.sibling;
   if (sibling) {
-    sibling.hidden = !kin || kin.offer;
-    sibling.textContent = kin && kin.offer === false ? kin.why : "";
-  }
-  if (merge) {
-    merge.hidden = !kin?.offer;
-    merge.onclick = kin?.offer && input.onMerge ? () => void input.onMerge?.() : null;
+    sibling.hidden = !kin;
+    sibling.textContent = !kin
+      ? ""
+      : kin.offer
+        ? "You already have this app. What this link carries is added to your copy — nothing you have is replaced."
+        : kin.why;
   }
   /*
-   * The other copy still opens, and says so.
+   * One action for a copy of something already here, and it says what it does.
    *
-   * "Get" is the word for a document this device does not have. When it does
-   * have one, opening this is a second copy beside the first, and calling that
-   * "Get" would hide the only thing about it worth knowing.
+   * There used to be two: *Merge into my copy*, and *Get* relabelled *Open as a
+   * separate copy*. There is no separate copy — this host keeps one per
+   * document — so the second button either left the arrival unread and showed
+   * the old copy, or wrote the arrival over the person's own, by whichever was
+   * saved later. A person following a new invite pressed the obvious button
+   * and played a whole game in the old one. "Get" is the word for a document
+   * this device does not have; for one it has, the action is adding to it.
    */
-  if (kin) open.textContent = "Open as a separate copy";
+  if (kin?.offer) open.textContent = "Open in my copy";
 
   // Carried in the clear: a fact about how it travelled, not about the
   // document, and never the word "unsafe".
@@ -530,6 +535,11 @@ export function showCard(input: CardInput): Promise<void> {
       input.onOpen?.();
       card.hidden = true;
       document.body.classList.remove("deciding");
+      // A copy of a document already here opens by merging into it; see above.
+      if (kin?.offer && input.onMerge) {
+        void input.onMerge();
+        return;
+      }
       asked();
     };
     open.addEventListener("click", go);

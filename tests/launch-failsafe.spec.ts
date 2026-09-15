@@ -140,7 +140,7 @@ test.describe("the launch fail-safe", () => {
 
     // The card is up and the splash is gone.
     await expect(page.locator("#card")).toBeVisible();
-    await expect(page.locator("#card-merge")).toBeVisible();
+    await expect(page.locator("#card-open")).toHaveText("Open in my copy");
     await expect(page.locator("body")).not.toHaveClass(/launching/);
 
     // And past the stall threshold, the fail-safe stays quiet: a card is a

@@ -210,8 +210,8 @@ test.describe("a game of chess played by exchanging files", () => {
      * never worked is not a choice anybody made knowingly.
      */
     await pageA.setInputFiles("#file", afterE5);
-    await expect(pageA.locator("#card-merge")).toBeVisible({ timeout: 60_000 });
-    await pageA.locator("#card-merge").click();
+    await expect(pageA.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await pageA.locator("#card-open").click();
     await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 60_000 });
 
     await play(appA, "g1", "f3");
@@ -221,8 +221,8 @@ test.describe("a game of chess played by exchanging files", () => {
     // B's first merge: B has opened this document before but never merged, so
     // B is asked once too.
     await pageB.setInputFiles("#file", afterNf3);
-    await expect(pageB.locator("#card-merge")).toBeVisible({ timeout: 60_000 });
-    await pageB.locator("#card-merge").click();
+    await expect(pageB.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await pageB.locator("#card-open").click();
     await expect(appB.locator("#move-history")).toContainText("Nf3", { timeout: 60_000 });
 
     await play(appB, "b8", "c6");

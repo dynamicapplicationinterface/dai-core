@@ -284,17 +284,22 @@ button pressed.
 
 So:
 
-1. **The first sibling arrival for a document gets one card and one choice.**
-   *Keep this copy up to date* merges now, and every time after, for copies
-   this host would have permitted anyway. *Open as a separate copy* stays
-   beside it. That press is the person choosing, in the sense §8.2 means.
+1. **The first sibling arrival for a document gets one card and one action.**
+   *Open in my copy* merges now, and every time after, for copies this host
+   would have permitted anyway. That press is the person choosing, in the
+   sense §8.2 means. There is no second button: a host that keeps one copy
+   per document has no separate copy to open, and a second way to open a
+   sibling can only resume the stored copy without the arrival or write the
+   arrival over it — both happened, silently, to a person following a second
+   invite (15 September). A host that does keep separate copies may offer
+   one, labelled for what it does.
 
 2. **After that, permitted merges are silent.** No card. The frame is told, the
    application decides what to show — a chess board simply has a new move on
    it. A host may show a transient line with the counts; it never interrupts.
 
 3. **The card comes back only for decisions.** A refusal, in words, with the
-   local copy untouched and *Open as a separate copy* offered. A replica this
+   local copy untouched and nothing opened over it. A replica this
    copy has never merged from, which until profiles close it is the
    forwarded-copy signal, and which gets the same one-time card. And changing
    the standing choice, which is reachable from settings and never from a card.

@@ -1075,8 +1075,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
-      "tests/merge-card.spec.ts",
-      "tests/sibling.spec.ts"
+      "tests/merge-card.spec.ts"
     ],
     "tests/merge-module-pin.spec.ts": [
       "apps/runner/public/",

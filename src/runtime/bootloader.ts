@@ -2727,6 +2727,27 @@ function deliverRules(): void {
   );
 }
 
+/*
+ * Merges the host asked for before the bridge was listening.
+ *
+ * The same race as the rules, on the merge. A document opened on a cold launch
+ * with a sibling to fold in asks for the merge at the handshake, and the
+ * handshake can come before the application's frame has a listener. A message
+ * to a window with no listener is dropped, not queued, so the merge vanished:
+ * the host waited out its thirty seconds, gave up, and the person was left on
+ * their old copy without the game the link carried. On WebKit that was two
+ * runs in six (15 September). Held here and delivered when the bridge says it
+ * is listening, the same way the rules are, so arrival order cannot matter.
+ */
+let pendingMerges: Record<string, unknown>[] = [];
+
+function deliverMerges(): void {
+  if (!listeningWindow || pendingMerges.length === 0) return;
+  const held = pendingMerges;
+  pendingMerges = [];
+  for (const message of held) listeningWindow.postMessage(message, "*");
+}
+
 function mount(srcdoc: string): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   frame.id = "dai-app";
@@ -3151,16 +3172,17 @@ async function boot(): Promise<void> {
         payload?: { databaseBytes?: unknown; mergeSource?: unknown; level?: unknown };
       };
       const payload = request.payload ?? {};
-      frame.contentWindow?.postMessage(
-        {
-          type: "dai:merge",
-          id: request.id,
-          databaseBytes: payload.databaseBytes,
-          mergeSource: payload.mergeSource,
-          level: payload.level,
-        },
-        "*",
-      );
+      const message = {
+        type: "dai:merge",
+        id: request.id,
+        databaseBytes: payload.databaseBytes,
+        mergeSource: payload.mergeSource,
+        level: payload.level,
+      };
+      // Held until the bridge is listening, never sent into a window that
+      // would drop it. See pendingMerges.
+      if (listeningWindow) listeningWindow.postMessage(message, "*");
+      else pendingMerges.push(message);
       return;
     }
     // The host asking the frame for what it authored above a watermark (Track 5).
@@ -3344,6 +3366,7 @@ async function boot(): Promise<void> {
       // anything that arrives later goes straight through.
       listeningWindow = event.source as Window;
       deliverRules();
+      deliverMerges();
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {

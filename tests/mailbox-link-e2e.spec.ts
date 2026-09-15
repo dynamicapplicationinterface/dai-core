@@ -270,6 +270,48 @@ test.describe("a game continues over a shared link (the key path)", () => {
     return opened;
   }
 
+  /**
+   * Start another game on A and invite into it with the app's own Invite
+   * button — the way a person sends a second game — returning the link.
+   * The opponent is left unnamed, so whoever takes the seat is asked.
+   */
+  async function inviteNewGame(page: Page, appFrame: FrameLocator): Promise<string> {
+    await appFrame.locator("[data-new-game]:visible").first().click();
+    await appFrame.locator("#setup-you").fill("Ada");
+    await appFrame.locator("#setup-them").fill("");
+    await appFrame.locator('input[name="color"][value="w"]').check();
+    await appFrame.locator("#new-game-form button[type=submit]").click();
+    await play(appFrame, "d2", "d4");
+    await page.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    });
+    await appFrame.locator("#share").click();
+    await page.locator("#send-go").click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    return page.evaluate(() => (window as any).__copied as string);
+  }
+
+  /**
+   * Collects the opener's mount-guard refusals on a page (the permanent
+   * `dai: refused to mount…` line). Empty means the guard never fired.
+   */
+  const guardWatch = (page: Page): string[] => {
+    const lines: string[] = [];
+    page.on("console", (m) => {
+      if (m.text().startsWith("dai: refused to mount")) lines.push(m.text());
+    });
+    return lines;
+  };
+
+  /** The games this copy's own database holds, as "white vs black". */
+  const gamesHeld = (page: Page): Promise<string[]> =>
+    appFrame(page).evaluate(() =>
+      (window as any).daiKit.db
+        .selectObjects("SELECT white_name || ' vs ' || black_name AS g FROM games_current ORDER BY _r_lc")
+        .map((r: any) => String(r.g)),
+    );
+
   test("the key reaches the second copy through the link, and a move crosses", async ({ browser }) => {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
@@ -391,6 +433,103 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   /**
+   * A second invite reaches a browser that already holds the app.
+   *
+   * Observed on a phone: the recipient had played an earlier game, followed a
+   * new invite, and was shown the old game — no new game, no name step — and
+   * nothing said so. Every invite is the same document (the app) filtered to
+   * one game, so the second one always arrives at a device that holds it.
+   * Driven the way a person does it: the app's own Invite button, the link
+   * followed in the same browser with nothing cleared, and each of the two
+   * buttons the card offers.
+   */
+  test("a second invite to a browser that holds the app opens the new game", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+    const refused = guardWatch(pageB);
+
+    // Game 1: A invites Bo, and B takes the seat.
+    const { appFrame: appA, link: first } = await startGameAndShare(pageA, container, "Ada", "Bo", "e2", "e4");
+    const appB = await openLink(pageB, first);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+
+    // Game 2: A starts another, leaves the opponent unnamed, and invites
+    // with the app's own Invite button.
+    const second = await inviteNewGame(pageA, appA);
+
+    // B follows the new invite in the same browser, nothing cleared. The card
+    // offers one thing, and it says it adds to B's copy.
+    await pageB.goto(second);
+    await expect(pageB.locator("#card-open")).toHaveText("Open in my copy", { timeout: 60_000 });
+    await expect(pageB.locator("#card-merge"), "no second button offering what the first one does").toHaveCount(0);
+    await pageB.locator("#card-open").click();
+    const appB2 = app(pageB);
+    await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
+
+    // The new game, and its name step: B was never named in it. And game 1 is
+    // still B's.
+    await expect(appB2.locator("#name-dialog")).toBeVisible({ timeout: 30_000 });
+    await expect(appB2.locator("#move-history")).toContainText("d4");
+    expect(await gamesHeld(pageB)).toContain("Ada vs Bo");
+    expect(refused, "the mount guard stays silent on a legitimate merge").toEqual([]);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * A second invite newer than everything the recipient has saved loses none of it.
+   *
+   * The other branch of the rule that dropped the invite above: when the
+   * arriving copy is stamped later than the recipient's last save, "newer
+   * wins" wrote the invite's database — one game — over the recipient's own,
+   * and every other game went with it. The timing is forced rather than hoped
+   * for: B's page is closed before A makes the second game, so B saves nothing
+   * after the invite is stamped.
+   */
+  test("a second invite newer than the recipient's copy keeps the recipient's other games", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const { appFrame: appA, link: first } = await startGameAndShare(pageA, container, "Ada", "Bo", "e2", "e4");
+    const appB = await openLink(pageB, first);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+    const before = await gamesHeld(pageB);
+    expect(before, "B holds game 1 before the second invite").toContain("Ada vs Bo");
+    // Saved and gone: nothing B does can be stamped after the invite.
+    await pageB.waitForTimeout(2_000);
+    await pageB.close();
+    await pageA.waitForTimeout(1_500);
+
+    const second = await inviteNewGame(pageA, appA);
+
+    const pageB2 = await deviceB.newPage();
+    const refused = guardWatch(pageB2);
+    await pageB2.goto(second);
+    await pageB2.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB2).locator("#app")).toBeVisible({ timeout: 60_000 });
+    // Wait for what the assertion needs — the invited game in B's database —
+    // not for a length of time.
+    await expect.poll(async () => (await gamesHeld(pageB2)).length, { timeout: 30_000 }).toBeGreaterThan(before.length);
+    const after = await gamesHeld(pageB2);
+
+    // Nothing B had is gone, and the new game is there too.
+    for (const game of before) expect(after, `B still holds "${game}"`).toContain(game);
+    expect(refused, "the mount guard stays silent on a legitimate merge").toEqual([]);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
    * Reopening the invite on the same copy binds no second seat.
    *
    * The discoverable open seat is bound on first open; a reopen must be a no-op
@@ -437,7 +576,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // accepts; the merge folds into B's own copy, keeping its replica and its one
     // binding. The guard below is the point: no second seat, whatever the card.
     await pageB2.goto(link);
-    await pageB2.locator("#card-merge").click({ timeout: 60_000 });
+    await pageB2.locator("#card-open").click({ timeout: 60_000 });
     const appB2 = app(pageB2);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB2);
@@ -688,7 +827,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // The new invite is a newer copy of a document this device holds, so it
     // arrives as a sibling merge: the person accepts it, which merges the fresh
     // seat into B's own copy (its replica kept) and re-runs join on mount.
-    await pageB2.locator("#card-merge").click({ timeout: 60_000 });
+    await pageB2.locator("#card-open").click({ timeout: 60_000 });
     const appB2 = app(pageB2);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB2);

@@ -1,51 +1,77 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const RUNNER_URL = "http://localhost:5175/";
 
 /**
  * What the launch card offers when another copy of a document arrives.
  *
- * Offered, never done. A host may put the choice on screen and must not make
- * it — the copy already here has the person's own work in it, and merging is
- * an answer to a question they have to be asked. Draft 1 §8.2 says the same in
- * fewer words: the host MUST NOT merge without the person's choice.
+ * One action, and it says what it does. This host keeps one copy of each
+ * document, so "open another copy of something I have" can only mean adding
+ * what it carries to mine, or replacing mine with it — and replacing is never
+ * what anybody asked for. The card used to offer both *Merge into my copy* and
+ * *Open as a separate copy*; the second made no separate copy, and a person
+ * following a second invite pressed it and played a whole game in the old one.
  *
- * These drive `showCard` directly rather than through an arriving file,
- * because what is under test is the card's own behaviour. Whether the right
- * verdict reaches it is `tests/sibling.spec.ts`, and whether a merge then
- * happens is the end-to-end test.
+ * Draft 1 §8.2 still holds: the host must not merge without the person
+ * choosing it. Pressing a button that says *Open in my copy* is that choice;
+ * what must never happen is a merge from a key pressed on a card nobody has
+ * read, so focus does not land on the action.
+ *
+ * These drive the real `showCard`. An earlier version re-created its logic in
+ * the test, which is how a test keeps passing after the code it copied changes.
  */
-async function card(page: import("@playwright/test").Page, sibling: unknown): Promise<void> {
+async function card(page: Page, sibling: unknown): Promise<void> {
   await page.goto(RUNNER_URL);
-  await page.waitForFunction(() => typeof window !== "undefined");
   await page.evaluate(
     ([kin]) => {
-      const el = (id: string) => document.getElementById(id) as HTMLElement;
-      // The card's own fields, set the way showCard sets them. Driving the
-      // real function would need a verified container; the behaviour under
-      // test is the offer, not the verification that precedes it.
-      const kinValue = kin as { offer: boolean; why?: string } | null;
-      el("card-sibling").hidden = !kinValue || kinValue.offer;
-      el("card-sibling").textContent = kinValue && !kinValue.offer ? String(kinValue.why) : "";
-      el("card-merge").hidden = !kinValue?.offer;
-      if (kinValue) el("card-open").textContent = "Open as a separate copy";
-      el("card").hidden = false;
+      const w = window as unknown as {
+        __merged?: boolean;
+        __opened?: boolean;
+        __runner: { showCard(input: unknown): Promise<void> };
+      };
+      w.__merged = false;
+      w.__opened = false;
+      void w.__runner
+        .showCard({
+          name: "Velvet Chess",
+          does: ["Play a friend at your own pace"],
+          size: 900000,
+          dataBytes: 0,
+          createdAt: new Date().toISOString(),
+          publisher: { state: "anonymous" },
+          applied: [],
+          from: "From a link.",
+          ...(kin ? { sibling: kin } : {}),
+          onMerge: () => {
+            w.__merged = true;
+          },
+        })
+        .then(() => {
+          w.__opened = true;
+        });
     },
     [sibling],
   );
+  await expect(page.locator("#card")).toBeVisible();
 }
 
-test.describe("when another copy of this document arrives", () => {
-  test("a sibling is offered a merge, and opening it separately stays available", async ({ page }) => {
-    await card(page, { offer: true });
-    await expect(page.locator("#card-merge")).toBeVisible();
-    await expect(page.locator("#card-merge")).toHaveText("Merge into my copy");
-    // Never the only way forward: the person may decline and still open it.
-    await expect(page.locator("#card-open")).toBeVisible();
-    await expect(page.locator("#card-open")).toHaveText("Open as a separate copy");
+const outcome = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as unknown as { __merged?: boolean; __opened?: boolean };
+    return { merged: Boolean(w.__merged), opened: Boolean(w.__opened) };
   });
 
-  test("a refusal is a sentence, and the document still opens", async ({ page }) => {
+test.describe("when another copy of this document arrives", () => {
+  test("a copy of something already here offers one action, and it merges", async ({ page }) => {
+    await card(page, { offer: true });
+    await expect(page.locator("#card-open")).toHaveText("Open in my copy");
+    await expect(page.locator("#card-merge"), "no second button offering what the first one does").toHaveCount(0);
+    await expect(page.locator("#card-sibling")).toContainText("nothing you have is replaced");
+    await page.locator("#card-open").click();
+    await expect.poll(() => outcome(page)).toEqual({ merged: true, opened: false });
+  });
+
+  test("a refusal is a sentence, and the ordinary action opens", async ({ page }) => {
     /*
      * A refusal to merge is not a refusal to open. A card that reported a
      * merge unavailable and stopped would have told somebody their document
@@ -55,28 +81,32 @@ test.describe("when another copy of this document arrives", () => {
       offer: false,
       why: "This document is replaced as a whole rather than merged. The newer copy wins.",
     });
-    await expect(page.locator("#card-merge")).toBeHidden();
     await expect(page.locator("#card-sibling")).toBeVisible();
     await expect(page.locator("#card-sibling")).toContainText(/replaced as a whole/i);
-    await expect(page.locator("#card-open")).toBeVisible();
+    await expect(page.locator("#card-open")).not.toHaveText("Open in my copy");
+    await page.locator("#card-open").click();
+    await expect.poll(() => outcome(page)).toEqual({ merged: false, opened: true });
   });
 
-  test("an ordinary document shows neither", async ({ page }) => {
+  test("an ordinary document says nothing about merging", async ({ page }) => {
     // Nothing about merging appears for a document this device has never seen.
     await card(page, null);
-    await expect(page.locator("#card-merge")).toBeHidden();
     await expect(page.locator("#card-sibling")).toBeHidden();
+    await expect(page.locator("#card-open")).toHaveText("Get");
+    await page.locator("#card-open").click();
+    await expect.poll(() => outcome(page)).toEqual({ merged: false, opened: true });
   });
 
-  test("the merge is never the default action", async ({ page }) => {
+  test("the merge is never taken by a key nobody meant", async ({ page }) => {
     /*
-     * Draft 1 §8.2: the host must not merge without the person choosing it,
-     * and must not overwrite the local copy with the incoming one. The weakest
-     * form of that promise is that nothing merges by pressing return on a card
-     * somebody has not read.
+     * Draft 1 §8.2: the host must not merge without the person choosing it.
+     * The weakest form of that promise is that pressing return on a card
+     * somebody has not read merges nothing.
      */
     await card(page, { offer: true });
     const focused = await page.evaluate(() => document.activeElement?.id ?? "");
-    expect(focused).not.toBe("card-merge");
+    expect(focused).not.toBe("card-open");
+    await page.keyboard.press("Enter");
+    expect(await outcome(page)).toEqual({ merged: false, opened: false });
   });
 });
