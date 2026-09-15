@@ -122,6 +122,62 @@ function main(argv) {
     console.log("");
     console.log("A job with NO TALLY produced no verdict — do not read its absence of failures as a pass.");
   }
+
+  /*
+   * What the run kept, and what it should have.
+   *
+   * A kept trace nobody is told about is a guard whose output nobody sees, so
+   * every artifact is listed. And the check that matters more: a job that
+   * retried a test (flaky) must have kept a retried-trace artifact, and a job
+   * that failed must have kept its report. A flaky job with no artifact means
+   * the upload stopped working — the one failure the upload cannot report
+   * about itself. Names follow test.yml: retried-<browser>-<part>,
+   * playwright-report-<browser>-<part>, where the job is "browser (<browser>, <part>, …)".
+   */
+  const kept = artifactsOf(runId);
+  console.log("");
+  if (kept.length === 0) console.log("  no artifacts kept");
+  for (const a of kept) {
+    console.log(`  kept   ${a.name.padEnd(28)} ${(a.size / 1024).toFixed(0)} KB${a.expired ? "  (expired)" : ""}`);
+  }
+  const names = new Set(kept.map((a) => a.name));
+  let anyUnkept = false;
+  for (const job of browserJobs) {
+    const matrix = /^browser \(([^,]+), ([^,)]+)/.exec(job.name);
+    if (!matrix) continue;
+    const t = tallyFrom((perJob.get(job.name) ?? []).join("\n"));
+    const [browser, part] = [matrix[1].trim(), matrix[2].trim()];
+    const expected =
+      job.conclusion === "failure"
+        ? `playwright-report-${browser}-${part}`
+        : t.flaky
+          ? `retried-${browser}-${part}`
+          : null;
+    if (expected && !names.has(expected)) {
+      anyUnkept = true;
+      const why = job.conclusion === "failure" ? "failed" : `retried ${t.flaky} test${t.flaky === 1 ? "" : "s"}`;
+      console.log(`  MISSING ${expected.padEnd(27)} ${job.name} ${why} and kept no trace`);
+    }
+  }
+  if (anyUnkept) {
+    console.log("");
+    console.log("A job that retried or failed kept nothing: the upload did not run, or found no trace to keep. Check it before trusting the next retry to be visible.");
+  }
+}
+
+/** The run's artifacts, every page of them. */
+function artifactsOf(runId) {
+  const out = gh([
+    "api",
+    `repos/{owner}/{repo}/actions/runs/${runId}/artifacts`,
+    "--paginate",
+    "-q",
+    ".artifacts[] | {name, size: .size_in_bytes, expired}",
+  ]);
+  return out
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
 }
 
 try {
