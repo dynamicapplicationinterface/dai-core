@@ -95,6 +95,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D29 | An offline reopen sometimes fetches the document's icon from the network | [ ] a real leak in the offline promise; intermittent |
 | D30 | Locally, a runtime change reaches the opener's tests one run late | [ ] the runner bundles the previous build; CI has no lag |
 | D31 | A document the opener has verified is verified again when it mounts | [ ] a trust ruling, not a performance fix; undecided |
+| D32 | On Firefox, a test loses the opener's frame when it is pointed at the document | [ ] the app mounts and shows; Playwright waits in a frame it still believes is blank; two CI sightings, both reproduced locally about 1 in 6 with screenshots; fix undecided |
 
 ---
 
@@ -555,6 +556,33 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D32 — On Firefox, a test loses the opener's frame when it is pointed at the document
+
+**What happens.** The opener mounts a document by pointing its `#cartridge` frame at a fresh `blob:` URL (`apps/runner/src/main.ts`, `mount`). An eject first resets that frame to `about:blank`. Sometimes, on Firefox under load, Playwright never registers that navigation. For the rest of the test it holds the frame as `about:blank`, so a locator that enters `#cartridge`, then `#dai-app`, then the app finds nothing and times out. The document is fine throughout.
+
+**Three sightings, one signature:**
+
+| Where | Test | What it shows |
+|---|---|---|
+| CI, run 34907553189 (14 Sep) | `returning-document:164` | After an `#a=` reopen, every snapshot shows the child frame as `about:blank` until the 90 s timeout. The console says the opener resumed its own copy. |
+| CI, run 34920744354 (15 Sep) | `mailbox-link-e2e`, forwarded invite (then line 542) | Device B's child frame is `about:blank` for the whole 60 s wait. B's *frame-side* breadcrumbs show the app ran: it adopted its replica and wrote saves 1 and 2. |
+| Local, 15 Sep | `returning-document:164` under load (1 in 6) | Same as the first row, and the trace's screenshots show the app on screen 0.7 s into the wait and still there at the timeout. |
+| Local, 15 Sep | `mailbox-link-e2e`, forwarded invite, under load (1 in 6; the run took 15.8 min) | Same as the second row, down to the frame-side breadcrumbs: replica adopted and saves 1 and 2 written within 1.5 s of Open. Screenshots show the chess board, with its "Your move" banner, on screen 2 s into the wait and still there at the failure. |
+
+In each failing trace, the first-level frame is `about:blank` and later a lone `about:srcdoc` frame appears, with the `blob:` frame that should sit between them missing. A healthy mount earlier in the same test shows main, then `blob:`, then `about:srcdoc`. Both specs reproduce it locally at about 1 in 6 on Firefox under load. Each local failure has a screenshot of the app on screen while the locator waits.
+
+**What this is not:**
+- **Not D22.** The replica decision is correct in each trace.
+- **Not the 14 Sep tap race** in the forwarded-invite test, which was real and fixed in `play()`, and happened at a later step.
+- **Not a mount stall.** The screenshots and the frame's own breadcrumbs both show the app running.
+
+The fault is in the test tooling's view of the frame, not in the product. That is proved for both local failures, where the screenshot and the stale frame sit side by side. For the two CI failures it is inferred from the identical signature.
+
+**The fix is undecided. The options:**
+- **In the tests:** find the app frame by walking `page.frames()` to the one whose parent's URL is the mounted `blob:`, instead of a `frameLocator` chain. This changes nothing a person meets. But it makes a Firefox tooling fault invisible rather than fixed, so it should carry a note saying why.
+- **In the opener:** replace the `#cartridge` element on each mount instead of re-pointing it, so every mount is a fresh frame that no tracker can have stale state for. The eject comment says the element is kept so the next document cannot inherit laxer sandbox attributes. A replacement built from the same attributes keeps that promise, but it is a product change made for a tool's sake.
+- **Upstream:** a minimal reproduction for Playwright's Firefox, an iframe reset to `about:blank` and then pointed at a `blob:` URL. This is worth filing whichever of the above is chosen.
 
 ### D31 — A document the opener has verified is verified again when it mounts
 
