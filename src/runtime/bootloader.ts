@@ -2364,7 +2364,7 @@ function installAppMode(frame: HTMLIFrameElement): void {
     document.body.classList.toggle("dai-app-mode", active());
     button.textContent = active() ? "Exit App Mode" : "Enter App Mode";
     // Apps that want to lay out differently in App Mode can listen for this.
-    frame.contentWindow?.postMessage({ type: APP_MODE_EVENT, active: active() }, "*");
+    toFrame({ type: APP_MODE_EVENT, active: active() });
   };
 
   button.addEventListener("click", () => {
@@ -2728,23 +2728,35 @@ function deliverRules(): void {
 }
 
 /*
- * Merges the host asked for before the bridge was listening.
+ * Every message from this shell to the application's frame, held until the
+ * bridge is listening (backlog D33).
  *
- * The same race as the rules, on the merge. A document opened on a cold launch
- * with a sibling to fold in asks for the merge at the handshake, and the
- * handshake can come before the application's frame has a listener. A message
- * to a window with no listener is dropped, not queued, so the merge vanished:
- * the host waited out its thirty seconds, gave up, and the person was left on
- * their old copy without the game the link carried. On WebKit that was two
- * runs in six (15 September). Held here and delivered when the bridge says it
- * is listening, the same way the rules are, so arrival order cannot matter.
+ * A message posted to a window whose bridge has not yet installed its listener
+ * is dropped, not queued. The write rules lost that race on a phone, and then
+ * the merge lost it on WebKit, two runs in six, leaving a person on their old
+ * copy without the game a link carried. Each was fixed by holding that one
+ * message, which left every other message to race the same way, and left the
+ * next message type to someone's memory.
+ *
+ * So holding is the default, not a list. Everything this shell sends into the
+ * frame goes through `toFrame`: straight through once the bridge has said it is
+ * listening (`dai:insets?`), queued before, and delivered in order the moment
+ * it does. The one direct send is the payload, which answers the frame's own
+ * `dai:frame-hello` and is what brings the bridge up, so holding it behind the
+ * bridge would wait forever. `tests/frame-hold.spec.ts` scans this file for a
+ * second direct send and proves the hold both ways.
  */
-let pendingMerges: Record<string, unknown>[] = [];
+let heldForFrame: Record<string, unknown>[] = [];
 
-function deliverMerges(): void {
-  if (!listeningWindow || pendingMerges.length === 0) return;
-  const held = pendingMerges;
-  pendingMerges = [];
+function toFrame(message: Record<string, unknown>): void {
+  if (listeningWindow) listeningWindow.postMessage(message, "*");
+  else heldForFrame.push(message);
+}
+
+function deliverHeld(): void {
+  if (!listeningWindow || heldForFrame.length === 0) return;
+  const held = heldForFrame;
+  heldForFrame = [];
   for (const message of held) listeningWindow.postMessage(message, "*");
 }
 
@@ -3117,7 +3129,7 @@ async function boot(): Promise<void> {
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_FLUSH") {
       // The host is packaging this document to share it and wants what the
       // person sees, not the last autosave. The answer comes back the same way.
-      frame.contentWindow?.postMessage({ type: "dai:flush", id: fromHost.id }, "*");
+      toFrame({ type: "dai:flush", id: fromHost.id });
       return;
     }
     /*
@@ -3129,10 +3141,7 @@ async function boot(): Promise<void> {
      * from; the frame one layer in does.
      */
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_REPLICA_ID") {
-      frame.contentWindow?.postMessage(
-        { type: "dai:replica-id", nonce: (event.data as { nonce?: string }).nonce },
-        "*",
-      );
+      toFrame({ type: "dai:replica-id", nonce: (event.data as { nonce?: string }).nonce });
       return;
     }
     /*
@@ -3179,35 +3188,26 @@ async function boot(): Promise<void> {
         mergeSource: payload.mergeSource,
         level: payload.level,
       };
-      // Held until the bridge is listening, never sent into a window that
-      // would drop it. See pendingMerges.
-      if (listeningWindow) listeningWindow.postMessage(message, "*");
-      else pendingMerges.push(message);
+      toFrame(message);
       return;
     }
     // The host asking the frame for what it authored above a watermark (Track 5).
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_AUTHORED_SINCE") {
       const request = event.data as { id?: string; seq?: number; replica?: string; session?: unknown };
       const session = typeof request.session === "string" && /^[0-9a-f]{32}$/.test(request.session) ? request.session : undefined;
-      frame.contentWindow?.postMessage(
-        { type: "dai:authored-since", id: request.id, seq: request.seq, replica: request.replica, ...(session ? { session } : {}) },
-        "*",
-      );
+      toFrame({ type: "dai:authored-since", id: request.id, seq: request.seq, replica: request.replica, ...(session ? { session } : {}) });
       return;
     }
     // The host asking which sessions this copy holds (T1-D30).
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_SESSIONS") {
       const request = event.data as { id?: string };
-      frame.contentWindow?.postMessage({ type: "dai:sessions", id: request.id }, "*");
+      toFrame({ type: "dai:sessions", id: request.id });
       return;
     }
     // The host handing the frame a batch pulled from the mailbox, to merge.
     if (event.source === window.parent && fromHost?.type === "DAI_HOST_APPLY_BATCH") {
       const request = event.data as { id?: string; batch?: unknown };
-      frame.contentWindow?.postMessage(
-        { type: "dai:apply-batch", id: request.id, batch: request.batch },
-        "*",
-      );
+      toFrame({ type: "dai:apply-batch", id: request.id, batch: request.batch });
       return;
     }
     /*
@@ -3244,7 +3244,7 @@ async function boot(): Promise<void> {
         }
       }
       knownInsets = passed;
-      frame.contentWindow?.postMessage({ type: "dai:insets", ...passed }, "*");
+      toFrame({ type: "dai:insets", ...passed });
       return;
     }
 
@@ -3361,12 +3361,12 @@ async function boot(): Promise<void> {
     // Asked for by the application as it starts, and answered with whatever
     // the host has said so far.
     if (event.source === frame.contentWindow && relay?.type === "dai:insets?") {
-      frame.contentWindow?.postMessage({ type: "dai:insets", ...knownInsets }, "*");
       // The bridge has a listener now. Anything held for it goes now, and
-      // anything that arrives later goes straight through.
+      // anything that arrives later goes straight through (see toFrame).
       listeningWindow = event.source as Window;
+      toFrame({ type: "dai:insets", ...knownInsets });
       deliverRules();
-      deliverMerges();
+      deliverHeld();
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {

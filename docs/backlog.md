@@ -98,7 +98,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D36 | An untouched copy's first save can make it "newer" than a real move, and the move is dropped | [ ] seen once (push tier, 15 Sep); pre-existing; savedAt stamped by a save that changed nothing |
 | D35 | The same document held on two installs is correct but illegible | [ ] the relay reconciles them; nothing says which icon is which |
 | D34 | Badge the home-screen icon on an incoming move | [ ] waits on the live push pipeline; where the count comes from is undecided |
-| D33 | Other host-to-frame messages can still arrive before the bridge listens | [ ] the merge is now held; mailbox messages rely on the next poll |
+| D33 | Other host-to-frame messages can still arrive before the bridge listens | [x] every message is held by default until the bridge listens; the payload is the one named exception; proven both ways |
 | D32 | On Firefox, a test loses the opener's frame when it is pointed at the document | [ ] the app mounts and shows; Playwright waits in a frame it still believes is blank; two CI sightings, both reproduced locally about 1 in 6 with screenshots; fix undecided |
 
 ---
@@ -744,6 +744,38 @@ in one place in the shell, so no message type can be added that skips it; or
 show, with a forced early message per type, that a drop is recovered. The
 general rule is in the 9 September trap: gate on the receiver announcing
 itself, and never rely on arrival order.
+
+**Built, 15 September: the hold is the default.** Every message the shell sends
+into the application's frame, and what a drop before the bridge listens cost:
+
+| Message | Sent | If dropped before the bridge listens |
+|---|---|---|
+| `dai:write-rules` | at mount | the first write refused on a phone (already held, since 9 Sep) |
+| `dai:merge` | at the handshake, cold launch | the merge timed out after 30 s and the old copy stayed on screen (held earlier today) |
+| `dai:flush` | at share time | the host gave up after 2.5 s and **shared the last autosave, silently stale** |
+| `dai:authored-since` | mailbox start | the host's ask timed out and the next poll re-asked: a delay |
+| `dai:sessions` | mailbox start | "keep the lanes and ask again next time": a delay |
+| `dai:apply-batch` | a pulled batch | no `DAI_HOST_APPLIED`, so the cursor held and the batch was re-pulled: a delay |
+| `dai:replica-id` | a diagnostic ask | the host read null |
+| `dai:insets` | at the handshake and on resize | the bridge asks for them itself, so they were recovered |
+| App Mode state | at install | the frame missed the initial state (false): harmless |
+| the payload | in answer to `dai:frame-hello` | **not held, by design**: it is what brings the bridge up |
+
+**The position: hold by default, not a list.** A list of held types relies on
+someone remembering the next type, which is how the rules and then the merge
+each raced before being fixed alone. So every send goes through one function,
+`toFrame`. It posts at once if the bridge has announced itself (`dai:insets?`),
+otherwise queues, and the announcement releases the queue in order. The write
+rules keep their single slot, where the latest wins, released by the same
+announcement. The payload is the one named exception, because holding it behind
+the bridge would wait forever.
+
+**Proven** (`tests/frame-hold.spec.ts`, chromium, Firefox and WebKit):
+- A question posted before the bridge exists, from the host's handshake handler,
+  is answered.
+- The same question after the app is up is answered in well under a second, so
+  the hold releases and does not delay.
+- A source scan fails if a second direct send into the frame appears.
 
 ### D32 — On Firefox, a test loses the opener's frame when it is pointed at the document
 
