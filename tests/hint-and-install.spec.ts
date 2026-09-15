@@ -69,8 +69,11 @@ test.describe("the hint only says which entry to try", () => {
 
     // Now a link carrying the *other* document, hinted as the held one.
     const value = await encodeInline(other.html, HOST);
+    // Same page, new fragment: a same-document navigation. The opener used to
+    // ignore a link arriving while a document was open, so this test reloaded
+    // by hand; it now saves the open document and reloads at the link itself,
+    // and a second reload from here would race it. Wait for what that brings.
     await page.goto(`${RUNNER_URL}#a=${value}&u=${held.uuid}`);
-    await page.reload();
 
     // The card, not a mount: this is a document this device has not seen.
     const card = page.locator("#card-open");

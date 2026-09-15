@@ -3437,14 +3437,24 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
  * paste does nothing at all and the person is looking at an empty chooser
  * with their link in the address bar.
  *
- * Only while nothing is open. A document already running has state somebody
- * made, and replacing it because an address changed would be this app throwing
- * away work nobody asked it to throw away.
+ * And while a document is open, too — but never by throwing its state away.
+ * This used to return when anything was loaded, so a link followed in a tab
+ * that already showed a document changed the address and nothing else: the old
+ * document stayed on screen, under a link for a different one, and nothing
+ * said so. That is the same silence as a second invite showing the old game.
+ * So the open document's pending writes are flushed first, and then the page
+ * reloads at the new address, which takes the link through the one open path
+ * every link takes — the card, a merge, or a refusal in words.
  */
 window.addEventListener("hashchange", () => {
-  if (loaded) return;
   const carried = inlineFrom(location.hash);
-  if (carried) void openFromLink(carried);
+  if (!carried) return;
+  if (!loaded) {
+    void openFromLink(carried);
+    return;
+  }
+  console.info("dai: a link arrived while a document was open; saving it and opening the link");
+  void flushDocument().finally(() => location.reload());
 });
 
 async function start(): Promise<void> {

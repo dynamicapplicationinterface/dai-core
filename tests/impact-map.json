@@ -804,6 +804,13 @@
       "apps/runner/src/opfs.ts",
       "tests/library-record.spec.ts"
     ],
+    "tests/link-into-open-tab.spec.ts": [
+      "apps/runner/",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/link-into-open-tab.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/loader-fidelity.spec.ts": [
       "apps/runner/src/main.ts",
       "scripts/retain-host.mjs",
