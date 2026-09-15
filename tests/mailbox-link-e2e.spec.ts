@@ -335,6 +335,62 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   /**
+   * Turns belong to seats, and the person invited names themselves.
+   *
+   * The app-side half of collaborative play (docs/collaborative-play.md): only
+   * the seat whose turn it is may author the next move, each copy says in a
+   * standing banner whose move it is — to its own player, so the two copies say
+   * different things — and the creator need not know what the invitee calls
+   * themselves. Each claim is checked on the copy it is about, with the move
+   * and the name crossing the real link and mailbox.
+   */
+  test("only the side to move can move, each copy says whose move it is, and the invitee names themselves", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    // A leaves the opponent unnamed, plays e4 as White, and invites.
+    const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "", "e2", "e4");
+    const appB = await openLink(pageB, link);
+
+    // B took the open seat of a game nobody named, so B is asked, once.
+    await expect(appB.locator("#name-dialog")).toBeVisible({ timeout: 30_000 });
+    await appB.locator("#my-name").fill("Bo");
+    await appB.locator("#name-form button[type=submit]").click();
+    await expect(appB.locator("#name-dialog")).toBeHidden();
+    await expect(appB.locator("#bottom-player")).toContainText("Bo");
+    await expect(appB.locator("#turn-banner-title")).toHaveText("Your move.");
+
+    // A hears the seat taken and the name given, and it is not A's move.
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#turn-banner-title")).toHaveText("Bo’s move.", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    await expect(appA.locator("#share"), "the invite is offered only until it is taken").toBeHidden();
+
+    // A's own piece, out of turn: nothing is picked up, and A is told why.
+    await appA.locator('[data-square="g1"]').click();
+    await expect(appA.locator("#toast")).toContainText("Bo’s move");
+    await expect(appA.locator('[data-square="g1"]')).toHaveAttribute("aria-selected", "false");
+
+    // B moves, and the turn — and each banner — changes hands.
+    await play(appB, "e7", "e5");
+    await expect(appB.locator("#turn-banner-title")).toHaveText("Ada’s move.");
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#turn-banner-title")).toHaveText("Your move.", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    await play(appA, "g1", "f3");
+    await expect(appA.locator("#move-history")).toContainText("Nf3");
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
    * Reopening the invite on the same copy binds no second seat.
    *
    * The discoverable open seat is bound on first open; a reopen must be a no-op

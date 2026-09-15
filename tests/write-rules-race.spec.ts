@@ -97,6 +97,9 @@ test.describe("write rules that arrive before the frame is listening", () => {
     await app(page).locator("[data-new-game]:visible").first().click();
     await app(page).locator("#setup-you").fill("Ada");
     await app(page).locator("#setup-them").fill("Bo");
+    // White, so this copy has the first move: a seat moves only on its own turn,
+    // and a creator dealt Black at random could not open with e2.
+    await app(page).locator('input[name="color"][value="w"]').check();
     await app(page).locator("#new-game-form button[type=submit]").click();
     await play(app(page), "e2", "e4");
     await expect(app(page).locator("#move-history")).toContainText("e4", { timeout: 30_000 });

@@ -171,8 +171,11 @@ is not a detour.
   `start_url` fragment (which carries the key) did not survive a PWA launch on
   one device; the launched app fell to "open your document from your files",
   wrong guidance for a link recipient. This is the "sixteenth" — device-gated.
-- [ ] Turn/seat model is not yet in the chess app or the recipe — it is the next
-  real build once the flow is agreed.
+- [x] Turn/seat model — in the chess app: the color comes from the seat (creator
+  plays the color it chose, the invitee the other), only the side to move can
+  pick a piece up, and the board faces the player's own side. The invitee names
+  themselves on taking a seat. Tested in `mailbox-link-e2e` ("only the side to
+  move can move…"). Still owed in the recipe.
 - [ ] **Automatic in-app refresh (polling) — the missing middle.** Slice one is
   pull-on-foreground (manual); push is slice two (out-of-app notification). The
   gap is the app updating itself *while open*, without a manual refresh — which
@@ -180,7 +183,9 @@ is not a detour.
   `head()` every few seconds (cheap — the relay's counter), pull when it moves
   past the cursor, pause while hidden. Slots before or alongside D22; it is the
   thing that makes the two-phone experience feel live.
-- [ ] "Your move" standing indicator (in-app) — buildable now.
+- [x] "Your move" standing indicator (in-app) — chess's turn banner: no
+  dismiss, drawn from the turn so it clears itself, and it also says when the
+  invite has not been opened yet.
 - [x] Push ("your turn" when not in the app) = slice two; motivated by this test.
   Landed on the per-session mailbox: one push endpoint per mailbox, a
   payloadless wake from the relay, a notification that opens the document, and

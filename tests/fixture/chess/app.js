@@ -5,6 +5,8 @@ const $=id=>document.getElementById(id);
 const names={p:'pawn',n:'knight',b:'bishop',r:'rook',q:'queen',k:'king'};
 const colorName=c=>c==='w'?'White':'Black';
 let store, animating=false, redrawQueued=false, toastTimer, confirmation=null;
+// The game and ply last drawn, so a move that lands over the relay can be told apart from one this copy played.
+let seen=null;
 const avatarURLs=[];
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)');
 const systemDark=matchMedia('(prefers-color-scheme: dark)');
@@ -71,9 +73,9 @@ function renderGames(){
  const games=store.games().filter(g=>!g.hidden&&!g.is_demo),active=store.settings().active_game_id;
  let open=0,decided=0,drawn=0;const rows=[];
  for(const g of games){const st=store.state(g.id);if(st.result==='*')open++;else if(st.result==='1/2-1/2')drawn++;else decided++;
-  const outcome=st.result==='1-0'?g.white_name+' won · '+st.resultReason:st.result==='0-1'?g.black_name+' won · '+st.resultReason:st.result==='1/2-1/2'?'Draw · '+st.resultReason:st.conflict?'Two moves at once — choose one':playerName(g,st.turn)+'’s move';
+  const outcome=st.result==='1-0'?playerName(g,'w')+' won · '+st.resultReason:st.result==='0-1'?playerName(g,'b')+' won · '+st.resultReason:st.result==='1/2-1/2'?'Draw · '+st.resultReason:st.conflict?'Two moves at once — choose one':store.myColor(g)===st.turn?'Your move':'Waiting on '+playerName(g,st.turn);
   const b=element('button','game-list-row');b.type='button';b.dataset.gameOpen=g.id;if(g.id===active)b.setAttribute('aria-current','true');
-  const body=element('span','game-list-body');body.append(element('strong','',g.white_name+' vs '+g.black_name),element('span','outcome',outcome),element('span','game-date',Math.ceil(st.ply/2)+' moves'));
+  const body=element('span','game-list-body');body.append(element('strong','',playerName(g,'w')+' vs '+playerName(g,'b')),element('span','outcome',outcome),element('span','game-date',Math.ceil(st.ply/2)+' moves'));
   b.append(element('span','game-list-icon','▦'),body,element('span','','›'));rows.push([st.result==='*'?0:1,b]);}
  rows.sort((a,b)=>a[0]-b[0]);
  $('games-list').replaceChildren(...rows.map(r=>r[1]));
@@ -86,7 +88,7 @@ function renderConflict(st){
  $('conflict-title').textContent=who+' moved on two copies at the same turn.';
  $('conflict-detail').textContent='Both moves were legal, so neither copy can pick one for you. Keep the move that should stand; the other is set aside and any moves that followed it are dropped.';
  const choices=$('conflict-choices');choices.replaceChildren();
- for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. Share the board so the other copy agrees.');}));choices.append(b);}
+ for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. The other board hears about it by itself.');}));choices.append(b);}
 }
 /**
  * The contested-seat state, rendered on the board like a conflict — a condition
@@ -122,6 +124,30 @@ function renderContested(st){
  }
  banner.hidden=true;invite.hidden=true;return false;
 }
+/**
+ * Whose move it is, said out loud and left standing — never a dialog with a
+ * dismiss. It clears itself when the turn changes, because it is drawn from the
+ * turn, not remembered. The title above the board names the side to move the
+ * same way on both copies; this is the part that speaks to this player.
+ */
+function renderTurnBanner(st,{mine,joined,myTurn,blocked}){
+ const banner=$('turn-banner'),g=st.game;
+ if(g.is_demo||blocked||st.conflict||st.result!=='*'||!mine){banner.hidden=true;return;}
+ const raw=mine==='w'?g.black_name:g.white_name,them=raw||'Your opponent',they=raw||'your opponent';
+ let title,detail;
+ if(myTurn&&joined){title='Your move.';detail=them+' sees it the moment you play.';}
+ else if(myTurn){title='Your move.';detail='Your invite hasn’t been opened yet. Play now, and the move will be waiting for '+they+'.';}
+ else if(joined){title=them+'’s move.';detail='It lands on this board by itself. If you allowed notifications, your device tells you when it does.';}
+ else{title='Waiting for '+they+' to join.';detail='They take their seat when they open your invite. If it went astray, send it again with Invite.';}
+ $('turn-banner-title').textContent=title;$('turn-banner-detail').textContent=detail;
+ banner.classList.toggle('mine',myTurn);banner.hidden=false;
+}
+/** Two renames crossed: show every standing version and let either player keep one. */
+function renderNames(g){
+ const banner=$('names-banner');banner.hidden=!g.names_conflicted;if(banner.hidden)return;
+ const choices=$('names-choices');choices.replaceChildren();
+ for(const v of store.nameVersions(g)){const b=element('button','button small');b.type='button';b.textContent=(v.white_name||'White')+' vs '+(v.black_name||'Black');b.addEventListener('click',run(()=>{store.keepNames(v.white_name,v.black_name);notify('Names settled.');}));choices.append(b);}
+}
 function draw(){
  if(!store)return;
  const s=store.settings(),u=store.ui(),st=store.state();setTheme();
@@ -141,6 +167,8 @@ function draw(){
  $('demo-note').hidden=!g.is_demo;
  renderConflict(st);
  const contestedOut=renderContested(st);
+ const seat=g.is_demo?null:store.seatState(g.session),mine=store.myColor(g),joined=!g.is_demo&&store.opponentJoined(g.session),myTurn=store.canMove(st);
+ renderTurnBanner(st,{mine,joined,myTurn,blocked:contestedOut});renderNames(g);
  if(!animating)renderBoard(st,u);
  const last=st.last;
  $('last-description').textContent=last?playerName(g,last.color)+' · '+last.san+' · '+last.from+' → '+last.to:'The story starts with the first move.';
@@ -149,7 +177,13 @@ function draw(){
  renderHistory(st);
  $('draw-banner').hidden=!(st.result==='*'&&st.drawOfferBy&&st.drawOfferBy!==st.turn);
  if(!$('draw-banner').hidden)$('draw-message').textContent=playerName(g,st.drawOfferBy)+' offered a draw. Accept it, or keep the game going.';
- $('play-move').disabled=!d||result||Boolean(st.conflict)||contestedOut;
+ $('play-move').hidden=result;
+ $('play-move').disabled=!d||result||Boolean(st.conflict)||contestedOut||!myTurn;
+ // A finished game offers the next one; an invite is offered only until it is taken — after that the relay carries every move.
+ $('rematch').hidden=!result||!mine;
+ $('share').hidden=!(seat&&seat.amCreator&&!joined&&!seat.contested&&!result);
+ const shown=['play-move','rematch','share'].filter(id=>!$(id).hidden).length;
+ $('action-row').dataset.count=String(shown);$('action-row').hidden=!shown;
  $('change-move').hidden=!d||result;
  $('game-actions-button').disabled=result||Boolean(st.conflict);
  // Close is offered only once a game is finished, and never for the practice
@@ -157,17 +191,19 @@ function draw(){
  // (T1-D31). A session already closed shows as closed and offers nothing more.
  const closed=result&&!g.is_demo&&store.isClosed(g.session);
  $('close-match').hidden=!result||g.is_demo||closed;
- if(result){$('move-step').textContent=closed?'MATCH CLOSED':'THE FINAL POSITION';$('move-summary').textContent=st.result==='1/2-1/2'?'Honors shared.':'A good game.';$('move-instruction').textContent=closed?'This match is closed. The board stays; no new moves can be added.':'Share the result, close the match, or start another. This one stays in your collection.';}
- else if(st.conflict){$('move-step').textContent='CHOOSE A MOVE';$('move-summary').textContent='Which one stands?';$('move-instruction').textContent='Pick one above. Then share the board so both copies agree.';}
+ if(result){$('move-step').textContent=closed?'MATCH CLOSED':'THE FINAL POSITION';$('move-summary').textContent=st.result==='1/2-1/2'?'Honors shared.':'A good game.';$('move-instruction').textContent=closed?'This match is closed. The board stays; no new moves can be added.':g.is_demo?'Start your own game to play someone.':'Offer a rematch, close the match, or leave it in your collection.';}
+ else if(st.conflict){$('move-step').textContent='CHOOSE A MOVE';$('move-summary').textContent='Which one stands?';$('move-instruction').textContent='Pick one above. Your choice reaches the other board by itself.';}
+ else if(!myTurn&&!d){$('move-step').textContent='THEIR MOVE';$('move-summary').textContent='Waiting on '+playerName(g,st.turn)+'.';$('move-instruction').textContent=!mine?'You can follow this game, but you don’t have a seat in it.':joined?'Their move lands here by itself. Look around the board meanwhile.':'They join when they open your invite, and their move lands here by itself.';}
  else if(d){$('move-step').textContent='TAKE A SECOND LOOK';$('move-summary').textContent=pv.move.san+'  ·  '+d.from_sq+' → '+d.to_sq;$('move-instruction').textContent='Nothing is final yet. Change your move, or play it.'+(pv.terminal?' '+pv.terminal.reason+' if played.':pv.claim?' '+pv.claim+' can be claimed with this move.':'')+(d.draw_offer?' A draw offer will travel with this move.':'');}
- else{$('move-step').textContent='MAKE YOUR MOVE';$('move-summary').textContent=u.selected_square?'Choose a destination.':'Pick a piece.';$('move-instruction').textContent=u.selected_square?'Only highlighted squares are legal. Tap your piece again to deselect.':'Tap one of your pieces. Its legal destinations will light up. When you play it, share the board.';}
+ else{$('move-step').textContent='MAKE YOUR MOVE';$('move-summary').textContent=u.selected_square?'Choose a destination.':'Pick a piece.';$('move-instruction').textContent=u.selected_square?'Only highlighted squares are legal. Tap your piece again to deselect.':'Tap one of your pieces. Its legal destinations will light up.'+(g.is_demo?'':' Once you play it, it’s on its way.');}
  $('offer-state').textContent=d?.draw_offer?'Included ✓':'Not included';
  const claim=store.claimEligibility(st);$('claim-draw').disabled=!claim;$('claim-state').textContent=claim?'Available':'Not yet';$('claim-help').textContent=claim?claim.reason+(claim.where==='draft'?' is available with your tentative move.':' is available in this position.'):'Available for threefold repetition or 50 moves without a pawn move or capture.';
  for(const [input,column]of [['edit-white-name','white_name'],['edit-black-name','black_name']])if(document.activeElement!==$(input))$(input).value=g[column];
+ seen={game:g.id,ply:st.ply};
  wireIcons();
 }
 function showNewGame(){const s=store.settings();$('setup-you').value=s.setup_you;$('setup-them').value=s.setup_them;for(const radio of document.querySelectorAll('input[name="color"]'))radio.checked=radio.value===s.setup_color;updateColorNote();$('new-game-dialog').showModal();}
-function updateColorNote(){const choice=store.settings().setup_color;$('color-note').textContent=choice==='b'?'You’ll share the starting board first so White can begin.':choice==='w'?'You make the first move.':'White moves first. Random makes the choice for you.';}
+function updateColorNote(){const choice=store.settings().setup_color;$('color-note').textContent=choice==='b'?'White moves first, so you’ll wait for their opening move.':choice==='w'?'You make the first move.':'Colors are dealt at random. White moves first.';}
 function closeDialog(dialog){if(dialog?.open)dialog.close();}
 function ask(title,detail,fn,{danger=false,clear=false,label='Confirm'}={}){
  for(const d of document.querySelectorAll('dialog[open]'))d.close();
@@ -200,7 +236,7 @@ async function chooseMove(from,to,promotion=null){const st=store.state();const m
 function showPromotion(){const u=store.ui(),st=store.state();$('promotion-choices').replaceChildren();for(const type of ['q','r','b','n']){const button=element('button','promotion-choice');button.type='button';button.dataset.promotion=type;button.append(pieceSVG(type,st.turn),element('span','',names[type][0].toUpperCase()+names[type].slice(1)));button.addEventListener('click',run(()=>chooseMove(u.promotion_from,u.promotion_to,type)));$('promotion-choices').append(button);}$('promotion-dialog').showModal();}
 async function clickSquare(square){
  if(animating)return;
- const st=store.playable(),u=store.ui();if(store.draft(st.game.id)){notify('Choose Change move to try another idea.');return;}
+ const st=store.playable(),u=store.ui();store.requireMover(st);if(store.draft(st.game.id)){notify('Choose Change move to try another idea.');return;}
  const p=st.position,piece=p.at(square);
  if(u.selected_square===square){store.select(null);return;}
  if(u.selected_square){const legal=p.legalMoves(u.selected_square).filter(m=>squareName(m.to)===square);if(legal.length){if(legal[0].promotion){store.startPromotion(u.selected_square,square);showPromotion();return;}await chooseMove(u.selected_square,square);return;}}
@@ -210,17 +246,36 @@ async function clickSquare(square){
 }
 function replay(){const st=store.state(),m=st?.last;if(!m||store.draft(st.game.id)||animating)return;return animateMove(m.before,m,st.game.id);}
 function playMove(){
- const r=store.playDraft();
- notify(r.terminal?r.move.san+' · '+r.terminal.reason+'. Share the result.':r.move.san+' is played. Share the board when you’re ready.');
+ const r=store.playDraft(),practice=store.game()?.is_demo;
+ // The move is on its way the moment it is played: the host publishes each write to the game's mailbox.
+ notify(r.terminal?r.move.san+' · '+r.terminal.reason+'.':practice?r.move.san+' is played.':r.move.san+' is played. It’s on its way.');
  store.faceMover();
 }
-function share(){
- // Keep this call inside the click gesture. The host seals and sends the document; the app has nothing to stage.
- if(typeof window.dai?.requestShare!=='function')throw new Error('Sharing is available in the DAI opener. Open this document there to share its card.');
- const st=store.state();if(st?.game.is_demo)throw new Error('This is a practice board. Start your own game to share it.');
- if(store.draft(st?.game.id))notify('Your tentative move stays with you. Play it first if you want it to travel.');
+/**
+ * The one delivery that goes by link: the invite. Every move after it goes by
+ * the game's mailbox. Keep this call inside the click — the opener asks here,
+ * in the gesture, whether this device may be told when the other player moves.
+ */
+function invite(session){
+ if(typeof window.dai?.requestShare!=='function')throw new Error('Invites are made by the DAI opener. Open this document there to invite someone.');
  // The game's session makes this an invite into this game only (T1-D28).
- return window.dai.requestShare(st?.game.session);
+ window.dai.requestShare(session);
+}
+function inviteActive(){const st=store.state();if(!st||st.game.is_demo)throw new Error('This is a practice board. Start your own game to invite someone.');invite(st.game.session);}
+/** A player who took the open seat of a game nobody named is asked their name, once. */
+function maybeAskName(){
+ const g=store.game();if(!g||!store.needsName(g)||$('name-dialog').open)return;
+ for(const d of document.querySelectorAll('dialog[open]'))d.close();
+ $('my-name').value=store.settings().setup_you||'';
+ $('name-detail').textContent=playerName(g,g.creator_color)+' invited you to play '+colorName(store.myColor(g))+'. Your name goes on your side of the board, for both of you to see.';
+ $('name-dialog').showModal();
+}
+/** A move from the other player landed over the relay: say so, and play it onto the board. */
+function announceArrival(before){
+ const st=store.state();if(!before||!st||before.game!==st.game.id||st.ply<=before.ply)return;
+ const g=st.game,m=st.last,mine=store.myColor(g);if(!m||!mine||m.color===mine)return;
+ notify(playerName(g,m.color)+' played '+m.san+'.'+(store.canMove(st)?' Your move.':''));
+ if(st.ply===before.ply+1&&!store.draft(g.id))animateMove(m.before,m,g.id).catch(e=>notify(e.message));
 }
 function wire(){
  wireIcons();
@@ -235,12 +290,14 @@ function wire(){
   else if(event.key==='Escape'){event.preventDefault();dbWrite('UPDATE ui_state SET selected_square = NULL WHERE id = 1');}
  }));
  bind('play-move',playMove);
- bind('change-move',()=>store.clearDraft());bind('share',share);bind('replay-last',replay);
+ bind('change-move',()=>store.clearDraft());bind('share',inviteActive);bind('replay-last',replay);
+ bind('rematch',()=>{const g=store.rematch();invite(g.session);notify('A new game, colors swapped. Send the invite to start it.');});
+ $('name-form').addEventListener('submit',run(event=>{event.preventDefault();if(!$('name-form').reportValidity())return;store.setMyName($('my-name').value);dbWrite('UPDATE settings SET setup_you = ? WHERE id = 1',[$('my-name').value.trim()]);closeDialog($('name-dialog'));notify('You’re seated. Good luck.');}));
  bind('game-actions-button',()=>{draw();$('actions-dialog').showModal();});
  bind('offer-draw',()=>{const on=store.toggleDrawOffer();notify(on?'A draw offer will travel with your move.':'Draw offer removed.');draw();});
- bind('accept-draw',()=>{const st=store.state();ask('Call it a draw?','Accept '+playerName(st.game,st.drawOfferBy)+'’s offer and end this game. Share the result afterward.',()=>store.acceptDraw(),{label:'Accept draw'});});
+ bind('accept-draw',()=>{const st=store.state();ask('Call it a draw?','Accept '+playerName(st.game,st.drawOfferBy)+'’s offer and end this game.',()=>store.acceptDraw(),{label:'Accept draw'});});
  bind('decline-draw',()=>store.declineDraw());
- bind('resign',()=>{const st=store.state();ask('Resign as '+playerName(st.game,st.turn)+'?','This ends the game and discards any tentative move. '+playerName(st.game,opposite(st.turn))+' wins unless no checkmate is possible. Share the result afterward.',()=>store.resign(),{danger:true,label:'Resign game'});});
+ bind('resign',()=>{const st=store.state(),me=store.myColor(st.game)||st.turn;ask('Resign as '+playerName(st.game,me)+'?','This ends the game and discards any tentative move. '+playerName(st.game,opposite(me))+' wins unless no checkmate is possible.',()=>store.resign(),{danger:true,label:'Resign game'});});
  bind('close-match',()=>{ask('Close this match?','No more moves can be added on either copy, and the match can be tidied away later. The final board stays readable. This does not delete anything.',()=>{store.closeMatch();notify('Match closed. The board stays; no new moves can be added.');},{label:'Close match'});});
  bind('new-invite',()=>{ask('Send a fresh invite?','This mints a new seat for the game and retires the old invite. Share the game again afterward, and the person you send it to takes the new seat.',()=>{store.newInvite();notify('A fresh invite is ready. Share the game again to send it.');},{label:'Send a new invite'});});
  bind('claim-draw',()=>{const e=store.claimEligibility();if(!e)return;ask('Claim a draw?',e.reason+(e.where==='draft'?' applies to your tentative move. It will be played and the draw claimed.':' applies to the current position. This ends the game.'),()=>store.claimDraw(),{label:'Claim draw'});});
@@ -251,7 +308,7 @@ function wire(){
  for(const radio of document.querySelectorAll('input[name="color"]'))radio.addEventListener('change',run(()=>{if(radio.checked)dbWrite('UPDATE settings SET setup_color = ? WHERE id = 1',[radio.value]);updateColorNote();}));
  for(const button of document.querySelectorAll('[data-theme-choice]'))button.addEventListener('click',run(()=>dbWrite('UPDATE settings SET theme = ? WHERE id = 1',[button.dataset.themeChoice])));
  bind('animations-toggle',()=>dbWrite('UPDATE settings SET animations = 1 - animations WHERE id = 1'));
- $('rename-form').addEventListener('submit',run(event=>{event.preventDefault();store.rename($('edit-white-name').value,$('edit-black-name').value);notify('Player names updated. They reach the other copy on the next share.');}));
+ $('rename-form').addEventListener('submit',run(event=>{event.preventDefault();store.rename($('edit-white-name').value,$('edit-black-name').value);notify('Player names updated.');}));
  bind('remove-photos',()=>dbWrite('DELETE FROM photos WHERE game_id = (SELECT active_game_id FROM settings WHERE id = 1)'));
  bind('clear-data',()=>ask('Clear all data?','This hides every game in this copy and removes your names, photos and options. Moves already shared stay in the game.',()=>{store.clearAll();notify('This copy is clear. Start a fresh game.');},{danger:true,clear:true,label:'Clear All Data'}));
  $('delete-confirm-input').addEventListener('input',()=>{$('confirm-yes').disabled=$('delete-confirm-input').value.trim()!=='CLEAR';});
@@ -275,13 +332,14 @@ async function boot(){
  // If this copy arrived at a game somebody shared, take the open seat — once,
  // after the mount adopted this copy's own identity (T1-D22/D29). Idempotent, so
  // a reopen or a later merge never binds twice.
- store.joinActive();wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;
+ store.joinActive();store.faceMover();wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;maybeAskName();
  // After a merge the host tells the frame; redraw so a newly arrived move or conflict shows without a reload.
  // Join ONLY when the merge came from opening a carrier — a file or link (T1-D34).
  // A mailbox merge, or any event without a source tag, must NOT join: the safe
  // default is background, so a future dispatch site that forgets the tag cannot
  // silently reintroduce auto-rebinding. The tag says "carrier" or it does not join.
- window.addEventListener('dai:merged',e=>{if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();});
+ // A mailbox merge is how the other player's moves arrive while the board is open: announce and animate them.
+ window.addEventListener('dai:merged',e=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);});
  const st=store.state();if(st?.last&&!store.draft(st.game.id))requestAnimationFrame(()=>{replay()?.catch?.(e=>notify(e.message));});
 }
 boot().catch(error=>{console.error(error);$('boot-notice').hidden=false;$('boot-notice').textContent='Your board could not be opened safely. '+error.message;});
