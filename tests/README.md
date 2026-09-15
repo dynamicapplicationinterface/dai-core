@@ -58,6 +58,29 @@ has arrived." If the app gives no signal for the state you need, that is worth
 knowing on its own: a person has the same problem, and the fix may belong in the
 app.
 
+**The same rule on the time axis: assert against an instant you chose, never
+against the clock read again later.** A test that sets a deadline from the wall
+clock and checks it after building, signing and auditing is racing its own
+machine — under load the audit lands after the deadline and a correct document
+reads as expired. Choose the instant once and pin the clock the code under test
+sees to it (the expiry tests stub `Date.now` around the audit), the way a timer
+is injected rather than slept out. And a save *asked* is not a save *written*:
+wait for the written signal (the opener's `dai: save N written`), not the count
+of asks.
+
+## The rule for recovering
+
+**A recovery step that repeats the thing under test destroys the test.**
+
+When a wait fails and the test's answer is to do it again — reload the page and
+look once more, reopen and retry — the test can pass on the second attempt while
+the first was broken, and the first is the one a person meets. A reopen that
+runs twice proves only that some reopen works. So a test does not recover by
+repeating its own subject. If the failure is in the tooling rather than the
+product (D32: the Firefox driver loses a frame the app is drawing in), that is
+said in the backlog, made visible in CI, and reported upstream; it is not
+papered over by running the step under test until it passes.
+
 ## The rule for mocking a same-origin request
 
 **A test that mocks a same-origin request with `page.route` must block service

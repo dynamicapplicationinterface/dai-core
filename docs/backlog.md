@@ -95,6 +95,9 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D29 | An offline reopen sometimes fetches the document's icon from the network | [ ] a real leak in the offline promise; intermittent |
 | D30 | Locally, a runtime change reaches the opener's tests one run late | [ ] the runner bundles the previous build; CI has no lag |
 | D31 | A document the opener has verified is verified again when it mounts | [ ] a trust ruling, not a performance fix; undecided |
+| D35 | The same document held on two installs is correct but illegible | [ ] the relay reconciles them; nothing says which icon is which |
+| D34 | Badge the home-screen icon on an incoming move | [ ] waits on the live push pipeline; where the count comes from is undecided |
+| D33 | Other host-to-frame messages can still arrive before the bridge listens | [ ] the merge is now held; mailbox messages rely on the next poll |
 | D32 | On Firefox, a test loses the opener's frame when it is pointed at the document | [ ] the app mounts and shows; Playwright waits in a frame it still believes is blank; two CI sightings, both reproduced locally about 1 in 6 with screenshots; fix undecided |
 
 ---
@@ -557,6 +560,120 @@ The documentation says what happens today — the share sheet sends the document
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
 
+### D35 — The same document held on two installs is correct but illegible
+
+Two invites to the same game can end up on two home-screen icons: two storage
+containers, two databases, reconciled only through the relay. The mailbox makes
+the result right, but nothing tells the person which icon is which, or that they
+are the same game. It is the same family as the tab-versus-installed-app note
+already on the roadmap.
+
+**Trigger:** somebody other than the developer holds one document on two icons.
+Until then it is recorded, not built.
+
+### D34 — Badge the home-screen icon on an incoming move
+
+**Pulled by:** correspondence chess on real phones. A move arrives hours later,
+the notification is swiped away or missed, and nothing on the home screen says it
+is your turn. The person has to open the document to find out.
+
+**What is already true.** VAPID is per-origin and belongs to the opener, so every
+document mounted from `opendai.app` shares one keypair and one push pipeline.
+Confirmed on a device: separate documents installed to the home screen get
+separate icons, separate storage containers and separate subscriptions. So a
+badge set by one install affects only that install's icon.
+
+**The change.** In the service worker's push handler, alongside the existing
+`showNotification`, set `navigator.setAppBadge(n)` to the number of games in that
+install where it is this player's turn. Call `clearAppBadge()` when the document
+mounts and after the local player moves.
+
+**Open: where `n` comes from. Decide this before writing the two lines.** The
+relay's push is payloadless (Track 5): the worker learns that a mailbox moved, and
+nothing else. The rows are encrypted, and "whose turn is it" is the
+application's knowledge, not the opener's, so the worker cannot count waiting
+games from a push alone. The options:
+- **The app reports its count.** While mounted, the application tells the host
+  how many games wait on this player (a small `window.dai` call, and a new
+  surface to specify), and the host keeps that per document. On a push the worker
+  sets the badge from the last reported count, plus the mailboxes that have moved
+  since the document was last open.
+- **The worker counts moved mailboxes.** It counts the mailboxes in this install
+  that moved since the document was last mounted. That is honest about what the
+  host knows. For turn-based play it approximates "games waiting on you", because
+  the relay does not wake the device that made the move. But a rename or a close
+  also moves a mailbox, so it is "games with something new", not "your turn".
+- **The frame is woken** to compute it. This is not available: nothing runs the
+  document while the app is closed, which is the whole point of push.
+
+The entry's own rule, never hardcode 1, holds under either workable option. They
+differ in whether the number means "your turn" or "something new", and the
+badge must not claim more than the host knows.
+
+**Ruled, 15 September: the app reports its count.** It is the only option that
+can pass the guard-both-ways test below.
+
+**Its limitation, on purpose.** The app is not running when a push lands, so the
+badge between mounts is the last count the app reported plus the mailboxes that
+moved since: a remembered number plus a guess. It drifts the moment a mailbox
+moves for something that is not a turn, such as a rename, a close or a resend.
+So **the badge is approximate between mounts**, and `clearAppBadge()` on mount,
+followed by the app's fresh report, is what makes it honest again: every time the
+person opens the document, the count resets to the truth. Nothing may treat the
+number as authoritative or build on it. It is a hint to open the app, and the
+app is where the truth is.
+
+**Constraints:**
+- **The push handler is the supported path.** `setAppBadge` runs in the push
+  handler while the app is closed; that is not a workaround. No timer, no poll:
+  the badge changes only because a push arrived.
+- **iOS needs the notification too.** It requires notification permission before
+  a badge renders, and requires every push to show a notification. The badge
+  supplements the notification and does not replace it. No silent-push path
+  exists on iOS, and attempting one risks the subscription being revoked (noted
+  in the push review).
+- **Android shows a dot.** Its launchers largely ignore numeric badges.
+  Feature-detect with `'setAppBadge' in navigator` and treat the count as best
+  effort.
+- **Never hardcode 1.** A second waiting game must show 2, or the badge goes
+  stale on its first real use.
+
+**Tests:**
+- A badge appears on a closed install when a move arrives, and the count matches
+  the waiting games.
+- With two documents installed, a push for A badges only A's icon.
+- The badge clears on mount and after a local move.
+- Where the API is absent, feature detection means nothing throws.
+- Guard both ways: a push that is not this player's turn must not raise the
+  count. Under the moved-mailbox option this test cannot pass, and that is the
+  test that forces the decision above.
+
+**Depends on:** the push pipeline being live (`DAI_PUSH_PUBLIC_KEY` on
+`dai-core-8ti8` is still pending). Verify on the spare phone in the same sitting
+as the push test.
+
+### D33 — Other host-to-frame messages can still arrive before the bridge listens
+
+Found fixing the second-invite bug (15 September). The shell forwarded the
+host's merge request straight into the application's frame, and on WebKit that
+frame sometimes had no listener yet. The message was dropped, the host waited
+out its thirty seconds, and a person was left on their old copy. It was 2 runs
+in 6. The merge is now held until the bridge announces itself (`dai:insets?`),
+exactly as the write rules already were.
+
+The same shape applies, in principle, to every other message the shell
+forwards from host to frame on arrival: the mailbox's authored-since and apply
+requests, and the replica-id and sessions questions. Those are re-sent by the
+mailbox loop on its next poll, so a drop costs a delay, not a game. That is why
+they were left alone in that fix. But "a later poll will cover it" is an
+argument, not a test.
+
+**Exit:** either hold every host-to-frame message behind the same announcement,
+in one place in the shell, so no message type can be added that skips it; or
+show, with a forced early message per type, that a drop is recovered. The
+general rule is in the 9 September trap: gate on the receiver announcing
+itself, and never rely on arrival order.
+
 ### D32 — On Firefox, a test loses the opener's frame when it is pointed at the document
 
 **What happens.** The opener mounts a document by pointing its `#cartridge` frame at a fresh `blob:` URL (`apps/runner/src/main.ts`, `mount`). An eject first resets that frame to `about:blank`. Sometimes, on Firefox under load, Playwright never registers that navigation. For the rest of the test it holds the frame as `about:blank`, so a locator that enters `#cartridge`, then `#dai-app`, then the app finds nothing and times out. The document is fine throughout.
@@ -579,7 +696,41 @@ In each failing trace, the first-level frame is `about:blank` and later a lone `
 
 The fault is in the test tooling's view of the frame, not in the product. That is proved for both local failures, where the screenshot and the stale frame sit side by side. For the two CI failures it is inferred from the identical signature.
 
-**The fix is undecided. The options:**
+**Probe, 15 September: none of Playwright's other lookups reach the app during a stall.** A temporary probe repeated the older-link reopen 24 times on Firefox under load. One run stalled with the D32 signature, and its screenshot showed the app ("move1 move2") on screen throughout. On that stall:
+- the usual nested `frameLocator` timed out;
+- walking `page.frames()` timed out: `#app` did not resolve in any frame Playwright held, including the lone `about:srcdoc` frame;
+- asking the `#cartridge` element handle for its `contentFrame()` returned, but `querySelector('#dai-app')` inside it never returned, and the test hit its 240 s limit.
+
+So the stale state is the driver's whole view of that frame subtree, not one lookup path. The test-side option of walking `page.frames()` below was chosen on 15 Sep and then disproved by this probe before it was built.
+
+**Tried and disproven, not merely considered:**
+- **Walking `page.frames()`.** On the probe's stall, `#app` resolved in no frame Playwright held.
+- **The `#cartridge` element handle's `contentFrame()`.** It returned, and the query inside it never came back.
+
+Do not reach for either again without a new driver version and a rerun of the probe.
+
+**Ruling, 15 September: accept it, make it visible, report it upstream.** The product works: Firefox renders the app, the frame navigates, the person sees the board, and it is the driver that loses the frame. Two consequences follow:
+- **No product change.** Changing how the opener mounts documents to satisfy a test driver would alter the eject path's deliberate frame reuse for a bug in someone else's code.
+- **The retry absorbs it, and it stays visible.** CI's single retry absorbs it, as it has every time. `ci-verdict` now lists the kept trace, and this entry names the signature, so a retry of this kind is recognisable rather than a mystery.
+
+**Rejected: reload on stall.** Recovering by reloading the page and asserting again was rejected by a standing rule, not a one-off judgement: **a recovery step that repeats the thing under test destroys the test.** A reopen that runs twice can pass on the second mount while the first was broken. The rule is in `tests/README.md`.
+
+**Upstream: not filed until it reproduces (ruled 15 September).** A report that
+cannot be reproduced buys a closed issue and spends the credibility wanted for
+the day it can be demonstrated. D32 stays a known flake that the retry absorbs,
+with its signature documented, the test-side workarounds disproven, and the
+reproduction's four missing ingredients listed below. The next sighting that
+comes with a kept trace is when it is worth someone's time again.
+
+**First attempt, 15 September: it did not reproduce.** A standalone page with no DAI code reset a sandboxed frame to `about:blank`, pointed it at a `blob:` document holding a sandboxed `srcdoc` frame, and did so after a full navigation. On Playwright 1.62.1, 300 rounds on Firefox at four workers all resolved. So the bare pattern is not enough, and an issue claiming a reproduction cannot be filed from it. What the minimal case left out, to add back one at a time:
+- **A service worker** controlling the page. The opener's pages are controlled.
+- **A `srcdoc` app that runs scripts and does work** as it starts: a module import map, SQLite, and messages to its parent.
+- **Several browser contexts at once,** as in the forwarded-invite test's three devices, which is the heaviest failing case.
+- **The eject-then-mount order on a page that already mounted once,** without a full navigation in between.
+
+The page, server, config and spec are kept outside the repo, ready to extend.
+
+**The options, as they stood before the ruling:**
 - **In the tests:** find the app frame by walking `page.frames()` to the one whose parent's URL is the mounted `blob:`, instead of a `frameLocator` chain. This changes nothing a person meets. But it makes a Firefox tooling fault invisible rather than fixed, so it should carry a note saying why.
 - **In the opener:** replace the `#cartridge` element on each mount instead of re-pointing it, so every mount is a fresh frame that no tracker can have stale state for. The eject comment says the element is kept so the next document cannot inherit laxer sandbox attributes. A replacement built from the same attributes keeps that promise, but it is a product change made for a tool's sake.
 - **Upstream:** a minimal reproduction for Playwright's Firefox, an iframe reset to `about:blank` and then pointed at a `blob:` URL. This is worth filing whichever of the above is chosen.
@@ -666,6 +817,49 @@ worker, that is exactly how they would reach the network during an offline
 reopen. Not yet proven: the next D29 trace should show whether the request that
 escaped was the prefetch or manifest fetch, or the page's own.
 
+**A third sighting, 15 September** (run 34964053176, Firefox, `09ec0ba`): again
+`confusables.bd086572.json`, and again it passed on retry. Its trace is kept
+(`retried-firefox-whole`, 211 KB), and it is the first kept trace where the
+escape is the confusable table, so it can answer the lead's open question: did
+the request come from the prefetch link or from the opener's own
+`confusables()` call? `sw.js` collects the file for its cache (line 99), so the
+answer is about timing, not about whether the worker knows the file.
+
+**Answered from that trace (15 September): it is the prefetch.** During the
+offline reopen the table was requested twice:
+- **The page's own fetch** (`Sec-Fetch-Mode=cors`) was answered 200 by the
+  service worker.
+- **The browser's own prefetch** (`Sec-Purpose=prefetch`, `no-cors`, from the
+  `<link rel="prefetch">` that `apps/runner/vite.config.ts` injects) failed with
+  `NS_BINDING_ABORTED`. The test records exactly that: `cutTheNetwork` counts a
+  request that *failed* after `setOffline(true)`, and one the worker answers
+  never fails.
+
+So on Firefox a prefetch is not answered by the worker, and offline it goes to
+the network and fails. The earlier icon sighting fits the same shape: a request
+the browser made for itself, from the head.
+
+**Dropping the prefetch link would move the failure, not remove it (checked
+15 September, after the question was asked before ruling).** The link is not
+only a prefetch: it is how the worker learns the table's name. `sw.js`
+precaches every `src`/`href` it finds in `index.html` (`appAssets`), and its own
+comment says the table is "named in the page by a prefetch link so this worker
+can find it". Take the link away and the table leaves the precache. The
+opener's own `confusables()` fetch (`apps/runner/src/confusables.ts`) then goes
+to the network at the moment it is needed. On an offline reopen that fails, and
+the opener falls back to `NO_TABLE`: publisher names compared by folding only,
+which is weaker, said so in the state it produces, but still a regression of
+the offline promise.
+
+**What the evidence points to (not yet ruled):** keep the name discoverable to
+the worker, but not as something the browser fetches for itself. For example,
+name the table in the page in a form the browser does not fetch, such as a
+`<meta>` the worker's scan reads, or have the worker precache the content-hashed
+name directly. Then the page's own fetch is answered from the cache, as the
+engine's is, and the browser has no prefetch to send past the worker. The test
+for it is the one that caught D29: an offline reopen with nothing reaching the
+network, plus the table present, not `NO_TABLE`.
+
 **Exit:** find why the page's requests can reach the network during an offline
 open — a worker not yet controlling the page, or a request made before its cache
 is consulted — and close that for every asset; the test then holds it every time.
@@ -693,6 +887,34 @@ closed`.
 - CI, chromium, two workers (14 September, run 34900932214):
   `runner.spec.ts:498`, the same spec whose neighbour failed on 13 September.
   The first CI sighting with its trace kept (`retried-chromium-whole`, D27).
+- CI, chromium, two workers (15 September, run 34964053176, `09ec0ba`):
+  `viewport.spec.ts:58` and then `viewport.spec.ts:66`, two tests in a row on
+  the same worker, both at their first `browser.newContext`. The first sighting
+  that took down more than one test, which fits one browser death taking every
+  test after it until the worker got a new browser. Trace kept
+  (`retried-chromium-whole`, 22 KB).
+
+**What the kept trace says (15 September): Chromium crashed.** Each error context
+carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
+0000000001b0`, a read near a null pointer. The two dumps come from *two
+different processes* (pid 9227 and pid 3508), with the same stack frame for
+frame (`chrome-headless-shell+0x4265412`, `+0x754bdf3`, `+0x6b59199`, …;
+headless shell build 1234). So:
+- **Not one death taking two tests.** It is one crash site in the browser,
+  hit twice.
+- **Not something the repository closes.** A segfault is the browser's own.
+- **The viewport tests are not proven triggers.** Both failed at the `page`
+  fixture's `newContext`, before either test ran, so the crash happened during
+  whatever that worker's browser ran just before them.
+
+**Next:**
+- **Find the trigger.** Map which test ran immediately before each crash on its
+  worker (the CI log's worker order), and see whether one test or one API, such
+  as `setViewportSize` or a context with a service worker, precedes every
+  sighting.
+- **Rule out a known bug.** Symbolize the stack against the Chromium build that
+  headless shell 1234 corresponds to, or check whether a Playwright upgrade
+  moves past it.
 
 Each passed on retry, and 78 repeats of launch-card under the same load never
 reproduced it. It is not parallelism: it happened at one worker too. Nothing in
