@@ -119,7 +119,31 @@ function stamp(): Plugin {
             "across deploys. See the note above CACHE in apps/runner/public/sw.js.",
         );
       }
-      writeFileSync(workerPath, worker.replace(MARKER, JSON.stringify(commit)), "utf8");
+      /*
+       * The confusable table, named in the worker's precache list.
+       *
+       * It is content-hashed (spec §9.6), so only the build knows its name. It
+       * used to reach the worker by way of a prefetch link in the page, which
+       * the worker found by scanning index.html — so the link was the only
+       * reason the table was cached offline, and the browser's own prefetch was
+       * the one request an offline reopen sent past the worker (backlog D29).
+       * Written here and asserted, the same as the cache name above.
+       */
+      const tableId = readFileSync(join(import.meta.dirname, "../../src/confusables-id.ts"), "utf8").match(
+        /CONFUSABLES_ID = "([0-9a-f]+)"/,
+      )?.[1];
+      const TABLE = '"__DAI_CONFUSABLES__"';
+      if (!tableId || !worker.includes(TABLE)) {
+        throw new Error(
+          `dist/sw.js carries no ${TABLE} marker, or the table id could not be read; ` +
+            "the confusable table would not be precached. See PRECACHE in apps/runner/public/sw.js.",
+        );
+      }
+      writeFileSync(
+        workerPath,
+        worker.replace(MARKER, JSON.stringify(commit)).replace(TABLE, JSON.stringify(`./confusables.${tableId}.json`)),
+        "utf8",
+      );
 
       writeFileSync(
         join(import.meta.dirname, "dist", "version.json"),
@@ -206,24 +230,6 @@ function engine(): Plugin {
   };
 }
 
-/**
- * Names the confusable table in the page, so the worker precaches it.
- *
- * The table is content-hashed (spec §9.6) and the worker learns asset names
- * from index.html; a prefetch link is the honest way to say "this page will
- * want that file" without the page fetching it before it is needed.
- */
-function tableLink(): Plugin {
-  return {
-    name: "dai-confusables-link",
-    transformIndexHtml(html) {
-      const id = readFileSync(join(import.meta.dirname, "../../src/confusables-id.ts"), "utf8")
-        .match(/CONFUSABLES_ID = "([0-9a-f]+)"/)?.[1];
-      if (!id) return html;
-      return html.replace("</head>", `  <link rel="prefetch" href="./confusables.${id}.json">\n</head>`);
-    },
-  };
-}
 
 export default defineConfig({
   /*
@@ -241,7 +247,7 @@ export default defineConfig({
   base: "/",
   // The digest the opener asks the merge module for; see mergeDigest above.
   define: { __DAI_MERGE_DIGEST__: JSON.stringify(MERGE_DIGEST) },
-  plugins: [stamp(), engine(), tableLink()],
+  plugins: [stamp(), engine()],
   server: { port: 5175, strictPort: true },
   preview: { port: 5175, strictPort: true, headers: productionHeaders() },
   build: { outDir: "dist", emptyOutDir: true },

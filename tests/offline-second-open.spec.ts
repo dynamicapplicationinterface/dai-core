@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { CONFUSABLES_FILE } from "../src/confusables-id.js";
 import { openFile } from "./open.js";
 import { cutTheNetwork, WEBKIT_CANNOT_DRIVE_OFFLINE_NAV } from "./offline.js";
 
@@ -65,5 +66,18 @@ test.describe("opening a document you already have, with no network", () => {
     // The engine included, which is the megabyte that would otherwise be the
     // one thing standing between this and working on a train.
     expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
+
+    /*
+     * And the confusable table is here, offline, without the page asking the
+     * browser to prefetch it (D29). The prefetch link was both the escape —
+     * Firefox sends a prefetch past the worker — and the only reason the table
+     * was cached; the worker now names it itself. Both halves are held: no
+     * prefetch in the page, and the table in the worker's cache.
+     */
+    await expect(page.locator('link[rel="prefetch"]')).toHaveCount(0);
+    expect(
+      await page.evaluate(async (name) => Boolean(await caches.match(new URL(name, location.href).href)), CONFUSABLES_FILE),
+      "the confusable table is cached for an offline open",
+    ).toBe(true);
   });
 });

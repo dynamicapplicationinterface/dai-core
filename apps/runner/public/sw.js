@@ -70,6 +70,16 @@ const PRECACHE = [
   "./icons/icon-512.png",
   "./runtime/sqlite3.wasm",
   "./runtime/sqlite3.mjs",
+  /*
+   * The confusable table (spec §9.6), by name. It is content-hashed, so the
+   * build writes the name here (apps/runner/vite.config.ts, closeBundle) and
+   * asserts it did. It used to be found by scanning the page for a prefetch
+   * link, which made the link the only reason the table was cached offline —
+   * and the browser's own prefetch was the one request an offline reopen sent
+   * past this worker (backlog D29). A list found by scanning covers whatever
+   * the page happens to mention, and stops covering it silently.
+   */
+  "__DAI_CONFUSABLES__",
 ];
 
 /**
@@ -94,9 +104,6 @@ async function appAssets() {
     // Same-origin build output only. An absolute URL is somebody else's server
     // and has no business in this cache.
     if (url.startsWith("./assets/") || url.startsWith("/assets/")) found.add(url);
-    // The confusable table (spec §9.6) is content-hashed too, and named in the
-    // page by a prefetch link so this worker can find it the same way.
-    if (/^\.?\/?confusables\.[0-9a-f]+\.json$/.test(url)) found.add(url);
   }
   return [...found];
 }
