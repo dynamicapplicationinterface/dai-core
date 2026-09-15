@@ -74,7 +74,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D8 | The host runs one mailbox per document | [x] one mailbox per session, wired and proven end to end (`de2be4f`); older session documents are D10 |
 | D9 | A tested building block with no caller is not done | [x] check in `npm run typecheck`, definition of done in `CONTRIBUTING.md`; found tic-tac-toe's trigger hole on its first run; every finding decided |
 | D10 | Session documents built before per-session mailboxes stay readable by any link holder | [x] decided: cannot be repaired in place; re-create — the app says so |
-| D11 | A large document crashes Safari on iPhone | [ ] not measured; no ceiling, no refusal |
+| D11 | A large document crashes Safari on iPhone | [ ] measured 14 Sep: a phone fails near 34 MB, desktop opens 67.5 MB, heap about 20× assets; profile against a named copy list next; no refusal yet |
 | D12 | A relay deploy has a window where a post lands in old code | [~] rule in the relay README; one junk item in the bucket |
 | D13 | The in-browser compiler skips the build-time schema check | [ ] the open half of D5 |
 | D14 | Two blind runs is not a rate | [ ] both passed, both found real defects |
@@ -94,6 +94,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D28 | A test's browser is sometimes already closed when it starts | [ ] three sightings, at 1, 2 and 7 workers; passes on retry; traces now kept (D27) |
 | D29 | An offline reopen sometimes fetches the document's icon from the network | [ ] a real leak in the offline promise; intermittent |
 | D30 | Locally, a runtime change reaches the opener's tests one run late | [ ] the runner bundles the previous build; CI has no lag |
+| D31 | A document the opener has verified is verified again when it mounts | [ ] a trust ruling, not a performance fix; undecided |
 
 ---
 
@@ -554,6 +555,25 @@ The documentation says what happens today — the share sheet sends the document
 **Exit:** sharing from inside a session document produces the filtered invite
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
+
+### D31 — A document the opener has verified is verified again when it mounts
+
+**The observation.** Found while reading the load path for D11. The opener checks a picked file in full (`verifyContainer`: digests, the shell against its sealed copy, the signature). Then the mounted container's own bootloader does the whole check again, with its own decoded and inflated copies. On a large document the second pass is a real share of the peak memory that kills a phone tab.
+
+**Not redundant, even though it is the same routine.** The two checks guard against two different threats that happen to use the same code:
+- **The opener's check** protects *the opener's* decision to mount the document.
+- **The document's check** protects the document anywhere: in a plain browser, on a static host, with no opener in the picture.
+
+Removing either one loses the thing only it defends.
+
+**Why this is not simply a fix.** The mount's own check is what protects a document opened with no opener: a file opened straight in a browser, or by some other host. It is also what the container's shell promises. Skipping it whenever an opener has already looked moves trust from the document to the host. That may be right, but it is a decision about who vouches for the bytes that run, not a memory optimization, and it is not taken here.
+
+**The questions a ruling has to answer:**
+- Under a host that has verified, can the shell's check be skipped? Or should it be kept and made cheaper (streamed, and hashed in place as D11's fixes do)?
+- If it is skipped, how does the shell know the host really verified, and verified *these* bytes, rather than taking the host's word?
+- What does a document opened with no host keep, unconditionally?
+
+**Status.** Undecided. D11's memory fixes do not depend on it and must not be read as approving it.
 
 ### D30 — Locally, a runtime change reaches the opener's tests one run late
 
@@ -1046,6 +1066,91 @@ Three parts:
    back to it looking untouched. They are not repeated here.
 3. **The refusal.** Whatever the ceiling turns out to be, a document too large
    for the device is refused by name with a sentence, before the tab dies.
+   Measure the desktop as well as the phone, because the two answers decide
+   what kind of refusal this is. If a laptop opens 50 MB and a phone dies at
+   15, the limit belongs to the device, not the format, and the message must
+   say *too large for this device*, not *too large*. The document is fine,
+   and a bigger device can open it.
+
+**Desktop ladder, 14 Sep.**
+- **The documents:** four, with 5, 10, 25 and 50 MB of incompressible assets. Each asset is 1 MB of random bytes, and every one is shown as an image, so the frame mints a URL for each.
+- **Their files:** 7.5, 14.2, 34.2 and 67.5 MB. The file runs about 1.35 times the asset size.
+- **The method:** each was opened through the local opener, from the file pick to the app reporting every asset settled, in Playwright on Windows.
+- **The result:** all twelve opened.
+
+| Assets | File | chromium | firefox | webkit | chromium peak JS heap |
+|---|---|---|---|---|---|
+| 5 MB | 7.5 MB | 1.3 s | 1.3 s | 1.8 s | 136 MB |
+| 10 MB | 14.2 MB | 2.0 s | 2.1 s | 2.7 s | 381 MB |
+| 25 MB | 34.2 MB | 3.9 s | 5.0 s | 6.6 s | 615 MB |
+| 50 MB | 67.5 MB | 8.2 s | 9.9 s | 11.3 s | 1118 MB |
+
+**What the table says:**
+- **Peak heap is about 20 times the asset size, and it grows in step with it.** It is 1.1 GB for 50 MB of assets. That is suspect one in the ladder above, many copies of the payload alive at once, now with a number.
+- **An iPhone tab gets far less than a desktop.** The Moon Garden crash at 50 MB is consistent with this ratio, even before the phone numbers are in.
+- **Where the fix is:** the likely win is in the runtime's own copies, not in a cap. Halving the copies would roughly halve the ceiling.
+- **Heap was sampled every 200 ms:** the true peak can only be higher.
+- **Which heap:** it is the page's heap. Whether it includes the app frame's heap depends on process placement.
+- **Timing grows in step with size** on every engine.
+- **Some rungs cannot travel as a link:** the 25 and 50 MB rungs are files over the store's 25 MB cap, so a person can get them only as a file.
+
+**iPhone ladder, 14 Sep (Safari tab, opendai.app, file from the Files app):**
+
+| Assets | File | Result |
+|---|---|---|
+| 5 MB | 7.5 MB | opened |
+| 10 MB | 14.2 MB | opened |
+| 25 MB | 34.2 MB | **failed on the first try** with Safari's "A problem repeatedly occurred" page, then opened on the second |
+| 50 MB | 67.5 MB | **failed:** "A problem repeatedly occurred on https://opendai.app/", the process killed for memory |
+
+The app's "settled in N ms" counts only from its own script. By then every image had already settled, so it reads 0 ms and says nothing about load time. The phone's load time is the wall clock from Open to "Opened".
+
+**What the 25 MB failure means.** "A problem repeatedly occurred" is Safari's page after the tab's content process is killed twice. On iOS that is the system ending it for memory, not a script error, so nothing in the page can catch it or report it. Two consequences follow:
+- **The refusal must come first.** It has to happen *before* the memory is spent: the opener estimates the peak from the file size and the device, and refuses on that estimate. It cannot come from a try/catch around the open.
+- **Near the ceiling, the failure is intermittent.** The same 34 MB file failed, then opened. To a person, a document that crashes sometimes looks like a random bug, which is worse than a clean refusal.
+
+At the desktop ratio of about 20 times, this document peaks near 600 MB, so the phone's ceiling sits around there.
+
+**The measurement is done** (part 1's ladder). On this iPhone, a document with about 10 MB of assets opens reliably. Around 25 MB of assets (a 34 MB file) is the edge, where it sometimes fails. At 50 MB (a 67.5 MB file) it fails. Desktop opens all four. So this is a device limit, not a format limit, and the refusal must say *too large for this device*.
+
+**The hypothesis the profile tests.** This list comes from reading the load path, not from measuring it. Each numbered copy is a claim the profile confirms or rules out on its own, by heap measurement on the ladder in desktop chromium, where the heap can be read. The ladder's generator is kept outside the repo; rebuild it from the description above. A profile that arrives with a list to check is worth more than one that measures blind.
+
+**Opener: reading the picked file**
+1. **The file's bytes.** `readCartridge` reads it with `file.arrayBuffer()` ([cartridge.ts:39](../apps/runner/src/cartridge.ts)).
+2. **The whole file decoded to a text string** (cartridge.ts:45). A JS string holds about twice the file size.
+3. **Verification copies in the core.** `verifyContainer` extracts the base64, decodes it, and unzips every entry, adding decoded and inflated copies. Each entry is also hashed.
+
+**Shell: the mounted container's own check**
+4. **The whole payload through `atob`**, which makes a binary string and then a byte array ([bootloader.ts:320](../src/runtime/bootloader.ts)).
+5. **Unzipped entries,** held alongside the compressed bytes.
+6. **A copy of each entry before hashing it.** `sha256` copies into a fresh array before calling `digest` (bootloader.ts:390).
+
+**Handing the app to the frame**
+7. **A copy of every entry for the frame.** `toArrayBuffer` runs per entry (bootloader.ts:2911). The transfer then moves that copy, and the originals stay for resealing.
+8. **A blob of every asset, made up front.** The frame makes one per non-script asset as soon as the payload arrives, whether or not the app asks for it (bootloader.ts:2517).
+
+**The fixes, ordered by what can be proved, not by what is clever.**
+
+The first three are plumbing inside code this project owns. Each will have a number attached once the profile runs, and each raises the ceiling:
+- **No giant string.** Find the payload in the file's bytes and decode it in chunks, not with one `atob` or a whole-file text decode. This addresses copies 2 and 4.
+- **Hash in place, and release as you go.** Digest without the defensive copy, and drop the compressed bytes once an entry is inflated. This addresses copies 3, 5 and 6.
+- **Transfer instead of duplicate.** Keep the resealing copy as a Blob rather than a heap array, so the frame's copy is the only one in the heap. This addresses copy 7.
+
+The fourth is different in kind, and it is also the most work:
+- **Assets on demand.** Keep assets as Blob slices and make a URL only when the app asks for one, so the first screen costs only what it shows. This addresses copy 8. It does not raise the ceiling; it separates document size from memory. Choose it after the three above have their numbers, not before, and not because it is the most interesting.
+
+**An option, not a step: large documents held in the sectioned form.** The opener could store a large document as a sectioned `.dai` (no base64, with a table of sections) so a reopen reads only the sections it needs. That is a storage-format change with its own consequences, and it pays only once the simpler copies are gone.
+
+**Not in this list: verifying twice.** The opener verifies the file and the mount verifies it again, and that repetition is visible above. Skipping the second check is a trust ruling, not a memory fix: the mount's own check is what protects a document opened with no opener at all. It is D31, with its own decision. Nothing in D11 approves it.
+
+**Then the refusal.** It comes before the open, estimated from the file size and the device, because a killed process cannot report anything. Its threshold is set from the ratio *after* the fixes above, not from today's.
+
+Every size limit in the code today is a policy limit: 32 kB for a link, 25 MB
+for a store, the archive caps against decompression bombs. The one that
+actually stops a person is a memory limit nobody has measured. 25 MB is what
+the store allows, and some number well below it is what a phone survives.
+Until this is measured, the system's only honest statement about size is "it
+worked when we tried it."
 
 What this is **not**. Not a reason to move assets to a server: a game that needs a
 CDN is a web game, and a file that carries its own assets is the format working
