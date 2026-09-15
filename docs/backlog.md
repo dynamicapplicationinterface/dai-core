@@ -687,6 +687,9 @@ itself, and never rely on arrival order.
 | Local, 15 Sep | `returning-document:164` under load (1 in 6) | Same as the first row, and the trace's screenshots show the app on screen 0.7 s into the wait and still there at the timeout. |
 | Local, 15 Sep | `mailbox-link-e2e`, forwarded invite, under load (1 in 6; the run took 15.8 min) | Same as the second row, down to the frame-side breadcrumbs: replica adopted and saves 1 and 2 written within 1.5 s of Open. Screenshots show the chess board, with its "Your move" banner, on screen 2 s into the wait and still there at the failure. |
 
+| CI, run 34976234780 (15 Sep) | `d22-reopen:132` | After `page.reload()` the child reads `about:blank` for the whole 60 s wait, with a lone `about:srcdoc` at the failure. The breadcrumbs show the reopen right: "reopen mounted the stored database", then "replica kept (own copy): 8e53f4f1… -> 8e53f4f1…". So D22 did not recur, and the frame was lost. |
+| CI, run 34976234780 (15 Sep) | `returning-document:189` | The same shape as the first row: after the reopen the child reads `about:blank`, then drops out of view, while "reopen mounted the stored database" is logged. The test timed out at 90 s. |
+
 In each failing trace, the first-level frame is `about:blank` and later a lone `about:srcdoc` frame appears, with the `blob:` frame that should sit between them missing. A healthy mount earlier in the same test shows main, then `blob:`, then `about:srcdoc`. Both specs reproduce it locally at about 1 in 6 on Firefox under load. Each local failure has a screenshot of the app on screen while the locator waits.
 
 **What this is not:**
@@ -851,7 +854,61 @@ the opener falls back to `NO_TABLE`: publisher names compared by folding only,
 which is weaker, said so in the state it produces, but still a regression of
 the offline promise.
 
-**What the evidence points to (not yet ruled):** keep the name discoverable to
+**Ruled and built, 15 September: break the dependency, not the symptom.** The
+worker names the table in its own precache list (`PRECACHE` in `sw.js`, the
+content-hashed name stamped by `vite.config.ts` at build and asserted, like the
+cache name). The page's scan no longer looks for it, and the prefetch link is
+gone. What is available offline is unchanged, and an offline reopen no longer
+fires a request the browser makes for itself. `offline-second-open` holds both
+halves: no prefetch in the page, and the table in the worker's cache after an
+offline reopen. It was proven both ways by stamping a wrong name, which fails
+the cache check.
+
+**Why the scan was the real fault.** A worker that discovers its own precache
+list by pattern-matching the page silently stops caching anything the page
+stops mentioning. That is the same failure family as the `*.dai.html` ignore
+rule that hid the isolation probe: a mechanism that works by scanning covers
+less than it appears to, and nothing says so. It is the third instance this
+week. The page scan still finds the hashed `assets/` bundle; that entry is
+correct today for the same reason this one was, and is worth the same scrutiny
+the next time the build's output changes shape.
+
+**Then the premise moved (15 September, a probe).** Every Firefox "escape" D29
+has recorded failed with `NS_BINDING_ABORTED`: the confusable prefetch twice, and
+the document icon. A probe gave the baseline. While offline, a same-origin
+address nothing has cached, which has to try the network, fails with
+`NS_ERROR_OFFLINE` on Firefox and `net::ERR_FAILED` on Chromium, three runs of
+three each. So `NS_BINDING_ABORTED` is a request the browser or the page
+*cancelled*, not one that reached the network. `cutTheNetwork` counts every
+`requestfailed` as "went to the network", so the Firefox sightings were the
+detector counting cancellations. Three clean offline reopens under the probe
+showed no aborted request at all, which fits an intermittent cancel, not a leak.
+The icon has three references in the head (two `<img>` and `apple-touch-icon`,
+written by `describedAs`); a load cancelled as the page settles is enough.
+
+**Measured after the precache change, against a baseline.** Six Firefox repeats
+of `offline-second-open` at three workers:
+- **With the change:** 3 of 6 failed on the icon.
+- **With the committed `sw.js` and `vite.config.ts`:** 2 of 6 failed on the icon. The other 4 got past the icon and failed on the new "no prefetch link" assertion, which is that assertion catching the old code.
+
+The icon failure is the same on both sides, so the change did not cause it. In
+every icon failure the "escaped" loads were `NS_BINDING_ABORTED`, each followed
+a few milliseconds later by the same icon answered 200 by the worker: a load
+cancelled and made again, not a request that reached the network. The rate is
+high enough (about 1 in 3 under load) that the detector proposal above is what
+stands between this test and a reliable Firefox retry.
+
+**Proposed, for a ruling: make the guard count what it means.** `cutTheNetwork`
+should count a failure that means the request tried the network
+(`NS_ERROR_OFFLINE`, `net::ERR_INTERNET_DISCONNECTED`, `net::ERR_FAILED` and the
+like) and set aside a cancellation (`NS_BINDING_ABORTED`, `net::ERR_ABORTED`),
+naming each one it sets aside so nothing is hidden. Proven both ways: an
+uncached fetch while offline must still be caught, and an aborted load must not
+be. Changing what a guard counts is exactly the change that needs that proof,
+because a guard that ignores too much is as broken as one that fires on
+everything.
+
+**What the evidence pointed to before the ruling:** keep the name discoverable to
 the worker, but not as something the browser fetches for itself. For example,
 name the table in the page in a form the browser does not fetch, such as a
 `<meta>` the worker's scan reads, or have the worker precache the content-hashed
