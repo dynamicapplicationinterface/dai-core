@@ -12,7 +12,12 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const APP = [
   "<!doctype html>",
   '<html><head><meta charset="UTF-8"><title>Notes</title></head>',
-  '<body><h1>Notes</h1><form id="f"><input id="b" required></form><ul id="l"></ul>',
+  // The input starts disabled and is enabled once the form can take what is
+  // typed (NO-INPUT-LOST-WHILE-OPENING) — the same app, and the same fix, as
+  // tests/cli.spec.ts. Enabled from the start, an Enter pressed before the
+  // handler existed submitted natively into the frame's `form-action 'none'`
+  // and the text was lost with no word, on Firefox in CI.
+  '<body><h1>Notes</h1><form id="f"><input id="b" required disabled></form><ul id="l"></ul>',
   '<script type="module">',
   "const db = await window.dai.openDatabase();",
   'db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)");',
@@ -31,6 +36,7 @@ const APP = [
   "  draw();",
   "};",
   "draw();",
+  "b.disabled = false;",
   "</script></body></html>",
 ].join("\n");
 
@@ -161,10 +167,12 @@ test.describe("create_dai_app", () => {
     await page.goto(pathToFileURL(file).href);
     const app = page.frameLocator("iframe");
     // The heading is static HTML and appears even when the application never
-    // ran, so waiting on it proves nothing. The row cannot exist until SQLite
-    // has booted — which on a cold runner takes longer than the default five
-    // seconds, and showed up as a flake on Firefox.
+    // ran, so waiting on it proves nothing about whether the form can take
+    // input. Wait for what typing needs: the input enabled, which the app does
+    // only once SQLite has booted and the handler is attached. A runtime that
+    // never boots fails here, by name, rather than swallowing what was typed.
     await expect(app.locator("h1")).toHaveText("Notes", { timeout: 20_000 });
+    await expect(app.locator("#b")).toBeEnabled({ timeout: 20_000 });
     await app.locator("#b").fill("Ring the dentist");
     await app.locator("#b").press("Enter");
     await expect(app.locator("li")).toHaveText("Ring the dentist", { timeout: 20_000 });

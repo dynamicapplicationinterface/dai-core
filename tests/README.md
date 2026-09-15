@@ -52,7 +52,10 @@ waited for is what makes the action safe. Three times now it was not:
   The test typed and pressed Enter as soon as the heading showed, the form
   submitted natively, the frame's `form-action 'none'` blocked it, and the text
   was gone with no error. The app now keeps its input disabled until it can take
-  input, and the test waits for it to be enabled.
+  input, and the test waits for it to be enabled. The same app and the same wait
+  had been copied into `mcp.spec` and `website-checks`, and the next CI run showed
+  the copy in `mcp.spec` losing input the same way. When a fixture carries a
+  wrong wait, look for its copies before the next run finds them for you.
 
 Each passed on a fast machine and failed on a loaded one, which is what a wait on
 the wrong signal looks like: correct ordering by luck.

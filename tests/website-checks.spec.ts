@@ -94,7 +94,9 @@ test("a single pasted file becomes an app that runs", async ({ page }) => {
   const pasted = [
     "<!doctype html>",
     '<html><head><meta charset="UTF-8"><title>Notes</title></head>',
-    '<body><h1>Notes</h1><form id="f"><input id="b" required></form><ul id="l"></ul>',
+    // Disabled until the form can take input (NO-INPUT-LOST-WHILE-OPENING),
+    // the same app and fix as tests/cli.spec.ts and tests/mcp.spec.ts.
+    '<body><h1>Notes</h1><form id="f"><input id="b" required disabled></form><ul id="l"></ul>',
     '<script type="module">',
     "const db = await window.dai.openDatabase();",
     'db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)");',
@@ -113,6 +115,7 @@ test("a single pasted file becomes an app that runs", async ({ page }) => {
     "  draw();",
     "};",
     "draw();",
+    "b.disabled = false;",
     "</script></body></html>",
   ].join("\n");
 
@@ -134,6 +137,9 @@ test("a single pasted file becomes an app that runs", async ({ page }) => {
   const app = page.frameLocator("iframe");
 
   await expect(app.locator("h1")).toHaveText("Notes", { timeout: 20_000 });
+  // The heading is static and proves nothing about the form: wait for the input
+  // to be enabled, which happens once SQLite has booted and the handler exists.
+  await expect(app.locator("#b")).toBeEnabled({ timeout: 20_000 });
   await app.locator("#b").fill("Ring the dentist");
   await app.locator("#b").press("Enter");
   await expect(app.locator("li")).toHaveText("Ring the dentist");
