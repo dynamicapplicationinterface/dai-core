@@ -770,6 +770,16 @@ rules keep their single slot, where the latest wins, released by the same
 announcement. The payload is the one named exception, because holding it behind
 the bridge would wait forever.
 
+**Considered and rejected: an explicit list of held types.** It looks cheaper,
+because most types recover on the next poll and only a few seem to need the
+hold. But the list is what failed here. The queue before this fix covered two
+of nine types, `dai:write-rules` and `dai:merge`, each added after its own race
+was found. Meanwhile `dai:flush` shared a stale autosave with no signal to
+anyone, the same class of harm as the second-invite bug. A list is right only
+until the next type is added, and the omission is silent. Do not narrow the
+hold back to a list to save a queue push. The source scan exists so this stays
+true.
+
 **Proven** (`tests/frame-hold.spec.ts`, chromium, Firefox and WebKit):
 - A question posted before the bridge exists, from the host's handshake handler,
   is answered.
@@ -1615,8 +1625,24 @@ Time to ready fell slightly at the larger sizes (50 MB: 11.8–12.3 s to 10.6 s)
   phone gains in proportion, the ceiling moves by roughly a fifth at the sizes
   that matter, which is a hypothesis for the next phone sitting, not a result.
 
+**Before the next fix, two cheap checks on the 5 MB number** (ruled 15 Sep):
+- Force a GC before sampling (`HeapProfiler.collectGarbage` over CDP). If
+  the rise is collection timing, it vanishes.
+- Check whether the new path allocates in proportion to the payload rather
+  than a constant. Suspects to run, not assume: the pre-sizing count pass in
+  `fromBase64`, and the shell's `clean` copy when the payload has line breaks.
+
+If the rise does not vanish, it says something about the new path.
+
+**The measurement that decides the rest: the phone.** Desktop cuts do not say
+whether the iPhone's ~34 MB ceiling moved, and that is the ceiling that stops a
+person. At the next phone sitting, open one document at one size through the
+opener on the spare phone, before and after, and read the heap. That is not
+the full ladder.
+
 The remaining fixes (hash in place, transfer instead of duplicate, assets on
-demand) and the refusal threshold wait for a ruling.
+demand) and the refusal threshold both wait on that phone number, not only on
+a ruling.
 
 **An option, not a step: large documents held in the sectioned form.** The opener could store a large document as a sectioned `.dai` (no base64, with a table of sections) so a reopen reads only the sections it needs. That is a storage-format change with its own consequences, and it pays only once the simpler copies are gone.
 
