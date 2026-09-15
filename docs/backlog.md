@@ -898,6 +898,35 @@ cancelled and made again, not a request that reached the network. The rate is
 high enough (about 1 in 3 under load) that the detector proposal above is what
 stands between this test and a reliable Firefox retry.
 
+**Ruled and built, 15 September: the guard counts what it means.**
+`cutTheNetwork` sorts a failure by its error text:
+- **Reached:** a request that tried the network.
+- **Set aside:** a cancellation. It is logged as it happens, in passing output
+  too, and listed in the failure message, so it is set aside rather than
+  ignored.
+- **Unrecognized:** counted as reached and named, so a new engine or error
+  makes the guard louder, never quieter.
+
+`tests/offline-detector.spec.ts` proves it both ways on each engine: a genuine
+uncached fetch while offline must be caught with a recognized error, and a
+cancelled load must be set aside and seen to be.
+
+The engines cancel differently, as two probes measured:
+- **Chromium** reports a fetch the page aborts, and an image the page removes,
+  as `net::ERR_ABORTED` every time.
+- **Firefox** reports nothing for a page's own abort. It reports
+  `NS_BINDING_ABORTED` only for a load a navigation cuts off, about one in
+  three. That is why D29 appeared only sometimes, and always just after a
+  reload.
+
+So on Firefox the test repeats the setup (four worker-served loads, then a
+reload) until a cancellation happens. The check itself runs once, on the first.
+
+With the guard in, `offline-second-open` passed 6 of 6 on Firefox under the same
+load that failed it 3 of 6. The log names four cancelled icon loads
+(`NS_BINDING_ABORTED`) it set aside. That settles D29's remaining sightings as
+cancellations. If the test fails again, it is new information.
+
 **Proposed, for a ruling: make the guard count what it means.** `cutTheNetwork`
 should count a failure that means the request tried the network
 (`NS_ERROR_OFFLINE`, `net::ERR_INTERNET_DISCONNECTED`, `net::ERR_FAILED` and the
