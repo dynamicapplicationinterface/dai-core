@@ -41,12 +41,72 @@ export const WEBKIT_CANNOT_DRIVE_OFFLINE_NAV =
  * setOffline is the honest cut; it just cannot be driven on WebKit — see
  * WEBKIT_CANNOT_DRIVE_OFFLINE_NAV.
  */
-export async function cutTheNetwork(
-  context: BrowserContext,
-  page: Page,
-): Promise<{ reached: string[] }> {
-  const reached: string[] = [];
-  page.on("requestfailed", (request) => reached.push(request.url()));
+/**
+ * What a failed request's error text says it was, per engine.
+ *
+ * A request that tried the network while it is cut fails with an offline or
+ * unreachable error. A request the browser or the page cancelled fails with an
+ * abort. The first is a leak; the second is not, and counting it as one cost a
+ * day (backlog D29): every Firefox "escape" D29 recorded was `NS_BINDING_ABORTED`,
+ * an icon load cancelled and made again, while a genuine offline fetch fails
+ * `NS_ERROR_OFFLINE` (Firefox) or `net::ERR_FAILED` (Chromium). Held by
+ * `tests/offline-detector.spec.ts`, which drives both kinds on each engine.
+ */
+export const TRIED_THE_NETWORK: readonly RegExp[] = [
+  /^NS_ERROR_OFFLINE$/,
+  /^NS_ERROR_(UNKNOWN_HOST|CONNECTION_REFUSED|NET_RESET|NET_INTERRUPT|NET_TIMEOUT)$/,
+  /^net::ERR_(FAILED|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_REFUSED|CONNECTION_RESET|ADDRESS_UNREACHABLE|NETWORK_CHANGED)$/,
+];
+export const CANCELLED: readonly RegExp[] = [/^NS_BINDING_ABORTED$/, /^net::ERR_ABORTED$/];
+
+export interface NetworkCut {
+  /** Requests that tried the network, plus any whose error this file does not recognize. */
+  reached: string[];
+  /** Requests cancelled by the browser or the page: named, never silently dropped. */
+  setAside: string[];
+  /** Failures whose error text is in neither list. Counted as reached, so they fail loudly. */
+  unrecognized: string[];
+  /** Everything above, for a failure message. */
+  summary(): string;
+}
+
+/**
+ * Sorts a failure by its error text. An error this file does not recognize is
+ * counted as reached: a new engine or error must make the guard louder, never
+ * quieter, and `unrecognized` says which error to add to a list above.
+ */
+export function classify(errorText: string): "reached" | "cancelled" | "unrecognized" {
+  if (CANCELLED.some((pattern) => pattern.test(errorText))) return "cancelled";
+  if (TRIED_THE_NETWORK.some((pattern) => pattern.test(errorText))) return "reached";
+  return "unrecognized";
+}
+
+export async function cutTheNetwork(context: BrowserContext, page: Page): Promise<NetworkCut> {
+  const cut: NetworkCut = {
+    reached: [],
+    setAside: [],
+    unrecognized: [],
+    summary: () =>
+      [
+        `reached the network: ${cut.reached.length ? cut.reached.join(", ") : "nothing"}`,
+        `set aside as cancelled: ${cut.setAside.length ? cut.setAside.join(", ") : "nothing"}`,
+        ...(cut.unrecognized.length ? [`unrecognized errors (add to tests/offline.ts): ${cut.unrecognized.join(", ")}`] : []),
+      ].join("; "),
+  };
+  page.on("requestfailed", (request) => {
+    const code = request.failure()?.errorText ?? "";
+    const named = `${request.url()} (${code || "no error text"})`;
+    const kind = classify(code);
+    if (kind === "cancelled") {
+      cut.setAside.push(named);
+      // In the passing output too: if cancellations ever become the symptom of
+      // something real, the count is sitting in the log.
+      console.log(`offline: set aside a cancelled load, ${named}`);
+      return;
+    }
+    cut.reached.push(named);
+    if (kind === "unrecognized") cut.unrecognized.push(named);
+  });
   await context.setOffline(true);
-  return { reached };
+  return cut;
 }

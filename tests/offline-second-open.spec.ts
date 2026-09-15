@@ -65,7 +65,7 @@ test.describe("opening a document you already have, with no network", () => {
 
     // The engine included, which is the megabyte that would otherwise be the
     // one thing standing between this and working on a train.
-    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
+    expect(net.reached, net.summary()).toEqual([]);
 
     /*
      * And the confusable table is here, offline, without the page asking the

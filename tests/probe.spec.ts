@@ -162,6 +162,6 @@ test.describe("which build this is", () => {
     const net = await cutTheNetwork(context, page);
     await page.reload();
     await expect(page.locator("#chooser-version")).toHaveText(/^[0-9a-f]{7} · /);
-    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
+    expect(net.reached, net.summary()).toEqual([]);
   });
 });

@@ -143,7 +143,7 @@ test.describe("an icon for a document this device holds", () => {
     await expect(
       page.frameLocator("#cartridge").frameLocator("#dai-app").locator("body"),
     ).toContainText(/chore/i, { timeout: 60_000 });
-    expect(net.reached, `these went to the network: ${net.reached.join(", ")}`).toEqual([]);
+    expect(net.reached, net.summary()).toEqual([]);
   });
 
   test("the offer to keep it appears only for a document that is held", async ({ page }) => {
