@@ -95,6 +95,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D29 | An offline reopen sometimes fetches the document's icon from the network | [ ] a real leak in the offline promise; intermittent |
 | D30 | Locally, a runtime change reaches the opener's tests one run late | [ ] the runner bundles the previous build; CI has no lag |
 | D31 | A document the opener has verified is verified again when it mounts | [ ] a trust ruling, not a performance fix; undecided |
+| D36 | An untouched copy's first save can make it "newer" than a real move, and the move is dropped | [ ] seen once (push tier, 15 Sep); pre-existing; savedAt stamped by a save that changed nothing |
 | D35 | The same document held on two installs is correct but illegible | [ ] the relay reconciles them; nothing says which icon is which |
 | D34 | Badge the home-screen icon on an incoming move | [ ] waits on the live push pipeline; where the count comes from is undecided |
 | D33 | Other host-to-frame messages can still arrive before the bridge listens | [ ] the merge is now held; mailbox messages rely on the next poll |
@@ -560,6 +561,76 @@ The documentation says what happens today — the share sheet sends the document
 through `exportSession`; an end-to-end test opens the invite and finds only
 that session's rows.
 
+### D36 — An untouched copy's first save can make it "newer" than a real move, and the move is dropped
+
+**Seen once, in the push tier (15 September, chromium):**
+`returning-document.spec.ts:129`, "arrives, instead of being replaced by what
+this device already had". Bob's app showed "no moves" for the whole 60 s wait;
+Alice's move never arrived. The frames were healthy throughout, so this is not
+D32. The timeline from the trace:
+
+| Time | What happened |
+|---|---|
+| 176.5 s | Alice's move is saved |
+| 178.0 s | Alice shares. Her link carries the `savedAt` of that moment |
+| 183.8 s | Bob opens the document. He makes no move |
+| 186.1 s | Bob's copy logs `dai: save 1 written`: a save from the open itself, not from anything Bob did |
+| 186.1 s | Bob follows Alice's link: "resumed this device's own copy from the stored database". Her move is dropped |
+
+**The cause, confirmed in the code.** Every save reseals the container, which
+stamps `savedAt` with the time of the save (`apps/runner/src/main.ts`, the save
+handler: `loaded = await resealCartridge(loaded, bytes)`). That stamp is then
+written into the library record as when this copy was last written
+(`savedAt: savedAtOf(loaded)`). So a save that changed nothing a person did,
+such as the first one after opening, moves the copy's clock past a real move
+made elsewhere earlier. The arriving copy then reads as "older", and "newer
+wins" keeps the empty copy. The open path already warns against exactly this
+(the comment beside `savedAt` in `ingest`: opening reseals and must not move the
+clock forward), but the save path does it on every save.
+
+**How often.** Rare: a rerun passed 6 of 6. It depends on whether an open-time
+save lands before the link does. It is pre-existing and unrelated to the
+15 September changes, which touched only replicated documents and tests. It is
+a silent loss on the path for documents without replicated tables (the
+`savedAt` rule), which is the path `returning-document` exists to hold.
+
+**Ruled, 15 September: record "arrived" and "written" separately, and refuse
+what cannot be ordered.**
+
+**Why not "stamp only when the data really changed".** It sounds narrower and
+cheaper, but it cannot be made right. "The person's data changed" is a judgement
+about content, a reseal is genuinely a write, and the code would end up keeping
+a definition of "real change" that drifts. Two facts, when this copy last took in
+another copy and when it last wrote, should never have been one field.
+
+**What separating them buys, stated plainly, because it is less than it looks.**
+The underlying problem is that `savedAt` is a wall clock used as a causality
+signal. Bob's copy and Alice's move never saw each other. They are concurrent,
+and no timestamp can order them correctly, because there is no correct order.
+Separating the fields does not fix that. It only stops a copy that saw nothing
+from outranking a copy that saw a move, which is the specific wrong seen here.
+
+**So the fix that matters is the refusal, not the ordering.** When two copies
+are genuinely concurrent, and neither has seen the other, the opener must not
+silently pick one. It says so: "these two copies diverged", with what each
+holds, so the person can act. It is the same shape as the second-invite mount
+guard: the harm was never that the wrong copy won, it was that nothing said
+anything. A person told the copies diverged can act; a person shown an empty
+board cannot.
+
+**The boundary.** Documents with replicated tables already solve this properly,
+by merging. D36 is the non-replicated path, where merge is not available and the
+honest answer is refuse-and-explain. Do not try to make timestamps correct: they
+cannot be, and a cleverer clock only moves where the silent pick happens.
+
+**The test forces the losing order; it does not wait for it.** Seen once in
+seven runs, a bug that cannot be provoked on demand costs a day to find again.
+The test drives an open-time save on the recipient between the share and the
+link, deterministically, and asserts the refusal: never an empty board, never a
+silent pick. It also asserts the ordinary case still works, a link that really
+is newer arriving at a copy that saw nothing since, and the old case still
+holds, an older link not rolling a copy back.
+
 ### D35 — The same document held on two installs is correct but illegible
 
 Two invites to the same game can end up on two home-screen icons: two storage
@@ -689,6 +760,7 @@ itself, and never rely on arrival order.
 
 | CI, run 34976234780 (15 Sep) | `d22-reopen:132` | After `page.reload()` the child reads `about:blank` for the whole 60 s wait, with a lone `about:srcdoc` at the failure. The breadcrumbs show the reopen right: "reopen mounted the stored database", then "replica kept (own copy): 8e53f4f1… -> 8e53f4f1…". So D22 did not recur, and the frame was lost. |
 | CI, run 34976234780 (15 Sep) | `returning-document:189` | The same shape as the first row: after the reopen the child reads `about:blank`, then drops out of view, while "reopen mounted the stored database" is logged. The test timed out at 90 s. |
+| CI, run 34992640259 (15 Sep) | `returning-document:164` | After the older-link reopen Playwright holds the main frame and a lone `about:srcdoc`, with no `blob:` frame between them. The screenshot shows "move1 move2", the right answer, on screen. The test timed out at 90 s. |
 
 In each failing trace, the first-level frame is `about:blank` and later a lone `about:srcdoc` frame appears, with the `blob:` frame that should sit between them missing. A healthy mount earlier in the same test shows main, then `blob:`, then `about:srcdoc`. Both specs reproduce it locally at about 1 in 6 on Firefox under load. Each local failure has a screenshot of the app on screen while the locator waits.
 
