@@ -47,6 +47,12 @@ waited for is what makes the action safe. Three times now it was not:
   history is right from the first frame; the board is not ready for a tap until
   later. Under load the gap is long enough to swallow the tap, and the test then
   waited fifteen seconds on a Play button that could never enable.
+- A static heading instead of the form's handler — the CLI test's app drew its
+  `<h1>` from markup and attached its submit handler only after SQLite booted.
+  The test typed and pressed Enter as soon as the heading showed, the form
+  submitted natively, the frame's `form-action 'none'` blocked it, and the text
+  was gone with no error. The app now keeps its input disabled until it can take
+  input, and the test waits for it to be enabled.
 
 Each passed on a fast machine and failed on a loaded one, which is what a wait on
 the wrong signal looks like: correct ordering by luck.

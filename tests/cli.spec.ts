@@ -13,7 +13,12 @@ const cli = resolve(repo, "dist/bin.js");
 const APP = [
   "<!doctype html>",
   '<html><head><meta charset="UTF-8"><title>Notes</title></head>',
-  '<body><h1>Notes</h1><form id="f"><input id="b" required></form><ul id="l"></ul>',
+  // The input starts disabled and is enabled once the form can take what is
+  // typed (NO-INPUT-LOST-WHILE-OPENING). Enabled from the start, an Enter
+  // pressed before the handler existed submitted the form natively, the
+  // frame's `form-action 'none'` blocked it, and the text was lost with no
+  // word — which is what a Firefox run in CI did.
+  '<body><h1>Notes</h1><form id="f"><input id="b" required disabled></form><ul id="l"></ul>',
   '<script type="module">',
   "const db = await window.dai.openDatabase();",
   'db.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)");',
@@ -32,6 +37,7 @@ const APP = [
   "  draw();",
   "};",
   "draw();",
+  "b.disabled = false;",
   "</script></body></html>",
 ].join("\n");
 
@@ -100,9 +106,13 @@ test.describe("dai build", () => {
     const app = page.frameLocator("iframe");
 
     // The heading is static HTML and renders even when the application never
-    // ran. The row cannot appear until SQLite has booted, and a cold runner
-    // takes longer than the default five seconds.
+    // ran, so it says nothing about whether the form can take input yet. Wait
+    // for what typing needs: the input enabled, which the app does only once
+    // SQLite has booted and the handler is attached. A cold runner takes longer
+    // than the default five seconds, and one that never boots fails here, by
+    // name, rather than swallowing what was typed.
     await expect(app.locator("h1")).toHaveText("Notes", { timeout: 20_000 });
+    await expect(app.locator("#b")).toBeEnabled({ timeout: 20_000 });
     await app.locator("#b").fill("Ring the dentist");
     await app.locator("#b").press("Enter");
     await expect(app.locator("li")).toHaveText("Ring the dentist", { timeout: 20_000 });
