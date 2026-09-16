@@ -1824,6 +1824,18 @@ check refused the document. Fixed on the table's own statement, with a
 regression test for each half. A schema that ever worked rewrites to identical
 text, since any that hit this would have failed that same check.
 
+**D5's lesson, recurring.** This is the same family as D5: the compiler produces
+something that builds clean and will not open. It was reachable by any author who
+ordered a schema slightly differently, and the result was a silent, permanent,
+unopenable document. Nobody hit it because every schema in the repository put its
+shared tables where the gap before them held nothing else. The build-time
+load-it-twice check was already there and would have caught it at any time — but
+a build check only catches what some input exercises, and nothing produced the
+unusual shape until a new feature needed one. **A check is only as wide as the
+inputs that reach it**: when a compiler rule depends on where a statement sits,
+test the unusual placements on purpose rather than waiting for a feature to
+produce them.
+
 ### D14 — Two blind runs is not a rate
 
 The documentation's success test is a model building an app it has never seen
