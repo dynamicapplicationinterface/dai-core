@@ -47,6 +47,7 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 
 ## Sessions
 
+- `window.dai.reportWaiting(sessions)` — Tells the host which sessions (hex) wait on this person, such as the games where it is their turn. The host uses the latest report to badge the home-screen icon when a move arrives while the app is closed. Send the whole set whenever it may have changed: at start-up, after a merge, after this person's move. The badge is a hint between opens, not a count to rely on.
 - `window.dai.replicated.session.create()` — Starts a session: seats this copy and leaves one open seat. Returns { session, seat } as hex.
 - `window.dai.replicated.session.join(session, seat)` — Binds this copy to an open seat. Call it when this copy opens an invite (SESSION-JOIN-ON-OPEN).
 - `window.dai.replicated.session.close(session)` — Closes a session at what this copy has seen. Throws CLOSE\_NOT\_PERMITTED for a non-creator under close=creator.

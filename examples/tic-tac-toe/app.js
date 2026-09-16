@@ -281,7 +281,18 @@ function drawNamesConflict(game) {
   }
 }
 
+/**
+ * Tells the host which games wait on this player, so the home-screen icon can
+ * say so when a move arrives while the app is closed. The whole set, every
+ * time: a game drops out of it the moment this player moves.
+ */
+function reportWaiting() {
+  if (typeof window.dai.reportWaiting !== "function") return;
+  window.dai.reportWaiting(games().filter((g) => state(g).canPlay).map((g) => g.session));
+}
+
 function draw() {
+  reportWaiting();
   drawGameList();
   const game = activeGame();
   $("play").hidden = !game;

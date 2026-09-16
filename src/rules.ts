@@ -859,6 +859,13 @@ export const SURFACE: readonly SurfaceEntry[] = [
     anchor: { file: "src/runtime/bootloader.ts", contains: "requestShare: (session?: string) =>" },
   },
   {
+    call: "window.dai.reportWaiting(sessions)",
+    does:
+      "Tells the host which sessions (hex) wait on this person, such as the games where it is their turn. The host uses the latest report to badge the home-screen icon when a move arrives while the app is closed. Send the whole set whenever it may have changed: at start-up, after a merge, after this person's move. The badge is a hint between opens, not a count to rely on.",
+    shapes: SESSION,
+    anchor: { file: "src/runtime/bootloader.ts", contains: "reportWaiting: (sessions: unknown) =>" },
+  },
+  {
     call: "window.dai.replicated.insert(table, values, session?)",
     does:
       "Creates a shared row and returns its entity (32 hex characters). values is an object of your own columns. In a session document, session (hex) is required.",

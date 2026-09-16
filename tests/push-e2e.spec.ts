@@ -479,3 +479,149 @@ test("an opener update keeps push; removing the document releases it", async ({ 
 
   await context.close();
 });
+
+/**
+ * The home-screen badge (backlog D34): how many games wait on this player,
+ * set by the service worker when a move arrives while the app is closed.
+ *
+ * What the icon itself shows is the operating system's, and no test can see
+ * it: this reads what the worker gave it, which it keeps beside the reason
+ * (the dai_badge store), and badge.js's own tests cover the call to the API.
+ * Per-install icons are a phone check: on a phone each home-screen install has
+ * its own storage, so only that install's worker ever runs for its pushes.
+ */
+test("the badge counts games waiting on this player, clears on open and after a move, and a push that is not a new turn does not raise it", async ({ browser }) => {
+  test.slow();
+  const { context: ctxA, page: pageA } = await device(browser, "eve");
+  const { context: ctxB, page: pageB } = await device(browser, "fay");
+  const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+
+  // Eve starts a game, moves, and invites Fay. It is Fay's turn.
+  await pageA.goto(RUNNER_URL);
+  await pageA.setInputFiles("#file", container);
+  await pageA.locator("#card-open").click();
+  const appA = appIn(pageA);
+  await expect(appA.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+  await appA.locator("#you").fill("Eve");
+  await appA.locator("#them").fill("Fay");
+  await appA.locator("#new-game button[type=submit]").click();
+  await expect(appA.locator("#players")).toContainText("Fay (O)", { timeout: 30_000 });
+  await cell(appA, 0).click();
+  await expect(cell(appA, 0)).toHaveText("X");
+  await pageA.evaluate(({ base, key }) => {
+    (window as any).__runner.useRelay(base);
+    (window as any).__runner.usePush(key);
+  }, { base: relay.base, key: vapid.publicKey });
+  await pageA.evaluate(() => {
+    (window as any).__copied = undefined;
+    navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+  });
+  const already = new Set(relay.appended);
+  await appA.locator("#invite").click();
+  await pageA.click("#send-go");
+  await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+  const link = await pageA.evaluate(() => (window as any).__copied as string);
+  await expect.poll(() => [...relay.appended].filter((a) => !already.has(a)).length, { timeout: 45_000 }).toBe(1);
+  const [address] = [...relay.appended].filter((a) => !already.has(a));
+  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(1);
+
+  await pageB.goto(link);
+  await pageB.locator("#card-open").click({ timeout: 60_000 });
+  const appB = appIn(pageB);
+  await expect(appB.locator("#status")).toContainText("Your move, Fay.", { timeout: 60_000 });
+  await pageB.evaluate(({ base, key }) => {
+    (window as any).__runner.useRelay(base);
+    (window as any).__runner.usePush(key);
+  }, { base: relay.base, key: vapid.publicKey });
+  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(2);
+
+  /** Eve's badge entries, read from a page on the opener's origin that is not the opener. */
+  const entries = async () => {
+    const reader = await ctxA.newPage();
+    await reader.goto(`${RUNNER_URL}icons/icon-192.png`);
+    const all = await reader.evaluate(
+      () =>
+        new Promise<{ uuid: string; waiting: string[]; moved: string[]; shown: number }[]>((resolve) => {
+          const open = indexedDB.open("dai_badge", 1);
+          open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+          open.onsuccess = () => {
+            const get = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
+            get.onsuccess = () => {
+              resolve(get.result);
+              open.result.close();
+            };
+          };
+        }),
+    );
+    await reader.close();
+    return all;
+  };
+
+  // Eve's own report, while her app is open: it is not her turn, so nothing waits.
+  await expect.poll(async () => (await entries()).map((e) => [e.waiting.length, e.shown]), { timeout: 30_000 }).toEqual([[0, 0]]);
+  const [{ uuid }] = await entries();
+
+  // Eve closes the app. Fay moves: a legitimate turn, and the count rises to 1.
+  await pageA.close();
+  await cell(appB, 4).click();
+  await expect(cell(appB, 4)).toHaveText("O");
+  await expect.poll(async () => (await entries())[0]?.shown, { timeout: 45_000 }).toBe(1);
+  const session = (await entries())[0]!.moved[0]!;
+  expect(session).toMatch(/^[0-9a-f]{32}$/);
+  await relay.settled();
+
+  // Eve opens it: the badge clears, and her app reports the game waiting on her.
+  const again = await ctxA.newPage();
+  await again.goto(`${RUNNER_URL}#u=${uuid}`);
+  const appAgain = appIn(again);
+  await expect(appAgain.locator("#board")).toBeVisible({ timeout: 60_000 });
+  await again.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  await expect(async () => {
+    await again.evaluate(() => (window as any).__runner.pullMailbox());
+    await expect(cell(appAgain, 4)).toHaveText("O", { timeout: 2_000 });
+  }).toPass({ timeout: 45_000 });
+  await expect.poll(async () => (await entries()).map((e) => ({ waiting: e.waiting, moved: e.moved, shown: e.shown })), { timeout: 30_000 })
+    .toEqual([{ waiting: [session], moved: [], shown: 0 }]);
+
+  // Guard: while it is Eve's turn, Fay renames the game. The mailbox moves and
+  // the push is real, but it is not a new turn: the game already waits, so the
+  // count stays at the one game waiting, not two.
+  const cursorRead = async () =>
+    again.evaluate(
+      (a) =>
+        new Promise<string>((resolve) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
+            all.onsuccess = () => resolve(String((all.result as { address?: string; cursor?: string }[]).find((r) => r.address === a)?.cursor ?? ""));
+          };
+        }),
+      address!,
+    );
+  const head = async () => (await fetch(`${relay.base}/${address}/head`)).text();
+  await expect.poll(async () => (await cursorRead()) === (await head()), { timeout: 30_000 }).toBe(true);
+  await again.close();
+  pushes.length = 0;
+  await appB.locator("#rename").click();
+  await appB.locator("#rename-x").fill("Evelyn");
+  await appB.locator("#rename-form button[type=submit]").click();
+  await expect.poll(() => pushes.filter((p) => p.device === "eve" && p.delivered).length, { timeout: 45_000 }).toBeGreaterThan(0);
+  await relay.settled();
+  await expect.poll(async () => (await entries())[0]?.moved, { timeout: 30_000 }).toEqual([session]);
+  expect((await entries())[0]!.shown, "a push for a game already waiting must not count it twice").toBe(1);
+
+  // Eve opens it and moves: after her own move nothing waits, and the badge is clear.
+  const third = await ctxA.newPage();
+  await third.goto(`${RUNNER_URL}#u=${uuid}`);
+  const appThird = appIn(third);
+  await expect(appThird.locator("#board")).toBeVisible({ timeout: 60_000 });
+  await expect.poll(async () => (await entries())[0]?.shown, { timeout: 30_000 }).toBe(0);
+  await expect(cell(appThird, 8)).toBeEnabled({ timeout: 30_000 });
+  await cell(appThird, 8).click();
+  await expect(cell(appThird, 8)).toHaveText("X");
+  await expect.poll(async () => (await entries()).map((e) => ({ waiting: e.waiting, shown: e.shown })), { timeout: 30_000 })
+    .toEqual([{ waiting: [], shown: 0 }]);
+
+  for (const c of [ctxA, ctxB]) await c.close();
+});

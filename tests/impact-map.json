@@ -81,6 +81,10 @@
       "tests/attachments.spec.ts",
       "tests/open.ts"
     ],
+    "tests/badge-count.spec.ts": [
+      "apps/runner/public/badge.js",
+      "tests/badge-count.spec.ts"
+    ],
     "tests/blind-agreement.spec.ts": [
       "apps/runner/",
       "src/bundle.ts",

@@ -57,7 +57,18 @@ const PUSH_ONLY = new URL(self.location.href).searchParams.has("push");
 // all" has to include that document. It is the largest thing precached by a
 // long way, which is the trade: a megabyte once, against every thin document
 // afterwards opening offline.
+/*
+ * The badge count, decided in the one file the page loads too (backlog D34).
+ * Imported at the top level, so the browser keeps it with this worker's version.
+ */
+try {
+  importScripts("./badge.js");
+} catch {
+  /* No badge, then; every push still ends in its notification. */
+}
+
 const PRECACHE = [
+  "./badge.js",
   // "./" and not "./index.html": the host answers the second with a redirect
   // to the first, and a *redirected* response stored here and later served
   // for a navigation is one Safari refuses outright — "Response served by
@@ -426,6 +437,18 @@ async function handlePush() {
       const pages = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const page of pages) page.postMessage({ type: "dai:mailbox-moved" });
       const onScreen = await showing(uuid);
+
+      /*
+       * The icon's badge (D34), only for something new and only when nobody is
+       * looking at the document. The game is the session this lane carries,
+       * or, for a lane from before per-game mailboxes, the mailbox itself.
+       * Never in the way of the notification below: a badge that fails is a
+       * badge not shown.
+       */
+      if (fresh && !onScreen && self.daiBadge) {
+        const game = String(record.documentUuid || "").split("/")[1] || address;
+        await self.daiBadge.pushed(uuid, game).catch(() => {});
+      }
       const name = await documentName(uuid);
       const data = { url: `/#u=${uuid}` };
 

@@ -789,6 +789,54 @@ correct — nothing calls `setAppBadge` anywhere in the opener.** The absence is
 this entry, not a setting anybody can turn on: iOS exposes a badge switch per
 app, but a web app's badge only renders when the page or its worker sets one.
 
+**Built.** The count is decided in one file, `apps/runner/public/badge.js`,
+which the service worker loads with `importScripts` and the opener's page loads
+with a script tag.
+
+- **The report.** `window.dai.reportWaiting(sessions)` in the runtime: the
+  sessions waiting on this person, sent whole every time it may have changed.
+  Only session ids pass the frame. The opener keeps the latest report per
+  document in its own IndexedDB store, `dai_badge`, and clears the icon, since
+  the person is looking. Tic-tac-toe reports the games where it is your move.
+- **The push.** For something new, with the document not on screen, the worker
+  adds that game to the games that moved since the report, and sets the badge to
+  the number of distinct games in either set. The game is the lane's session,
+  or for a lane from before per-game mailboxes, the mailbox. The notification
+  is unchanged and still always shown, and a badge failure never gets in its
+  way.
+- **Open.** Mounting a document clears what moved and clears the icon. The
+  app's next report replaces the remembered part.
+- **A store of its own,** not a field on the mailbox record: the open app writes
+  its lane's whole record back on every save, which would erase anything the
+  worker had added.
+- Each entry keeps `shown`, the number last given to the icon, beside the sets it
+  came from, so a trace can read both.
+
+**Tests.**
+- `tests/badge-count.spec.ts` loads the real `badge.js`, not a copy. A move for a
+  game not waiting raises the count, and two games show 2. A push for a game
+  already waiting does not raise it, and a game moving twice counts once. The
+  report replaces what moved, opening clears it, and one document's entry
+  leaves another's alone. The API is called to set and clear, and where it is
+  absent, throws, or rejects, nothing throws.
+- `tests/push-e2e.spec.ts`, "the badge counts games waiting on this player", with
+  the real relay and worker:
+  - The app is closed and the other player moves: 1.
+  - The app is opened: cleared, and the game is reported as waiting.
+  - Closed again, the other player renames the game during this player's turn.
+    The push is real, but not a new turn: still 1, not 2.
+  - The app is opened and this player moves: nothing waits, cleared.
+- Proven to fail for the reason each guards:
+  - Counting without de-duplication gives 2 at the rename, and two unit tests fail.
+  - The worker not recording a push leaves 0 where 1 is expected.
+  - The opener not recording opens or reports leaves no entry at all.
+
+**Not covered, and said so.** No test can see the icon: they read what the worker
+gave it. Per-install icons (a push for A badges only A's icon) rest on each
+home-screen install having its own storage, which is a phone check. So is iOS
+rendering the badge at all, and Android showing a dot. The Request example does
+not report yet, so its icon counts "something new", not "waiting on you".
+
 So the blocker is gone and the decision is made; what is left is the two lines
 in the push handler, the `window.dai` surface for the app to report its count,
 and the five tests above — including the guard-both-ways one, which is what

@@ -2408,6 +2408,20 @@ function bridgeMain(): void {
       const invite = typeof session === "string" && /^[0-9a-f]{32}$/i.test(session) ? session.toLowerCase() : undefined;
       window.parent.postMessage({ type: "dai:request-share", ...(invite ? { session: invite } : {}) }, "*");
     },
+    /*
+     * Which games wait on this person: the sessions (hex) where it is their
+     * turn, or where anything else asks for them. The host keeps the latest
+     * report to badge the document's home-screen icon when a push lands while
+     * the application is not running (backlog D34). Report the whole set every
+     * time it may have changed: on start-up, after a merge, after this
+     * person's own move. An empty list says nothing waits.
+     */
+    reportWaiting: (sessions: unknown) => {
+      const list = Array.isArray(sessions)
+        ? sessions.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/i.test(s)).map((s) => s.toLowerCase())
+        : [];
+      window.parent.postMessage({ type: "dai:waiting", sessions: list }, "*");
+    },
   };
 
   (window as unknown as Any).dai = api;
@@ -3433,7 +3447,7 @@ async function boot(): Promise<void> {
       return;
     }
 
-    const relay = event.data as { type?: string; id?: string; session?: unknown };
+    const relay = event.data as { type?: string; id?: string; session?: unknown; sessions?: unknown };
     // Asked for by the application as it starts, and answered with whatever
     // the host has said so far.
     if (event.source === frame.contentWindow && relay?.type === "dai:insets?") {
@@ -3565,6 +3579,16 @@ async function boot(): Promise<void> {
       const session =
         typeof relay.session === "string" && /^[0-9a-f]{32}$/.test(relay.session) ? relay.session : undefined;
       window.parent.postMessage({ type: "DAI_HOST_REQUEST_SHARE", sessionNonce, ...(session ? { session } : {}) }, "*");
+      return;
+    }
+
+    // The application's games waiting on this person (D34). Only session ids
+    // pass, and never more than a document could hold: nothing else rides along.
+    if (event.source === frame.contentWindow && relay?.type === "dai:waiting") {
+      const sessions = Array.isArray(relay.sessions)
+        ? (relay.sessions as unknown[]).filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)).slice(0, 256)
+        : [];
+      window.parent.postMessage({ type: "DAI_HOST_WAITING", sessionNonce, sessions }, "*");
       return;
     }
 

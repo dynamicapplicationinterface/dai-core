@@ -131,6 +131,13 @@ let appTag = document.head.querySelector<HTMLMetaElement>('meta[name="theme-colo
 let declaredGround: string | undefined;
 /** The open document, for remembering its colour; and its identity, when iOS has one to describe. */
 let mountedUuid: string | undefined;
+
+/** The badge count, from `/badge.js`, which the service worker loads too (D34). Absent if that script did not load. */
+interface DaiBadge {
+  opened(uuid: string): Promise<unknown>;
+  reported(uuid: string, sessions: string[]): Promise<unknown>;
+}
+const badge = (): DaiBadge | undefined => (globalThis as unknown as { daiBadge?: DaiBadge }).daiBadge;
 let describedIdentity: Identity | undefined;
 /** A colour and nothing else: it goes into a style property and a meta tag on this page. */
 const COLOUR = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/]+\)|[a-z]{3,20})$/i;
@@ -824,6 +831,8 @@ async function mount(cartridge: Cartridge): Promise<void> {
   const { theme } = describeApp(indexHtmlOf(cartridge));
   declaredGround = theme;
   mountedUuid = cartridge.manifest.documentUuid;
+  // The person is looking at the document: nothing on its icon is news (D34).
+  void badge()?.opened(cartridge.manifest.documentUuid).catch(() => undefined);
   if (theme) settleGround(theme);
   else {
     // Not declared: what this device remembers, or what the link it came by
@@ -2208,6 +2217,18 @@ window.addEventListener("message", (event) => {
     // Checked again here: a malformed one is ignored, never guessed at.
     const session = typeof data.session === "string" && /^[0-9a-f]{32}$/.test(data.session) ? data.session : undefined;
     void sendDocument(session);
+  } else if (data.type === "DAI_HOST_WAITING") {
+    /*
+     * The application's count of games waiting on this person (D34), kept for
+     * the service worker to badge the icon from when a push lands and the
+     * application is not running. Only well-formed session ids are kept, and
+     * the badge is cleared: this is reported while the person is looking.
+     */
+    if (!fromMountedContainer(event, data)) return;
+    const sessions = Array.isArray(data.sessions)
+      ? (data.sessions as unknown[]).filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s))
+      : [];
+    if (mountedUuid) void badge()?.reported(mountedUuid, sessions).catch(() => undefined);
   } else if (data.type === "DAI_HOST_WRITE_RULES_REFUSED") {
     /*
      * The rules were delivered and the frame would not adopt them.
