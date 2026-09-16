@@ -1014,6 +1014,29 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+### D42 — The opener's card makes a stronger claim about an unsigned document than it means
+
+Open, not designed. The card is the first thing a stranger sees, before the
+document itself, and for every unsigned document it says **"Not signed" in
+orange** on the "Made by" row. Both the word and the color read as a warning.
+What it actually means is narrower: nobody has put a name to this build. The
+document is still verified and runs in the same sandbox as any other. Every
+example and every demo built without a signing key opens this way.
+
+The question to settle: what the card should say about an unsigned document,
+and what it should look like. The wording should state what is and is not
+known, with no more alarm than that warrants. Signed and unsigned should still
+be distinguishable at a glance.
+
+In the same entry: once a document is open, the **"Enter App Mode" chip sits
+over the bottom right corner of the application**, covering whatever the app
+puts there. That is the same kind of problem, the host's own UI changing a
+stranger's first look at somebody else's document.
+
+Where: the wording is in `apps/runner/src/card.ts` ("Not signed" in the facts
+row, and a longer "Not signed — anyone could have made this." elsewhere on the
+card). The chip is `#dai-app-mode` in the runtime template.
+
 ### D41 — A library write outside the save lock can rewind the save counter
 
 Found reading the trace of the one CI failure on `907eea6` (chromium,
