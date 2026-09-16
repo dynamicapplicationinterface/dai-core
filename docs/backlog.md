@@ -936,6 +936,46 @@ preventable. **One replica never gets the power to destroy another's copy.**
 Stated here in those words because the next person to touch it will assume
 ejection should propagate.
 
+## The shape that keeps recurring — one thing carrying two identities
+
+Three defects this week, filed separately because they were found separately,
+are one shape. Recorded here as a pattern rather than split across three
+entries, because the codebase clearly has a habit and the next instance will
+not announce itself as a member of the family.
+
+- **D36 — `savedAt` means both "when this was written" and "what it has seen".**
+  A copy that only opened and saved outranks a real move made elsewhere.
+- **D37 — a key means both "this document" and "this game".** Two people who
+  each invited first derived different mailbox addresses and published moves
+  the other never read.
+- **D41 — a lock spelled two ways is two identities for one lock.** The save
+  path took `dai:<uuid>` under a local alias, so a guard reading the source
+  reported it as unlocked and every writer that should have held it looked
+  unprotected.
+
+**What they share.** One stored value, or one name, standing for two facts.
+Nothing throws. Each half of the meaning is individually correct, so no
+assertion about the *value* catches it — D36's clock is a real clock, D37's key
+opens a real mailbox, D41's alias takes a real lock. The failure appears only
+where the two meanings diverge, and by then the symptom is two copies
+disagreeing, or a guard reporting the opposite of the truth.
+
+**Why it is hard to see.** Each one reads perfectly at the line where it is
+written. The ambiguity lives between two call sites that never appear on the
+same screen.
+
+**What has actually caught instances.** Not unit tests on values. A test over
+the *shape* (`library-record.spec` reads every library write), a breadcrumb that
+prints which of the two meanings is in play (the lane line names whether an
+address came from the game's key or the document's), and a guard that fails when
+a second spelling appears. When an instance is found, the fix is to collapse the
+two meanings into one — one spelling, one owner — never to teach the checker
+about the second.
+
+**The question to ask of a new stored field or name:** can this be read as two
+different facts by two different callers? If so, either split it into two fields
+or give it one owner, before it is written twice.
+
 ### D41 — A library write outside the save lock can rewind the save counter
 
 Found reading the trace of the one CI failure on `907eea6` (chromium,
