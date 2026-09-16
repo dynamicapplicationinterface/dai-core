@@ -1913,6 +1913,20 @@ bucket configuration:
 — and the list should show sixteen `shared-documents-90-days-<digit>` rules and
 no rule with an empty prefix.
 
+**Applied, 16 September 2026**, through the Cloudflare dashboard rather than
+wrangler: the bucket's Object lifecycle rules. The old empty-prefix rule was
+deleted first, so nothing could expire while the replacements went in. Checked
+from screenshots of the whole list:
+- sixteen rules, `shared-documents-90-days-0` to `-f`, with prefixes `0` to `f`;
+- each deletes objects after 90 days and aborts uploads after 1 day;
+- every rule is Enabled;
+- no rule has an empty prefix, and none matches `mailbox`;
+- no bucket lock rules.
+
+The `e` rule was missed on the first pass and added once the list was read back.
+That is the reason to read the applied list rather than trust the steps. Mailbox
+batches no longer expire. Retention itself is still open, below.
+
 **What stays open: retention must be decided deliberately.** Keeping every batch
 for ever is safe while the question is open and is not an answer. The decision
 is how long a mailbox keeps its history, and what a copy that arrives after that
