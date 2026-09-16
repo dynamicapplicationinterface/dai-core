@@ -976,6 +976,44 @@ about the second.
 different facts by two different callers? If so, either split it into two fields
 or give it one owner, before it is written twice.
 
+## The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
+
+Three instances in one week, found in three different kinds of check. Recorded as
+one pattern because each looked like a different accident and none of them was.
+
+- **A probe that could not tell "nothing" from "I could not look" (D37).** It
+  returned an empty list when a dynamic import failed, then when it guessed a
+  database name, then a version. Each empty result read as a finding about the
+  product. The rule that came out of it is in D37: a probe must be able to say
+  it failed.
+- **A tier that passes by running nothing (D40).** `test:commit` on a clean tree
+  prints "nothing a spec reaches changed" and exits 0. The green means no spec
+  was asked, not that none failed.
+- **A test that agreed by accident (D15).** "A refused write left nothing
+  behind" is a claim about the rows *this copy* wrote; the assertion counted the
+  whole table. It passed locally because the relay had not delivered the other
+  party's legitimate rows yet — a reason with nothing to do with whether a
+  refused write leaves anything. In CI the relay had delivered, and it failed on
+  a feature that was working.
+
+**What they share.** Each check produced the answer its author expected, for a
+reason other than the one it was written to test. That is why they are dangerous
+rather than merely wrong: a check that fails for the wrong reason gets
+investigated, and a check that passes for the wrong reason gets trusted.
+
+**What has caught them.** Not a second look at the green. In every case, making
+the check produce its *other* answer on purpose: forcing the probe to report its
+own failure; asking what a tier ran rather than what it returned; and, for the
+roles test, putting the broken assertion back with delivery forced and
+reproducing CI's exact failure locally — which turned "I think this is why" into
+"this is why". A check has only been proven when it has been seen to go red for
+the reason it claims to guard, and green when that reason is absent.
+
+**The question to ask of a passing check:** what else would make this pass? If
+the honest answer is "the thing it checks for not having happened *yet*" — a
+relay not delivered, a module not loaded, a spec not selected — the check is
+agreeing by accident.
+
 ### D41 — A library write outside the save lock can rewind the save counter
 
 Found reading the trace of the one CI failure on `907eea6` (chromium,
