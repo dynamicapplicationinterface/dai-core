@@ -71,6 +71,21 @@ export interface LibraryItem {
    */
   savedAt?: string;
   /**
+   * The last point this copy is known to have matched another: the copy it
+   * last took in, or last sent out with its data, by that copy's own stamp and
+   * its database's digest (backlog D36).
+   *
+   * Kept apart from `savedAt` because they are two facts. `savedAt` moves on
+   * every save, including a save that changed nothing a person did, and read
+   * as "what this copy has seen" it let an untouched copy outrank a real move
+   * made elsewhere. What a copy has seen moves only when a copy arrives or
+   * leaves. See `src/copy-choice.ts`.
+   */
+  matchedAt?: string;
+  matchedDigest?: string;
+  /** Digests of the databases this copy has held here, oldest first, so a link it sent can be recognized when it comes back. */
+  history?: string[];
+  /**
    * Links this device made through the store for the document, with the
    * token that retires each. Kept so the person who shared can unshare.
    */

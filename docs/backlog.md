@@ -636,6 +636,63 @@ silent pick. It also asserts the ordinary case still works, a link that really
 is newer arriving at a copy that saw nothing since, and the old case still
 holds, an older link not rolling a copy back.
 
+**Built.** The decision is `src/copy-choice.ts`, a pure function the opener calls
+for a non-replicated document it already holds.
+
+- **Two facts, kept apart.** `savedAt` stays "when this copy last wrote". New:
+  `matchedAt` and `matchedDigest`, the last point this copy is known to have
+  matched another, by that copy's stamp and the SHA-256 of its database. A match
+  is a copy taken in, or a copy sent out with its data (a share or Save a copy).
+  And `history`, the digests of the last 64 databases this copy held, so a link
+  it sent can be recognized when it comes back.
+- **The decision.** The arriving database is this copy's own, now or in its
+  history: keep. Stamped at or before the last match: keep, and say it is
+  older. Nothing written here since the match: take. Otherwise the two diverged:
+  nothing is mounted, nothing stored is touched, and the person is told, with a
+  console line (`dai: refused to choose between diverged copies`) for traces.
+- **The open-time save, handled where the fact lives.** A document built
+  without a database gets its schema on first open, and that is saved like any
+  write. In bytes it is indistinguishable from a person's first change, which
+  is D36 itself. The runtime ran that SQL and watches every write after it, so
+  each save now carries `setup: true` when nothing but the document's own SQL
+  has changed the database since it opened. A setup save with nothing else
+  written since the match becomes part of the match. That is a runtime change:
+  host `8ac573b9edac5cc7`.
+- **A breadcrumb on every choice:** `dai: copy choice for <uuid>: take|keep|diverged`,
+  with the stamps and whether this copy changed since the match.
+- A record from before this has no match. It is decided by the old rule once,
+  and its first open under this code records one.
+
+**What this still cannot see, stated.** The arriving copy carries a stamp and a
+database, not where it came from. "Further along" means "later than the last
+match", not "descended from it". A copy sent out and then answered by someone
+who started from an older copy instead still reads as further along and is
+taken. That is the old behavior, not a new loss. Making it exact means the
+arriving copy carries its own lineage, which is a format change and is not
+ruled.
+
+**Tests, forced rather than waited for** (`returning-document.spec.ts`, "two
+copies of a document that cannot merge"; the test app has a Save now button
+that saves without changing anything):
+- A no-op save landing between her share and his following the link: her move
+  opens. With the old `savedAt` rule put back, this test gets "no moves", D36's
+  exact loss, every run.
+- Both changed since they matched: refused, the refusal is shown, and his own
+  copy still opens with his move. Fails with the refusal removed.
+- A turn sent, answered, and followed with nothing written in between: taken,
+  with no refusal. Fails, as a false refusal, if a share is not recorded as a
+  match, and the no-op-save test fails the same way without the runtime's setup
+  flag. So the guard is proven silent on the legitimate cases as well as firing
+  on the divergence.
+- Unit cases for the decision and for what a save does to the match:
+  `tests/copy-choice.spec.ts`.
+
+The existing test "opening your own copy after they moved does not make yours
+look newer" used to start with him making a move of his own and expect hers to
+open over it. That was a genuine divergence asserted as a silent pick. Its setup
+now has him change nothing, which is the case its title describes; the
+divergence is the new test above.
+
 ### D35 — The same document held on two installs is correct but illegible
 
 Two invites to the same game can end up on two home-screen icons: two storage
@@ -1220,6 +1277,7 @@ part of the D37 change.
 | CI, run 34920744354 (15 Sep) | `mailbox-link-e2e`, forwarded invite (then line 542) | Device B's child frame is `about:blank` for the whole 60 s wait. B's *frame-side* breadcrumbs show the app ran: it adopted its replica and wrote saves 1 and 2. |
 | Local, 15 Sep | `returning-document:164` under load (1 in 6) | Same as the first row, and the trace's screenshots show the app on screen 0.7 s into the wait and still there at the timeout. |
 | Local, 15 Sep | `mailbox-link-e2e`, forwarded invite, under load (1 in 6; the run took 15.8 min) | Same as the second row, down to the frame-side breadcrumbs: replica adopted and saves 1 and 2 written within 1.5 s of Open. Screenshots show the chess board, with its "Your move" banner, on screen 2 s into the wait and still there at the failure. |
+| CI, run 35099758939 (16 Sep, `63e2d1e`) | `returning-document:189`, Firefox, failed and failed its retry | After a reopen, the opener logs "reopen mounted the stored database", and every frame snapshot stops at that moment. Screenshots show the app with "move1" on screen 22 s into the wait and still there at the 90 s timeout. The commit changed no runner or runtime code; the test passed 4 of 4 locally on Firefox, and the next run (`fb4c09f`, same code) was green. |
 
 | CI, run 34976234780 (15 Sep) | `d22-reopen:132` | After `page.reload()` the child reads `about:blank` for the whole 60 s wait, with a lone `about:srcdoc` at the failure. The breadcrumbs show the reopen right: "reopen mounted the stored database", then "replica kept (own copy): 8e53f4f1… -> 8e53f4f1…". So D22 did not recur, and the frame was lost. |
 | CI, run 34976234780 (15 Sep) | `returning-document:189` | The same shape as the first row: after the reopen the child reads `about:blank`, then drops out of view, while "reopen mounted the stored database" is logged. The test timed out at 90 s. |
@@ -1499,6 +1557,9 @@ closed`.
 - CI, chromium, two workers (14 September, run 34889745158):
   `host-profile.spec.ts:49`, the first test in its stretch to ask for a browser
   context, after four that never open a page.
+- CI, chromium (16 September, run 35100278196, `fb4c09f`): `runner.spec.ts:802`
+  and `viewport.spec.ts:58`, both on the first thing they do, both passed on
+  retry. The run is recorded as green with 2 flaky.
 - Locally, chromium, four workers (14 September, a push-tier run):
   `launch-card.spec.ts:211`. The first with any evidence: the error context
   carries the dead browser's own process log (pid 37192), and it was alive and

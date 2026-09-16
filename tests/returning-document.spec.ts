@@ -31,7 +31,7 @@ async function board(): Promise<string> {
   writeFileSync(
     join(dir, "index.html"),
     '<!doctype html><meta charset="utf-8"><meta name="description" content="A game by post">' +
-      '<p id="app">…</p><button id="move">Move</button>' +
+      '<p id="app">…</p><button id="move">Move</button><button id="save-now">Save now</button>' +
       '<script type="module">\n' +
       "const db = await window.dai.openDatabase();\n" +
       "const draw = () => {\n" +
@@ -43,6 +43,8 @@ async function board(): Promise<string> {
       "  db.exec({ sql: 'INSERT INTO moves (n, san) VALUES (?, ?)', bind: [next, 'move' + next] });\n" +
       "  draw();\n" +
       "};\n" +
+      // A save that changes nothing a person did: D36's open-time save, on demand.
+      "document.getElementById('save-now').onclick = () => window.dai.saveDatabase(db);\n" +
       "draw();\n" +
       "</script>",
     "utf8",
@@ -190,14 +192,12 @@ test.describe("a move sent back to somebody who has the app", () => {
     test.slow();
     const file = await board();
 
-    // He has the game and has played a move of his own, saved.
+    // Both start from the same file. Neither has changed anything.
     const his = await browser.newContext();
     const bob = await his.newPage();
     await open(bob, file);
-    await inside(bob).locator("#move").click();
-    await settled(bob);
 
-    // She moves after that, on her device, and sends it.
+    // She moves, on her device, and sends it.
     const hers = await browser.newContext();
     const alice = await hers.newPage();
     await open(alice, file);
@@ -216,12 +216,137 @@ test.describe("a move sent back to somebody who has the app", () => {
     await bob.goto("about:blank");
     await bob.goto(RUNNER_URL);
     await through(bob);
-    await expect(inside(bob).locator("#app")).toHaveText("move1");
+    await expect(inside(bob).locator("#app")).toHaveText("no moves");
 
     await bob.goto("about:blank");
     await bob.goto(link);
     await through(bob);
     await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
+    await his.close();
+  });
+});
+
+/**
+ * D36: which copy opens is decided by what each has seen, not whose clock ran
+ * last. Every case here forces its order on purpose. The bug was seen once in
+ * seven runs, when a save happened to land between a share and the link being
+ * followed, and a bug that cannot be provoked on demand gets found again
+ * instead of fixed.
+ */
+test.describe("two copies of a document that cannot merge", () => {
+  /** Resolves when the opener refuses to choose between two copies. */
+  function refusal(page: Page): Promise<string> {
+    return new Promise((resolve) => {
+      page.on("console", (message) => {
+        if (message.text().includes("dai: refused to choose between diverged copies")) resolve(message.text());
+      });
+    });
+  }
+
+  test("a save that changed nothing, landing between her share and his following it, does not outrank her move", async ({ browser }) => {
+    test.slow();
+    const file = await board();
+
+    const hers = await browser.newContext();
+    const alice = await hers.newPage();
+    await open(alice, file);
+    await inside(alice).locator("#move").click();
+    await settled(alice);
+    const link = await shareLink(alice);
+    await hers.close();
+
+    // His copy saves after her share and before her link: the losing order,
+    // forced. Nothing he did changed the data; his clock moved past her move.
+    const his = await browser.newContext();
+    const bob = await his.newPage();
+    await open(bob, file);
+    // Waited for as the host's own line: an explicit save does not touch the
+    // save-state label that `settled` reads.
+    const written = new Promise<void>((resolve) =>
+      bob.on("console", (message) => {
+        if (/^dai: save \d+ written$/.test(message.text())) resolve();
+      }),
+    );
+    await inside(bob).locator("#save-now").click();
+    await written;
+    await bob.waitForTimeout(600);
+    await expect(inside(bob).locator("#app")).toHaveText("no moves");
+
+    await bob.goto("about:blank");
+    await bob.goto(link);
+    await through(bob);
+    await expect(inside(bob).locator("#app")).toHaveText("move1", { timeout: 60_000 });
+    await his.close();
+  });
+
+  test("both changed since they last matched: neither is opened over the other, and he is told", async ({ browser }) => {
+    test.slow();
+    const file = await board();
+
+    const hers = await browser.newContext();
+    const alice = await hers.newPage();
+    await open(alice, file);
+    await inside(alice).locator("#move").click();
+    await inside(alice).locator("#move").click();
+    await settled(alice);
+    const link = await shareLink(alice);
+    await hers.close();
+
+    // He moves too, on his own copy, after her share: a real change she never saw.
+    const his = await browser.newContext();
+    const bob = await his.newPage();
+    await open(bob, file);
+    await inside(bob).locator("#move").click();
+    await settled(bob);
+
+    const refused = refusal(bob);
+    await bob.goto("about:blank");
+    await bob.goto(link);
+    await refused;
+    await expect(bob.locator("#report")).toContainText("both changed since they last matched", { timeout: 30_000 });
+    await expect(bob.locator("body")).not.toHaveClass(/loaded/);
+
+    // Nothing of his was touched: his own copy still opens with his move.
+    await bob.goto("about:blank");
+    await bob.goto(RUNNER_URL);
+    await through(bob);
+    await expect(inside(bob).locator("#app")).toHaveText("move1", { timeout: 60_000 });
+    await his.close();
+  });
+
+  test("a turn sent and answered, with nothing written in between, is taken without a question", async ({ browser }) => {
+    test.slow();
+    const file = await board();
+
+    // He moves and sends it.
+    const his = await browser.newContext();
+    const bob = await his.newPage();
+    await open(bob, file);
+    await inside(bob).locator("#move").click();
+    await settled(bob);
+    const toHer = await shareLink(bob);
+
+    // She opens his link, answers, and sends it back.
+    const hers = await browser.newContext();
+    const alice = await hers.newPage();
+    await alice.goto(toHer);
+    await through(alice);
+    await expect(inside(alice).locator("#app")).toHaveText("move1", { timeout: 60_000 });
+    await inside(alice).locator("#move").click();
+    await expect(inside(alice).locator("#app")).toHaveText("move1 move2");
+    await settled(alice);
+    const toHim = await shareLink(alice);
+    await hers.close();
+
+    // His copy changed (his move) since the file, but not since he sent it.
+    const refused = refusal(bob);
+    let wasRefused = false;
+    void refused.then(() => (wasRefused = true));
+    await bob.goto("about:blank");
+    await bob.goto(toHim);
+    await through(bob);
+    await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
+    expect(wasRefused, "a legitimate reply was refused as a divergence").toBe(false);
     await his.close();
   });
 });

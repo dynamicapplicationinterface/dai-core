@@ -16,6 +16,7 @@ import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } fr
 import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { declaresReplication, siblingTest, whyNotSibling } from "../../../src/sibling.js";
+import { afterSave, BLANK_DIGEST, chooseCopy, databaseDigest, remember } from "../../../src/copy-choice.js";
 import { confusables } from "./confusables.js";
 import { verifyIdentity } from "../../../src/identity.js";
 
@@ -1556,11 +1557,61 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const heldItem = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
     );
-    const brought =
-      Boolean(opfsDb && opfsDb.byteLength > 0) &&
-      arriving !== undefined &&
-      heldItem?.savedAt !== undefined &&
-      arriving > heldItem.savedAt;
+    /*
+     * Which copy opens is decided from what each has seen, not whose clock ran
+     * last (D36, src/copy-choice.ts). A save that changed nothing a person did
+     * used to move this copy's stamp past a real move made elsewhere, and the
+     * move was dropped with nothing said.
+     */
+    const incomingDb = cartridge.archive["document.sqlite"];
+    const hasStored = Boolean(opfsDb && opfsDb.byteLength > 0);
+    const localDigest = hasStored ? await databaseDigest(opfsDb!) : undefined;
+    const arrivingDigest = incomingDb && incomingDb.byteLength > 0 ? await databaseDigest(incomingDb) : undefined;
+    const decided =
+      hasStored && heldItem && localDigest !== undefined && arrivingDigest !== undefined
+        ? chooseCopy(heldItem, localDigest, { savedAt: arriving, digest: arrivingDigest })
+        : // Nothing stored here, or nothing arriving to compare: the old rule, which
+          // is all either case ever needed.
+          hasStored && arriving !== undefined && heldItem?.savedAt !== undefined && arriving > heldItem.savedAt
+          ? ({ kind: "take" } as const)
+          : ({
+              kind: "keep",
+              older: arriving !== undefined && heldItem?.savedAt !== undefined && arriving < heldItem.savedAt,
+            } as const);
+
+    /*
+     * Two copies that both changed since they last matched. Neither has seen
+     * the other, so there is no correct one to open, and opening either would
+     * drop the other's changes without a word. Nothing is mounted, nothing
+     * stored is touched, and the person is told what happened. The console
+     * line is what a test and a trace look for.
+     */
+    if (hasStored) {
+      // What the choice was made from, for a trace: the stamps, and whether
+      // each database is the matched one or this copy's own past.
+      console.info(
+        `dai: copy choice for ${cartridge.manifest.documentUuid.slice(0, 8)}: ${decided.kind}` +
+          ` (arriving ${arriving ?? "unstamped"}, matched ${heldItem?.matchedAt ?? "none"}, ` +
+          `here ${localDigest === heldItem?.matchedDigest ? "unchanged" : "changed"} since the match, ` +
+          `arriving ${arrivingDigest !== undefined && heldItem?.history?.includes(arrivingDigest) ? "is" : "is not"} this copy's own)`,
+      );
+    }
+    if (hasStored && decided.kind === "diverged") {
+      console.error(
+        `dai: refused to choose between diverged copies of ${cartridge.manifest.documentUuid}: both changed since they last matched`,
+      );
+      slot.classList.remove("busy");
+      const appName = cartridge.manifest.appName ?? "this document";
+      say(
+        `This link and the copy of ${appName} on this device were both changed since they last matched, so neither was opened over the other. ` +
+          `Nothing on this device was changed. To see what the link holds without replacing your copy, open it in a private window; ` +
+          `to keep one, agree with whoever sent it which copy goes on.`,
+        true,
+      );
+      return;
+    }
+
+    const brought = hasStored && decided.kind === "take";
 
     if (opfsDb && opfsDb.byteLength > 0 && !brought) {
       // Resuming this device's own held copy — a stored database for a UUID this
@@ -1573,7 +1624,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       markStep("preparing the document");
       loaded = await resealCartridge(cartridge, opfsDb);
       console.info(`dai: resumed this device's own copy from the stored database (${opfsDb.byteLength} bytes)`);
-      if (arriving !== undefined && heldItem?.savedAt !== undefined && arriving < heldItem.savedAt) {
+      if (decided.kind === "keep" && decided.older) {
         // Said rather than done silently: somebody who opened an older link
         // and saw their own game is owed the reason it did not change.
         say(
@@ -1633,6 +1684,13 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
          * one already recorded here, untouched.
          */
         savedAt: brought ? savedAtOf(cartridge) : (heldItem?.savedAt ?? savedAtOf(cartridge)),
+        /*
+         * The last match (D36). A copy taken in is a match, by its own stamp and
+         * database. So is the first copy this device ever holds: the file or link
+         * it came from. A resumed copy keeps the match it had; one with no match
+         * recorded, from before this existed, starts one here, at what it holds.
+         */
+        ...matchAfterOpen(keepItem, brought, hasStored, localDigest, arrivingDigest, arriving),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(kept.manifest.documentUuid),
@@ -1747,6 +1805,7 @@ async function exportContainer(): Promise<void> {
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const activeCartridge = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   loaded = activeCartridge;
+  if (opfsDb) await noteSentOut(activeCartridge, opfsDb);
 
   const name = activeCartridge.manifest.appName ?? "container";
   const fileName = `${name}.dai.html`;
@@ -1925,6 +1984,34 @@ function recordTimings(timings?: { phase: string; at: number }[]): void {
  * Absent on a document nobody has saved yet, which orders nothing and is why
  * every comparison here requires both sides to have one.
  */
+/**
+ * What an open does to a copy's record of its last match (D36). Taking a copy
+ * in, or holding a document for the first time, is a match with that copy.
+ * Resuming leaves the match alone, and starts one for a record that predates it.
+ */
+function matchAfterOpen(
+  held: LibraryItem | null | undefined,
+  brought: boolean,
+  hasStored: boolean,
+  localDigest: string | undefined,
+  arrivingDigest: string | undefined,
+  arrivingAt: string | undefined,
+): Pick<LibraryItem, "matchedAt" | "matchedDigest" | "history"> {
+  const tookIn = brought || !hasStored;
+  if (tookIn && arrivingDigest !== undefined) {
+    return { matchedAt: arrivingAt, matchedDigest: arrivingDigest, history: remember(held?.history, arrivingDigest) };
+  }
+  // Held for the first time, as built: no database yet. The match is the blank
+  // document, which the first open's setup save then fills in (afterSave).
+  if (!hasStored && held?.matchedDigest === undefined) {
+    return { matchedAt: arrivingAt, matchedDigest: BLANK_DIGEST, history: held?.history ?? [] };
+  }
+  if (held?.matchedDigest === undefined && localDigest !== undefined) {
+    return { matchedAt: held?.savedAt, matchedDigest: localDigest, history: remember(held?.history, localDigest) };
+  }
+  return { matchedAt: held?.matchedAt, matchedDigest: held?.matchedDigest, history: held?.history };
+}
+
 function savedAtOf(container: { manifest: Record<string, unknown> }): string | undefined {
   const at = container.manifest["savedAt"];
   return typeof at === "string" && at ? at : undefined;
@@ -2270,6 +2357,11 @@ window.addEventListener("message", (event) => {
             // device has no record of when its own copy was last written,
             // and an arriving copy cannot be told newer or older than it.
             savedAt: savedAtOf(loaded),
+            // Every database this copy has held, so a link it sends now can be
+            // recognized as its own when it comes back (D36). A save is a change
+            // since the last match, unless the runtime says it was only the
+            // document's own setup SQL, which every copy runs.
+            ...(held ? afterSave(held, await databaseDigest(bytes), data.payload?.setup === true) : {}),
             html: loaded.html,
             publicKeyFingerprint: loaded.publicKeyFingerprint,
             revision: next,
@@ -2737,7 +2829,24 @@ async function currentHtml(withData = true): Promise<string> {
   await flushDocument();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
+  if (opfsDb) await noteSentOut(current, opfsDb);
   return current.supplied.length > 0 ? refatten(current) : current.html;
+}
+
+/**
+ * A copy leaving with its data is a match (D36): whoever answers it starts from
+ * exactly this. Recorded as the copy that left, by its own stamp, so a reply
+ * made from it reads as further along, and a change made here after it left
+ * reads as this copy moving on.
+ */
+async function noteSentOut(sent: Cartridge, database: Uint8Array): Promise<void> {
+  const digest = await databaseDigest(database);
+  await amendLibraryRecord(sent.manifest.documentUuid, (held) => ({
+    ...held,
+    matchedAt: savedAtOf(sent),
+    matchedDigest: digest,
+    history: remember(held.history, digest),
+  }));
 }
 
 /**

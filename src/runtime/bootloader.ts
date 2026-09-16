@@ -1016,7 +1016,7 @@ function bridgeMain(): void {
     const db = autosaveDb;
     autosaveDb = null;
     tellSaveStatus("saving");
-    saving = saveState(exportDatabase(db), { method: "auto" }).then(
+    saving = saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }).then(
       (result: Any) => {
         saving = null;
         if (result && result.saved === false) throw new Error(String(result.method || "the host did not save"));
@@ -1067,6 +1067,23 @@ function bridgeMain(): void {
     }
     return `${changes}:${schema}`;
   };
+
+  /*
+   * The stored state just after the document's own SQL ran (D36).
+   *
+   * Opening a document writes to it before anyone does anything: the schema is
+   * created, seed rows go in, and that is saved like any other write. To a host
+   * that save looks exactly like a person's first change, so a copy that had
+   * done nothing read as a copy that had changed, and its clock moved past a
+   * real move made elsewhere. The runtime ran that SQL and watches every write
+   * after it, so it can say, as a fact about this handle, whether anything else
+   * has changed the database since.
+   */
+  let setupState: string | null = null;
+  const markSetupDone = (db: Any): void => {
+    setupState = storedState(db);
+  };
+  const setupOnly = (db: Any): boolean => setupState !== null && storedState(db) === setupState;
   /*
    * The SQL the document carries, run by the runtime and not by luck.
    *
@@ -1999,7 +2016,7 @@ function bridgeMain(): void {
    */
   const saveState = (
     bytes?: Uint8Array | null,
-    options?: { method?: "auto" | "picker" | "download" },
+    options?: { method?: "auto" | "picker" | "download"; setup?: boolean },
   ): Promise<Any> =>
     new Promise((resolve, reject) => {
       const id = Math.random().toString(36).slice(2);
@@ -2020,6 +2037,10 @@ function bridgeMain(): void {
           id: id,
           sqlite: bytes ? new Uint8Array(bytes) : null,
           method: (options && options.method) || "auto",
+          // Nothing but the document's own SQL has changed this database since
+          // it opened (D36). Said by the runtime, which ran that SQL and watches
+          // every write; a host cannot tell it from the bytes.
+          setup: Boolean(options && options.setup),
         },
         "*",
       );
@@ -2325,6 +2346,7 @@ function bridgeMain(): void {
           // Watched first, so the seed rows a first open inserts are saved.
           watched(db);
           runDocumentSql(db);
+          markSetupDone(db);
           return db;
         }
         // Closed before the error propagates: an application asking for a
@@ -2336,6 +2358,7 @@ function bridgeMain(): void {
           () => {
             watched(db);
             runDocumentSql(db);
+            markSetupDone(db);
             return db;
           },
           (error: Error) => {
@@ -2365,7 +2388,7 @@ function bridgeMain(): void {
       if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
       autosaveDb = null;
-      return saveState(exportDatabase(db), options);
+      return saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) });
     },
     saveState: saveState,
     /*
@@ -3550,6 +3573,7 @@ async function boot(): Promise<void> {
       id?: string;
       sqlite?: Uint8Array;
       method?: SaveMethod;
+      setup?: boolean;
     };
     if (request?.type !== SAVE_REQUEST) return;
 
@@ -3619,6 +3643,7 @@ async function boot(): Promise<void> {
                 html,
                 databaseBytes,
                 documentUuid: manifest?.documentUuid ?? "",
+                setup: request.setup === true,
               },
             },
             "*",
