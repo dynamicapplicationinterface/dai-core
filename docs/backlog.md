@@ -1814,6 +1814,111 @@ Sigstore signing flow at build time.
 
 ### Protocol changes
 
+#### D48 — Getting a player back into a game they are already in
+
+*Status: open — findings and a proposal; nothing ruled, nothing built.*
+
+**Seen.** A player in a Safari tab closed it and lost the link. Their data was
+intact in the opener's storage; only the address was gone. The other player tried
+to send them back in, and the only thing the app offered made a new game.
+
+**What the code says, which changes the diagnosis.** The SDK can already make a
+link to a session that exists. An invite is `window.dai.requestShare(session)`, and
+it mints nothing: `exportSession` filters the sender's document to that session's
+rows, and the link carries that game's key. Calling it again for a live game makes a
+link to the *same* game. The new game came from the chess app. Its Share button is
+shown only to the creator, and only until someone has joined
+(`tests/fixture/chess/app.js`: `$('share').hidden = !(seat && seat.amCreator &&
+!joined && …)`). After that, the only control left is Rematch, which creates a new
+session. So an app today *can* send someone back in; what is missing is a name and a
+meaning for doing it, so no app knows it should.
+
+**1. The acts, named.**
+
+| Act | What it means to a person | Exposed today |
+|---|---|---|
+| Start a game with someone | "Here is a new game; open it and you are the other player." | Yes: `session.create()`, then `requestShare(session)` |
+| Send a game again | "Here is our game; open it to get back to it." | Yes, unnamed: the same `requestShare(session)` on a live game |
+| Take a lost player's place back | "Your old device is gone; this puts you back in your seat, with your moves." | **No, and cannot be built on today's roster** (see 3) |
+| Hand a seat to someone else | "You play my side from now on." | No. It is transfer, parked under Transferable ownership |
+
+So there are four, and only the first two are possible. They are one call.
+
+**2. What an invite means.** One sentence: **a link to one game, carrying that game's
+rows and its key; opening it gives you the game, and gives you the open seat if one is
+still open.** Read that way, "start a game with you" and "here is the game again" are
+not two acts. They are the same link, and what it does depends on the recipient's
+state, which is where the two meanings the word "invite" was carrying come apart.
+That is the one-thing-two-meanings pattern again, living in the *name* and not the
+mechanism: the SDK and the documentation call it an invite, so apps treat it as
+"start". The call does not need splitting. Its meaning needs writing down, and
+"invite" is the wrong word for half of what it does.
+
+**3. What opening the link does, by recipient.**
+- **Holds the game (same browser, storage intact):** the arriving copy is a sibling
+  and merges (the second-invite path, already fixed), and the copy keeps its own
+  replica id, so the player is back. They may not need a link at all: opening
+  `opendai.app` in the same browser reopens the last open document
+  (`rememberOpen`, then `launchFromLibrary` at start-up), and held documents are
+  listed there. This case is a discoverability gap, not a missing primitive.
+- **Holds nothing (storage evicted, a different device, a different browser such as
+  a home-screen install versus a Safari tab):** this is the case that matters, and
+  today it cannot work.
+  - A player's identity in a game is the replica id that bound their seat, and it
+    lives only in that device's storage. A fresh copy has a new replica id.
+  - Opening the link gives the new copy the game's rows, but the seat is already
+    bound to the old replica, so there is no open seat. `joinIfInvited` joins only an
+    open seat, and the app shows the not-invited state. The rightful player is told
+    they were never invited.
+  - The one roster repair, `session.reseat`, runs only for a contested seat, is
+    refused for anyone but the creator, and by its own comment "drops every binding
+    to the old value … eject that joiner and vanish their moves". So even if the new
+    copy contested the seat and the creator reseated, the player's past moves would
+    stop being admitted.
+  - **If the lost player is the creator, nothing can be done.** Seats, reseat, close
+    under `close=creator`, and every `author=creator` table are bound to the creator's
+    replica id.
+  - What would make it work is a roster act that **admits a new replica as the
+    successor of a bound one, keeping the old replica's rows admitted.** That raises
+    the question the sentence cannot yet answer: who may say that the new device is
+    the same person? Today the only identity is possession of the old storage. An
+    answer needs a key the person holds apart from any one device, which is the same
+    missing key-holder identity Transferable ownership depends on. **Until that
+    exists, the honest behavior is to say so:** a copy that holds a game's rows, whose
+    seat is bound to a replica it is not, is told "this game's seat belongs to a
+    device this copy is not; that device's player can continue", not "you were not
+    invited".
+
+**4. Against D38.** Unchanged. D38's hard part is an offer that travels over the
+existing mailbox instead of by link, with its own consent. Sending a game again is
+already a link and already exists, so it takes nothing off D38. They share only the
+existing carrier.
+
+**5. The API surface.**
+- **No new call, and nothing in the frozen link format changes** for sending a game
+  again. It is `requestShare(session)` as it is, and every link already sent keeps
+  working.
+- **What changes is documentation and naming.** `SESSION-INVITE` and the reference
+  describe the call as the invite. They should state the sentence in 2, and name
+  sending a game again as a use of it, including that an app should keep offering it
+  after the other player has joined. A rename (for example an alias such as
+  `shareGame`) is possible but not needed, and it would be a second spelling of one
+  act, which D41 argues against.
+- **Taking a lost player's place back is a protocol change, stated loudly:** a new
+  roster row kind or rule and a change to the admission views, gated on a key-holder
+  identity that does not exist. It does not change the link format, but it changes
+  what the relay-less merge admits, and it cannot be built before the identity
+  question is answered.
+- **The not-invited message for a player whose seat is bound elsewhere** is a small,
+  honest change in the example apps and the documentation. It needs no protocol
+  change and could come first.
+
+**The rule this item is about.** The sentence for "start" and "send again" can be
+written, so those are ready: they are documentation. The sentence for "take a lost
+player's place back" cannot be finished until someone can say who is allowed to
+claim a seat, so that act is not ready to build.
+
+
 #### 6.2 A data-only carrier
 
 *Status: open.*
