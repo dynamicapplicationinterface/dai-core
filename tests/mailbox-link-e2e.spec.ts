@@ -640,6 +640,26 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // Resign is NOT a close: the match is not yet closed, so Close match offers.
     await expect(appA.locator("#close-match")).toBeVisible();
 
+    /*
+     * The retirement breadcrumb, held by this test (D41).
+     *
+     * A closed game's lane retires and releases its push subscription. When it
+     * did not, the only evidence was a subscription still standing at the relay,
+     * which "released the wrong address" and "never released at all" both
+     * produce. Captured from here, before the close, so the line is the one the
+     * close caused.
+     */
+    const retiredLines = (page: Page): string[] => {
+      const lines: string[] = [];
+      page.on("console", (message) => {
+        const text = message.text();
+        if (/^dai: lane [0-9a-f]{12} retired: /.test(text)) lines.push(text);
+      });
+      return lines;
+    };
+    const retiredA = retiredLines(pageA);
+    const retiredB = retiredLines(pageB);
+
     // A closes the match — a session act, separate button, only after the result.
     await appA.locator("#close-match").click();
     await appA.locator("#confirm-yes").click();
@@ -660,6 +680,14 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await expect(appB.locator("#move-step")).toContainText("MATCH CLOSED", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
     await expect(appB.locator("#move-history")).toContainText("e5");
+
+    // Both copies said their lane retired. Polled for rather than asserted at
+    // once, because retirement follows the last publish and pull, not the close.
+    await expect.poll(() => retiredA.length, { timeout: 30_000 }).toBeGreaterThan(0);
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      expect(retiredB.length, "the copy that learned of the close says its lane retired").toBeGreaterThan(0);
+    }).toPass({ timeout: 30_000 });
 
     await deviceA.close();
     await deviceB.close();

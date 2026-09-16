@@ -423,9 +423,30 @@ export function startMailboxSession(config: {
    * nothing above the watermark and nothing is pending), and the last pull has
    * run. Its record is kept, marked closed, so it does not start again.
    */
+  /*
+   * Why a closed game's lane has not retired, said once per reason (D41).
+   *
+   * Retirement is what releases a device's push subscription, and it used to
+   * fail silently: last night a copy's game closed, its lane never retired, and
+   * the only evidence was a subscription still standing at the relay — which
+   * "released the wrong address" and "never released at all" both produce. The
+   * reason is kept per lane so a stuck lane says what holds it once, rather
+   * than on every three-second tick, and says it again only if the reason
+   * changes.
+   */
+  const heldBack = new Map<string, string>();
+  const noteHeldBack = (lane: Lane, why: string): void => {
+    if (heldBack.get(lane.address) === why) return;
+    heldBack.set(lane.address, why);
+    note(`lane ${lane.address.slice(0, 12)} not retired: its game closed, but ${why}`);
+  };
+
   function retireIfDone(lane: Lane): void {
     if (lane.retired || lane.inboundOnly || !lane.session || !closed.has(lane.session)) return;
-    if (!lane.upToDate || lane.publishing || lane.state.pending) return;
+    if (lane.state.pending) return noteHeldBack(lane, "a batch is still waiting for the relay to acknowledge it");
+    if (lane.publishing) return noteHeldBack(lane, "a publish is still in flight");
+    if (!lane.upToDate) return noteHeldBack(lane, "this copy has not yet confirmed it has nothing left to send");
+    heldBack.delete(lane.address);
     lane.retired = true;
     lane.state = { ...lane.state, closed: true };
     save(lane);
@@ -533,7 +554,28 @@ export function startMailboxSession(config: {
        * where it was; the next pull fetches those batches again, and the merge
        * skips the rows it already has.
        */
-      if (config.persist && !(await config.persist())) return;
+      if (config.persist && !(await config.persist())) {
+        /*
+         * The silence last night's failure lived in (D41).
+         *
+         * Returning here skips `retireIfDone` below, so a copy whose saves are
+         * refused keeps its cursor, never retires a closed game's lane, and
+         * never releases its push. That is correct — the rows are not stored —
+         * but it happened without a word, and the trace showed only a
+         * subscription that would not go away. Said once per lane until a
+         * save lands.
+         */
+        const cursorKey = `${lane.address}#cursor`;
+        if (heldBack.get(cursorKey) !== "unsaved") {
+          heldBack.set(cursorKey, "unsaved");
+          note(
+            `lane ${lane.address.slice(0, 12)} cursor held at ${lane.state.cursor || "0"}: ` +
+              `what was read could not be saved on this device, so it will be read again`,
+          );
+        }
+        return;
+      }
+      heldBack.delete(`${lane.address}#cursor`);
       lane.state = { ...lane.state, cursor: next };
       save(lane);
     }
