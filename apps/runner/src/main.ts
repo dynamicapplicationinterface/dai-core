@@ -322,6 +322,45 @@ async function learnRevision(documentUuid: string): Promise<number> {
   return revision;
 }
 
+/**
+ * One writer at a time for a document's library record (backlog D41).
+ *
+ * The save path always held this lock, because two tabs each writing a whole
+ * database can interleave. Every other write — the keys, the shares, standing
+ * consent — read the record and wrote it back outside it, and a read that
+ * straddles a save's commit writes `revision` back to what it was before. The
+ * tab that saved has already moved its own `knownRevision` on, so from then on
+ * every save it makes reads as "another tab saved this" and is refused, for the
+ * life of that page. Nothing recovers it but a reopen.
+ *
+ * So it is one helper, used by every writer. Read the record *inside* the lock
+ * and write it there too: a read from outside is exactly the stale snapshot
+ * this exists to prevent.
+ */
+function withLibraryLock<T>(documentUuid: string, work: () => Promise<T>): Promise<T> {
+  const key = `dai:${documentUuid}`;
+  return navigator.locks?.request
+    ? navigator.locks.request(key, { mode: "exclusive" }, work)
+    : work();
+}
+
+/**
+ * Changes one document's library record under the lock, from a fresh read.
+ *
+ * `change` receives the record as it is at that moment and returns what to
+ * write. A document this device does not hold is left alone.
+ */
+async function amendLibraryRecord(
+  documentUuid: string,
+  change: (held: LibraryItem) => LibraryItem,
+): Promise<void> {
+  await withLibraryLock(documentUuid, async () => {
+    const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+    if (!held) return;
+    await saveCartridgeToLibrary(change(held)).catch(() => undefined);
+  });
+}
+
 function arrived(still: boolean): void {
   document.documentElement.classList.toggle("arriving", still);
 }
@@ -713,14 +752,26 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
      * the person gave the last time they were asked. The whole record is
      * carried now, and only what this write owns is overwritten.
      */
-    await saveCartridgeToLibrary({
-      ...item,
-      documentUuid: loaded.manifest.documentUuid,
-      appName: loaded.manifest.appName ?? "container",
-      lastOpened: new Date().toISOString(),
-      html: loaded.html,
-      publicKeyFingerprint: loaded.publicKeyFingerprint,
-      revision: await learnRevision(loaded.manifest.documentUuid),
+    /*
+     * Under the lock, and the revision learned inside it (D41).
+     *
+     * `learnRevision` reads the record and records what this tab believes;
+     * writing it back outside the lock lets a save commit in between, so the
+     * write rewinds `revision` while the saving tab has moved on — and every
+     * save that tab makes afterwards is refused as another tab's work.
+     */
+    const opened = loaded;
+    await withLibraryLock(opened.manifest.documentUuid, async () => {
+      const held = (await getCartridgeFromLibrary(opened.manifest.documentUuid).catch(() => null)) ?? item;
+      await saveCartridgeToLibrary({
+        ...held,
+        documentUuid: opened.manifest.documentUuid,
+        appName: opened.manifest.appName ?? "container",
+        lastOpened: new Date().toISOString(),
+        html: opened.html,
+        publicKeyFingerprint: opened.publicKeyFingerprint,
+        revision: await learnRevision(opened.manifest.documentUuid),
+      });
     });
 
     rememberOpen(loaded.manifest.documentUuid);
@@ -1554,7 +1605,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
        * whatever was added in between — the same shape of loss the note below
        * describes for standing consent and issued shares.
        */
-      const keepItem = (await getCartridgeFromLibrary(loaded.manifest.documentUuid).catch(() => null)) ?? heldItem;
+      const kept = loaded;
+      await withLibraryLock(kept.manifest.documentUuid, async () => {
+      // Read inside the lock, with the revision learned there too (D41): a
+      // record read outside it can be written back over a save that committed
+      // in between, rewinding the counter and refusing every later save.
+      const keepItem = (await getCartridgeFromLibrary(kept.manifest.documentUuid).catch(() => null)) ?? heldItem;
       await saveCartridgeToLibrary({
         // Standing consent and issued shares belong to the copy, not to this
         // write. See the note on the save path above.
@@ -1579,7 +1635,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         savedAt: brought ? savedAtOf(cartridge) : (heldItem?.savedAt ?? savedAtOf(cartridge)),
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
-        revision: await learnRevision(loaded.manifest.documentUuid),
+        revision: await learnRevision(kept.manifest.documentUuid),
+      });
       });
       keptOnDevice = true;
     } catch {
@@ -2158,11 +2215,18 @@ window.addEventListener("message", (event) => {
        * lock the second write can land under the first's reseal and the
        * library keeps a copy that matches neither.
        */
-      const key = `dai:${documentUuid}`;
+      /*
+       * The shared lock, not a second spelling of it (D41).
+       *
+       * This path had its own `locked` helper taking `dai:<uuid>` — the same
+       * lock `withLibraryLock` takes, under another name. One lock with two
+       * names is the shape that cost a night already: a guard reading the
+       * source cannot see that the two are the same, and every writer that
+       * should have been holding it looked unlocked. One spelling, so the rule
+       * is checkable.
+       */
       const locked = <T,>(work: () => Promise<T>): Promise<T> =>
-        navigator.locks?.request
-          ? navigator.locks.request(key, { mode: "exclusive" }, work)
-          : work();
+        withLibraryLock(documentUuid, work);
       /*
        * Held through the whole of it — the revision check, the database, the
        * reseal, the library — so no tab sees the database at one revision
@@ -3351,7 +3415,8 @@ async function documentRootKey(documentUuid: string): Promise<string | null> {
    */
   if (arrivedKey && !arrivedSession) {
     if (held && held.documentKey !== arrivedKey) {
-      await saveCartridgeToLibrary({ ...held, documentKey: arrivedKey }).catch(() => undefined);
+      // Under the lock, from a fresh read: see `withLibraryLock` (D41).
+      await amendLibraryRecord(documentUuid, (record) => ({ ...record, documentKey: arrivedKey }));
     }
     return arrivedKey;
   }
@@ -3370,8 +3435,9 @@ async function ensureDocumentKey(documentUuid: string): Promise<string> {
   const existing = await documentRootKey(documentUuid);
   if (existing) return existing;
   const key = mintKeyBase64Url();
-  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
-  if (held) await saveCartridgeToLibrary({ ...held, documentKey: key });
+  // Under the lock, from a fresh read: a write built from a read taken outside
+  // it can rewind `revision` and refuse every later save (D41).
+  await amendLibraryRecord(documentUuid, (record) => ({ ...record, documentKey: key }));
   return key;
 }
 
@@ -3411,9 +3477,10 @@ async function ensureSessionKey(documentUuid: string, session: string): Promise<
   const existing = held?.sessionKeys?.[session];
   if (existing) return existing;
   const key = mintKeyBase64Url();
-  if (held) {
-    await saveCartridgeToLibrary({ ...held, sessionKeys: { ...(held.sessionKeys ?? {}), [session]: key } });
-  }
+  await amendLibraryRecord(documentUuid, (record) => ({
+    ...record,
+    sessionKeys: { ...(record.sessionKeys ?? {}), [session]: key },
+  }));
   /*
    * The lanes are rebuilt, because this key did not exist when they were.
    *
@@ -3446,12 +3513,15 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
   const existing = await getCartridgeFromLibrary(documentUuid).catch(() => null);
   if (!existing) return;
   if (!existing.documentKey) await ensureDocumentKey(documentUuid);
-  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
-  if (!held || held.sessionKeys?.[session] === key) return;
-  await saveCartridgeToLibrary({
-    ...held,
-    sessionKeys: { ...(held.sessionKeys ?? {}), [session]: key },
-  }).catch(() => undefined);
+  // Under the lock, from a fresh read (D41). This is the write that was
+  // measured rewinding `revision` on a copy that had just saved: the receiving
+  // copy filed the key at lane construction and every save after it was
+  // refused, 37 in a row, with no recovery but a reopen.
+  await amendLibraryRecord(documentUuid, (record) =>
+    record.sessionKeys?.[session] === key
+      ? record
+      : { ...record, sessionKeys: { ...(record.sessionKeys ?? {}), [session]: key } },
+  );
 }
 
 /**

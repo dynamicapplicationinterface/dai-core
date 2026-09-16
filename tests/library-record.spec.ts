@@ -90,6 +90,98 @@ test.describe("writing a document's record in the library", () => {
     ).toEqual([]);
   });
 
+  /**
+   * A write that can rewind the save counter (backlog D41).
+   *
+   * The save path takes a per-document lock, reads the record inside it, and
+   * writes `revision` back one higher. Every other write read the record
+   * outside that lock and wrote it back whole — so a read that straddled a
+   * save's commit put `revision` back to what it was before, while the tab that
+   * saved had already moved its own `knownRevision` on. From then on that
+   * tab's every save was refused as "another tab saved this", with no recovery
+   * but a reopen. Measured in CI: a copy filed a game's key at lane
+   * construction and then refused 37 consecutive saves, and because its saves
+   * never landed its cursor never moved, its lane never retired, and its push
+   * subscription was never released — which is the assertion that failed.
+   *
+   * The rule: a library write either happens under the lock, from a record read
+   * inside it, or it does not carry `revision`.
+   */
+  test("no library write outside the lock can carry the save counter", () => {
+    const source = readFileSync(resolve(repo, MAIN), "utf8");
+
+    // `amendLibraryRecord` is the locked helper: reads inside the lock, writes
+    // there. Its own call is the one allowed to spread a record freely.
+    expect(source, "the locked helper still exists").toContain("function amendLibraryRecord");
+    expect(source, "and it is what takes the lock").toMatch(
+      /function amendLibraryRecord[\s\S]{0,400}withLibraryLock/,
+    );
+
+    /*
+     * Inside a lock, not merely few in number.
+     *
+     * The first cut of this test counted the writes that set `revision` and
+     * allowed two. That measures the wrong thing: it cannot tell a writer that
+     * takes the lock from one that does not, so moving a writer under the lock
+     * left it still failing, and the only way to make it pass would have been to
+     * raise the count — arguing with the guard instead of meeting it. So it asks
+     * the question it means: is this write inside a `withLibraryLock` block?
+     */
+    /*
+     * Two spellings, one lock, and a test that knows both by name.
+     *
+     * The save path wraps its work in `locked(...)`, a one-line alias declared
+     * beside it that calls `withLibraryLock` for the same document. The write
+     * therefore sits inside a closure passed to the alias, not lexically inside
+     * a `withLibraryLock(` call — so a parser looking only for the long name
+     * reports it unlocked, for ever, however the code is arranged.
+     *
+     * Rewriting the parser again, or bending the save path to satisfy it, is
+     * debugging the instrument instead of the product. So the rule is stated as
+     * the code states it: these are the two names the lock is taken under, and
+     * a write carrying `revision` must be inside one of them. A third spelling
+     * is what this test is for — it will appear as an unlocked write.
+     */
+    const lockSpans: { from: number; to: number }[] = [];
+    const lock = /(?:withLibraryLock|\blocked)\s*\(/g;
+    let opened: RegExpExecArray | null;
+    while ((opened = lock.exec(source)) !== null) {
+      let depth = 0;
+      let index = opened.index + opened[0].length - 1;
+      const from = index;
+      for (; index < source.length; index += 1) {
+        const char = source[index];
+        if (char === "(") depth += 1;
+        else if (char === ")") {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      lockSpans.push({ from, to: index });
+    }
+    expect(lockSpans.length, "the lock is taken somewhere").toBeGreaterThan(0);
+
+    const offsetOf = (line: number): number => {
+      const lines = source.split("\n").slice(0, line - 1);
+      return lines.join("\n").length;
+    };
+
+    const unlocked = writes(source)
+      .filter(({ argument }) => /revision\s*:/.test(argument))
+      .filter(({ at }) => {
+        const offset = offsetOf(at);
+        return !lockSpans.some((span) => offset >= span.from && offset <= span.to);
+      })
+      .map(({ at }) => `${MAIN}:${at}`);
+
+    expect(
+      unlocked,
+      "a write that carries the save counter must hold the document's library lock, " +
+        "or a save committing between its read and its write is rewound and every " +
+        "later save from that tab is refused",
+    ).toEqual([]);
+  });
+
   test("the fields that get dropped are the ones nothing else would notice", () => {
     /*
      * Named here so the reason survives the next refactor.

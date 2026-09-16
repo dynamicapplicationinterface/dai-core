@@ -97,12 +97,13 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D31 | A document the opener has verified is verified again when it mounts | [ ] a trust ruling, not a performance fix; undecided |
 | D36 | An untouched copy's first save can make it "newer" than a real move, and the move is dropped | [ ] seen once (push tier, 15 Sep); pre-existing; savedAt stamped by a save that changed nothing |
 | D35 | The same document held on two installs is correct but illegible | [ ] the relay reconciles them; nothing says which icon is which |
-| D34 | Badge the home-screen icon on an incoming move | [ ] waits on the live push pipeline; where the count comes from is undecided |
+| D34 | Badge the home-screen icon on an incoming move | [ ] unblocked 16 Sep: push confirmed working on a phone (banner arrives, no badge — nothing calls `setAppBadge`); the count is ruled (the app reports it); the two lines are unwritten |
 | D33 | Other host-to-frame messages can still arrive before the bridge listens | [x] every message is held by default until the bridge listens; the payload is the one named exception; proven both ways |
 | D37 | Two people who both invite cannot reach each other, in silence | [x] a key belongs to the game, not the document; four orders forced by test; migration decided (old games restart); 13/13 on chromium, CI across engines still to run |
 | D38 | A rematch has to be sent as a link, which is absurd between two people already playing | [ ] the mechanism is decided and deliberately not built; trigger below |
 | D39 | A copy's replica id changes during the open of an invite | [ ] seen four times, unexplained, nothing observed going wrong; mailbox breadcrumbs added to answer it in one run; cross-referenced with T1-D22 (replicated-tables), not backlog D22 |
 | D40 | `test:commit` reports success by running nothing | [ ] a clean tree prints "nothing a spec reaches changed" and exits 0; a guard that passes by doing nothing is the same failure as a probe that cannot tell "nothing" from "I could not look" |
+| D41 | A library write outside the save lock can rewind the save counter | [x] found in the CI trace of `push-e2e:212` (37 refused saves, a push subscription never released); one lock, one spelling, every `revision` writer inside it; guarded by `library-record.spec`; the race itself inferred, not reproduced |
 | D32 | On Firefox, a test loses the opener's frame when it is pointed at the document | [ ] the app mounts and shows; Playwright waits in a frame it still believes is blank; two CI sightings, both reproduced locally about 1 in 6 with screenshots; fix undecided |
 
 ---
@@ -723,9 +724,18 @@ app is where the truth is.
   count. Under the moved-mailbox option this test cannot pass, and that is the
   test that forces the decision above.
 
-**Depends on:** the push pipeline being live (`DAI_PUSH_PUBLIC_KEY` on
-`dai-core-8ti8` is still pending). Verify on the spare phone in the same sitting
-as the push test.
+**Depended on the push pipeline being live. It is, as of 16 September.**
+`DAI_PUSH_PUBLIC_KEY` is set on the opener and a real push reached a phone from
+the relay: the notification arrived on the lock screen and the home screen,
+titled by the app, while the document was closed. **No badge appeared, which is
+correct — nothing calls `setAppBadge` anywhere in the opener.** The absence is
+this entry, not a setting anybody can turn on: iOS exposes a badge switch per
+app, but a web app's badge only renders when the page or its worker sets one.
+
+So the blocker is gone and the decision is made; what is left is the two lines
+in the push handler, the `window.dai` surface for the app to report its count,
+and the five tests above — including the guard-both-ways one, which is what
+ruled out counting moved mailboxes.
 
 ### D33 — Other host-to-frame messages can still arrive before the bridge listens
 
@@ -925,6 +935,52 @@ right, and the tier this sits in is social and conditional — detectable, not
 preventable. **One replica never gets the power to destroy another's copy.**
 Stated here in those words because the next person to touch it will assume
 ejection should propagate.
+
+### D41 — A library write outside the save lock can rewind the save counter
+
+Found reading the trace of the one CI failure on `907eea6` (chromium,
+`push-e2e:212`). Firefox and both WebKit shards were green.
+
+**What was measured, from the kept trace:**
+- The lane breadcrumbs print **one stable address** on both copies, in the
+  original run and the retry: `lane for game d5744081 of cb634325 ->
+  12f3e6acf5f0, from that game's own key`. Per-game keying (D37) derived one
+  address and never moved it, so it is not the cause.
+- Three `/subscribe` and two `/unsubscribe` on that address. Both unsubscribes
+  came from the inviting copy's reopened page. **The invited copy never released
+  its subscription** — the 1 the assertion found where it wanted 0.
+- The invited copy refused **37 consecutive saves**, from save 2 to save 38,
+  every one "This document was saved from another tab since it was opened here",
+  beginning the instant its lanes were built and never recovering.
+- Two of the four extracted network files were byte-identical; an ordering read
+  taken before deduplicating them suggested a re-subscribe that does not exist.
+
+**The chain, and the inferred part is named as inferred.** A refused save means
+`persist` does not confirm; `pullLane` then returns at its persist check, which
+sits *above* `retireIfDone`; the lane never retires, `onLaneClosed` never fires,
+and the push subscription stands. That much is code, not conjecture. **What
+caused the refusals is inferred and has not been reproduced**: the save path
+holds a per-document lock across its read-modify-write and moves `revision` on,
+while every other library write read the record and wrote it back *outside* that
+lock. A read straddling a save's commit writes `revision` back to its earlier
+value; the saving tab has already advanced its own `knownRevision`, so from then
+on its every save reads as another tab's work and is refused, with no recovery
+short of a reopen. The inviting copy never shows it because it reopens, and each
+reopen re-runs `learnRevision`.
+
+**Fixed:** one `withLibraryLock(documentUuid, …)` helper, and every writer that
+carries `revision` takes it and reads the record inside it — the library-open
+path, the ingest keep-step, the key writers, and the save path, which had its own
+one-line alias for the same lock. **One lock, one spelling**: two names for one
+lock is what let a source-shape guard report the save path as unlocked.
+
+**Guarded:** `library-record.spec` now fails if a write carrying `revision` sits
+outside a lock. It is a source-shape test because the symptom needs contention to
+appear, and the two existing tests in that file are the same shape.
+
+**Not proven:** the race. Reproducing it needs a save committing inside another
+writer's read-write window, which did not occur in three local runs or in a
+repeat-each run. The guard is what makes the inference safe to live with.
 
 ### D40 — A tier that reports success by running nothing
 

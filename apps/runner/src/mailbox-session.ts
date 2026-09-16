@@ -429,6 +429,10 @@ export function startMailboxSession(config: {
     lane.retired = true;
     lane.state = { ...lane.state, closed: true };
     save(lane);
+    // The moment the trace went silent when a subscription was left standing
+    // (D41): a lane that never retires never releases its push, and nothing
+    // said which of those two had happened.
+    note(`lane ${lane.address.slice(0, 12)} retired: its game closed, releasing push`);
     config.onLaneClosed?.(lane.address);
   }
 
