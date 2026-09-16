@@ -433,6 +433,12 @@ test.describe("request, a session document with author roles", () => {
     await expect(questions(appB)).toHaveCount(2);
     await expect(appB.locator("#add-question")).toBeHidden();
     await expect(appB.locator("#new-request")).toBeHidden();
+    // Opened cold, the page says what to do and shows where it ends — and
+    // offers nothing that is not about this request.
+    await expect(appB.locator("#hint")).toBeVisible();
+    await expect(appB.locator("#submit")).toBeVisible();
+    await expect(appB.locator("#submit")).toBeDisabled();
+    await expect(appB.locator("#compose")).toBeHidden();
     await questions(appB).nth(0).locator("textarea").fill("accounts@example.com");
     await questions(appB).nth(0).locator("button").click();
     await expect(appB.locator("#progress")).toContainText("1 of 2 answered");
@@ -447,6 +453,7 @@ test.describe("request, a session document with author roles", () => {
     await expect(appB.locator("#progress")).toContainText("Sent back · you can still change your answers");
     await expect(questions(appB).nth(1)).toContainText("Saved");
     await expect(appB.locator("#submit")).toBeHidden();
+    await expect(appB.locator("#hint")).toBeHidden();
 
     // The page hides the other side's controls; the write surface is the guard.
     const refusedB = await tryWrite(appB, "questions", { request_id: "00", position: 3, prompt: "added by the answerer" });

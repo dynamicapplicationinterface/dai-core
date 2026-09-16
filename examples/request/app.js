@@ -277,6 +277,7 @@ function drawQuestion(question, s, request) {
   reply.textContent = answer ? answer.body : s.isWriter ? "Not answered yet." : "No answer.";
   item.append(reply);
 
+  // Page-only, unlike the roles (see schema.sql).
   // Questions lock once the request has been opened: a question changing under
   // an answer is a change nobody could follow.
   if (s.isWriter && !s.closed && !s.answererJoined) {
@@ -343,8 +344,13 @@ function drawSubmit() {
   const unsaved = unsavedIn(request).length;
   const sent = submitted(request);
   const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  button.hidden = !(s.isAnswerer && !s.closed && (sent ? unsaved > 0 : answered + unsaved > 0));
+  // Before anything is sent the button is always there, disabled until there is
+  // something to send, so a person opening the request cold can see where it ends.
+  button.hidden = !(s.isAnswerer && !s.closed && (sent ? unsaved > 0 : true));
+  button.disabled = !sent && answered + unsaved === 0;
+  $("hint").hidden = !(s.isAnswerer && !s.closed && !sent);
   if (sent) button.textContent = `Save ${plural(unsaved, "change")}`;
+  else if (answered + unsaved === 0) button.textContent = "Send answers back";
   else if (unsaved > 0) button.textContent = `Save ${plural(unsaved, "answer")} and send back`;
   else if (answered < questions.length) button.textContent = `Send back ${answered} of ${questions.length} answers`;
   else button.textContent = "Send answers back";
@@ -365,6 +371,9 @@ function draw() {
   $("view").hidden = writing;
   if (writing) return;
   const s = seats(request.session);
+  // The person answering came for this request; starting one of their own is
+  // not what their screen is for.
+  if (s.isAnswerer) $("compose").hidden = true;
   const questions = questionsOf(request);
   const answered = questions.filter((q) => answersTo(q).current.length > 0).length;
   const sent = submitted(request);

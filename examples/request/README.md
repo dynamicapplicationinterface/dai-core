@@ -21,4 +21,12 @@ copy with the check removed, a hand-built batch — is stored but never admitted
 to the `_current` views, so it never shows and never buries a legitimate row.
 The page hiding the controls is a courtesy on top of both, not the guard.
 
+One rule in this example is **not** enforced that way. Once the request has
+been opened, the page stops offering to add or remove questions, so a question
+never changes under an answer. That lock is only the page not showing the
+controls. The writer's copy can still write the `questions` table, and nothing
+refuses it. The roles are a guarantee; the lock is a convention this page
+follows. If it ever has to hold, it needs a rule the runtime enforces, not a
+hidden button.
+
 The reasoning for each table is in `schema.sql`; the application is `app.js`.

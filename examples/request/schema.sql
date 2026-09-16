@@ -26,6 +26,11 @@
 --     writer like any other row. Questions lock, in the page, once the request
 --     has been opened: a question changing under an answer is not worth
 --     explaining.
+--   * That lock is weaker than the roles above. The roles are enforced: a
+--     copy cannot write the other party's table. The lock is only the page not
+--     offering the control; the writer's copy can still write questions. If
+--     that ever has to hold, it needs a rule the runtime enforces, not a
+--     hidden button.
 --   * Which request is showing is about this copy, so it is local.
 
 -- dai:profile session max_parties=2 close=creator
