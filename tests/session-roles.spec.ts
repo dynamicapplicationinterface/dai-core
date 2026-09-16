@@ -115,7 +115,7 @@ CREATE TABLE notes (
   test("a role that is neither creator nor joiner is refused", () => {
     expect(() =>
       rewriteReplicated(`-- dai:profile session max_parties=2
--- dai:replicated author=client
+-- dai:replicated author=owner
 CREATE TABLE advice (
   note TEXT NOT NULL
 );
@@ -156,7 +156,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     seat(joinerCopy);
 
     // The creator's legitimate advice.
-    put(creatorCopy, "advice", C, 4, 5, { note: "sell in March" });
+    put(creatorCopy, "advice", C, 4, 5, { note: "first note" });
     // The joiner writes advice it has no right to — on a copy whose application
     // enforced nothing, so the row exists and travels.
     put(joinerCopy, "advice", J, 2, 6, { note: "forged by the joiner" });
@@ -167,7 +167,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     // not admitted. That it is stored and absent is what shows the admission
     // rule dropped it, rather than the merge declining to copy it.
     expect(stored(creatorCopy, "advice")).toContain("forged by the joiner");
-    expect(current(creatorCopy, "advice")).toEqual(["sell in March"]);
+    expect(current(creatorCopy, "advice")).toEqual(["first note"]);
 
     creatorCopy.close();
     joinerCopy.close();
@@ -180,13 +180,13 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     seat(creatorCopy);
     seat(joinerCopy);
 
-    put(joinerCopy, "answers", J, 2, 5, { note: "yes, in March" });
+    put(joinerCopy, "answers", J, 2, 5, { note: "a reply" });
     put(creatorCopy, "answers", C, 4, 6, { note: "forged by the creator" });
 
     expect(mergeSibling(joinerCopy, creatorCopy).refused).toBeUndefined();
 
     expect(stored(joinerCopy, "answers")).toContain("forged by the creator");
-    expect(current(joinerCopy, "answers")).toEqual(["yes, in March"]);
+    expect(current(joinerCopy, "answers")).toEqual(["a reply"]);
 
     joinerCopy.close();
     creatorCopy.close();
@@ -200,17 +200,17 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     seat(creatorCopy);
     seat(joinerCopy);
 
-    put(creatorCopy, "advice", C, 4, 5, { note: "sell in March" });
+    put(creatorCopy, "advice", C, 4, 5, { note: "first note" });
     put(creatorCopy, "notes", C, 5, 6, { note: "from the creator" });
-    put(joinerCopy, "answers", J, 2, 7, { note: "yes, in March" });
+    put(joinerCopy, "answers", J, 2, 7, { note: "a reply" });
     put(joinerCopy, "notes", J, 3, 8, { note: "from the joiner" });
 
     expect(mergeSibling(creatorCopy, joinerCopy).refused).toBeUndefined();
     expect(mergeSibling(joinerCopy, creatorCopy).refused).toBeUndefined();
 
     for (const copy of [creatorCopy, joinerCopy]) {
-      expect(current(copy, "advice")).toEqual(["sell in March"]);
-      expect(current(copy, "answers")).toEqual(["yes, in March"]);
+      expect(current(copy, "advice")).toEqual(["first note"]);
+      expect(current(copy, "answers")).toEqual(["a reply"]);
       expect(current(copy, "notes")).toEqual(["from the creator", "from the joiner"]);
     }
 
@@ -225,19 +225,19 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     counter = 0;
     const copy = openWith(SCHEMA);
     seat(copy);
-    const advice = put(copy, "advice", C, 4, 5, { note: "sell in March" });
+    const advice = put(copy, "advice", C, 4, 5, { note: "first note" });
     put(
       copy,
       "advice",
       J,
       2,
       6,
-      { note: "hold forever" },
+      { note: "an overwrite" },
       advice,
       JSON.stringify([`${Buffer.from(C).toString("hex")}:4`]),
     );
 
-    expect(current(copy, "advice")).toEqual(["sell in March"]);
+    expect(current(copy, "advice")).toEqual(["first note"]);
     copy.close();
   });
 });

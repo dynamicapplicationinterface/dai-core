@@ -1770,28 +1770,28 @@ a pilot.**
 
 ### D15 — Asymmetric roles inside a session
 
-An advisor writes and a client answers, and neither can write the other's rows.
+One party writes and the other answers, and neither can write the other's rows.
 Today a roster member can write any table in the session, so an app can only
 fake a role in its interface — which the rules themselves forbid (an app must not
-enforce what only the roster can). The enterprise demo's "firm and client" beat
-depends on the real thing: a client's copy that cannot author a firm's advice
-row, refused at the merge rather than hidden by the screen.
+enforce what only the roster can). A document whose value is who said what needs
+the real thing: an answering copy that cannot author the writing party's rows,
+refused at the merge rather than hidden by the screen.
 
 Why it matters: without it, a two-party document is two peers, and any document
-whose value is *who said it* — advice, an instruction, a signed-off figure —
+whose value is *who said it* — an instruction, a stated figure, a sign-off —
 carries only the app's word for it.
 
 The cheaper alternative, recorded so it is weighed rather than forgotten: a
-firm's server in the path that admits rows by role. It needs no format change and
-holds exactly where that server is in the path — a copy exchanged directly, or a
+server in the path that admits rows by role. It needs no format change and holds
+exactly where that server is in the path — a copy exchanged directly, or a
 mailbox the server does not front, bypasses it. That is a deployment choice, not
 a property of the document.
 
-A hub with many private spokes (one firm, many clients, each unable to see the
-others) may fold into this entry rather than being its own shape; see *Not
-doing*.
+A hub with many private spokes (one writing party, many answering parties, each
+unable to see the others) may fold into this entry rather than being its own
+shape; see *Not doing*.
 
-**Un-parks when the dynamic statement needs enforced roles.**
+**Un-parks when a document needs enforced roles.**
 
 **Pulled forward and built, first cut (16 September).**
 
@@ -1839,11 +1839,11 @@ a marker that almost parses are all refused. The last is new: `-- dai:replicated
 foo` used to fail an exact comparison and leave its table silently local.
 
 **Limits of this cut, stated rather than discovered:**
-- The advisor must start the session, because the role follows who minted the
-  seats. A client-initiated engagement would invert the roles.
+- The writing party must start the session, because the role follows who minted
+  the seats. A session started by the answering party would invert the roles.
 - Two parties. The roster knows creator and everyone else, not "this seat is
-  client A". One advisor with many private clients is one session per client,
-  which already gives each its own key and mailbox (D8, D37).
+  party A". One writing party with many answering parties is one session per
+  answering party, which already gives each its own key and mailbox (D8, D37).
 - The answering side needs nothing installed: opening the link binds the open
   seat. Nothing in this cut changes that path.
 
