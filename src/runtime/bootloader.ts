@@ -1666,11 +1666,47 @@ function bridgeMain(): void {
     const hex = (bytes: Uint8Array): string =>
       Array.prototype.map.call(bytes, (b: number) => b.toString(16).padStart(2, "0")).join("");
     const entity = (): Uint8Array => crypto.getRandomValues(new Uint8Array(16));
+
+    /*
+     * Who may write this table, refused by name as the write is made (D15).
+     *
+     * The merge is where a role actually holds: the admission views drop a row
+     * from the wrong party whichever copy it came from. This is the correctness
+     * check on this copy's own writes, so an author is told at once, and told
+     * which way round it went — a creator writing a joiner-only table and a
+     * joiner writing a creator-only one are different mistakes with different
+     * fixes. The creator test is the one `close` uses: the seat rows name the
+     * creator, and the author is this copy's key.
+     */
+    const sessionOfEntity = (table: string, id: Uint8Array): Uint8Array | undefined => {
+      const found = rows.all(`SELECT _r_session AS s FROM "${table.replace(/"/g, '""')}" WHERE _r_entity = ? LIMIT 1`, [id])[0]?.["s"];
+      return found instanceof Uint8Array ? found : undefined;
+    };
+    const authorGate = (table: string, sessionOf: () => Uint8Array | undefined): void => {
+      if (rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_author_rules'").length === 0) return;
+      const required = rows.all("SELECT author FROM _dai_author_rules WHERE tbl = ?", [table])[0]?.["author"];
+      if (required !== "creator" && required !== "joiner") return;
+      const session = sessionOf();
+      if (!session) {
+        throw new Error(`ROLE_NOT_PERMITTED (${table} may be written only by a session's ${required}, and this write names no session)`);
+      }
+      const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+      const isCreator =
+        rows.all("SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1", [session, me]).length > 0;
+      if (required === "creator" && !isCreator) {
+        throw new Error(`ROLE_NOT_PERMITTED (the joiner wrote ${table}, which only the session's creator may write)`);
+      }
+      if (required === "joiner" && isCreator) {
+        throw new Error(`ROLE_NOT_PERMITTED (the creator wrote ${table}, which only the session's joiner may write)`);
+      }
+    };
+
     // Every write settles the identity first; it does the work once.
     return {
       insert: (table: string, values: Any, sessionHex?: string): string => {
         const id = entity();
         settleReplica(rows);
+        authorGate(table, () => (sessionHex ? fromHex(sessionHex) : undefined));
         // A session document threads the session onto every row (T1-D26); the
         // app passes the game's session id. A plain document passes none.
         rules().createEntity(rows, table, id, values, sessionHex ? fromHex(sessionHex) : undefined);
@@ -1680,6 +1716,7 @@ function bridgeMain(): void {
       change: (table: string, entityHex: string, values: Any): string => {
         const id = fromHex(entityHex);
         settleReplica(rows);
+        authorGate(table, () => sessionOfEntity(table, id));
         // The session is inherited from the entity's head (T1-D28) — the app
         // never restates it, so a change cannot move a row to another session.
         rules().changeEntity(rows, table, id, values);
@@ -1688,6 +1725,7 @@ function bridgeMain(): void {
       },
       remove: (table: string, entityHex: string): string => {
         settleReplica(rows);
+        authorGate(table, () => sessionOfEntity(table, fromHex(entityHex)));
         rules().deleteEntity(rows, table, fromHex(entityHex));
         nudgeAuthored();
         return entityHex;

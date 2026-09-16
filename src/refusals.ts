@@ -83,6 +83,14 @@ export const REFUSALS = {
       "Only the creator may end this session; the close is refused rather than written as a row " +
       "that closes nothing (T1-D32).",
   },
+  ROLE_NOT_PERMITTED: {
+    recoverable: false,
+    means:
+      "A write named a table that only one party in a session may author, and the other party made " +
+      "it: the creator wrote a joiner-only table, or the joiner a creator-only one. The message names " +
+      "which, and the table. Refused at the write rather than written as a row every copy would drop " +
+      "(D15).",
+  },
   CANNOT_RESEAT: {
     recoverable: false,
     means:

@@ -207,6 +207,43 @@ test.describe("a declared table", () => {
       db.close();
     }
   });
+
+  /*
+   * The clause goes on the replicated table's own CREATE, not on the gap before it.
+   *
+   * Found writing D15's test, not by D15's code. The rewrite tested and edited
+   * everything since the previous replicated table, so two things went wrong once
+   * a replicated table followed other statements: an `IF NOT EXISTS` on an earlier
+   * local table counted as this table's own, and when there was none the clause
+   * was put on the *first* CREATE TABLE in the gap — a local table — instead. The
+   * replicated table stayed a bare CREATE both ways, and a document built from it
+   * opened once and then refused. Appending two tables after chess's local tables
+   * is what hit it; the build's load-it-twice check is what caught it.
+   */
+  test("a local IF NOT EXISTS earlier in the gap does not stand in for the replicated table's own", () => {
+    const schema =
+      "CREATE TABLE IF NOT EXISTS settings (\n  theme TEXT\n);\n" +
+      "\n-- dai:replicated\nCREATE TABLE advice (\n  note TEXT NOT NULL\n);\n";
+    const { sql } = rewriteReplicated(schema);
+    expect(sql, "the replicated table carries the clause itself").toMatch(/CREATE TABLE IF NOT EXISTS advice \(/);
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(sql);
+      expect(() => db.exec(sql), "and so the schema survives a second open").not.toThrow();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a bare local table earlier in the gap is left as written, and the replicated one gets the clause", () => {
+    const schema =
+      "CREATE TABLE photos (\n  bytes BLOB\n);\n" +
+      "\n-- dai:replicated\nCREATE TABLE advice (\n  note TEXT NOT NULL\n);\n";
+    const { sql } = rewriteReplicated(schema);
+    expect(sql, "the replicated table carries the clause").toMatch(/CREATE TABLE IF NOT EXISTS advice \(/);
+    expect(sql, "the author's own local table is not rewritten in its place").toMatch(/CREATE TABLE photos \(/);
+    expect(sql).not.toMatch(/CREATE TABLE IF NOT EXISTS photos/);
+  });
 });
 
 test.describe("the default build path emits the version the spec says it emits", () => {

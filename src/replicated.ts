@@ -39,6 +39,22 @@ export interface SessionProfile {
 }
 
 /**
+ * Who may author the rows of one replicated table in a session document (D15).
+ *
+ * The two roles the roster already has, and no others: the **creator** is the
+ * replica that authored the session's seat rows, the **joiner** is a member who
+ * authored none. The author of a row is its key, so neither can be claimed by a
+ * copy that is not it — the same property `close=creator` rests on (T1-D32).
+ *
+ * Declared on the table's own marker line, `-- dai:replicated author=creator`,
+ * because a role is a property of the table rather than of the link that
+ * carries a document, and because the schema is inside the signed artifact and
+ * inside what the build already reads — so a role is checked when the document
+ * is built, not only when a row is written.
+ */
+export type AuthorRole = "creator" | "joiner";
+
+/**
  * The session profile a document declares, if any (T1-D26).
  *
  * A line comment anywhere in the schema, quote- and comment-aware for the same
@@ -134,6 +150,8 @@ export interface RewrittenSchema {
   tables: string[];
   /** The session profile, when the document declares one (T1-D26). */
   session?: SessionProfile;
+  /** Tables whose rows only one role may author, when any are declared (D15). */
+  authors?: Record<string, AuthorRole>;
 }
 
 /**
@@ -246,15 +264,54 @@ function tableSpans(sql: string): TableSpan[] {
 }
 
 /** Whether the marker comment sits immediately above this statement. */
-function declaredAbove(sql: string, start: number): boolean {
+/** The text of the `--` comment directly above a table, or null when there is none. */
+function markerLineAbove(sql: string, start: number): string | null {
   const before = sql.slice(0, start);
   // Only whitespace may separate the marker from the table it marks: a comment
   // three statements earlier is not a declaration, and treating it as one
   // would replicate a table by accident.
   const trimmed = before.replace(/[ \t\r\n]+$/, "");
   const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1).trim();
-  if (!lastLine.startsWith("--")) return false;
-  return lastLine.slice(2).trim().toLowerCase() === REPLICATED_MARKER;
+  if (!lastLine.startsWith("--")) return null;
+  return lastLine.slice(2).trim();
+}
+
+const AUTHOR_CLAUSE = /^dai:replicated\s+author\s*=\s*([A-Za-z]+)$/i;
+
+function declaredAbove(sql: string, start: number): boolean {
+  const marker = markerLineAbove(sql, start);
+  if (marker === null) return false;
+  if (marker.toLowerCase() === REPLICATED_MARKER) return true;
+  if (!marker.toLowerCase().startsWith(REPLICATED_MARKER)) return false;
+  if (AUTHOR_CLAUSE.test(marker)) return true;
+  /*
+   * A marker that begins as one and does not parse is a build failure (D15).
+   *
+   * It used to compare for exact equality, so `-- dai:replicated foo` simply
+   * was not a marker, and its table was built as an ordinary local table:
+   * nothing merged, nothing said so. The line names the table's contract, so
+   * a line that almost names it is refused rather than quietly ignored.
+   */
+  throw new ReplicationError(
+    `The marker "-- ${marker}" is not one this build understands. A replicated table is marked ` +
+      '"-- dai:replicated", or "-- dai:replicated author=creator" / "author=joiner" to say which ' +
+      "party in a session may write it.",
+  );
+}
+
+/** The role a table's marker names, if it names one (D15). */
+function authorAbove(sql: string, start: number): AuthorRole | undefined {
+  const marker = markerLineAbove(sql, start);
+  const match = marker === null ? null : AUTHOR_CLAUSE.exec(marker);
+  if (!match) return undefined;
+  const role = match[1]!.toLowerCase();
+  if (role !== "creator" && role !== "joiner") {
+    throw new ReplicationError(
+      `A table's marker declares author=${match[1]}. The author of a table's rows is the session's ` +
+        "'creator' (the party that started it) or its 'joiner' (the party that took the invite).",
+    );
+  }
+  return role;
 }
 
 /** True when the last line of `text` ends in a `--` comment outside any quote. */
@@ -397,7 +454,7 @@ function replicationColumns(session: boolean): string {
  * slow the answer is a materialized membership set recomputed on merge — not a
  * return to the stored flag, which cannot express a membership that changes.
  */
-function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean): string {
+function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean, author?: AuthorRole): string {
   if (!admissionFiltered) {
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT * FROM ${q} WHERE _r_superseded = 0;`;
@@ -424,7 +481,22 @@ function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean)
     `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session${authored("x", row)})` +
     ` OR EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session` +
     ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq${authored("x", row)}))`;
-  const admitted = (row: string): string => `(${member(row)}) AND ${notLate(row)}`;
+  /*
+   * Who may author this table's rows, when its marker says (D15).
+   *
+   * The same test `close=creator` puts on a close, put on every row of the
+   * table: the seat rows name the session's creator, and a row's author is its
+   * key. This is the security property, not the write-surface refusal — it runs
+   * over rows that arrived from somebody else's copy, whose consumer may have
+   * enforced nothing. A row from the wrong party is simply not admitted, on
+   * every copy that holds it, and a wrong-party row cannot supersede a right
+   * one either, because `admitted` gates the superseding row too.
+   */
+  const seatAuthor = (row: string): string =>
+    `${row}._r_replica IN (SELECT s._r_replica FROM _dai_seat_current s WHERE s._r_session = ${row}._r_session)`;
+  const byRole = (row: string): string =>
+    author === "creator" ? ` AND ${seatAuthor(row)}` : author === "joiner" ? ` AND NOT ${seatAuthor(row)}` : "";
+  const admitted = (row: string): string => `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
@@ -441,6 +513,7 @@ function tableObjects(
   session: boolean,
   admissionFiltered: boolean,
   closeCreator = false,
+  author?: AuthorRole,
 ): string {
   const q = name;
   /*
@@ -478,7 +551,7 @@ CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_supe
   WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-${headsView(q, admissionFiltered, closeCreator)}
+${headsView(q, admissionFiltered, closeCreator, author)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
@@ -581,6 +654,28 @@ CREATE VIEW IF NOT EXISTS _dai_member AS
   return base + rosterTable("_dai_seat") + rosterTable("_dai_binding") + close + member;
 }
 
+/**
+ * The declared roles, as a view the frame's write surface can read (D15).
+ *
+ * The admission view already holds a role's rows back at merge. A write that
+ * breaks a role should also be refused as it is made, by name, so the author
+ * learns at once rather than watching a row vanish — and the frame can only do
+ * that from what the document itself carries. This is schema, so it is signed
+ * with the rest, and it is emitted only when a role is declared: a document
+ * without one rewrites to exactly the text it always did.
+ */
+function authorRulesView(authors: Record<string, AuthorRole>): string {
+  const entries = Object.entries(authors);
+  if (entries.length === 0) return "";
+  // Table names here matched an identifier pattern when they were parsed, so
+  // they are safe inside single quotes.
+  const rows = entries.map(([table, role]) => `SELECT '${table}' AS tbl, '${role}' AS author`).join("\n  UNION ALL ");
+  return `
+CREATE VIEW IF NOT EXISTS _dai_author_rules AS
+  ${rows};
+`;
+}
+
 /** The replicated system tables a session document carries beside its author tables (T1-D29). */
 export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding", "_dai_close"] as const;
 
@@ -654,6 +749,23 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     return { sql, tables: [] };
   }
 
+  // Which role may author each table, from its own marker line (D15).
+  const authors: Record<string, AuthorRole> = {};
+  for (const span of declared) {
+    const role = authorAbove(sql, span.start);
+    if (role) authors[span.name] = role;
+  }
+  if (Object.keys(authors).length > 0 && !session) {
+    // A role is a party in a session — the creator is whoever minted its seats —
+    // so a role in a document with no session names nobody, and would admit
+    // nothing. Refused at build rather than shipped as a table nobody can write.
+    throw new ReplicationError(
+      `${Object.keys(authors).join(", ")} declare${Object.keys(authors).length === 1 ? "s" : ""} an author ` +
+        "role, but the document has no session profile. A role names a party in a session; add " +
+        "-- dai:profile session max_parties=N, or drop the role.",
+    );
+  }
+
   let out = "";
   let cursor = 0;
   for (const span of declared) {
@@ -674,10 +786,24 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
      * runs on every open, and a bare CREATE opens a document once and refuses
      * it thereafter. An author who wrote IF NOT EXISTS already keeps theirs.
      */
-    const header = sql.slice(cursor, span.open + 1);
-    out += /\bIF\s+NOT\s+EXISTS\b/i.test(header)
-      ? header
-      : header.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
+    /*
+     * On this table's own statement, not on the gap before it.
+     *
+     * This used to test and edit `sql.slice(cursor, span.open + 1)` — everything
+     * since the previous replicated table. So an `IF NOT EXISTS` on any earlier
+     * statement in that gap (a local table, an index) counted as this table's,
+     * and when it was absent the keyword went onto the *first* CREATE TABLE in
+     * the gap, which could be a local table rather than this one. Either way the
+     * replicated table stayed a bare CREATE, and the schema, which runs on every
+     * open, refused its second open. It never bit while replicated tables sat
+     * where their gap held nothing else; appending two after chess's local tables
+     * found it, and the build's load-it-twice check refused the document.
+     * `span.start` is this statement's own CREATE, found in the quote-aware copy.
+     */
+    const own = sql.slice(span.start, span.open + 1);
+    out += /\bIF\s+NOT\s+EXISTS\b/i.test(own)
+      ? sql.slice(cursor, span.open + 1)
+      : sql.slice(cursor, span.start) + own.replace(/\bCREATE\s+TABLE\s+/i, (kw) => `${kw}IF NOT EXISTS `);
     // A line comment on the author's last line would swallow a comma appended
     // after it, and the table would build and then refuse to open. The comma
     // goes on its own line in that case only, so every schema that already
@@ -688,13 +814,20 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     // are recomputed over the members' rows (T1-D29), and the close policy is
     // baked into the late-row predicate (T1-D32). The roster tables that carry
     // the membership are not admission-filtered — emitted by documentTables.
-    out += tableObjects(span.name, authorColumns(body), session !== null, session !== null, session?.close === "creator");
+    out += tableObjects(
+      span.name,
+      authorColumns(body),
+      session !== null,
+      session !== null,
+      session?.close === "creator",
+      authors[span.name],
+    );
     cursor = span.end;
   }
   out += sql.slice(cursor);
 
   return {
-    sql: documentTables(session !== null) + out,
+    sql: documentTables(session !== null) + out + authorRulesView(authors),
     // Author tables only — the manifest's `replication.tables` surface, and what
     // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
     // the schema and the digest but not this list; they are implicit in a session
@@ -702,5 +835,6 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     // replicated set for merge and export (T1-D29, spec §3 example).
     tables: declared.map((span) => span.name),
     ...(session ? { session } : {}),
+    ...(Object.keys(authors).length > 0 ? { authors } : {}),
   };
 }

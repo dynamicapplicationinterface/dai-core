@@ -78,7 +78,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D12 | A relay deploy has a window where a post lands in old code | [~] rule in the relay README; one junk item in the bucket |
 | D13 | The in-browser compiler skips the build-time schema check | [ ] the open half of D5 |
 | D14 | Two blind runs is not a rate | [ ] both passed, both found real defects |
-| D15 | Asymmetric roles inside a session | [ ] the enterprise demo needs it; parked on the dynamic statement |
+| D15 | Asymmetric roles inside a session | [x] first cut: a table's marker names creator or joiner; dropped at merge (the security property) and refused at write, each proven both ways; the example document is not built |
 | D16 | A native iOS host: App Clip and Messages extension | [ ] parked until after the enterprise demo |
 | D17 | Mailbox batches are deleted at 90 days — silent data loss, first on ~8 Dec | [~] scoped rule written in `infra/r2-lifecycle.json`; Chris applies it; retention then decided on purpose |
 | D18 | Nothing can tell a hole in a mailbox history from an empty stretch | [ ] the property that makes D17 silent; the relay is the one place that can |
@@ -1022,6 +1022,27 @@ appear, and the two existing tests in that file are the same shape.
 writer's read-write window, which did not occur in three local runs or in a
 repeat-each run. The guard is what makes the inference safe to live with.
 
+**The breadcrumbs that followed (`f3ade06`), and what holds them.** A closed
+game's lane now says when it retires, when it is held back from retiring and
+why (a batch awaiting acknowledgement, a publish in flight, or this copy not yet
+confirmed to have nothing left to send), and when a pull reads something it
+cannot save — the early return in `pullLane` that skipped retirement silently,
+which is exactly where this failure lived. Each is said once per reason, not
+every tick.
+
+- **Held:** the retirement line. The close test requires both copies to print it
+  after one of them closes a match. Proven both ways: with the line's text
+  changed the test fails on that assertion, and restored it passes.
+- **Not held, deliberately:** the held-back line and the cursor-held line. A test
+  that asserts those strings exist in the source would prove the words are
+  present, not that they fire — coverage recorded without coverage had.
+
+**The test for those two arrives when something can force a refused save on
+demand.** That is worth building for its own sake: this entry's whole diagnosis
+rests on a race nobody has reproduced, and a harness that makes a save lose to a
+concurrent writer at will would both hold these lines and turn the inferred
+cause into a measured one.
+
 ### D40 — A tier that reports success by running nothing
 
 `npm run test:commit` on a clean tree prints
@@ -1733,6 +1754,75 @@ others) may fold into this entry rather than being its own shape; see *Not
 doing*.
 
 **Un-parks when the dynamic statement needs enforced roles.**
+
+**Pulled forward and built, first cut (16 September).**
+
+**The question answered first, from the code rather than a design.** Is an
+asymmetric role just a seat with different write rules? Half. There were no
+per-seat write rules — a member could write any table, as this entry said. But
+the one role-gated act that existed, `close=creator`, was already a complete
+template: the roster has exactly two roles (the **creator** authored the
+session's seat rows; the **joiner** is a member who authored none), a row's
+author is its key so neither can be claimed, and `close` was enforced in both
+places this needs — refused at authoring, and dropped by the admission views at
+merge. So no new authority model: a role is those two roles applied per table.
+
+**The declaration lives in the schema** (ruled, Chris): `-- dai:replicated
+author=creator|joiner` on the table's own marker line. Two reasons, both kept
+here. The inline link format is deliberately frozen (D23), and a role is a
+property of the table, not of the link that carries a document. And the schema
+is inside the signed artifact *and* inside what the build already reads, so a
+role is checkable when the document is built, not only when a row is written — a
+role in the manifest would be enforceable but invisible to the tooling that
+already reads shapes.
+
+**Enforced in two places, proven separately:**
+- **At the merge — the security property.** The table's admission view admits a
+  row only when its author is the creator (creator-only) or is not
+  (joiner-only), beside the membership and late-row rules. This is what holds
+  against a copy whose application enforced nothing. `session-roles.spec.ts`
+  applies forged rows straight through the choke point, merges, and requires
+  them stored yet absent from `_current`, in both directions, with legitimate
+  rows admitted and a wrong-party change unable to bury a right-party row.
+  **Proven both ways by mutation:** with the creator branch disabled, only the
+  creator-only tests failed; with the joiner branch disabled, only the
+  joiner-only test failed — so the role clause, not membership, is what drops
+  the row.
+- **At the write — the correctness check.** The frame's write surface reads a
+  signed `_dai_author_rules` view and refuses `ROLE_NOT_PERMITTED`, naming the
+  direction, the table and the role required: "the creator wrote answers, which
+  only the session's joiner may write". A creator writing a joiner-only table
+  and a joiner writing a creator-only one are different mistakes with different
+  fixes. Proven end to end in `mailbox-link-e2e.spec.ts` on a roles build of
+  chess; the refusal's words can only come from the gate.
+
+**Checked at build:** an unknown role, a role in a document with no session, and
+a marker that almost parses are all refused. The last is new: `-- dai:replicated
+foo` used to fail an exact comparison and leave its table silently local.
+
+**Limits of this cut, stated rather than discovered:**
+- The advisor must start the session, because the role follows who minted the
+  seats. A client-initiated engagement would invert the roles.
+- Two parties. The roster knows creator and everyone else, not "this seat is
+  client A". One advisor with many private clients is one session per client,
+  which already gives each its own key and mailbox (D8, D37).
+- The answering side needs nothing installed: opening the link binds the open
+  seat. Nothing in this cut changes that path.
+
+**Not built:** the example document, and the model file and reference pages
+(`src/rules.ts`) that teach an application author to declare a role. Content
+comes after.
+
+**Found building it — a pre-existing defect in the rewrite.** `rewriteReplicated`
+decided whether a replicated table needed `IF NOT EXISTS` by testing the whole gap
+since the previous replicated table, and added it to the *first* `CREATE TABLE`
+in that gap. A replicated table placed after other statements was left a bare
+`CREATE`, so its document built, opened once, and refused every open after.
+Invisible while replicated tables sat where their gap held nothing else;
+appending two after chess's local tables hit it, and the build's load-it-twice
+check refused the document. Fixed on the table's own statement, with a
+regression test for each half. A schema that ever worked rewrites to identical
+text, since any that hit this would have failed that same check.
 
 ### D14 — Two blind runs is not a rate
 

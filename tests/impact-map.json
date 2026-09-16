@@ -2224,6 +2224,14 @@
       "src/unzip.ts",
       "tests/session-profile.spec.ts"
     ],
+    "tests/session-roles.spec.ts": [
+      "src/cbor.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "tests/session-roles.spec.ts"
+    ],
     "tests/sibling.spec.ts": [
       "apps/runner/src/card.ts",
       "apps/runner/src/main.ts",

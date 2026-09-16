@@ -53,6 +53,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
   let storeBase: string;
   let container: string;
   let creatorContainer: string;
+  let rolesContainer: string;
   const bucket = new Map<string, Buffer>();
 
   test.beforeAll(async () => {
@@ -169,6 +170,24 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const builtCreator = await compileDirectory({ sourceDir: creatorDir, root: repo, appName: "Velvet Chess" });
     creatorContainer = join(mkdtempSync(join(tmpdir(), "dai-link-creator-")), "velvet-chess.dai.html");
     writeFileSync(creatorContainer, builtCreator.html, "utf8");
+
+    // A roles build of the same app (D15): two tables chess never touches, one
+    // that only the session's creator may write and one only its joiner may. The
+    // write-surface refusal lives in the runtime, so it needs a real document;
+    // the merge-side property is proven without one in session-roles.spec.ts.
+    const rolesDir = mkdtempSync(join(tmpdir(), "dai-chess-roles-"));
+    cpSync(join(repo, "tests", "fixture", "chess"), rolesDir, { recursive: true });
+    const rolesSchema = join(rolesDir, "schema.sql");
+    writeFileSync(
+      rolesSchema,
+      readFileSync(rolesSchema, "utf8") +
+        "\n-- dai:replicated author=creator\nCREATE TABLE advice (\n  note TEXT NOT NULL\n);\n" +
+        "\n-- dai:replicated author=joiner\nCREATE TABLE answers (\n  note TEXT NOT NULL\n);\n",
+      "utf8",
+    );
+    const builtRoles = await compileDirectory({ sourceDir: rolesDir, root: repo, appName: "Velvet Chess" });
+    rolesContainer = join(mkdtempSync(join(tmpdir(), "dai-link-roles-")), "velvet-chess.dai.html");
+    writeFileSync(rolesContainer, builtRoles.html, "utf8");
   });
 
   test.afterAll(() => {
@@ -749,6 +768,75 @@ test.describe("a game continues over a shared link (the key path)", () => {
       (window as any).daiKit.db.selectObjects("SELECT count(*) AS n FROM _dai_close_current")[0].n,
     );
     expect(Number(closedOnA), "the creator's close was honored").toBeGreaterThan(0);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * Roles, at the write surface (D15): each party writes its own table, and is
+   * refused the other's by name — with the direction said.
+   *
+   * A creator writing a joiner-only table and a joiner writing a creator-only one
+   * are different mistakes with different fixes, so the refusal names which, and
+   * the table. This is the correctness check on a copy's own writes; the merge,
+   * which is where a role actually holds against a copy that enforced nothing,
+   * is proven in session-roles.spec.ts.
+   */
+  test("roles: each party writes only its own table, and is refused the other's by name", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    // A starts the game, so A authored the seats: A is the creator, B the joiner.
+    const { link } = await startGameAndShare(pageA, rolesContainer, "Ada", "Bo", "e2", "e4");
+    const appB = await openLink(pageB, link);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+
+    /** Write one row into `table` under the active game's session; "written" or the refusal. */
+    const write = (page: Page, table: string): Promise<string> =>
+      appFrame(page).evaluate((target) => {
+        const db = (window as any).daiKit.db;
+        const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
+        const session = db.selectObjects(
+          "SELECT lower(hex(_r_session)) AS s FROM games_current WHERE lower(hex(_r_entity)) = ?",
+          [active],
+        )[0].s;
+        try {
+          (window as any).dai.replicated.insert(target, { note: `into ${target}` }, session);
+          return "written";
+        } catch (error: any) {
+          return String((error && error.message) || error);
+        }
+      }, table);
+    const rowsIn = async (page: Page, table: string): Promise<number> =>
+      Number(
+        await appFrame(page).evaluate(
+          (target) => (window as any).daiKit.db.selectObjects(`SELECT count(*) AS n FROM ${target}`)[0].n,
+          table,
+        ),
+      );
+
+    // The creator: its own table is written; the joiner's is refused, saying so.
+    expect(await write(pageA, "advice"), "the creator writes a creator-only table").toBe("written");
+    const creatorRefused = await write(pageA, "answers");
+    expect(creatorRefused).toContain("ROLE_NOT_PERMITTED");
+    expect(creatorRefused, "and names the direction and the table").toContain("the creator wrote answers");
+
+    // The joiner: its own table is written; the creator's is refused, saying so.
+    expect(await write(pageB, "answers"), "the joiner writes a joiner-only table").toBe("written");
+    const joinerRefused = await write(pageB, "advice");
+    expect(joinerRefused).toContain("ROLE_NOT_PERMITTED");
+    expect(joinerRefused, "and names the direction and the table").toContain("the joiner wrote advice");
+
+    // A refused write left nothing behind; a permitted one landed.
+    expect(await rowsIn(pageA, "advice")).toBe(1);
+    expect(await rowsIn(pageA, "answers")).toBe(0);
+    expect(await rowsIn(pageB, "answers")).toBe(1);
+    expect(await rowsIn(pageB, "advice")).toBe(0);
 
     await deviceA.close();
     await deviceB.close();
