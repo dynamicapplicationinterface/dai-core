@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -625,3 +625,142 @@ test("the badge counts games waiting on this player, clears on open and after a 
 
   for (const c of [ctxA, ctxB]) await c.close();
 });
+
+/**
+ * The badge clears when this player moves (D34), on the phone and not only on
+ * a fresh load. Found on a phone after this suite was green: a move made in a
+ * resumed app left the badge standing until a reload mounted the document
+ * again. A badge is the operating system's, and nothing here can see it, so
+ * these read what the opener gave it.
+ *
+ * Run for an app that reports waiting games (tic-tac-toe) and for the same app
+ * with its report removed, which is what the chess install is: for that one the
+ * count is only "games that moved", and only the opener can clear it.
+ */
+async function nonReportingTicTacToe(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "dai-noreport-"));
+  cpSync(join(repo, "examples", "tic-tac-toe"), dir, { recursive: true });
+  const app = join(dir, "app.js");
+  const source = readFileSync(app, "utf8");
+  const stripped = source.replace("function draw() {\n  reportWaiting();", "function draw() {");
+  if (stripped === source) throw new Error("the report call was not removed");
+  writeFileSync(app, stripped);
+  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Tic-tac-toe" });
+  const file = join(dir, "no-report.dai.html");
+  writeFileSync(file, built.html, "utf8");
+  return file;
+}
+
+for (const variant of ["reports waiting games", "does not report"] as const) {
+  test(`the badge clears after this player's own move is sent, for an app that ${variant}`, async ({ browser }) => {
+    test.slow();
+    const file = variant === "reports waiting games" ? container : await nonReportingTicTacToe();
+    const tag = variant === "reports waiting games" ? "gil" : "hal";
+    const { context: ctxA, page: pageA } = await device(browser, `${tag}-a`);
+    const { context: ctxB, page: pageB } = await device(browser, `${tag}-b`);
+    const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+
+    await pageA.goto(RUNNER_URL);
+    await pageA.setInputFiles("#file", file);
+    await pageA.locator("#card-open").click();
+    const appA = appIn(pageA);
+    await expect(appA.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+    await appA.locator("#you").fill("Gil");
+    await appA.locator("#them").fill("Hal");
+    await appA.locator("#new-game button[type=submit]").click();
+    await expect(appA.locator("#players")).toContainText("Hal (O)", { timeout: 30_000 });
+    await cell(appA, 0).click();
+    await expect(cell(appA, 0)).toHaveText("X");
+    await pageA.evaluate(({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    }, { base: relay.base, key: vapid.publicKey });
+    await pageA.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+      navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+    });
+    await appA.locator("#invite").click();
+    await pageA.click("#send-go");
+    await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    const link = await pageA.evaluate(() => (window as any).__copied as string);
+
+    await pageB.goto(link);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    const appB = appIn(pageB);
+    await expect(appB.locator("#status")).toContainText("Your move, Hal.", { timeout: 60_000 });
+    await pageB.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+    await cell(appB, 4).click();
+    await expect(cell(appB, 4)).toHaveText("O");
+
+    // Hal's move arrives on Gil's open copy: Gil's turn.
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(cell(appA, 4)).toHaveText("O", { timeout: 2_000 });
+    }).toPass({ timeout: 45_000 });
+
+    /** Gil's one badge entry, and a way to set it as a push while the app was away would have. */
+    const entry = () =>
+      pageA.evaluate(
+        () =>
+          new Promise<{ uuid: string; waiting: string[]; moved: string[]; shown: number } | null>((resolve) => {
+            const open = indexedDB.open("dai_badge", 1);
+            open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+            open.onsuccess = () => {
+              const all = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
+              all.onsuccess = () => {
+                resolve((all.result[0] as never) ?? null);
+                open.result.close();
+              };
+            };
+          }),
+      );
+    await expect.poll(async () => (await entry())?.uuid ?? "", { timeout: 30_000 }).not.toBe("");
+    const uuid = (await entry())!.uuid;
+    const standing = async () =>
+      pageA.evaluate(
+        (u) =>
+          new Promise<void>((resolve) => {
+            const open = indexedDB.open("dai_badge", 1);
+            open.onsuccess = () => {
+              const tx = open.result.transaction("documents", "readwrite");
+              tx.objectStore("documents").put({ uuid: u, waiting: [], moved: ["a-game-that-moved"], shown: 1 });
+              tx.oncomplete = () => {
+                open.result.close();
+                resolve();
+              };
+            };
+          }),
+        uuid,
+      );
+
+    // A move that cannot be sent does not clear it: nothing left this device.
+    await standing();
+    await pageA.context().route(`${relay.base}/**`, (route) =>
+      route.request().method() === "POST" ? route.abort() : route.continue(),
+    );
+    await cell(appA, 8).click();
+    await expect(cell(appA, 8)).toHaveText("X");
+    if (variant === "does not report") {
+      await pageA.waitForTimeout(3_000);
+      expect((await entry())!.shown, "a move that never left must not clear the badge").toBe(1);
+    }
+
+    // Once it is sent, the badge clears. A failed publish is sent again on this
+    // copy's next write, not on a timer, so a rename is what sends the move.
+    await standing();
+    await pageA.context().unroute(`${relay.base}/**`);
+    await appA.locator("#rename").click();
+    await appA.locator("#rename-x").fill("Gilbert");
+    await appA.locator("#rename-form button[type=submit]").click();
+    await expect.poll(async () => (await entry())!.shown, { timeout: 45_000 }).toBe(0);
+    expect((await entry())!.moved).toEqual([]);
+
+    // Coming back to a resumed page clears it too, without a reload.
+    await standing();
+    await pageA.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect.poll(async () => (await entry())!.shown, { timeout: 15_000 }).toBe(0);
+
+    for (const c of [ctxA, ctxB]) await c.close();
+  });
+}

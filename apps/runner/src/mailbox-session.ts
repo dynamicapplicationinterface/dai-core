@@ -166,6 +166,12 @@ export function startMailboxSession(config: {
   relay?: string;
   /** A lane this session writes to is running: the place to ask for push on its address. */
   onLane?: (address: string) => void;
+  /**
+   * This device's rows reached the relay: called only once a publish is
+   * confirmed, never when it was asked or when it failed. The strongest signal
+   * there is that this person just took their turn (D34's badge clears here).
+   */
+  onPublished?: (address: string) => void;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
   let rootKey: Uint8Array;
@@ -350,6 +356,7 @@ export function startMailboxSession(config: {
           };
           save(lane);
           noteWatermark(lane, "resumed");
+          config.onPublished?.(lane.address);
         } catch {
           /* Still unreachable; stays pending. */
         }
@@ -492,6 +499,7 @@ export function startMailboxSession(config: {
           lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
           save(lane);
           noteWatermark(lane, "published");
+          config.onPublished?.(lane.address);
           lane.upToDate = !lane.publishAgain;
         } catch {
           config.onNote?.("A move could not be sent yet; it will send when the connection returns.");

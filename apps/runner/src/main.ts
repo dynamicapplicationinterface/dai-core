@@ -3704,6 +3704,13 @@ async function startMailboxIfPossible(): Promise<void> {
       relay,
       onLane: (address) => wantPush(address, relay),
       onLaneClosed: (address) => void releasePush(address, relay),
+      // This person's own move reached the relay: whatever the icon said is
+      // answered (D34). After the confirmation, never before it, so a move
+      // that never left clears nothing. Applies whether or not the app reports
+      // its waiting games; for one that does not, this is the only clear.
+      onPublished: () => {
+        if (mountedUuid === uuid) void badge()?.opened(uuid).catch(() => undefined);
+      },
       // A pulled move is stored on this device before the cursor passes it.
       persist: flushDocument,
       onNote: (message) => say(message),
@@ -4179,11 +4186,26 @@ Object.defineProperty(window, "__runner", {
  * is for; a timer cannot promise it on iOS.
  */
 const wakeMailbox = (): void => mailboxSession?.pull();
+/*
+ * Coming back to a document is opening it, for the badge (D34). On a phone the
+ * icon usually resumes the page iOS kept, and a resumed page does not mount the
+ * document again, so the clear on mount alone left the badge standing until a
+ * reload. Found on a phone, after the suite was green.
+ */
+const backToDocument = (): void => {
+  if (mountedUuid && document.visibilityState === "visible") void badge()?.opened(mountedUuid).catch(() => undefined);
+};
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") wakeMailbox();
+  if (document.visibilityState === "visible") {
+    wakeMailbox();
+    backToDocument();
+  }
 });
 window.addEventListener("focus", wakeMailbox);
-window.addEventListener("pageshow", wakeMailbox);
+window.addEventListener("pageshow", () => {
+  wakeMailbox();
+  backToDocument();
+});
 
 /**
  * Registers the service worker that makes the runner itself work offline.

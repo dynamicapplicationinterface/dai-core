@@ -848,6 +848,48 @@ notifications, and the icon read **1**. So:
 Not yet read on a phone: a second game raising it to 2, clearing on open, two
 icons, Android, and the Request run with a document that reports.
 
+**Found on a phone after CI and `test:push` were green: the badge did not clear
+when the player moved.** Chess, badge "1". Opened from the home-screen icon, made
+a move, closed: still "1". Reopened (it reloaded) and closed: cleared. Nothing in
+the suite could have seen it: a badge is operating-system state, and the tests
+read only what the opener gave it.
+
+**Diagnosed before fixing, from the code, then confirmed by a test run before the
+fix.** The opener cleared the badge in two places only: when a document mounts,
+and when the app reports its waiting games.
+- **Not built:** there was no clear on this player's own move. The entry above
+  said it clears "after a local move"; that held only for an app that reports,
+  whose report after the move did the clearing. Chess does not report, so its
+  move cleared nothing.
+- **A second gap in the same report:** opening from the icon resumes the page iOS
+  kept, and a resumed page does not mount again. So the clear on open did not run
+  either, until a reload.
+- **The test run before the fix split exactly that way.** The reporting app
+  cleared on the move and failed only on resume. The non-reporting app failed at
+  the move.
+
+**Fixed.**
+- The mailbox session reports a publish only once the relay has confirmed it
+  (`onPublished`, for a new move and for one resumed from an earlier visit). The
+  opener clears the badge then, for every app, reporting or not.
+- A mounted document coming back into view (`visibilitychange`, `pageshow`) clears
+  it, which is what opening from the icon is on a phone.
+
+**Tests** (`push-e2e.spec.ts`, "the badge clears after this player's own move is
+sent", run for tic-tac-toe as it is and with its report removed):
+- A move that cannot reach the relay does not clear.
+- The same move, once sent, does.
+- Returning to a resumed page clears.
+
+Each is proven on the non-reporting app, the one with nothing else to clear it:
+- no clear on publish fails at the move;
+- clearing before the publish is confirmed fails at "a move that never left";
+- no clear on resume fails at the return.
+
+**Found alongside, filed as D46:** a publish that fails is sent again only on
+this copy's next write or next open, not on a timer. The test sends the stuck move
+with a rename for that reason.
+
 **Seen alongside, not built:** a join and a name change each alert like a move.
 The worker cannot tell them apart, since the push carries nothing. The shared
 tag replaces each notification, but `renotify` alerts again every time. Whether
@@ -1157,6 +1199,22 @@ the reason it claims to guard, and green when that reason is absent.
 the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
+
+### D46 — A move that failed to send waits for the next write, not for the connection
+
+Open, not ruled. Found writing D34's clear-on-move test.
+
+When a publish to the relay fails, the mailbox session keeps the sealed batch
+pending and says "A move could not be sent yet; it will send when the connection
+returns." Nothing makes that true. The batch is sent again only when this copy
+writes something else (a later move, a rename) or when the document is next
+opened. The polling timer pulls; it does not publish. So a move made with no
+connection, followed by nothing, sits on this device while the other player waits,
+and the message says it will send on its own.
+
+The question: whether a pending publish is retried on the poll or on regaining a
+connection, or whether the message changes to say what actually happens. Either
+way, the sentence and the behavior have to agree.
 
 ### D45 — An author declares whether a document notifies
 
