@@ -1035,7 +1035,7 @@ or give it one owner, before it is written twice.
 
 ## The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
-Four instances in one week, found in four different kinds of check. Recorded as
+Five instances in one week, found in five different kinds of check. Recorded as
 one pattern because each looked like a different accident and none of them was.
 
 - **A probe that could not tell "nothing" from "I could not look" (D37).** It
@@ -1058,6 +1058,17 @@ one pattern because each looked like a different accident and none of them was.
   so the assertion restated how the string is built and could not catch anything.
   It was removed before it was committed. The earlier three passed by accident on
   a given run; this one was built unable to fail at all.
+- **A test that asserted the defect as the expected behavior (D36).**
+  `returning-document`, "opening your own copy after they moved does not make
+  yours look newer", had him make a move of his own, then expected her copy to
+  open over it. Neither copy had seen the other, so that was a genuine
+  divergence, and the test required a silent pick that dropped his move. It
+  passed, and what it passed for was the bug. It stayed green as coverage until
+  the fix refused the divergence and the test went red for being right. This
+  one is the sharpest of the five: the others agreed by accident or could not
+  disagree, and this one encoded the loss as the spec. Reading a test's title is
+  not enough; read what its assertions would require the product to do, and ask
+  whether that is what anyone wants.
 
 **The corollary: a check like this is worse than no check.** An absent test is
 visibly absent. A test that cannot fail counts as coverage, sits in the totals,
