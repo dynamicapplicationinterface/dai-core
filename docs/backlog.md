@@ -1060,9 +1060,13 @@ notifications, and the icon read **1**. So:
 - one game that moved several times counts once on a real device;
 - every push still ended in a notification.
 
-Not yet read on a phone: a second game raising it to 2, clearing on open without a
-move, two icons, Android, and the Request run with a document that reports. (The
-clear after a move is read; see the fix below.)
+**Two games, 16 September:** the same two players with two games running in the one
+chess document, and a move arriving in each while the app was closed. The icon read
+**2**. The count is per game, not per person, and it does not stop at 1.
+
+Not yet read on a phone: clearing on open without a move, two icons, Android, and
+the Request run with a document that reports. (The clear after a move is read; see
+the fix below.)
 
 **Found on a phone after CI and `test:push` were green: the badge did not clear
 when the player moved.** Chess, badge "1". Opened from the home-screen icon, made
