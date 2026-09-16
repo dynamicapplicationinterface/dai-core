@@ -90,6 +90,26 @@ product (D32: the Firefox driver loses a frame the app is drawing in), that is
 said in the backlog, made visible in CI, and reported upstream; it is not
 papered over by running the step under test until it passes.
 
+## The rule for moving rows between two parties
+
+**A whole-document copy carries every session in it. Merging one into the other
+party's device is not "sending this game": it is an invite into every game the
+sender holds.**
+
+An application that joins on a carrier open (SESSION-JOIN-ON-OPEN) takes the
+open seat of any session it can, and a saved file holds all of the sender's
+sessions (backlog D4). So in a two-party test, the second party merging a copy
+after the first party started another game or request joins that one too, and
+the app may switch to it. The assertions that follow then read a different
+session than the test means. That is the product's real behavior, not a test
+fault, and it has surprised the person writing the test before (the Request
+waiting-report test, D34).
+
+So, when a test moves rows between two parties by file: move them only while the
+sender holds the one session the test is about, or assert which session is
+showing before reading anything from it. Invites filtered to one session are
+what `requestShare(session)` makes; a saved file is not that.
+
 ## The rule for mocking a same-origin request
 
 **A test that mocks a same-origin request with `page.route` must block service
