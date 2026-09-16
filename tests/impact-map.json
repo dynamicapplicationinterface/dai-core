@@ -1145,6 +1145,12 @@
       "tests/message-binding.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/model-file-size.spec.ts": [
+      "src/generated/examples.ts",
+      "src/recipe.ts",
+      "src/rules.ts",
+      "tests/model-file-size.spec.ts"
+    ],
     "tests/naming.spec.ts": [
       "apps/runner/README.md",
       "apps/runner/index.html",

@@ -1014,6 +1014,25 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+### D43 — Whether the model file should carry the examples' stylesheets
+
+Open question, not scheduled. Each example's bundle in the model file includes
+its `app.css`. Styling is not what the model file teaches, and the stylesheets
+are a real share of it: the session example's alone is about 4.9 KB of the
+119,444 bytes.
+
+Leaving `app.css` out of every bundle would change what a fresh model sees
+across the board. A model that sees no stylesheet may write worse pages, or
+may simply write its own. That is a question for a blind run, not a reading.
+
+Not an option: a shortened stylesheet kept for the model file beside the real
+one. That is one thing with two copies that can drift apart, the defect family
+in the pattern entry.
+
+**Trigger:** the model file becoming genuinely large. `tests/model-file-size.spec.ts`
+makes any growth a deliberate budget change, so the growth that would prompt
+this will be visible when it happens.
+
 ### D42 — The opener's card makes a stronger claim about an unsigned document than it means
 
 Open, not designed. The card is the first thing a stranger sees, before the
