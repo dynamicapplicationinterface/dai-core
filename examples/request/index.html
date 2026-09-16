@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Send questions to one person and get their answers back" />
+  <meta name="dai:does" content="Write a set of questions and send them as a link" />
+  <meta name="dai:does" content="The person you send it to answers in their browser, with no account" />
+  <meta name="dai:does" content="Only you can change the questions; only they can answer them" />
+  <meta name="theme-color" content="#20343a" />
+  <title>Request</title>
+  <link rel="stylesheet" href="./app.css" />
+</head>
+<body>
+  <script type="application/sql">
+    -- Local seed only. Shared rows are never seeded with SQL.
+    INSERT OR IGNORE INTO settings (id) VALUES (1);
+  </script>
+
+  <!-- Nothing to press until app.js has started: a form on screen before then
+       takes typing the app cannot handle yet, and loses it. -->
+  <p id="opening" class="opening" role="status">Opening…</p>
+
+  <main id="app" hidden inert>
+    <header>
+      <h1>Request</h1>
+      <select id="request-list" aria-label="Request"></select>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <section id="view" hidden>
+      <p id="role" class="role"></p>
+      <h2 id="title" class="title"></h2>
+      <p id="meta" class="meta"></p>
+      <p id="note" class="note"></p>
+
+      <p id="progress" class="progress" aria-live="polite"></p>
+
+      <div id="seat" class="panel" hidden>
+        <p id="seat-text"></p>
+        <div class="choices">
+          <button id="reseat" type="button" hidden>Send a fresh link</button>
+        </div>
+      </div>
+
+      <ol id="questions" class="questions"></ol>
+
+      <form id="add-question" class="add" autocomplete="off" hidden>
+        <label for="prompt">Add a question</label>
+        <div class="row">
+          <input id="prompt" required maxlength="280" placeholder="What do you need to know?" />
+          <button type="submit">Add</button>
+        </div>
+      </form>
+
+      <div class="actions">
+        <button id="invite" type="button">Send link</button>
+        <button id="submit" type="button" hidden>Send answers back</button>
+        <button id="close" type="button" class="quiet" hidden>Close request</button>
+      </div>
+    </section>
+
+    <form id="new-request" class="panel" autocomplete="off">
+      <h2>New request</h2>
+      <label>Title <input id="new-title" required maxlength="80" placeholder="Onboarding details" /></label>
+      <label>Note to them <textarea id="new-note" rows="3" maxlength="600" placeholder="A few things we need before the kickoff call."></textarea></label>
+      <label>Answers needed by <input id="new-due" type="date" /></label>
+      <button type="submit">Start writing questions</button>
+    </form>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

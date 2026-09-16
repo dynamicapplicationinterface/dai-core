@@ -372,6 +372,7 @@
     "tests/examples-shared.spec.ts": [
       "apps/runner/",
       "examples/receipts/",
+      "examples/request/",
       "examples/tic-tac-toe/",
       "src/bundle.ts",
       "src/cbor.ts",
@@ -1926,6 +1927,7 @@
       "examples/chess-foil/",
       "examples/packing-list/",
       "examples/receipts/",
+      "examples/request/",
       "examples/tic-tac-toe/",
       "scripts/build-docs.mjs",
       "scripts/generate-key.mjs",

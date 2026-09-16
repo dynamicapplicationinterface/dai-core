@@ -212,7 +212,7 @@ function filesOf(dir: string): Record<string, string> {
 
 test.describe("the lint holds applications to the shared-table constraints", () => {
   test("the correct applications pass", () => {
-    for (const dir of ["examples/packing-list", "examples/receipts", "examples/tic-tac-toe", "tests/fixture/chess"]) {
+    for (const dir of ["examples/packing-list", "examples/receipts", "examples/tic-tac-toe", "examples/request", "tests/fixture/chess"]) {
       const findings = breaking(lintFiles(filesOf(dir)));
       expect(findings.map((f) => `${f.file}: ${f.id}`), dir).toEqual([]);
     }

@@ -378,3 +378,77 @@ test.describe("tic-tac-toe, a session document", () => {
     for (const context of contexts) await context.close();
   });
 });
+
+test.describe("request, a session document with author roles", () => {
+  test.slow();
+
+  test("the writer asks, the answerer answers, and each copy is refused the other's side by name", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-request-"));
+    const container = await build("examples/request", "Request", scratch);
+    const { contexts, pages } = await devices(browser, 2);
+    const [pageA, pageB] = pages as [Page, Page];
+    const questions = (app: FrameLocator) => app.locator("#questions .question");
+
+    /** A write the page never offers, made straight on the write surface into the request showing. */
+    const tryWrite = (app: FrameLocator, table: string, columns: Record<string, unknown>): Promise<string> =>
+      app.locator("#request-list").evaluate(
+        (list, [t, c]) => {
+          const option = (list as HTMLSelectElement).options[(list as HTMLSelectElement).selectedIndex];
+          const dai = (window as unknown as { dai: { replicated: { insert(t: string, c: unknown, s: string): string } } }).dai;
+          try {
+            dai.replicated.insert(t, c, option?.dataset.session ?? "");
+            return "written";
+          } catch (error) {
+            return String((error as Error).message ?? error);
+          }
+        },
+        [table, columns] as [string, Record<string, unknown>],
+      );
+
+    // A writes a request with two questions and sends the link.
+    const appA = await firstOpen(pageA, container, "#new-request");
+    await appA.locator("#new-title").fill("Onboarding details");
+    await appA.locator("#new-note").fill("A few things we need before the kickoff call.");
+    await appA.locator("#new-request button[type=submit]").click();
+    await expect(appA.locator("#role")).toContainText("You wrote this request", { timeout: 30_000 });
+    for (const prompt of ["Who should receive invoices?", "Which start date works?"]) {
+      await appA.locator("#prompt").fill(prompt);
+      await appA.locator("#add-question button[type=submit]").click();
+    }
+    await expect(questions(appA)).toHaveCount(2);
+    await expect(appA.locator("#invite")).toBeVisible();
+    // The writer sees the answers as places to wait, never as fields.
+    await expect(appA.locator("#questions textarea")).toHaveCount(0);
+    const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
+
+    // B opens the link: joins at start-up, and answers.
+    const appB = await firstOpen(pageB, a1, "#view");
+    await expect(appB.locator("#role")).toContainText("Sent to you", { timeout: 30_000 });
+    await expect(questions(appB)).toHaveCount(2);
+    await expect(appB.locator("#add-question")).toBeHidden();
+    await questions(appB).nth(0).locator("textarea").fill("accounts@example.com");
+    await questions(appB).nth(0).locator("button").click();
+    await expect(appB.locator("#progress")).toContainText("1 of 2 answered");
+    await questions(appB).nth(1).locator("textarea").fill("The first Monday of next month");
+    await questions(appB).nth(1).locator("button").click();
+    await expect(appB.locator("#progress")).toContainText("2 of 2 answered");
+    await appB.locator("#submit").click();
+    await expect(appB.locator("#progress")).toContainText("Sent back");
+
+    // The page hides the other side's controls; the write surface is the guard.
+    const refusedB = await tryWrite(appB, "questions", { request_id: "00", position: 3, prompt: "added by the answerer" });
+    expect(refusedB).toContain("ROLE_NOT_PERMITTED");
+    expect(refusedB).toContain("questions");
+    const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
+
+    // A's copy shows the answers when B's rows arrive, and cannot answer for B.
+    await mergeIn(pageA, b1, true);
+    await expect(questions(appA).nth(0)).toContainText("accounts@example.com", { timeout: 60_000 });
+    await expect(appA.locator("#progress")).toContainText("Answers received · 2 of 2");
+    const refusedA = await tryWrite(appA, "answers", { question_id: "00", body: "written by the writer" });
+    expect(refusedA).toContain("ROLE_NOT_PERMITTED");
+    expect(refusedA).toContain("answers");
+
+    for (const context of contexts) await context.close();
+  });
+});
