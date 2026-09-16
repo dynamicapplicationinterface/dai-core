@@ -1200,6 +1200,22 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+### D47 — `static-opener` fails in full local runs, and nobody has read why
+
+Open. `tests/static-opener.spec.ts:147`, "a /d/ link on a plain static host opens
+the document", has failed in the full local `test:push` run several times this
+week. Each time it passed when run alone, and it was called environmental. The
+error text was never read.
+
+The latest, 16 September, during D34's clear-on-move change: 1 failed out of
+1,053, then 3 of 3 alone. Rerunning overwrote the original error text, so this
+sighting explains nothing either.
+
+**The rule for the next failure: read the error and keep the result directory
+before rerunning anything.** "It passed alone" is not an explanation. A spec that
+fails only under a full run's load or ordering is saying something about load or
+ordering, and a rerun discards the only evidence of what.
+
 ### D46 — A move that failed to send waits for the next write, not for the connection
 
 Open, not ruled. Found writing D34's clear-on-move test.
