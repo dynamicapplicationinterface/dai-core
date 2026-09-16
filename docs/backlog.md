@@ -837,6 +837,22 @@ home-screen install having its own storage, which is a phone check. So is iOS
 rendering the badge at all, and Android showing a dot. The Request example does
 not report yet, so its icon counts "something new", not "waiting on you".
 
+**On a phone, 16 September (iOS, home-screen install of a chess document that
+does not report waiting games).** With the app closed, the other player joined,
+saved their name, and made a move. That was three pushes and three
+notifications, and the icon read **1**. So:
+- the badge renders on iOS from the worker;
+- one game that moved several times counts once on a real device;
+- every push still ended in a notification.
+
+Not yet read on a phone: a second game raising it to 2, clearing on open, two
+icons, Android, and the Request run with a document that reports.
+
+**Seen alongside, not built:** a join and a name change each alert like a move.
+The worker cannot tell them apart, since the push carries nothing. The shared
+tag replaces each notification, but `renotify` alerts again every time. Whether
+something that is not a turn should alert is its own question.
+
 So the blocker is gone and the decision is made; what is left is the two lines
 in the push handler, the `window.dai` surface for the app to report its count,
 and the five tests above — including the guard-both-ways one, which is what
