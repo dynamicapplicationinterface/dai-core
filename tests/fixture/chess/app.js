@@ -75,7 +75,7 @@ function renderGames(){
  for(const g of games){const st=store.state(g.id);if(st.result==='*')open++;else if(st.result==='1/2-1/2')drawn++;else decided++;
   const outcome=st.result==='1-0'?playerName(g,'w')+' won · '+st.resultReason:st.result==='0-1'?playerName(g,'b')+' won · '+st.resultReason:st.result==='1/2-1/2'?'Draw · '+st.resultReason:st.conflict?'Two moves at once — choose one':store.myColor(g)===st.turn?'Your move':'Waiting on '+playerName(g,st.turn);
   const b=element('button','game-list-row');b.type='button';b.dataset.gameOpen=g.id;if(g.id===active)b.setAttribute('aria-current','true');
-  const body=element('span','game-list-body');body.append(element('strong','',playerName(g,'w')+' vs '+playerName(g,'b')),element('span','outcome',outcome),element('span','game-date',Math.ceil(st.ply/2)+' moves'));
+  const body=element('span','game-list-body');body.append(element('strong','',playerName(g,'w')+' vs '+playerName(g,'b')),element('span','outcome',outcome),element('span','game-date',Math.ceil(st.ply/2)+' moves · '+g.session.slice(0,8)));
   b.append(element('span','game-list-icon','▦'),body,element('span','','›'));rows.push([st.result==='*'?0:1,b]);}
  rows.sort((a,b)=>a[0]-b[0]);
  $('games-list').replaceChildren(...rows.map(r=>r[1]));
@@ -148,6 +148,23 @@ function renderNames(g){
  const choices=$('names-choices');choices.replaceChildren();
  for(const v of store.nameVersions(g)){const b=element('button','button small');b.type='button';b.textContent=(v.white_name||'White')+' vs '+(v.black_name||'Black');b.addEventListener('click',run(()=>{store.keepNames(v.white_name,v.black_name);notify('Names settled.');}));choices.append(b);}
 }
+/**
+ * Which game this board is, and whether the other player is really in it.
+ *
+ * Two copies can sit on different games and both look perfectly healthy — that
+ * is exactly how a split invite went unseen, with each person waiting on the
+ * other. The short session id is the same on both copies of one game, so two
+ * people can read it to each other and know in a second whether they are even
+ * in the same game. It says who is in it for the same reason: "waiting to join"
+ * on both screens at once is the state that cannot happen.
+ */
+function renderGameId(g,seat,joined){
+ const line=$('game-id');
+ if(!g||g.is_demo){line.hidden=true;return;}
+ const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':'waiting for the other player to join';
+ line.textContent='Game '+g.session.slice(0,8)+' · '+who;
+ line.hidden=false;
+}
 function draw(){
  if(!store)return;
  const s=store.settings(),u=store.ui(),st=store.state();setTheme();
@@ -168,7 +185,7 @@ function draw(){
  renderConflict(st);
  const contestedOut=renderContested(st);
  const seat=g.is_demo?null:store.seatState(g.session),mine=store.myColor(g),joined=!g.is_demo&&store.opponentJoined(g.session),myTurn=store.canMove(st);
- renderTurnBanner(st,{mine,joined,myTurn,blocked:contestedOut});renderNames(g);
+ renderTurnBanner(st,{mine,joined,myTurn,blocked:contestedOut});renderNames(g);renderGameId(g,seat,joined);
  if(!animating)renderBoard(st,u);
  const last=st.last;
  $('last-description').textContent=last?playerName(g,last.color)+' · '+last.san+' · '+last.from+' → '+last.to:'The story starts with the first move.';

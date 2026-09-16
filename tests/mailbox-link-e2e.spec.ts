@@ -915,4 +915,238 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceA.close();
     await deviceB.close();
   });
+
+  /*
+   * Two people inviting each other, in all four orders they can do it in
+   * (backlog D37).
+   *
+   * Reported from a phone: two people invited each other and the app behaved as
+   * though they were in two different games, with both boards looking healthy.
+   * The cause was that a key meant "this document" and "this game" at once, so
+   * whoever invited second re-keyed everything the first had — every mailbox
+   * address is derived from that key, so each published moves the other never
+   * read, in silence.
+   *
+   * The finding underneath is that nothing in this suite ever had **two people
+   * act**. Every test had one inviter. So these force the orders rather than
+   * hoping for one: each is deterministic, and none waits on a race.
+   */
+  /** Open the chess container on a fresh page and wait for the board. */
+  async function openContainer(page: Page): Promise<FrameLocator> {
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", container);
+    await page.locator("#card-open").click({ timeout: 60_000 });
+    const opened = app(page);
+    await expect(opened.locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(page);
+    return opened;
+  }
+
+  /** The keys this copy holds per game, as `<session>:<key>`. Two copies of one game must agree. */
+  const keysHeld = (page: Page): Promise<string[]> =>
+    page.evaluate(async () => {
+      const items = (await (window as any).__runner.listLibrary()) as { sessionKeys?: Record<string, string> }[];
+      return items.flatMap((item) => Object.entries(item.sessionKeys ?? {}).map(([s, k]) => `${s}:${k}`));
+    });
+
+  /** Every move this copy holds, as `<san>@<session>` — a move checked in the game it belongs to. */
+  const movesHeld = (page: Page): Promise<string[]> =>
+    appFrame(page).evaluate(() =>
+      (window as any).daiKit.db
+        .selectObjects(
+          "SELECT m.san AS san, lower(hex(g._r_session)) AS s FROM moves_current m" +
+            " JOIN games_current g ON lower(hex(g._r_entity)) = m.game_id ORDER BY m.ply",
+        )
+        .map((r: any) => `${String(r.san)}@${String(r.s)}`),
+    );
+
+  /** The session of the game this copy is showing. */
+  const activeSession = (page: Page): Promise<string> =>
+    appFrame(page).evaluate(() => {
+      const db = (window as any).daiKit.db;
+      const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
+      return String(
+        db.selectObjects("SELECT lower(hex(_r_session)) AS s FROM games_current WHERE lower(hex(_r_entity)) = ?", [
+          active,
+        ])[0].s,
+      );
+    });
+
+  /** Pull until a move lands, in the game it belongs to. The poll is the app's own. */
+  async function reaches(page: Page, want: string, why: string): Promise<void> {
+    await expect(async () => {
+      await page.evaluate(() => (window as any).__runner.pullMailbox());
+      expect(await movesHeld(page), why).toContain(want);
+    }).toPass({ timeout: 30_000 });
+  }
+
+  /** A copy that took an open seat is asked to name itself, once. */
+  async function nameIfAsked(page: Page, name: string): Promise<void> {
+    const dialog = app(page).locator("#name-dialog");
+    if (await dialog.waitFor({ state: "visible", timeout: 20_000 }).then(() => true, () => false)) {
+      await app(page).locator("#my-name").fill(name);
+      await app(page).locator("#name-form button[type=submit]").click();
+    }
+  }
+
+  test("an invite carries the game it opens, and both copies key that game the same way", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openContainer(pageA);
+    await openContainer(pageB);
+    const link = await inviteNewGame(pageA, appA);
+    const session = await activeSession(pageA);
+
+    // The game travels in the link beside the key, because the receiving host
+    // holds ciphertext and cannot read the document's tables to find out which
+    // game a key opens.
+    expect(new URL(link).hash, "the invite names the game its key opens").toContain(`s=${session}`);
+
+    await pageB.goto(link);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB);
+    await nameIfAsked(pageB, "Bo");
+
+    // Both copies hold the same key for that game — which is what makes their
+    // derived mailbox addresses agree.
+    await expect
+      .poll(async () => (await keysHeld(pageB)).filter((k) => k.startsWith(`${session}:`)), { timeout: 30_000 })
+      .toEqual(await keysHeld(pageA).then((keys) => keys.filter((k) => k.startsWith(`${session}:`))));
+
+    await play(app(pageB), "e7", "e5");
+    await reaches(pageA, `e5@${session}`, "B's reply reaches A in the game they share");
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  test("both invite before either opens, and each game still reaches the other copy", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openContainer(pageA);
+    const appB = await openContainer(pageB);
+
+    // The reported order: each mints an invite before either has opened one, so
+    // under one key per document the two copies held different keys from here on.
+    const linkFromA = await inviteNewGame(pageA, appA);
+    const sessionA = await activeSession(pageA);
+    const linkFromB = await inviteNewGame(pageB, appB);
+    const sessionB = await activeSession(pageB);
+    expect(sessionA, "two invites are two different games").not.toBe(sessionB);
+
+    await pageB.goto(linkFromA);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB);
+    await nameIfAsked(pageB, "Bo");
+
+    await pageA.goto(linkFromB);
+    await pageA.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageA);
+    await nameIfAsked(pageA, "Ada");
+
+    // B replies in A's game, and A replies in B's. Both must arrive: the failure
+    // this guards is both of them looking healthy and neither hearing anything.
+    await play(app(pageB), "e7", "e5");
+    await reaches(pageA, `e5@${sessionA}`, "B's reply in A's game reaches A");
+
+    await play(app(pageA), "e7", "e5");
+    await reaches(pageB, `e5@${sessionB}`, "A's reply in B's game reaches B");
+
+    // And opening the other's invite left each copy's own game keyed as it was:
+    // the stranding half of D37, where an arriving key re-keyed everything held.
+    expect(await keysHeld(pageA), "A still holds its own game's key").toEqual(
+      expect.arrayContaining([expect.stringContaining(`${sessionA}:`)]),
+    );
+    expect(await keysHeld(pageB), "B still holds its own game's key").toEqual(
+      expect.arrayContaining([expect.stringContaining(`${sessionB}:`)]),
+    );
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  test("the same crossed invites in the other opening order reach each other too", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openContainer(pageA);
+    const appB = await openContainer(pageB);
+    const linkFromA = await inviteNewGame(pageA, appA);
+    const sessionA = await activeSession(pageA);
+    const linkFromB = await inviteNewGame(pageB, appB);
+    const sessionB = await activeSession(pageB);
+
+    // A opens first this time. Opening order is the other half of "who acted
+    // first", and it decided the outcome before per-game keys.
+    await pageA.goto(linkFromB);
+    await pageA.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageA);
+    await nameIfAsked(pageA, "Ada");
+
+    await pageB.goto(linkFromA);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB);
+    await nameIfAsked(pageB, "Bo");
+
+    await play(app(pageA), "e7", "e5");
+    await reaches(pageB, `e5@${sessionB}`, "A's reply in B's game reaches B");
+
+    await play(app(pageB), "e7", "e5");
+    await reaches(pageA, `e5@${sessionA}`, "B's reply in A's game reaches A");
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  test("a second invite from the same copy leaves the first game reaching its player", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openContainer(pageA);
+    await openContainer(pageB);
+
+    const first = await inviteNewGame(pageA, appA);
+    const firstSession = await activeSession(pageA);
+    await pageB.goto(first);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB);
+    await nameIfAsked(pageB, "Bo");
+
+    // A second invite into a different game mints a different key. The first
+    // game must keep working: under one key per document it did not, because
+    // minting the second replaced the key the first was running on.
+    await inviteNewGame(pageA, appA);
+    const secondSession = await activeSession(pageA);
+    expect(secondSession).not.toBe(firstSession);
+
+    await play(app(pageB), "e7", "e5");
+    await reaches(pageA, `e5@${firstSession}`, "the first game still reaches A after a second invite");
+
+    await deviceA.close();
+    await deviceB.close();
+  });
 });

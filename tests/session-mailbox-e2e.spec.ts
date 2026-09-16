@@ -202,8 +202,31 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   await pageA.click("#send-go");
   await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
   const link = await pageA.evaluate(() => (window as any).__copied as string);
-  const root = fromBase64Url(new URLSearchParams(new URL(link).hash.slice(1)).get("k")!);
-  expect(root.byteLength, "the link carries the document's 32-byte key").toBe(32);
+  /*
+   * The invite carries the *game's* key now, not the document's (backlog D37).
+   *
+   * Updated knowingly rather than incidentally: this test used to derive both
+   * games' addresses from the key in the link, because one key served the whole
+   * document. A key that meant "this document" and "this game" at once is what
+   * let two people who each invited first publish to addresses the other never
+   * read, so a key now belongs to the game it was minted for. Each game's
+   * address is therefore derived from its own key, and the separation this test
+   * exists for is stronger than before: the document key no longer opens the
+   * invited game's mailbox at all, which is asserted below.
+   */
+  const fragment = new URLSearchParams(new URL(link).hash.slice(1));
+  const invitedKey = fromBase64Url(fragment.get("k")!);
+  expect(invitedKey.byteLength, "the link carries a 32-byte key").toBe(32);
+  const invitedGame = fragment.get("s");
+  expect(invitedGame, "the link names the game its key opens").toMatch(/^[0-9a-f]{32}$/);
+  // The document's own key, which the games with no invite still travel under.
+  const root = fromBase64Url(
+    await pageA.evaluate(async () => {
+      const items = (await (window as any).__runner.listLibrary()) as { documentKey?: string }[];
+      return items.map((i) => i.documentKey).find((k): k is string => typeof k === "string")!;
+    }),
+  );
+  expect(root.byteLength, "this device holds the document's 32-byte key").toBe(32);
 
   // Both games published, each to its own address.
   await expect.poll(() => appended.size, { timeout: 45_000 }).toBeGreaterThanOrEqual(2);
@@ -211,7 +234,10 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   const games = a.prepare("SELECT lower(hex(_r_session)) AS session, o_name FROM games").all() as { session: string; o_name: string }[];
   const bo = games.find((g) => g.o_name === "Bo")!.session;
   const cy = games.find((g) => g.o_name === "Cy")!.session;
-  const boMailbox = await deriveSessionMailbox(root, fromHex(bo));
+  expect(bo, "the invited game is the one the link names").toBe(invitedGame);
+  // Each from its own key: the invited game from the key in the link, the game
+  // nobody was invited into from the document's.
+  const boMailbox = await deriveSessionMailbox(invitedKey, fromHex(bo));
   const cyMailbox = await deriveSessionMailbox(root, fromHex(cy));
 
   // Two addresses, the ones a recipient derives from the link — and nothing
@@ -228,6 +254,15 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   expect(await opens(sealed, boMailbox.key), "the invited game's key must not open it").toBe(false);
   expect(await opens(sealed, root), "the document key alone must not open it").toBe(false);
   expect(await opens(sealed, await documentMailboxKey(root)), "the old per-document key must not open it").toBe(false);
+  // New with per-game keys: what the invited person was sent opens their game
+  // and nothing else — the key handed over is a capability for one game.
+  expect(await opens(sealed, invitedKey), "the key sent in the invite must not open another game").toBe(false);
+  const invitedBatches = (await backend.since(boMailbox.id, "")).batches;
+  expect(invitedBatches.length, "the invited game's mailbox has rows in it").toBeGreaterThan(0);
+  expect(
+    await opens(invitedBatches[0]!, await documentMailboxKey(root)),
+    "and the document's key does not open the invited game either",
+  ).toBe(false);
 
   // And the invited game still plays over its own mailbox: B joins from the
   // link, answers, and A receives it.

@@ -99,6 +99,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D35 | The same document held on two installs is correct but illegible | [ ] the relay reconciles them; nothing says which icon is which |
 | D34 | Badge the home-screen icon on an incoming move | [ ] waits on the live push pipeline; where the count comes from is undecided |
 | D33 | Other host-to-frame messages can still arrive before the bridge listens | [x] every message is held by default until the bridge listens; the payload is the one named exception; proven both ways |
+| D37 | Two people who both invite cannot reach each other, in silence | [x] a key belongs to the game, not the document; four orders forced by test; migration decided (old games restart); 13/13 on chromium, CI across engines still to run |
+| D38 | A rematch has to be sent as a link, which is absurd between two people already playing | [ ] the mechanism is decided and deliberately not built; trigger below |
 | D32 | On Firefox, a test loses the opener's frame when it is pointed at the document | [ ] the app mounts and shows; Playwright waits in a frame it still believes is blank; two CI sightings, both reproduced locally about 1 in 6 with screenshots; fix undecided |
 
 ---
@@ -786,6 +788,141 @@ true.
 - The same question after the app is up is answered in well under a second, so
   the hold releases and does not delay.
 - A source scan fails if a second direct send into the frame appears.
+
+### D37 — Two people who both invite cannot reach each other, and nothing says so
+
+Reported from a phone, 15 September: two people invited each other, twice each,
+and the app behaved as though they were in two different games. Both boards
+looked healthy. Neither person could tell which game they were in.
+
+**What was measured, against production, not read from the code:**
+
+- The ordinary order works. A invites, B opens it in a browser that already
+  holds the app: B is asked to name themselves, A sees B join in 2 s, moves
+  cross both ways in about 4 s, and B inviting A back works too.
+- **Both inviting first splits them.** Each device minted its own key for the
+  same document (`SATY…` and `V6Q…` in the run). Every mailbox address is
+  derived from that key, so each published moves to an address the other never
+  read.
+- **Opening an invite stranded the opener's own game.** An arriving key replaced
+  the document key whatever game it was for, so games already running moved to
+  addresses derived from the new key while their partners kept reading the old.
+- Nothing reported any of it. No refusal, no console line, nothing on screen.
+
+**The cause, in one sentence: one stored value carried two facts.** A key meant
+"this document" and "this game" at once, so a key minted for one game re-keyed
+every other game the copy held. That is the same shape as D36, where `savedAt`
+means both "when this was written" and "what it had seen" — and the same
+symptom both times: **silent divergence.** Worth stating as a pattern, because
+it is now twice in one week: *when one stored value carries two meanings, the
+failure is silent and what a person sees is two copies that disagree.*
+
+**The ruling (Chris, 15 September): a key belongs to the game.** Option B of
+`decision-where-does-a-key-live`. Rejected: keeping one key per document and
+merely refusing to overwrite it — that fixes the stranding and leaves the
+mutual-invite case broken, which ships a fix while two people still stare at
+healthy boards that cannot reach each other.
+
+**Built:** a key per game (session hex → base64url) in the library entry,
+minted by whoever invites into that game, carried in the invite's fragment
+beside the hash (`s=<session>`), filed by the receiver against that game alone,
+and used to derive that game's mailbox address and seal. A game with no key of
+its own falls back to the document key, which is every game made before this. A
+lane is re-keyed when *its own* key changes and not when some other key for the
+same document does.
+
+**The test forces all four orders on purpose** — A invites first; B invites
+first; both invite before either opens; each opens the other's. Deterministic,
+no waiting on a race. The finding here is not only the bug: *nothing in the
+suite ever had two people act at all*, which is why two people acting in the
+wrong order was reachable at all. All thirteen tests in
+`tests/mailbox-link-e2e.spec.ts` pass on chromium; CI across three engines is
+the authority and has not run yet.
+
+**What it cost to get there, because the shape is worth keeping.** Five product
+changes, three of which were corrections of regressions introduced by the two
+before them, and every step forward came from a throwaway probe rather than from
+reading the code:
+
+- **The key was filed too late.** A copy that already holds the app takes the
+  merge path, which runs through `launchFromLibrary` — and `eject` clears the
+  arriving key. So the key was gone before anything wrote it down. It is filed
+  now at the moment the document it belongs to is identified.
+- **Two library writes rebuilt the record from a pre-merge snapshot** and wrote
+  the new field back out of existence — the keep-step save and the
+  standing-consent save. Both re-read now. This is a real defect of its own,
+  the same shape the note in that code already described for standing consent
+  and issued shares; it simply did not cover a field that did not exist yet.
+- **Per-game keys stopped a document key ever being minted**, and
+  `startMailboxIfPossible` gives up when there is none — so a copy that had
+  invited somebody ran *no mailbox at all*: no lanes, no polling, nothing
+  published or pulled, while both copies held matching game keys they never
+  used. Then the mirror of it on the receiving side: a copy that only ever
+  *receives* invites never minted one either. Both sides ensure one now.
+- **Three of my own readings were wrong** — that the inviter was not filing its
+  key (the expected and received arrays were the other way round), that no
+  lanes existed (the probe could not open the database and returned an empty
+  list for it), and that no session existed (the probe was pointed at a dead
+  relay). Each was caught only because the next probe was made to report its own
+  failures instead of returning something that looked like data.
+
+**The rule this leaves behind: a probe must not be able to say "nothing" when it
+means "I could not look."** Every wrong turn tonight had that shape.
+- **The migration, decided rather than discovered (15 September): old games
+  break and are restarted.** No legacy-address fallback. There were two users
+  and their games were already split across mailboxes neither could read, so
+  there was nothing working to carry over — and a fallback path is code that
+  lives for ever to serve a week of history. The two of them start a new game on
+  the new build.
+
+  Two things this is *not*. It is not succession: `planSuccession` refuses
+  adoption unless the arriving copy is signed by the key this device pinned for
+  the document it replaces, and chess is unsigned, so `--upgrade-of` would only
+  produce a card reading "this copy is not signed". And it is not solved by
+  pinning the same `documentUuid` either: a sibling merge carries data, never
+  code, so the copy already on the phone would keep its old application and
+  never show the new screen. A changed application is a new document until
+  chess is signed, which is its own decision.
+
+  **The document-key fallback stays, and is not migration debt.** A share of the
+  whole document from the opener's menu carries no game and is keyed by the
+  document; only an invite into a game carries a game's own key. The fallback is
+  that live path, not a bridge for old data.
+
+### D38 — A rematch has to be sent as a link, which is absurd between two people already playing
+
+Two people playing each other share a private channel already: the game's
+mailbox, sealed under a key only they hold. A rematch could mint a new game and
+deliver its key **in-band** through that channel, so playing again needs no link
+at all — and "play somebody else" stays the same operation with the key
+delivered by link instead. One mechanism, two deliveries.
+
+**Deliberately not built (Chris, 15 September), for two reasons:**
+
+1. **It changes what an arriving message can do.** The standing rule is that
+   nobody is seated without a person opening something (T1-D34) — that rule is
+   consent, and it is load-bearing. In-band delivery makes a row capable of
+   creating a game. Even framed as an offer, that is a change of kind, and it
+   does not belong inside a commit whose job is fixing a live bug.
+2. **It re-links what D8 separated on purpose.** Each game was given its own
+   address and its own key so that a relay cannot tell that two games share a
+   document or a person, and there is a privacy test holding that. Putting game
+   two's key into game one's channel re-links them. That may be acceptable — but
+   it has to be argued on its own, with D8's test updated knowingly rather than
+   incidentally.
+
+**The trigger that un-parks it:** when somebody asks for a rematch and finds
+sending a link absurd. That will happen, and that is when the argument above is
+worth having.
+
+**A rule that is settled either way — removal is local.** When a person removes
+the other player, it means *on their own copy only*: they leave, and may invite
+somebody else. It never ejects the other person from their copy. Symmetric
+ejection lets two people destroy a live game with no arbiter to decide who was
+right, and the tier this sits in is social and conditional — detectable, not
+preventable. **One replica never gets the power to destroy another's copy.**
+Stated here in those words because the next person to touch it will assume
+ejection should propagate.
 
 ### D32 — On Firefox, a test loses the opener's frame when it is pointed at the document
 

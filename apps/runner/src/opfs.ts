@@ -39,6 +39,21 @@ export interface LibraryItem {
    */
   documentKey?: string;
   /**
+   * A key per shared game (session hex → base64url), for a session document.
+   *
+   * The document key above is one fact standing for two: "this document" and
+   * "this game". Two people who each invited before opening the other's invite
+   * therefore held different document keys, every derived mailbox address
+   * differed, and each published moves where the other never read — in silence,
+   * because nothing compares the two (backlog D37). A game's key belongs to the
+   * game: minted by whoever invites into it, carried by that invite, and stored
+   * here under the game it opens. Who invites first, and how often, stops
+   * deciding whether two copies can reach each other.
+   *
+   * Absent for a game made before this, which falls back to `documentKey`.
+   */
+  sessionKeys?: Record<string, string>;
+  /**
    * Counts the saves this device has committed for the document. A tab
    * saving against a revision it did not see last is behind another tab,
    * and its whole-database write would put the newer work back.

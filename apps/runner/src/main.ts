@@ -625,6 +625,8 @@ function eject(): void {
   mailboxSession?.stop();
   mailboxSession = null;
   arrivedKey = undefined;
+  // With it: a game named by the last link must not file the next document's key.
+  arrivedSession = undefined;
   document.body.classList.remove("loaded", "launching", "booting");
   clearLaunchGuard();
   document.documentElement.style.removeProperty("--app-ground");
@@ -1201,6 +1203,22 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const heldHere = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
     );
+    /*
+     * The game's key is filed here, the moment the document it opens is known.
+     *
+     * It used to be filed when the mailbox started, which is too late and was
+     * the whole of why this fix did not work: a copy that already holds the app
+     * takes the merge path, and that runs through `launchFromLibrary` — which
+     * ejects first, and `eject` clears the arriving key. The key was gone before
+     * anything wrote it down, so the invited copy kept reading the address
+     * derived from the document key while the inviter published to the game's
+     * own. The same two-addresses failure as D37, one layer along.
+     *
+     * Here it is known and nothing has ejected yet, so it survives the mount.
+     */
+    if (arrivedKey && arrivedSession && heldHere) {
+      await rememberSessionKey(cartridge.manifest.documentUuid, arrivedSession, arrivedKey);
+    }
     const kin =
       heldHere && declaresReplication(cartridge.manifest)
         ? siblingTest(
@@ -1529,10 +1547,18 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     // menu says it was not kept rather than promising it was.
     markStep("keeping it on this device");
     try {
+      /*
+       * Read again rather than reuse `heldItem`, which was read before the
+       * document was identified and before an arriving game's key was filed
+       * against it (D37). A write built from the older snapshot silently drops
+       * whatever was added in between — the same shape of loss the note below
+       * describes for standing consent and issued shares.
+       */
+      const keepItem = (await getCartridgeFromLibrary(loaded.manifest.documentUuid).catch(() => null)) ?? heldItem;
       await saveCartridgeToLibrary({
         // Standing consent and issued shares belong to the copy, not to this
         // write. See the note on the save path above.
-        ...heldItem,
+        ...keepItem,
         documentUuid: loaded.manifest.documentUuid,
         appName: loaded.manifest.appName ?? "container",
         lastOpened: new Date().toISOString(),
@@ -2556,7 +2582,16 @@ async function applyPendingMerge(): Promise<void> {
       // dai:merged event. Not an error say: that would call arrived(false) and
       // eject the document the person just opened.
       if (!report.refused && job.recordStanding) {
-        await saveCartridgeToLibrary({ ...job.heldItem, mergeStanding: true }).catch(
+        /*
+         * Re-read, never rebuilt from the snapshot this job was made with.
+         *
+         * `job.heldItem` was captured before the document was opened and before
+         * the merge ran. Writing it back here would undo anything filed in
+         * between — the game's key from the invite that caused this very merge
+         * (D37) among it. Only the flag this write owns is changed.
+         */
+        const held = await getCartridgeFromLibrary(job.heldItem.documentUuid).catch(() => null);
+        await saveCartridgeToLibrary({ ...(held ?? job.heldItem), mergeStanding: true }).catch(
           () => undefined,
         );
       }
@@ -2671,7 +2706,12 @@ async function previewIcon(favicon: string | undefined): Promise<{ png: Uint8Arr
  * fits, otherwise through the store. Returns where it came from too, so the
  * sheet can say whether anything left the device.
  */
-async function linkToSend(html: string, preview: boolean): Promise<{ link: string; uploaded: boolean }> {
+async function linkToSend(
+  html: string,
+  preview: boolean,
+  /** The game being invited into, when this link is an invite into one. */
+  session?: string,
+): Promise<{ link: string; uploaded: boolean }> {
   const cfg = storeConfig();
   const store = cfg ? presignedStore(cfg) : undefined;
   const icon = preview && loaded ? await previewIcon(loaded.manifest.favicon) : undefined;
@@ -2691,16 +2731,25 @@ async function linkToSend(html: string, preview: boolean): Promise<{ link: strin
    * Inside the link is still what a document does when there is no store
    * to reach: the link goes without a card rather than not at all.
    */
-  // A replicated document seals under its own stable key — the one its mailbox
-  // uses — so every share carries the same key and the two sides converge. A
-  // document with nothing to sync keeps a fresh key per share.
+  /*
+   * An invite into a game seals under that game's own key (backlog D37); a
+   * share of the whole document seals under the document's.
+   *
+   * The two sides converge because both derive from the key the invite carried,
+   * and a later invite into a different game carries a different key and leaves
+   * this one alone. Under one key per document they did not converge: whoever
+   * invited second overwrote the first key, and the games already running under
+   * it moved to addresses nobody read.
+   */
   const key =
     loaded && declaresReplication(loaded.manifest)
-      ? await ensureDocumentKey(loaded.manifest.documentUuid)
+      ? session
+        ? await ensureSessionKey(loaded.manifest.documentUuid, session)
+        : await ensureDocumentKey(loaded.manifest.documentUuid)
       : undefined;
   if (store) {
     try {
-      const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon, key });
+      const { links, sealed } = await publish(html, store, location.origin + "/", { preview, icon, key }, key ? session : undefined);
       // Remembered, so the person who shared it can take it back (see retireShares).
       if (loaded) await rememberShare(loaded.manifest.documentUuid, { hash: sealed.hash, retire: sealed.retire, at: new Date().toISOString() });
       return { link: withGround(links.known), uploaded: true };
@@ -2873,7 +2922,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
       const html = invite ? await inviteHtml(invite) : await currentHtml(withData.checked);
       // The name and icon go with it, as they do when a phone shares any
       // app; the person can take the card off in the share sheet itself.
-      made = await linkToSend(html, true);
+      made = await linkToSend(html, true, invite);
     } catch (error) {
       close();
       const why = error instanceof Error ? error.message : "The store could not be reached.";
@@ -3249,6 +3298,15 @@ let relayBase: string | undefined =
 /** The document key this open carried in its link, if any — the mailbox seals under it. */
 let arrivedKey: string | undefined;
 
+/**
+ * The game that key opens, when the link named one (backlog D37).
+ *
+ * A key with a game named beside it is filed against that game and changes
+ * nothing else this device holds. Without it — every link made before per-game
+ * keys — the key is the document's, and behaves as it always did.
+ */
+let arrivedSession: string | undefined;
+
 /** The running mailbox loop for the mounted document, or none. */
 let mailboxSession: MailboxSession | null = null;
 
@@ -3278,7 +3336,17 @@ function mintKeyBase64Url(): string {
  */
 async function documentRootKey(documentUuid: string): Promise<string | null> {
   const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
-  if (arrivedKey) {
+  /*
+   * A key that named a game is that game's, and never the document's (D37).
+   *
+   * This is the line that stranded a game. An arriving key used to replace the
+   * document key whatever it was for, so opening somebody's invite re-keyed
+   * every game this copy already had: their mailboxes moved to addresses
+   * derived from the new key, their partners kept reading the old ones, and
+   * nothing anywhere said a word. A named key is filed against its own game by
+   * `rememberSessionKey` and changes nothing else.
+   */
+  if (arrivedKey && !arrivedSession) {
     if (held && held.documentKey !== arrivedKey) {
       await saveCartridgeToLibrary({ ...held, documentKey: arrivedKey }).catch(() => undefined);
     }
@@ -3304,6 +3372,85 @@ async function ensureDocumentKey(documentUuid: string): Promise<string> {
   return key;
 }
 
+/** Every key this device holds for a game of a document (session hex → base64url). */
+async function sessionKeysFor(documentUuid: string): Promise<Record<string, string>> {
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  return held?.sessionKeys ?? {};
+}
+
+/**
+ * The key for one shared game, minting one the first time it is invited into.
+ *
+ * The key belongs to the game, not to the document (backlog D37). A document
+ * key meant both at once, so two people who each invited before opening the
+ * other's invite held different keys, derived different mailbox addresses, and
+ * published moves the other never read — with nothing on either screen saying
+ * so. Minted at the invite, kept here, carried by that invite, and never
+ * replaced by a key arriving for a different game.
+ */
+async function ensureSessionKey(documentUuid: string, session: string): Promise<string> {
+  /*
+   * The document still gets a key, even though this invite does not use it.
+   *
+   * `startMailboxIfPossible` asks for the document's key and gives up when
+   * there is none — "updates arrive when you invite someone" — so routing
+   * invites through per-game keys alone left a copy that had invited somebody
+   * with no mailbox session at all: no lanes, no polling, nothing published,
+   * and both copies holding matching game keys they never used. That was this
+   * fix breaking the layer above the one it was fixing.
+   *
+   * Minted first, and the record re-read afterwards, because these are two
+   * writes to one record and the second built from a stale read would undo the
+   * first — the same trap as the keep-step and standing-consent writes.
+   */
+  await ensureDocumentKey(documentUuid);
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  const existing = held?.sessionKeys?.[session];
+  if (existing) return existing;
+  const key = mintKeyBase64Url();
+  if (held) {
+    await saveCartridgeToLibrary({ ...held, sessionKeys: { ...(held.sessionKeys ?? {}), [session]: key } });
+  }
+  /*
+   * The lanes are rebuilt, because this key did not exist when they were.
+   *
+   * A mailbox session builds a lane per game when the document mounts, and a
+   * game's key is minted later — at the invite. Without this the inviter keeps
+   * publishing that game to the address derived from the document key while the
+   * copy they invited reads the one derived from the key it was sent: the same
+   * two-addresses failure as D37, reintroduced by the order the fix runs in.
+   * Restarting re-derives every lane; a re-keyed lane republishes from the
+   * start, which a merge already ignores where it has the rows.
+   */
+  await startMailboxIfPossible();
+  return key;
+}
+
+/**
+ * Files a key that arrived in a link against the game it opens.
+ *
+ * The document gets a key here too, for the same reason the inviting side does:
+ * `startMailboxIfPossible` asks for the document's key and gives up when there
+ * is none. A copy that only ever *receives* invites never mints one, so it held
+ * the right key for the game and ran no mailbox at all — no lanes, no polling,
+ * nothing published or pulled. Measured: the inviting copy reported two lanes
+ * and a running session, the receiving copy reported none.
+ *
+ * The record is re-read between the two writes, because they are two writes to
+ * one record and the second built from a stale read would undo the first.
+ */
+async function rememberSessionKey(documentUuid: string, session: string, key: string): Promise<void> {
+  const existing = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  if (!existing) return;
+  if (!existing.documentKey) await ensureDocumentKey(documentUuid);
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  if (!held || held.sessionKeys?.[session] === key) return;
+  await saveCartridgeToLibrary({
+    ...held,
+    sessionKeys: { ...(held.sessionKeys ?? {}), [session]: key },
+  }).catch(() => undefined);
+}
+
 /**
  * Starts the mailbox loop for the mounted document, when there is one to start.
  *
@@ -3324,6 +3471,9 @@ async function startMailboxIfPossible(): Promise<void> {
   const uuid = loaded.manifest.documentUuid;
   // The person has this document open: a notification about it has done its job.
   void clearNotices(uuid);
+  // An invite that named its game hands this copy that game's key. Filed first,
+  // so the lane below derives from it on this very open rather than the next.
+  if (arrivedKey && arrivedSession) await rememberSessionKey(uuid, arrivedSession, arrivedKey);
   const key = await documentRootKey(uuid);
   if (!key) {
     // Replicated, but no key yet: this copy came by file and has not been
@@ -3344,6 +3494,8 @@ async function startMailboxIfPossible(): Promise<void> {
       // when its runtime can scope a batch to one — said in its handshake.
       sessions: Boolean(loaded.manifest.session),
       sessionLanes: frameSessionLanes,
+      // Each game's own key, for the lanes that have one (D37).
+      sessionKeys: await sessionKeysFor(uuid),
       // And each mailbox wakes this device when it moves, if it may (slice
       // two), until its game closes.
       relay,
@@ -3421,6 +3573,9 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
   // The document's key, kept for the mailbox — the same key that just decrypted
   // it. A home-screen launch will not carry it again, so the session records it.
   arrivedKey = reference.key;
+  // Which game it opens, when the link said. Filed against that game once the
+  // document is in the library, so it never displaces a key for another game.
+  arrivedSession = reference.session;
   // Carried in the clear, if the link said so. Held until the card is built.
   arrivedInClear = reference.clear === true;
   const store = reference.url ? where : "this project's store";

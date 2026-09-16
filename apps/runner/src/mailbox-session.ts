@@ -148,6 +148,13 @@ export function startMailboxSession(config: {
    * had. This is the only thing that chooses between the two: no timer does.
    */
   sessionLanes?: boolean;
+  /**
+   * A key per session (session hex → base64url), from the invite that created
+   * that game (backlog D37). A lane with one derives its address and seal from
+   * it; a lane without one falls back to the document key, which is what every
+   * game made before per-game keys has.
+   */
+  sessionKeys?: Record<string, string>;
   /** A lane's session closed and the lane has stopped: release its push. */
   onLaneClosed?: (address: string) => void;
   /**
@@ -246,7 +253,18 @@ export function startMailboxSession(config: {
     void saveMailbox(lane.state);
   };
 
-  function makeLane(name: string, address: string, key: () => Promise<Uint8Array>, session: string | undefined, inboundOnly: boolean): Lane {
+  function makeLane(
+    name: string,
+    address: string,
+    key: () => Promise<Uint8Array>,
+    session: string | undefined,
+    inboundOnly: boolean,
+    // The key this lane's address and seal were derived from — its own, for a
+    // game that has one. Written into the record and compared on the next open,
+    // so a lane is re-keyed when *its* key changes and not when some other key
+    // for the same document does.
+    stateKey: string = config.keyBase64Url,
+  ): Lane {
     const lane: Lane = {
       name,
       address,
@@ -255,7 +273,7 @@ export function startMailboxSession(config: {
       key,
       state: {
         documentUuid: name,
-        key: config.keyBase64Url,
+        key: stateKey,
         watermark: { replica: "", seq: 0 },
         cursor: "",
         pending: null,
@@ -270,7 +288,7 @@ export function startMailboxSession(config: {
     };
     lane.ready = (async () => {
       const saved = await loadMailbox(name);
-      if (saved && saved.key === config.keyBase64Url) {
+      if (saved && saved.key === stateKey) {
         // Kept state, with where it lives written down for the service worker.
         lane.state = { ...saved, address, ...(config.relay ? { relay: config.relay } : {}) };
         if (saved.address !== address || saved.relay !== config.relay) save(lane);
@@ -334,8 +352,28 @@ export function startMailboxSession(config: {
       if (typeof session !== "string" || !/^[0-9a-f]{32}$/.test(session)) continue;
       const name = `${documentUuid}/${session}`;
       if (lanes.has(name)) continue;
-      const derived = await deriveSessionMailbox(rootKey, fromHex(session));
-      lanes.set(name, makeLane(name, derived.id, async () => derived.key, session, false));
+      /*
+       * A game derives from its own key when the invite that made it carried
+       * one (backlog D37), and from the document's when it does not — which is
+       * every game made before per-game keys, and is why the fallback stays.
+       *
+       * This is the whole of the fix: the pair (key, session id) both sides
+       * compute from is now a property of the game, so it no longer matters who
+       * invited first, how many times, or in which order the two people opened
+       * what they were sent.
+       */
+      const own = config.sessionKeys?.[session];
+      let seed = rootKey;
+      if (own) {
+        try {
+          const bytes = fromBase64Url(own);
+          if (bytes.byteLength === 32) seed = bytes;
+        } catch {
+          /* An unreadable key is no key: the document's root still carries it. */
+        }
+      }
+      const derived = await deriveSessionMailbox(seed, fromHex(session));
+      lanes.set(name, makeLane(name, derived.id, async () => derived.key, session, false, own ?? config.keyBase64Url));
     }
   }
 

@@ -43,8 +43,15 @@ import { fromBase64, sha256Hex, toBase64 } from "./core.js";
  */
 export const STORE_CAP = 25 * 1024 * 1024;
 
-/** The fragment keys. `h` for the hash, `k` for the key, `u` for an any-host URL. */
-export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c" } as const;
+/**
+ * The fragment keys. `h` for the hash, `k` for the key, `u` for an any-host URL.
+ *
+ * `s` names the shared game a key opens, for a document whose games each carry
+ * their own key (backlog D37). The receiving host cannot read the document's
+ * tables — it holds ciphertext until the frame opens it — so the one thing it
+ * must know to file the key correctly has to travel where the key does.
+ */
+export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c", session: "s" } as const;
 
 /**
  * What travels beside the blob, in the clear.
@@ -535,9 +542,14 @@ export function referenceLinks(
   opener: string,
   sealed: Pick<Sealed, "hash" | "key" | "clear">,
   href: string,
+  /** The shared game this link invites into, when its key is that game's own. */
+  session?: string,
 ): { known: string; anyHost: string } {
   const base = opener.replace(/[#?].*$/, "").replace(/\/$/, "");
-  const { hash, key, url, clear } = REFERENCE_KEYS;
+  const { hash, key, url, clear, session: sessionKey } = REFERENCE_KEYS;
+  // Only for a key that opens one game. A document-wide key names no game, and
+  // a link that claimed one would file that key against a game it does not open.
+  const game = session && !sealed.clear ? `&${sessionKey}=${session}` : "";
 
   /*
    * A document held in the clear carries `c=1` instead of a key.
@@ -551,8 +563,8 @@ export function referenceLinks(
    */
   const secret = sealed.clear ? `${clear}=1` : `${key}=${sealed.key}`;
   return {
-    known: `${base}/d/${sealed.hash}#${hash}=${sealed.hash}&${secret}`,
-    anyHost: `${base}/#${hash}=${sealed.hash}&${url}=${encodeURIComponent(href)}&${secret}`,
+    known: `${base}/d/${sealed.hash}#${hash}=${sealed.hash}&${secret}${game}`,
+    anyHost: `${base}/#${hash}=${sealed.hash}&${url}=${encodeURIComponent(href)}&${secret}${game}`,
   };
 }
 
@@ -565,6 +577,13 @@ export interface Reference {
   clear?: boolean;
   /** Where the blob is. Absent for `/d/<id>`, which names the opener's own store. */
   url?: string;
+  /**
+   * The shared game `key` opens, when the key belongs to one game rather than
+   * to the whole document (backlog D37). Absent on every link made before that,
+   * and on a document-wide key, where it would be a claim about a game the key
+   * does not open.
+   */
+  session?: string;
 }
 
 /**
@@ -580,6 +599,16 @@ export function referenceFrom(pathname: string, search: string, hash: string): R
   // Clear carriage is stated, never inferred from a missing key: see
   // `referenceLinks`. A link may say one or the other and never both.
   const clear = fragment.get(REFERENCE_KEYS.clear) === "1";
+  /*
+   * The game this key opens, when the link says so.
+   *
+   * Shaped like a session id or not carried at all: a malformed one is dropped
+   * rather than refusing the link, because the key still opens the document and
+   * the mailbox falls back to the document's own. Never accepted beside a clear
+   * link, which carries no key for it to describe.
+   */
+  const s = fragment.get(REFERENCE_KEYS.session);
+  const session = !clear && s && /^[0-9a-f]{32}$/i.test(s) ? s.toLowerCase() : undefined;
   if (!h || !/^[0-9a-f]{64}$/i.test(h)) return undefined;
   if (clear && k) return undefined;
   if (!clear && (!k || !/^[A-Za-z0-9_-]{43}$/.test(k))) return undefined;
@@ -589,7 +618,7 @@ export function referenceFrom(pathname: string, search: string, hash: string): R
     try {
       const url = new URL(u);
       if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
-      return { hash: h.toLowerCase(), key: k ?? "", ...(clear ? { clear } : {}), url: url.href };
+      return { hash: h.toLowerCase(), key: k ?? "", ...(clear ? { clear } : {}), ...(session ? { session } : {}), url: url.href };
     } catch {
       return undefined;
     }
@@ -602,7 +631,7 @@ export function referenceFrom(pathname: string, search: string, hash: string): R
   const byQuery = new URLSearchParams(search).get("d");
   const id = byPath ?? byQuery;
   if (id && id.toLowerCase() !== h.toLowerCase()) return undefined;
-  return { hash: h.toLowerCase(), key: k ?? "", ...(clear ? { clear } : {}) };
+  return { hash: h.toLowerCase(), key: k ?? "", ...(clear ? { clear } : {}), ...(session ? { session } : {}) };
 }
 
 /**
@@ -656,8 +685,10 @@ export async function publish(
   store: Store,
   opener: string,
   options: SealOptions = {},
+  /** The shared game this link invites into, when the key sealing it is that game's own. */
+  session?: string,
 ): Promise<{ sealed: Sealed; href: string; links: { known: string; anyHost: string } }> {
   const sealed = await sealForStore(html, options);
   const href = await store.put(sealed.hash, sealed.blob, sealed.sidecar, sealed.icon);
-  return { sealed, href, links: referenceLinks(opener, sealed, href) };
+  return { sealed, href, links: referenceLinks(opener, sealed, href, session) };
 }

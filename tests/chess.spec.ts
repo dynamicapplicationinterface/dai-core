@@ -181,6 +181,19 @@ test.describe("a game of chess played by exchanging files", () => {
     await appA.locator("#setup-them").fill("Bo");
     await appA.locator('input[name="color"][value="w"]').check();
     await appA.locator("#new-game-form button[type=submit]").click();
+
+    /*
+     * The board says which game it is, and whether the other player is in it.
+     *
+     * Two people once sat on different games with both boards looking healthy
+     * and no way to tell (backlog D37) — the whole diagnosis cost was that the
+     * screen said nothing. So the line is asserted rather than left to rot: the
+     * game's short id, and the state that matters, which here is that nobody has
+     * joined yet.
+     */
+    await expect(appA.locator("#game-id")).toBeVisible();
+    await expect(appA.locator("#game-id")).toContainText(/^Game [0-9a-f]{8} · waiting for the other player to join$/);
+
     await play(appA, "e2", "e4");
 
     const afterE4 = join(scratch, "a-e4.dai.html");
