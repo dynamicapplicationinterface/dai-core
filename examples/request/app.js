@@ -41,7 +41,7 @@ const myReplica = () => one("SELECT lower(hex(id)) AS id FROM _dai_replica")?.id
 
 function requests() {
   return rows(
-    `SELECT lower(hex(_r_entity)) AS id, lower(hex(_r_session)) AS session, title, note, due_on
+    `SELECT lower(hex(_r_entity)) AS id, lower(hex(_r_session)) AS session, from_name, title, note, due_on
        FROM requests_current ORDER BY _r_lc`,
   );
 }
@@ -235,24 +235,39 @@ function drawQuestion(question, s, request) {
     box.id = `answer-${question.id}`;
     box.rows = 3;
     box.maxLength = 2000;
-    box.value = answer?.body ?? "";
+    box.value = drafts.get(question.id) ?? answer?.body ?? "";
     box.setAttribute("aria-label", `Answer to: ${question.prompt}`);
     const row = document.createElement("div");
-    row.className = "choices";
+    row.className = "choices saving";
     const save = document.createElement("button");
     save.type = "button";
-    save.textContent = answer ? "Save changes" : "Save answer";
-    save.addEventListener("click", () => {
-      const body = box.value.trim();
-      if (!body || body === answer?.body) return;
-      write(() =>
-        answer
-          ? shared.change("answers", answer.id, { question_id: question.id, body })
-          : shared.insert("answers", { question_id: question.id, body }, request.session),
-      );
-      draw();
+    const state = document.createElement("span");
+    state.className = "saved";
+    // Redrawn on every keystroke without rebuilding the box, so typing is never
+    // interrupted and the send button always counts what is unsaved.
+    const show = () => {
+      const unsaved = isUnsaved(question.id, answer);
+      save.textContent = answer ? "Save changes" : "Save answer";
+      save.disabled = !unsaved;
+      state.textContent = unsaved
+        ? "Not saved yet"
+        : drafts.has(question.id) && !drafts.get(question.id).trim() && answer
+          ? "Empty answers are not saved; your saved answer stays"
+          : answer
+            ? "Saved"
+            : "";
+      state.classList.toggle("unsaved", unsaved);
+    };
+    box.addEventListener("input", () => {
+      drafts.set(question.id, box.value);
+      show();
+      drawSubmit();
     });
-    row.append(save);
+    save.addEventListener("click", () => {
+      if (saveDraft(question, answer, request)) draw();
+    });
+    show();
+    row.append(save, state);
     item.append(box, row);
     return item;
   }
@@ -262,68 +277,148 @@ function drawQuestion(question, s, request) {
   reply.textContent = answer ? answer.body : s.isWriter ? "Not answered yet." : "No answer.";
   item.append(reply);
 
-  if (s.isWriter && !s.closed && !answer) {
+  // Questions lock once the request has been opened: a question changing under
+  // an answer is a change nobody could follow.
+  if (s.isWriter && !s.closed && !s.answererJoined) {
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.className = "quiet";
-    remove.textContent = "Remove question";
+    remove.className = "link";
+    remove.textContent = "Remove";
+    remove.setAttribute("aria-label", `Remove question: ${question.prompt}`);
     remove.addEventListener("click", () => {
       write(() => shared.remove("questions", question.id));
       draw();
     });
-    const row = document.createElement("div");
-    row.className = "choices";
-    row.append(remove);
-    item.append(row);
+    item.append(remove);
   }
   return item;
 }
 
+// ---- answers not yet saved ----------------------------------------------
+
+/**
+ * What the answerer has typed and not saved, by question. Held here, not in the
+ * database: an answer is a shared row, and a row per pause in typing would send
+ * half-written text to the other person. Every redraw draws from this, so a
+ * merge arriving mid-sentence never replaces what is on screen.
+ */
+const drafts = new Map();
+
+function isUnsaved(questionId, answer) {
+  const text = drafts.get(questionId)?.trim();
+  return !!text && text !== answer?.body;
+}
+
+/** Saves one question's draft. True when there was nothing to save or it saved. */
+function saveDraft(question, answer, request) {
+  if (!isUnsaved(question.id, answer)) return true;
+  const body = drafts.get(question.id).trim();
+  const saved = write(() =>
+    answer
+      ? shared.change("answers", answer.id, { question_id: question.id, body })
+      : shared.insert("answers", { question_id: question.id, body }, request.session),
+  );
+  if (saved) drafts.delete(question.id);
+  return !!saved;
+}
+
+/** The unsaved answers of the request showing, with what each would replace. */
+function unsavedIn(request) {
+  return questionsOf(request)
+    .map((question) => ({ question, answer: answersTo(question).current[0] ?? null }))
+    .filter(({ question, answer }) => isUnsaved(question.id, answer));
+}
+
+/**
+ * The one button that sends. It never sends past text on screen: whatever is
+ * unsaved is saved first, and the label says how much.
+ */
+function drawSubmit() {
+  const request = activeRequest();
+  const button = $("submit");
+  if (!request) return;
+  const s = seats(request.session);
+  const questions = questionsOf(request);
+  const answered = questions.filter((q) => answersTo(q).current.length > 0).length;
+  const unsaved = unsavedIn(request).length;
+  const sent = submitted(request);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  button.hidden = !(s.isAnswerer && !s.closed && (sent ? unsaved > 0 : answered + unsaved > 0));
+  if (sent) button.textContent = `Save ${plural(unsaved, "change")}`;
+  else if (unsaved > 0) button.textContent = `Save ${plural(unsaved, "answer")} and send back`;
+  else if (answered < questions.length) button.textContent = `Send back ${answered} of ${questions.length} answers`;
+  else button.textContent = "Send answers back";
+}
+
+// ---- the page -----------------------------------------------------------
+
+/** True while the person is writing a new request over one that is open. */
+let composing = false;
+
 function draw() {
   drawList();
   const request = activeRequest();
-  $("view").hidden = !request;
-  if (!request) return;
+  const writing = composing || !request;
+  $("new-request").hidden = !writing;
+  $("compose-cancel").hidden = !request;
+  $("compose").hidden = writing;
+  $("view").hidden = writing;
+  if (writing) return;
   const s = seats(request.session);
   const questions = questionsOf(request);
   const answered = questions.filter((q) => answersTo(q).current.length > 0).length;
   const sent = submitted(request);
 
   $("role").textContent = s.isWriter
-    ? "You wrote this request · only you can change the questions"
+    ? s.answererJoined
+      ? "You wrote this request · it has been opened, so the questions are locked"
+      : "You wrote this request · only you can change the questions"
     : s.isAnswerer
-      ? "Sent to you · only you can answer"
-      : "Request";
+      ? `From ${request.from_name} · only you can answer`
+      : `From ${request.from_name}`;
   $("title").textContent = request.title;
   $("meta").textContent = request.due_on ? `Answers needed by ${formatDate(request.due_on)}` : "";
   $("note").textContent = request.note;
 
   let progress;
+  const of = `${answered} of ${questions.length}`;
   if (questions.length === 0) progress = s.isWriter ? "Add your first question below." : "No questions yet.";
-  else if (sent) progress = s.isWriter ? `Answers received · ${answered} of ${questions.length}` : `Sent back · ${answered} of ${questions.length} answered`;
+  else if (s.isWriter && sent) progress = `Answers sent back · ${of} answered`;
   else if (s.isWriter && !s.answererJoined) progress = `${questions.length} ${questions.length === 1 ? "question" : "questions"} · not opened yet`;
-  else progress = `${answered} of ${questions.length} answered`;
+  else if (s.isWriter) progress = `Opened · ${of} answered so far`;
+  else if (sent) progress = `Sent back · you can still change your answers`;
+  else progress = `${of} answered`;
   $("progress").textContent = progress;
-  $("progress").classList.toggle("done", sent);
+  $("progress").classList.toggle("done", sent && answered === questions.length);
 
   drawSeat(s);
   $("questions").replaceChildren(...questions.map((q) => drawQuestion(q, s, request)));
 
-  $("add-question").hidden = !(s.isWriter && !s.closed);
+  $("add-question").hidden = !(s.isWriter && !s.closed && !s.answererJoined);
   $("invite").hidden = !(s.isWriter && s.openSeat && !s.contested && !s.closed && questions.length > 0);
-  $("submit").hidden = !(s.isAnswerer && !s.closed && !sent && answered > 0);
-  $("submit").textContent = answered < questions.length
-    ? `Send back ${answered} of ${questions.length} answers`
-    : "Send answers back";
+  drawSubmit();
   $("close").hidden = !(s.isWriter && !s.closed && s.answererJoined);
 }
 
 // ---- acting -------------------------------------------------------------
 
+$("compose").addEventListener("click", () => {
+  composing = true;
+  draw();
+  $("new-from").focus();
+});
+
+$("compose-cancel").addEventListener("click", () => {
+  composing = false;
+  $("new-request").reset();
+  draw();
+});
+
 $("new-request").addEventListener("submit", (event) => {
   event.preventDefault();
+  const from = $("new-from").value.trim();
   const title = $("new-title").value.trim();
-  if (!title) return;
+  if (!from || !title) return;
   const made = write(() => {
     db.exec("BEGIN");
     try {
@@ -331,7 +426,7 @@ $("new-request").addEventListener("submit", (event) => {
       const { session } = shared.session.create();
       const id = shared.insert(
         "requests",
-        { title, note: $("new-note").value.trim(), due_on: $("new-due").value || null },
+        { from_name: from, title, note: $("new-note").value.trim(), due_on: $("new-due").value || null },
         session,
       );
       db.exec({ sql: "UPDATE settings SET active_request = ? WHERE id = 1", bind: [id] });
@@ -343,6 +438,7 @@ $("new-request").addEventListener("submit", (event) => {
     }
   });
   if (made) {
+    composing = false;
     $("new-request").reset();
     draw();
     $("prompt").focus();
@@ -351,6 +447,7 @@ $("new-request").addEventListener("submit", (event) => {
 
 $("request-list").addEventListener("change", () => {
   db.exec({ sql: "UPDATE settings SET active_request = ? WHERE id = 1", bind: [$("request-list").value] });
+  composing = false;
   draw();
 });
 
@@ -381,9 +478,17 @@ $("reseat").addEventListener("click", () => {
   draw();
 });
 
+// Saves every unsaved answer first, and sends only if all of them saved: a
+// send that went ahead past a failed save would be the silent loss this button
+// exists to prevent.
 $("submit").addEventListener("click", () => {
   const request = activeRequest();
-  if (request) write(() => shared.insert("submissions", { request_id: request.id }, request.session));
+  if (!request) return;
+  const pending = unsavedIn(request);
+  const allSaved = pending.every(({ question, answer }) => saveDraft(question, answer, request));
+  if (allSaved && !submitted(request)) {
+    write(() => shared.insert("submissions", { request_id: request.id }, request.session));
+  }
   draw();
 });
 
@@ -394,17 +499,17 @@ $("close").addEventListener("click", () => {
 });
 
 // The other person's rows arrive here, and nowhere else. Join only when a file
-// or link was opened; a background mailbox merge never takes a seat. A merge
-// redraws everything but an answer being typed: a redraw would replace it.
+// or link was opened; a background mailbox merge never takes a seat. Unsaved
+// answers survive the redraw (they are drawn from drafts); the cursor is put
+// back where it was.
 window.addEventListener("dai:merged", (event) => {
   if (event.detail?.via === "carrier") joinIfInvited();
   const typing = document.activeElement?.id?.startsWith("answer-") ? document.activeElement : null;
-  const draft = typing ? { id: typing.id, value: typing.value, start: typing.selectionStart } : null;
+  const at = typing ? { id: typing.id, start: typing.selectionStart } : null;
   draw();
-  if (draft && $(draft.id)) {
-    $(draft.id).value = draft.value;
-    $(draft.id).focus();
-    $(draft.id).setSelectionRange(draft.start, draft.start);
+  if (at && $(at.id)) {
+    $(at.id).focus();
+    $(at.id).setSelectionRange(at.start, at.start);
   }
 });
 

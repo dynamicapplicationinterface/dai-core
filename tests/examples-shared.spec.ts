@@ -407,33 +407,46 @@ test.describe("request, a session document with author roles", () => {
 
     // A writes a request with two questions and sends the link.
     const appA = await firstOpen(pageA, container, "#new-request");
+    await appA.locator("#new-from").fill("Jordan Lee");
     await appA.locator("#new-title").fill("Onboarding details");
     await appA.locator("#new-note").fill("A few things we need before the kickoff call.");
     await appA.locator("#new-request button[type=submit]").click();
     await expect(appA.locator("#role")).toContainText("You wrote this request", { timeout: 30_000 });
+    // The form for another request is out of the way while this one is open.
+    await expect(appA.locator("#new-request")).toBeHidden();
+    await expect(appA.locator("#compose")).toBeVisible();
     for (const prompt of ["Who should receive invoices?", "Which start date works?"]) {
       await appA.locator("#prompt").fill(prompt);
       await appA.locator("#add-question button[type=submit]").click();
     }
     await expect(questions(appA)).toHaveCount(2);
-    await expect(appA.locator("#invite")).toBeVisible();
+    await expect(appA.locator("#invite")).toBeInViewport();
+    // Before it is opened, the writer can still remove a question.
+    await expect(appA.locator("#questions button.link")).toHaveCount(2);
     // The writer sees the answers as places to wait, never as fields.
     await expect(appA.locator("#questions textarea")).toHaveCount(0);
     const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
 
-    // B opens the link: joins at start-up, and answers.
+    // B opens the link: joins at start-up, sees who is asking, and answers.
     const appB = await firstOpen(pageB, a1, "#view");
-    await expect(appB.locator("#role")).toContainText("Sent to you", { timeout: 30_000 });
+    await expect(appB.locator("#role")).toContainText("From Jordan Lee · only you can answer", { timeout: 30_000 });
     await expect(questions(appB)).toHaveCount(2);
     await expect(appB.locator("#add-question")).toBeHidden();
+    await expect(appB.locator("#new-request")).toBeHidden();
     await questions(appB).nth(0).locator("textarea").fill("accounts@example.com");
     await questions(appB).nth(0).locator("button").click();
     await expect(appB.locator("#progress")).toContainText("1 of 2 answered");
+    await expect(questions(appB).nth(0)).toContainText("Saved");
+
+    // The second answer is typed and never saved by its own button. Sending
+    // back must not leave it behind: the button counts it, and saves it first.
     await questions(appB).nth(1).locator("textarea").fill("The first Monday of next month");
-    await questions(appB).nth(1).locator("button").click();
-    await expect(appB.locator("#progress")).toContainText("2 of 2 answered");
+    await expect(questions(appB).nth(1)).toContainText("Not saved yet");
+    await expect(appB.locator("#submit")).toHaveText("Save 1 answer and send back");
     await appB.locator("#submit").click();
-    await expect(appB.locator("#progress")).toContainText("Sent back");
+    await expect(appB.locator("#progress")).toContainText("Sent back · you can still change your answers");
+    await expect(questions(appB).nth(1)).toContainText("Saved");
+    await expect(appB.locator("#submit")).toBeHidden();
 
     // The page hides the other side's controls; the write surface is the guard.
     const refusedB = await tryWrite(appB, "questions", { request_id: "00", position: 3, prompt: "added by the answerer" });
@@ -441,10 +454,15 @@ test.describe("request, a session document with author roles", () => {
     expect(refusedB).toContain("questions");
     const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
 
-    // A's copy shows the answers when B's rows arrive, and cannot answer for B.
+    // A's copy shows both answers when B's rows arrive — the unsaved one too —
+    // and the questions are locked now that the request has been opened.
     await mergeIn(pageA, b1, true);
     await expect(questions(appA).nth(0)).toContainText("accounts@example.com", { timeout: 60_000 });
-    await expect(appA.locator("#progress")).toContainText("Answers received · 2 of 2");
+    await expect(questions(appA).nth(1)).toContainText("The first Monday of next month");
+    await expect(appA.locator("#progress")).toContainText("Answers sent back · 2 of 2 answered");
+    await expect(appA.locator("#role")).toContainText("the questions are locked");
+    await expect(appA.locator("#add-question")).toBeHidden();
+    await expect(appA.locator("#questions button.link")).toHaveCount(0);
     const refusedA = await tryWrite(appA, "answers", { question_id: "00", body: "written by the writer" });
     expect(refusedA).toContain("ROLE_NOT_PERMITTED");
     expect(refusedA).toContain("answers");

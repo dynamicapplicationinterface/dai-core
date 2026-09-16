@@ -25,6 +25,7 @@
     <header>
       <h1>Request</h1>
       <select id="request-list" aria-label="Request"></select>
+      <button id="compose" type="button" class="quiet small" hidden>New request</button>
     </header>
 
     <p id="notice" class="notice" role="status" hidden></p>
@@ -35,7 +36,10 @@
       <p id="meta" class="meta"></p>
       <p id="note" class="note"></p>
 
-      <p id="progress" class="progress" aria-live="polite"></p>
+      <div class="next">
+        <p id="progress" class="progress" aria-live="polite"></p>
+        <button id="invite" type="button" hidden>Send link</button>
+      </div>
 
       <div id="seat" class="panel" hidden>
         <p id="seat-text"></p>
@@ -49,24 +53,28 @@
       <form id="add-question" class="add" autocomplete="off" hidden>
         <label for="prompt">Add a question</label>
         <div class="row">
-          <input id="prompt" required maxlength="280" placeholder="What do you need to know?" />
+          <input id="prompt" required maxlength="280" placeholder="e.g. Which start date works for you?" />
           <button type="submit">Add</button>
         </div>
       </form>
 
       <div class="actions">
-        <button id="invite" type="button">Send link</button>
         <button id="submit" type="button" hidden>Send answers back</button>
         <button id="close" type="button" class="quiet" hidden>Close request</button>
       </div>
     </section>
 
-    <form id="new-request" class="panel" autocomplete="off">
+    <form id="new-request" class="panel" autocomplete="off" hidden>
       <h2>New request</h2>
-      <label>Title <input id="new-title" required maxlength="80" placeholder="Onboarding details" /></label>
-      <label>Note to them <textarea id="new-note" rows="3" maxlength="600" placeholder="A few things we need before the kickoff call."></textarea></label>
-      <label>Answers needed by <input id="new-due" type="date" /></label>
-      <button type="submit">Start writing questions</button>
+      <label>Your name <input id="new-from" required maxlength="60" placeholder="e.g. Jordan Lee" /></label>
+      <label>Title <input id="new-title" required maxlength="80" placeholder="e.g. Onboarding details" /></label>
+      <label><span>Note to them <span class="optional">· optional</span></span>
+        <textarea id="new-note" rows="3" maxlength="600" placeholder="e.g. A few things we need before the kickoff call."></textarea></label>
+      <label><span>Answers needed by <span class="optional">· optional</span></span> <input id="new-due" type="date" /></label>
+      <div class="choices">
+        <button type="submit">Start writing questions</button>
+        <button id="compose-cancel" type="button" class="quiet" hidden>Cancel</button>
+      </div>
     </form>
   </main>
 

@@ -19,12 +19,20 @@
 --     whether the answers were sent back, are derived from the rows.
 --   * An answer is one row per question, changed in place by change(). An
 --     answer edited on two devices before they met is shown to settle.
+--   * An answer is written when the person saves it, not while they type: a
+--     row per pause would send half-typed text and invite conflicts. Text not
+--     yet saved is held by the page, and sending back saves it first.
+--   * Answers stay editable after they are sent back; an edit reaches the
+--     writer like any other row. Questions lock, in the page, once the request
+--     has been opened: a question changing under an answer is not worth
+--     explaining.
 --   * Which request is showing is about this copy, so it is local.
 
 -- dai:profile session max_parties=2 close=creator
 
 -- dai:replicated author=creator
 CREATE TABLE IF NOT EXISTS requests (
+  from_name TEXT NOT NULL,            -- who is asking, as the other person will see it
   title   TEXT NOT NULL,
   note    TEXT NOT NULL DEFAULT '',
   due_on  TEXT                        -- YYYY-MM-DD, or null for no date
