@@ -47,6 +47,12 @@ bridge](/docs/host-bridge#refusal-reasons-glossary).
 
 **Do instead:** Offer the close control only to the creator (SESSION-CLOSE).
 
+### `ROLE_NOT_PERMITTED` {#ROLE_NOT_PERMITTED}
+
+**Applies to** session. **When:** A copy wrote a table whose marker names the other party (author=creator or author=joiner), or wrote a role table with no session.
+
+**Do instead:** Offer the table's controls only to the party its marker names, and pass the session on insert (SESSION-AUTHOR-ROLES).
+
 ### `NOT_SEAT_CREATOR` {#NOT_SEAT_CREATOR}
 
 **Applies to** session. **When:** Someone other than the session's creator called session.reseat.

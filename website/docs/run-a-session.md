@@ -18,6 +18,10 @@ worked example is [Your first two-player app](/docs/two-player-app).
 
 <!--@include: ./parts/constraint/SESSION-ROW-CARRIES-SESSION.md-->
 
+## Give each party its own tables
+
+<!--@include: ./parts/constraint/SESSION-AUTHOR-ROLES.md-->
+
 ## Invite
 
 <!--@include: ./parts/constraint/SESSION-INVITE.md-->

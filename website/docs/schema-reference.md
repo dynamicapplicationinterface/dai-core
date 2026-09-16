@@ -25,6 +25,12 @@ way: [Why rows never change](/docs/why-rows-never-change).
 
 **Does:** Makes the document a session document: every replicated row carries a session, and only members' rows are admitted.
 
+### `-- dai:replicated author=creator|joiner`
+
+**Where:** In place of -- dai:replicated, directly above a CREATE TABLE, in a document with a session profile.
+
+**Does:** Makes the table replicated and writable by one party only: the session's creator, or the member who took the invite. The wrong party's write is refused with ROLE\_NOT\_PERMITTED; its rows, if they arrive another way, are never admitted.
+
 ## Views and system tables
 
 ### `t_current`

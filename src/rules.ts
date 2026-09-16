@@ -571,6 +571,22 @@ export const CONSTRAINTS: readonly Constraint[] = [
     ],
   },
   {
+    id: "SESSION-AUTHOR-ROLES",
+    title: "Say which party writes a table",
+    shapes: SESSION,
+    topic: "session",
+    rule:
+      "When the two parties in a session are not interchangeable — one asks and the other answers, one offers and the other accepts — put the role on the table's marker: `-- dai:replicated author=creator` for a table only the session's creator writes, `-- dai:replicated author=joiner` for a table only the party who took the invite writes. A table with no role is written by either member. The creator is the copy that called `session.create()`; the joiner is the other member. A write by the wrong party throws ROLE_NOT_PERMITTED, which names the table and which party wrote it, and nothing is written. Hide or disable the other party's controls, and read which party this copy is from the seats (SESSION-MEMBERSHIP), never from a stored column.",
+    why:
+      "The role is signed into the document and held twice. The write surface refuses the wrong party, and a row that reaches a copy some other way — a copy with the check removed, a hand-built batch — is stored but never admitted to the _current views, so it never shows and never buries a legitimate row. At build, a role other than creator or joiner is refused, a role in a document with no session profile is refused, and a marker that begins as -- dai:replicated but does not parse is refused rather than built as a local table.",
+    enforced: ["compiler", "runtime"],
+    anchors: [
+      { file: "src/replicated.ts", contains: "const AUTHOR_CLAUSE = /^dai:replicated\\s+author\\s*=\\s*([A-Za-z]+)$/i;" },
+      { file: "src/replicated.ts", contains: "role, but the document has no session profile." },
+      { file: "src/runtime/bootloader.ts", contains: "ROLE_NOT_PERMITTED (the joiner wrote ${table}" },
+    ],
+  },
+  {
     id: "SESSION-JOIN-ON-OPEN",
     title: "Take the open seat when an invite is opened",
     shapes: SESSION,
@@ -1014,6 +1030,13 @@ export const MARKERS: readonly MarkerEntry[] = [
     shapes: SESSION,
     anchor: { file: "src/replicated.ts", contains: 'export const SESSION_PROFILE_MARKER = "dai:profile session"' },
   },
+  {
+    marker: "-- dai:replicated author=creator|joiner",
+    where: "In place of -- dai:replicated, directly above a CREATE TABLE, in a document with a session profile.",
+    does: "Makes the table replicated and writable by one party only: the session's creator, or the member who took the invite. The wrong party's write is refused with ROLE_NOT_PERMITTED; its rows, if they arrive another way, are never admitted.",
+    shapes: SESSION,
+    anchor: { file: "src/replicated.ts", contains: "const AUTHOR_CLAUSE = /^dai:replicated\\s+author\\s*=\\s*([A-Za-z]+)$/i;" },
+  },
 ];
 
 /* -------------------------------------------------- refusals an app meets */
@@ -1076,6 +1099,13 @@ export const APP_REFUSALS: readonly AppRefusal[] = [
     then: "Offer the close control only to the creator (SESSION-CLOSE).",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: 'throw new Error("CLOSE_NOT_PERMITTED")' },
+  },
+  {
+    code: "ROLE_NOT_PERMITTED",
+    when: "A copy wrote a table whose marker names the other party (author=creator or author=joiner), or wrote a role table with no session.",
+    then: "Offer the table's controls only to the party its marker names, and pass the session on insert (SESSION-AUTHOR-ROLES).",
+    shapes: SESSION,
+    anchor: { file: "src/runtime/bootloader.ts", contains: "ROLE_NOT_PERMITTED (the creator wrote ${table}" },
   },
   {
     code: "NOT_SEAT_CREATOR",
