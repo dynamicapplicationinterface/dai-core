@@ -1111,6 +1111,20 @@ same iOS chess install, the badge appeared for an incoming move, and after this
 player moved, it disappeared. That is the clear on a confirmed publish, for an app
 that does not report, which is the case that had nothing clearing it before.
 
+**Noted on the phone, not ruled: one move clears every game's badge.** With the icon
+at 2 (two games, each waiting), a move in one game cleared the badge completely,
+though the other game still waited. That is how it was built: a confirmed publish
+clears the whole document's badge, the same as opening it. For chess, which does not
+report waiting games, the opener cannot know the other game still waits. Whether that
+is a flaw is open:
+- **As built,** the badge means "something new since you last looked". Acting in the
+  document clears it.
+- **The alternative,** without anything new reaching the relay: a confirmed publish
+  already knows its game's mailbox, so it could drop only that game from the count and
+  leave 1. An app that reports would have its reported count shown rather than
+  cleared to 0. The badge then means "games waiting on you", and can stay up while
+  the app is open.
+
 **Found alongside, filed as D46:** a publish that fails is sent again only on
 this copy's next write or next open, not on a timer. The test sends the stuck move
 with a rename for that reason.
