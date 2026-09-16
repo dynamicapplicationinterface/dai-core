@@ -997,6 +997,28 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const pageA = await deviceA.newPage();
     const pageB = await deviceB.newPage();
 
+    /*
+     * The lane breadcrumb, held by a test so it cannot rot (backlog D39).
+     *
+     * Which address each copy derives for a game — and from whose key — is the
+     * fact that took two rounds of a throwaway probe to reach, and the probe was
+     * wrong about itself twice on the way. The instrument lives in the product
+     * now; this is what keeps it honest, because a breadcrumb nothing checks is
+     * one nobody notices going quiet.
+     */
+    const laneLines = (page: Page): string[] => {
+      const lines: string[] = [];
+      page.on("console", (message) => {
+        const text = message.text();
+        if (text.startsWith("dai: lane for game")) lines.push(text);
+      });
+      return lines;
+    };
+    const lanesA = laneLines(pageA);
+    const lanesB = laneLines(pageB);
+    const addressFor = (lines: string[], game: string): string | undefined =>
+      lines.find((line) => line.includes(`lane for game ${game.slice(0, 8)}`))?.match(/-> ([0-9a-f]{12})/)?.[1];
+
     const appA = await openContainer(pageA);
     await openContainer(pageB);
     const link = await inviteNewGame(pageA, appA);
@@ -1021,6 +1043,15 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     await play(app(pageB), "e7", "e5");
     await reaches(pageA, `e5@${session}`, "B's reply reaches A in the game they share");
+
+    // Both copies said out loud where that game publishes, and said the same
+    // thing. Two different addresses here is the whole of D37, in two lines.
+    await expect.poll(() => addressFor(lanesA, session), { timeout: 30_000 }).toBeTruthy();
+    await expect.poll(() => addressFor(lanesB, session), { timeout: 30_000 }).toBeTruthy();
+    expect(
+      addressFor(lanesB, session),
+      "both copies derive the same relay address for the game they share",
+    ).toBe(addressFor(lanesA, session));
 
     await deviceA.close();
     await deviceB.close();

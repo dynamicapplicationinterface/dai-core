@@ -2591,9 +2591,12 @@ async function applyPendingMerge(): Promise<void> {
          * (D37) among it. Only the flag this write owns is changed.
          */
         const held = await getCartridgeFromLibrary(job.heldItem.documentUuid).catch(() => null);
-        await saveCartridgeToLibrary({ ...(held ?? job.heldItem), mergeStanding: true }).catch(
-          () => undefined,
-        );
+        // Named before it is spread: `library-record.spec` reads the shape of
+        // every write here, and a spread of a parenthesised expression is not a
+        // shape it can see. The rule it enforces is the one this write depends
+        // on, so it is met literally rather than argued with.
+        const record = held ?? job.heldItem;
+        await saveCartridgeToLibrary({ ...record, mergeStanding: true }).catch(() => undefined);
       }
       return;
     }

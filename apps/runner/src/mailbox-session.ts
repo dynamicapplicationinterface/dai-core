@@ -181,6 +181,36 @@ export function startMailboxSession(config: {
 
   const { documentUuid, mailbox, frame, sessionNonce } = config;
   const lanes = new Map<string, Lane>();
+
+  /*
+   * Permanent breadcrumbs for the mailbox (backlog D39).
+   *
+   * Which address a copy derives for a game, and from which key, is the fact two
+   * rounds of debugging could not reach. A throwaway probe was built to read it
+   * and spent those rounds being wrong about itself: it returned an empty list
+   * when it could not open the database, guessed a database name, then guessed a
+   * version — and "no lanes" was indistinguishable from "I could not look". The
+   * instrument belongs here instead, in the product, for the same reason the
+   * `dai:` breadcrumbs for D22 do: it runs in every test, in CI and on a phone,
+   * it cannot answer with something that looks like data when it failed, and it
+   * is still here next month.
+   *
+   * Two moments are enough to settle where a row went. Where a lane publishes,
+   * and which key that address came from — the document's or the game's own,
+   * which is the distinction the whole of D37 turned on. And where a watermark
+   * stands, with the replica it is bound to, because a seq counts only within
+   * the replica that issued it.
+   */
+  const note = (message: string): void => {
+    console.info(`dai: ${message}`);
+  };
+
+  const noteWatermark = (lane: Lane, what: string): void =>
+    note(
+      `watermark ${what} at ${lane.address.slice(0, 12)}: replica ${
+        lane.state.watermark.replica.slice(0, 8) || "none"
+      }, seq ${lane.state.watermark.seq}`,
+    );
   /**
    * One mailbox per session, or one for the whole document — decided here, once,
    * from what the runtime is. It used to be decided by a three-second wait for
@@ -293,6 +323,7 @@ export function startMailboxSession(config: {
         lane.state = { ...saved, address, ...(config.relay ? { relay: config.relay } : {}) };
         if (saved.address !== address || saved.relay !== config.relay) save(lane);
       } else save(lane); // first time, or a re-keyed document: write the key down.
+      noteWatermark(lane, saved && saved.key === stateKey ? "read" : "started");
       if (lane.state.closed) {
         // Stopped on an earlier visit: it stays stopped, and its push stays released.
         lane.retired = true;
@@ -318,6 +349,7 @@ export function startMailboxSession(config: {
             pending: null,
           };
           save(lane);
+          noteWatermark(lane, "resumed");
         } catch {
           /* Still unreachable; stays pending. */
         }
@@ -345,6 +377,7 @@ export function startMailboxSession(config: {
       legacyChecked = true;
       const legacy = await loadMailbox(documentUuid);
       if (legacy && legacy.key === config.keyBase64Url) {
+        note(`lane legacy per-document ${documentUuid.slice(0, 8)} -> ${documentUuid.slice(0, 12)}, from the document's key, drained only`);
         lanes.set(documentUuid, makeLane(documentUuid, documentUuid, documentMailboxKey, undefined, true));
       }
     }
@@ -373,6 +406,13 @@ export function startMailboxSession(config: {
         }
       }
       const derived = await deriveSessionMailbox(seed, fromHex(session));
+      // The breadcrumb D37 was missing: which address this copy will publish
+      // that game to, and whose key it came from. Two copies printing different
+      // addresses for one game is the whole bug, visible in one line each.
+      note(
+        `lane for game ${session.slice(0, 8)} of ${documentUuid.slice(0, 8)} -> ${derived.id.slice(0, 12)}` +
+          `, from ${own ? "that game's own key" : "the document's key"}`,
+      );
       lanes.set(name, makeLane(name, derived.id, async () => derived.key, session, false, own ?? config.keyBase64Url));
     }
   }
@@ -426,6 +466,7 @@ export function startMailboxSession(config: {
           await publishSealed(mailbox, lane.address, sealed);
           lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
           save(lane);
+          noteWatermark(lane, "published");
           lane.upToDate = !lane.publishAgain;
         } catch {
           config.onNote?.("A move could not be sent yet; it will send when the connection returns.");
@@ -434,6 +475,7 @@ export function startMailboxSession(config: {
         if (replica !== lane.state.watermark.replica || head > lane.state.watermark.seq) {
           lane.state = { ...lane.state, watermark: { replica, seq: head } };
           save(lane);
+          noteWatermark(lane, "advanced with nothing to send");
         }
         // Answered, and nothing to send.
         if ("head" in answer) lane.upToDate = !lane.publishAgain;

@@ -699,6 +699,20 @@ distinguishes them — is this document's UUID already in this device's library 
 **not** by the carrier it came in on. That boundary is T1-D33; the loose reading
 of "arrived" as "came by a link" is the bug that decision fixes.
 
+**An observation against this decision, unexplained, filed as backlog D39
+(15 September).** A copy that already holds the app and opens an invite printed
+*two* identities inside one open: `replica adopted (arrived copy): none ->
+3c5ef357…`, then, after the merge path reopened it from the library, `replica
+kept (own copy): none -> f5026807…`. On its face that is two copies — the one
+opened from the file and the library's own — which is what the two messages say
+and what this decision expects. But a watermark is bound to the replica that
+issued it, so if those were one copy changing identity mid-open, a seq counted
+under the first would say nothing about the second. Nothing observed has gone
+wrong: the seat, turn and thirteen link tests all pass with it happening. The
+mailbox breadcrumbs added with D39 name the replica at every watermark read and
+write, so the next real trace settles it. Kept separate from that entry until it
+does, rather than assumed to be the same thing.
+
 **The same person opening their own file on a second device is also a new
 replica, and that is the design rather than an oversight.** A replica is a
 copy, and their phone and their laptop are two copies: each allocates sequence

@@ -101,6 +101,8 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D33 | Other host-to-frame messages can still arrive before the bridge listens | [x] every message is held by default until the bridge listens; the payload is the one named exception; proven both ways |
 | D37 | Two people who both invite cannot reach each other, in silence | [x] a key belongs to the game, not the document; four orders forced by test; migration decided (old games restart); 13/13 on chromium, CI across engines still to run |
 | D38 | A rematch has to be sent as a link, which is absurd between two people already playing | [ ] the mechanism is decided and deliberately not built; trigger below |
+| D39 | A copy's replica id changes during the open of an invite | [ ] seen four times, unexplained, nothing observed going wrong; mailbox breadcrumbs added to answer it in one run; cross-referenced with T1-D22 (replicated-tables), not backlog D22 |
+| D40 | `test:commit` reports success by running nothing | [ ] a clean tree prints "nothing a spec reaches changed" and exits 0; a guard that passes by doing nothing is the same failure as a probe that cannot tell "nothing" from "I could not look" |
 | D32 | On Firefox, a test loses the opener's frame when it is pointed at the document | [ ] the app mounts and shows; Playwright waits in a frame it still believes is blank; two CI sightings, both reproduced locally about 1 in 6 with screenshots; fix undecided |
 
 ---
@@ -923,6 +925,79 @@ right, and the tier this sits in is social and conditional — detectable, not
 preventable. **One replica never gets the power to destroy another's copy.**
 Stated here in those words because the next person to touch it will assume
 ejection should propagate.
+
+### D40 — A tier that reports success by running nothing
+
+`npm run test:commit` on a clean tree prints
+
+    nothing a spec reaches changed
+    test-tier commit: no spec reaches what changed.
+
+and exits 0. Nothing ran, and the exit code says everything passed. It was very
+nearly banked tonight as a green after a commit, which is exactly when the tree
+is clean and the answer is least meaningful.
+
+**It is the same failure as the probe that could not tell "nothing" from "I
+could not look"** (D37's closing rule), wearing the opposite face: there, an
+instrument reported absence when it had failed; here, a guard reports success
+when it has abstained. Both are safe-looking answers that carry no information,
+and both are read as good news by whoever is tired.
+
+**Exit:** a tier that ran no specs says so in a way that cannot be mistaken for
+a pass — a distinct exit code, or wording a person and a script both read as
+"not checked". The same question applies to the impact map's no-op case, which
+prints a stale-map warning and still exits 0 (seen twice tonight).
+
+### D39 — A copy's replica id changes during the open of an invite
+
+Seen four times in the D37 probe readings, never explained, written down because
+it is not understood rather than because it is known to be wrong.
+
+A copy that already holds the app and opens an invite prints two identities in
+one open:
+
+    dai: replica adopted (arrived copy): none -> 3c5ef357d884387f245809beaf8a34cb
+    dai: pending merge refused: NO_DOCUMENT_OPEN
+    dai: replica kept (own copy): none -> f50268072e5d4b5d1dc4daf323008378
+
+The first is the copy opened from the file; the second is the reopen the merge
+path performs through `launchFromLibrary`. Both lines are the runtime saying
+what identity the write surface adopted, and they disagree within one open.
+
+**Why it might matter, stated as a question and not a claim.** A watermark is
+bound to the replica that issued it (T1-D22's structural fix). If a copy
+publishes under one identity and later reads or advances a watermark under
+another, a seq counted in the first says nothing about the second. That is the
+shape of the corruption the `{replica, seq}` pair exists to prevent, so an
+identity that changes mid-open is worth understanding even though the exchange
+currently converges.
+
+**Cross-referenced with T1-D22, and deliberately not merged into it.** T1-D22
+(`docs/replicated-tables.md`, not backlog D22, which is about zip timestamps) is
+a confirmed corruption — a reopened arrived copy came back wearing the sender's
+id — and it waits on its next CI sighting with breadcrumbs already in place.
+This is an identity changing *within one open*, on a copy that is behaving. They
+are close enough that they may turn out to be one thing, and keeping them apart
+is what makes that a finding rather than an assumption: if the next trace shows
+the same id on both sides of a merge, they merge with evidence. Until then, two
+entries.
+
+**Why it is not filed as a bug.** Nothing observed has gone wrong because of it:
+all thirteen tests in `tests/mailbox-link-e2e.spec.ts` pass, including the four
+that force every order two people can invite in, and the seat and turn tests
+pass with it happening. The two ids may simply be two different copies — the
+file-opened one and the library's — which is exactly what the two messages say
+on their face. **That is the reading to confirm or refute, and the mailbox
+breadcrumbs added with this entry are what will answer it**: a watermark line
+now names the replica it is bound to at every read and write, so one run shows
+whether anything was ever published under an identity that later changed.
+
+**Resolved alongside it, recorded so nobody re-opens it:** the same readings
+showed the invited copy's key for a game appearing only *after* the mailbox
+started, which is after the merge — a lane built before that point would have
+derived from the document key. That one is understood and fixed: the key is
+filed when the document it belongs to is identified, before the mount, which is
+part of the D37 change.
 
 ### D32 — On Firefox, a test loses the opener's frame when it is pointed at the document
 
