@@ -476,4 +476,91 @@ test.describe("request, a session document with author roles", () => {
 
     for (const context of contexts) await context.close();
   });
+
+  test("it reports what waits on each person, and a change that is not their turn does not add to it", async ({ browser }) => {
+    const scratch = mkdtempSync(join(tmpdir(), "dai-request-waiting-"));
+    const container = await build("examples/request", "Request", scratch);
+    const { contexts, pages } = await devices(browser, 2);
+    const [pageA, pageB] = pages as [Page, Page];
+    const questions = (app: FrameLocator) => app.locator("#questions .question");
+
+    /** The sessions the host holds as waiting on this device's person: the app's latest report. */
+    const waiting = (page: Page): Promise<string[] | null> =>
+      page.evaluate(
+        () =>
+          new Promise<string[] | null>((resolve) => {
+            const open = indexedDB.open("dai_badge", 1);
+            open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+            open.onsuccess = () => {
+              const all = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
+              all.onsuccess = () => {
+                const entries = all.result as { waiting: string[] }[];
+                resolve(entries.length ? [...entries[0]!.waiting].sort() : null);
+                open.result.close();
+              };
+            };
+          }),
+      );
+    const sessionShowing = (app: FrameLocator) =>
+      app.locator("#request-list").evaluate((list) => {
+        const select = list as HTMLSelectElement;
+        return select.options[select.selectedIndex]?.dataset.session ?? "";
+      });
+
+    // The writer's request, sent. Nothing has come back, so nothing waits on her.
+    const appA = await firstOpen(pageA, container, "#new-request");
+    await appA.locator("#new-from").fill("Jordan Lee");
+    await appA.locator("#new-title").fill("Onboarding details");
+    await appA.locator("#new-request button[type=submit]").click();
+    for (const prompt of ["Who should receive invoices?", "Which start date works?"]) {
+      await appA.locator("#prompt").fill(prompt);
+      await appA.locator("#add-question button[type=submit]").click();
+    }
+    await expect(questions(appA)).toHaveCount(2);
+    const first = await sessionShowing(appA);
+    expect(first).toMatch(/^[0-9a-f]{32}$/);
+    await expect.poll(() => waiting(pageA), { timeout: 30_000 }).toEqual([]);
+    const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
+
+    // The answerer opens it: unanswered questions wait on him, until every one is answered.
+    const appB = await firstOpen(pageB, a1, "#view");
+    await expect(questions(appB)).toHaveCount(2, { timeout: 30_000 });
+    await expect.poll(() => waiting(pageB), { timeout: 30_000 }).toEqual([first]);
+    await questions(appB).nth(0).locator("textarea").fill("accounts@example.com");
+    await questions(appB).nth(0).locator("button").click();
+    await expect(appB.locator("#progress")).toContainText("1 of 2 answered");
+    await expect.poll(() => waiting(pageB), { timeout: 30_000 }).toEqual([first]);
+    await questions(appB).nth(1).locator("textarea").fill("The first Monday of next month");
+    await appB.locator("#submit").click();
+    await expect(appB.locator("#progress")).toContainText("Sent back", { timeout: 30_000 });
+    await expect.poll(() => waiting(pageB), { timeout: 30_000 }).toEqual([]);
+    // Editing an answer after it was sent back is not his turn.
+    await questions(appB).nth(0).locator("textarea").fill("billing@example.com");
+    await questions(appB).nth(0).locator("button").click();
+    await expect(questions(appB).nth(0)).toContainText("Saved");
+    await expect.poll(() => waiting(pageB), { timeout: 30_000 }).toEqual([]);
+    const b1 = await saveOut(pageB, join(scratch, "b1.dai.html"));
+
+    // The writer is writing a new request, not looking at this one, when the
+    // answers arrive: it now waits on her, because she has not seen them.
+    await appA.locator("#compose").click();
+    await expect(appA.locator("#new-request")).toBeVisible();
+    await mergeIn(pageA, b1, true);
+    await expect.poll(() => waiting(pageA), { timeout: 60_000 }).toEqual([first]);
+
+    // She goes back to it: seen, so nothing waits.
+    await appA.locator("#compose-cancel").click();
+    await expect(questions(appA).nth(0)).toContainText("billing@example.com", { timeout: 30_000 });
+    await expect.poll(() => waiting(pageA), { timeout: 30_000 }).toEqual([]);
+
+    // She closes it, and the close reaches him. A close is not his turn.
+    await appA.locator("#close").click();
+    await expect(appA.locator("#seat-text")).toContainText("closed", { timeout: 30_000 });
+    const a2 = await saveOut(pageA, join(scratch, "a2.dai.html"));
+    await mergeIn(pageB, a2, true);
+    await expect(appB.locator("#seat-text")).toContainText("closed", { timeout: 60_000 });
+    await expect.poll(() => waiting(pageB), { timeout: 30_000 }).toEqual([]);
+
+    for (const context of contexts) await context.close();
+  });
 });

@@ -15,8 +15,8 @@ import { RECIPE } from "../src/recipe.js";
  * growth through unnoticed.
  */
 
-/** 119,444 bytes: after Request replaced Tic-tac-toe as the session example. */
-const BUDGET_BYTES = 119_444;
+/** 122,371 bytes: Request reports what waits on each person, and window.dai.reportWaiting is documented (D34). */
+const BUDGET_BYTES = 122_371;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;

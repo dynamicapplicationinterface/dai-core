@@ -66,3 +66,10 @@ CREATE TABLE IF NOT EXISTS settings (
   id             INTEGER PRIMARY KEY CHECK (id = 1),
   active_request TEXT
 );
+
+-- Local: the newest sending-back the writer has had on screen, per request.
+-- Seeing something is about this copy, never shared.
+CREATE TABLE IF NOT EXISTS opened (
+  request_id TEXT PRIMARY KEY,        -- the requests row's entity, as hex
+  submission TEXT NOT NULL            -- the submissions row's entity, as hex
+);

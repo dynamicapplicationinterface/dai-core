@@ -29,4 +29,23 @@ refuses it. The roles are a guarantee; the lock is a convention this page
 follows. If it ever has to hold, it needs a rule the runtime enforces, not a
 hidden button.
 
+## What waits on you
+
+The application tells the host which requests wait on this person, so the
+home-screen icon can show a number when something arrives while the app is
+closed. The rule:
+
+- **Answering:** the request is open and at least one question has no answer.
+- **Writing:** answers were sent back that you have not had on screen since.
+  Having the request showing counts as seeing them; that is remembered on this
+  device only.
+
+Nothing else makes a request wait. A closed request does not, and neither does
+a question added or an answer edited after it was sent back. The report is sent
+whole every time the page redraws.
+
+Between opens the icon's number is a hint, not a count to rely on: the host adds
+requests whose mailbox moved since the last report, and a move that is not one
+of the above raises it too. Opening the app resets it.
+
 The reasoning for each table is in `schema.sql`; the application is `app.js`.

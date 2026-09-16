@@ -361,7 +361,58 @@ function drawSubmit() {
 /** True while the person is writing a new request over one that is open. */
 let composing = false;
 
+// ---- what waits on this person --------------------------------------------
+
+/** The newest sending-back of a request, as its row's entity, or null if nothing was sent. */
+function latestSubmission(request) {
+  return one(
+    "SELECT lower(hex(_r_entity)) AS id FROM submissions_current WHERE request_id = ? ORDER BY _r_lc DESC LIMIT 1",
+    [request.id],
+  )?.id ?? null;
+}
+
+/** The writer has this request on screen: whatever was sent back so far is seen. Local, per copy. */
+function markOpened(request) {
+  if (!seats(request.session).isWriter) return;
+  const latest = latestSubmission(request);
+  if (!latest) return;
+  // Written only when it changes: every write is a save, and this runs on every redraw.
+  if (one("SELECT submission FROM opened WHERE request_id = ?", [request.id])?.submission === latest) return;
+  db.exec({ sql: "INSERT OR REPLACE INTO opened (request_id, submission) VALUES (?, ?)", bind: [request.id, latest] });
+}
+
+/**
+ * Whether a request waits on this person. For the person answering: it is open
+ * and some question has no answer. For the writer: answers were sent back that
+ * the writer has not had on screen since. Nothing else counts, so a closed
+ * request, a question added, or an answer edited after it was sent back does
+ * not make it wait.
+ */
+function waitsOnMe(request) {
+  const s = seats(request.session);
+  if (s.closed) return false;
+  if (s.isAnswerer) {
+    const questions = questionsOf(request);
+    return questions.length > 0 && questions.some((q) => answersTo(q).current.length === 0);
+  }
+  if (s.isWriter) {
+    const latest = latestSubmission(request);
+    const seen = one("SELECT submission FROM opened WHERE request_id = ?", [request.id])?.submission ?? null;
+    return !!latest && latest !== seen;
+  }
+  return false;
+}
+
+/** Tells the host which requests wait on this person, for the home-screen icon's badge. The whole set, every time. */
+function reportWaiting() {
+  if (typeof window.dai.reportWaiting !== "function") return;
+  window.dai.reportWaiting(requests().filter(waitsOnMe).map((r) => r.session));
+}
+
 function draw() {
+  const onScreen = composing ? null : activeRequest();
+  if (onScreen) markOpened(onScreen);
+  reportWaiting();
   drawList();
   const request = activeRequest();
   const writing = composing || !request;
