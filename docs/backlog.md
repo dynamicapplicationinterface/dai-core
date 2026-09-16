@@ -1870,9 +1870,20 @@ foo` used to fail an exact comparison and leave its table silently local.
 - The answering side needs nothing installed: opening the link binds the open
   seat. Nothing in this cut changes that path.
 
-**Not built:** the example document, and the model file and reference pages
-(`src/rules.ts`) that teach an application author to declare a role. Content
-comes after.
+**Since built:** the example, `examples/request`, is the session example in the
+model file now, replacing Tic-tac-toe, which stays in `examples/`. The marker,
+the constraint SESSION-AUTHOR-ROLES and the refusal ROLE_NOT_PERMITTED are in
+`src/rules.ts`. The model file lost one illustration in the swap, replaying
+marks in turn order, where two marks for one turn are shown to settle; the rule
+itself is still taught by the conflicted answer. The model file grew from
+108,924 to 119,444 bytes.
+
+**Open in the example:**
+- Its lock on questions once the request is opened is only the page not
+  offering the control, unlike the roles; the example says so in three places.
+- "Send answers back" sits at the end of the page, which is below the fold on
+  a phone with only three questions. The instruction at the top says "at the
+  end", which is enough at three. Nobody has looked at a request with ten.
 
 **Found building it — a pre-existing defect in the rewrite.** `rewriteReplicated`
 decided whether a replicated table needed `IF NOT EXISTS` by testing the whole gap

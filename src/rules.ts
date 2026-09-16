@@ -116,8 +116,8 @@ export const SHAPES: readonly ShapeInfo[] = [
     declares: "Tables marked -- dai:replicated, plus the profile line -- dai:profile session max_parties=N.",
     mechanism:
       "Everything in passable, plus seats: the creator mints its own and one open seat, an invitee binds the open one, and only members' rows are read. A forwarded copy cannot join. There is no way yet to seat a third person, so a group larger than two cannot be a session.",
-    examples: "a game by message, a two-party agreement, anything turn-based",
-    example: "examples/tic-tac-toe",
+    examples: "a request one person writes and another answers, a game by message, a two-party agreement",
+    example: "examples/request",
   },
   {
     id: "broadcast",

@@ -42,7 +42,7 @@ const { APP_REFUSALS, CONSTRAINTS, CSS_VARS, MARKERS, SHAPES, SHAPE_DECISION, SH
 export const EXAMPLES = [
   { shape: "solo", dir: "examples/packing-list", name: "Beach trip" },
   { shape: "passable", dir: "examples/receipts", name: "Receipts" },
-  { shape: "session", dir: "examples/tic-tac-toe", name: "Tic-tac-toe" },
+  { shape: "session", dir: "examples/request", name: "Request" },
 ];
 
 /** Files in the order a reader wants them: the decision first, then the page. */

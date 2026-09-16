@@ -119,7 +119,7 @@ function renderExamples(): string {
     passable:
       "PASSABLE — two people in one household hand the document back and forth. The shared table is written through window.dai.replicated and read from receipts_current; the totals are derived, never stored; a merge redraws; an edit made on both copies is shown and settled by the person.",
     session:
-      "SESSION — two people play one game. Each game is a session: the creator plays X, whoever opens the invite takes the open seat. The board, the turn and the winner are derived from the marks; the application joins on a carrier open only, shows the contested and not-invited states, and closes a finished match.",
+      "SESSION — one person writes a request and sends a link; the person who opens it answers. Each request is a session: the creator writes it, whoever opens the invite takes the open seat. The two sides are not interchangeable, so the tables declare author=creator and author=joiner (SESSION-AUTHOR-ROLES); which side this copy is on is read from the seats. Progress is derived, never stored; the application joins on a carrier open only, shows the contested and not-invited states, settles an answer edited on two devices, and lets only the creator close. A session whose parties are interchangeable — two players of one game — is the same with no author= on any table.",
   };
   const apps = EXAMPLE_APPS.map(
     (app) => `${intro[app.shape] ?? app.shape.toUpperCase()}\n\n${bundleOf(app.name, app.files)}`,

@@ -35,8 +35,8 @@ A closed group admitted by invite — today, two people: the creator and one inv
 
 - **Declare:** Tables marked -- dai:replicated, plus the profile line -- dai:profile session max\_parties=N.
 - **What the runtime does:** Everything in passable, plus seats: the creator mints its own and one open seat, an invitee binds the open one, and only members' rows are read. A forwarded copy cannot join. There is no way yet to seat a third person, so a group larger than two cannot be a session.
-- **For example:** a game by message, a two-party agreement, anything turn-based.
-- **In the repository:** [`examples/tic-tac-toe`](https://github.com/dynamicapplicationinterface/dai-core/tree/main/examples/tic-tac-toe)
+- **For example:** a request one person writes and another answers, a game by message, a two-party agreement.
+- **In the repository:** [`examples/request`](https://github.com/dynamicapplicationinterface/dai-core/tree/main/examples/request)
 
 ### Broadcast {#broadcast}
 
