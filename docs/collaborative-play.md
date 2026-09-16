@@ -1,8 +1,8 @@
 # Collaborative play — onboarding, turns, and ownership (design note)
 
 Internal working note. **Not** the recipe, not the site. Captures the decisions
-from the first two-player test so nothing is re-derived, and holds the running
-list of things to fix. Nothing here is deployed until it is deliberately moved
+for two-player play so nothing is re-derived, and holds the running list of
+things to fix. Nothing here is deployed until it is deliberately moved
 into `website/docs/the-recipe` (the AI recipe) or the host.
 
 ## The reframe
@@ -10,8 +10,8 @@ into `website/docs/the-recipe` (the AI recipe) or the host.
 There is no separate "onboarding". **The invite link is the first sync — move
 zero.** The link carries a snapshot of the game as it is at share time, plus the
 key and the mailbox address; every move after is a delta over the mailbox. One
-delivery by link, every delivery after by mailbox. "He doesn't have it yet" is
-not a special case — it is the first delivery, done by link instead of mailbox.
+delivery by link, every delivery after by mailbox. A recipient who does not have
+the game yet is not a special case — it is the first delivery, done by link instead of mailbox.
 
 ## Onboarding sequence (ruled)
 
@@ -115,8 +115,8 @@ stale-opener / merge-mismatch class of bug.
    match* is a separate, deliberate button, later.
 4. Version number becomes an "update" prompt when the live opener is newer —
    checked on menu open, never on load.
-5. Order across everything queued: (a) file-fallback fix first — it is
-   breaking the friend test; (b) the session slice; (c) version-number update
+5. Order across everything queued: (a) file-fallback fix first — it
+   strands a two-device game; (b) the session slice; (c) version-number update
    prompt; (d) push (Track 5 slice two).
 
 ## The session slice — build in order (the spec)
@@ -163,7 +163,7 @@ is not a detour.
   be made (presign rate limit, store hiccup, oversize), the share exports the
   *file* — a keyless copy that can never join the mailbox. For a replicated
   document the host should say "couldn't make the invite link, try again", not
-  hand over a dead copy. (This is what stranded the first friend test.)
+  hand over a dead copy.
 - [ ] **Presign rate limit too tight for testing.** `DAI_PRESIGN_PER_HOUR`
   defaults to 20/IP/hour; heavy testing trips it and forces the file fallback.
   Fine for production; raise it (env) during testing, or accept the reset.
@@ -217,10 +217,10 @@ is not a detour.
   after the stable-key fix + deploy (`01bb9e5`): a move crossed the mailbox
   between a phone and a PC, key carried by the link, no injection. The thing
   Track 5 slice one set out to do.
-- [ ] **Refreshing a link re-merges instead of pulling.** On PC the friend
-  refreshed the `/d/` URL; that re-runs open-from-link (re-fetch the store
-  snapshot, sibling-merge against the held copy), so he got a merge prompt on
-  every new move — redundant with the mailbox, which was already syncing
+- [ ] **Refreshing a link re-merges instead of pulling.** Refreshing the
+  `/d/` URL on a desktop re-runs open-from-link (re-fetch the store snapshot,
+  sibling-merge against the held copy), so it raises a merge prompt on every
+  new move — redundant with the mailbox, which was already syncing
   silently. Fix: refreshing a link for a document already held opens the held
   copy and pulls the mailbox, not re-merges the link's older snapshot. The link
   is a first-delivery carrier; once held, the mailbox is the channel. Mostly

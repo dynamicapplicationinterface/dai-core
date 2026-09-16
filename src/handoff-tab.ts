@@ -5,9 +5,8 @@
  *
  * A phone cannot run a document out of its Files app. So the honest instruction
  * used to be: save it, leave the browser, find it in Files, open the opener,
- * pick it from a file picker. Five steps, each one a place somebody stops. A
- * tester's summary of it was that the flow does not flow, and they were right —
- * nobody does that twice, and most people do not do it once.
+ * pick it from a file picker. Five steps, each one a place somebody stops. The
+ * flow does not flow: nobody does that twice, and most people do not do it once.
  *
  * The bytes already exist in the page that built them. The only reason they
  * were taking a trip through the filesystem is that the builder and the opener

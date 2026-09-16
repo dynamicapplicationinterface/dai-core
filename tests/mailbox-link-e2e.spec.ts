@@ -454,9 +454,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
   /**
    * A second invite reaches a browser that already holds the app.
    *
-   * Observed on a phone: the recipient had played an earlier game, followed a
-   * new invite, and was shown the old game — no new game, no name step — and
-   * nothing said so. Every invite is the same document (the app) filtered to
+   * The defect: a recipient who had played an earlier game, followed a new
+   * invite, was shown the old game — no new game, no name step — and nothing
+   * said so. Every invite is the same document (the app) filtered to
    * one game, so the second one always arrives at a device that holds it.
    * Driven the way a person does it: the app's own Invite button, the link
    * followed in the same browser with nothing cleared, and each of the two
@@ -1073,8 +1073,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * Two people inviting each other, in all four orders they can do it in
    * (backlog D37).
    *
-   * Reported from a phone: two people invited each other and the app behaved as
-   * though they were in two different games, with both boards looking healthy.
+   * The defect: two people who invited each other were shown as though they were
+   * in two different games, with both boards looking healthy.
    * The cause was that a key meant "this document" and "this game" at once, so
    * whoever invited second re-keyed everything the first had — every mailbox
    * address is derived from that key, so each published moves the other never

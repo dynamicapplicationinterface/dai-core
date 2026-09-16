@@ -846,10 +846,9 @@ test.describe("Host Bridge Protocol & OPFS Persistence", () => {
  *
  * The first version spent about a fifth of the screen on five controls, in the
  * vocabulary of the people who wrote them — "Eject", "Export Container" — above
- * an app that scrolled and rubber-banded inside a page that also scrolled. A
- * tester's verdict was that it was too clunky to adopt, which is the only
- * verdict that matters for a thing whose entire purpose is being handed to
- * somebody else.
+ * an app that scrolled and rubber-banded inside a page that also scrolled. That
+ * reads as too clunky to adopt, and adoption is the only measure that matters for
+ * a thing whose entire purpose is being handed to somebody else.
  *
  * These are the two measurements behind that: the chrome is one line, and the
  * page underneath it does not move.

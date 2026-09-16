@@ -28,7 +28,7 @@ reopens what was open, and containers that arrive by link or by being shared.
 
 **Counted rather than argued.** [opening.md](opening.md) lists every route a
 document takes to somebody and the number of steps each costs them. The original
-route cost five, and a tester stopped at three. Two of the routes now cost one,
+route cost five. Two of the routes now cost one,
 and one costs none.
 
 **Measured rather than argued.** [performance.md](performance.md) records where

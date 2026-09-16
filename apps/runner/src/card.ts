@@ -10,7 +10,7 @@
  *
  * It used to be a card: a panel floating on a dimmed page, the app's name
  * small at the top, and four sentences about isolation filling the middle.
- * Testers read it as one store page imitating another, and two of them said
+ * Read as a whole, it was one store page imitating another — the shape of a
  * scam. The priority was wrong, not the facts. So the app's own account of
  * itself — its name, its line, three things it says it does — takes the
  * screen, who made it and when are a row of plain facts, and everything true
@@ -488,8 +488,8 @@ export function showCard(input: CardInput): Promise<void> {
    * separate copy*. There is no separate copy — this host keeps one per
    * document — so the second button either left the arrival unread and showed
    * the old copy, or wrote the arrival over the person's own, by whichever was
-   * saved later. A person following a new invite pressed the obvious button
-   * and played a whole game in the old one. "Get" is the word for a document
+   * saved later. So the obvious button, pressed on a second invite, opened the
+   * old game rather than the new one. "Get" is the word for a document
    * this device does not have; for one it has, the action is adding to it.
    */
   if (kin?.offer) open.textContent = "Open in my copy";

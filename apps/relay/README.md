@@ -32,8 +32,7 @@ worker's `/m` path, e.g. `https://relay.opendai.app/m`.
 its Durable Objects do not change version at the same instant: for a short
 window new routing can be live while a mailbox object still runs the old code,
 and a POST meant for a new route lands in the old object as an append — a batch
-in somebody's mailbox. That is how a junk item was written on 14 September. A
-GET is a read in both versions, so it is safe in the window; use one that tells
+in somebody's mailbox. A GET is a read in both versions, so it is safe in the window; use one that tells
 the versions apart (for a new route, compare what the old and new code would
 each return) and post only once it reads new.
 

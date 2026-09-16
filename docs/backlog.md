@@ -803,8 +803,8 @@ true.
 
 ### D37 — Two people who both invite cannot reach each other, and nothing says so
 
-Reported from a phone, 15 September: two people invited each other, twice each,
-and the app behaved as though they were in two different games. Both boards
+Two people who invited each other, twice each, were shown as though they were in
+two different games. Both boards
 looked healthy. Neither person could tell which game they were in.
 
 **What was measured, against production, not read from the code:**
@@ -2071,7 +2071,7 @@ Time to ready fell slightly at the larger sizes (50 MB: 11.8–12.3 s to 10.6 s)
   measured, not written off, and is the first thing to look at next.
 - **The device ceiling was not measured.** It is desktop chromium only. If a
   phone gains in proportion, the ceiling moves by roughly a fifth at the sizes
-  that matter, which is a hypothesis for the next phone sitting, not a result.
+  that matter, which is a hypothesis to measure on a phone, not a result.
 
 **Before the next fix, two cheap checks on the 5 MB number** (ruled 15 Sep):
 - Force a GC before sampling (`HeapProfiler.collectGarbage` over CDP). If
@@ -2084,8 +2084,8 @@ If the rise does not vanish, it says something about the new path.
 
 **The measurement that decides the rest: the phone.** Desktop cuts do not say
 whether the iPhone's ~34 MB ceiling moved, and that is the ceiling that stops a
-person. At the next phone sitting, open one document at one size through the
-opener on the spare phone, before and after, and read the heap. That is not
+person. Measure it: open one document at one size through the opener on a
+phone, before and after, and read the heap. That is not
 the full ladder.
 
 The remaining fixes (hash in place, transfer instead of duplicate, assets on
@@ -2110,8 +2110,8 @@ CDN is a web game, and a file that carries its own assets is the format working
 as intended. Not a media-in-the-database question: Moon Garden's database was
 20 KB; the size is all archive entries.
 
-**Un-parks now, as a measurement** — it is the next thing on the phone after the
-Wednesday sitting, and the ladder above needs nothing built first. The fix
+**Un-parks now, as a measurement** — it needs only a phone and the ladder above,
+and nothing built first. The fix
 un-parks from what the profile names.
 
 ### D10 — Session documents built before per-session mailboxes stay readable by any link holder

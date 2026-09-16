@@ -2995,9 +2995,9 @@ async function sendDocument(inviteSession?: string): Promise<void> {
       const why = error instanceof Error ? error.message : "The store could not be reached.";
       /*
        * A replicated app is played together, and a file has no key — it cannot
-       * join the mailbox, so it is not the invite that was asked for. Handing
-       * one over silently is how a friend ended up with a copy that could never
-       * sync. So for a replicated document the link failing is said and stopped;
+       * join the mailbox, so it is not the invite that was asked for. Handed
+       * over silently, it gives the other person a copy that can never sync.
+       * So for a replicated document the link failing is said and stopped;
        * "Save a copy…" in the menu is still there for a deliberate file. A
        * document with nothing to sync keeps the old behaviour: the file is an
        * equal carrier of a snapshot, and going ahead with it is no loss.
@@ -3722,8 +3722,8 @@ async function start(): Promise<void> {
    * A document handed straight over by the page that built it.
    *
    * The alternative was telling somebody on a phone to save the file, leave
-   * the browser, find it in a Files app and pick it out of a chooser — which
-   * is the flow a tester gave up on, and fairly. The bytes come across by
+   * the browser, find it in a Files app and pick it out of a chooser — a flow
+   * long enough to be abandoned before it finishes. The bytes come across by
    * message instead: no download, no upload, nothing on the network.
    *
    * The document is read and verified here exactly as a chosen file is. Where

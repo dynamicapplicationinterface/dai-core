@@ -8,8 +8,8 @@ On a phone it will not: a phone shows you a file, and has no way to run one. The
 opener exists for that, and everything on this page is about the distance
 between somebody having a document and somebody looking at it running.
 
-That distance is the whole adoption problem. A tester's verdict on the original
-route was that it does not flow, and counting the steps says why.
+That distance is the whole adoption problem. The original route does not flow,
+and counting the steps says why.
 
 ## The routes, worst to best
 
