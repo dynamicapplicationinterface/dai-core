@@ -812,10 +812,23 @@ test.describe("a game continues over a shared link (the key path)", () => {
           return String((error && error.message) || error);
         }
       }, table);
-    const rowsIn = async (page: Page, table: string): Promise<number> =>
+    /*
+     * Rows in `table` that this copy itself authored.
+     *
+     * Not every row in the table: the other party's permitted rows arrive over the
+     * relay, and are meant to. The first version counted the whole table, and it
+     * passed locally only because the relay had not delivered yet; in CI it had,
+     * so the joiner's copy held the creator's legitimate advice and the count read
+     * 1 where the claim — "a refused write left nothing behind" — is about this
+     * copy's own rows. The check now asks the question the claim is about.
+     */
+    const ownRowsIn = async (page: Page, table: string): Promise<number> =>
       Number(
         await appFrame(page).evaluate(
-          (target) => (window as any).daiKit.db.selectObjects(`SELECT count(*) AS n FROM ${target}`)[0].n,
+          (target) =>
+            (window as any).daiKit.db.selectObjects(
+              `SELECT count(*) AS n FROM ${target} WHERE _r_replica = (SELECT id FROM _dai_replica)`,
+            )[0].n,
           table,
         ),
       );
@@ -832,11 +845,35 @@ test.describe("a game continues over a shared link (the key path)", () => {
     expect(joinerRefused).toContain("ROLE_NOT_PERMITTED");
     expect(joinerRefused, "and names the direction and the table").toContain("the joiner wrote advice");
 
+    /*
+     * Force the condition that failed in CI, rather than hope a run reaches it.
+     *
+     * The relay delivers each party's permitted row to the other copy; in CI it
+     * had done so before the counts ran, and locally it had not. So both copies
+     * pull until each holds the other's row — and the other party's row is not
+     * only stored but admitted, which is the role rule doing its job end to end in
+     * the real runtime: the creator's advice is admitted on the joiner's copy, and
+     * the joiner's answer on the creator's.
+     */
+    const allRowsIn = async (page: Page, view: string): Promise<number> =>
+      Number(
+        await appFrame(page).evaluate(
+          (target) => (window as any).daiKit.db.selectObjects(`SELECT count(*) AS n FROM ${target}`)[0].n,
+          view,
+        ),
+      );
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      expect(await allRowsIn(pageB, "advice_current"), "the creator's advice is admitted on the joiner's copy").toBe(1);
+      expect(await allRowsIn(pageA, "answers_current"), "the joiner's answer is admitted on the creator's copy").toBe(1);
+    }).toPass({ timeout: 30_000 });
+
     // A refused write left nothing behind; a permitted one landed.
-    expect(await rowsIn(pageA, "advice")).toBe(1);
-    expect(await rowsIn(pageA, "answers")).toBe(0);
-    expect(await rowsIn(pageB, "answers")).toBe(1);
-    expect(await rowsIn(pageB, "advice")).toBe(0);
+    expect(await ownRowsIn(pageA, "advice"), "the creator's permitted write landed").toBe(1);
+    expect(await ownRowsIn(pageA, "answers"), "the creator's refused write left no row of its own").toBe(0);
+    expect(await ownRowsIn(pageB, "answers"), "the joiner's permitted write landed").toBe(1);
+    expect(await ownRowsIn(pageB, "advice"), "the joiner's refused write left no row of its own").toBe(0);
 
     await deviceA.close();
     await deviceB.close();
