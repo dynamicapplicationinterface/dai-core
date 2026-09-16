@@ -978,7 +978,7 @@ or give it one owner, before it is written twice.
 
 ## The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
-Three instances in one week, found in three different kinds of check. Recorded as
+Four instances in one week, found in four different kinds of check. Recorded as
 one pattern because each looked like a different accident and none of them was.
 
 - **A probe that could not tell "nothing" from "I could not look" (D37).** It
@@ -995,6 +995,18 @@ one pattern because each looked like a different accident and none of them was.
   party's legitimate rows yet — a reason with nothing to do with whether a
   refused write leaves anything. In CI the relay had delivered, and it failed on
   a feature that was working.
+- **A test that could not fail for any reason that mattered (model file size).**
+  Written beside the budget check: "the prompt form of the model file contains
+  the model file". The prompt form is built as the file plus one line of text,
+  so the assertion restated how the string is built and could not catch anything.
+  It was removed before it was committed. The earlier three passed by accident on
+  a given run; this one was built unable to fail at all.
+
+**The corollary: a check like this is worse than no check.** An absent test is
+visibly absent. A test that cannot fail counts as coverage, sits in the totals,
+and is trusted in review, while proving nothing. A suite can get quietly weaker
+while its numbers go up. Before adding a test, name the change it would catch; if
+there isn't one, don't add it.
 
 **What they share.** Each check produced the answer its author expected, for a
 reason other than the one it was written to test. That is why they are dangerous
