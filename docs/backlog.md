@@ -1158,6 +1158,77 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+### D45 — An author declares whether a document notifies
+
+Ruled, not built.
+
+**Today.** Every shared document notifies, and no author can turn that off. The
+opener subscribes each mailbox to push, the relay wakes the other devices on
+every new batch, and the worker shows a notification for every wake. Nothing in
+a document says anything about it. That default arrived by accident, not by
+decision.
+
+**The ruling: authors get per-document on or off,** declared in the document and
+surfaced through the SDK. Correspondence chess wants alerts; a shared packing
+list or a passable receipt probably should not nag anyone.
+
+**Why it is cheap.** The choice is made before anything is published. The opener
+knows the document before it subscribes, so a document that declares no
+notifications never subscribes. No new information reaches the relay, and the
+rows still arrive the next time the app is opened or polls.
+
+**The order of authority:**
+1. **The person.** A recipient can revoke notification permission in their
+   operating system's settings at any time, whatever the document says.
+2. **The author** sets the default for the document.
+3. An author's choice is a default, never an authority. A document can ask not
+   to notify. It can never insist on notifying someone who declined.
+
+**Open, not ruled:**
+- **Where the declaration lives:** a schema marker beside `author=`, or the
+  manifest. `author=` went into the schema because it describes the tables and
+  is signed with them, and the build refuses a role it cannot honor (D15).
+  Re-read that reasoning when this is decided: notifying is about the document,
+  not a table, which may point the other way.
+- **The default** for a document that declares nothing.
+
+**Out of scope here: per-write labelling,** where some writes in a document
+notify and others do not. That costs relay visibility. The decision would happen
+per batch at publish time, and the relay would learn whether each batch was worth
+waking someone for. D8 gave each game its own mailbox address so the relay learns
+as little as possible. Do not fold it in here. It is a separate question with a
+separate cost, and D44 may remove most of its motivation.
+
+### D44 — A burst of shared writes becomes one notification
+
+Ruled, not built.
+
+**Seen on a phone, 16 September** (D34's first reading): setting up one game
+produced three alerts in quick succession: the other player joining, saving their
+name, and making the first move. The document was a chess install; the mechanism
+is the opener's and applies to any shared document. Each was a real shared write
+that was published to the mailbox and woke this device. The worker cannot tell
+them apart, because the push carries nothing. It gives each the same tag, so each
+replaces the last on screen, but with `renotify: true` every one of them alerts
+again.
+
+**The ruling:** a burst inside a short window becomes one notification. Replace
+rather than stack, and drop `renotify` for a wake inside the window. Whatever is
+decided later about labelling writes, three alerts in ten seconds should be one.
+
+**Why it is separable and goes first:** it fixes the observed problem in the
+worker alone. No protocol change, nothing new reaches the relay, and no author
+declares anything. The setup burst may turn out to be the whole problem: a
+one-time burst per game may not justify per-write labelling (out of scope in D45)
+at all. Read that from use before deciding the more expensive change.
+
+**Constraints that hold:** every push still ends in a notification, because iOS
+revokes a subscription that shows none. A folded wake replaces the earlier
+notification silently; it is not skipped.
+
+**Open: the window's length.** It needs a number chosen against real use, not
+designed now.
+
 ### D43 — Whether the model file should carry the examples' stylesheets
 
 Open question, not scheduled. Each example's bundle in the model file includes
