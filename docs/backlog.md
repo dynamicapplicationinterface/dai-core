@@ -1060,8 +1060,9 @@ notifications, and the icon read **1**. So:
 - one game that moved several times counts once on a real device;
 - every push still ended in a notification.
 
-Not yet read on a phone: a second game raising it to 2, clearing on open, two
-icons, Android, and the Request run with a document that reports.
+Not yet read on a phone: a second game raising it to 2, clearing on open without a
+move, two icons, Android, and the Request run with a document that reports. (The
+clear after a move is read; see the fix below.)
 
 **Found on a phone after CI and `test:push` were green: the badge did not clear
 when the player moved.** Chess, badge "1". Opened from the home-screen icon, made
@@ -1100,6 +1101,11 @@ Each is proven on the non-reporting app, the one with nothing else to clear it:
 - no clear on publish fails at the move;
 - clearing before the publish is confirmed fails at "a move that never left";
 - no clear on resume fails at the return.
+
+**Confirmed on the phone, 16 September, after the fix deployed (`2055c00`):** on the
+same iOS chess install, the badge appeared for an incoming move, and after this
+player moved, it disappeared. That is the clear on a confirmed publish, for an app
+that does not report, which is the case that had nothing clearing it before.
 
 **Found alongside, filed as D46:** a publish that fails is sent again only on
 this copy's next write or next open, not on a timer. The test sends the stuck move
