@@ -15,6 +15,10 @@ dist/
 # untrack them and the site would build without its samples.
 !website/public/*.dai
 !website/public/*.dai.html
+# The opener hosts one built example for phone checks, opened through the opener
+# at /?open=/request.dai.html. Built from examples/request with the CLI; rebuild it
+# when that example changes.
+!apps/runner/public/request.dai.html
 *.bat
 test-results/
 playwright-report/
