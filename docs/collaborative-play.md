@@ -13,7 +13,7 @@ key and the mailbox address; every move after is a delta over the mailbox. One
 delivery by link, every delivery after by mailbox. "He doesn't have it yet" is
 not a special case — it is the first delivery, done by link instead of mailbox.
 
-## Onboarding sequence (Chris's ruling)
+## Onboarding sequence (ruled)
 
 Inviter:
 1. Tap **Invite**.
@@ -39,7 +39,7 @@ Opener:
 - **Turn-gated authorship.** Only the seat whose turn it is may author the next
   move; the control is disabled otherwise. This is what stops both players
   authoring the same ply and the merge keeping both.
-- **"Your turn" notification, no close button (Chris's ruling).** A passive,
+- **"Your turn" notification, no close button (ruled).** A passive,
   persistent indicator — never a modal with a dismiss. Two layers:
   - *In-app, buildable now:* on foreground/refresh, if it is your turn, show a
     standing "Your move" banner that clears itself when you move. No dismiss.
@@ -48,14 +48,14 @@ Opener:
     opening the app. So "your turn notification" is the concrete motivation for
     slice two — write that down as the reason it exists.
 
-## Game end (Chris's ruling)
+## Game end (ruled)
 
 When the game ends (checkmate / resign / draw): the final state syncs (last move
 published so both land on the same result), then offer a **link for a new game**.
 A new game is a new invite — see ownership below; a rematch is just a new game
 with the same person.
 
-## Sessions are the unit of play (Chris's ruling — supersedes the below)
+## Sessions are the unit of play (ruled — supersedes the below)
 
 The document is the wrong level to pair people at. **Pull Track 3's session
 profile forward and build it now, chess as its first user, on the live relay.**
@@ -86,11 +86,11 @@ Host's job stays as built (link → snapshot → key → mailbox); what changes 
 rows, the mailbox, and the invite export are all **scoped to a session**, and the
 roster — not the app — is what admits a party.
 
-## Update prompt on the version number (Chris's ruling)
+## Update prompt on the version number (ruled)
 
 The version stamp in the app menu (`<build> · <date>`) should, when the live
 opener is newer than the running one, become **"New version — update"** with a
-one-tap update. The check runs **on menu open, never on load** (Chris). It is the
+one-tap update. The check runs **on menu open, never on load**. It is the
 user-facing form of the cache self-heal — compare the running build to the live
 `version.json`, tap → cache-bust + reload — and the clean fix for the
 stale-opener / merge-mismatch class of bug.
@@ -115,11 +115,11 @@ stale-opener / merge-mismatch class of bug.
    match* is a separate, deliberate button, later.
 4. Version number becomes an "update" prompt when the live opener is newer —
    checked on menu open, never on load.
-5. Order across everything queued (Chris): (a) file-fallback fix first — it is
+5. Order across everything queued: (a) file-fallback fix first — it is
    breaking the friend test; (b) the session slice; (c) version-number update
    prompt; (d) push (Track 5 slice two).
 
-## The session slice — build in order (Chris's spec)
+## The session slice — build in order (the spec)
 
 **This is Track 3 of the replicated-tables plan, not a new track.** The session
 profile — its roster, `max_parties`, the D4 export-to-one-session and D6

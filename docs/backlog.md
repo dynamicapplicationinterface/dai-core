@@ -80,7 +80,7 @@ One line per item. `[ ]` open, `[~]` in progress, `[x]` done with its commit.
 | D14 | Two blind runs is not a rate | [ ] both passed, both found real defects |
 | D15 | Asymmetric roles inside a session | [x] first cut: a table's marker names creator or joiner; dropped at merge (the security property) and refused at write, each proven both ways; the example document is not built |
 | D16 | A native iOS host: App Clip and Messages extension | [ ] parked until after the enterprise demo |
-| D17 | Mailbox batches are deleted at 90 days — silent data loss, first on ~8 Dec | [~] scoped rule written in `infra/r2-lifecycle.json`; Chris applies it; retention then decided on purpose |
+| D17 | Mailbox batches are deleted at 90 days — silent data loss, first on ~8 Dec | [~] scoped rule written in `infra/r2-lifecycle.json`; the maintainer applies it; retention then decided on purpose |
 | D18 | Nothing can tell a hole in a mailbox history from an empty stretch | [ ] the property that makes D17 silent; the relay is the one place that can |
 | D19 | The published spec says a reader must refuse version 4 | [ ] one sentence; goes with the next docs change |
 | D20 | A table constraint in a shared table rewrites to SQL that will not load | [ ] refused at build with SQLite's message, not by name; the in-browser compiler would ship it |
@@ -829,7 +829,7 @@ symptom both times: **silent divergence.** Worth stating as a pattern, because
 it is now twice in one week: *when one stored value carries two meanings, the
 failure is silent and what a person sees is two copies that disagree.*
 
-**The ruling (Chris, 15 September): a key belongs to the game.** Option B of
+**The ruling (15 September): a key belongs to the game.** Option B of
 `decision-where-does-a-key-live`. Rejected: keeping one key per document and
 merely refusing to overwrite it — that fixes the stranding and leaves the
 mutual-invite case broken, which ships a fix while two people still stare at
@@ -909,7 +909,7 @@ deliver its key **in-band** through that channel, so playing again needs no link
 at all — and "play somebody else" stays the same operation with the key
 delivered by link instead. One mechanism, two deliveries.
 
-**Deliberately not built (Chris, 15 September), for two reasons:**
+**Deliberately not built (ruled 15 September), for two reasons:**
 
 1. **It changes what an arriving message can do.** The standing rule is that
    nobody is seated without a person opening something (T1-D34) — that rule is
@@ -1728,7 +1728,7 @@ digit `0`–`f`. Every store key is a lowercase 64-hex hash (the presign route
 refuses anything else), with `.json` and `.png` beside it, and preview ids are
 random 64-hex, so these cover every stored document and never match
 `mailbox/`. Mailbox batches then stop expiring; batches already written keep
-their age but no longer match a rule. **Chris applies it** — it is production
+their age but no longer match a rule. **The maintainer applies it** — it is production
 bucket configuration:
 
     cd apps/relay
@@ -1805,7 +1805,7 @@ author is its key so neither can be claimed, and `close` was enforced in both
 places this needs — refused at authoring, and dropped by the admission views at
 merge. So no new authority model: a role is those two roles applied per table.
 
-**The declaration lives in the schema** (ruled, Chris): `-- dai:replicated
+**The declaration lives in the schema** (ruled): `-- dai:replicated
 author=creator|joiner` on the table's own marker line. Two reasons, both kept
 here. The inline link format is deliberately frozen (D23), and a role is a
 property of the table, not of the link that carries a document. And the schema
@@ -1927,7 +1927,7 @@ a GET is a read in both versions — and post only once it answers as the new co
 The junk item: left in place. Under the bucket's current lifecycle rule (empty
 prefix, 90 days) it would expire with everything else; once D17's scoped rule is
 applied, `mailbox/` stops expiring and it stays until somebody deletes it — a
-36-byte object nothing reads. Deleting it is Chris's (`npx wrangler r2 object
+36-byte object nothing reads. Deleting it is the maintainer's (`npx wrangler r2 object
 delete dai-store/mailbox/subscribe/1`), and nothing depends on it.
 
 Why it matters: the window is short, but it is exactly when somebody verifies a
