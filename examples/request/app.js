@@ -457,7 +457,9 @@ function draw() {
   $("questions").replaceChildren(...questions.map((q) => drawQuestion(q, s, request)));
 
   $("add-question").hidden = !(s.isWriter && !s.closed && !s.answererJoined);
-  $("invite").hidden = !(s.isWriter && s.openSeat && !s.contested && !s.closed && questions.length > 0);
+  // Offered for as long as this person is in the request, not only until it is
+  // opened: the same link sends the request again to someone who lost it (D48).
+  $("invite").hidden = !((s.isWriter || s.isAnswerer) && !s.contested && !s.closed && questions.length > 0);
   drawSubmit();
   $("close").hidden = !(s.isWriter && !s.closed && s.answererJoined);
 }

@@ -200,7 +200,9 @@ function draw(){
  $('play-move').disabled=!d||result||Boolean(st.conflict)||contestedOut||!myTurn;
  // A finished game offers the next one; an invite is offered only until it is taken — after that the relay carries every move.
  $('rematch').hidden=!result||!mine;
- $('share').hidden=!(seat&&seat.amCreator&&!joined&&!seat.contested&&!result);
+ // Offered to either player for as long as they are in the game, not only until the
+ // seat is taken: the same link sends the game again to someone who lost it (D48).
+ $('share').hidden=!(seat&&seat.member&&!seat.contested);
  const shown=['play-move','rematch','share'].filter(id=>!$(id).hidden).length;
  $('action-row').dataset.count=String(shown);$('action-row').hidden=!shown;
  $('change-move').hidden=!d||result;

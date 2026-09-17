@@ -306,7 +306,9 @@ function draw() {
   drawCollision(game, st);
   drawNamesConflict(game);
   drawSeat(game, st);
-  $("invite").hidden = !(st.seats.amCreator && st.seats.openSeat && !st.seats.contested);
+  // Offered for as long as this player is in the game, not only until the seat is
+  // taken: the same link sends the game again to someone who lost it (D48).
+  $("invite").hidden = !((st.seats.amCreator || st.seats.member) && !st.seats.contested);
   $("rename").hidden = !st.seats.member || st.seats.closed;
   $("close-match").hidden = !(st.over && st.seats.member && !st.seats.closed);
 }

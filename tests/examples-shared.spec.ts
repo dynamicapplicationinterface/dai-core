@@ -470,6 +470,9 @@ test.describe("request, a session document with author roles", () => {
     await expect(questions(appA).nth(1)).toContainText("The first Monday of next month");
     await expect(appA.locator("#progress")).toContainText("Answers sent back · 2 of 2 answered");
     await expect(appA.locator("#role")).toContainText("the questions are locked");
+    // Opened, and still sendable by both: the same link is how either gets back (D48).
+    await expect(appA.locator("#invite")).toBeVisible();
+    await expect(appB.locator("#invite")).toBeVisible();
     await expect(appA.locator("#add-question")).toBeHidden();
     await expect(appA.locator("#questions button.link")).toHaveCount(0);
     const refusedA = await tryWrite(appA, "answers", { question_id: "00", body: "written by the writer" });

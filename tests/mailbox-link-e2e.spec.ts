@@ -430,7 +430,10 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
       await expect(appA.locator("#turn-banner-title")).toHaveText("Bo’s move.", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
-    await expect(appA.locator("#share"), "the invite is offered only until it is taken").toBeHidden();
+    // The same link sends the game again, so both players keep it after the seat is
+    // taken: it is how a player who lost the tab gets back (D48).
+    await expect(appA.locator("#share"), "the game can still be sent again after the seat is taken").toBeVisible();
+    await expect(appB.locator("#share"), "the player who joined can send it too").toBeVisible();
 
     // A's own piece, out of turn: nothing is picked up, and A is told why.
     await appA.locator('[data-square="g1"]').click();
