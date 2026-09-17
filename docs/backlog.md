@@ -571,6 +571,240 @@ next to the database that reopen mounted. Until then, leave it: the evidence has
 been taken as far as it goes. The cost of a wrong "flaky" call here is a game that
 loses moves in the field.
 
+### Storage eviction
+
+Six entries from one review, filed together because they are one situation seen
+from six places: the browser sweeps this device's stores, and the opener has no
+idea it happened. Nothing here is ruled yet.
+
+**What holds for all six.**
+
+- **No wipe detection exists anywhere.** `TrustStorageUnavailable` is the only
+  storage condition the code names, and it covers one thing: the trust store
+  could not be reached. An IndexedDB that opens cleanly and is empty is
+  indistinguishable from a fresh device, and every path treats it as one.
+- **All of it is script-writable, and all of it is subject to ITP.** `opfs.ts`
+  keeps the library, the pins, the publishers and the mailboxes in IndexedDB
+  (`dai_runner_storage`; stores `sqlite_databases`, `cartridges`, `pins`,
+  `publishers`, `mailboxes`). The one correction to the review: the file does use
+  OPFS for a document's database bytes — `saveDatabaseToOpfs` writes a
+  `<uuid>.sqlite` file through `navigator.storage.getDirectory()` and falls back
+  to IndexedDB only when that is unavailable or throws. That does not change the
+  conclusion, because OPFS is script-writable origin storage too and is swept by
+  the same eviction. It changes the *inventory*: a wipe takes both the file and
+  the fallback, and a partial sweep could take one and not the other.
+- **The seven-day phone test cannot be repeated until D49 is built.** See D49.
+  Any entry here that would be answered by a device reading is waiting on that,
+  not on a decision.
+
+#### D49 — Persistence is asked for at boot and the answer is thrown away
+
+*Status: open. It blocks any repeat of the seven-day phone test.*
+
+**What it means to a person:** whether the documents on this device survive a week
+of not being opened is decided by the browser, and nobody — not the person, not
+the opener — can find out which way it was decided.
+
+`apps/runner/src/main.ts:92`, the whole of it:
+
+```
+// Storage Eviction Defense: call navigator.storage.persist() on boot
+if ("storage" in navigator && typeof navigator.storage?.persist === "function") {
+  void navigator.storage.persist().catch(() => {
+    // Permission denied or non-fatal failure
+  });
+}
+```
+
+Three things are true of those five lines:
+
+- It runs at page boot, **before any document is open**. That is the weakest
+  moment for the browser's heuristics: no engagement, no install signal, nothing
+  the person has done with this origin yet. It is the request least likely to be
+  granted, made at the only moment the code makes it.
+- `void` and the empty `catch` **discard the result**. The promise resolves to a
+  boolean saying whether the origin is now persistent, and that boolean is
+  dropped on both paths.
+- **`persisted()` is never read anywhere.** Nothing on the device records whether
+  either context is durable.
+
+**The consequence to record explicitly: the seven-day phone test is
+uninterpretable.** It measured an install whose persistence status was never
+known, and what it saw is the expected outcome for an unpersisted one. It is not
+evidence of a defect and it is not evidence against one. It cannot be rerun into
+an answer either, because a rerun would measure the same unknown.
+
+**The tab and the home-screen install are separate contexts and can be granted
+differently.** A grant read in one says nothing about the other, so both need
+reading, and a device check has to say which context it was in.
+
+When it is picked up:
+
+1. *Does a person understand what happened?* No, and neither does anyone else.
+   This is the entry that makes the rest of the cluster answerable.
+4. *What can a test not see here?* All of it. Persistence is a browser decision
+   made from operating-system state and engagement history; no test can grant it
+   or observe the real one.
+
+#### D50 — An icon that outlives its storage is greeted as a stranger
+
+*Status: open.*
+
+**What it means to a person:** they tap the icon they have had for weeks and are
+told, in effect, that they have never opened this document — go find the file
+again. It is not that nothing was said; it is that the wrong thing was said.
+
+The OS keeps the home-screen icon and its `start_url` after every script-writable
+store has been swept. So **an icon launched for a uuid the library does not hold
+*is* the had-it-and-it's-gone case** — it is the one signal that survives the
+wipe, and the code treats it as identical to a first open.
+
+`apps/runner/src/install.ts:70` already describes the situation in prose, while
+doing nothing with it:
+
+> `?doc=<uuid>` finds a document this device already keeps, which is the right
+> answer once it does — and it is nothing at all on a device that has been reset,
+> or where storage was evicted, or where somebody added the icon and opened it
+> for the first time a week later.
+
+That comment names three cases. Only the third — never opened — is the one the
+code acts on.
+
+The message a person actually gets, `apps/runner/src/main.ts:4047`:
+
+> `This icon is for ${name}. Open ${name} from your files once — tap Open a file
+> and choose it — and it will be here every time after that.`
+
+**Record that as a wrong statement, not a missing one.** "Open it from your files
+once" is false for someone who did exactly that a week ago; and "it will be here
+every time after that" is the promise that has just been broken, repeated.
+
+When it is picked up:
+
+1. *Does a person understand what happened?* They are actively misled, which is
+   worse than the silent defects of the week of 15 September.
+3. *What already-built thing does this touch?* 3.5 and `install.ts`'s `link`
+   field. An icon built from a link can fetch the document again; an icon built
+   from `?doc=` cannot, so the two cases get different true sentences, not one.
+
+#### D51 — The library remembers the app and the database is gone
+
+*Status: open. Silent loss.*
+
+**What it means to a person:** their app opens, looks right, and is empty. No
+entries, no games, no answer.
+
+`apps/runner/src/main.ts:734` — a reopen loads the stored database, and when
+there is none it mounts the container as it arrived and says nothing about the
+difference:
+
+```
+const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+if (opfsDb && opfsDb.byteLength > 0) {
+  loaded = await resealCartridge(cartridge, opfsDb);
+} else {
+  loaded = cartridge;
+}
+```
+
+The library row surviving while the database does not is exactly the state a
+partial sweep leaves (see the inventory note above: the file and the fallback are
+separate). The breadcrumb underneath it already logs the distinction — "reopen
+mounted the library's own copy (no stored database)" — so the opener knows. The
+person is not told.
+
+When it is picked up:
+
+1. *Does a person understand what happened?* No. This is the purest instance of
+   the theme in the cluster: the right thing is known, in the right place, at the
+   right moment, and not said.
+
+#### D52 — A session document can restore its bytes and still be unplayable
+
+*Status: open. Blocked on the same missing primitive as D48 and Transferable
+ownership.*
+
+**What it means to a person:** the game comes back, all of it, and they cannot
+take their turn in it.
+
+Even where the bytes are fully recovered from a link, the seat is not:
+
+- A link arrival takes **a fresh replica id**.
+- **The old seat binding is still in the restored rows**, so the seat reads as
+  bound, not open.
+- **Heads are filtered by member replica**, so the new replica's writes are not
+  admitted.
+
+The way back in is a creator reseat plus a fresh invite — and **reseat is gated on
+seat authorship by replica**, so a creator who lost storage cannot perform it for
+themselves. That is D48's asymmetry reached by a second road: storage loss rather
+than a lost tab.
+
+**Three items now block on the same absent primitive: a person-held identity
+independent of any device.** D48 (taking a lost seat back), Transferable ownership
+(its key-holder identity), and this. A primitive that blocks three things is a
+different priority from one that blocks one, and whoever weighs any of the three
+should weigh the identity itself rather than the item in front of them.
+
+When it is picked up:
+
+3. *What already-built thing does this touch?* Seats, reseat, the head filter,
+   and the invite path — the same surfaces D48 ruled on.
+5. *What does an author have to know that is not written down?* That restoring a
+   session document's bytes is not restoring a seat. Nothing says so today.
+
+#### D53 — The key dies with the storage, so a link is the only backup
+
+*Status: open — as a statement to be written somewhere a person can read, not as a
+defect.*
+
+**What it means to a person:** if this device forgets a document, the copy on the
+relay is unreadable forever, by them and by everyone. Keeping the link is the only
+backup that exists.
+
+After eviction the relay still holds the ciphertext, and nobody can derive the key
+again. `documentKey` lives in the evicted library row and is on no server, by
+design — `opfs.ts` says so in the field's own documentation:
+
+> The root the whole exchange runs on: minted once at creation, kept here for the
+> life of the document, carried in every share link, and the key the store seal
+> and the mailbox both use.
+
+**This is the design working as intended.** File it as a stated property, not a
+fault: it is the same property that makes a link safe on a home screen (3.5) and
+makes a stranger's file safe to keep. What is missing is that a person is never
+told it, and cannot act on it if they are not.
+
+When it is picked up:
+
+2. *What does this change about what someone else can see or infer?* Nothing —
+   and that is the point being recorded.
+5. *What does an author have to know that is not written down?* That the link is
+   the backup. It is written in a code comment and nowhere a person will meet it.
+
+#### D54 — After a wipe, a notification loses the document's name
+
+*Status: open. Small, and first.*
+
+**What it means to a person:** the first thing they see after a wipe they do not
+know about is a notification that has forgotten what their document is called.
+
+Cached manifests go with everything else, so the push worker's name lookup misses
+and the notification reads "A shared document" instead of the name.
+
+Small in mechanism, and it is worth filing separately because of **when** it
+happens: the notification arrives before the person has opened anything, so it is
+the first observable symptom of the wipe, and today it is a symptom nobody can
+read as one. It is also the cheapest place in the cluster to *detect* a wipe from,
+since the worker already knows it looked for a manifest and did not find it.
+
+When it is picked up:
+
+1. *Does a person understand what happened?* No, but this is the one place where
+   a person might notice something is wrong before losing anything further.
+3. *What already-built thing does this touch?* The push worker's name lookup, and
+   D44/D45's notification decisions.
+
 ### Reaching a person
 
 #### 3.5 iOS, solved by the link
@@ -1837,10 +2071,12 @@ not ready.*
 - **Taking a lost seat back stays unbuilt.** The sentence cannot be finished, because
   nobody can say who may claim a seat.
 
-**One missing primitive now blocks two items.** Taking a lost seat back needs an
+**One missing primitive now blocks three items.** Taking a lost seat back needs an
 identity a person holds apart from any one device. So does Transferable ownership
-(its key-holder identity). A primitive that blocks two things is a different priority
-from one that blocks one. Whoever next weighs either item should weigh the identity
+(its key-holder identity), and so does D52 — a session document that restores its
+bytes after a storage wipe and is still unplayable, which reaches this same wall by
+a different road. A primitive that blocks three things is a different priority from
+one that blocks one. Whoever next weighs any of the three should weigh the identity
 itself, not each item alone.
 
 **The asymmetry: a lost creator is worse than a lost joiner, and more likely.** The
@@ -2086,6 +2322,12 @@ superseded copy needs revocation-by-policy machinery that `main` does not have.
 **Un-parks when an enterprise use case needs a transferable instrument**, and only
 after Track 4 has landed under it. Until then it is thinking, not work: PR #2 stays
 open and unmerged.
+
+**The key-holder identity this depends on now blocks three items**, not one: this,
+D48 (taking a lost seat back), and D52 (a session document restored after a storage
+wipe, unplayable because the seat is bound to a replica that is gone). The park
+stands, but the primitive underneath it should be weighed on its own rather than as
+a precondition of whichever item is in front of whoever is reading.
 
 #### Device capabilities
 
