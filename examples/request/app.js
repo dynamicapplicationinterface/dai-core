@@ -178,7 +178,9 @@ function drawSeat(s) {
   } else if (s.seatLost) {
     text = "Your place in this request was taken on another device or replaced. Ask the sender for a fresh link.";
   } else if (s.notIn) {
-    text = "This request reached you, but not through its link. Open the link you were sent to answer it.";
+    // True for both people this copy could be: someone it was forwarded to, or the
+    // person who answers it, on a new device or browser. The copy cannot tell which.
+    text = "Both places in this request belong to other devices, so this copy can't change it. If you answered it on another device or in another browser, carry on there.";
   } else if (s.closed) {
     text = "This request is closed. Nothing on it can change.";
   }

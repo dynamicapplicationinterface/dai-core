@@ -3,7 +3,7 @@
 ::: info SESSION-MEMBERSHIP
 **Read membership, and show the three ways to be outside**
 
-This copy's replica id is `SELECT lower(hex(id)) AS id FROM _dai_replica`. It is a member of a session when `_dai_member` has a row for (session, replica). Enable writing only for members, and show a copy that is not one which of three states it is in: it holds the rows but never joined (it was forwarded the document, not invited); it joined but its seat was contested or replaced (SESSION-CONTESTED-SEAT); or the session is closed (SESSION-CLOSE). The \_current views of a session document show only admitted rows — rows by members, written before any close.
+This copy's replica id is `SELECT lower(hex(id)) AS id FROM _dai_replica`. It is a member of a session when `_dai_member` has a row for (session, replica). Enable writing only for members, and show a copy that is not one which of three states it is in: it holds the rows but is not a member, and no seat is open to it — which is both a copy forwarded to someone who was never in the game and a player's own new device or browser, and the copy cannot tell them apart, so say that the seats belong to other devices and never that the person was not invited; it joined but its seat was contested or replaced (SESSION-CONTESTED-SEAT); or the session is closed (SESSION-CLOSE). The \_current views of a session document show only admitted rows — rows by members, written before any close.
 
 **Why.** A non-member's rows are kept but never admitted, so an application that let a non-member play would show them their own moves and nobody else ever would. Saying which state a copy is in is the difference between a message and a hang.
 

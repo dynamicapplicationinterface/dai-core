@@ -1816,7 +1816,40 @@ Sigstore signing flow at build time.
 
 #### D48 — Getting a player back into a game they are already in
 
-*Status: open — findings and a proposal; nothing ruled, nothing built.*
+*Status: partly ruled. The honest message and the documented meaning are built; chess
+keeping its Share button after join is ruled and small; taking a lost seat back is ruled
+not ready.*
+
+**Ruled, 16 September.**
+- **One call, one meaning; no alias.** `requestShare(session)` is the only call. An
+  alias beside it would be one act with two names, the D41 shape. The meaning is now
+  in `SESSION-INVITE`, including "keep offering it after the other party has joined".
+- **The honest message ships first.** A copy whose seats all belong to other devices
+  was told "you have not been invited". That is false for a player on a new device or
+  browser, and it tells them they do not belong when the truth is their device is gone.
+  A copy cannot tell that player from someone the game was forwarded to, so the message
+  is written to be true for both: the seats belong to other devices, and a player who
+  played elsewhere should carry on there. Changed in tic-tac-toe, Request and the chess
+  fixture, and in `SESSION-MEMBERSHIP`; the forwarded-copy test now also asserts the
+  word "invited" is gone.
+- **Chess keeps its Share button after the other player joins.** That button is the
+  recovery path for the common case (a lost tab, data intact). Small, and soon.
+- **Taking a lost seat back stays unbuilt.** The sentence cannot be finished, because
+  nobody can say who may claim a seat.
+
+**One missing primitive now blocks two items.** Taking a lost seat back needs an
+identity a person holds apart from any one device. So does Transferable ownership
+(its key-holder identity). A primitive that blocks two things is a different priority
+from one that blocks one. Whoever next weighs either item should weigh the identity
+itself, not each item alone.
+
+**The asymmetry: a lost creator is worse than a lost joiner, and more likely.** The
+creator is the person most likely to have started from a phone and moved on. Seats,
+reseat, close under `close=creator`, and every `author=creator` table are bound to the
+creator's replica id, so a creator on a new device cannot be recovered by anyone,
+while a lost joiner's seat could at least be repaired by the creator if the history
+question were answered. The chess fixture used to tell a creator on a new device to
+"open an invite from" the player who started the game: themselves.
 
 **Seen.** A player in a Safari tab closed it and lost the link. Their data was
 intact in the opener's storage; only the address was gone. The other player tried

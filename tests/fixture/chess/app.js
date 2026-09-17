@@ -118,8 +118,10 @@ function renderContested(st){
  }
  if(!s.amCreator&&s.notIn){
   banner.hidden=false;invite.hidden=true;
-  $('contested-title').textContent='You’re not in this game.';
-  $('contested-detail').textContent='This game reached your device, but you haven’t been invited into it — membership comes from opening an invite, not from the game arriving. Open an invite from '+(playerName(g,g.creator_color)||'the player who started it')+' to take a seat.';
+  // True for both people this copy could be: someone the game was forwarded to, or
+  // a player (the creator included) on a new device or browser. It cannot tell which.
+  $('contested-title').textContent='Both seats belong to other devices.';
+  $('contested-detail').textContent='This copy has the game but isn’t one of its players, so it can’t move. If you played this game on another device or in another browser, keep playing there.';
   return true; // not a member: cannot play until invited in
  }
  banner.hidden=true;invite.hidden=true;return false;

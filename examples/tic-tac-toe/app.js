@@ -193,7 +193,10 @@ function drawSeat(game, st) {
   } else if (s.seatLost) {
     text = `Your seat in this game was taken on another device or replaced. Nothing you did lost it — ${game.x_name} can send you a fresh invite.`;
   } else if (s.notIn) {
-    text = `This game reached you, but you have not been invited into it. Open an invite from ${game.x_name} to play.`;
+    // Said so it is true for both people this copy could be: someone the game was
+    // forwarded to, or a player on a new device or browser. The copy cannot tell
+    // them apart, and "you were not invited" is false for the second.
+    text = "Both seats in this game belong to other devices, so this copy can't play. If you played it on another device or in another browser, keep playing there.";
   } else if (s.closed) {
     text = "This match is closed.";
   }

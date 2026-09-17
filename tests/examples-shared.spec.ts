@@ -364,7 +364,9 @@ test.describe("tic-tac-toe, a session document", () => {
 
     // C holds B's copy but was never invited: the seat is taken, and C is told so.
     const appC = await firstOpen(pageC, b1, "#play");
-    await expect(appC.locator("#seat-text")).toContainText("you have not been invited into it", { timeout: 30_000 });
+    // Told the truth for both people C could be, and never that they were not invited.
+    await expect(appC.locator("#seat-text")).toContainText("Both seats in this game belong to other devices", { timeout: 30_000 });
+    await expect(appC.locator("#seat-text")).not.toContainText("invited");
     await expect(cell(appC, 8)).toBeDisabled();
 
     // D opens A's original invite too: two replicas bind one seat, which admits neither.
