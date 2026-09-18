@@ -41,6 +41,7 @@
 import { catchUp, publishSealed } from "../../../src/mailbox-sync.js";
 import { deriveSessionMailbox, openBatch, sealBatch, type Mailbox } from "../../../src/mailbox.js";
 import { loadMailbox, saveMailbox, type MailboxRecord } from "./opfs.js";
+import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 
 const fromBase64Url = (value: string): Uint8Array => {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
@@ -270,13 +271,13 @@ export function startMailboxSession(config: {
     const data = event.data as Any;
     if (!data || data["sessionNonce"] !== sessionNonce) return;
     const type = data["type"];
-    if (type === "DAI_HOST_AUTHORED") {
+    if (type === TO_HOST.AUTHORED) {
       for (const lane of lanes.values()) lane.upToDate = false;
       schedulePublish();
       pollNow(); // a local move; the reply is likely soon, so poll fast again.
       return;
     }
-    if (type === "DAI_HOST_AUTHORED_BATCH" || type === "DAI_HOST_APPLIED" || type === "DAI_HOST_SESSIONS_ANSWER") {
+    if (type === TO_HOST.AUTHORED_BATCH || type === TO_HOST.APPLIED || type === TO_HOST.SESSIONS_ANSWER) {
       const resolver = pending.get(String(data["id"]) + String(type));
       if (resolver) {
         pending.delete(String(data["id"]) + String(type));
@@ -372,7 +373,7 @@ export function startMailboxSession(config: {
       if (!lanes.has(documentUuid)) lanes.set(documentUuid, makeLane(documentUuid, documentUuid, documentMailboxKey, undefined, false));
       return;
     }
-    const answer = await ask({ type: "DAI_HOST_SESSIONS" }, "DAI_HOST_SESSIONS_ANSWER");
+    const answer = await ask({ type: TO_DOCUMENT.SESSIONS }, TO_HOST.SESSIONS_ANSWER);
     if (stopped) return;
     // No answer yet: keep the lanes already running and ask again next time.
     // Never a reason to fall back to the per-document mailbox.
@@ -479,12 +480,12 @@ export function startMailboxSession(config: {
       // this copy authored under, so the watermark rebinds to it.
       const answer = await ask(
         {
-          type: "DAI_HOST_AUTHORED_SINCE",
+          type: TO_DOCUMENT.AUTHORED_SINCE,
           seq: lane.state.watermark.seq,
           replica: lane.state.watermark.replica,
           ...(lane.session ? { session: lane.session } : {}),
         },
-        "DAI_HOST_AUTHORED_BATCH",
+        TO_HOST.AUTHORED_BATCH,
       );
       const batchBytes = answer["batch"];
       const head = Number(answer["head"] ?? lane.state.watermark.seq);
@@ -545,7 +546,7 @@ export function startMailboxSession(config: {
       lane.state.cursor,
       async (sealed) => openBatch(sealed, await lane.key()),
       async (plaintext) => {
-        await ask({ type: "DAI_HOST_APPLY_BATCH", batch: plaintext }, "DAI_HOST_APPLIED");
+        await ask({ type: TO_DOCUMENT.APPLY_BATCH, batch: plaintext }, TO_HOST.APPLIED);
       },
     );
     if (next !== lane.state.cursor) {

@@ -76,6 +76,7 @@ import {
   type LibraryItem,
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
+import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 
 const openButton = document.getElementById("open") as HTMLButtonElement;
 const exportButton = document.getElementById("export") as HTMLButtonElement;
@@ -311,13 +312,13 @@ function tellCanvas(): void {
   const target = cartridgeFrame.contentWindow;
   const colour = document.documentElement.style.getPropertyValue("--app-ground").trim();
   if (!target || !mountedNonce || !colour) return;
-  target.postMessage({ type: "DAI_HOST_CANVAS", colour }, "*");
+  target.postMessage({ type: TO_DOCUMENT.CANVAS, colour }, "*");
 }
 
 function tellInsets(): void {
   const target = cartridgeFrame.contentWindow;
   if (!target || !mountedNonce) return;
-  target.postMessage({ type: "DAI_HOST_INSETS", ...screenInsets() }, "*");
+  target.postMessage({ type: TO_DOCUMENT.INSETS, ...screenInsets() }, "*");
 }
 
 window.addEventListener("resize", () => tellInsets());
@@ -2132,7 +2133,7 @@ window.addEventListener("message", (event) => {
     return;
   }
 
-  if (data.type === "DAI_HOST_HANDSHAKE") {
+  if (data.type === TO_HOST.HANDSHAKE) {
     // The frame this runner mounted, and no other window.
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
@@ -2209,7 +2210,7 @@ window.addEventListener("message", (event) => {
       }
       (event.source as Window | null)?.postMessage(
         {
-          type: "DAI_HOST_WRITE_RULES",
+          type: TO_DOCUMENT.WRITE_RULES,
           sessionNonce: mountedNonce,
           source,
           // T1-D22: whether this copy keeps the replica id it holds or takes a
@@ -2226,7 +2227,7 @@ window.addEventListener("message", (event) => {
 
     (event.source as Window | null)?.postMessage(
       {
-        type: "DAI_HOST_HANDSHAKE_ACK",
+        type: TO_DOCUMENT.HANDSHAKE_ACK,
         // A viewer: this host keeps a copy on the device and can export. It
         // cannot write the file it was given in place, and it says so.
         // What this host applies, by the probe's own ids. A claim, checked in
@@ -2235,7 +2236,7 @@ window.addEventListener("message", (event) => {
       },
       "*",
     );
-  } else if (data.type === "DAI_HOST_REFUSED") {
+  } else if (data.type === TO_HOST.REFUSED) {
     /*
      * The shell refused to run what it was handed — most often the schema
      * gate: data written by one version of an application that this version
@@ -2282,7 +2283,7 @@ window.addEventListener("message", (event) => {
     );
     window.clearTimeout(bootingGuard);
     document.body.classList.remove("loaded", "booting");
-  } else if (data.type === "DAI_HOST_GROUND") {
+  } else if (data.type === TO_HOST.GROUND) {
     // The colour at the top edge of the application, measured by it once it
     // had painted, for the strip above it that only this page can colour.
     // An application that declared a theme-color said what that strip should
@@ -2292,7 +2293,7 @@ window.addEventListener("message", (event) => {
     const colour = typeof data.colour === "string" ? data.colour.trim() : "";
     if (!COLOUR.test(colour)) return;
     settleGround(colour);
-  } else if (data.type === "DAI_HOST_REQUEST_SHARE") {
+  } else if (data.type === TO_HOST.REQUEST_SHARE) {
     /*
      * The application asked for its host's own share sheet.
      *
@@ -2306,7 +2307,7 @@ window.addEventListener("message", (event) => {
     // Checked again here: a malformed one is ignored, never guessed at.
     const session = typeof data.session === "string" && /^[0-9a-f]{32}$/.test(data.session) ? data.session : undefined;
     void sendDocument(session);
-  } else if (data.type === "DAI_HOST_WAITING") {
+  } else if (data.type === TO_HOST.WAITING) {
     /*
      * The application's count of games waiting on this person (D34), kept for
      * the service worker to badge the icon from when a push lands and the
@@ -2318,7 +2319,7 @@ window.addEventListener("message", (event) => {
       ? (data.sessions as unknown[]).filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s))
       : [];
     if (mountedUuid) void badge()?.reported(mountedUuid, sessions).catch(() => undefined);
-  } else if (data.type === "DAI_HOST_WRITE_RULES_REFUSED") {
+  } else if (data.type === TO_HOST.WRITE_RULES_REFUSED) {
     /*
      * The rules were delivered and the frame would not adopt them.
      *
@@ -2341,7 +2342,7 @@ window.addEventListener("message", (event) => {
         `that writes its shared tables (${why}${detail ? ` — ${detail}` : ""}).`,
       true,
     );
-  } else if (data.type === "DAI_HOST_SAVE_STATE") {
+  } else if (data.type === TO_HOST.SAVE_STATE) {
     // The runtime's own account of where the data stands. Shown, never
     // inferred: a green word here means the host acknowledged a write.
     if (!fromMountedContainer(event, data)) return;
@@ -2370,7 +2371,7 @@ window.addEventListener("message", (event) => {
         true,
       );
     }
-  } else if (data.type === "DAI_HOST_TIMING") {
+  } else if (data.type === TO_HOST.TIMING) {
     // The boot finished. The handshake went out before the application had
     // painted, so this is the message carrying the number that matters.
     if (fromMountedContainer(event, data)) {
@@ -2380,7 +2381,7 @@ window.addEventListener("message", (event) => {
       window.clearTimeout(bootingGuard);
       if (!rehearsing) document.body.classList.remove("booting");
     }
-  } else if (data.type === "DAI_HOST_USED") {
+  } else if (data.type === TO_HOST.USED) {
     /*
      * Somebody used the document: they ticked something, added something, or
      * saved. Only now is "keep this on your device" an offer rather than an
@@ -2391,7 +2392,7 @@ window.addEventListener("message", (event) => {
     // Not during a rehearsal: that use is the kit's own, on a page nobody
     // has touched, and the offer is once per document.
     if (fromMountedContainer(event, data) && !installSuppressed && !rehearsing) keeper?.offer();
-  } else if (data.type === "DAI_HOST_SAVE") {
+  } else if (data.type === TO_HOST.SAVE) {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
     if (!fromMountedContainer(event, data)) return;
@@ -2484,14 +2485,14 @@ window.addEventListener("message", (event) => {
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
           (event.source as Window | null)?.postMessage(
-            { type: "DAI_HOST_SAVE_ACK", status: "ok", requestId },
+            { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId },
             "*",
           );
         })
         .catch((error: unknown) => {
           console.info(`dai: save ${saveNumber} refused: ${String(error)}`);
           (event.source as Window | null)?.postMessage(
-            { type: "DAI_HOST_SAVE_ACK", status: "error", error: String(error), requestId },
+            { type: TO_DOCUMENT.SAVE_ACK, status: "error", error: String(error), requestId },
             "*",
           );
         });
@@ -2632,7 +2633,7 @@ function flushDocument(): Promise<boolean> {
     }, 2500);
     const onFlushed = (event: MessageEvent): void => {
       const data = event.data as { type?: string; id?: string; sessionNonce?: string; saved?: boolean } | null;
-      if (!data || data.type !== "DAI_HOST_FLUSHED" || data.id !== id) return;
+      if (!data || data.type !== TO_HOST.FLUSHED || data.id !== id) return;
       if (!fromMountedContainer(event, data)) return;
       window.clearTimeout(timer);
       window.removeEventListener("message", onFlushed);
@@ -2640,7 +2641,7 @@ function flushDocument(): Promise<boolean> {
       resolve(data.saved !== false);
     };
     window.addEventListener("message", onFlushed);
-    target.postMessage({ type: "DAI_HOST_FLUSH", id }, "*");
+    target.postMessage({ type: TO_DOCUMENT.FLUSH, id }, "*");
   });
 }
 
@@ -2906,7 +2907,7 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
       const data = event.data as
         | ({ type?: string; id?: string; sessionNonce?: string } & MergeReport)
         | null;
-      if (!data || data.type !== "DAI_HOST_MERGE_RESULT") return;
+      if (!data || data.type !== TO_HOST.MERGE_RESULT) return;
       if (!fromMountedContainer(event, data)) return;
       // The answer to *this* request. One the host gave up on may still land,
       // and it belongs to nobody.
@@ -2918,7 +2919,7 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
     };
     window.addEventListener("message", onResult);
     target.postMessage(
-      { type: "DAI_HOST_MERGE", id, payload: { databaseBytes, mergeSource: source, level } },
+      { type: TO_DOCUMENT.MERGE, id, payload: { databaseBytes, mergeSource: source, level } },
       "*",
     );
   });
@@ -4193,7 +4194,7 @@ function requestReplicaId(): Promise<string | null> {
       }
     };
     window.addEventListener("message", onReply);
-    target.postMessage({ type: "DAI_HOST_REPLICA_ID", nonce }, "*");
+    target.postMessage({ type: TO_DOCUMENT.REPLICA_ID, nonce }, "*");
   });
 }
 
