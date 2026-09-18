@@ -80,6 +80,7 @@ test("a save reply is bound to its request and to the host that was asked", () =
   // The container checks who answered and which request it was for…
   expect(boot).toMatch(/evt\.source !== window\.parent/);
   expect(boot).toMatch(/data\.requestId !== requestId/);
-  // …and the host echoes the id it was given.
-  expect(shell).toMatch(/DAI_HOST_SAVE_ACK", status: "ok", requestId/);
+  // …and the host echoes the id it was given. Spelled as the opener spells it,
+  // through the bridge's owner (src/bridge.ts, D68), not as the wire string.
+  expect(shell).toMatch(/type: TO_DOCUMENT\.SAVE_ACK, status: "ok", requestId/);
 });
