@@ -986,6 +986,8 @@
 
       #card-succession { margin: 14px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); }
       #card-succession[hidden] { display: none; }
+      #card-returning { margin: 0 0 14px; font-size: 13px; line-height: 1.45; color: var(--text-2); }
+      #card-returning[hidden] { display: none; }
       #card-succession[data-state="refused"] { color: var(--warn); }
       #card-clear { margin: 14px 0 0; font-size: 13px; line-height: 1.45; color: var(--warn); }
       #card-clear[hidden] { display: none; }
@@ -1334,6 +1336,13 @@
       -->
       <div id="card" hidden>
         <div class="card-panel" tabindex="-1">
+          <!--
+            This device held the document and no longer does, and its icon
+            fetched it again from its link (D50). Above the app, because without
+            it the card reads as a first meeting. Not a control: Open stays the
+            one action.
+          -->
+          <p id="card-returning" hidden></p>
           <div class="card-head">
             <img id="card-icon" alt="" width="68" height="68" />
             <div class="card-titles">

@@ -424,6 +424,10 @@ Why it matters: a missing batch and a batch never written look the same from
 every side, so any loss in the relay — an expiry, a failed write, an operator's
 mistake — arrives as a quietly incomplete game rather than an error.
 
+The same shape as D50's iOS boundary: gone and never-there look alike. The
+difference is that here one party, the relay, can tell them apart. D50 has no
+such party.
+
 The relay is the one place that can tell: it holds the counter and knows which
 numbers it cannot serve. **Un-parks with D17's retention decision, or with the
 first relay change that could lose an object** — `since` names the numbers it
@@ -731,7 +735,13 @@ When it is picked up:
 
 #### D50 — An icon that outlives its storage is greeted as a stranger
 
-*Status: open.*
+*Status: built for an icon made from a file (17 September). The card sentence for
+an icon made from a store link is built and unreachable until D56 is fixed.*
+
+**A boundary, not a gap: on iOS the page cannot tell an icon's first launch from a
+wiped one, because any "launched before" marker lives in the storage the wipe
+reaches.** Same shape as D18's hole versus empty stretch, with one difference: in
+D18 the relay can tell the two apart, so that one is fixable; here nothing can.
 
 **What it means to a person:** they tap the icon they have had for weeks and are
 told, in effect, that they have never opened this document — go find the file
@@ -819,6 +829,22 @@ made, and anything done on this device since is gone. A sentence that says so
 would be true and would be the first time a person hears it. It is also the
 sentence most likely to be wrong in detail, so it waits for someone to trace
 both paths rather than going into the first build.
+
+**Not covered by the ruling: an icon made from an inline link.** Its bytes are in
+its own address, so it recovers even after a wipe. But it never shows a card: the
+hint counts as consent (`main.ts:1433`, "a fresh storage … should open it, not ask
+again"), and the document mounts directly. So the ruled link sentence has no
+surface to go on, and "fetched again" would be false there anyway, because
+nothing is fetched. Left unbuilt, not given an improvised home.
+
+**Built, 17 September.** `iconLostItsDocument()` and `iconWithoutItsFile()` in
+`main.ts` write the sentences. `#card-returning` sits above the card head. Both
+conditions for "any more", standalone and shared storage, are required; anything
+less gets the neutral sentence, so the strict answer costs saying less, never
+saying something false. The card sentence appears only when the fetched document
+is the one the icon named, because the payload is authoritative.
+`tests/icon-after-wipe.spec.ts` holds the file-icon split: shared storage, iOS, a
+tab, and a first-time link that must *not* carry the sentence.
 
 When it is picked up:
 
@@ -971,10 +997,92 @@ honest answer when there is no link to point at.
 
 Tested both ways in `tests/reference-link.spec.ts`.
 
+**Broken for every icon made from a store link: see D56.** The test above asserts
+the icon's `start_url`, and never launches it on a device without the document.
+Launching it is what fails.
+
 **Exit not met, and cannot be met here:** an iOS device test needs an iOS
 device. Everything above is the mechanism it would exercise; what is left is
 somebody holding a phone, or a device lab — the same decision 5.1 is waiting
 on.
+
+#### D56 — An icon made from a store link cannot fetch its document again
+
+*Status: open. Found by running, 17 September, while building D50. Not ruled.*
+
+**What it means to a person:** the icon that 3.5 built to survive exactly this, a
+device that no longer holds the document, does not survive it. After a wipe it
+opens the chooser and tells them to find a file they never had.
+
+The icon's hint and the reference link's store address are the same field:
+
+- `src/link.ts:125`: `export const HINT_KEY = "u";`
+- `src/store.ts:54`: `export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c", session: "s" } as const;`
+
+`withHint()` (`apps/runner/src/install.ts:109`) drops every existing `u=` part
+before adding its own, so an icon built from a store link loses the store
+address and gains `u=<uuid>`. On launch, `referenceFrom()` (`src/store.ts:616`)
+reads that `u` as the store URL:
+
+```
+const u = fragment.get(REFERENCE_KEYS.url);
+if (u) {
+  try {
+    const url = new URL(u);
+    ...
+  } catch {
+    return undefined;
+  }
+}
+```
+
+`new URL("<uuid>")` throws, so the whole reference is `undefined`. On a device
+that holds the document it does not matter: the hint finds the library copy
+first. On a device that does not, which is the only case the link was there for,
+nothing is fetched.
+
+**Evidence, run:** `tests/icon-after-wipe.spec.ts`, "launched on a wiped device,
+fetches the document again and says so on the card". A chore chart is published
+to a local store and opened by its link, and the `start_url` is read from the
+manifest the opener wrote. That address is then launched in a fresh browser
+context, as an installed app. The card never appears. The chooser shows:
+
+> your document isn't on this device any more. If you still have the file, open
+> it here and this icon will open it again.
+
+That is D50's file-icon sentence, reached because the reference was unreadable,
+with no name because a link icon carries no `?name=`. The test is marked
+`test.fail` so that it runs and flips when this is fixed.
+
+`tests/reference-link.spec.ts:376` asserts the collision into the manifest,
+`expect(manifest!.start_url).toContain(`u=${built.manifest.documentUuid}`)`, and
+never launches the result on a device without the document.
+
+**Read, not run:** a `/d/<hash>` link with no store `u=` should fail the same
+way, because the icon's own `u=<uuid>` is the only `u` in its fragment. Every
+icon made from a link on the production opener would then be affected, not only
+links naming a custom store. A test with a `/d/` icon would confirm it.
+
+**Why it is not fixed inside D50.** Icons already on home screens carry this
+address and cannot be rewritten; only the opener that reads them can change. The
+choices look different for those icons:
+
+- **Tell the two `u`s apart by shape where they are read.** A uuid-shaped `u` is
+  the hint, a URL-shaped one is the store. `hintedUuid()` already validates the
+  uuid shape. That would repair every existing `/d/<hash>` icon without touching
+  it. An icon that named a custom store has already lost it, and would fall back
+  to the default store.
+- **A new hint key** for icons made from now on. That is cleaner, and it repairs
+  nothing already installed.
+- Both: read by shape for the icons in the field, write a distinct key from now on.
+
+When it is picked up:
+
+3. *What already-built thing does this touch?* 3.5, the D50 card sentence
+   (built, unreachable until this is fixed), the 6.4 relaunch (which also uses
+   `launchAddress()`), and every installed icon.
+4. *What can a test not see here?* Nothing, as it turns out. This was always
+   visible to a test that launched the address instead of only reading it.
 
 #### 6.3 iOS: a link cannot reach an installed icon
 

@@ -50,7 +50,7 @@ import {
   type Identity,
 } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
-import { platform } from "./platform.js";
+import { installShareStorage, platform, standalone } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
@@ -1136,6 +1136,49 @@ let arrivedByLink: string | undefined;
 let arrivedInClear = false;
 
 /**
+ * Whether an icon launch for a document this device does not hold means the
+ * document was here and is gone (D50).
+ *
+ * True only where the icon shares storage with the browser and this is the
+ * icon: an icon is made from a document the device holds, so on Android and
+ * desktop a launch for one it does not hold means it was there — wiped, or
+ * removed by the person. "Any more" is true for both and claims neither.
+ *
+ * Never on iOS. The icon has storage of its own there (6.3), and its first
+ * launch is indistinguishable from a wiped one: a marker saying "this icon has
+ * launched before" would live in the storage the wipe reaches. That is a
+ * boundary, not a gap — the same shape as D18's hole versus empty stretch —
+ * so iOS gets the sentence that is true in both cases.
+ */
+function iconLostItsDocument(): boolean {
+  return standalone() && installShareStorage();
+}
+
+/**
+ * What an icon says when its document arrived as a file and is not here (D50).
+ *
+ * It used to say "Open {name} from your files once … and it will be here every
+ * time after that": right for an iOS icon's first launch, wrong for every wipe,
+ * and in the wiped case a promise repeated at the moment it had been broken.
+ * Neither sentence says why the document is not here, because that cannot be
+ * known, and neither promises anything about next time.
+ */
+function iconWithoutItsFile(name: string): string {
+  return iconLostItsDocument()
+    ? `${name} isn't on this device any more. If you still have the file, open it here ` +
+        `and this icon will open it again.`
+    : `This icon is for ${name}, and it isn't on this device. If you have the file, open ` +
+        `it here and this icon will open it.`;
+}
+
+/**
+ * Set when an icon launched for a document this device held and no longer
+ * does, and the icon carries a link to fetch it from (D50). The card says so,
+ * once, for that document.
+ */
+let returningTo: string | undefined;
+
+/**
  * Where a document came from, which decides whether it is shown a card first.
  *
  * A file somebody picked out of their own storage, or one they have just built
@@ -1463,6 +1506,14 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
             "Nothing is uploaded — it runs on this device."
           : (carrier.from ?? "From a file on this device. Nothing is uploaded — it runs here."),
         succession: succession?.card,
+        // The icon's own document, fetched again because it was gone (D50).
+        // Only for the document the icon named: the payload is authoritative,
+        // and a link that carried something else is not a return.
+        returning:
+          returningTo === cartridge.manifest.documentUuid
+            ? `${cartridge.manifest.appName ?? "This document"} wasn't on this device any more, ` +
+              `so it was fetched again from its link.`
+            : undefined,
         // Opening an invite is choosing to play with whoever sent it: the
         // moment, inside the gesture, to ask whether this device may be told
         // when they move (Track 5, slice two).
@@ -3967,6 +4018,9 @@ async function start(): Promise<void> {
     // Painted as launching into it by the worker, and it is not here: the
     // chooser, or a card for what the link carries, is the honest screen.
     document.body.classList.remove("launching");
+    // An icon whose document is gone, with a link to fetch it again: the card
+    // for it says so, on a device where that can be known (D50).
+    if (iconLostItsDocument()) returningTo = wanted;
     if (!referenceFrom(location.pathname, location.search, location.hash)) arrived(false);
   }
 
@@ -4065,11 +4119,7 @@ async function start(): Promise<void> {
     // Not held here, and no link to follow (a document that arrived as a
     // file exists nowhere else): the address carries the name so this can
     // ask for exactly that file rather than showing an empty chooser.
-    const name = parameters.get("name") ?? "your document";
-    say(
-      `This icon is for ${name}. Open ${name} from your files once — tap Open a file ` +
-        `and choose it — and it will be here every time after that.`,
-    );
+    say(iconWithoutItsFile(parameters.get("name") ?? "your document"));
     return;
   }
 

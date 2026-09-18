@@ -77,6 +77,13 @@ export interface CardInput {
    */
   succession?: { state: "adopting" | "refused" | "nothing-here"; previous: string; why?: string };
   /**
+   * This device held the document and no longer does, and its icon fetched it
+   * again from its link (D50). Above the app, because without it the card reads
+   * as a first meeting, which it is not. Absent wherever that cannot be known —
+   * on iOS an icon's first launch looks the same — and absent says nothing.
+   */
+  returning?: string;
+  /**
    * Another copy of a document this device already holds (§7).
    *
    * `offer` makes the one action *Open in my copy*, and pressing it merges:
@@ -221,6 +228,13 @@ export function showCard(input: CardInput): Promise<void> {
   }
 
   name.textContent = input.name;
+
+  // D50. Set every time, so a card shown after this one never carries it over.
+  const returning = document.getElementById("card-returning");
+  if (returning) {
+    returning.hidden = !input.returning;
+    returning.textContent = input.returning ?? "";
+  }
 
   const tagline = document.getElementById("card-tagline");
   if (tagline) {
