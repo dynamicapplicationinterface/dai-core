@@ -3910,6 +3910,20 @@ the two Firefox traces, and more runs on 1243 before calling the crash gone.
   time, a fresh run for each sample (an empty commit per run), not a rerun in
   place, or download each attempt's artifacts before the next starts.
 
+**Fresh run after the test fix, 18 September (run 35399985043, `437ecfa`, a new
+run from a push, not a rerun; artifacts downloaded as soon as it finished).**
+- **WebKit shard 2: 317 of 317.** `runner.spec.ts:1168` now reads back through
+  the opener's own load (`__runner.loadStored`, which is `loadDatabaseFromOpfs`),
+  which falls back to IndexedDB exactly as the save does. It passed where it had
+  failed in all three earlier runs. It is not skipped on any engine.
+- **Chromium: 1,078 of 1,078, no crash signal, no `newContext … closed`.** The
+  fourth clean run on build 1243. Still a small sample.
+- **Firefox: one retry, `returning-document:192`, D32 confirmed.** This time
+  its trace was kept. It stalled at line 220, `toHaveText("no moves")`, after
+  "reopen mounted the stored database", and the last screenshot shows "no
+  moves" on screen. Run 2's lost sighting stays unconfirmed. This test has
+  shown D32's signature every time it could be read.
+
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
 0000000001b0`, a read near a null pointer. The two dumps come from *two
