@@ -3556,6 +3556,16 @@ closed`.
   `chrome-headless-shell+0x4265412`, `+0x754bdf3`, `+0x6b59199`. One crash site,
   hit again, in a spec with nothing in common with the earlier ones. So far the
   trigger is still not any one test.
+- CI, chromium (18 September, run 35375122730, `470c909`): `one-sentence.spec.ts:30`
+  and `storage-persistence.spec.ts:234`, back to back, both at their first
+  `browser.newContext`, both passed on retry. The dumps show the same signal
+  and fault address (`SEGV_MAPERR 0000000001b0`), but **different frames**:
+  `+0x1e63034`, `+0x1e67d90`, `+0x1e71bf0`, `+0x31cb700`, against
+  `+0x4265412`, `+0x754bdf3`, `+0x6b59199` in every earlier dump. Both runs used
+  the same build (`chromium_headless_shell-1234`), and the offsets are relative
+  to the binary, so this is **a second crash site** in the same build, reading
+  the same distance past a null pointer. Two tests in a row fits one browser
+  death taking out the tests after it, as on 15 September.
 
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
