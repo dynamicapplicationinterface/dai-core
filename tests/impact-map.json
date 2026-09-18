@@ -37,6 +37,7 @@
     ],
     "tests/attachments.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -88,6 +89,7 @@
     ],
     "tests/blind-agreement.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -140,6 +142,10 @@
       "tests/bridge-nonce.spec.ts",
       "tests/fixture/",
       "tsup.config.ts"
+    ],
+    "tests/bridge-wire.spec.ts": [
+      "src/bridge.ts",
+      "tests/bridge-wire.spec.ts"
     ],
     "tests/browser-input.spec.ts": [
       "src/browser.ts",
@@ -222,6 +228,7 @@
     ],
     "tests/container.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -397,6 +404,7 @@
       "examples/receipts/",
       "examples/request/",
       "examples/tic-tac-toe/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -502,6 +510,7 @@
     ],
     "tests/frame-hold.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -569,6 +578,7 @@
     "tests/host-profile.spec.ts": [
       "apps/runner/",
       "conformance/isolation-probe.dai.html",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -632,6 +642,7 @@
       "apps/runner/",
       "conformance/signing-key.pem",
       "examples/chore-chart/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -679,6 +690,7 @@
     ],
     "tests/idb-timeout.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -727,6 +739,7 @@
       "conformance/identity-vectors.json",
       "conformance/signing-key.pem",
       "scripts/lib/sigstore-test.mjs",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -796,6 +809,7 @@
     "tests/invite-one-session.spec.ts": [
       "apps/runner/",
       "examples/tic-tac-toe/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -871,6 +885,7 @@
     ],
     "tests/launch-card.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -917,6 +932,7 @@
     ],
     "tests/launch-failsafe.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -981,6 +997,7 @@
     ],
     "tests/look-inside.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -1139,6 +1156,7 @@
       "examples/packing-list/icon.svg",
       "examples/packing-list/index.html",
       "examples/packing-list/schema.sql",
+      "src/bridge.ts",
       "src/browser.ts",
       "src/bundle.ts",
       "src/cbor.ts",
@@ -1212,6 +1230,7 @@
     ],
     "tests/merge-card.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -1288,6 +1307,7 @@
     ],
     "tests/no-beacon.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -1333,6 +1353,7 @@
     ],
     "tests/offline-detector.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -1380,6 +1401,7 @@
     "tests/offline-second-open.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -1479,6 +1501,7 @@
       "examples/packing-list/icon.svg",
       "examples/packing-list/index.html",
       "examples/packing-list/schema.sql",
+      "src/bridge.ts",
       "src/browser.ts",
       "src/bundle.ts",
       "src/cbor.ts",
@@ -1531,6 +1554,7 @@
     "tests/opener-thin.spec.ts": [
       "apps/runner/",
       "conformance/signing-key.pem",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -1586,6 +1610,7 @@
     ],
     "tests/opener-updates.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -1657,6 +1682,7 @@
     "tests/probe.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -1717,6 +1743,7 @@
       "examples/packing-list/icon.svg",
       "examples/packing-list/index.html",
       "examples/packing-list/schema.sql",
+      "src/bridge.ts",
       "src/browser.ts",
       "src/cbor.ts",
       "src/container.ts",
@@ -1755,6 +1782,7 @@
       "apps/runner/",
       "conformance/confusables.json",
       "conformance/trust-vectors.json",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -1804,6 +1832,7 @@
       "apps/relay/src/",
       "apps/runner/",
       "examples/tic-tac-toe/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -1851,6 +1880,7 @@
     ],
     "tests/reference-head.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -1898,6 +1928,7 @@
       "apps/runner/",
       "conformance/signing-key.pem",
       "examples/chore-chart/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -1986,6 +2017,7 @@
     ],
     "tests/request-share.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2032,6 +2064,7 @@
     ],
     "tests/returning-document.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2121,6 +2154,7 @@
     ],
     "tests/safe-area.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2173,6 +2207,7 @@
     ],
     "tests/schema-run.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2311,6 +2346,7 @@
     "tests/session-mailbox-e2e.spec.ts": [
       "apps/runner/",
       "examples/tic-tac-toe/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2428,6 +2464,7 @@
       "apps/runner/",
       "conformance/isolation-probe.dai.html",
       "examples/packing-list/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2476,6 +2513,7 @@
     ],
     "tests/storage-persistence.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/confusables-id.ts",
@@ -2534,6 +2572,7 @@
     ],
     "tests/succession.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2618,6 +2657,7 @@
       "conformance/trust-publisher-a-key.pem",
       "conformance/trust-publisher-b-key.pem",
       "examples/chore-chart/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2718,6 +2758,7 @@
     "tests/unfurl.spec.ts": [
       "apps/runner/",
       "examples/packing-list/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2770,6 +2811,7 @@
     "tests/v3-reader.spec.ts": [
       "apps/runner/",
       "conformance/signing-key.pem",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2838,6 +2880,7 @@
     "tests/version-update.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",
@@ -2885,6 +2928,7 @@
     ],
     "tests/viewport.spec.ts": [
       "apps/runner/",
+      "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
       "src/compile.ts",

@@ -27,6 +27,7 @@ import { unzipBounded, ArchiveTooLarge } from "../unzip.js";
 import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
 import { verifySign1 } from "../cose.js";
 import { compatibility, type SchemaDeclaration } from "../schema.js";
+import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
 
 const APP_PREFIX = "app/";
 const SCHEMA_ENTRY = "runtime/schema.json";
@@ -247,7 +248,7 @@ function refuse(reason: RefusalReason, message: string, detail = ""): void {
   try {
     window.parent.postMessage(
       {
-        type: "DAI_HOST_REFUSED",
+        type: TO_HOST.REFUSED,
         payload: {
           bridgeVersion: BRIDGE_VERSION,
           sessionNonce,
@@ -3153,7 +3154,7 @@ async function boot(): Promise<void> {
     try {
       window.parent.postMessage(
         {
-          type: "DAI_HOST_USED",
+          type: TO_HOST.USED,
           sessionNonce,
           payload: {
             bridgeVersion: BRIDGE_VERSION,
@@ -3187,7 +3188,7 @@ async function boot(): Promise<void> {
   })();
 
   window.addEventListener("message", (event) => {
-    if ((event.data as { type?: string })?.type === "DAI_HOST_HANDSHAKE_ACK") {
+    if ((event.data as { type?: string })?.type === TO_DOCUMENT.HANDSHAKE_ACK) {
       // From the window this container is embedded in, carrying the value this
       // container invented. Neither check proves the sender is honest; together
       // they establish that it is the same party the handshake was sent to,
@@ -3216,7 +3217,7 @@ async function boot(): Promise<void> {
      * the share go with whatever the last automatic save happened to hold.
      */
     const fromHost = event.data as { type?: string; id?: string };
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_FLUSH") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.FLUSH) {
       // The host is packaging this document to share it and wants what the
       // person sees, not the last autosave. The answer comes back the same way.
       toFrame({ type: "dai:flush", id: fromHost.id });
@@ -3230,7 +3231,7 @@ async function boot(): Promise<void> {
      * whether a later exchange collided. This shell has no database to read it
      * from; the frame one layer in does.
      */
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_REPLICA_ID") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.REPLICA_ID) {
       toFrame({ type: "dai:replica-id", nonce: (event.data as { nonce?: string }).nonce });
       return;
     }
@@ -3257,7 +3258,7 @@ async function boot(): Promise<void> {
      * this shell does not import it, does not check it, and does not need to.
      * The frame holds the digest it must match.
      */
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_WRITE_RULES") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
       const pushed = event.data as { source?: unknown; ownCopy?: unknown; closePolicy?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
@@ -3265,7 +3266,7 @@ async function boot(): Promise<void> {
       if (listeningWindow) deliverRules();
       return;
     }
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_MERGE") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.MERGE) {
       const request = event.data as {
         id?: string;
         payload?: { databaseBytes?: unknown; mergeSource?: unknown; level?: unknown };
@@ -3282,20 +3283,20 @@ async function boot(): Promise<void> {
       return;
     }
     // The host asking the frame for what it authored above a watermark (Track 5).
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_AUTHORED_SINCE") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.AUTHORED_SINCE) {
       const request = event.data as { id?: string; seq?: number; replica?: string; session?: unknown };
       const session = typeof request.session === "string" && /^[0-9a-f]{32}$/.test(request.session) ? request.session : undefined;
       toFrame({ type: "dai:authored-since", id: request.id, seq: request.seq, replica: request.replica, ...(session ? { session } : {}) });
       return;
     }
     // The host asking which sessions this copy holds (T1-D30).
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_SESSIONS") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.SESSIONS) {
       const request = event.data as { id?: string };
       toFrame({ type: "dai:sessions", id: request.id });
       return;
     }
     // The host handing the frame a batch pulled from the mailbox, to merge.
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_APPLY_BATCH") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.APPLY_BATCH) {
       const request = event.data as { id?: string; batch?: unknown };
       toFrame({ type: "dai:apply-batch", id: request.id, batch: request.batch });
       return;
@@ -3314,7 +3315,7 @@ async function boot(): Promise<void> {
      * past its top shows the application's own colour and not a white
      * ground of this shell's. A colour and nothing else goes into a style.
      */
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_CANVAS") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.CANVAS) {
       const colour = typeof (event.data as { colour?: unknown }).colour === "string"
         ? String((event.data as { colour: string }).colour).trim()
         : "";
@@ -3323,7 +3324,7 @@ async function boot(): Promise<void> {
       }
       return;
     }
-    if (event.source === window.parent && fromHost?.type === "DAI_HOST_INSETS") {
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.INSETS) {
       const insets = event.data as unknown as Record<string, unknown>;
       const passed: Record<string, number> = {};
       for (const edge of ["top", "right", "bottom", "left"]) {
@@ -3429,7 +3430,7 @@ async function boot(): Promise<void> {
         try {
           window.parent.postMessage(
             {
-              type: "DAI_HOST_TIMING",
+              type: TO_HOST.TIMING,
               sessionNonce,
               payload: { bridgeVersion: BRIDGE_VERSION, timings: timingTable() },
             },
@@ -3461,7 +3462,7 @@ async function boot(): Promise<void> {
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
       window.parent.postMessage(
-        { type: "DAI_HOST_FLUSHED", sessionNonce, id: relay.id, saved: (event.data as { saved?: unknown }).saved !== false },
+        { type: TO_HOST.FLUSHED, sessionNonce, id: relay.id, saved: (event.data as { saved?: unknown }).saved !== false },
         "*",
       );
       return;
@@ -3478,14 +3479,14 @@ async function boot(): Promise<void> {
     if (event.source === frame.contentWindow && relay?.type === "dai:merged") {
       const { type: _ignored, ...report } = event.data as Record<string, unknown>;
       window.parent.postMessage(
-        { type: "DAI_HOST_MERGE_RESULT", sessionNonce, ...report },
+        { type: TO_HOST.MERGE_RESULT, sessionNonce, ...report },
         "*",
       );
       return;
     }
     // Track 5: the frame's mailbox messages, on their way to the host.
     if (event.source === frame.contentWindow && relay?.type === "dai:authored") {
-      window.parent.postMessage({ type: "DAI_HOST_AUTHORED", sessionNonce }, "*");
+      window.parent.postMessage({ type: TO_HOST.AUTHORED, sessionNonce }, "*");
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:sessions-answer") {
@@ -3493,7 +3494,7 @@ async function boot(): Promise<void> {
       const hex = (list: unknown): string[] =>
         Array.isArray(list) ? list.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)) : [];
       window.parent.postMessage(
-        { type: "DAI_HOST_SESSIONS_ANSWER", sessionNonce, id: answer.id, sessions: hex(answer.sessions), closed: hex(answer.closed) },
+        { type: TO_HOST.SESSIONS_ANSWER, sessionNonce, id: answer.id, sessions: hex(answer.sessions), closed: hex(answer.closed) },
         "*",
       );
       return;
@@ -3508,7 +3509,7 @@ async function boot(): Promise<void> {
       };
       window.parent.postMessage(
         {
-          type: "DAI_HOST_AUTHORED_BATCH",
+          type: TO_HOST.AUTHORED_BATCH,
           sessionNonce,
           id: answer.id,
           seq: answer.seq,
@@ -3522,7 +3523,7 @@ async function boot(): Promise<void> {
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:applied") {
       const { type: _t, ...report } = event.data as Record<string, unknown>;
-      window.parent.postMessage({ type: "DAI_HOST_APPLIED", sessionNonce, ...report }, "*");
+      window.parent.postMessage({ type: TO_HOST.APPLIED, sessionNonce, ...report }, "*");
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === "dai:replica-id-answer") {
@@ -3539,7 +3540,7 @@ async function boot(): Promise<void> {
       // decides whether a declared theme-color outranks it.
       const ground = event.data as { colour?: unknown };
       if (typeof ground.colour === "string" && ground.colour.length <= 64) {
-        window.parent.postMessage({ type: "DAI_HOST_GROUND", sessionNonce, colour: ground.colour }, "*");
+        window.parent.postMessage({ type: TO_HOST.GROUND, sessionNonce, colour: ground.colour }, "*");
       }
       return;
     }
@@ -3552,7 +3553,7 @@ async function boot(): Promise<void> {
       const refusal = event.data as { why?: string; detail?: string };
       window.parent.postMessage(
         {
-          type: "DAI_HOST_WRITE_RULES_REFUSED",
+          type: TO_HOST.WRITE_RULES_REFUSED,
           sessionNonce,
           why: refusal.why,
           detail: refusal.detail,
@@ -3564,7 +3565,7 @@ async function boot(): Promise<void> {
     if (event.source === frame.contentWindow && relay?.type === "dai:save-state") {
       const status = event.data as { state?: string; error?: string };
       window.parent.postMessage(
-        { type: "DAI_HOST_SAVE_STATE", sessionNonce, state: status.state, error: status.error },
+        { type: TO_HOST.SAVE_STATE, sessionNonce, state: status.state, error: status.error },
         "*",
       );
       return;
@@ -3578,7 +3579,7 @@ async function boot(): Promise<void> {
       // application did not plainly say.
       const session =
         typeof relay.session === "string" && /^[0-9a-f]{32}$/.test(relay.session) ? relay.session : undefined;
-      window.parent.postMessage({ type: "DAI_HOST_REQUEST_SHARE", sessionNonce, ...(session ? { session } : {}) }, "*");
+      window.parent.postMessage({ type: TO_HOST.REQUEST_SHARE, sessionNonce, ...(session ? { session } : {}) }, "*");
       return;
     }
 
@@ -3588,7 +3589,7 @@ async function boot(): Promise<void> {
       const sessions = Array.isArray(relay.sessions)
         ? (relay.sessions as unknown[]).filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)).slice(0, 256)
         : [];
-      window.parent.postMessage({ type: "DAI_HOST_WAITING", sessionNonce, sessions }, "*");
+      window.parent.postMessage({ type: TO_HOST.WAITING, sessionNonce, sessions }, "*");
       return;
     }
 
@@ -3629,7 +3630,7 @@ async function boot(): Promise<void> {
               code?: string;
               requestId?: string;
             };
-            if (data?.type !== "DAI_HOST_SAVE_ACK") return;
+            if (data?.type !== TO_DOCUMENT.SAVE_ACK) return;
             if (data.requestId !== requestId) return;
             window.removeEventListener("message", onHostAck);
             window.clearTimeout(hostTimer);
@@ -3656,7 +3657,7 @@ async function boot(): Promise<void> {
           window.addEventListener("message", onHostAck);
           window.parent.postMessage(
             {
-              type: "DAI_HOST_SAVE",
+              type: TO_HOST.SAVE,
               sessionNonce,
               requestId,
               // Both, because hosts need different things: a native host
@@ -3692,7 +3693,7 @@ async function boot(): Promise<void> {
     ).then((fingerprint) => {
       window.parent.postMessage(
         {
-          type: "DAI_HOST_HANDSHAKE",
+          type: TO_HOST.HANDSHAKE,
           payload: {
             bridgeVersion: BRIDGE_VERSION,
             sessionNonce,
@@ -3754,7 +3755,7 @@ async function boot(): Promise<void> {
       try {
         window.parent.postMessage(
           {
-            type: "DAI_HOST_CLOSING",
+            type: TO_HOST.CLOSING,
             payload: {
               bridgeVersion: BRIDGE_VERSION,
               sessionNonce,
