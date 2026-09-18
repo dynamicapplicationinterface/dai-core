@@ -2459,6 +2459,51 @@ in the roadmap, the specification (§4.4) or its own page. It should also get a
 check that fails when the code gains a message the reference does not name, the
 D56 prevention applied to documentation.
 
+**Groundwork, 18 September: the names have no owner.** Every `DAI_HOST_*` name
+is a string literal written at each place a message is sent or checked, in four
+hand-written files across three programs: the document runtime
+(`src/runtime/bootloader.ts`), the web opener (`apps/runner/src/main.ts`,
+`apps/runner/src/mailbox-session.ts`) and the desktop host
+(`apps/desktop/src/main.ts`). Nothing declares the set: no union type, no enum,
+no constants object. A drift check against "the list" is not possible until
+there is one, so the ruling is to give the names a single owner that the runtime
+and the web opener both import, as `src/fragment.ts` owns the link fields, and
+to build the check after.
+
+**Live or dead, established two ways before anything is collapsed.**
+- *Handled* is a property of the code, so it was read with the TypeScript
+  parser, not a regex. Every literal site was classified by its place in the
+  syntax tree: the value of a `type:` property is a send; a `===` or `case` is
+  a handler; the `ask(request, reply)` helper's second argument is an awaited
+  reply. That covered 65 sites in 69 files.
+- *Sent* was shown at runtime. A temporary tap in the opener page, removed
+  afterwards, recorded every bridge message in both directions across the whole
+  chromium suite: 700 tests, 4,996 messages. It could see both directions:
+  every request/reply pair matches (`HANDSHAKE` 220 : `HANDSHAKE_ACK` 221,
+  `SAVE` 281 : `SAVE_ACK` 280, `SESSIONS` 258 : `SESSIONS_ANSWER` 258, and so
+  on).
+
+Result:
+- **Live both sides: 27.** Each has a sender in one program, a handler in the
+  other, and was seen on the wire. Every one flows in exactly one direction:
+  16 runtime → host, 11 host → runtime. With `CLOSING`, all 28 split 17 and
+  11.
+- **Live one side only: 1, `DAI_HOST_CLOSING`.** The runtime sends it (seen 15
+  times), and the web opener has no handler. Only the desktop host handles it.
+  On the web it goes out and nothing receives it.
+- **Dead: none.** All 28 were sent in the suite. Some rarely:
+  `WRITE_RULES_REFUSED` twice, `REFUSED` three times, `REPLICA_ID` four times.
+
+**The desktop, recorded and not changed (deferred until mobile V1, not
+abandoned).** The desktop build copies the *current* runtime into
+`apps/desktop/public/runtime/` on every build (`scripts/stage-runtime.mjs`,
+`prebuild`/`predev`). That folder is gitignored, and a stale local copy from
+5 September knows only 8 names. Read as "the runtime the desktop ships", that
+copy was misleading. The real gap is the host: `apps/desktop/src/main.ts`
+handles 4 names (`HANDSHAKE`, `SAVE`, `REFUSED`, `CLOSING`) and sends 2
+(`HANDSHAKE_ACK`, `SAVE_ACK`), while the runtime a desktop build would carry
+sends 17. The desktop rewrite starts from the owner.
+
 ### Trust, verification and offline
 
 #### D31 — A document the opener has verified is verified again when it mounts
