@@ -910,6 +910,21 @@ seen live), and whether "Remember this decision" left unticked means the
 question comes back on every visit. Both are one more minute in the same
 profile.
 
+**Attempted 18 September, not taken: these readings need a person's click.**
+The same setup (Playwright's Firefox 153.0 launched directly, a fresh profile,
+the real screen captured) put the prompt on screen again. Clicks sent to Allow
+from this machine's automation were ignored four times. The pointer was checked
+on the button (the display is 2880×1620 at 150%; logical (801, 277) is physical
+(1202, 416), where Allow is drawn). Firefox was confirmed as the foreground
+window. The pointer rested on the button for 3 s before one attempt, and another
+was clicked at physical coordinates from a DPI-aware process. The prompt never
+changed, not even a hover highlight, so the injected input did not reach it.
+Nothing was answered, so there is no after-Allow, after-Block or second-visit
+reading. The three still wanted, each on its own fresh profile at
+`https://opendai.app/`: the D49 line after Allow; the line after Block; and,
+with "Remember this decision" left unticked, whether the prompt returns on a
+second visit. A person with a mouse can take all three in about five minutes.
+
 #### D50 — An icon that outlives its storage is greeted as a stranger
 
 *Status: built, 17 September, for an icon made from a file and one made from a
