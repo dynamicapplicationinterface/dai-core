@@ -3181,6 +3181,16 @@ closed`.
   that took down more than one test, which fits one browser death taking every
   test after it until the worker got a new browser. Trace kept
   (`retried-chromium-whole`, 22 KB).
+- Locally, chromium, four workers (18 September, a push-tier run at `20d18dd`):
+  `icon-after-wipe.spec.ts:74`, at its first `browser.newContext`. Kept by the
+  evidence keeper (`test-runs/2026-09-18T11-43-58-697Z-20d18dd`), and read
+  before anything was rerun. It has the same shape as the 14 September local
+  sighting: the dead browser (pid 12848) was alive and logging to its last line,
+  with no crash, exit or signal line (Windows writes no dump). Its last work was
+  the test before it in the same file, `:63`, a page spoofed as an installed
+  app. The last lines are that page's persistence breadcrumbs, ending at
+  `(installed): not kept (after the request)`. That test creates and closes
+  its own context, never the browser.
 
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
