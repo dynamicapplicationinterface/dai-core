@@ -347,7 +347,7 @@ refuses to write anything if one count is wrong. A search that can come back
 empty should be one that can also be seen to have run.
 
 **It is a class, not a one-off: a tool that answers confidently about something
-it never looked at.** Three instances in one week, all on the tooling side of
+it never looked at.** Four instances in one week, all on the tooling side of
 the work:
 - **The probe (D37)** returned an empty list when its import failed, then when
   it guessed a database name.
@@ -356,8 +356,17 @@ the work:
 - **The mutation runner (18 September)** passed a test-name pattern to
   Playwright through a shell, unquoted. The pattern split into words, so one
   "proof" ran a different set of tests, and reported that they passed.
+- **The load-check proof (D68, 18 September)** passed an inline script through
+  a shell to load `src/bridge.ts` after each mutation. The shell mangled it, so
+  the script never ran. Both mutations "refused to load", which was the wanted
+  answer, and so did the **unmutated** file, which should have loaded. The
+  exit code reported a failure the script never reached. A `=>` in it was also
+  taken as a redirect, and left two empty files in the repository. Only running
+  the unmutated control first exposed it: a check that fails on the correct
+  input has not tested anything. Redone with the loader in its own file and the
+  control required to print `LOADED 28 names` before any mutation counted.
 
-**None of the three complained.** Each produced a well-formed, plausible answer.
+**None of them complained.** Each produced a well-formed, plausible answer.
 The tell was never the tool; it was arithmetic or a stray detail beside the
 answer: "125 passed" for a proof that should have run one test, and a test
 failing in a full run after the search had said nothing was left. A near
@@ -2175,6 +2184,29 @@ state.
 *Status: open.* The desktop window should show the document's own icon.
 
 ### Authoring and the kit
+
+#### D70 — The bridge's load-time check ships inside every document, where it can never fire
+
+*Status: ruled — not built. Move it in the same pass as D69, so the runtime
+bundle and the host fingerprint change once, not twice.*
+
+**What it means to a person:** every document is about a kilobyte bigger than
+it needs to be, to carry a check that cannot fail by the time it is carrying it.
+
+`src/bridge.ts` checks its own names as it loads: no value twice, and each value
+equal to `DAI_HOST_` plus its key. That check is right, and it caught both
+mutations it was built for (D68). But the runtime bundles the module, so the
+check runs in every document, at every open, in a bundle whose strings were
+fixed when it was built. There, it can never find anything. Routing the runtime
+through the owner grew the bundle from 63,865 to 64,910 bytes (+1,045): the two
+objects and the check, which the build did not inline. Every document carries
+that runtime.
+
+The check belongs where the names can still change: at build time, or in a test
+(`tests/bridge-wire.spec.ts` already runs beside it). The runtime keeps only the
+names. Moving it changes the runtime bundle and so the host fingerprint. D69's
+collapse of the `dai:*` names will change them anyway, so both go in one pass,
+one new host.
 
 #### D69 — The runtime's messages to the app frame have no owner either
 
