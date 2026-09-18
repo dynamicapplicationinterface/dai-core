@@ -72,6 +72,7 @@ import {
   askToPersist,
   readPersistence,
   persistenceLine,
+  requestLine,
   type LibraryItem,
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
@@ -119,7 +120,13 @@ if (typeof navigator !== "undefined" && typeof navigator.storage?.persist === "f
   console.info("dai: storage persistence asked at boot; waiting on the browser");
 }
 void askToPersist().then((asked) => {
-  if (asked) console.info(`dai: ${persistenceLine(asked)} (asked at boot)`);
+  if (!asked) return;
+  console.info(`dai: ${requestLine(asked)} (asked at boot)`);
+  // The answer may have changed what is true: read it again, for the log and
+  // for the line on screen. Whatever the answer — a rejection can still leave
+  // the state different from what was read before the request.
+  void readPersistence().then((after) => console.info(`dai: ${persistenceLine(after)} (after the request)`));
+  showPersistence();
 });
 
 function say(message: string, isError = false): void {
@@ -4389,19 +4396,32 @@ showVersion();
  * browser grants persistence or it does not, and a button that asked again
  * would be a control that usually does nothing.
  *
- * Gathered on render rather than remembered. `persisted()` is a live question,
- * and the store that would hold a cached answer is the store being described.
+ * Asked again whenever it may have changed, never remembered: once at load, and
+ * again when the boot request settles, whatever its answer. It used to be read
+ * once, at load, in parallel with the request, and never again — so on a device
+ * that granted the request the line said "not kept" for the rest of the visit.
+ * The first launch after installing is exactly when this is read before a
+ * multi-day phone test, so a stale line meant the test measured something other
+ * than what the screen said (review of 454858c..7abb896, item 1).
+ *
+ * The newest reading wins. Each call takes a number, and a reading that comes
+ * back after a newer one was asked for is dropped: a slow first `persisted()`
+ * must not land after the post-grant one and put "not kept" back.
  *
  * Failure is silence, as with the stamp: a browser that will not answer leaves
  * the line empty rather than printing a "no" it never got. The two cases are
  * different facts, and conflating them is the mistake this whole cluster is about.
  */
+let persistenceAsked = 0;
 function showPersistence(): void {
+  const mine = ++persistenceAsked;
   void readPersistence().then((reading) => {
-    if (!reading) return;
-    const text = reading.kept
-      ? `kept on this device · ${reading.context}`
-      : `not kept · ${reading.context}`;
+    if (mine !== persistenceAsked) return;
+    const text = !reading
+      ? ""
+      : reading.kept
+        ? `kept on this device · ${reading.context}`
+        : `not kept · ${reading.context}`;
     for (const id of ["sheet-storage", "chooser-storage"]) {
       const slot = document.getElementById(id);
       if (slot) slot.textContent = text;

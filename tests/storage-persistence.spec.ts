@@ -49,16 +49,48 @@ const RUNNER_URL = "http://localhost:5175/";
  */
 async function storageThatAnswers(
   page: import("@playwright/test").Page,
-  answers: { persisted: boolean; persist: boolean | "never" },
+  answers: {
+    persisted: boolean;
+    /**
+     * `true` grants, and from then on `persisted()` answers `true` — which is
+     * what a real grant does. `"reject"` is a browser that will not take the
+     * question. `"never"` leaves it unanswered.
+     */
+    persist: boolean | "never" | "reject";
+    /** How long a `persisted()` asked before the grant takes to answer, with what was true when asked. */
+    staleReadMs?: number;
+  },
 ): Promise<void> {
   await page.addInitScript((given) => {
     const real = navigator.storage as StorageManager | undefined;
+    let kept = given.persisted;
+    let granted = false;
     Object.defineProperty(navigator, "storage", {
       configurable: true,
       value: {
         getDirectory: real?.getDirectory?.bind(real),
-        persisted: async () => given.persisted,
-        persist: () => (given.persist === "never" ? new Promise<boolean>(() => {}) : Promise.resolve(given.persist)),
+        persisted: () => {
+          const answer = kept;
+          const delay = granted ? 0 : (given.staleReadMs ?? 0);
+          return new Promise<boolean>((resolve) => setTimeout(() => resolve(answer), delay));
+        },
+        persist: () => {
+          if (given.persist === "never") return new Promise<boolean>(() => {});
+          if (given.persist === "reject") {
+            return Promise.reject(new DOMException("persistence is not available here", "NotAllowedError"));
+          }
+          // Answered a moment after asking, as a real browser does, so the
+          // load-time reading has already been taken when the grant arrives.
+          return new Promise<boolean>((resolve) =>
+            setTimeout(() => {
+              if (given.persist === true) {
+                kept = true;
+                granted = true;
+              }
+              resolve(given.persist as boolean);
+            }, 200),
+          );
+        },
       },
     });
   }, answers);
@@ -130,6 +162,54 @@ test.describe("the storage persistence reading", () => {
       "dai: storage persistence (tab): not kept (asked at boot)",
     ]);
     expect(said).toContain("dai: storage persistence asked at boot; waiting on the browser");
+  });
+
+  test("when the boot request is granted, the line on screen says so", async ({ page }) => {
+    /*
+     * The case the first build missed. The line was read once at load, beside
+     * the request, and never again: on a device that granted it, the screen
+     * said "not kept" for the rest of the visit. The first launch after
+     * installing is when this is read before a multi-day phone test, so the
+     * test would have measured something other than what the screen said.
+     */
+    await storageThatAnswers(page, { persisted: false, persist: true });
+    const said = await breadcrumbs(page);
+    await page.goto(RUNNER_URL);
+
+    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · tab", { timeout: 30_000 });
+    await expect(page.locator("#sheet-storage")).toHaveText("kept on this device · tab");
+    await expect.poll(() => said).toContain("dai: storage persistence (tab): kept (asked at boot)");
+    await expect.poll(() => said).toContain("dai: storage persistence (tab): kept (after the request)");
+  });
+
+  test("a reading asked before the grant cannot land after it", async ({ page }) => {
+    // The load-time reading is slow here and answers with what was true when
+    // it was asked. It comes back well after the grant, and must be dropped
+    // rather than put "not kept" back on the screen.
+    await storageThatAnswers(page, { persisted: false, persist: true, staleReadMs: 1_500 });
+    await page.goto(RUNNER_URL);
+
+    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · tab", { timeout: 30_000 });
+    // Past the moment the stale reading answers, and still right.
+    await page.waitForTimeout(2_000);
+    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · tab");
+  });
+
+  test("a request the browser would not take is not reported as a refusal", async ({ page }) => {
+    // A rejection is the browser declining the question, not answering it.
+    // "Not kept" would be a fact it never gave.
+    await storageThatAnswers(page, { persisted: false, persist: "reject" });
+    const said = await breadcrumbs(page);
+    await page.goto(RUNNER_URL);
+
+    await expect
+      .poll(() => said.filter((s) => s.includes("(asked at boot)")))
+      .toEqual([
+        "dai: storage persistence (tab): the browser did not take the request (persistence is not available here) (asked at boot)",
+      ]);
+    expect(said).not.toContain("dai: storage persistence (tab): not kept (asked at boot)");
+    // The standing reading is its own fact, and still reported.
+    await expect(page.locator("#chooser-storage")).toHaveText("not kept · tab");
   });
 
   test("a request the browser never answers does not silence the reading", async ({ page }) => {

@@ -94,9 +94,10 @@ The same holds one level up. **Rerunning a failed suite destroys the failure**,
 because Playwright clears `test-results/` at the start of every run, and the
 rerun that passes erases the error, the snapshot and the trace of the run that
 did not. That is how `static-opener` failed several times in one week without
-anyone reading why (D47). So `npm run test:push` copies a failed run's
-`test-results/` into `test-runs/<time>-<commit>/` before it exits, and keeps the
-newest ten. Read what is there before running anything again.
+anyone reading why (D47). So when `npm run test:push` fails, by a test or by
+the count gate, it copies `test-results/` into `test-runs/<time>-<commit>/`
+before it exits, and keeps the newest ten. `run.txt` there says why the run
+failed. Read what is there before running anything again.
 
 ## The rule for values the product defines
 

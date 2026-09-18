@@ -1,5 +1,5 @@
 /**
- * Every field a link's fragment can carry, defined in one place (D56).
+ * The `key=value` fields a link's fragment carries, defined in one place (D56).
  *
  * A fragment is one namespace, and it had three definers in two files — the
  * inline carrier's `a` in `link.ts`, the store reference's `h k u c s` in
@@ -10,15 +10,24 @@
  * held it, which is the one case the icon exists for. No single file could see
  * the collision, so no single file's tests could catch it.
  *
- * So the namespace is written here, whole, and checked where it is written:
- * this module refuses to load if two fields claim one key. The owners keep
- * their own names for their fields (`INLINE_KEY`, `REFERENCE_KEYS`,
- * `HINT_KEY`), derived from this, so no caller changes.
+ * So the fields are written here and checked where they are written: this
+ * module refuses to load if two fields claim one key. The owners keep their own
+ * names for their fields (`INLINE_KEY`, `REFERENCE_KEYS`, `HINT_KEY`), derived
+ * from this, so no caller changes.
  *
- * One copy lives outside it: the service worker (`apps/runner/public/sw.js`)
- * is plain script and cannot import, and it writes the hint into a
- * notification's address. `tests/push-e2e.spec.ts` holds that copy to
- * `HINT_KEY` by reading the notification the worker actually shows.
+ * Not the whole fragment. Three readers and writers sit outside this registry,
+ * and nothing here checks them:
+ *
+ * - The service worker (`apps/runner/public/sw.js`) is plain script and cannot
+ *   import. It writes the hint into a notification's address.
+ *   `tests/push-e2e.spec.ts` holds that copy to `HINT_KEY` by reading the
+ *   notification the worker actually shows.
+ * - The head script in `apps/runner/index.html` runs before any module, and
+ *   matches `a`, `h` and `k` by regex to decide whether a page is arriving.
+ *   Nothing holds it to this file (backlog D58).
+ * - `#handoff` (`apps/runner/src/main.ts`) is a whole-fragment marker, not a
+ *   `key=value` field, so it cannot collide as a key. It is still a third way of
+ *   reading the fragment that this file does not know about (D58).
  */
 export const FRAGMENT_KEYS = {
   /** A document carried in the link itself (`src/link.ts`). */

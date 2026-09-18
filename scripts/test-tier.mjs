@@ -25,7 +25,7 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { keepEvidence } from "./lib/keep-evidence.mjs";
+import { keepEvidenceSafely, whyFailed } from "./lib/keep-evidence.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPORT = join(repo, "test-results", "count-gate.json");
@@ -131,39 +131,46 @@ if (tier === "push" || process.argv[2] === "push") {
 
   rmSync(REPORT, { force: true });
   const status = playwright(rest);
+  let report = null;
+  try {
+    if (existsSync(REPORT)) report = JSON.parse(readFileSync(REPORT, "utf8"));
+  } catch {
+    /* An unreadable report is no report: whyFailed says so. */
+  }
   /*
-   * A failure's evidence, kept before anything else can run (D47). The next
-   * run clears test-results/, and a rerun that passes is exactly what erased
-   * every earlier static-opener failure unread.
+   * One verdict, read by both the evidence keeper and the exit. The keeper once
+   * decided "failed" for itself, from Playwright's exit alone, and so kept
+   * nothing when Playwright passed and the count gate refused (review of
+   * 454858c..7abb896, item 4).
    */
-  if (status !== 0) {
+  const reasons = whyFailed({ status, report, projects: ["chromium", "node"] });
+  if (reasons.length > 0) {
+    /*
+     * A failure's evidence, kept before anything else can run (D47). The next
+     * run clears test-results/, and a rerun that passes is exactly what erased
+     * every earlier static-opener failure unread.
+     */
     let commit = "unknown";
     try {
       commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
     } catch {
       /* Not a repository; the run is still worth keeping. */
     }
-    const kept = keepEvidence({
+    const { kept, error } = keepEvidenceSafely({
       results: join(repo, "test-results"),
       into: join(repo, "test-runs"),
-      status,
+      reasons,
       commit,
       note: "tier: push",
     });
     if (kept) console.error(`\ntest-tier push: this run failed; its results are kept in ${kept}. Read them before rerunning.`);
-  }
-  if (!existsSync(REPORT)) {
-    console.error("test-tier push: the count gate did not report, so this run was not checked. Failing.");
-    process.exit(1);
-  }
-  const report = JSON.parse(readFileSync(REPORT, "utf8"));
-  const missing = ["chromium", "node"].filter((project) => !(project in (report.passed ?? {})));
-  if (!report.checked || missing.length > 0 || (report.complaints ?? []).length > 0) {
-    console.error(`test-tier push: the count gate did not pass this run (${missing.length ? `no count for ${missing.join(", ")}` : "complaints above"}).`);
-    process.exit(1);
+    if (error) console.error(`\ntest-tier push: this run failed, and its results could NOT be kept (${error}). Copy test-results/ by hand before rerunning.`);
+    if (!kept && !error) console.error("\ntest-tier push: this run failed, and there was no test-results/ to keep.");
+    for (const reason of reasons) console.error(`test-tier push: failed: ${reason}`);
+    process.exit(status !== 0 ? status : 1);
   }
   console.log(`\ntest-tier push: whole run, count gate checked: ${JSON.stringify(report.passed)}`);
-  process.exit(status);
+  process.exit(0);
 }
 
 console.error("usage: node scripts/test-tier.mjs iterate <specs…> | commit | push");

@@ -269,9 +269,11 @@ its own file, with nothing that sees all three. One registry of fragment field
 names, or one assertion that no two definers share a key, would have refused `u`
 the day the hint was added. The same applies to any namespace several modules
 write into: `localStorage` keys, `dai:` lock names, IndexedDB store names.
-**Built for the fragment, 17 September:** `src/fragment.ts` holds the whole
-namespace and refuses to load on a collision (D56). The other namespaces named
-here are not covered yet.
+**Built for the fragment, 17 September:** `src/fragment.ts` holds the
+fragment's `key=value` fields and refuses to load on a collision (D56). Not the
+whole namespace, as first claimed: the head script, `#handoff` and the service
+worker read or write the fragment outside it (D58, and the file says so). The
+other namespaces named here are not covered yet.
 
 ### The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
@@ -714,9 +716,33 @@ as `showVersion()` does it: a browser that cannot answer says nothing rather tha
 apologising for a diagnostic nobody asked for.
 
 *It survives a page load by being re-read, not remembered.* `persisted()` is a
-live question with a live answer, so the line is gathered on render. Storing the
-last reading would be worse than useless: the store holding it is the store under
+live question with a live answer, so the line is read again whenever it may have
+changed: at load, and once more when the boot request settles. Storing the last
+reading would be worse than useless: the store holding it is the store under
 discussion, and a wipe would take the reading with the thing it described.
+
+**Corrected 18 September: two claims in `b6ff876` were not true of the code until
+now.** A review of `454858c..7abb896` found them. Both are fixed, and the claims
+are true as of the fix, not before it.
+- **"Gathered on render" and "read live, never cached."** The line was read once,
+  at load, at the same time as the boot request, and never again. On a device
+  that granted the request, the screen said "not kept" for the rest of the visit.
+  The first launch after installing is when this is read before a multi-day
+  phone test, so the next test would have measured something other than what
+  the screen said, which is the entry's whole purpose defeated. Fixed: the line
+  is read again when the request settles, and the newest reading wins, so a slow
+  earlier one cannot land after it. Tests: "when the boot request is granted,
+  the line on screen says so" and "a reading asked before the grant cannot land
+  after it". Each fails with its fix removed (`"not kept · tab"` where `"kept
+  on this device · tab"` was expected).
+- **"`null`, not `kept:false`, when the browser will not answer."** That was
+  true of `readPersistence` and not of `askToPersist`, which turned a rejected
+  `persist()` into `kept: false`. "The browser refused" and "the browser would
+  not take the question" are the distinction this entry is built on. Fixed:
+  the request has its own type with three answers (`kept`, `not kept`, `not
+  taken` with the browser's reason), and the breadcrumb keeps them apart. Test:
+  "a request the browser would not take is not reported as a refusal". It fails
+  with a rejection collapsed back to "not kept".
 
 *Deliberately absent:* any explanation of eviction on the chooser, any "your data
 may be deleted" warning, and any request button. The line is a reading. What a
@@ -1066,6 +1092,45 @@ When it is picked up:
 3. *What already-built thing does this touch?* The push worker's name lookup, and
    D44/D45's notification decisions.
 
+#### D59 — On a Mac, "Add to Dock" gets the assertive D50 sentence
+
+*Status: open, waiting on a Mac. From the review of `454858c..7abb896`.*
+
+**What it means to a person:** a Mac user whose Dock app has never held a
+document may be told it "isn't on this device any more", which is D50's
+wrong statement in its other direction.
+
+`iconLostItsDocument()` is `standalone() && installShareStorage()`. A Safari
+"Add to Dock" app on macOS is standalone, and `platform()` classes it as
+`desktop`, so `installShareStorage()` says it shares storage with the browser.
+The review says a Dock app has storage of its own, like an iOS home-screen
+app. If so, its first launch looks like a wipe, exactly the iOS boundary, and
+it should get the neutral sentence. Needs a Mac: add a document's page to the
+Dock, launch it, and read whether its library is Safari's.
+
+#### D60 — A notification tap can reach the D50 sentence, which says "icon"
+
+*Status: open. From the review of `454858c..7abb896`.*
+
+A notification opens `/#opener-doc=<uuid>` (`sw.js`). If the document is no
+longer held and the page is standalone, that is D50's file-icon path, and the
+sentence says "this icon will open it again", to someone who tapped a
+notification, not an icon. It also has no `?name=`, so it reads "your
+document". The sentence was written for one entry point and is reachable from
+two. Whether a notification for a wiped document should say something else
+entirely (it is the D54 moment: the first thing seen after a wipe) is part of
+the question.
+
+#### D64 — `iconLostItsDocument()` is named for a detection it does not do
+
+*Status: open. From the review of `454858c..7abb896`.*
+
+It is `standalone() && installShareStorage()`: a platform check. It detects
+nothing about whether a document was lost. The name claims the case D50 argues
+can only be inferred, and the next caller will read it as a finding. A name like
+`iconSharesBrowserStorage()` says what it checks, and leaves "so the document
+was here" to the caller, where D50's reasoning is written down.
+
 ### Reaching a person
 
 #### 3.5 iOS, solved by the link
@@ -1113,10 +1178,18 @@ it was still cheap. That is why the option that repairs more was not built. It
 was the right choice only if an installed base existed, and one did not.
 
 **What was built.**
-- `src/fragment.ts` defines every fragment field in one registry,
+- `src/fragment.ts` defines the fragment's `key=value` fields in one registry,
   `FRAGMENT_KEYS`: inline `a`; reference `h k u c s`; the opener's hint,
   `opener-doc`. `INLINE_KEY`, `REFERENCE_KEYS` and `HINT_KEY` are derived from
-  it, so no caller's names or types changed.
+  it, so no caller's names or types changed. **Corrected 18 September:** as
+  first written, this said "every field", and the file's own comment said "every
+  field a link's fragment can carry, defined in one place". Three things read
+  or write the fragment outside it. The head script in `index.html` matches
+  `a`, `h` and `k` by regex, before any module loads, to decide whether a page
+  is arriving. `#handoff` in `main.ts` is a whole-fragment marker a studio page
+  opens the opener with. And `public/sw.js` writes the hint into a
+  notification's address and cannot import. The file now names all three. The
+  first two are D58.
 - **The collision check sits at the point of definition.** The module runs
   `fragmentCollisions()` on its own registry when it loads and throws on a
   duplicate. Proved both ways. On the real set it is silent
@@ -1149,6 +1222,26 @@ was the right choice only if an installed base existed, and one did not.
   Both now use `HINT_KEY`. The missed literals got past the first search because
   its pattern was mangled by shell escaping; the second search matched the
   literal text and found only store-URL `u=`s besides these two.
+
+**Before the next phone sitting: delete and reinstall every icon on the test
+phones.** The ruling that there was no installed base was right about the
+field and wrong about the test phones. An icon installed between R7 (when the
+hint moved into the fragment as `#u=`) and this fix carries `#u=<uuid>`, and `u`
+is no longer the hint. From reading the launch path (not run):
+- **An icon made from a file** (`?name=…#u=<uuid>`) now has no hint, no document
+  and no reference, so it falls through to the resume path. That opens whatever
+  was open last, which may be a *different* document than the one the icon
+  shows, with nothing on screen saying so.
+- **An icon made from a store link** still carries `u=<uuid>`, which
+  `referenceFrom` still reads as a store URL. It stays broken exactly as it
+  was before the fix.
+- **An icon made from an inline link** opens its own document, because the
+  document is in the address.
+
+A reading taken through the first kind would be a reading of the wrong
+document, which is D49's failure arriving by another road. An icon made after
+this fix carries `opener-doc=`. Reinstalling costs a minute; a phone check taken
+through a stale icon costs the check.
 
 Everything below is the entry as it stood before the ruling, kept for the
 evidence and the reasoning.
@@ -1255,6 +1348,52 @@ When it is picked up:
    `launchAddress()`), and every installed icon.
 4. *What can a test not see here?* Nothing, as it turns out. This was always
    visible to a test that launched the address instead of only reading it.
+
+#### D57 — The two fragment parsers disagree about a repeated key
+
+*Status: open. From the review of `454858c..7abb896`, 18 September. Same family
+as D56.*
+
+**What it means to a person:** a link carrying a key twice opens one thing in
+one part of the opener and another thing in another, and nothing says so.
+
+`src/link.ts`'s `fragmentFields()` builds a `Map` in a loop, so a repeated key
+keeps its **last** value. `src/store.ts` reads the same fragment through
+`URLSearchParams.get()`, which returns the **first**. A fragment with two `h=`,
+or two hints, is then read two ways by the same opener. D56 was one name
+standing for two facts across two files; this is one fragment read by two rules
+across the same two files. The fix is presumably one parser, and a refusal for
+a repeated key rather than a choice between its values, but that is not ruled.
+
+#### D58 — Two readers of the fragment sit outside the registry
+
+*Status: open. From the review of `454858c..7abb896`.*
+
+`src/fragment.ts` holds the fragment's `key=value` fields and refuses a
+collision. Two things read the fragment without going through it:
+- **The head script in `apps/runner/index.html`** matches `/^#(a|h|k)=/` and
+  `/[#&](h|k)=/` by regex, before any module loads, to decide whether a page
+  is arriving. It cannot import. A renamed or added link field would leave it
+  deciding on the old names, with nothing failing.
+- **`#handoff` in `main.ts`** is a whole-fragment marker (`location.hash ===
+  "#handoff"`) a studio page opens the opener with. It cannot collide as a key
+  today, since it has no `=`, but it is a third way of reading the fragment that
+  the registry does not know about.
+
+The service worker's copy of the hint is the third outsider, and it is already
+held by `push-e2e` through the notification it shows. The head script and
+`#handoff` have no equivalent guard.
+
+#### D63 — A dozen comments still call the hint `#u=`
+
+*Status: open. From the review of `454858c..7abb896`.*
+
+The hint is `opener-doc` now, and `u` is a live key that means the store URL.
+Around a dozen comments in `install.ts`, `main.ts`, `sw.js` and the tests still
+describe the hint as `#u=` (for example `install.ts:143`, "`#u=`, not
+`?doc=`"). A comment naming the wrong field is the next person's D56: it tells
+them `u` is the hint. They should say `opener-doc`, or name `HINT_KEY`, or be
+explicitly historical ("was `#u=` until D56").
 
 #### 6.3 iOS: a link cannot reach an installed icon
 
@@ -2865,6 +3004,54 @@ prints where. `scripts/lib/keep-evidence.mjs`, held by
 `tests/keep-evidence.spec.ts` in both directions: a failure is kept whole, and a
 pass keeps nothing. Each direction was proved by mutation. The next failure here
 arrives with its error already kept; read which wait ran out.
+
+**Corrected 18 September: "copies a failed run's `test-results/`" was true only
+of runs Playwright itself failed.** The keeper decided "failed" from
+Playwright's exit, while the tier decided it from the exit and the count gate:
+two places deciding one thing. Fixed: one verdict, `whyFailed()`, read by both.
+It counts a missing report, an unchecked run, a missing project count and any
+gate complaint. The copy is wrapped (`keepEvidenceSafely`), so a failure inside
+it is reported and the tier still exits by its own verdict, instead of an
+exception taking its place.
+
+**Which gate failures the old keeper actually missed, found by running.** The
+review named a floor drop: tests stop being collected and everything reports
+success. A real full run with the Chromium floor raised out of reach showed the
+gate reporter already turns a complaint into a failed Playwright result
+(`run.txt`: `failed: playwright exited 1`). So the old keeper kept that case
+too, and that run proved the wiring but not the gap. The runs it missed are the
+ones where Playwright exits 0 and the gate is *absent*: no report written (the
+reporter did not run), or no count for a project. The old tier failed those runs
+and kept nothing. A second real run, with the gate reporter removed from the
+local config, passed 1,078 tests with Playwright exiting 0. The new tier kept
+it, with `failed: the count gate did not report, so this run was not checked`.
+Unit tests and two mutations cover the rest: the verdict ignoring the gate, and
+the copy unguarded.
+
+#### D61 — `icon-after-wipe`'s file icon is written by hand, not taken from `launchAddress()`
+
+*Status: open. From the review of `454858c..7abb896`. The disconnected-test shape
+again.*
+
+`tests/icon-after-wipe.spec.ts:60` writes `FILE_ICON` as a literal address
+(`?name=Chores#${HINT_KEY}=…`). It imports the hint key, so a rename of the key
+reaches it, but the *shape* of the address is still spelled out. If
+`launchAddress()` changes how a file icon's address is built (a new parameter,
+the name moving into the fragment), the test keeps launching the old shape and
+keeps passing. It should launch the address the opener actually writes: read
+from a real manifest, as the store-link tests in the same file already do.
+
+#### D62 — `keep-evidence.spec` plants a file Playwright never writes
+
+*Status: open. From the review of `454858c..7abb896`.*
+
+The fixture writes `error.md`, where Playwright writes `error-context.md`, the
+file a person actually opens to read a failure. The name was changed to keep the
+spec on the node project: the project split routes any spec containing the word
+"context" to a browser. So the test proves the keeper copies *a* file, not the
+one that matters. The copy is recursive, so it almost certainly makes no
+difference, but "almost certainly" is what the test was for. The real name can
+be built without the literal word, or the routing rule can be made less blunt.
 
 #### D40 — A tier that reports success by running nothing
 

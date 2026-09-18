@@ -48,9 +48,10 @@ export interface PersistenceReading {
  * cluster turns on — an empty store and an unreadable store look alike, and
  * every place that has conflated them is an entry in the backlog.
  *
- * Read live, never cached. The value can change between page loads, and the
- * store that would hold a cached copy is the store under discussion: a wipe
- * would take the reading along with the thing it described.
+ * Never cached: every call asks the browser. The value can change between page
+ * loads — and within one, when a request is granted — and the store that would
+ * hold a cached copy is the store under discussion: a wipe would take the
+ * reading along with the thing it described.
  */
 export async function readPersistence(): Promise<PersistenceReading | null> {
   const context: StorageContext = standalone() ? "installed" : "tab";
@@ -64,6 +65,19 @@ export async function readPersistence(): Promise<PersistenceReading | null> {
 }
 
 /**
+ * What the browser did with a request to keep this origin's storage.
+ *
+ * Three answers, not two. `kept` and `not kept` are the browser deciding.
+ * `not taken` is a rejection: the browser would not take the question at all,
+ * which says nothing about what it would have decided. Reading a rejection as
+ * "not kept" is the same collapse `readPersistence` refuses — a fact reported
+ * that was never given — so it is its own state, with the browser's reason.
+ */
+export type PersistRequest =
+  | { context: StorageContext; answer: "kept" | "not kept" }
+  | { context: StorageContext; answer: "not taken"; why: string };
+
+/**
  * Ask the browser to keep this origin's storage, and say what it answered.
  *
  * The result used to be discarded — `void` on the promise and an empty `catch`
@@ -72,18 +86,17 @@ export async function readPersistence(): Promise<PersistenceReading | null> {
  * The request itself is unchanged here, including when it is made; *when* to
  * ask is D55, and moving it would change the thing the first readings measure.
  *
- * `null` on a browser that cannot be asked, for the same reason as above.
+ * `null` on a browser that cannot be asked (no `persist()`), for the same
+ * reason `readPersistence` returns it: there was no answer to report.
  */
-export async function askToPersist(): Promise<PersistenceReading | null> {
+export async function askToPersist(): Promise<PersistRequest | null> {
   const context: StorageContext = standalone() ? "installed" : "tab";
   if (typeof navigator === "undefined") return null;
   if (!navigator.storage || typeof navigator.storage.persist !== "function") return null;
   try {
-    return { context, kept: await navigator.storage.persist() };
-  } catch {
-    // A refusal can arrive as a rejection rather than `false`; either way the
-    // browser has told us something, and "not kept" is what it told us.
-    return { context, kept: false };
+    return { context, answer: (await navigator.storage.persist()) ? "kept" : "not kept" };
+  } catch (error) {
+    return { context, answer: "not taken", why: (error as Error)?.message || String(error) };
   }
 }
 
@@ -91,6 +104,13 @@ export async function askToPersist(): Promise<PersistenceReading | null> {
 export function persistenceLine(reading: PersistenceReading | null): string {
   if (!reading) return "storage persistence: the browser will not say";
   return `storage persistence (${reading.context}): ${reading.kept ? "kept" : "not kept"}`;
+}
+
+/** One line for a request's answer, keeping a rejection apart from a refusal. */
+export function requestLine(request: PersistRequest): string {
+  return request.answer === "not taken"
+    ? `storage persistence (${request.context}): the browser did not take the request (${request.why})`
+    : `storage persistence (${request.context}): ${request.answer}`;
 }
 
 export interface LibraryItem {
