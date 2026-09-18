@@ -3407,6 +3407,41 @@ one that matters. The copy is recursive, so it almost certainly makes no
 difference, but "almost certainly" is what the test was for. The real name can
 be built without the literal word, or the routing rule can be made less blunt.
 
+#### D71 — `sectioned-mount` waits for a size that every save already has
+
+*Status: open. Seen on Firefox in CI, 18 September; not fixed.*
+
+`tests/sectioned-mount.spec.ts:110`, "a row written in one runner is there when
+the sectioned file opens in another", failed on Firefox in run 35378663791
+(`abb0c3a`) and passed on retry. The second runner read `0` where it expected
+`1`: the element was found 58 times, so the frame was visible and the row was
+missing. Not D32, not D28.
+
+The kept trace, on one timeline:
+- **+1.63 s** the test clicks *tick*;
+- **+2.77 s** `save 1 asked (16384 bytes)`;
+- **+3.04 s** `save 1 written`, and at the same instant the test's wait passes
+  and it reads the database;
+- **+4.13 s** `save 2 asked`, then `save 2 written` at +4.49 s;
+- **+4.71 s** the second runner, opened from the database read at +3.04 s,
+  shows `0`.
+
+**The wait is a proxy that cannot fail on the thing it stands for.** It polls
+until the stored database is larger than 1,024 bytes, taking that to mean the
+save with the row has landed. But SQLite writes whole 4,096-byte pages, and
+every save in this trace is 16,384 bytes, with or without the row. The test
+took save 1 as the save with the row, and a second save followed a second
+later. Most likely save 1 held the state before the tick and the row went into
+save 2, but the bytes were not opened to confirm it. The product saved
+normally: both saves were asked and written. The test read too early.
+
+The test's own comment records that this 1,024-byte wait was the fix for an
+earlier WebKit sighting of the same race. So the earlier fix was a proxy too,
+the "wait for the state the next step needs" rule (`tests/README.md`) met in
+letter and missed in substance. What the next step needs is a database
+*containing the row*. The fix is to wait for that, by reading the row out of
+the bytes, or by waiting for the save that follows the tick. Not a byte count.
+
 #### D40 — A tier that reports success by running nothing
 
 *Status: open.*
