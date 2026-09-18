@@ -1184,21 +1184,22 @@ test.describe("saves take turns", () => {
     const held = await page.evaluate(async () => (await navigator.locks.query()).held?.map((l) => l.name) ?? []);
     expect(held.filter((n) => n.startsWith("dai:"))).toEqual([]);
 
-    // Read the stored bytes back out of OPFS to prove the *later* write is the
-    // one kept — where the harness exposes OPFS. WebKit's Playwright context has
-    // no navigator.storage.getDirectory, so the byte read is verified on Chromium
-    // and Firefox; the save results and the released lock above already hold on
-    // every engine that both writes landed.
-    const canReadOpfs = await page.evaluate(() => typeof navigator.storage?.getDirectory === "function");
-    if (canReadOpfs) {
-      const stored = await page.evaluate(async (uuid) => {
-        const root = await navigator.storage.getDirectory();
-        const handle = await root.getFileHandle(`${uuid}.sqlite`);
-        const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-        return bytes[100];
-      }, await page.evaluate(() => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid));
-      expect(stored).toBe(0x22);
-    }
+    /*
+     * Read the stored bytes back to prove the *later* write is the one kept,
+     * on every engine, through the opener's own load. It reads OPFS and falls
+     * back to IndexedDB exactly as the save does. This used to read OPFS
+     * directly, guarded by "where the harness exposes OPFS": right while
+     * Playwright's WebKit had no getDirectory, wrong once WebKit 2359 exposed
+     * it with every operation throwing, so the save had fallen back to
+     * IndexedDB and there was no file to read (D28). The guard is gone: the
+     * read no longer depends on where the save landed.
+     */
+    const stored = await page.evaluate(async (uuid) => {
+      const runner = (window as unknown as { __runner: { loadStored: (id: string) => Promise<Uint8Array | null> } }).__runner;
+      const bytes = await runner.loadStored(uuid);
+      return bytes ? bytes[100] : null;
+    }, await page.evaluate(() => (window as unknown as { __runner: { loaded: { manifest: { documentUuid: string } } } }).__runner.loaded.manifest.documentUuid));
+    expect(stored).toBe(0x22);
   });
 
   test("both hosts lock, and the specification names the refusals", () => {

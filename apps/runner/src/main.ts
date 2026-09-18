@@ -4218,6 +4218,11 @@ Object.defineProperty(window, "__runner", {
     deleteApp,
     refreshLibrary,
     listLibrary: listCartridgesFromLibrary,
+    // A document's stored database, read the way a reopen reads it: from OPFS,
+    // falling back to IndexedDB exactly as a save does. A test that reads OPFS
+    // itself assumes the save went there, and on WebKit 2359 OPFS is exposed but
+    // every operation throws, so the save lands in IndexedDB instead (D28).
+    loadStored: loadDatabaseFromOpfs,
     // The card is a pure renderer over what it is handed. Exposed so a test
     // can draw it with a weaker profile than this host has, which is the only
     // way to check that a sentence disappears when its clause does.
