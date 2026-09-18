@@ -104,13 +104,23 @@ let handshakeEstablished = false;
  *
  * When the request is made — still page boot, still the weakest moment for the
  * browser's heuristics — is D55, deliberately not changed here.
+ *
+ * The standing state never waits on the request. On Firefox `persist()` can go
+ * unanswered — most likely held on a permission prompt — and when the reading
+ * was chained behind it, neither line was ever written: the one engine where
+ * the question is visible to a person was the one where the reading went
+ * silent (CI, 18 September). So the two are separate, and the request is
+ * written down when it is made as well as when it is answered: "asked, no
+ * answer yet" is a fact, and it is legible instead of indistinguishable from
+ * never asking.
  */
-void (async () => {
-  const asked = await askToPersist();
+void readPersistence().then((standing) => console.info(`dai: ${persistenceLine(standing)}`));
+if (typeof navigator !== "undefined" && typeof navigator.storage?.persist === "function") {
+  console.info("dai: storage persistence asked at boot; waiting on the browser");
+}
+void askToPersist().then((asked) => {
   if (asked) console.info(`dai: ${persistenceLine(asked)} (asked at boot)`);
-  const standing = await readPersistence();
-  console.info(`dai: ${persistenceLine(standing)}`);
-})();
+});
 
 function say(message: string, isError = false): void {
   report.textContent = message;

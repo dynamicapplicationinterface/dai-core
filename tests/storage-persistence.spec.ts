@@ -31,6 +31,39 @@ const RUNNER_URL = "http://localhost:5175/";
  * alike.
  */
 
+/**
+ * A Storage API that gives the answers a test names, on every engine.
+ *
+ * The engines disagree about the real one, and none of them is the case that
+ * matters: Chromium answers `false` at once, Firefox can leave `persist()`
+ * unanswered (most likely on a permission prompt), and Playwright's WebKit has
+ * no `navigator.storage` at all (CI, 18 September). These tests hold what the
+ * opener does with an answer — which context it names, that it writes the
+ * request down, that it says nothing when there is nothing — so they give it
+ * the answer and run identically everywhere. Skipping an engine instead would
+ * run nothing there and say nothing about it (D24). What a real browser grants
+ * is a device reading, and D49 says so.
+ *
+ * `getDirectory` is kept from the real object, so a document's bytes still go
+ * where they would.
+ */
+async function storageThatAnswers(
+  page: import("@playwright/test").Page,
+  answers: { persisted: boolean; persist: boolean | "never" },
+): Promise<void> {
+  await page.addInitScript((given) => {
+    const real = navigator.storage as StorageManager | undefined;
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: {
+        getDirectory: real?.getDirectory?.bind(real),
+        persisted: async () => given.persisted,
+        persist: () => (given.persist === "never" ? new Promise<boolean>(() => {}) : Promise.resolve(given.persist)),
+      },
+    });
+  }, answers);
+}
+
 /** Every `dai:` breadcrumb the page writes, from before the first script runs. */
 async function breadcrumbs(page: import("@playwright/test").Page): Promise<string[]> {
   const seen: string[] = [];
@@ -45,16 +78,17 @@ test.describe("the storage persistence reading", () => {
   test("names the context it is reporting from, and shows it where a phone can read it", async ({
     page,
   }) => {
+    await storageThatAnswers(page, { persisted: false, persist: false });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
 
     // The chooser is the screen the person whose documents are gone is looking
     // at, and it has no menu. The line has to be here, not only in the sheet.
     const line = page.locator("#chooser-storage");
-    await expect(line).toHaveText(/·\s*tab$/, { timeout: 30_000 });
+    await expect(line).toHaveText("not kept · tab", { timeout: 30_000 });
 
     // A plain page load is the tab context. Named, not implied.
-    expect(said.some((s) => s.includes("storage persistence (tab)"))).toBe(true);
+    await expect.poll(() => said.some((s) => s === "dai: storage persistence (tab): not kept")).toBe(true);
     expect(said.some((s) => s.includes("storage persistence (installed)"))).toBe(false);
 
     // The same fact is in the sheet as well, for the person who has a menu.
@@ -72,27 +106,49 @@ test.describe("the storage persistence reading", () => {
           : real(query)) as typeof window.matchMedia;
     });
 
+    // Kept, this time, so both of the line's wordings are held.
+    await storageThatAnswers(page, { persisted: true, persist: true });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
 
-    await expect(page.locator("#chooser-storage")).toHaveText(/·\s*installed$/, {
+    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · installed", {
       timeout: 30_000,
     });
-    expect(said.some((s) => s.includes("storage persistence (installed)"))).toBe(true);
+    await expect.poll(() => said.some((s) => s === "dai: storage persistence (installed): kept")).toBe(true);
     expect(said.some((s) => s.includes("storage persistence (tab)"))).toBe(false);
   });
 
   test("records what the boot request answered, instead of discarding it", async ({ page }) => {
+    await storageThatAnswers(page, { persisted: false, persist: false });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
     await expect(page.locator("#chooser-storage")).not.toHaveText("", { timeout: 30_000 });
 
-    // The defect was that this answer existed and went nowhere. Whether it is
-    // "kept" or "not kept" is the browser's business; that it was written down
-    // at all is this entry's.
-    const asked = said.filter((s) => s.includes("(asked at boot)"));
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/storage persistence \((installed|tab)\): (kept|not kept) \(asked at boot\)/);
+    // The defect was that this answer existed and went nowhere: the request is
+    // written down when it is made, and its answer when it comes.
+    await expect.poll(() => said.filter((s) => s.includes("(asked at boot)"))).toEqual([
+      "dai: storage persistence (tab): not kept (asked at boot)",
+    ]);
+    expect(said).toContain("dai: storage persistence asked at boot; waiting on the browser");
+  });
+
+  test("a request the browser never answers does not silence the reading", async ({ page }) => {
+    /*
+     * The shape Firefox gave CI on 18 September: `persist()` unanswered. The
+     * reading used to be chained behind the request, so neither line was ever
+     * written, on the one engine where the question is visible to a person.
+     * The reading is independent now, and the request is on record as asked
+     * and unanswered, which is the truth.
+     */
+    await storageThatAnswers(page, { persisted: false, persist: "never" });
+    const said = await breadcrumbs(page);
+    await page.goto(RUNNER_URL);
+
+    await expect(page.locator("#chooser-storage")).toHaveText("not kept · tab", { timeout: 30_000 });
+    await expect.poll(() => said.some((s) => s === "dai: storage persistence (tab): not kept")).toBe(true);
+    expect(said).toContain("dai: storage persistence asked at boot; waiting on the browser");
+    // No answer was given, so none is written.
+    expect(said.some((s) => s.includes("(asked at boot)"))).toBe(false);
   });
 
   test("a browser that will not answer says nothing, rather than saying no", async ({ page }) => {

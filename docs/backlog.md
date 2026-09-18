@@ -744,6 +744,33 @@ When it is picked up:
    than discarded, and that a browser without the API says nothing. Prove the
    guard both ways: the line must be absent when the API is missing, not blank.
 
+**Built 17 September; CI on 18 September found what Chromium could not.** Run
+35335170825 failed three D49 tests on Firefox and three on WebKit. Chromium,
+the only engine run locally, passed. A probe on all three engines showed two
+different causes:
+
+| Engine | `navigator.storage` | `persisted()` | `persist()` |
+|---|---|---|---|
+| Chromium | present | `false` | `false` |
+| Firefox | present | `false` | no answer after 5 s |
+| WebKit (Playwright's build) | absent | — | — |
+
+- **Firefox: a flaw in the build.** The boot code awaited the request before
+  writing the standing reading, and Firefox can leave `persist()` unanswered,
+  most likely on a permission prompt. That part is inferred: no answer was
+  seen, not a prompt. So neither line was written, on the engine where the
+  question is visible to a person. Fixed: the reading is independent of the
+  request, and the request is written down when made ("asked at boot; waiting
+  on the browser") and again when answered. A test holds it ("a request the
+  browser never answers does not silence the reading"). With the old chained
+  order put back, it fails on all three engines, reproducing CI's Firefox
+  failure without depending on Firefox's timing.
+- **WebKit: the product was right; the tests assumed the API exists.** With no
+  Storage API, the opener said nothing, exactly as designed. The tests now stub
+  the answers they need and run identically on every engine, rather than
+  skipping one. What a real browser grants stays a device reading. Real Safari
+  does have the API, so this is about the test engine, not the product.
+
 #### D55 — When persistence should be asked for
 
 *Status: open. Separated from D49 deliberately.*
@@ -784,6 +811,17 @@ When it is picked up:
    well-timed request from a badly timed one, because the heuristic is the
    browser's and a test browser grants freely. This one is answered by a device
    reading before and after, which is why it waits on D49.
+
+**A fact for the ruling, from CI on 18 September: on Firefox the request may
+be visible.** In automation, Firefox left `persist()` unanswered for as long as
+it was watched. The likely reason is that it asks the person with a permission
+prompt rather than deciding on heuristics as Chromium does. That is inferred
+from the missing answer, not seen on a screen. If it holds, the opener has
+been putting a permission prompt in front of every first-time Firefox visitor
+at page load, before they have opened anything, and it did so before D49 too.
+That weighs heavily toward asking later, at a moment the person would
+recognize as a reason. A desktop Firefox check (open the opener fresh and look)
+would confirm or rule it out in a minute.
 
 #### D50 — An icon that outlives its storage is greeted as a stranger
 
