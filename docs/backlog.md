@@ -3126,6 +3126,8 @@ prints a stale-map warning and still exits 0 (seen twice tonight).
 | CI, run 34992640259 (15 Sep) | `returning-document:164` | After the older-link reopen Playwright holds the main frame and a lone `about:srcdoc`, with no `blob:` frame between them. The screenshot shows "move1 move2", the right answer, on screen. The test timed out at 90 s. |
 | CI, run 34994907770 (15 Sep) | `runner.spec:1265`, "ticking something offers to keep it" | Everything the test is named for had already passed: no offer on mount, the tick ran, the offer appeared, and the save was written. It stopped after `page.reload()`, waiting 90 s for `#state` to read "1", while the child frame read `about:blank` and then dropped out of view. The opener "resumed this device's own copy", and both screenshots show "tick 1", the saved state, on screen. It is the first sighting outside the chess and returning-document specs, and the reopen path is the common factor. |
 
+| CI, run 35341691229 (18 Sep, `7afb8c9`) | `mailbox-link-e2e:1287`, crossed invites in the other opening order, Firefox, passed on retry | Page A clicked Open on B's link, and `#app` was never found in 60 s. A's frame-side breadcrumbs show the app ran: "reopen mounted the stored database", "replica kept (own copy)", "pending merge applied (5 rows)", "save 1 written" at 4.2 s. A's last screenshot, 60 s after Open, shows the chess app on screen with its seat prompt. Both halves of the signature, read from the kept trace. |
+
 In each failing trace, the first-level frame is `about:blank` and later a lone `about:srcdoc` frame appears, with the `blob:` frame that should sit between them missing. A healthy mount earlier in the same test shows main, then `blob:`, then `about:srcdoc`. Both specs reproduce it locally at about 1 in 6 on Firefox under load. Each local failure has a screenshot of the app on screen while the locator waits.
 
 **What this is not:**
@@ -3218,6 +3220,13 @@ closed`.
   app. The last lines are that page's persistence breadcrumbs, ending at
   `(installed): not kept (after the request)`. That test creates and closes
   its own context, never the browser.
+- CI, chromium (18 September, run 35341691229, `7afb8c9`):
+  `offline-detector.spec.ts:27`, at its first `browser.newContext`; it passed on
+  retry. The log carries the same crash as the 15 September traces, frame for
+  frame: `Received signal 11 SEGV_MAPERR 0000000001b0` at
+  `chrome-headless-shell+0x4265412`, `+0x754bdf3`, `+0x6b59199`. One crash site,
+  hit again, in a spec with nothing in common with the earlier ones. So far the
+  trigger is still not any one test.
 
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
