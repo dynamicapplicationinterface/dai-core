@@ -3924,6 +3924,41 @@ run from a push, not a rerun; artifacts downloaded as soon as it finished).**
   moves" on screen. Run 2's lost sighting stays unconfirmed. This test has
   shown D32's signature every time it could be read.
 
+**Reproduced on demand on the old build, gone on the new (18 September).** The
+lead was that the crash twice landed at `icon-after-wipe:74`, right after `:63`.
+- **The pair alone does not do it.** `:63` then `:74`, 30 times in one worker
+  on build 1234 (line filters, 60 tests listed alternating before the run): 60
+  passed, no deaths.
+- **Under load it does.** The whole `icon-after-wipe` file repeated 30 times
+  across 4 workers, which keeps each file's tests in order on one worker. On
+  **build 1234** (Chrome 151.0.7922.34): **6, 6 and 9 deaths in three runs of
+  180 tests: 21 of 540, 3.9%.** On **build 1243** (Chrome 153.0.8010.12),
+  otherwise identical: **0, 0 and 0: 0 of 540.** Every death was the next
+  test's first `browser.newContext` finding the browser closed. CI logs on
+  1234 carry the `SEGV_MAPERR 0x1b0` dump; this Windows machine writes none.
+- **It is not `:63` or its `matchMedia` replacement.** Deaths landed at `:85`
+  13 times (after `:74`, iPhone user agent and `matchMedia` replaced), `:74` 5
+  times (after `:63`, `matchMedia` replaced) and `:112` 3 times (after `:85`,
+  which replaces nothing). What every predecessor shares is that it creates its
+  own browser context and closes it (`page.context().close()`). The trigger
+  looks like context disposal under load, most often after the iPhone-user-agent
+  context. That is read from the pattern, not isolated.
+- **Nothing from `:63` reaches the next test.** `:85` follows `:74` and asserts
+  the neutral sentence, which needs `standalone()` false. It passed every time
+  it was not the crash's victim. A `matchMedia` replaced by `addInitScript`
+  lives and dies with its context: no harness finding. And a real page cannot
+  close a browser context, so nothing here suggests a page could reach the
+  crash.
+
+**This is the merge evidence D28 asked for:** reproducible on the old build at
+a measured rate, and not at all on the new one under the same load. The WebKit
+test the upgrade broke is fixed on the branch (`437ecfa`), so the upgrade's
+known costs are paid. **Ready for a merge ruling.**
+
+Side effect to know about: `npx playwright install` on the branch removed
+`main`'s browsers (`chromium_headless_shell-1234`, `webkit-2336`) as unused.
+Switching back needed a reinstall.
+
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
 0000000001b0`, a read near a null pointer. The two dumps come from *two
