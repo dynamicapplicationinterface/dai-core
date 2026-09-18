@@ -2127,7 +2127,7 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
 
-  if (data.type === "dai:isolation-report") {
+  if (data.type === TO_HOST.ISOLATION_REPORT) {
     // Kept for the harness that holds this host's claim against the probe.
     if (event.source === cartridgeFrame.contentWindow) lastIsolationReport = data;
     return;

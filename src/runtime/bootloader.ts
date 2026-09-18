@@ -28,6 +28,7 @@ import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
 import { verifySign1 } from "../cose.js";
 import { compatibility, type SchemaDeclaration } from "../schema.js";
 import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
+import { FRAME, FRAME_INTERNAL, FRAME_PUBLIC, type FrameNames } from "../frame.js";
 
 const APP_PREFIX = "app/";
 const SCHEMA_ENTRY = "runtime/schema.json";
@@ -36,7 +37,7 @@ const SQLITE_ENTRY = "document.sqlite";
 const CONTAINER_ENTRY = "runtime/container.html";
 const GLUE_ENTRY = "runtime/sqlite3.mjs";
 const MANIFEST_ENTRY = "runtime/manifest.json";
-const SAVE_REQUEST = "dai:save";
+const SAVE_REQUEST = FRAME_INTERNAL.SAVE;
 
 /**
  * The host bridge's schema version, sent in every message a host might read.
@@ -106,7 +107,7 @@ type RefusalReason =
   | "SCHEMA_INCOMPATIBLE"
   | "MOUNT_TIMEOUT"
   | "BOOT_FAILED";
-const APP_MODE_EVENT = "dai:appmode";
+const APP_MODE_EVENT = FRAME_INTERNAL.APPMODE;
 
 /** How a save should be attempted. */
 type SaveMethod = "auto" | "picker" | "download" | "host";
@@ -179,7 +180,7 @@ function timingTable(): { phase: string; at: number; took: number }[] {
   }));
 }
 
-const HANDSHAKE = "dai:ready";
+const HANDSHAKE = FRAME_INTERNAL.READY;
 /**
  * How long the application has to report in before the shell gives up on it.
  *
@@ -740,7 +741,7 @@ async function writeContainer(
  * would seal into the next copy. The loader hands this object over by
  * `postMessage` and sets it locally instead.
  */
-function bridgeMain(): void {
+function bridgeMain(names: FrameNames): void {
   /*
    * The SHA-256 of the merge module this runtime was built against.
    *
@@ -832,7 +833,7 @@ function bridgeMain(): void {
       try {
         window.parent.postMessage(
           {
-            type: "dai:timing",
+            type: names.TIMING,
             phase: "engine",
             took: Math.round((performance.now() - engineStarted) * 10) / 10,
           },
@@ -1000,7 +1001,7 @@ function bridgeMain(): void {
   const tellSaveStatus = (state: typeof saveStatus, error?: string): void => {
     saveStatus = state;
     try {
-      window.parent.postMessage({ type: "dai:save-state", state, error }, "*");
+      window.parent.postMessage({ type: names.SAVE_STATE, state, error }, "*");
     } catch {
       /* No parent listening; the status is still readable on the api. */
     }
@@ -1315,7 +1316,7 @@ function bridgeMain(): void {
         // deliberate act, unlike a background mailbox pull. A copy joins a session
         // (or rejoins a reseated one) only on a carrier open, never on a mailbox
         // merge (T1-D34), and the application reads this to tell them apart.
-        window.dispatchEvent(new CustomEvent("dai:merged", { detail: { ...report, via: "carrier" } }));
+        window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "carrier" } }));
         return report;
       } catch (error) {
         liveDb.exec("ROLLBACK");
@@ -1450,7 +1451,7 @@ function bridgeMain(): void {
         }
         liveDb.exec("COMMIT");
         scheduleAutosave(liveDb);
-        window.dispatchEvent(new CustomEvent("dai:merged", { detail: { ...report, via: "mailbox" } }));
+        window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
         return report;
       } catch (error) {
         liveDb.exec("ROLLBACK");
@@ -1468,7 +1469,7 @@ function bridgeMain(): void {
   /** A nudge to the host that this copy has authored a row worth publishing. */
   const nudgeAuthored = (): void => {
     try {
-      window.parent.postMessage({ type: "dai:authored" }, "*");
+      window.parent.postMessage({ type: names.AUTHORED }, "*");
     } catch (error) {
       void error;
     }
@@ -1498,7 +1499,7 @@ function bridgeMain(): void {
   const refuseWriteRules = (why: string, detail?: string): void => {
     lastRefusal = detail ? `${why} — ${detail}` : why;
     try {
-      window.parent.postMessage({ type: "dai:write-rules-refused", why, detail }, "*");
+      window.parent.postMessage({ type: names.WRITE_RULES_REFUSED, why, detail }, "*");
     } catch {
       /* Nothing above to tell; the refusal below still stands. */
     }
@@ -1956,7 +1957,7 @@ function bridgeMain(): void {
         // window that merely knows how to shape a message.
         if (event.source !== window.parent) return;
         const data = event.data as Any;
-        if (!data || data.type !== "dai:schema-verdict" || data.id !== id) return;
+        if (!data || data.type !== names.SCHEMA_VERDICT || data.id !== id) return;
         window.removeEventListener("message", onReply);
         window.clearTimeout(timer);
 
@@ -1997,7 +1998,7 @@ function bridgeMain(): void {
       }, 10000);
 
       window.addEventListener("message", onReply);
-      window.parent.postMessage({ type: "dai:schema", id: id, actual: actual ?? null }, "*");
+      window.parent.postMessage({ type: names.SCHEMA, id: id, actual: actual ?? null }, "*");
     });
   };
 
@@ -2034,7 +2035,7 @@ function bridgeMain(): void {
       window.addEventListener("message", done);
       parent.postMessage(
         {
-          type: "dai:save",
+          type: names.SAVE,
           id: id,
           sqlite: bytes ? new Uint8Array(bytes) : null,
           method: (options && options.method) || "auto",
@@ -2057,7 +2058,7 @@ function bridgeMain(): void {
     if (event.source !== window.parent) return;
     const data = event.data as Any;
     if (!data) return;
-    if (data.type === "dai:flush") {
+    if (data.type === names.FLUSH) {
       // The host is about to package this document — to share it — and
       // wants what the person sees, not the last autosave. Anything pending
       // is written now, and the answer waits for the host to have it.
@@ -2068,7 +2069,7 @@ function bridgeMain(): void {
         // mailbox cursor on this answer must not move it past rows still only
         // in memory.
         const saved = autosaveDb === null && saveStatus !== "failed";
-        window.parent.postMessage({ type: "dai:flushed", id: data.id, saved }, "*");
+        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved }, "*");
       });
       return;
     }
@@ -2092,7 +2093,7 @@ function bridgeMain(): void {
      * the conformance fixtures import, so what runs here is what three readers
      * agreed on.
      */
-    if (data.type === "dai:write-rules") {
+    if (data.type === names.WRITE_RULES) {
       mountIsOwnCopy = data.ownCopy === true;
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // The same pin the merge uses. A module that does not hash to what this
@@ -2102,7 +2103,7 @@ function bridgeMain(): void {
       void adoptWriteRules(data.source);
       return;
     }
-    if (data.type === "dai:authored-since") {
+    if (data.type === names.AUTHORED_SINCE) {
       // The host owns the watermark and is asking for what this copy authored
       // above it. The watermark is a (replica, seq) pair; the reply carries the
       // replica this copy actually authored under, so the host rebinds. Answered,
@@ -2121,12 +2122,12 @@ function bridgeMain(): void {
       // Cloned, not transferred: a batch is a few rows, and a transfer list of
       // one detached buffer is a footgun for the saving it does not make.
       window.parent.postMessage(
-        { type: "dai:authored-batch", id: data.id, seq: data.seq, head, replica, batch },
+        { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch },
         "*",
       );
       return;
     }
-    if (data.type === "dai:replica-id") {
+    if (data.type === names.REPLICA_ID) {
       // This copy's replica id, hex, from `_dai_replica`. Read only, answered
       // never volunteered. `null` when the table is not there yet — an own copy
       // whose schema is unwritten, which settles on its first write.
@@ -2137,42 +2138,42 @@ function bridgeMain(): void {
       } catch {
         replica = null;
       }
-      window.parent.postMessage({ type: "dai:replica-id-answer", nonce: data.nonce, replica }, "*");
+      window.parent.postMessage({ type: names.REPLICA_ID_ANSWER, nonce: data.nonce, replica }, "*");
       return;
     }
-    if (data.type === "dai:sessions") {
+    if (data.type === names.SESSIONS) {
       // The host asking which sessions this copy holds, so it can run one mailbox
       // for each (T1-D30), and which of them have closed. The host knows this
       // runtime answers from `sessionLanes` in the handshake, never by timing.
       window.parent.postMessage(
-        { type: "dai:sessions-answer", id: data.id, sessions: heldSessions(), closed: closedSessions() },
+        { type: names.SESSIONS_ANSWER, id: data.id, sessions: heldSessions(), closed: closedSessions() },
         "*",
       );
       return;
     }
-    if (data.type === "dai:apply-batch") {
+    if (data.type === names.APPLY_BATCH) {
       const bytes = data.batch instanceof Uint8Array ? data.batch : new Uint8Array(data.batch as ArrayBuffer);
       void applyBatch(bytes)
         .then((report: Any) => {
-          window.parent.postMessage({ type: "dai:applied", id: data.id, ...report }, "*");
+          window.parent.postMessage({ type: names.APPLIED, id: data.id, ...report }, "*");
         })
         .catch((error: Any) => {
           window.parent.postMessage(
-            { type: "dai:applied", id: data.id, applied: 0, refused: (error && error.message) || "APPLY_FAILED" },
+            { type: names.APPLIED, id: data.id, applied: 0, refused: (error && error.message) || "APPLY_FAILED" },
             "*",
           );
         });
       return;
     }
-    if (data.type === "dai:merge") {
+    if (data.type === names.MERGE) {
       void mergeSibling(data)
         .then((report: Any) => {
-          window.parent.postMessage({ type: "dai:merged", id: data.id, ...report }, "*");
+          window.parent.postMessage({ type: names.MERGE_RESULT, id: data.id, ...report }, "*");
         })
         .catch((error: Any) => {
           window.parent.postMessage(
             {
-              type: "dai:merged",
+              type: names.MERGE_RESULT,
               id: data.id,
               applied: 0,
               duplicate: 0,
@@ -2202,7 +2203,7 @@ function bridgeMain(): void {
      * Absent on a host that does not send them, which is what the fallback in
      * `var()` is for.
      */
-    if (data.type === "dai:insets") {
+    if (data.type === names.INSETS) {
       const insets = data as unknown as Record<string, unknown>;
       for (const edge of ["top", "right", "bottom", "left"]) {
         const value = insets[edge];
@@ -2212,14 +2213,14 @@ function bridgeMain(): void {
       }
       return;
     }
-    if (data.type !== "dai:appmode") return;
+    if (data.type !== names.APPMODE) return;
     appMode = !!data.active;
     appModeListeners.forEach((listener) => listener(appMode));
   });
 
   // Now that there is something listening, ask. The host knew these at the
   // handshake, which was before this frame existed.
-  window.parent.postMessage({ type: "dai:insets?" }, "*");
+  window.parent.postMessage({ type: names.INSETS_ASK }, "*");
 
   /*
    * The colour of the one strip an application cannot paint.
@@ -2259,7 +2260,7 @@ function bridgeMain(): void {
   };
   const tellGround = (): void => {
     const colour = groundColour();
-    if (colour) window.parent.postMessage({ type: "dai:ground", colour }, "*");
+    if (colour) window.parent.postMessage({ type: names.GROUND, colour }, "*");
   };
   // Two frames on: the first is when styles have applied, the second is
   // when they have painted, and a colour read before that is the default.
@@ -2407,7 +2408,7 @@ function bridgeMain(): void {
       // filters the copy it sends to that session's rows (T1-D28). Without one,
       // the host offers the whole document, as its own menu does.
       const invite = typeof session === "string" && /^[0-9a-f]{32}$/i.test(session) ? session.toLowerCase() : undefined;
-      window.parent.postMessage({ type: "dai:request-share", ...(invite ? { session: invite } : {}) }, "*");
+      window.parent.postMessage({ type: names.REQUEST_SHARE, ...(invite ? { session: invite } : {}) }, "*");
     },
     /*
      * Which games wait on this person: the sessions (hex) where it is their
@@ -2421,7 +2422,7 @@ function bridgeMain(): void {
       const list = Array.isArray(sessions)
         ? sessions.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/i.test(s)).map((s) => s.toLowerCase())
         : [];
-      window.parent.postMessage({ type: "dai:waiting", sessions: list }, "*");
+      window.parent.postMessage({ type: names.WAITING, sessions: list }, "*");
     },
   };
 
@@ -2493,7 +2494,7 @@ function installAppMode(frame: HTMLIFrameElement): void {
  * place before any module in the document is fetched, and it cannot be written
  * until the URLs it names exist.
  */
-function frameLoader(): void {
+function frameLoader(names: FrameNames): void {
   type Any = Record<string, any>;
 
   /*
@@ -2591,7 +2592,7 @@ function frameLoader(): void {
    */
   const onPayload = (event: MessageEvent): void => {
     const data = event.data as Any;
-    if (!data || data.type !== "dai:payload") return;
+    if (!data || data.type !== names.PAYLOAD) return;
     if (event.source !== parent) return;
 
     window.removeEventListener("message", onPayload);
@@ -2752,17 +2753,17 @@ function frameLoader(): void {
   };
 
   window.addEventListener("message", onPayload);
-  parent.postMessage({ type: "dai:frame-hello" }, "*");
+  parent.postMessage({ type: names.FRAME_HELLO }, "*");
 }
 
 /** Serializes frameLoader() into the frame's initial document. */
 function loaderScript(): string {
-  return "<script" + nonceAttr() + ">(" + frameLoader.toString() + ")()<" + "/script>";
+  return "<script" + nonceAttr() + ">(" + frameLoader.toString() + ")(" + JSON.stringify(FRAME) + ")<" + "/script>";
 }
 
 /** Serializes bridgeMain() into the frame. See the note on that function. */
 function bridgeScript(): string {
-  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")()<" + "/script>";
+  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")(" + JSON.stringify(FRAME) + ")<" + "/script>";
 }
 
 /** Injected into the iframe so the host can tell mounting actually succeeded. */
@@ -2771,7 +2772,7 @@ function handshakeScript(): string {
     `<script${nonceAttr()}>(function(){` +
     `var ok=function(){try{parent.postMessage(${JSON.stringify(HANDSHAKE)},"*")}catch(e){}};` +
     `window.addEventListener("error",function(e){try{parent.postMessage(` +
-    `{type:"dai:error",message:String(e.message)},"*")}catch(_){}}, true);` +
+    `{type:${JSON.stringify(FRAME_INTERNAL.ERROR)},message:String(e.message)},"*")}catch(_){}}, true);` +
     // Several signals, because this document is written rather than navigated
     // to. Firefox does not fire "load" for a document produced by
     // document.write, so waiting only on that left the shell reporting
@@ -2813,7 +2814,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: "dai:write-rules", source: rules.source, ownCopy: rules.ownCopy, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, ownCopy: rules.ownCopy, closePolicy: rules.closePolicy },
     "*",
   );
 }
@@ -3028,7 +3029,7 @@ async function boot(): Promise<void> {
    * copied twice on the way across.
    */
   const framePayload = {
-    type: "dai:payload",
+    type: FRAME_INTERNAL.PAYLOAD,
     entryHtml: new TextDecoder().decode(entry),
     assets: [...assets]
       .filter(([name]) => name !== "index.html")
@@ -3220,7 +3221,7 @@ async function boot(): Promise<void> {
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.FLUSH) {
       // The host is packaging this document to share it and wants what the
       // person sees, not the last autosave. The answer comes back the same way.
-      toFrame({ type: "dai:flush", id: fromHost.id });
+      toFrame({ type: FRAME_INTERNAL.FLUSH, id: fromHost.id });
       return;
     }
     /*
@@ -3232,7 +3233,7 @@ async function boot(): Promise<void> {
      * from; the frame one layer in does.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.REPLICA_ID) {
-      toFrame({ type: "dai:replica-id", nonce: (event.data as { nonce?: string }).nonce });
+      toFrame({ type: FRAME_INTERNAL.REPLICA_ID, nonce: (event.data as { nonce?: string }).nonce });
       return;
     }
     /*
@@ -3273,7 +3274,7 @@ async function boot(): Promise<void> {
       };
       const payload = request.payload ?? {};
       const message = {
-        type: "dai:merge",
+        type: FRAME_INTERNAL.MERGE,
         id: request.id,
         databaseBytes: payload.databaseBytes,
         mergeSource: payload.mergeSource,
@@ -3286,19 +3287,19 @@ async function boot(): Promise<void> {
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.AUTHORED_SINCE) {
       const request = event.data as { id?: string; seq?: number; replica?: string; session?: unknown };
       const session = typeof request.session === "string" && /^[0-9a-f]{32}$/.test(request.session) ? request.session : undefined;
-      toFrame({ type: "dai:authored-since", id: request.id, seq: request.seq, replica: request.replica, ...(session ? { session } : {}) });
+      toFrame({ type: FRAME_INTERNAL.AUTHORED_SINCE, id: request.id, seq: request.seq, replica: request.replica, ...(session ? { session } : {}) });
       return;
     }
     // The host asking which sessions this copy holds (T1-D30).
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.SESSIONS) {
       const request = event.data as { id?: string };
-      toFrame({ type: "dai:sessions", id: request.id });
+      toFrame({ type: FRAME_INTERNAL.SESSIONS, id: request.id });
       return;
     }
     // The host handing the frame a batch pulled from the mailbox, to merge.
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.APPLY_BATCH) {
       const request = event.data as { id?: string; batch?: unknown };
-      toFrame({ type: "dai:apply-batch", id: request.id, batch: request.batch });
+      toFrame({ type: FRAME_INTERNAL.APPLY_BATCH, id: request.id, batch: request.batch });
       return;
     }
     /*
@@ -3335,7 +3336,7 @@ async function boot(): Promise<void> {
         }
       }
       knownInsets = passed;
-      toFrame({ type: "dai:insets", ...passed });
+      toFrame({ type: FRAME_INTERNAL.INSETS, ...passed });
       return;
     }
 
@@ -3358,7 +3359,7 @@ async function boot(): Promise<void> {
     if (event.source !== frame.contentWindow) return;
 
     const reported = event.data as { type?: string; phase?: string; took?: number };
-    if (reported?.type === "dai:timing") {
+    if (reported?.type === FRAME_INTERNAL.TIMING) {
       // Measured inside the frame, which is the only side that can time it.
       mark(String(reported.phase), Number(reported.took));
       return;
@@ -3368,7 +3369,7 @@ async function boot(): Promise<void> {
     // The probe's findings, passed up to whoever hosts this shell. An
     // isolated frame can address only this window; a host running the probe
     // in CI needs to see the report, alongside what it claimed.
-    if (asked?.type === "dai:isolation-report" && window.parent !== window) {
+    if (asked?.type === TO_HOST.ISOLATION_REPORT && window.parent !== window) {
       window.parent.postMessage(
         { ...(asked as Record<string, unknown>), hostProfile: hostProfile ?? [] },
         "*",
@@ -3376,12 +3377,12 @@ async function boot(): Promise<void> {
       return;
     }
 
-    if (asked?.type === "dai:used") {
+    if (asked?.type === FRAME_PUBLIC.USED) {
       noteUse();
       return;
     }
 
-    if (asked?.type === "dai:schema" && declaredSchema) {
+    if (asked?.type === FRAME_INTERNAL.SCHEMA && declaredSchema) {
       const verdict = compatibility({
         expected: declaredSchema.digest,
         actual: asked.actual ?? undefined,
@@ -3390,7 +3391,7 @@ async function boot(): Promise<void> {
 
       (event.source as Window | null)?.postMessage(
         {
-          type: "dai:schema-verdict",
+          type: FRAME_INTERNAL.SCHEMA_VERDICT,
           id: asked.id,
           status: verdict.status === "migrate" ? "migrate" : verdict.status,
           digest: declaredSchema.digest,
@@ -3451,16 +3452,16 @@ async function boot(): Promise<void> {
     const relay = event.data as { type?: string; id?: string; session?: unknown; sessions?: unknown };
     // Asked for by the application as it starts, and answered with whatever
     // the host has said so far.
-    if (event.source === frame.contentWindow && relay?.type === "dai:insets?") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.INSETS_ASK) {
       // The bridge has a listener now. Anything held for it goes now, and
       // anything that arrives later goes straight through (see toFrame).
       listeningWindow = event.source as Window;
-      toFrame({ type: "dai:insets", ...knownInsets });
+      toFrame({ type: FRAME_INTERNAL.INSETS, ...knownInsets });
       deliverRules();
       deliverHeld();
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:flushed") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.FLUSHED) {
       window.parent.postMessage(
         { type: TO_HOST.FLUSHED, sessionNonce, id: relay.id, saved: (event.data as { saved?: unknown }).saved !== false },
         "*",
@@ -3476,7 +3477,7 @@ async function boot(): Promise<void> {
      * through untouched: this shell has no view of the rows and no business
      * summarising them.
      */
-    if (event.source === frame.contentWindow && relay?.type === "dai:merged") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.MERGE_RESULT) {
       const { type: _ignored, ...report } = event.data as Record<string, unknown>;
       window.parent.postMessage(
         { type: TO_HOST.MERGE_RESULT, sessionNonce, ...report },
@@ -3485,11 +3486,11 @@ async function boot(): Promise<void> {
       return;
     }
     // Track 5: the frame's mailbox messages, on their way to the host.
-    if (event.source === frame.contentWindow && relay?.type === "dai:authored") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.AUTHORED) {
       window.parent.postMessage({ type: TO_HOST.AUTHORED, sessionNonce }, "*");
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:sessions-answer") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SESSIONS_ANSWER) {
       const answer = event.data as { id?: string; sessions?: unknown; closed?: unknown };
       const hex = (list: unknown): string[] =>
         Array.isArray(list) ? list.filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)) : [];
@@ -3499,7 +3500,7 @@ async function boot(): Promise<void> {
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:authored-batch") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.AUTHORED_BATCH) {
       const answer = event.data as {
         id?: string;
         seq?: number;
@@ -3521,12 +3522,12 @@ async function boot(): Promise<void> {
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:applied") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.APPLIED) {
       const { type: _t, ...report } = event.data as Record<string, unknown>;
       window.parent.postMessage({ type: TO_HOST.APPLIED, sessionNonce, ...report }, "*");
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:replica-id-answer") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.REPLICA_ID_ANSWER) {
       const answer = event.data as { nonce?: string; replica?: string | null };
       window.parent.postMessage(
         { type: "DAI_FRAME_REPLICA_ID", nonce: answer.nonce, replica: answer.replica ?? null },
@@ -3534,7 +3535,7 @@ async function boot(): Promise<void> {
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:ground") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.GROUND) {
       // The colour at the top of the application, for the strip above it
       // that only the host's page can colour. Passed on as it came; the host
       // decides whether a declared theme-color outranks it.
@@ -3549,7 +3550,7 @@ async function boot(): Promise<void> {
      * kept in the frame, because the host is the half that chose what to send
      * and the only half with somewhere to put a sentence.
      */
-    if (event.source === frame.contentWindow && relay?.type === "dai:write-rules-refused") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.WRITE_RULES_REFUSED) {
       const refusal = event.data as { why?: string; detail?: string };
       window.parent.postMessage(
         {
@@ -3562,7 +3563,7 @@ async function boot(): Promise<void> {
       );
       return;
     }
-    if (event.source === frame.contentWindow && relay?.type === "dai:save-state") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SAVE_STATE) {
       const status = event.data as { state?: string; error?: string };
       window.parent.postMessage(
         { type: TO_HOST.SAVE_STATE, sessionNonce, state: status.state, error: status.error },
@@ -3573,7 +3574,7 @@ async function boot(): Promise<void> {
     // The application asking the host to offer its share sheet. Relayed
     // exactly as asked — no data of the application's choosing rides along,
     // because none is needed: the host reads the document it already has.
-    if (event.source === frame.contentWindow && relay?.type === "dai:request-share") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.REQUEST_SHARE) {
       // The session rides through unchanged when it is well-formed, and is
       // dropped when it is not: the host must never filter on something the
       // application did not plainly say.
@@ -3585,7 +3586,7 @@ async function boot(): Promise<void> {
 
     // The application's games waiting on this person (D34). Only session ids
     // pass, and never more than a document could hold: nothing else rides along.
-    if (event.source === frame.contentWindow && relay?.type === "dai:waiting") {
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.WAITING) {
       const sessions = Array.isArray(relay.sessions)
         ? (relay.sessions as unknown[]).filter((s): s is string => typeof s === "string" && /^[0-9a-f]{32}$/.test(s)).slice(0, 256)
         : [];
@@ -3735,7 +3736,7 @@ async function boot(): Promise<void> {
    * listener.
    */
   const onHello = (event: MessageEvent): void => {
-    if ((event.data as { type?: string })?.type !== "dai:frame-hello") return;
+    if ((event.data as { type?: string })?.type !== FRAME_INTERNAL.FRAME_HELLO) return;
     if (event.source !== frame.contentWindow) return;
 
     window.removeEventListener("message", onHello);

@@ -309,7 +309,8 @@ export const CONSTRAINTS: readonly Constraint[] = [
       { file: "tests/fixture/chess/app.js", contains: "$('boot-notice').hidden=true;$('app').hidden=false;" },
       { file: "examples/receipts/index.html", contains: '<main id="app" hidden inert>' },
       { file: "examples/tic-tac-toe/index.html", contains: '<main id="app" hidden inert>' },
-      { file: "src/runtime/bootloader.ts", contains: '{type:"dai:error",message:String(e.message)},"*")' },
+      { file: "src/frame.ts", contains: 'ERROR: "dai:error"' },
+      { file: "src/runtime/bootloader.ts", contains: '{type:${JSON.stringify(FRAME_INTERNAL.ERROR)},message:String(e.message)},"*")' },
       { file: "src/kit.ts", contains: "class DaiForm extends HTMLElement {" },
     ],
   },
@@ -461,8 +462,9 @@ export const CONSTRAINTS: readonly Constraint[] = [
     enforced: ["lint"],
     lint: ["shared-no-merge-listener"],
     anchors: [
-      { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent("dai:merged", { detail: { ...report, via: "carrier" } })' },
-      { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent("dai:merged", { detail: { ...report, via: "mailbox" } })' },
+      { file: "src/frame.ts", contains: 'MERGED: "dai:merged"' },
+      { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent(names.MERGED, { detail: { ...report, via: "carrier" } })' },
+      { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } })' },
       { file: "tests/fixture/chess/schema.sql", contains: "A tentative move lives here until the player commits it" },
     ],
   },
@@ -651,7 +653,8 @@ export const CONSTRAINTS: readonly Constraint[] = [
     why: "The host mints the key that lets the two copies exchange rows and makes the link; the application only asks, and only the application knows which game it is inviting to. Filtering to that game is what keeps a person's other games — and whatever they keep only on their own device — out of every invite they send.",
     enforced: ["prose"],
     anchors: [
-      { file: "src/runtime/bootloader.ts", contains: 'window.parent.postMessage({ type: "dai:request-share", ...(invite ? { session: invite } : {}) }, "*");' },
+      { file: "src/frame.ts", contains: 'REQUEST_SHARE: "dai:request-share"' },
+      { file: "src/runtime/bootloader.ts", contains: 'window.parent.postMessage({ type: names.REQUEST_SHARE, ...(invite ? { session: invite } : {}) }, "*");' },
       { file: "apps/runner/src/main.ts", contains: "const html = invite ? await inviteHtml(invite) : await currentHtml(withData.checked);" },
       { file: "apps/runner/src/main.ts", contains: "Sharing is the moment a solo document becomes a shared one" },
     ],
@@ -915,7 +918,7 @@ export const SURFACE: readonly SurfaceEntry[] = [
     does:
       'Fired when another copy\'s rows arrive. event.detail: { applied, duplicate, rejected, newReplicas, conflicts, via } — via is "carrier" (a file or link was opened) or "mailbox" (rows arrived in the background).',
     shapes: SHARED,
-    anchor: { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent("dai:merged"' },
+    anchor: { file: "src/frame.ts", contains: 'MERGED: "dai:merged"' },
   },
   {
     call: "window.daiKit.refresh()",

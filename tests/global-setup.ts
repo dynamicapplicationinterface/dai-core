@@ -70,7 +70,8 @@ export default function globalSetup(): void {
     stdio: "inherit",
   });
 
-  execSync("npm run build", { cwd: repo, stdio: "inherit" });
+  // The library only: keeping a host is the deliberate build's job (D77).
+  execSync("npm run build:lib", { cwd: repo, stdio: "inherit" });
 
   rmSync(resolve(fixture, "dist"), { recursive: true, force: true });
   rmSync(resolve(fixture, "fixture.dai.html"), { force: true });

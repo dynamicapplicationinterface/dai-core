@@ -58,7 +58,20 @@ export function retain() {
   return { id, written: true };
 }
 
+/*
+ * Kept only when asked, and only the deliberate build asks (`npm run build`
+ * passes --keep). Every Playwright run and every `npm install` also built the
+ * library, and each kept whatever it built: in-between states of a runtime
+ * change, and once a host built from a kit a test had deliberately broken (D77).
+ * A kept host is a promise that links made against it keep opening, so it is
+ * made on purpose or not at all. Without --keep this says what it would keep and
+ * writes nothing.
+ */
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { id, written } = retain();
-  console.log(written ? `kept host ${id}` : `host ${id} already kept`);
+  if (!process.argv.includes("--keep")) {
+    console.log(`host ${hostId(currentHost())} not kept: only the deliberate build keeps hosts (npm run build passes --keep)`);
+  } else {
+    const { id, written } = retain();
+    console.log(written ? `kept host ${id}` : `host ${id} already kept`);
+  }
 }

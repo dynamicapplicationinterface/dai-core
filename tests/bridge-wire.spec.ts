@@ -27,6 +27,8 @@ const TO_HOST_ON_THE_WIRE = [
   "DAI_HOST_FLUSHED",
   "DAI_HOST_GROUND",
   "DAI_HOST_HANDSHAKE",
+  // The one bridge name with the frame prefix; the probe document posts it (D69).
+  "dai:isolation-report",
   "DAI_HOST_MERGE_RESULT",
   "DAI_HOST_REFUSED",
   "DAI_HOST_REQUEST_SHARE",

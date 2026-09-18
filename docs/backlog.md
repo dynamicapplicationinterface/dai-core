@@ -3621,6 +3621,40 @@ letter and missed in substance. What the next step needs is a database
 *containing the row*. The fix is to wait for that, by reading the row out of
 the bytes, or by waiting for the save that follows the tick. Not a byte count.
 
+#### D77 — Every test run and every install kept whatever host it built
+
+*Status: fixed, 18 September.*
+
+**What it means to a person:** a kept host is a promise that links made against
+it keep opening. Test runs were making that promise for runtimes nobody
+shipped: in-between states of a change, and once a runtime with a kit a test
+had broken on purpose.
+
+`npm run build` was `tsup && node scripts/retain-host.mjs`, and three things
+other than the deliberate build ran it: Playwright's global setup
+(`tests/global-setup.ts`), the push tier's CI-mirroring checks
+(`scripts/test-tier.mjs`), and `prepare`, which is every `npm install`. So any
+test run after a runtime edit kept a host. During D69 that happened four times:
+`bf675b53…` (the check removed, routing not yet done), `0964f957…` (the kit
+interpolated, 17 KB too big), and two from two runs of one spec: `7a21bbdc…`
+from the real kit and `614bf718…` from the kit with its literal mutated to
+`dai:use`. (First reported the other way round. The deliberate build that
+followed kept `7a21bbdc…` from the real kit, which settled it. That host was
+itself replaced before D69 landed: the kit's comment was moved out of the
+string, and the host D69 shipped with is `42328a9cd436a2fd`.) None was
+deployed; all four were caught and removed by hand, which is the kind of
+catching that eventually fails.
+
+**Fixed.** `retain-host.mjs` writes only with `--keep`, and only `npm run build`
+passes it. Global setup, the push tier and `prepare` run `npm run build:lib`
+(`tsup` alone). Without `--keep` the script says which host it would keep and
+writes nothing. A forgotten deliberate build is still caught:
+`host-retention.spec` reads the committed tree. Proved: a Playwright run that
+built (its output shows `build:lib`) left the hosts folder at 44 entries and
+`index.json` unchanged, where the two runs just before the fix each kept one.
+CI's workflows still run `npm run build`, harmlessly: each CI run starts from a
+fresh checkout.
+
 #### D40 — A tier that reports success by running nothing
 
 *Status: open.*

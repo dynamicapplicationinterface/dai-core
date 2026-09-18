@@ -112,7 +112,8 @@ if (tier === "push" || process.argv[2] === "push") {
    * these reads dist/.
    */
   const checks = [
-    ["npm", ["run", "build"]],
+    // The library only: a test run never keeps a host (D77).
+    ["npm", ["run", "build:lib"]],
     [process.execPath, [join(repo, "scripts", "build-conformance.mjs"), "--check"]],
     [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"]],
     [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"]],

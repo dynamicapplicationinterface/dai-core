@@ -7,8 +7,10 @@
  * (`src/runtime/bootloader.ts`), in the web opener (`apps/runner/src/main.ts`,
  * `mailbox-session.ts`) and in the desktop host, with nothing that held the set.
  * A name spelled differently on one side does not fail; it is a message nobody
- * hears. So the names are written here, both programs import them, and this
- * module refuses to load if the set is inconsistent.
+ * hears. So the names are written here and both programs import them. Their
+ * consistency is checked at build and in tests (`src/names-check.ts`), not as
+ * this module loads: that check once ran in every document's runtime, where the
+ * strings are already fixed and it could never fire (D70).
  *
  * **The values are wire format and never change.** Every document carries the
  * runtime it was built with, and the opener keeps every earlier host so old
@@ -37,6 +39,15 @@ export const TO_HOST = {
   FLUSHED: "DAI_HOST_FLUSHED",
   GROUND: "DAI_HOST_GROUND",
   HANDSHAKE: "DAI_HOST_HANDSHAKE",
+  /**
+   * The isolation probe's report, relayed to the host. **The one name that does
+   * not follow `DAI_HOST_` + key**, and the one named exception in the check
+   * (`scripts/check-names.mjs`). It was spelled with the frame's prefix before
+   * the bridge had an owner, and the probe document's own application code
+   * (`conformance/isolation/probe.js`) posts it. That code travels in documents,
+   * so the value is wire format and cannot be respelled (D69).
+   */
+  ISOLATION_REPORT: "dai:isolation-report",
   MERGE_RESULT: "DAI_HOST_MERGE_RESULT",
   REFUSED: "DAI_HOST_REFUSED",
   REQUEST_SHARE: "DAI_HOST_REQUEST_SHARE",
@@ -66,31 +77,3 @@ export const TO_DOCUMENT = {
 
 export type ToHost = (typeof TO_HOST)[keyof typeof TO_HOST];
 export type ToDocument = (typeof TO_DOCUMENT)[keyof typeof TO_DOCUMENT];
-
-/**
- * Everything wrong with a set of bridge names, in words; empty when it is sound.
- *
- * Two rules. Each value is `DAI_HOST_` followed by its own key, so the name the
- * code uses and the string on the wire cannot drift apart. And no value appears
- * twice, in either direction: one string must never be two messages.
- * Exported so the check can be shown to fire, not only to stay quiet.
- */
-export function bridgeProblems(
-  sets: Readonly<Record<string, Readonly<Record<string, string>>>>,
-): string[] {
-  const problems: string[] = [];
-  const seen = new Map<string, string>();
-  for (const [direction, names] of Object.entries(sets)) {
-    for (const [key, value] of Object.entries(names)) {
-      if (value !== `DAI_HOST_${key}`) problems.push(`${direction}.${key} is "${value}", not "DAI_HOST_${key}"`);
-      const earlier = seen.get(value);
-      if (earlier) problems.push(`"${value}" is both ${earlier} and ${direction}.${key}`);
-      else seen.set(value, `${direction}.${key}`);
-    }
-  }
-  return problems;
-}
-
-// At the point of definition: an inconsistent set is not a warning for later.
-const problems = bridgeProblems({ TO_HOST, TO_DOCUMENT });
-if (problems.length > 0) throw new Error(`bridge names are inconsistent: ${problems.join("; ")}`);

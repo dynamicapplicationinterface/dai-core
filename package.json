@@ -73,8 +73,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && node scripts/retain-host.mjs",
-    "prepare": "npm run build",
+    "build": "tsup && node scripts/retain-host.mjs --keep",
+    "build:lib": "tsup",
+    "prepare": "npm run build:lib",
     "build:runner": "vite build apps/runner",
     "build:studio": "vite build examples/web-studio",
     "build:desktop": "vite build apps/desktop",
@@ -87,7 +88,7 @@
     "deploys": "node scripts/check-deploys.mjs",
     "measure": "node scripts/measure.mjs",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json && node scripts/check-symbols.mjs && node scripts/check-routes.mjs && node scripts/check-callers.mjs && node scripts/impact-map.mjs --check",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.runtime.json && node scripts/check-symbols.mjs && node scripts/check-routes.mjs && node scripts/check-callers.mjs && node scripts/check-names.mjs && node scripts/impact-map.mjs --check",
     "prepublishOnly": "npm run build",
     "test": "playwright test",
     "test:iterate": "node scripts/test-tier.mjs iterate",

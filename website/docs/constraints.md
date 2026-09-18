@@ -162,7 +162,7 @@ Until the application's script has finished starting — the database open, the 
 
 **Why.** The script's start-up waits on `await window.dai.openDatabase()`, which in a shared document waits for the host's write rules. A form on screen before then takes a person's typing while the application cannot yet handle it. Pressing Enter or its button then either makes the browser submit the form itself and replace the page, or does nothing at all — and the script's own start-up resets the form a moment later. Which of the two happens varies between browsers and between one opening and the next; either way what they typed is gone, with nothing to say why. Both blind runs copied examples that showed their forms early. The same failure arriving mid-edit, when another copy's rows land, is SHARED-REDRAW-ON-MERGE.
 
-<small>Depends on [`tests/fixture/chess/app.js`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/tests/fixture/chess/app.js), [`examples/receipts/index.html`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/examples/receipts/index.html), [`examples/tic-tac-toe/index.html`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/examples/tic-tac-toe/index.html), [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`src/kit.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/kit.ts).</small>
+<small>Depends on [`tests/fixture/chess/app.js`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/tests/fixture/chess/app.js), [`examples/receipts/index.html`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/examples/receipts/index.html), [`examples/tic-tac-toe/index.html`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/examples/tic-tac-toe/index.html), [`src/frame.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/frame.ts), [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`src/kit.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/kit.ts).</small>
 
 ### NO-SAVE-BUTTON · Saving is automatic {#NO-SAVE-BUTTON}
 
@@ -284,7 +284,7 @@ Listen for the `dai:merged` event on window and redraw everything drawn from sha
 
 **Why.** Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for. And a redraw that rebuilds an open editor from the stored wording throws away what was being typed, silently — found by running a blind candidate over the mailbox, where a background merge landed while a term was being edited.
 
-<small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`tests/fixture/chess/schema.sql`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/tests/fixture/chess/schema.sql).</small>
+<small>Depends on [`src/frame.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/frame.ts), [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`tests/fixture/chess/schema.sql`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/tests/fixture/chess/schema.sql).</small>
 
 ### SHARED-NO-DERIVED-STATE · Store facts, derive everything else {#SHARED-NO-DERIVED-STATE}
 
@@ -426,7 +426,7 @@ Invite the other party by asking the host to share, naming the session: a button
 
 **Why.** The host mints the key that lets the two copies exchange rows and makes the link; the application only asks, and only the application knows which game it is inviting to. Filtering to that game is what keeps a person's other games — and whatever they keep only on their own device — out of every invite they send.
 
-<small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`apps/runner/src/main.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/apps/runner/src/main.ts).</small>
+<small>Depends on [`src/frame.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/frame.ts), [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts), [`apps/runner/src/main.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/apps/runner/src/main.ts).</small>
 
 ## The kit {#topic-kit}
 
