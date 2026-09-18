@@ -2176,6 +2176,37 @@ state.
 
 ### Authoring and the kit
 
+#### D69 — The runtime's messages to the app frame have no owner either
+
+*Status: open. Ruled to follow D68: after the bridge names have their owner.*
+
+**What it means to a person:** an author's document listens for these names.
+If the runtime and the kit drift apart, someone else's app stops redrawing, or
+stops saving, at runtime, with nothing failing in this repository's build.
+
+The same problem as D68, on the other side of the runtime. Between the document
+runtime and the application frame it hosts (the kit, and any author code) runs a
+second set of messages and events: `dai:merged`, `dai:write-rules`,
+`dai:save-state`, `dai:request-share`, `dai:sessions` and more. Each is a string
+literal at every place it is sent or heard.
+
+**This one matters more than D68.** The host bridge is spoken between two
+programs this repository builds together. This surface is the one *authors*
+write against: `dai:merged` is how an application learns the other party's row
+landed (`rules.ts`, the model file). A name that drifts here breaks documents
+nobody in this repository can see or test. It needs an owner, and, unlike the
+bridge, it probably also needs to be a published, versioned list.
+
+**Size, and the first job.** A grep on 18 September found **37** distinct
+`"dai:…"` strings in hand-written source, but they are not all messages. The
+`dai:` prefix is shared by at least four kinds of name: frame messages, events
+dispatched on `window`, schema markers (`dai:replicated`, `dai:profile`) and
+local-storage and lock keys. One prefix with several meanings is the part-3
+pattern itself. Before an owner, each string needs classifying, as D68 did by
+parser and by runtime tap. Then only the frame messages and events are
+collapsed. Where the kit's source lives, and how it reaches a document, is to
+be established as part of that; it was not checked here.
+
 #### D1 — The kit writes shared tables with raw SQL, and never redraws on a merge
 
 *Status: open.*
@@ -2493,6 +2524,14 @@ Result:
   On the web it goes out and nothing receives it.
 - **Dead: none.** All 28 were sent in the suite. Some rarely:
   `WRITE_RULES_REFUSED` twice, `REFUSED` three times, `REPLICA_ID` four times.
+
+**What "sent" measured.** It was measured by watching the chromium suite, so it
+measures what the tests exercise, not what the product can do. All 28 appeared,
+so the question did not arise this time. But a name that never appeared would
+not have shown whether it was dead or only untested: a zero from this method
+distinguishes neither. Before a name is called dead on this evidence, it needs
+the parser's answer as well (no send site anywhere), or a test that drives the
+path.
 
 **The desktop, recorded and not changed (deferred until mobile V1, not
 abandoned).** The desktop build copies the *current* runtime into
