@@ -920,7 +920,21 @@ window. The pointer rested on the button for 3 s before one attempt, and another
 was clicked at physical coordinates from a DPI-aware process. The prompt never
 changed, not even a hover highlight, so the injected input did not reach it.
 Nothing was answered, so there is no after-Allow, after-Block or second-visit
-reading. The three still wanted, each on its own fresh profile at
+reading.
+
+**Why, checked rather than assumed: this machine's injected input does not
+reach Firefox at all, prompt or not.** The obvious explanation is that the
+prompt is privileged chrome that rejects synthetic input. That may be true of
+Firefox, but these attempts cannot show it. The missing hover pointed
+elsewhere, and a hover grants nothing. A second check on a fresh profile rested
+the injected pointer on the page's own "Open a file" button. That button has a
+hover style (`#slot #open:hover { background: var(--accent-press); }`,
+`apps/runner/index.html:545`), so the check could fail. Compared pixel for pixel
+against a capture with the pointer parked elsewhere, the button did not change:
+0 differing pixels, `#007aff` in both. So in this environment, injected pointer
+input has no effect on Firefox's page content either. **The readings need a
+person at the machine.** Retrying the automation will not change that, whatever
+the prompt does with synthetic input, which stays untested. The three still wanted, each on its own fresh profile at
 `https://opendai.app/`: the D49 line after Allow; the line after Block; and,
 with "Remember this decision" left unticked, whether the prompt returns on a
 second visit. A person with a mouse can take all three in about five minutes.
@@ -2417,6 +2431,34 @@ documentation next.
 *Status: open.* Left over from manifestVersion 3: the carriers in spec 2.4 have no
 CDDL and no byte vectors.
 
+#### D68 — The host bridge reference describes a protocol that no longer exists
+
+*Status: open. Marked in place, 18 September; not rewritten.*
+
+**What it means to a person:** someone building a host from the published
+reference would build one that cannot save a merge, share a link, or keep a
+session, and would believe it complete.
+
+`docs/roadmap.md`'s "The host bridge" section was last edited on 2 September
+(`ea0cb91`). The bridge has grown since: `DAI_HOST_REQUEST_SHARE` arrived on
+7 September (`15f4355`), and `DAI_HOST_MERGE` and `DAI_HOST_WRITE_RULES` on
+9 September. Counted on 18 September, the code uses **28** `DAI_HOST_*` message
+types (`src/`, `apps/runner/src/`), and the section's tables document **6**
+(`HANDSHAKE`, `HANDSHAKE_ACK`, `SAVE`, `SAVE_ACK`, `REFUSED`, `CLOSING`). Among
+the 22 missing: the write rules and their refusal, merge and its result, the
+authored/apply-batch exchange, sessions, share requests, replica id, flush,
+insets, ground and canvas. Its refusal-reason table is likely behind too, and
+was not recounted.
+
+A reference that describes a protocol that no longer exists is worse than none,
+for the same reason a test that cannot fail is: it is trusted. The section now
+opens with a line saying what it is current as of, and pointing here. The
+rewrite is its own piece of work: enumerate every message from the code, say
+which direction each flows and why, and decide whether the reference belongs
+in the roadmap, the specification (§4.4) or its own page. It should also get a
+check that fails when the code gains a message the reference does not name, the
+D56 prevention applied to documentation.
+
 ### Trust, verification and offline
 
 #### D31 — A document the opener has verified is verified again when it mounts
@@ -2679,6 +2721,30 @@ longer mints a key. It is the one host that *could* keep one: it has a filesyste
 and a config directory, so it should offer to, and reuse the same key next time,
 which is what makes a publisher pinnable across documents. Until then `/desktop`
 says plainly that it does not.
+
+#### D67 — A database written by one SQLite build and opened by another is untested
+
+*Status: open. Moved from the roadmap's numbered plan (item 4), 18 September,
+where it was the only record. No test exists.*
+
+**What it means to a person:** a document kept for years could open in a newer
+opener, or in the desktop app instead of the browser, and read differently
+from how it was written, with nothing saying so.
+
+A `.dai` file carries a SQLite database, and different hosts open it with
+different engine builds: the browser opener's WebAssembly SQLite, the desktop
+app's, and whatever a later version of either ships. Page size is pinned at 4096
+for new databases (`tests/container.spec.ts:644`, "pins a new database to 4096
+and holds it across save and reopen", holds that *within one engine*). Nothing checks a database written by one engine
+build and opened by another. `tests/one-engine.spec.ts` sounds as if it does, but
+it guards something else: that there is one container *compiler*.
+
+This is the silent-divergence family. The likely failures are not a refusal but
+a quiet difference: a file-format feature one build writes and another reads
+differently, a collation or `LIKE` behavior that changes a query's answer, or
+the replicated views (`_current`, `_heads`) computing a different head on a
+different engine. The roadmap's proposal was a matrix test, each engine writing
+and every engine reading, before anyone keeps years of data in one. Not ruled.
 
 #### Identity: what manifestVersion 3 left
 
@@ -3031,6 +3097,26 @@ has to be right first. "Native phone apps as a prerequisite for first use" stays
 in *Not doing*; this is an addition for people who already have one.
 
 **Un-parks when onboarding friction is what blocks a pilot.**
+
+### Hosts
+
+#### D66 — The desktop app opens one document at a time, and a second replaces the first
+
+*Status: open. Moved from the roadmap's numbered plan (item 3), 18 September,
+where it was the only record.*
+
+**What it means to a person:** opening a second document on the desktop closes
+the one they were working in.
+
+The desktop app is single-instance (`apps/desktop/src-tauri/src/lib.rs:555`,
+`tauri_plugin_single_instance`). A second launch hands its file path to the one
+existing `main` window and exits, and the frontend opens it there, replacing
+whatever was open. Single-instance was chosen to close a race on the trust
+registry: two processes touching it at start-up. That reason still holds. The
+roadmap's verdict was that for a document application this is the wrong shape,
+and that the right one is **a window per document, with a single owner for the
+registry**. Not ruled. It touches the trust registry's ownership, the
+`dai://open-cartridge` event, and every save path that assumes one open document.
 
 ### Test and CI integrity
 

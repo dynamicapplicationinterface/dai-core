@@ -63,6 +63,12 @@ the format, and must never become something a cartridge consults or depends on.
 
 ## The host bridge
 
+> **Current as of 2 September 2026 (`ea0cb91`). The bridge has grown since.**
+> The code now uses 28 `DAI_HOST_*` message types and the tables below
+> document 6, so a host built from this section is incomplete. The rewrite is
+> [backlog D68](backlog.md). Until then, the messages in `src/` and
+> `apps/runner/src/` are the reference.
+
 A cartridge speaks to exactly one party: the window that framed it, over
 `postMessage`. That is not a network connection — it is same-machine, in-process,
 initiated by the cartridge, and reaches only a host that already had the file.
@@ -209,74 +215,6 @@ open because of what it *cannot* do, and every capability added to the inbound
 direction is a capability an attacker inherits along with everyone else.
 
 ---
-
-## Near-term: execution runtime
-
-Ordered by how much they hurt today.
-
-1. **Back up before an in-place save.** **Done.** Both save paths copy a
-   document to `name.dai.bak` before the first write of a session, staged and
-   renamed so a crash cannot replace a good backup with half of one. Once per
-   session rather than per save, because this format expects large files and the
-   copy worth having is of the state the window opened.
-
-   The sectioned path needed it because an in-place write is not atomic and the
-   previous database is gone the moment the new one starts. The viewer path
-   needed it for a different reason: its rename *is* atomic, so the file is
-   never half-written, and the version it replaced is gone regardless.
-
-   `save_cartridge_data`, the sectioned path, makes this more pressing rather
-   than less: it writes over the database in place, so there is no moment at
-   which the previous version exists anywhere. The ordering it guarantees means
-   a crash is *reported* rather than silent, which is not the same as
-   recoverable. Whatever is done here has to avoid copying the whole file on
-   every save, since not copying it is the reason the sectioned form exists.
-2. **Trust pinning in the runner.** **Done.** The decision moved to
-   `src/trust.ts` and is shared: the desktop keeps pins in Rust, the opener in
-   IndexedDB, and neither has an opinion of its own. A second implementation of
-   "is this the publisher you trusted" would eventually disagree, and the day it
-   did would be the day one of them let an impersonation through.
-
-   It matters more in the opener than it did in the desktop, because the opener
-   takes containers from a link: an address that can serve an update is an
-   address that can serve an impersonation. Checked on the way in and on the way
-   back out of the library, since a gate that applied only on first sight would
-   apply to the way people open a container once and not to the way they open it
-   every day.
-3. **Windows per document.** Single-instance closed the registry race by making
-   a second cartridge replace the first. For a document application that is the
-   wrong shape; the right one is a window per cartridge with a single owner for
-   the registry.
-4. **Cross-engine database compatibility.** Page size is pinned at 4096 for new
-   databases, but a document written by one engine build and opened by another
-   is unverified. Worth a matrix test before anyone keeps years of data in one.
-5. **Real Safari and real iOS.** Playwright's WebKit is not Safari; the offline
-   path and the download-based save are both unverified on a device.
-
-## Near-term: self-deployment
-
-6. **A command-line compiler.** `buildContainer` is pure and hosted at
-   `dai-core/core`, but the only way to drive it is a Vite plugin. A `dai build`
-   that takes a directory and emits a cartridge removes the framework from the
-   critical path and makes the format usable from any toolchain.
-7. **Reproducible builds by default.** **Done.** `documentUuid` and `now` are
-   injectable, and an unsigned container built twice from identical inputs is
-   byte-identical. It was not, quietly: every zip entry carried the clock, so
-   two builds of the same inputs differed by a few bytes for no reason anybody
-   could see. Entries now carry a fixed timestamp, built from local components
-   so it reads back the same in any timezone.
-
-   A **signed** container is not, and cannot be made so: ECDSA draws a fresh
-   nonce for every signature, so signing the same bytes twice yields two
-   different signatures, which changes the manifest, which changes the payload,
-   which changes the file. Byte comparison is therefore the wrong test for a
-   signed cartridge. The right one compares the *payload fingerprint* — the
-   document UUID and the entry digests — which is stable across builds and is
-   already computed by `payloadFingerprint`. A CLI should surface that rather
-   than inviting a comparison that will always fail.
-8. **Publish the runner.** The player is the answer for platforms that cannot
-   execute a cartridge from the filesystem. It is written and tested and has no
-   home.
 
 ## Documented limits, not yet scheduled
 
