@@ -2685,11 +2685,14 @@ What that does and does not say:
   not a slow run.** The next failure's error will name which wait expired, and
   that is the question it should be read for.
 
-**Recording the next one needs no discipline.** Playwright clears `test-results/`
-at the start of every run, so the evidence dies the moment anyone reruns. The
-cheapest fix would be for the push tier itself to copy `test-results/` and the log
-aside when a run fails. Not built; noted as the option, because "remember to keep
-the directory" is a rule that has already failed once.
+**Recording the next one needs no discipline: built, 17 September.** Playwright
+clears `test-results/` at the start of every run, so the evidence died the moment
+anyone reran. `npm run test:push` now copies a failed run's `test-results/` into
+`test-runs/<time>-<commit>/` (gitignored, newest ten kept) before it exits, and
+prints where. `scripts/lib/keep-evidence.mjs`, held by
+`tests/keep-evidence.spec.ts` in both directions: a failure is kept whole, and a
+pass keeps nothing. Each direction was proved by mutation. The next failure here
+arrives with its error already kept; read which wait ran out.
 
 #### D40 — A tier that reports success by running nothing
 

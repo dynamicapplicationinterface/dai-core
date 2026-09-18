@@ -822,6 +822,10 @@
     "tests/isolation.spec.ts": [
       "tests/isolation.spec.ts"
     ],
+    "tests/keep-evidence.spec.ts": [
+      "scripts/lib/keep-evidence.mjs",
+      "tests/keep-evidence.spec.ts"
+    ],
     "tests/kit.spec.ts": [
       "eval/candidates/gemini/dose-log/index.html",
       "scripts/generate-key.mjs",

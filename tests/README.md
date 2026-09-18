@@ -90,6 +90,14 @@ product (D32: the Firefox driver loses a frame the app is drawing in), that is
 said in the backlog, made visible in CI, and reported upstream; it is not
 papered over by running the step under test until it passes.
 
+The same holds one level up. **Rerunning a failed suite destroys the failure**,
+because Playwright clears `test-results/` at the start of every run, and the
+rerun that passes erases the error, the snapshot and the trace of the run that
+did not. That is how `static-opener` failed several times in one week without
+anyone reading why (D47). So `npm run test:push` copies a failed run's
+`test-results/` into `test-runs/<time>-<commit>/` before it exits, and keeps the
+newest ten. Read what is there before running anything again.
+
 ## The rule for moving rows between two parties
 
 **A whole-document copy carries every session in it. Merging one into the other

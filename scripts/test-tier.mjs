@@ -25,6 +25,7 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { keepEvidence } from "./lib/keep-evidence.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPORT = join(repo, "test-results", "count-gate.json");
@@ -130,6 +131,27 @@ if (tier === "push" || process.argv[2] === "push") {
 
   rmSync(REPORT, { force: true });
   const status = playwright(rest);
+  /*
+   * A failure's evidence, kept before anything else can run (D47). The next
+   * run clears test-results/, and a rerun that passes is exactly what erased
+   * every earlier static-opener failure unread.
+   */
+  if (status !== 0) {
+    let commit = "unknown";
+    try {
+      commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    } catch {
+      /* Not a repository; the run is still worth keeping. */
+    }
+    const kept = keepEvidence({
+      results: join(repo, "test-results"),
+      into: join(repo, "test-runs"),
+      status,
+      commit,
+      note: "tier: push",
+    });
+    if (kept) console.error(`\ntest-tier push: this run failed; its results are kept in ${kept}. Read them before rerunning.`);
+  }
   if (!existsSync(REPORT)) {
     console.error("test-tier push: the count gate did not report, so this run was not checked. Failing.");
     process.exit(1);

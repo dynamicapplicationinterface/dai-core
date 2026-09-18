@@ -62,3 +62,4 @@ crates/*/target/
 # Python bytecode from the reference reader
 __pycache__/
 *.pyc
+test-runs/
