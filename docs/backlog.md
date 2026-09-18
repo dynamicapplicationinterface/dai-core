@@ -3739,6 +3739,31 @@ but not a rate. D14's argument applies: this is three samples, not proof.
 **Next:** decide the WebKit test (it now exercises a path that never ran), read
 the two Firefox traces, and more runs on 1243 before calling the crash gone.
 
+**Both read, 18 September.**
+- **WebKit, `runner.spec.ts:1168`: the opener fell back to IndexedDB, because
+  OPFS itself is broken in this WebKit.** A probe on WebKit 2359 (on Windows;
+  CI is Linux, and its `UnknownError` matches) saved as the test does, then
+  looked. `getDirectory()` exists, but every OPFS operation throws `UnknownError
+  … transient reason`, even listing the root, before any file is involved.
+  IndexedDB held 4,096 bytes with byte 100 = `0x22`, the later write, which is
+  correct. On reload the opener logged `stored database read from IndexedDB` and
+  `reopen mounted the stored database`. **A person would have seen nothing
+  wrong:** the document reopened with the later save's data. The product is
+  right. The test assumes the data is in OPFS whenever `getDirectory` exists.
+  The natural fix is for it to read back through the opener's own load, which
+  falls back the same way the save does. Not changed, not skipped: a ruling.
+- **Firefox, `returning-document:318`: D32, confirmed.** The kept trace stalls
+  at line 349, `toHaveText("move1 move2")`. Bob's page logged the correct
+  decision (`copy choice … take (arriving …)`), and his last screenshot, taken
+  at the 90 s mark, shows "move1 move2", the expected text, on screen.
+- **Firefox, `returning-document:192`: unconfirmed, and its evidence is gone.**
+  Run 2's Firefox report is not among the run's artifacts; only the latest
+  attempt's survive. The three runs were made with `gh run rerun`, **which
+  replaces each attempt's artifacts with the next one's.** That is D47's
+  lesson one level up: a rerun erased the evidence of the run before it. Next
+  time, a fresh run for each sample (an empty commit per run), not a rerun in
+  place, or download each attempt's artifacts before the next starts.
+
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
 0000000001b0`, a read near a null pointer. The two dumps come from *two
