@@ -3068,6 +3068,40 @@ the name moving into the fragment), the test keeps launching the old shape and
 keeps passing. It should launch the address the opener actually writes: read
 from a real manifest, as the store-link tests in the same file already do.
 
+#### D65 — Both players in the crossed-invite tests are named "Ada", so a swapped name cannot fail them
+
+*Status: open. Seen in a CI screenshot on 18 September; the product was checked
+and is right.*
+
+**What was seen.** In run 35341691229 (Firefox, `mailbox-link-e2e:1287`, the
+D32 sighting), page A's last screenshot shows the chess seat prompt: "Ada
+invited you to play Black", with "Ada" already in the name field. The test names
+page A "Ada" only on the next line. Kept at
+`retried-firefox-whole/mailbox-link-e2e-a-game-co-07e52--order-reach-each-other-too-firefox/trace.zip`,
+screenshot `page@065375879da0fa23e22f1840e4080c49-1789733097345.jpeg` (60 s after
+Open).
+
+**What it is, read from the code.** Not placeholder text, and not a product
+defect:
+- The prompt names the *creator* of the game being joined,
+  `playerName(g, g.creator_color)` (`tests/fixture/chess/app.js:291`). That was
+  B's game.
+- The field is prefilled with this device's remembered name,
+  `store.settings().setup_you`, from setting up its own game.
+- `inviteNewGame` (`tests/mailbox-link-e2e.spec.ts:299`) sets up **both**
+  devices with `#setup-you` = "Ada". So B's game really was created by "Ada",
+  and A really did remember "Ada". The screen said something true about what it
+  was given.
+
+**The weakness is the test's.** With both players named the same, the crossed
+invite tests cannot tell a correct name from a swapped one. If the prompt ever
+named the joiner as the inviter, or put the other player's name on this side of
+the board, these tests would still pass, and a screenshot of them reads as a bug
+to anyone who looks. It is the disconnected-test shape again: an assertion that
+holds whichever way the thing goes. The fix is presumably two names in the
+fixture (A sets up as "Ada", B as "Bo", as `nameIfAsked` already does), plus one
+assertion on the prompt's text, but that is not ruled.
+
 #### D62 — `keep-evidence.spec` plants a file Playwright never writes
 
 *Status: open. From the review of `454858c..7abb896`.*
@@ -3178,7 +3212,22 @@ The page, server, config and spec are kept outside the repo, ready to extend.
 
 #### D28 — A test's browser is sometimes already closed when it starts
 
-*Status: open — watched; traces kept.*
+*Status: open. A browser crash at one site, not yet identified upstream; traces
+kept.*
+
+**Where the evidence stands (18 September).** On Linux CI it is a crash: every
+sighting there with its log kept carries `Received signal 11 SEGV_MAPERR
+0000000001b0` at the same headless-shell frames (`+0x4265412`, `+0x754bdf3`,
+`+0x6b59199`): on 15 September from two processes, and on 18 September in
+`offline-detector`, a spec with nothing in common with the others. So it is not
+tied to one test. The Windows sightings, local, have **no dump**: the browser is
+alive and logging to its last line, then gone. That they are the same crash is
+an inference from the identical symptom, not a confirmation, and the crash site
+cannot be compared across platforms without a Windows dump. It is not yet a
+*known* upstream bug either: that needs the stack symbolized against headless
+shell 1234's Chromium build, or a Playwright upgrade that moves past it, which
+is the next step below. Until then it is "a browser crash, one site, not our
+code", which is more than "unexplained" and less than "known".
 
 Three sightings, each failing on the first thing the test does, before any of
 its own code: `browser.newContext: Target page, context or browser has been
