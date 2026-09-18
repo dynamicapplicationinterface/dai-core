@@ -317,6 +317,13 @@ because each looked like a different accident and none of them was.
   which is the one case the icon exists for. D36's test encoded a defect in a
   behavior; this one encoded a defect in an address, by asserting its shape.
   What caught it was launching the address in empty storage.
+  **The fix produced a variant, recorded here:** a rename emptied a test without
+  failing it. `returning-document`'s icon test spelled the old key, so after the
+  rename its trap was never set, and it stayed green over the regression it
+  exists to catch. A test that spells a constant instead of importing it can be
+  quietly disconnected by any rename. The defense is the same as the pattern's:
+  make it produce its other answer. Here that meant putting the old behavior
+  back in and watching which version of the test noticed.
 
 **The corollary: a check like this is worse than no check.** An absent test is
 visibly absent. A test that cannot fail counts as coverage, sits in the totals,
@@ -1074,6 +1081,17 @@ was the right choice only if an installed base existed, and one did not.
 - **The two `test.fail` marks came off in the same commit.** Both tests pass
   unmarked: a store-link icon and a `/d/` icon each fetch their document on a
   wiped device and show D50's card sentence.
+- **The full push tier found two more, and one had been hollowed out, not
+  broken.** `document-icon.spec.ts:132` failed on `` `u=${uuid}` ``, a missed
+  literal. `returning-document.spec.ts:396` passed. It builds an icon address
+  by hand to set a trap: the hint names a document this device holds, and the
+  newer payload must still win. After the rename its `u=` was no longer a hint,
+  so the trap was never set and it passed without testing anything. Proved by
+  putting the old hint-first ordering back into the product. The corrected test
+  failed (`Expected "move1"`, `Received "no moves"`), and the old one passed.
+  Both now use `HINT_KEY`. The missed literals got past the first search because
+  its pattern was mangled by shell escaping; the second search matched the
+  literal text and found only store-URL `u=`s besides these two.
 
 Everything below is the entry as it stood before the ruling, kept for the
 evidence and the reasoning.

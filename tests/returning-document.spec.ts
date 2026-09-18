@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -393,7 +394,7 @@ test.describe("a newer copy arriving at its own icon's address", () => {
     await expect(inside(bob).locator("#app")).toHaveText("no moves");
 
     // Her link, with the hint an icon would carry beside it.
-    const iconAddress = `${link}${link.includes("#") ? "&" : "#"}u=${uuid}`;
+    const iconAddress = `${link}${link.includes("#") ? "&" : "#"}${HINT_KEY}=${uuid}`;
     await bob.goto("about:blank");
     await bob.goto(iconAddress);
     await through(bob);

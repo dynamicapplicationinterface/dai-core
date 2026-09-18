@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { HINT_KEY } from "../src/link.js";
 import { openFile } from "./open.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -129,7 +130,7 @@ test.describe("a document's icon, rasterised for a home screen", () => {
     }, uuid);
     expect(manifest.status).toBe(200);
     expect(manifest.body.name).toBe(name);
-    expect(manifest.body.start_url).toContain(`u=${uuid}`);
+    expect(manifest.body.start_url).toContain(`${HINT_KEY}=${uuid}`);
     expect(manifest.body.icons.some((icon) => icon.src.includes("doc-icons"))).toBe(true);
 
     // A fresh load at that address: the HTML itself — before any script runs
