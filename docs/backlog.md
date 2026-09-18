@@ -2252,6 +2252,83 @@ parser and by runtime tap. Then only the frame messages and events are
 collapsed. Where the kit's source lives, and how it reaches a document, is to
 be established as part of that; it was not checked here.
 
+**Groundwork, 18 September.**
+
+*The prefix, split by kind.* The `dai:` prefix names at least nine kinds of
+thing:
+1. **Runtime ↔ app-frame messages.** About 30, in `src/runtime/bootloader.ts`.
+2. **Window events raised for authors.** `dai:merged`.
+3. **Opener ↔ service-worker messages.** `dai:which-document`,
+   `dai:shell-updated`, `dai:mailbox-moved`.
+4. **Window-to-window handoff.** `dai:opener-ready`, `dai:handoff`, already
+   constants in `src/handoff-tab.ts`.
+5. **SQL markers.** `dai:replicated`, `dai:profile`, already owned by
+   `REPLICATED_MARKER` and `SESSION_PROFILE_MARKER` in `src/replicated.ts`.
+6. **Local-storage and lock keys.** `dai:opens:`, `dai:ground:`, `dai:resume`,
+   `dai:install-asked`, `dai:keep-after-reload`, and `dai:<uuid>` locks.
+7. **Key-derivation labels.** `dai:mailbox:key:`, `dai:mailbox:id:`,
+   `dai:mailbox:v1`. Renaming one would make every existing mailbox
+   undecryptable, so these are frozen harder than any message.
+8. **Document metadata.** `<meta name="dai:does">`, written by authors and read
+   by the card.
+9. **Mentions in author documentation and lint.** `rules.ts`, `recipe.ts`,
+   `lint.ts`.
+
+Only 1 and 2 are D69's subject. Kinds 4 and 5 already have owners. Kinds 3, 6
+and 7 are different namespaces with different owners, and are not collapsed
+here.
+
+*How the app-frame end is written.* Not in a separate file, and not in the kit.
+The frame side of the conversation is TypeScript functions inside
+`bootloader.ts` (`bridgeMain`, `frameLoader`), injected into the app frame as
+text: `"(" + bridgeMain.toString() + ")()"` (`bootloader.ts:2760–2765`). A
+function serialised that way loses its module scope, so it cannot use an
+imported constant. The kit is also text, `KIT_SOURCE`, a string in
+`src/kit.ts`, and it spells one message, `dai:used`. Every shell-to-frame send
+goes through one helper, `toFrame(...)`.
+
+*Which names are frozen.* The opener mounts every document in its **own** shell
+(`main.ts:858`, `hostShell(... HOST_RUNTIME)`), so a document's kit and author
+code always run against the opener's current runtime, whatever built them. So:
+- **internal:** names between the shell and `bridgeMain`. Both ends are in one
+  runtime bundle, always the same version, so they can be renamed;
+- **public:** names the kit or author code sends or hears (`dai:used`, the
+  `dai:merged` event). These cross versions like the host bridge and are frozen.
+
+*Two collisions found.*
+- **`dai:merged` is both the event authors listen for (`bootloader.ts:1318`,
+  `:1453`) and a message type (`:2170`, `:2175`, `:3479`).** One name, two
+  meanings.
+- `dai:insets` (the shell's answer, `:3338`) and **`dai:insets?`** (the frame's
+  question, `:2222`) are two names differing by a trailing `?`. The first
+  inventory pattern did not allow `?` and merged them.
+
+*One bridge message outside D68's owner.* `dai:isolation-report` crosses from
+the frame through the shell to the **opener** (`main.ts:2130`). It is a
+host-bridge message spelled with the frame prefix, and not in `TO_HOST`.
+
+*Live or dead, by observation.* A temporary tap, removed afterwards, watched the
+chromium suite: 700 tests, 2,933 `dai:` messages. **It was partly blind, and
+the pairs show where.** It saw everything the app frame sent up (19 names, from
+`dai:save-state` ×540 to `dai:error` ×1) and everything that reached the opener
+(`dai:isolation-report` ×3, `dai:handoff` ×1). It saw **nothing** sent from the
+shell down to the app frame, because the frame is sandboxed without same-origin
+access and cannot be listened in on. `dai:sessions-answer` arrived 258 times
+while its request, `dai:sessions`, was never seen. So the downward names
+(`dai:sessions`, `dai:flush`, `dai:apply-batch`, `dai:authored-since`,
+`dai:replica-id`, `dai:write-rules`, `dai:insets`, …) are **inferred live from
+their replies, not observed**. Names with no reply to infer from are
+*unestablished*, not dead. The service-worker surface showed no traffic at all,
+which cannot tell untested from unseen. And as with D68, observation measures
+what the tests exercise.
+
+*What authors are told.* `rules.ts` names six: `dai:merged`, `dai:replicated`,
+`dai:profile`, `dai:does`, `dai:error` (to say it never reaches the application)
+and `dai:request-share`. The website docs name five of the same. Fourteen of
+`rules.ts`'s anchors quote `dai:` text, and `tests/rules.spec.ts` checks every
+anchor still matches its file, so routing names through an owner will need
+each anchor on a routed literal re-pointed.
+
 #### D1 — The kit writes shared tables with raw SQL, and never redraws on a merge
 
 *Status: open.*
