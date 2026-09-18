@@ -320,10 +320,29 @@ because each looked like a different accident and none of them was.
   **The fix produced a variant, recorded here:** a rename emptied a test without
   failing it. `returning-document`'s icon test spelled the old key, so after the
   rename its trap was never set, and it stayed green over the regression it
-  exists to catch. A test that spells a constant instead of importing it can be
-  quietly disconnected by any rename. The defense is the same as the pattern's:
-  make it produce its other answer. Here that meant putting the old behavior
-  back in and watching which version of the test noticed.
+  exists to catch. The defense is the same as the pattern's: make it produce its
+  other answer. Here that meant putting the old behavior back in and watching
+  which version of the test noticed.
+
+**A rule, because this one has a preventable cause: tests import the constants
+they assert on.** The other instances were found by forcing a check's other
+answer. This one has a mechanism. Every literal a test spells out in place of a
+product constant (a fragment key, a storage key, a lock name, a message) is a
+wire that a rename can cut. The test keeps running, keeps passing, and the suite
+reports the same count either way. An imported constant moves with the rename;
+a spelled one silently stops being connected. So when a test needs a value the
+product defines, it imports that value. The exception is a test whose subject
+*is* the literal, such as a frozen byte vector or a published format string. It
+spells the value on purpose, and says so.
+
+**The same family, in a search: a search that did not run looks like a search
+that found nothing.** The first sweep for the old key missed both of those
+tests because shell escaping mangled its pattern. It returned no matches, which
+read as "none left", the same failure as the probe that could not tell empty
+from unreadable (D37). What found them was matching exact literal text, and for
+an edit, a script that states how many times each replacement must match and
+refuses to write anything if one count is wrong. A search that can come back
+empty should be one that can also be seen to have run.
 
 **The corollary: a check like this is worse than no check.** An absent test is
 visibly absent. A test that cannot fail counts as coverage, sits in the totals,

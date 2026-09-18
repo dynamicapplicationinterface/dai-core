@@ -98,6 +98,22 @@ anyone reading why (D47). So `npm run test:push` copies a failed run's
 `test-results/` into `test-runs/<time>-<commit>/` before it exits, and keeps the
 newest ten. Read what is there before running anything again.
 
+## The rule for values the product defines
+
+**A test imports the constants it asserts on. It does not spell them out.**
+
+A spelled-out literal is a wire a rename can cut without anything failing. When
+the icon hint moved from `u` to `opener-doc` (D56), `returning-document`'s icon
+test still wrote `u=` by hand. After the rename it no longer set up the case it
+exists for, and it kept passing. Putting the old defect back into the product
+showed it would have stayed green through the very regression it guards: the
+corrected test failed on it, and the spelled-out one did not notice. An imported
+`HINT_KEY` moves with a rename; a typed `"u"` stays behind and still runs.
+
+The exception is a test whose subject is the literal: a frozen byte vector, a
+published format string, a sentence a person reads. That test spells the value
+on purpose, because the value itself is what is being held fixed.
+
 ## The rule for moving rows between two parties
 
 **A whole-document copy carries every session in it. Merging one into the other
