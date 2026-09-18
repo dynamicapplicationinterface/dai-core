@@ -513,6 +513,10 @@
       "src/unzip.ts",
       "tests/fragment-keys.spec.ts"
     ],
+    "tests/fragment-wire.spec.ts": [
+      "src/fragment.ts",
+      "tests/fragment-wire.spec.ts"
+    ],
     "tests/frame-hold.spec.ts": [
       "apps/runner/",
       "src/bridge.ts",
@@ -1106,6 +1110,24 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "tests/mailbox-http.spec.ts"
+    ],
+    "tests/mailbox-labels.spec.ts": [
+      "src/cbor.ts",
+      "src/container.ts",
+      "src/core.ts",
+      "src/cose.ts",
+      "src/format.ts",
+      "src/fragment.ts",
+      "src/kit.ts",
+      "src/mailbox.ts",
+      "src/refusals.ts",
+      "src/replicated.ts",
+      "src/schema.ts",
+      "src/store.ts",
+      "src/test-keys.ts",
+      "src/unfurl.ts",
+      "src/unzip.ts",
+      "tests/mailbox-labels.spec.ts"
     ],
     "tests/mailbox-link-e2e.spec.ts": [
       "apps/runner/",

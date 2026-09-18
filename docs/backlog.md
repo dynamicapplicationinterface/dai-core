@@ -2518,7 +2518,7 @@ commit every run under `eval/candidates/` as the method says.
 
 #### D75 — What can never change without breaking documents already out there
 
-*Status: open. A list, and where each item is protected, written 18 September.*
+*Status: open. The link-field and key-derivation gaps are closed (`tests/fragment-wire.spec.ts`, `tests/mailbox-labels.spec.ts`, 18 September); the SQL markers, `window.dai` and refusal codes are not.*
 
 **What it means to a person:** these are the things that, if changed, make a
 document, link or icon someone already has stop working, with nothing to tell
@@ -2532,8 +2532,8 @@ consistent rename, which is exactly the dangerous change.
 |---|---|---|---|
 | Host bridge names (29) | `src/bridge.ts` | `tests/bridge-wire.spec.ts` writes every value out | none |
 | Frame public names (`dai:merged`, `dai:used`) | `src/frame.ts` `FRAME_PUBLIC` | `tests/frame-wire.spec.ts` | none |
-| Link fragment fields (`a`; `h k u c s`; `opener-doc`) | `src/fragment.ts` | collision check at load, and `fragment-keys.spec` holds the constants to the registry | **no test writes the values out**: a consistent rename of `h` would pass everything and break every link already sent |
-| Key-derivation labels | `dai:mailbox:key:`, `dai:mailbox:id:` (`src/mailbox.ts`), `dai:mailbox:v1` (`mailbox-session.ts`) | `v1` is pinned in effect: `session-mailbox-e2e` derives with the literal | **`key:` and `id:` are pinned by nothing**; see D74 |
+| Link fragment fields (`a`; `h k u c s`; `opener-doc`) | `src/fragment.ts` | collision check at load; `fragment-keys.spec` holds the constants to the registry; **`tests/fragment-wire.spec.ts` writes every value out** | none. Proved: with `h` renamed to `x`, `fragment-keys` passed and `fragment-wire` failed |
+| Key-derivation labels | `dai:mailbox:key:`, `dai:mailbox:id:` (`src/mailbox.ts`), `dai:mailbox:v1` (`mailbox-session.ts`) | `v1`: `session-mailbox-e2e` derives with the literal. `key:` and `id:`: **`tests/mailbox-labels.spec.ts`**, known answers checked against an HKDF with the labels typed out | none. Proved: with `key:` renamed, `mailbox.spec` passed and `mailbox-labels` failed |
 | SQL markers (`dai:replicated`, `dai:profile session`) | `REPLICATED_MARKER`, `SESSION_PROFILE_MARKER` in `src/replicated.ts` | `rules.ts` anchors, and the parser's own tests | anchors hold the constant's line, not the string |
 | `<meta name="dai:does">` | read by `apps/runner/src/card.ts` | a `rules.ts` anchor on the reader | none named |
 | Container bytes (manifest, CBOR, envelope) | `src/core.ts`, `src/cose.ts` | `conformance/vectors.json`, `tests/vectors.spec.ts`, the Python reader | none |
@@ -2726,7 +2726,7 @@ sends 17. The desktop rewrite starts from the owner.
 
 #### D74 — The mailbox's key-derivation labels are wire format, and two are unpinned
 
-*Status: open. Split out of D69, 18 September.*
+*Status: fixed, 18 September. `tests/mailbox-labels.spec.ts` pins the `key:` and `id:` labels by known answer; `v1` stays pinned by `session-mailbox-e2e`.*
 
 **What it means to a person:** if one of these strings changed, every game
 already in progress would stop receiving moves, silently: the mailbox would be
