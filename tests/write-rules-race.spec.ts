@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { play } from "./chess-play.js";
+import { TO_HOST, TO_DOCUMENT } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -69,13 +70,15 @@ test.describe("write rules that arrive before the frame is listening", () => {
      * has done anything else — which is before the fetch, before the frame's
      * hello has been answered, and before the bridge exists.
      */
-    await page.evaluate((source) => {
+    // The names travel in as an argument: this runs in the page, where nothing
+    // imported here exists.
+    await page.evaluate(({ source, handshake, writeRules }) => {
       window.addEventListener("message", (event) => {
         const data = event.data as { type?: string; payload?: { sessionNonce?: string } };
-        if (data?.type !== "DAI_HOST_HANDSHAKE") return;
+        if (data?.type !== handshake) return;
         (event.source as Window).postMessage(
           {
-            type: "DAI_HOST_WRITE_RULES",
+            type: writeRules,
             sessionNonce: data.payload?.sessionNonce ?? null,
             source,
             ownCopy: true,
@@ -83,7 +86,7 @@ test.describe("write rules that arrive before the frame is listening", () => {
           "*",
         );
       });
-    }, moduleSource);
+    }, { source: moduleSource, handshake: TO_HOST.HANDSHAKE, writeRules: TO_DOCUMENT.WRITE_RULES });
 
     await page.setInputFiles("#file", container);
     await page.locator("#card-open").waitFor({ timeout: 60_000 });

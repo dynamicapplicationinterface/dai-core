@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
+import { TO_DOCUMENT, TO_HOST } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONTAINER = resolve(repo, "tests", "fixture", "fixture.dai.html");
@@ -35,11 +36,11 @@ const hostPage = (containerUrl: string, echo: "correct" | "wrong" | "none") => `
     if (!data || typeof data !== "object") return;
     window.seen.push(data.type);
 
-    if (data.type === "DAI_HOST_REFUSED") {
+    if (data.type === "${TO_HOST.REFUSED}") {
       window.refusalNonce = data.payload && data.payload.sessionNonce;
     }
 
-    if (data.type === "DAI_HOST_HANDSHAKE") {
+    if (data.type === "${TO_HOST.HANDSHAKE}") {
       window.handshakeNonce = data.payload && data.payload.sessionNonce;
       const payload =
         ${JSON.stringify(echo)} === "correct"
@@ -47,7 +48,7 @@ const hostPage = (containerUrl: string, echo: "correct" | "wrong" | "none") => `
           : ${JSON.stringify(echo)} === "wrong"
             ? { bridgeVersion: 1, sessionNonce: "not-the-one-it-sent" }
             : { bridgeVersion: 1 };
-      event.source.postMessage({ type: "DAI_HOST_HANDSHAKE_ACK", payload }, "*");
+      event.source.postMessage({ type: "${TO_DOCUMENT.HANDSHAKE_ACK}", payload }, "*");
     }
   });
 </script>`;
@@ -119,15 +120,17 @@ test.describe("the handshake nonce", () => {
     )) as string;
 
     // Armed before the application is asked, so nothing is missed in between.
-    await browser.evaluate(() => {
+    // The name travels in as an argument: this runs in the page, where nothing
+    // imported here exists.
+    await browser.evaluate((save) => {
       (window as unknown as { savedNonce: string | null }).savedNonce = null;
       window.addEventListener("message", function onSave(event: MessageEvent) {
         const data = event.data as { type?: string; sessionNonce?: string };
-        if (data?.type !== "DAI_HOST_SAVE") return;
+        if (data?.type !== save) return;
         window.removeEventListener("message", onSave);
         (window as unknown as { savedNonce: string | null }).savedNonce = data.sessionNonce ?? "";
       });
-    });
+    }, TO_HOST.SAVE);
 
     await saveFromApp(browser);
     await browser.waitForFunction(
@@ -156,13 +159,13 @@ test.describe("the handshake nonce", () => {
       { timeout: 30_000 },
     );
 
-    await browser.evaluate(() => {
+    await browser.evaluate((save) => {
       (window as unknown as { posted: boolean }).posted = false;
       window.addEventListener("message", (event: MessageEvent) => {
-        if ((event.data as { type?: string })?.type !== "DAI_HOST_SAVE") return;
+        if ((event.data as { type?: string })?.type !== save) return;
         (window as unknown as { posted: boolean }).posted = true;
       });
-    });
+    }, TO_HOST.SAVE);
 
     // The application asks, and is answered by its own container rather than
     // by a window whose acknowledgement did not check out.
@@ -185,13 +188,13 @@ test.describe("the handshake nonce", () => {
       { timeout: 30_000 },
     );
 
-    await browser.evaluate(() => {
+    await browser.evaluate((save) => {
       (window as unknown as { posted: boolean }).posted = false;
       window.addEventListener("message", (event: MessageEvent) => {
-        if ((event.data as { type?: string })?.type !== "DAI_HOST_SAVE") return;
+        if ((event.data as { type?: string })?.type !== save) return;
         (window as unknown as { posted: boolean }).posted = true;
       });
-    });
+    }, TO_HOST.SAVE);
 
     // The application asks, and is answered by its own container rather than
     // by a window whose acknowledgement did not check out.
@@ -237,8 +240,8 @@ test.describe("the handshake nonce", () => {
 
     await browser.goto(pathToFileURL(host).href);
     await browser.waitForFunction(
-      () => (window as unknown as { seen: string[] }).seen.includes("DAI_HOST_REFUSED"),
-      undefined,
+      (refused) => (window as unknown as { seen: string[] }).seen.includes(refused),
+      TO_HOST.REFUSED,
       { timeout: 30_000 },
     );
 

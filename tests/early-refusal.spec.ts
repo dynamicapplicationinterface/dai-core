@@ -6,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
+import { TO_HOST } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -95,20 +96,22 @@ test.describe("a refusal raised before the handshake", () => {
     );
 
     // The page posting to itself: the source is not the cartridge frame.
-    await page.evaluate(() => {
+    // The names travel in as an argument: this runs in the page, where nothing
+    // imported here exists.
+    await page.evaluate((refused) => {
       window.postMessage(
-        { type: "DAI_HOST_REFUSED", payload: { reason: "BOOT_FAILED", message: "Forged." } },
+        { type: refused, payload: { reason: "BOOT_FAILED", message: "Forged." } },
         "*",
       );
-    });
+    }, TO_HOST.REFUSED);
     // And the cartridge itself, after the handshake, without the nonce it was given.
     const cartridge = page.frames().find((f) => f.url().startsWith("blob:"))!;
-    await cartridge.evaluate(() => {
+    await cartridge.evaluate((refused) => {
       window.parent.postMessage(
-        { type: "DAI_HOST_REFUSED", payload: { sessionNonce: "not-the-one", reason: "BOOT_FAILED", message: "Forged." } },
+        { type: refused, payload: { sessionNonce: "not-the-one", reason: "BOOT_FAILED", message: "Forged." } },
         "*",
       );
-    });
+    }, TO_HOST.REFUSED);
     await page.waitForTimeout(500);
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await expect(page.locator("#report")).not.toContainText(/Forged/);

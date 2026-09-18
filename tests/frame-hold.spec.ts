@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { TO_HOST, TO_DOCUMENT } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -41,14 +42,16 @@ async function jobs(): Promise<string> {
 
 /** Collects the frame's answers to sessions questions, by id, with when they came. */
 async function listenForAnswers(page: Page): Promise<void> {
-  await page.evaluate(() => {
+  // The name travels in as an argument: this runs in the page, where nothing
+  // imported here exists.
+  await page.evaluate((answer) => {
     const w = window as unknown as { __answers: Record<string, number> };
     w.__answers = {};
     window.addEventListener("message", (event) => {
       const data = event.data as { type?: string; id?: string };
-      if (data?.type === "DAI_HOST_SESSIONS_ANSWER" && typeof data.id === "string") w.__answers[data.id] = performance.now();
+      if (data?.type === answer && typeof data.id === "string") w.__answers[data.id] = performance.now();
     });
-  });
+  }, TO_HOST.SESSIONS_ANSWER);
 }
 
 test("a message sent before the bridge is listening is held and answered", async ({ page }) => {
@@ -57,13 +60,13 @@ test("a message sent before the bridge is listening is held and answered", async
   await listenForAnswers(page);
   // Asked from the host's handshake handler, synchronously: before the host has
   // done anything else, and before the application's bridge can exist.
-  await page.evaluate(() => {
+  await page.evaluate(({ handshake, sessions }) => {
     window.addEventListener("message", (event) => {
       const data = event.data as { type?: string };
-      if (data?.type !== "DAI_HOST_HANDSHAKE") return;
-      (event.source as Window).postMessage({ type: "DAI_HOST_SESSIONS", id: "early" }, "*");
+      if (data?.type !== handshake) return;
+      (event.source as Window).postMessage({ type: sessions, id: "early" }, "*");
     });
-  });
+  }, { handshake: TO_HOST.HANDSHAKE, sessions: TO_DOCUMENT.SESSIONS });
   await page.setInputFiles("#file", file);
   await page.locator("#card-open").click({ timeout: 60_000 });
   await expect(page.frameLocator("#cartridge").frameLocator("#dai-app").locator("#app")).toHaveText("here", {
@@ -88,12 +91,12 @@ test("a message sent after the bridge is listening is not delayed", async ({ pag
   });
   // The bridge is up. A question now goes straight through: answered in well
   // under a second, not held for something that already happened.
-  const asked = await page.evaluate(() => {
+  const asked = await page.evaluate((sessions) => {
     const frame = document.getElementById("cartridge") as HTMLIFrameElement;
     const at = performance.now();
-    frame.contentWindow?.postMessage({ type: "DAI_HOST_SESSIONS", id: "late" }, "*");
+    frame.contentWindow?.postMessage({ type: sessions, id: "late" }, "*");
     return at;
-  });
+  }, TO_DOCUMENT.SESSIONS);
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __answers: Record<string, number> }).__answers.late ?? null), {
       timeout: 5_000,

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
+import { TO_HOST } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -128,7 +129,7 @@ test.describe("cold open", () => {
          window.timings = null;
          window.addEventListener("message", (event) => {
            const data = event.data;
-           if (data && data.type === "DAI_HOST_HANDSHAKE") window.timings = data.payload.timings;
+           if (data && data.type === "${TO_HOST.HANDSHAKE}") window.timings = data.payload.timings;
          });
        </script>`,
     );

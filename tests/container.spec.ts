@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type ConsoleMessage, type Frame, type Page } from "@playwright/test";
 import { unzipSync, zipSync } from "fflate";
 import { MANIFEST_VERSION } from "../src/core.js";
+import { TO_DOCUMENT, TO_HOST } from "../src/bridge.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CONTAINER = resolve(here, "fixture/fixture.dai.html");
@@ -849,7 +850,9 @@ test.describe("host bridge", () => {
          sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"></iframe>`,
     );
 
-    await page.evaluate((replies) => {
+    // The bridge's names travel into the page as an argument: this function is
+    // serialised and run in the browser, where nothing imported here exists.
+    await page.evaluate(({ replies, toHost, toDocument }) => {
       const win = window as unknown as Record<string, unknown>;
       win.__saves = [];
       window.addEventListener("message", (event) => {
@@ -857,32 +860,32 @@ test.describe("host bridge", () => {
           type?: string;
           payload?: { html?: string; sessionNonce?: string };
         };
-        if (data?.type === "DAI_HOST_HANDSHAKE" && replies) {
+        if (data?.type === toHost.HANDSHAKE && replies) {
           // Echoing the value the container invented is what makes this a host
           // rather than a window that happens to be listening. A container
           // ignores an acknowledgement without it, which is the whole point.
           (event.source as Window).postMessage(
             {
-              type: "DAI_HOST_HANDSHAKE_ACK",
+              type: toDocument.HANDSHAKE_ACK,
               payload: { sessionNonce: data.payload?.sessionNonce },
             },
             "*",
           );
         }
-        if (data?.type === "DAI_HOST_SAVE") {
+        if (data?.type === toHost.SAVE) {
           (win.__saves as unknown[]).push(data.payload?.html ?? "");
           if (replies) {
             // Echoing the request id, as a real host does: a reply without it
             // is not this request's reply, and the container waits for one
             // that is.
             (event.source as Window).postMessage(
-              { type: "DAI_HOST_SAVE_ACK", status: "ok", requestId: data.requestId },
+              { type: toDocument.SAVE_ACK, status: "ok", requestId: data.requestId },
               "*",
             );
           }
         }
       });
-    }, hostReplies);
+    }, { replies: hostReplies, toHost: TO_HOST, toDocument: TO_DOCUMENT });
 
     const html = readFileSync(CONTAINER, "utf8");
     await page.evaluate((source) => {
@@ -1004,7 +1007,7 @@ test.describe("host bridge hooks", () => {
     await expect.poll(async () => (await seen()).length).toBeGreaterThan(0);
 
     const messages = await seen();
-    const refusal = messages.find((m) => m.type === "DAI_HOST_REFUSED")!;
+    const refusal = messages.find((m) => m.type === TO_HOST.REFUSED)!;
     expect(refusal).toBeTruthy();
     expect((refusal.payload as { reason: string }).reason).toBe("DIGEST_MISMATCH");
     // Named, so a host can log the document rather than an anonymous failure.
@@ -1012,16 +1015,16 @@ test.describe("host bridge hooks", () => {
     expect((refusal.payload as { bridgeVersion: number }).bridgeVersion).toBe(1);
 
     // A refusal must not be followed by a handshake: the cartridge stopped.
-    expect(messages.some((m) => m.type === "DAI_HOST_HANDSHAKE")).toBe(false);
+    expect(messages.some((m) => m.type === TO_HOST.HANDSHAKE)).toBe(false);
   });
 
   test("a healthy cartridge handshakes with a bridge version", async ({ page }) => {
     const seen = await observe(page, readFileSync(CONTAINER, "utf8"));
     await expect
-      .poll(async () => (await seen()).some((m) => m.type === "DAI_HOST_HANDSHAKE"))
+      .poll(async () => (await seen()).some((m) => m.type === TO_HOST.HANDSHAKE))
       .toBe(true);
 
-    const handshake = (await seen()).find((m) => m.type === "DAI_HOST_HANDSHAKE")!;
+    const handshake = (await seen()).find((m) => m.type === TO_HOST.HANDSHAKE)!;
     const payload = handshake.payload as {
       bridgeVersion: number;
       verified: boolean;
@@ -1033,13 +1036,13 @@ test.describe("host bridge hooks", () => {
     expect(payload.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/);
 
     // No refusal from a cartridge that is fine.
-    expect((await seen()).some((m) => m.type === "DAI_HOST_REFUSED")).toBe(false);
+    expect((await seen()).some((m) => m.type === TO_HOST.REFUSED)).toBe(false);
   });
 
   test("signals closing when the document goes away", async ({ page }) => {
     const seen = await observe(page, readFileSync(CONTAINER, "utf8"));
     await expect
-      .poll(async () => (await seen()).some((m) => m.type === "DAI_HOST_HANDSHAKE"))
+      .poll(async () => (await seen()).some((m) => m.type === TO_HOST.HANDSHAKE))
       .toBe(true);
 
     // Navigating the frame away is what a host does when it swaps cartridges.
@@ -1048,7 +1051,7 @@ test.describe("host bridge hooks", () => {
     });
 
     await expect
-      .poll(async () => (await seen()).some((m) => m.type === "DAI_HOST_CLOSING"))
+      .poll(async () => (await seen()).some((m) => m.type === TO_HOST.CLOSING))
       .toBe(true);
   });
 });

@@ -209,6 +209,7 @@
       "tsup.config.ts"
     ],
     "tests/cold-open.spec.ts": [
+      "src/bridge.ts",
       "tests/cold-open.spec.ts",
       "website/public/sample-intact.dai"
     ],

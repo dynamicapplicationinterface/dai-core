@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { TO_HOST } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -76,9 +77,11 @@ test.describe("an application's own share button", () => {
 
     // Posted straight at the host, skipping the shell that mints the nonce —
     // the shape a forgery from an unrelated window would take.
-    await page.evaluate(() => {
-      window.postMessage({ type: "DAI_HOST_REQUEST_SHARE", sessionNonce: "not-a-real-one" }, "*");
-    });
+    // The names travel in as an argument: this runs in the page, where nothing
+    // imported here exists.
+    await page.evaluate((requestShare) => {
+      window.postMessage({ type: requestShare, sessionNonce: "not-a-real-one" }, "*");
+    }, TO_HOST.REQUEST_SHARE);
     await page.waitForTimeout(500);
     await expect(page.locator("#send-sheet")).toBeHidden();
   });
