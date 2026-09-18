@@ -3709,6 +3709,36 @@ closed`.
   the same distance past a null pointer. Two tests in a row fits one browser
   death taking out the tests after it, as on 15 September.
 
+**The upgrade test, 18 September: no crash in three runs on the next build.**
+Draft PR #4 (branch `d28-playwright-1.63`, not merged) moved Playwright from
+1.62.1 to 1.63.0. That pins `chromium-headless-shell` 1243 (Chromium
+153.0.8010.12), Firefox 1543 and WebKit 2359. Full CI ran three times (run
+35393599569, attempts 1–3). Chromium passed 1,078 of 1,078 each time, with no
+retries, no `newContext … closed`, and no crash signal; the build was confirmed
+1243 in every log. Against the history (sightings on 13, 14, 15, 16 and 18
+September on build 1234, some runs with two), three clean runs are encouraging
+but not a rate. D14's argument applies: this is three samples, not proof.
+
+**The upgrade is not clean, for other reasons, and is not ready to merge.**
+- **WebKit, deterministic, all three runs:** `runner.spec.ts:1168`, "two saves
+  at once both land". Its OPFS read-back is guarded by "where the harness
+  exposes OPFS", and its comment says Playwright's WebKit has no
+  `getDirectory`. WebKit 2359 does, so the branch now runs on WebKit and
+  `getFileHandle` fails with `UnknownError: The operation failed for an unknown
+  transient reason`. The saves themselves reported `saved: true` and released
+  their locks. Not established: whether WebKit's OPFS under Playwright is
+  unreliable, or the opener fell back to IndexedDB so there is no file to read.
+  The latter is D49's inventory question on a real engine. This is an
+  environment fact the tests relied on (D49's tests stub the Storage API for
+  the same reason), and it changes with the upgrade.
+- **Firefox, intermittent:** `returning-document:192` (run 2, failed and failed
+  its retry) and `:318` (run 3, passed on retry), both 90 s timeouts, the shape
+  D32 has shown in this file. Their traces were not read, so D32-shaped, not
+  D32.
+
+**Next:** decide the WebKit test (it now exercises a path that never ran), read
+the two Firefox traces, and more runs on 1243 before calling the crash gone.
+
 **What the kept trace says (15 September): Chromium crashed.** Each error context
 carries the browser's own crash dump: `Received signal 11 SEGV_MAPERR
 0000000001b0`, a read near a null pointer. The two dumps come from *two
