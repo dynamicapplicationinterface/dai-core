@@ -3241,7 +3241,9 @@ trusted.
 
 #### D47 — `static-opener` fails in full local runs, and nobody has read why
 
-*Status: open.*
+*Status: fixed, 18 September. The teardown closes its servers' connections before
+closing the servers. Which connection held it is still not established; see
+below.*
 
 Open. `tests/static-opener.spec.ts:147`, "a /d/ link on a plain static host opens
 the document", has failed in the full local `test:push` run several times this
@@ -3301,6 +3303,18 @@ connections explicitly (`server.closeAllConnections()` before `close()`), or
 bound the teardown. Either takes a teardown hang off the test's clock. To
 confirm the cause first, log `server.getConnections()` at close time on the
 next failure.
+
+**Fixed, 18 September.** The failure itself cannot be reproduced on demand: the
+test passes alone in about a second, and hung only under a full run's load. The
+kept failing run is its evidence. What *was* reproduced on demand is the
+mechanism. A small script had a page hold a request open to a Node server, then
+timed `server.close()` as the test does it. Without the fix, it was still
+waiting when the 10 s bound ran out. With `closeAllConnections()` first, it
+closed in 0 ms. The fix is applied to all three teardowns in
+`static-opener.spec.ts` (the first describe's `afterAll`, and the `/d/` test's
+opener and store servers), since all three had the same hazard. Closing open
+connections at shutdown is correct whichever connection it was. That question
+stays open, and the service worker stays the suspect.
 
 **Recording the next one needs no discipline: built, 17 September.** Playwright
 clears `test-results/` at the start of every run, so the evidence died the moment

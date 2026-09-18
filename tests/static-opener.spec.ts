@@ -75,6 +75,9 @@ test.describe("the opener on a host that does nothing", () => {
   });
 
   test.afterAll(async () => {
+    // Connections closed first, so a request in flight cannot hold the server
+    // open until the test times out (D47; the full note is in the /d/ test).
+    server?.closeAllConnections();
     await new Promise<void>((closed) => server?.close(() => closed()));
   });
 
@@ -238,6 +241,17 @@ test.describe("a /d/ link on a plain static host", () => {
       const neverLoaded = [...aborted].filter((url) => !loadedOk.has(url)).map((url) => new URL(url).pathname);
       expect(neverLoaded, `aborted and never loaded: ${neverLoaded.join(", ")}`).toEqual([]);
     } finally {
+      /*
+       * Close every connection before closing the server (D47). server.close()
+       * calls back only once every connection has ended, and the page is still
+       * open until this block returns: a request in flight from it, such as the
+       * opener's service worker fetching in the background, held the server
+       * open until the 90 s test timeout, after every assertion had passed.
+       * Reproduced on demand with a page holding a request open: without this,
+       * close() was still waiting at a 10 s bound; with it, 0 ms.
+       */
+      opener.closeAllConnections();
+      store.closeAllConnections();
       await new Promise<void>((done) => opener.close(() => done()));
       await new Promise<void>((done) => store.close(() => done()));
     }
