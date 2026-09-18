@@ -2221,6 +2221,18 @@ names. Moving it changes the runtime bundle and so the host fingerprint. D69's
 collapse of the `dai:*` names will change them anyway, so both go in one pass,
 one new host.
 
+#### D76 — The runtime could expose its public event names to authors
+
+*Status: parked — a possible later addition, ruled out of D69 (18 September).*
+
+Authors cannot import from `src/`, so today they learn `dai:merged` from the
+model file (`src/rules.ts`, whose anchors point at `src/frame.ts`). The runtime
+could also expose the public names, for example `window.dai.events.MERGED`, so
+an application references the runtime's own value and not a string it typed.
+Not done: it is an API addition, and a new public surface is itself frozen the
+day it ships (D75). Un-parks if an author's typed name is ever the cause of a
+bug.
+
 #### D69 — The runtime's messages to the app frame have no owner either
 
 *Status: open. Ruled to follow D68: after the bridge names have their owner.*
@@ -2490,6 +2502,37 @@ commit every run under `eval/candidates/` as the method says.
 
 ### The specification
 
+#### D75 — What can never change without breaking documents already out there
+
+*Status: open. A list, and where each item is protected, written 18 September.*
+
+**What it means to a person:** these are the things that, if changed, make a
+document, link or icon someone already has stop working, with nothing to tell
+them why. Every document carries its own runtime, the opener keeps every earlier
+host, and a link or icon lives as long as someone keeps it. So these are frozen.
+Each needs a check that fails if it changes. A check that only compares the
+code with itself (a registry against its own constants) cannot catch a
+consistent rename, which is exactly the dangerous change.
+
+| Surface | Where it is defined | What protects it | Gap |
+|---|---|---|---|
+| Host bridge names (29) | `src/bridge.ts` | `tests/bridge-wire.spec.ts` writes every value out | none |
+| Frame public names (`dai:merged`, `dai:used`) | `src/frame.ts` `FRAME_PUBLIC` | `tests/frame-wire.spec.ts` | none |
+| Link fragment fields (`a`; `h k u c s`; `opener-doc`) | `src/fragment.ts` | collision check at load, and `fragment-keys.spec` holds the constants to the registry | **no test writes the values out**: a consistent rename of `h` would pass everything and break every link already sent |
+| Key-derivation labels | `dai:mailbox:key:`, `dai:mailbox:id:` (`src/mailbox.ts`), `dai:mailbox:v1` (`mailbox-session.ts`) | `v1` is pinned in effect: `session-mailbox-e2e` derives with the literal | **`key:` and `id:` are pinned by nothing**; see D74 |
+| SQL markers (`dai:replicated`, `dai:profile session`) | `REPLICATED_MARKER`, `SESSION_PROFILE_MARKER` in `src/replicated.ts` | `rules.ts` anchors, and the parser's own tests | anchors hold the constant's line, not the string |
+| `<meta name="dai:does">` | read by `apps/runner/src/card.ts` | a `rules.ts` anchor on the reader | none named |
+| Container bytes (manifest, CBOR, envelope) | `src/core.ts`, `src/cose.ts` | `conformance/vectors.json`, `tests/vectors.spec.ts`, the Python reader | none |
+| Kept hosts | `apps/runner/public/hosts/*` | `tests/host-retention.spec.ts` | none |
+| The `window.dai` functions authors call | `bootloader.ts` `bridgeMain` | `rules.ts` anchors on some | no single list; not every function anchored |
+| Refusal codes a host records | `src/refusals`, registry | `refusal-registry.spec` checks presence | nothing stops a code being respelled |
+
+**The cheap move for each gap** is the one the two wire tests already make: one
+test per surface that writes every frozen value out in full, the allowed
+exception to importing constants. The first three gaps are small; the last two
+need their list written down first.
+
+
 Added: the specification and the refusal registry are what an author and a second
 implementer read, and they lag the code in the same way.
 
@@ -2666,6 +2709,24 @@ handles 4 names (`HANDSHAKE`, `SAVE`, `REFUSED`, `CLOSING`) and sends 2
 sends 17. The desktop rewrite starts from the owner.
 
 ### Trust, verification and offline
+
+#### D74 — The mailbox's key-derivation labels are wire format, and two are unpinned
+
+*Status: open. Split out of D69, 18 September.*
+
+**What it means to a person:** if one of these strings changed, every game
+already in progress would stop receiving moves, silently: the mailbox would be
+derived under a different key and address, and read nothing.
+
+`dai:mailbox:key:` and `dai:mailbox:id:` (`src/mailbox.ts:105–106`) and
+`dai:mailbox:v1` (`apps/runner/src/mailbox-session.ts:76`) are HKDF `info`
+labels. They are the strictest frozen surface here: stricter than a message
+name, because nothing can translate a key derived under an old label. `v1` is
+pinned in effect, since `tests/session-mailbox-e2e.spec.ts` derives with the
+literal. `key:` and `id:` are pinned by nothing. A test that derives a known key
+and address from a fixed document key, and compares with values written out in
+full, would pin all three. That is the D75 move.
+
 
 #### D31 — A document the opener has verified is verified again when it mounts
 
@@ -3305,6 +3366,31 @@ in *Not doing*; this is an addition for people who already have one.
 **Un-parks when onboarding friction is what blocks a pilot.**
 
 ### Hosts
+
+#### D72 — The opener and its service worker speak in unowned names
+
+*Status: open. Split out of D69, 18 September; not collapsed in that pass.*
+
+`dai:which-document`, `dai:shell-updated` and `dai:mailbox-moved` pass between
+the opener page and its service worker, each spelled wherever it is sent or
+heard, like the bridge names before D68. `sw.js` is plain script and cannot
+import, so an owner here needs the same route the bridge's hint took: a test
+that reads the names off the worker's real traffic. The observation tap in D69
+saw no traffic on this surface at all, which cannot tell untested from
+unexercised. That is worth knowing before the owner is built.
+
+#### D73 — The opener's storage and lock keys share the dai: prefix with everything else
+
+*Status: open. Split out of D69.*
+
+`dai:opens:`, `dai:ground:`, `dai:resume`, `dai:install-asked`,
+`dai:keep-after-reload`, and the `dai:<uuid>` document locks are local-storage
+and Web Lock names in the opener. Some are already constants in the file that
+uses them (`RESUME_KEY`, `KEEP_AFTER_RELOAD`); the head script spells
+`dai:ground:` itself (D58). They are one namespace, written from several files,
+with nothing that sees all of it: D56's shape. They are not wire format, since
+they never leave the device, but a rename strands what a person has stored
+under the old key.
 
 #### D66 — The desktop app opens one document at a time, and a second replaces the first
 
