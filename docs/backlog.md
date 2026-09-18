@@ -762,10 +762,71 @@ The message a person actually gets, `apps/runner/src/main.ts:4047`:
 once" is false for someone who did exactly that a week ago; and "it will be here
 every time after that" is the promise that has just been broken, repeated.
 
+**A correction to the premise, found while writing the sentences.** The icon is
+the had-it-and-it's-gone signal only where the icon shares storage with the
+browser. On Android and desktop it does (`installShareStorage()`): an icon is
+made from a document the device holds, so a launch for one it does not hold
+means the document was there and is gone — wiped, or removed by the person. **On
+iOS the icon has storage of its own (6.3), and its first launch has exactly the
+same shape as a wiped one.** `main.ts:4038`'s comment is written for that case,
+which is why its message is not simply wrong: it is right for an iOS icon's
+first launch and wrong for every wipe. Nothing in the page can tell the two
+apart, because a marker saying "this icon has launched before" would live in the
+storage that gets wiped. So on iOS, where eviction matters most, the sentence has
+to be the weaker one. That is a real cost and it is recorded, not designed away.
+
+Every icon launches with `#u=<uuid>` in its fragment (`launchAddress()`,
+`install.ts:136`); the link-backed one carries the link beside it, the other
+carries `?name=`. Neither says whether it has launched before.
+
+**The sentences, written before the code.** The rule for all four: say what is
+true now, never what happened (it cannot be known), and never repeat a promise
+storage has just broken. "It will be here every time after that" goes, in every
+variant.
+
+*The `?doc=`-style icon — a document that arrived as a file, no link to follow.*
+The bytes exist nowhere the opener can reach. Today's message, `main.ts:4047`, is
+the wrong statement this entry is about.
+
+- **Shared storage (Android, desktop):** "**{name} isn't on this device any more.
+  If you still have the file, open it here and this icon will open it again.**"
+  "Any more" is true for both causes, a wipe and a removal, and claims neither.
+- **iOS:** "**This icon is for {name}, and it isn't on this device. If you have
+  the file, open it here and this icon will open it.**" No "any more", because on
+  a first launch it would be false; no "once", because for someone who did
+  exactly that last week it is an accusation.
+
+*The link-backed icon.* This one recovers: it follows its link, and the document
+comes back. What it gets wrong today is silence — it lands on the card as though
+this were the first meeting, which on a shared-storage device it is not.
+
+- **Shared storage:** "**{name} wasn't on this device any more, so it was fetched
+  again from its link.**" On the card, above the app; the card's primary action
+  stays Open.
+- **iOS:** nothing new. On a first launch the ordinary card is the truth, and on a
+  wipe the same card is at least not false. A sentence that is right in only one
+  of two indistinguishable cases is not written.
+
+*Deliberately absent from all four:* any account of why ("your browser cleared
+storage" cannot be known and would be a guess stated as fact); any warning about
+the future; any mention of persistence. What a person should do so this does not
+happen again is D53's sentence, and D49's reading is where durability is shown.
+
+**Open inside this entry, not ruled:** whether the link-backed sentence should
+say what the fetched copy lacks. For a replicated document the mailbox catches
+it up; for one that is not, the copy is the document as it was when the link was
+made, and anything done on this device since is gone. A sentence that says so
+would be true and would be the first time a person hears it. It is also the
+sentence most likely to be wrong in detail, so it waits for someone to trace
+both paths rather than going into the first build.
+
 When it is picked up:
 
 1. *Does a person understand what happened?* They are actively misled, which is
    worse than the silent defects of the week of 15 September.
+4. *What can a test not see here?* Whether iOS gives an icon's first launch empty
+   storage in practice — 6.3 says so, and it has not been read on a phone since.
+   The whole iOS half rests on it.
 3. *What already-built thing does this touch?* 3.5 and `install.ts`'s `link`
    field. An icon built from a link can fetch the document again; an icon built
    from `?doc=` cannot, so the two cases get different true sentences, not one.
@@ -2498,6 +2559,29 @@ sighting explains nothing either.
 before rerunning anything.** "It passed alone" is not an explanation. A spec that
 fails only under a full run's load or ordering is saying something about load or
 ordering, and a rerun discards the only evidence of what.
+
+**17 September: a full run with the evidence kept, and it passed.** `test:push` at
+`b6ff876`, four workers, log and `test-results/` copied out before anything else
+ran: 1,057 passed, 0 failed, 2 skipped, 5.9 minutes. `static-opener.spec.ts:147`
+passed in **1.2 s**. The other two tests in the file took under a second each.
+
+What that does and does not say:
+
+- **It does not close this.** One clean run is not a rate (the D14 argument), and
+  the earlier sightings were "several times this week" across runs.
+- **It weakens the budget explanation.** The test is `test.slow()` (90 s) and wraps
+  a `compileDirectory`, a `#card-open` click with a 60 s timeout, and a `loaded`
+  wait with another. Read as code, that suggests a slow run could overrun. But
+  under the same full-run load the whole test took 1.2 s, so being somewhat slow
+  does not reach 90 s. **A failure here is a stall of about a minute at one step,
+  not a slow run.** The next failure's error will name which wait expired, and
+  that is the question it should be read for.
+
+**Recording the next one needs no discipline.** Playwright clears `test-results/`
+at the start of every run, so the evidence dies the moment anyone reruns. The
+cheapest fix would be for the push tier itself to copy `test-results/` and the log
+aside when a run fails. Not built; noted as the option, because "remember to keep
+the directory" is a rule that has already failed once.
 
 #### D40 — A tier that reports success by running nothing
 
