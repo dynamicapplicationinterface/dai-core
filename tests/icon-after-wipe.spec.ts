@@ -117,6 +117,10 @@ test.describe("an icon for a document that came by a store link", () => {
      * store and `referenceFrom` reads the uuid as a URL and gives up. What the
      * wiped device shows instead is the file-icon sentence, to someone who
      * never had a file.
+     *
+     * Do not delete it or skip it to make the suite green. A skip runs nothing
+     * (D24); this runs, and Playwright reports an unexpected pass on the day
+     * the fix lands, which is when the mark comes off.
      */
     test.fail(true, "D56: the icon's #u= hint overwrites the reference link's store URL");
     test.slow();
@@ -171,6 +175,78 @@ test.describe("an icon for a document that came by a store link", () => {
       await expect(returning).toHaveText("Chore chart wasn't on this device any more, so it was fetched again from its link.");
       // Open stays the one action.
       await expect(after.locator("#card-open")).toBeVisible();
+      await after.context().close();
+    } finally {
+      await new Promise<void>((done) => store.server.close(() => done()));
+    }
+  });
+
+  test("a /d/ link with no store in it: the icon, launched on a wiped device, fetches the document again", async ({
+    browser,
+  }) => {
+    /*
+     * The form the production opener makes: `/d/<hash>#k=<key>`, no `u=`, the
+     * store implied. The icon's hint is then the only `u` in its fragment. This
+     * is the case D56 needed run rather than read, because it decides whether
+     * every link icon in the field is affected or only those naming a store.
+     *
+     * Run unmarked first, 17 September: it failed, and the wiped device showed
+     * the file-icon sentence with nothing fetched. So every link icon is
+     * affected. Marked like its sibling, on purpose: it runs, and it flips when
+     * D56 is fixed. Do not delete it or skip it to make the suite green.
+     */
+    test.fail(true, "D56: the icon's #u= hint is read as a store URL, so a /d/ icon cannot fetch");
+    test.slow();
+    const built = await compileDirectory({
+      sourceDir: resolve(repo, "examples/chore-chart"),
+      root: repo,
+      appName: "Chore chart",
+      signingKey: KEY,
+      allowTestKey: true,
+    });
+    const root = mkdtempSync(join(tmpdir(), "dai-store-"));
+    const store = await serve(root);
+    // The default store, pointed at this one, for both devices (see storeConfig()).
+    const pointAtStore = (origin: string) => ({
+      presignUrl: `${origin}/presign-unused`,
+      publicBase: `${origin}/`,
+    });
+    try {
+      const { sealed } = await publish(built.html, fsStore({ root, baseUrl: store.origin }), RUNNER_URL);
+      // `h` is required in every reference fragment; the path must agree with it.
+      const link = `${RUNNER_URL}d/${sealed.hash}#h=${sealed.hash}&k=${sealed.key}`;
+
+      const before = await (await browser.newContext()).newPage();
+      await before.addInitScript((config) => {
+        (window as unknown as { __daiStore: unknown }).__daiStore = config;
+      }, pointAtStore(store.origin));
+      await before.goto(link);
+      await before.locator("#card-open").click({ timeout: 60_000 });
+      await expect(before.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+      let start = "";
+      await expect
+        .poll(
+          async () => {
+            start = await before.evaluate(async () => {
+              const href = document.querySelector('link[rel="manifest"]')?.getAttribute("href");
+              if (!href || !href.includes("doc-manifests")) return "";
+              const response = await fetch(href).catch(() => null);
+              return response?.ok ? ((await response.json()) as { start_url: string }).start_url : "";
+            });
+            return start;
+          },
+          { timeout: 60_000 },
+        )
+        .not.toBe("");
+      await before.context().close();
+      console.log(`D56 /d/ icon start_url: ${start.replace(sealed.key, "<key>")}`);
+
+      const after = await wipedDevice(browser, { installed: true });
+      await after.addInitScript((config) => {
+        (window as unknown as { __daiStore: unknown }).__daiStore = config;
+      }, pointAtStore(store.origin));
+      await after.goto(start);
+      await expect(after.locator("#card-returning")).toBeVisible({ timeout: 60_000 });
       await after.context().close();
     } finally {
       await new Promise<void>((done) => store.server.close(() => done()));

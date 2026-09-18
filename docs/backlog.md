@@ -217,10 +217,11 @@ file.
 
 ### The shape that keeps recurring — one thing carrying two identities
 
-Three defects this week, filed separately because they were found separately,
-are one shape. Recorded here as a pattern rather than split across three
-entries, because the codebase clearly has a habit and the next instance will
-not announce itself as a member of the family.
+Four defects, filed separately because they were found separately, are one
+shape. Recorded here as a pattern rather than split across four entries,
+because the codebase clearly has a habit and the next instance will not announce
+itself as a member of the family. At four it is a property of the codebase, not
+a coincidence.
 
 - **D36 — `savedAt` means both "when this was written" and "what it has seen".**
   A copy that only opened and saved outranks a real move made elsewhere.
@@ -231,6 +232,12 @@ not announce itself as a member of the family.
   path took `dai:<uuid>` under a local alias, so a guard reading the source
   reported it as unlocked and every writer that should have held it looked
   unprotected.
+- **D56: `u` means both "this document's id" and "the store this link fetches
+  from".** `HINT_KEY = "u"` (`src/link.ts`) and `REFERENCE_KEYS.url = "u"`
+  (`src/store.ts`) are defined in two files for one fragment. An icon's address
+  keeps the hint and loses the store address, so an icon made from a store link
+  cannot fetch its document on the one device it was built for, a device that
+  no longer holds it.
 
 **What they share.** One stored value, or one name, standing for two facts.
 Nothing throws. Each half of the meaning is individually correct, so no
@@ -255,10 +262,19 @@ about the second.
 different facts by two different callers? If so, either split it into two fields
 or give it one owner, before it is written twice.
 
+**The cheap prevention, for names: check for a collision where a name is
+defined.** D56 is the plainest case. A link's fragment is one namespace written
+by three definers: the inline carrier, `REFERENCE_KEYS`, and `HINT_KEY`, each in
+its own file, with nothing that sees all three. One registry of fragment field
+names, or one assertion that no two definers share a key, would have refused `u`
+the day the hint was added. The same applies to any namespace several modules
+write into: `localStorage` keys, `dai:` lock names, IndexedDB store names. Not
+built; recorded as the prevention.
+
 ### The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
-Five instances in one week, found in five different kinds of check. Recorded as
-one pattern because each looked like a different accident and none of them was.
+Six instances, found in six different kinds of check. Recorded as one pattern
+because each looked like a different accident and none of them was.
 
 - **A probe that could not tell "nothing" from "I could not look" (D37).** It
   returned an empty list when a dynamic import failed, then when it guessed a
@@ -291,6 +307,14 @@ one pattern because each looked like a different accident and none of them was.
   disagree, and this one encoded the loss as the spec. Reading a test's title is
   not enough; read what its assertions would require the product to do, and ask
   whether that is what anyone wants.
+- **A test that checked a thing was built, never that it worked (3.5, D56).**
+  `reference-link.spec`, "the home-screen icon for a document that came by link",
+  reads the icon's `start_url` and asserts its parts, including
+  `toContain(`u=${built.manifest.documentUuid}`)`, which is the collision that
+  breaks it. It never launches that address on a device without the document,
+  which is the one case the icon exists for. D36's test encoded a defect in a
+  behavior; this one encoded a defect in an address, by asserting its shape.
+  What caught it was launching the address in empty storage.
 
 **The corollary: a check like this is worse than no check.** An absent test is
 visibly absent. A test that cannot fail counts as coverage, sits in the totals,
@@ -1051,17 +1075,46 @@ context, as an installed app. The card never appears. The chooser shows:
 > it here and this icon will open it again.
 
 That is D50's file-icon sentence, reached because the reference was unreadable,
-with no name because a link icon carries no `?name=`. The test is marked
-`test.fail` so that it runs and flips when this is fixed.
+with no name because a link icon carries no `?name=`.
+
+**The test is marked `test.fail` on purpose. Do not delete it, skip it, or remove
+the mark to make the suite look green.** A test marked that way still runs, and it
+counts as passing only while the defect is there. When D56 is fixed, Playwright
+reports an unexpected pass, and that is the signal to take the mark off. A skip
+would run nothing and show nothing (D24). Deleting the test would remove the only
+check that launches an icon's address on a device without its document.
+
+**It belongs to both patterns in part 3.** `u` is one name carrying two identities
+(the fourth instance), and 3.5's test checked the address was built rather than
+that it worked (the sixth).
 
 `tests/reference-link.spec.ts:376` asserts the collision into the manifest,
 `expect(manifest!.start_url).toContain(`u=${built.manifest.documentUuid}`)`, and
 never launches the result on a device without the document.
 
-**Read, not run:** a `/d/<hash>` link with no store `u=` should fail the same
-way, because the icon's own `u=<uuid>` is the only `u` in its fragment. Every
-icon made from a link on the production opener would then be affected, not only
-links naming a custom store. A test with a `/d/` icon would confirm it.
+**Confirmed by running, 17 September: a `/d/<hash>` link fails the same way.**
+It was first only read, then run before any repair was designed, because it
+decides which repair helps. The test ("a /d/ link with no store in it") points
+the default store at a local one through `__daiStore`, opens
+`/d/<hash>#h=<hash>&k=<key>`, and reads the icon's real `start_url`:
+
+```
+/d/<hash>?ground=…#h=<hash>&k=<key>&u=<uuid>
+```
+
+The icon's `u=<uuid>` is the only `u` in that fragment. Launched on a wiped
+device, it fetches nothing, and the chooser shows the file-icon sentence. So
+**every link icon the production opener has ever made is affected**, not only
+icons from links that name a custom store. The test was run unmarked first, so
+the failure was read before the `test.fail` label went on.
+
+**What that does to the repair options.** A new hint key repairs nothing
+already installed, and the icons already installed are the ones that exist.
+Reading by shape where the address is read (a uuid-shaped `u` is the hint) is
+the only option of the three that repairs a `/d/` icon without touching it,
+because a `/d/` icon never had a store `u` to lose. Icons made from links that
+named a custom store would still fall back to the default store. That is a
+consequence, recorded so the ruling can weigh it. It is not the ruling.
 
 **Why it is not fixed inside D50.** Icons already on home screens carry this
 address and cannot be rewritten; only the opener that reads them can change. The
