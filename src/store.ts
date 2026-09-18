@@ -32,6 +32,7 @@
 import { ContainerError, parseContainer, thinned, type ParsedContainer } from "./container.js";
 import { descriptionOf, type Preview } from "./unfurl.js";
 import { fromBase64, sha256Hex, toBase64 } from "./core.js";
+import { FRAGMENT_KEYS } from "./fragment.js";
 
 /**
  * What a DAI relay will hold. A general file host this is not.
@@ -45,13 +46,15 @@ export const STORE_CAP = 25 * 1024 * 1024;
 
 /**
  * The fragment keys. `h` for the hash, `k` for the key, `u` for an any-host URL.
+ * Defined with every other fragment field in `fragment.ts`, which refuses a
+ * collision (D56: the icon hint once took `u` as well).
  *
  * `s` names the shared game a key opens, for a document whose games each carry
  * their own key (backlog D37). The receiving host cannot read the document's
  * tables — it holds ciphertext until the frame opens it — so the one thing it
  * must know to file the key correctly has to travel where the key does.
  */
-export const REFERENCE_KEYS = { hash: "h", key: "k", url: "u", clear: "c", session: "s" } as const;
+export const REFERENCE_KEYS = FRAGMENT_KEYS.reference;
 
 /**
  * What travels beside the blob, in the clear.

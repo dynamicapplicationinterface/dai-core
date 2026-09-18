@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { publish } from "../src/store.js";
+import { HINT_KEY } from "../src/link.js";
 import { fsStore } from "../src/store-fs.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -56,7 +57,7 @@ async function wipedDevice(browser: Browser, options: { installed: boolean; ipho
 }
 
 /** The address an icon for a file-borne document launches into, as `launchAddress()` writes it. */
-const FILE_ICON = `${RUNNER_URL}?name=Chores#u=00000000-0000-0000-0000-000000000000`;
+const FILE_ICON = `${RUNNER_URL}?name=Chores#${HINT_KEY}=00000000-0000-0000-0000-000000000000`;
 
 test.describe("an icon for a document that arrived as a file", () => {
   test("on a device whose icon shares storage, says the document is not here any more", async ({ browser }) => {
@@ -110,19 +111,13 @@ async function serve(root: string): Promise<{ server: Server; origin: string }> 
 test.describe("an icon for a document that came by a store link", () => {
   test("launched on a wiped device, fetches the document again and says so on the card", async ({ browser }) => {
     /*
-     * Expected to fail until D56 is fixed, and marked so that it runs rather
-     * than being skipped: when the fix lands this flips, and Playwright reports
-     * the unexpected pass. The icon's hint is `u=<uuid>`, and `u` is also the
-     * store-URL field of a reference link, so the icon's address strips the
-     * store and `referenceFrom` reads the uuid as a URL and gives up. What the
-     * wiped device shows instead is the file-icon sentence, to someone who
-     * never had a file.
-     *
-     * Do not delete it or skip it to make the suite green. A skip runs nothing
-     * (D24); this runs, and Playwright reports an unexpected pass on the day
-     * the fix lands, which is when the mark comes off.
+     * D56. The icon's hint was `u=<uuid>`, and `u` is also the store-URL field
+     * of a reference link, so the icon's address lost the store and
+     * `referenceFrom` read the uuid as a URL and gave up: the wiped device
+     * showed the file-icon sentence, to someone who never had a file. This
+     * test ran marked as an expected failure until the hint got a key of its
+     * own; the mark came off in the same commit as the fix.
      */
-    test.fail(true, "D56: the icon's #u= hint overwrites the reference link's store URL");
     test.slow();
     const built = await compileDirectory({
       sourceDir: resolve(repo, "examples/chore-chart"),
@@ -191,11 +186,10 @@ test.describe("an icon for a document that came by a store link", () => {
      * every link icon in the field is affected or only those naming a store.
      *
      * Run unmarked first, 17 September: it failed, and the wiped device showed
-     * the file-icon sentence with nothing fetched. So every link icon is
-     * affected. Marked like its sibling, on purpose: it runs, and it flips when
-     * D56 is fixed. Do not delete it or skip it to make the suite green.
+     * the file-icon sentence with nothing fetched, so every link icon was
+     * affected. Held as an expected failure until the fix, which removed the
+     * mark in the same commit.
      */
-    test.fail(true, "D56: the icon's #u= hint is read as a store URL, so a /d/ icon cannot fetch");
     test.slow();
     const built = await compileDirectory({
       sourceDir: resolve(repo, "examples/chore-chart"),

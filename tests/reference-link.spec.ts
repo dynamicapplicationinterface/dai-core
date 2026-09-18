@@ -7,6 +7,7 @@ import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { openFile, ejectFrom } from "./open.js";
 import { ContainerError, verifyContainer } from "../src/container.js";
+import { HINT_KEY } from "../src/link.js";
 import { openFromStore, publish, referenceFrom, sealForStore, type Sidecar, retireDigest, retireTokenFor } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";
 
@@ -373,7 +374,11 @@ test.describe("the home-screen icon for a document that came by link", () => {
       // has opens its own copy without asking the store.
       expect(manifest!.start_url).toContain(`k=${sealed.key}`);
       expect(manifest!.start_url).toContain(`h=${sealed.hash}`);
-      expect(manifest!.start_url).toContain(`u=${built.manifest.documentUuid}`);
+      expect(manifest!.start_url).toContain(`${HINT_KEY}=${built.manifest.documentUuid}`);
+      // And the store it came from, still there beside the hint. The hint once
+      // shared `u` with the store URL and replaced it (D56); asserting the
+      // address is whole is half of it, and icon-after-wipe launches it.
+      expect(manifest!.start_url).toContain(`u=${encodeURIComponent(`${a.origin}/${sealed.hash}`)}`);
       expect(manifest!.id).toContain(built.manifest.documentUuid);
     } finally {
       await new Promise<void>((done) => a.server.close(() => done()));
@@ -395,7 +400,7 @@ test.describe("the home-screen icon for a document that came by link", () => {
 
     // No link to point at, so the honest answer: the document this device
     // keeps, by its identity.
-    expect(start).toContain("u=");
+    expect(start).toContain(`${HINT_KEY}=`);
     expect(start).not.toContain("k=");
   });
 });

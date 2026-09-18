@@ -8,7 +8,7 @@
  */
 import { ContainerError, readCartridge, resealCartridge, reverify, type Cartridge } from "./cartridge.js";
 import { refatten } from "../../../src/container.js";
-import { decodeInline, hasLegacyHint, hintedUuid, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
+import { decodeInline, hasLegacyHint, HINT_KEY, hintedUuid, inlineFrom, inlineLink, LAUNCH_CAP } from "../../../src/link.js";
 import type { PastHost } from "../../../src/inline.js";
 import { linkFor } from "../../../src/sender.js";
 import { heldEngine } from "./engine.js";
@@ -601,7 +601,7 @@ async function launchDetails(): Promise<string> {
   } catch {
     /* A malformed address is itself worth seeing, below. */
   }
-  lines.push(`#u=: ${uuid || "(none)"}`);
+  lines.push(`hint (${HINT_KEY}): ${uuid || "(none)"}`);
   lines.push(`address: ${address.slice(0, 200)}`);
 
   try {
@@ -3975,8 +3975,8 @@ async function start(): Promise<void> {
     const corrected = new URL(location.href);
     corrected.searchParams.delete("doc");
     corrected.hash = `#${[
-      ...corrected.hash.replace(/^#/, "").split("&").filter((part) => part.length > 0 && !part.startsWith("u=")),
-      `u=${wanted}`,
+      ...corrected.hash.replace(/^#/, "").split("&").filter((part) => part.length > 0 && !part.startsWith(`${HINT_KEY}=`)),
+      `${HINT_KEY}=${wanted}`,
     ].join("&")}`;
     history.replaceState(history.state, "", corrected.href);
   }

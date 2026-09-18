@@ -18,6 +18,7 @@
  */
 import { parseContainer, type Supplier } from "./container.js";
 import { packInline, unpackInline, type Host, type PastHost } from "./inline.js";
+import { FRAGMENT_KEYS } from "./fragment.js";
 
 export type { Host } from "./inline.js";
 
@@ -46,8 +47,8 @@ export const INLINE_CAP = 32 * 1024;
  */
 export const LAUNCH_CAP = 1024 * 1024;
 
-/** The fragment key. `#a=` for the application itself, carried in the link. */
-export const INLINE_KEY = "a";
+/** The fragment key. `#a=` for the application itself, carried in the link. See `fragment.ts`. */
+export const INLINE_KEY = FRAGMENT_KEYS.inline.payload;
 
 /**
  * The fragment value for a document.
@@ -102,11 +103,11 @@ export async function inlineLink(
  */
 export function inlineFrom(hash: string): string | undefined {
   // Read as fields rather than as the whole fragment, because a link may now
-  // carry a `u=` hint beside the document (R7). The value itself is still held
-  // to its alphabet: a fragment that is not exactly this is not a document,
+  // carry the opener's hint beside the document (R7). The value itself is still
+  // held to its alphabet: a fragment that is not exactly this is not a document,
   // and guessing at a damaged one is how a reader opens something it should
   // have refused.
-  const value = fragmentFields(hash).get("a");
+  const value = fragmentFields(hash).get(INLINE_KEY);
   return value && /^[A-Za-z0-9\-_]+$/.test(value) ? value : undefined;
 }
 
@@ -121,8 +122,12 @@ function fragmentFields(hash: string): Map<string, string> {
   return fields;
 }
 
-/** The fragment key for the hint: which document this address is probably for. */
-export const HINT_KEY = "u";
+/**
+ * The fragment key for the hint: which document this address is probably for.
+ *
+ * Was `u`, which a store reference also uses for its URL (D56). See `fragment.ts`.
+ */
+export const HINT_KEY = FRAGMENT_KEYS.opener.hint;
 
 /**
  * The document a launch address is probably for (R7).

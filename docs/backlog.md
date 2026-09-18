@@ -268,8 +268,10 @@ by three definers: the inline carrier, `REFERENCE_KEYS`, and `HINT_KEY`, each in
 its own file, with nothing that sees all three. One registry of fragment field
 names, or one assertion that no two definers share a key, would have refused `u`
 the day the hint was added. The same applies to any namespace several modules
-write into: `localStorage` keys, `dai:` lock names, IndexedDB store names. Not
-built; recorded as the prevention.
+write into: `localStorage` keys, `dai:` lock names, IndexedDB store names.
+**Built for the fragment, 17 September:** `src/fragment.ts` holds the whole
+namespace and refuses to load on a collision (D56). The other namespaces named
+here are not covered yet.
 
 ### The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
@@ -759,8 +761,9 @@ When it is picked up:
 
 #### D50 — An icon that outlives its storage is greeted as a stranger
 
-*Status: built for an icon made from a file (17 September). The card sentence for
-an icon made from a store link is built and unreachable until D56 is fixed.*
+*Status: built, 17 September, for an icon made from a file and one made from a
+store link or a `/d/` link (the link half became reachable when D56 was fixed).
+An icon made from an inline link is not covered by the ruling; see below.*
 
 **A boundary, not a gap: on iOS the page cannot tell an icon's first launch from a
 wiped one, because any "launched before" marker lives in the storage the wipe
@@ -1021,9 +1024,10 @@ honest answer when there is no link to point at.
 
 Tested both ways in `tests/reference-link.spec.ts`.
 
-**Broken for every icon made from a store link: see D56.** The test above asserts
-the icon's `start_url`, and never launches it on a device without the document.
-Launching it is what fails.
+**Was broken for every icon made from a link; fixed 17 September (D56).** The
+test above asserted the icon's `start_url` and never launched it on a device
+without the document. `tests/icon-after-wipe.spec.ts` now launches it, for a
+store link and for a `/d/` link.
 
 **Exit not met, and cannot be met here:** an iOS device test needs an iOS
 device. Everything above is the mechanism it would exercise; what is left is
@@ -1032,7 +1036,47 @@ on.
 
 #### D56 — An icon made from a store link cannot fetch its document again
 
-*Status: open. Found by running, 17 September, while building D50. Not ruled.*
+*Status: fixed, 17 September. Found by running while building D50; ruled and
+fixed the same day. The icon hint has a key of its own, and the fragment
+namespace is defined in one file that refuses a collision.*
+
+**Ruled: a distinct hint key, and not the shape-reader.** The options below were
+weighed on the assumption that installed icons in the field needed repairing.
+**There were none; only test installs existed.** So reading `u` by shape would
+have been a compatibility path with nothing to be compatible with, and a
+permanent workaround kept alive for a problem that could be fixed cleanly while
+it was still cheap. That is why the option that repairs more was not built. It
+was the right choice only if an installed base existed, and one did not.
+
+**What was built.**
+- `src/fragment.ts` defines every fragment field in one registry,
+  `FRAGMENT_KEYS`: inline `a`; reference `h k u c s`; the opener's hint,
+  `opener-doc`. `INLINE_KEY`, `REFERENCE_KEYS` and `HINT_KEY` are derived from
+  it, so no caller's names or types changed.
+- **The collision check sits at the point of definition.** The module runs
+  `fragmentCollisions()` on its own registry when it loads and throws on a
+  duplicate. Proved both ways. On the real set it is silent
+  (`tests/fragment-keys.spec.ts`). With the real registry mutated back to the
+  defect (`hint: "u"`), nothing starts: the build behind the test servers
+  refuses with `fragment keys collide: "u" is claimed by reference.url and
+  opener.hint`, so no build or test can run on a colliding set. The spec also
+  names both claimants of a synthetic duplicate, and holds each owner's constant
+  to the registry, so no copy can drift from it unchecked.
+- **Every writer that bypassed the constant now goes through it:** the `?doc=`
+  rewrite (`main.ts`), the launch details label, and `link.ts`'s own `get("a")`.
+  The one copy that cannot import, the service worker's notification address in
+  `public/sw.js`, is held to `HINT_KEY` by `push-e2e`, which reads the
+  notification the worker actually shows.
+- **Tests stopped spelling the key.** Every `#u=`, `/[#&]u=/` and
+  `toContain("u=")` now builds from `HINT_KEY`. Six were missed by the first
+  search, and the first run of the touched specs caught them. A rename can no
+  longer leave the tests behind.
+- **The two `test.fail` marks came off in the same commit.** Both tests pass
+  unmarked: a store-link icon and a `/d/` icon each fetch their document on a
+  wiped device and show D50's card sentence.
+
+Everything below is the entry as it stood before the ruling, kept for the
+evidence and the reasoning.
 
 **What it means to a person:** the icon that 3.5 built to survive exactly this, a
 device that no longer holds the document, does not survive it. After a wipe it

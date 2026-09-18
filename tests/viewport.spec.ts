@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -212,7 +213,7 @@ test.describe("how much of the screen an application gets", () => {
     // behind the launch screen, and wait for it to say what it is - and the
     // address it then loads carries the answer, for the head script to paint
     // before the first frame of the load that counts.
-    await page.waitForURL(/[#&]u=/, { timeout: 60_000 });
+    await page.waitForURL(new RegExp(`[#&]${HINT_KEY}=`), { timeout: 60_000 });
     expect(new URL(page.url()).searchParams.get("ground")).toBe("rgb(20, 30, 40)");
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     const first = page.locator('meta[name="theme-color"]').first();

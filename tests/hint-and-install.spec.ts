@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
-import { encodeInline } from "../src/link.js";
+import { encodeInline, HINT_KEY } from "../src/link.js";
 import { openFile } from "./open.js";
 import { cutTheNetwork, WEBKIT_CANNOT_DRIVE_OFFLINE_NAV } from "./offline.js";
 
@@ -73,7 +73,7 @@ test.describe("the hint only says which entry to try", () => {
     // ignore a link arriving while a document was open, so this test reloaded
     // by hand; it now saves the open document and reloads at the link itself,
     // and a second reload from here would race it. Wait for what that brings.
-    await page.goto(`${RUNNER_URL}#a=${value}&u=${held.uuid}`);
+    await page.goto(`${RUNNER_URL}#a=${value}&${HINT_KEY}=${held.uuid}`);
 
     // The card, not a mount: this is a document this device has not seen.
     const card = page.locator("#card-open");
@@ -97,7 +97,7 @@ test.describe("the hint only says which entry to try", () => {
     // The other half of "only a hint": a wrong guess costs nothing. An address
     // for a document that is not here opens the chooser, not an error and not
     // somebody else's document.
-    await page.goto(`${RUNNER_URL}#u=3f2504e0-4f89-41d3-9a0c-0305e82c3301`);
+    await page.goto(`${RUNNER_URL}#${HINT_KEY}=3f2504e0-4f89-41d3-9a0c-0305e82c3301`);
     await expect(page.locator("#open")).toBeVisible({ timeout: 60_000 });
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
   });
@@ -134,7 +134,7 @@ test.describe("an icon for a document this device holds", () => {
     // request aborted and recorded, so a held open that touches the network
     // fails by name (see tests/offline.ts).
     const net = await cutTheNetwork(context, page);
-    await page.goto(`${RUNNER_URL}#u=${held.uuid}`);
+    await page.goto(`${RUNNER_URL}#${HINT_KEY}=${held.uuid}`);
     await page.reload();
 
     // Straight in: a document this device holds is not a document from a

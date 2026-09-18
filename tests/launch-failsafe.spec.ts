@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { HINT_KEY } from "../src/link.js";
 
 const RUNNER_URL = "http://localhost:5175/";
 
@@ -43,7 +44,7 @@ test.describe("the launch fail-safe", () => {
     // The splash, standing with nothing mounted — the state the SW leaves a
     // home-screen launch in — and the guard armed at the address the relaunch
     // was trying to reach.
-    const target = `${RUNNER_URL}#u=00000000-0000-4000-8000-000000000000`;
+    const target = `${RUNNER_URL}#${HINT_KEY}=00000000-0000-4000-8000-000000000000`;
     await page.evaluate((to) => {
       document.body.classList.add("launching");
       (window as unknown as { __runner: { guardLaunch(t: string): void } }).__runner.guardLaunch(to);
@@ -66,7 +67,7 @@ test.describe("the launch fail-safe", () => {
     // The gesture: a plain navigation to the launch address.
     await page.locator("#launch-open").click();
     await expect.poll(() => page.evaluate(() => location.hash)).toBe(
-      "#u=00000000-0000-4000-8000-000000000000",
+      `#${HINT_KEY}=00000000-0000-4000-8000-000000000000`,
     );
   });
 
@@ -84,7 +85,7 @@ test.describe("the launch fail-safe", () => {
       );
     });
 
-    const target = `${RUNNER_URL}#u=11111111-1111-4111-8111-111111111111`;
+    const target = `${RUNNER_URL}#${HINT_KEY}=11111111-1111-4111-8111-111111111111`;
     await page.evaluate((to) => {
       document.body.classList.add("launching");
       (window as unknown as { __runner: { guardLaunch(t: string): void } }).__runner.guardLaunch(to);
@@ -98,7 +99,7 @@ test.describe("the launch fail-safe", () => {
     // The six things a phone with no inspector cannot otherwise report.
     await expect(panel).toContainText(/build:\s*\S/);
     await expect(panel).toContainText("step:");
-    await expect(panel).toContainText("#u=: 11111111-1111-4111-8111-111111111111");
+    await expect(panel).toContainText(`hint (${HINT_KEY}): 11111111-1111-4111-8111-111111111111`);
     await expect(panel).toContainText(/library holds it:\s*(yes|no|n\/a)/);
     await expect(panel).toContainText(/service worker controls page:\s*(yes|no|unavailable)/);
     // The error captured before the panel ever opened.
@@ -169,7 +170,7 @@ test.describe("the launch fail-safe", () => {
         document.body.classList.remove("launching");
         document.body.classList.add("loaded");
       }, 300);
-    }, `${RUNNER_URL}#u=abc`);
+    }, `${RUNNER_URL}#${HINT_KEY}=abc`);
 
     // The guard fires well after the mount; because the document loaded, it must
     // do nothing. Waited past the stall threshold to be sure it stays quiet.

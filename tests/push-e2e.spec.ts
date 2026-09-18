@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Browser, type BrowserContext, type CDPSession, type FrameLocator, type Page } from "@playwright/test";
+import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
 import type { Vapid } from "../apps/relay/src/push.js";
 import { serveRelay, vapidKeys, verifyVapid, type ServedRelay } from "./relay-memory.js";
@@ -293,8 +294,9 @@ test("a move made while the other app is closed arrives as a notification that o
   await expect.poll(async () => (await readNotes()).length, { timeout: 30_000 }).toBe(1);
   const [note] = await readNotes();
   expect(note!.title.length).toBeGreaterThan(0);
-  expect(note!.url).toMatch(/^\/#u=[0-9a-f-]{36}$/);
-  expect(note!.tag).toBe(note!.url.slice("/#u=".length));
+  // The worker's copy of the hint key, held to HINT_KEY here (D56).
+  expect(note!.url).toMatch(new RegExp(`^/#${HINT_KEY}=[0-9a-f-]{36}$`));
+  expect(note!.tag).toBe(note!.url.slice(`/#${HINT_KEY}=`.length));
 
   // Following it opens the game with Bo's move in it, and asks nothing.
   await inspector.close();
@@ -358,7 +360,7 @@ test("a move made while the other app is closed arrives as a notification that o
   // releases its push once the last row is sent and read, and stops asking the
   // relay about that mailbox at all.
   const adaGame = await ctxA.newPage();
-  await adaGame.goto(`${RUNNER_URL}#u=${uuid}`);
+  await adaGame.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appAda = appIn(adaGame);
   await expect(appAda.locator("#board")).toBeVisible({ timeout: 60_000 });
   await adaGame.evaluate(({ base, key }) => {
@@ -469,7 +471,7 @@ test("an opener update keeps push; removing the document releases it", async ({ 
   expect(relay.subscriptions(address!).length, "still subscribed at the relay").toBe(1);
 
   // Removing the document from this device releases its push everywhere.
-  await page.goto(`${RUNNER_URL}#u=${uuid}`);
+  await page.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   await expect(appIn(page).locator("#board")).toBeVisible({ timeout: 60_000 });
   page.once("dialog", (dialog) => void dialog.accept());
   await page.locator("#more").click();
@@ -573,7 +575,7 @@ test("the badge counts games waiting on this player, clears on open and after a 
 
   // Eve opens it: the badge clears, and her app reports the game waiting on her.
   const again = await ctxA.newPage();
-  await again.goto(`${RUNNER_URL}#u=${uuid}`);
+  await again.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appAgain = appIn(again);
   await expect(appAgain.locator("#board")).toBeVisible({ timeout: 60_000 });
   await again.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
@@ -613,7 +615,7 @@ test("the badge counts games waiting on this player, clears on open and after a 
 
   // Eve opens it and moves: after her own move nothing waits, and the badge is clear.
   const third = await ctxA.newPage();
-  await third.goto(`${RUNNER_URL}#u=${uuid}`);
+  await third.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appThird = appIn(third);
   await expect(appThird.locator("#board")).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => (await entries())[0]?.shown, { timeout: 30_000 }).toBe(0);

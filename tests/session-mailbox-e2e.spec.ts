@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
+import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
 import { parseContainer } from "../src/container.js";
 import { deriveSessionMailbox, openBatch } from "../src/mailbox.js";
@@ -303,7 +304,7 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   );
   await pageA.close();
   const reopened = await ctxA.newPage();
-  await reopened.goto(`${RUNNER_URL}#u=${uuid}`);
+  await reopened.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appAgain = appIn(reopened);
   await expect(appAgain.locator("#game-list")).toBeVisible({ timeout: 60_000 });
   await appAgain.locator("#game-list").selectOption({ label: "Ada v Bo" });

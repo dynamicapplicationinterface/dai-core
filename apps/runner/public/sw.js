@@ -176,7 +176,7 @@ async function clean(response) {
 /**
  * The document the page said the next load would be about.
  *
- * The hint lives in the fragment now (`#u=`), because a query parameter is
+ * The hint lives in the fragment now (`#opener-doc=`), because a query parameter is
  * sent to the server and an icon's address is launched every time somebody
  * taps it. A worker cannot read a fragment — it is never transmitted, so the
  * request here does not have one — which would leave the head undescribed and
@@ -450,7 +450,9 @@ async function handlePush() {
         await self.daiBadge.pushed(uuid, game).catch(() => {});
       }
       const name = await documentName(uuid);
-      const data = { url: `/#u=${uuid}` };
+      // The hint key is HINT_KEY in src/fragment.ts; this script cannot import it,
+      // so push-e2e holds this copy to it by reading the notification (D56).
+      const data = { url: `/#opener-doc=${uuid}` };
 
       if (fresh && !onScreen) {
         await self.registration.showNotification(name, { body: "Something new arrived.", tag: uuid, renotify: true, data });
