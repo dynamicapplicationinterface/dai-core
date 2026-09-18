@@ -638,13 +638,96 @@ an answer either, because a rerun would measure the same unknown.
 differently.** A grant read in one says nothing about the other, so both need
 reading, and a device check has to say which context it was in.
 
+**The screen, written before the code.**
+
+*What it is for:* letting a person — or a person holding a phone days later, with
+no cable and no inspector — say whether this device's documents are durable, and
+which context they are answering for.
+
+*The one thing a person does:* read one line. There is no control, because there
+is no decision to make here: the browser grants persistence or it does not, and a
+button that asked again would be a control that usually does nothing.
+
+*What they see, and where:* one quiet line beside the build stamp, in the same two
+places and for the same reason the stamp is in both — the menu sheet
+(`#sheet-version`), and the chooser (`#chooser-version`), because the person who
+most needs to read this is the one whose document is gone, and that person is
+looking at the chooser, which has no menu. It names the context and the answer:
+`kept on this device · installed` / `not kept · tab`. Failure is silence, exactly
+as `showVersion()` does it: a browser that cannot answer says nothing rather than
+apologising for a diagnostic nobody asked for.
+
+*It survives a page load by being re-read, not remembered.* `persisted()` is a
+live question with a live answer, so the line is gathered on render. Storing the
+last reading would be worse than useless: the store holding it is the store under
+discussion, and a wipe would take the reading with the thing it described.
+
+*Deliberately absent:* any explanation of eviction on the chooser, any "your data
+may be deleted" warning, and any request button. The line is a reading. What a
+person should *do* about an unpersisted device is D53's sentence — keep the link —
+and it belongs where that is said, not here.
+
+The launch details panel (`launchDetails()`) gets the same two facts as a line,
+which is free: it already exists for exactly this argument ("a phone has no
+inspector, so 'it hangs' is all a report can say without this"), and a stalled
+launch on a wiped device is a case worth having it in. That is a second surface,
+not the primary one — it only appears when a launch stalls.
+
 When it is picked up:
 
 1. *Does a person understand what happened?* No, and neither does anyone else.
    This is the entry that makes the rest of the cluster answerable.
-4. *What can a test not see here?* All of it. Persistence is a browser decision
-   made from operating-system state and engagement history; no test can grant it
-   or observe the real one.
+3. *What already-built thing does this touch?* `showVersion()` and the two version
+   slots; `standalone()` in `platform.ts`, which already knows the context and is
+   used for nothing like this today.
+4. *What can a test not see here?* Whether a grant is real. Persistence is a
+   browser decision made from operating-system state and engagement history, and
+   no test can grant it or observe the true one — headless Chromium grants it
+   freely, which is the opposite of the case that matters. What a test *can* see
+   is that both contexts are distinguished, that the result is recorded rather
+   than discarded, and that a browser without the API says nothing. Prove the
+   guard both ways: the line must be absent when the API is missing, not blank.
+
+#### D55 — When persistence should be asked for
+
+*Status: open. Separated from D49 deliberately.*
+
+**What it means to a person:** whether the browser says yes when the opener asks
+for durable storage depends almost entirely on when it asks, and today it asks at
+the worst available moment.
+
+D49 is about reading the answer. This is about the question: `persist()` currently
+runs at page boot, before any document is open, with no engagement, no install
+signal and nothing the person has done with this origin. That is the request least
+likely to be granted, made at the only moment the code makes it.
+
+The candidates, none ruled:
+
+- **After a first save.** The person has made something. Strongest engagement
+  signal, and the latest of the three.
+- **After a first open.** Earlier, weaker, but it covers a document that is read
+  and never written.
+- **On install / on keeping a document as an app.** The clearest statement of
+  intent a person ever makes here, and the moment Chrome's own heuristics weight
+  most heavily. It is also the context that matters most (see D49: the installed
+  context is the one a home-screen icon launches into).
+
+It could be more than one of these; asking again after a refusal is cheap and the
+answer can change as engagement accumulates.
+
+**Why it is not folded into D49.** D49 is a reading, and it is correct whatever
+this is ruled to be. Changing *when* the request happens changes the outcome being
+measured, so doing both in one commit would mean the first reading taken is a
+reading of a thing that has just changed. D49 first, then a reading, then this.
+
+When it is picked up:
+
+2. *What does this change about what someone else can see or infer?* Nothing; the
+   request is local and invisible.
+4. *What can a test not see here?* The thing that matters. No test can tell a
+   well-timed request from a badly timed one, because the heuristic is the
+   browser's and a test browser grants freely. This one is answered by a device
+   reading before and after, which is why it waits on D49.
 
 #### D50 — An icon that outlives its storage is greeted as a stranger
 

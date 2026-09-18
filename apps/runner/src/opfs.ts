@@ -18,6 +18,80 @@ import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/identity.js";
 import { releasePush } from "./push.js";
+import { standalone } from "./platform.js";
+
+/**
+ * Which storage this reading is about (D49).
+ *
+ * An installed app and a tab are separate contexts and the browser can grant
+ * them persistence differently — on iOS they are separate storage outright
+ * (6.3), and everywhere else the install is the context with the stronger
+ * claim on being kept. So a reading that does not name its context is not a
+ * reading: "persisted: true" answers a question nobody asked.
+ */
+export type StorageContext = "installed" | "tab";
+
+export interface PersistenceReading {
+  context: StorageContext;
+  /** Whether this origin's storage is durable, as the browser answers right now. */
+  kept: boolean;
+}
+
+/**
+ * Whether this device's documents are durable, and which context is answering.
+ *
+ * `null` when the browser has no answer to give — no Storage API, or a
+ * `persisted()` that throws. That is deliberately different from `kept: false`:
+ * "the browser says it may evict this" and "the browser will not say" are not
+ * the same fact, and the D49 surface shows nothing at all for the second rather
+ * than printing a `false` it did not get. This is the distinction the whole
+ * cluster turns on — an empty store and an unreadable store look alike, and
+ * every place that has conflated them is an entry in the backlog.
+ *
+ * Read live, never cached. The value can change between page loads, and the
+ * store that would hold a cached copy is the store under discussion: a wipe
+ * would take the reading along with the thing it described.
+ */
+export async function readPersistence(): Promise<PersistenceReading | null> {
+  const context: StorageContext = standalone() ? "installed" : "tab";
+  if (typeof navigator === "undefined") return null;
+  if (!navigator.storage || typeof navigator.storage.persisted !== "function") return null;
+  try {
+    return { context, kept: await navigator.storage.persisted() };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask the browser to keep this origin's storage, and say what it answered.
+ *
+ * The result used to be discarded — `void` on the promise and an empty `catch`
+ * — so nothing on the device recorded whether either context was durable, and
+ * the seven-day phone reading measured an install of unknown status (D49).
+ * The request itself is unchanged here, including when it is made; *when* to
+ * ask is D55, and moving it would change the thing the first readings measure.
+ *
+ * `null` on a browser that cannot be asked, for the same reason as above.
+ */
+export async function askToPersist(): Promise<PersistenceReading | null> {
+  const context: StorageContext = standalone() ? "installed" : "tab";
+  if (typeof navigator === "undefined") return null;
+  if (!navigator.storage || typeof navigator.storage.persist !== "function") return null;
+  try {
+    return { context, kept: await navigator.storage.persist() };
+  } catch {
+    // A refusal can arrive as a rejection rather than `false`; either way the
+    // browser has told us something, and "not kept" is what it told us.
+    return { context, kept: false };
+  }
+}
+
+/** One line for a breadcrumb or a panel: what was read, and about which storage. */
+export function persistenceLine(reading: PersistenceReading | null): string {
+  if (!reading) return "storage persistence: the browser will not say";
+  return `storage persistence (${reading.context}): ${reading.kept ? "kept" : "not kept"}`;
+}
 
 export interface LibraryItem {
   documentUuid: string;

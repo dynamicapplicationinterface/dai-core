@@ -69,6 +69,9 @@ import {
   publisherStore,
   sigstoreRoots,
   saveDatabaseToOpfs,
+  askToPersist,
+  readPersistence,
+  persistenceLine,
   type LibraryItem,
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
@@ -89,12 +92,25 @@ let mountedUrl: string | undefined;
 let loaded: Cartridge | undefined;
 let handshakeEstablished = false;
 
-// Storage Eviction Defense: call navigator.storage.persist() on boot
-if ("storage" in navigator && typeof navigator.storage?.persist === "function") {
-  void navigator.storage.persist().catch(() => {
-    // Permission denied or non-fatal failure
-  });
-}
+/*
+ * Ask the browser to keep this origin's storage, and record what it answered (D49).
+ *
+ * The answer used to be thrown away, which is why the seven-day phone reading
+ * cannot be interpreted: it measured an install whose persistence status was
+ * never known, and what it saw is the expected outcome for an unpersisted one.
+ * Both the request's answer and the standing state are breadcrumbed, with the
+ * context each belongs to, because an installed app and a tab can be granted
+ * differently and it is the install that matters.
+ *
+ * When the request is made — still page boot, still the weakest moment for the
+ * browser's heuristics — is D55, deliberately not changed here.
+ */
+void (async () => {
+  const asked = await askToPersist();
+  if (asked) console.info(`dai: ${persistenceLine(asked)} (asked at boot)`);
+  const standing = await readPersistence();
+  console.info(`dai: ${persistenceLine(standing)}`);
+})();
 
 function say(message: string, isError = false): void {
   report.textContent = message;
@@ -561,9 +577,10 @@ function markStep(step: string): void {
 /**
  * What the launch knows about itself, for a screenshot to carry back.
  *
- * Six things and the error ring: the build, the step it is on, the id in the
+ * Seven things and the error ring: the build, the step it is on, the id in the
  * address and whether this device holds it, whether a worker controls the
- * page, and the last errors captured since the first line of the first script
+ * page, whether this device's storage is kept and which context answered
+ * (D49), and the last errors captured since the first line of the first script
  * (see `__daiLog` in the head). Gathered on demand; nothing here runs until
  * somebody taps Show details.
  */
@@ -598,6 +615,10 @@ async function launchDetails(): Promise<string> {
   lines.push(
     `service worker controls page: ${sw ? (sw.controller ? "yes" : "no") : "unavailable"}`,
   );
+
+  // D49: a stall on a device whose storage was swept is a case worth having
+  // here, and the panel already exists for exactly this argument.
+  lines.push(persistenceLine(await readPersistence()));
 
   const log = (window as unknown as { __daiLog?: string[] }).__daiLog;
   lines.push("");
@@ -4298,6 +4319,37 @@ function showVersion(): void {
 }
 
 showVersion();
+
+/**
+ * Whether this device's documents are kept, beside the build stamp (D49).
+ *
+ * The same argument the stamp is in both places for: the person who most needs
+ * to read this is the one whose documents are gone, and that person is looking
+ * at the chooser, which has no menu. It is a reading, not a control — the
+ * browser grants persistence or it does not, and a button that asked again
+ * would be a control that usually does nothing.
+ *
+ * Gathered on render rather than remembered. `persisted()` is a live question,
+ * and the store that would hold a cached answer is the store being described.
+ *
+ * Failure is silence, as with the stamp: a browser that will not answer leaves
+ * the line empty rather than printing a "no" it never got. The two cases are
+ * different facts, and conflating them is the mistake this whole cluster is about.
+ */
+function showPersistence(): void {
+  void readPersistence().then((reading) => {
+    if (!reading) return;
+    const text = reading.kept
+      ? `kept on this device · ${reading.context}`
+      : `not kept · ${reading.context}`;
+    for (const id of ["sheet-storage", "chooser-storage"]) {
+      const slot = document.getElementById(id);
+      if (slot) slot.textContent = text;
+    }
+  });
+}
+
+showPersistence();
 
 /**
  * On the menu opening — never on load — the stamp becomes a one-tap update when a
