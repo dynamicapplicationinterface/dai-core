@@ -277,7 +277,7 @@ other namespaces named here are not covered yet.
 
 ### The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
-Six instances, found in six different kinds of check. Recorded as one pattern
+Seven instances, found in seven different kinds of check. Recorded as one pattern
 because each looked like a different accident and none of them was.
 
 - **A probe that could not tell "nothing" from "I could not look" (D37).** It
@@ -325,6 +325,19 @@ because each looked like a different accident and none of them was.
   exists to catch. The defense is the same as the pattern's: make it produce its
   other answer. Here that meant putting the old behavior back in and watching
   which version of the test noticed.
+- **A wait that measured a size instead of the thing it waited for (D71).**
+  `sectioned-mount` waited for "the save with the row" by polling until the
+  stored database was over 1,024 bytes. Every save of that document is 16,384
+  bytes, with the row or without it, so the first save satisfied the wait, and
+  on Firefox the test read a database without the row. **The byte check was
+  itself the fix for the previous sighting of the same race** (WebKit, a sleep
+  replaced by a wait). The fix obeyed "wait for the signal the next step
+  depends on" in form and chose a stand-in the real state never had to reach.
+  Now the wait reads the row out of the exact bytes. Proved the right way: with
+  the bytes made to lack the row while the screen still shows it, the test fails
+  *at the wait* (expected 1, received null), not later at the second runner.
+  The lesson for a fix to a flaky wait: say what the next step needs, then check
+  that the new condition cannot be true without it.
 
 **A rule, because this one has a preventable cause: tests import the constants
 they assert on.** The other instances were found by forcing a check's other
@@ -3409,7 +3422,10 @@ be built without the literal word, or the routing rule can be made less blunt.
 
 #### D71 — `sectioned-mount` waits for a size that every save already has
 
-*Status: open. Seen on Firefox in CI, 18 September; not fixed.*
+*Status: fixed, 18 September. The wait now reads the row out of the bytes it
+uses (`node:sqlite`), and fails at the wait when the row is absent. The seed
+database is 0 bytes, so the old check passed on the first save, not on the
+seed. It is the seventh instance in part 3's "passes for an unrelated reason".*
 
 `tests/sectioned-mount.spec.ts:110`, "a row written in one runner is there when
 the sectioned file opens in another", failed on Firefox in run 35378663791

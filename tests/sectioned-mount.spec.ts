@@ -1,5 +1,6 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -29,6 +30,26 @@ const HOST = {
  * This holds the whole way: a real database, written by the runner, wrapped
  * into a sectioned file, opened in a fresh runner, its row still there.
  */
+
+/**
+ * Row 1's `done` in a database's bytes, or null when the bytes are not yet a
+ * database with that row. Read with Node's own SQLite, from a copy on disk.
+ */
+function tickedIn(bytes: Uint8Array): number | null {
+  const path = join(mkdtempSync(join(tmpdir(), "dai-sectioned-read-")), "document.sqlite");
+  writeFileSync(path, bytes);
+  try {
+    const db = new DatabaseSync(path);
+    try {
+      const row = db.prepare("SELECT done FROM jobs WHERE id = 1").get() as { done?: number } | undefined;
+      return typeof row?.done === "number" ? row.done : null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
 
 /** A small kit app: one table, one row seeded, one control that changes it. */
 async function jobsApp(): Promise<string> {
@@ -135,7 +156,16 @@ test.describe("a sectioned document mounts with its data", () => {
         for (const b of bytes) s += String.fromCharCode(b);
         return btoa(s);
       });
-    await expect.poll(async () => fromBase64(await readDatabase()).byteLength, { timeout: 30_000 }).toBeGreaterThan(1024);
+    /*
+     * Waited for by what it contains, not by its size (D71). This used to poll
+     * until the database was larger than 1,024 bytes, which the fix for the
+     * WebKit sighting above put in. SQLite writes whole pages, so every save of
+     * this document is 16,384 bytes, with the row or without it: the first
+     * save satisfied that wait, and on Firefox in CI the test read a database
+     * without the row while a second save was still to come. What the next
+     * step needs is the row, so the row is read out of these exact bytes.
+     */
+    await expect.poll(async () => tickedIn(fromBase64(await readDatabase())), { timeout: 30_000 }).toBe(1);
     const database = fromBase64(await readDatabase());
 
     // Wrap that real database in a sectioned file, and open it somewhere new.
