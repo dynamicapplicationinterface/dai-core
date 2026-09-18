@@ -346,6 +346,33 @@ an edit, a script that states how many times each replacement must match and
 refuses to write anything if one count is wrong. A search that can come back
 empty should be one that can also be seen to have run.
 
+**It is a class, not a one-off: a tool that answers confidently about something
+it never looked at.** Three instances in one week, all on the tooling side of
+the work:
+- **The probe (D37)** returned an empty list when its import failed, then when
+  it guessed a database name.
+- **The search (D56)** returned no matches because shell escaping mangled its
+  pattern.
+- **The mutation runner (18 September)** passed a test-name pattern to
+  Playwright through a shell, unquoted. The pattern split into words, so one
+  "proof" ran a different set of tests, and reported that they passed.
+
+**None of the three complained.** Each produced a well-formed, plausible answer.
+The tell was never the tool; it was arithmetic or a stray detail beside the
+answer: "125 passed" for a proof that should have run one test, and a test
+failing in a full run after the search had said nothing was left. A near
+relative from the same day: a proof run aimed at the wrong case (a raised count
+floor, which was already caught). Its `run.txt` said `failed: playwright exited
+1`, which is why it proved nothing about the gate, and only that line gave it
+away.
+
+**What to do about it.** Make tools state what they looked at, not only what
+they found: the count of tests a proof ran, the files a search opened, the
+number of matches an edit expected. Then read that before reading the answer.
+A proof that should run one test and reports anything else has not proved
+anything. Pass patterns to child processes as arguments, never through a shell
+string. And when a result would be good news, check the arithmetic first.
+
 **The corollary: a check like this is worse than no check.** An absent test is
 visibly absent. A test that cannot fail counts as coverage, sits in the totals,
 and is trusted in review, while proving nothing. A suite can get quietly weaker
