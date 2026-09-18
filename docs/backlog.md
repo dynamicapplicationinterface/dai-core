@@ -3825,6 +3825,18 @@ closed`.
   app. The last lines are that page's persistence breadcrumbs, ending at
   `(installed): not kept (after the request)`. That test creates and closes
   its own context, never the browser.
+- Locally, chromium, four workers (18 September, a push-tier run at `e08d9a5`,
+  kept in `test-runs/2026-09-18T21-58-27-764Z-e08d9a5`): **the same test,
+  `icon-after-wipe.spec.ts:74`, again**, at its first `browser.newContext`. Again
+  the browser was alive and logging to its last line with no crash line, and
+  again its last lines were the previous test's (`:63`) installed-app
+  breadcrumbs, `(installed): not kept (after the request)`. **The first time D28
+  has recurred at one place.** Every other sighting was a different spec. `:63`
+  replaces `window.matchMedia` so the page reads as an installed app, opens the
+  opener, then closes its own context. That is a lead for "find the trigger",
+  not a cause. The next step it suggests: repeat `:63` then `:74` in one worker
+  many times, with and without the `matchMedia` replacement, and see which
+  kills the browser.
 - CI, chromium (18 September, run 35341691229, `7afb8c9`):
   `offline-detector.spec.ts:27`, at its first `browser.newContext`; it passed on
   retry. The log carries the same crash as the 15 September traces, frame for
