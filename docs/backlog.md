@@ -876,6 +876,40 @@ That weighs heavily toward asking later, at a moment the person would
 recognize as a reason. A desktop Firefox check (open the opener fresh and look)
 would confirm or rule it out in a minute.
 
+**Read, 18 September: on Firefox, a first visit gets a permission prompt on
+load.** Seen on screen, no longer inferred.
+- **Browser.** Firefox 153.0, build `20260722113508` (codename Nightly). This is
+  the Firefox that ships with Playwright (`ms-playwright/firefox-1538`), launched
+  directly as an ordinary visible browser with no automation attached. Desktop
+  release Firefox is not installed on this machine. So this is a proxy reading:
+  Gecko with Firefox's own permission UI, not the release build a visitor runs.
+  A release-build reading would confirm it and is not yet taken.
+- **Profile.** A brand-new, empty profile directory made for this visit
+  (`-no-remote -new-instance -profile <new dir>`). Nothing remembered, no prior
+  dismissal. Cleared site settings on an old profile were not used, because
+  Firefox remembers dismissals and a second visit reads differently from a first.
+- **Page.** `https://opendai.app/`, the production opener, serving `f75478c`
+  (its build stamp). Captured from the real screen 12 s after launch, because
+  the prompt is browser chrome and a page screenshot cannot show it.
+- **What was on screen.** Before anything was clicked, a doorhanger under the
+  address bar: "**Allow opendai.app to store data in persistent storage?**",
+  with "Learn more", an unticked "Remember this decision", and **Allow** and
+  **Block**. Behind it the chooser, with the D49 line reading `not kept · tab`,
+  the correct standing state while the request is unanswered.
+- **What it explains.** It is why `persist()` went unanswered in automation on
+  Firefox (CI, 18 September): the request was waiting on this prompt.
+
+So the opener has been putting a permission question in front of every
+first-time Firefox visitor at page load, before they have opened anything, and
+it did so before D49 too. Nothing about when `persist()` is called was changed
+for this reading. That is the decision this entry exists to make, and changing it
+first would change what the reading measured.
+
+Not read: what the line shows after Allow or Block is pressed (item 1's fix,
+seen live), and whether "Remember this decision" left unticked means the
+question comes back on every visit. Both are one more minute in the same
+profile.
+
 #### D50 — An icon that outlives its storage is greeted as a stranger
 
 *Status: built, 17 September, for an icon made from a file and one made from a
