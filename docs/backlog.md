@@ -3274,6 +3274,34 @@ What that does and does not say:
   not a slow run.** The next failure's error will name which wait expired, and
   that is the question it should be read for.
 
+**18 September: it failed again, the evidence keeper kept it, and the stall is
+in the test's own teardown, not in any wait.** A push-tier run at `5a68727`
+(`test-runs/2026-09-18T17-32-50-751Z-5a68727`) failed `static-opener:147` with
+"Test timeout of 90000ms exceeded", naming no wait. The kept trace records every
+step's start and end. Every step finished within about **1 second** with every
+assertion passing: the navigation, the card click, `toHaveClass(/loaded/)`,
+`toContainText("Beach trip")`, and the three network checks. Then nothing
+until the 90 s timeout. What runs after line 239 is the `finally` block:
+`await` on `opener.close()` then `store.close()`. Node's `server.close()` calls
+back only when every connection has ended. Node 24 closes idle keep-alive
+connections for it, but a connection with a request in flight holds it open,
+and the page stays open until the test body, `finally` included, returns. So
+the test can deadlock with its own server until the timeout. That also explains
+why it passes in 1.2 s alone and under light load, and hangs only sometimes.
+
+- **Established:** the stall is in teardown, after the test passed. It is not
+  the product, and not a wait running out (the earlier budget theory is dead).
+- **Not established:** which connection holds the server open. The page's
+  network log in the trace shows 23 requests, all completed. The opener's
+  service worker fetches in the background and is outside that log, so it is
+  the suspect, but that is inference.
+
+**Not fixed; the fix is small and testable when picked up.** Close the
+connections explicitly (`server.closeAllConnections()` before `close()`), or
+bound the teardown. Either takes a teardown hang off the test's clock. To
+confirm the cause first, log `server.getConnections()` at close time on the
+next failure.
+
 **Recording the next one needs no discipline: built, 17 September.** Playwright
 clears `test-results/` at the start of every run, so the evidence died the moment
 anyone reran. `npm run test:push` now copies a failed run's `test-results/` into
