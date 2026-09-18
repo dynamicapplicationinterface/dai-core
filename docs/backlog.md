@@ -395,6 +395,20 @@ A proof that should run one test and reports anything else has not proved
 anything. Pass patterns to child processes as arguments, never through a shell
 string. And when a result would be good news, check the arithmetic first.
 
+**A near relative: a sampling method that overwrites its own samples.** For
+D28, three CI runs were taken as `gh run rerun` of one run. Each attempt
+replaced the previous attempt's saved artifacts, so when the third finished,
+only its traces existed. One of run 2's failures (`returning-document:192` on
+Firefox) could then never be read: its evidence had been destroyed by the
+method that was collecting evidence. The logs survived, the traces did not, and
+nothing said so until the download was attempted. It is D47's lesson one level
+up. There, a local rerun erased `test-results/` before anyone read it, and the
+fix was a keeper that copies the evidence aside before the next run. Here the
+fix is the same move at CI's level: a separate, fresh run for each sample (an
+empty commit per run, or a new branch run), or each attempt's artifacts
+downloaded before the next attempt starts. The general question: **does taking
+the next sample destroy the last?** If so, the method cannot take a rate.
+
 **The corollary: a check like this is worse than no check.** An absent test is
 visibly absent. A test that cannot fail counts as coverage, sits in the totals,
 and is trusted in review, while proving nothing. A suite can get quietly weaker
