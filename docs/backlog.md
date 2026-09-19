@@ -3684,6 +3684,17 @@ code, so routing it changes the runtime and keeps a host. The fix is one line
 (build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
 next runtime change that is keeping a host anyway, not on its own.
 
+#### D79 — push-e2e's badge text flaked once on Chromium 153
+
+*Status: noted, not investigated. First sighting, no signature yet.*
+
+`push-e2e.spec.ts:657`, "the badge clears after this player's own move is
+sent, for an app that reports waiting games", failed once and passed on retry
+in PR #4's run 35409533799 (Chromium 153, build 1243): `expect(locator).
+toHaveText(expected) failed`. No closed browser, so not D28. Trace kept in that
+run's `retried-chromium-whole` artifact. A second sighting starts the
+investigation.
+
 #### D40 — A tier that reports success by running nothing
 
 *Status: open.*
