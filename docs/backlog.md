@@ -3717,6 +3717,82 @@ code, so routing it changes the runtime and keeps a host. The fix is one line
 (build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
 next runtime change that is keeping a host anyway, not on its own.
 
+#### D80 — A copy can seat itself as any player, and the other copy will believe it
+
+*Status: **open, V1 blocker.** Proven 19 September; not fixed. The fix is what a
+seat is bound to, and that is its own sitting.*
+
+**What it means to a person:** the other player's phone can make moves as you,
+and your phone will show them as yours. Nothing on either screen says anything
+is wrong.
+
+**Found on two phones, 19 September.** The joiner moved from the wrong seat.
+The creator's phone announced the move as the creator's own and oriented the
+board as the creator. Both copies ended holding the creator's game with the
+joiner gone. They converged on a wrong state, and nothing was shown.
+
+**The mechanism, read from the code and then run:**
+- A row's author is `_r_replica`, a column the writing copy sets to its own
+  replica id. The merge admits it as written (`applyBatch`,
+  `src/runtime/bootloader.ts`): no signature, nothing only that copy holds.
+- "Creator" is whichever replica id authored the session's seat rows. The role
+  gate on writes (`authorGate`), the admission view (`seatAuthor` in
+  `src/replicated.ts`) and the chess app's seat (`myColor`, `store.js`) all ask
+  that one question.
+- **D37 and D15 cannot both hold with one shared key.** D15 says the wrong
+  party's writes are refused by the writer's key. D37 gives both copies the same
+  per-game key, which can prove "a member of this game wrote this" but not
+  which member. D15 therefore rests on `_r_replica`, which the writer sets.
+  **D15 landed second** (`e6949d5`, 16 September, after D37's `14cb352` on 15
+  September). Before D37 the key was per document and just as shared, so D15
+  has never rested on anything a copy could not forge.
+
+**Proof:** `mailbox-link-e2e`, "D80: a copy running under the creator's id is
+not believed to be the creator". Ada creates and invites, Bo joins as "Bo" and
+plays e5. Bo's copy is then given Ada's replica id, the precondition the phones
+reached by d22's route. Bo moves White's d4 through the board. Ada's copy
+admits d4 authored as Ada (`r` = Ada's id). It fails on `bf2b845` and is held
+as `test.fail` on Chromium and WebKit until the fix, which removes the mark.
+
+**What happens to the roster in this version (step 2 answered for D80):** the
+rows stay. Both copies still list two members, Bo's binding and "Ada vs Bo".
+What is lost is Bo's identity: his copy *is* Ada now, so anything it writes,
+names included, is Ada's. Whether the phones' missing seat row came from this
+or from how the route got there waits on d22's reproduction.
+
+**Not the route.** The route is d22's: a reopened copy that came back under
+the sender's id. The plain reopen of the invite on one device keeps the
+joiner's id (the guard test before this one, Chromium and WebKit, also with the
+stored database removed).
+
+**Related:** D37 (the shared per-game key), D15 (roles), D48 (taking a lost seat
+back), D65 (two names, so a swap can fail a test), the key-holder identity
+primitive (*Three items now block on the same absent primitive*; this is a
+fourth), and d22 (the route).
+
+#### D81 — A joiner who installs after joining in Safari gets a second, broken seat
+
+*Status: open, not fixed. Found running D80's route, 19 September.*
+
+**What it means to a person:** on iOS the home-screen app and Safari keep
+separate storage. Somebody who joins a game in Safari and then installs it opens
+a copy that knows none of their game. That is the post-install walk failing at
+its second step.
+
+Run as the invite reopened in a fresh browser context after Bo had joined,
+named himself and played e5 (Chromium, 19 September). The new copy:
+- took a new replica id and **bound Bo's seat a second time** (two binders:
+  contested);
+- lists **only the creator** as a member;
+- holds Black's name empty and **never received e5**, Bo's earlier move, after
+  five pulls;
+- still showed **"Your move."** on the Black side, so it invites a move from a
+  seat it does not hold.
+
+Readings are from the D80 guard test's fresh-storage variant, run once. It is not
+kept as a test yet; a test for this should assert what the walk is meant to do,
+which is a design question D48 already owns.
+
 #### D79 — push-e2e's badge text flaked once on Chromium 153
 
 *Status: noted, not investigated. First sighting, no signature yet.*

@@ -1339,4 +1339,165 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceA.close();
     await deviceB.close();
   });
+
+  /** Every row the question turns on, as this copy holds it. */
+  const seatRows = (page: Page) =>
+    appFrame(page).evaluate(() => {
+      const db = (window as any).daiKit.db;
+      // The invited game only: the app also holds a demo game in a session of its own.
+      const session = db.selectObjects("SELECT _r_session s FROM games_current WHERE white_name = 'Ada'")[0]?.s;
+      const q = (sql: string) => db.selectObjects(sql, [session]);
+      return {
+        me: String(db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0]?.id ?? ""),
+        members: q("SELECT lower(hex(replica)) r FROM _dai_member WHERE session = ? ORDER BY 1").map((r: any) => String(r.r)),
+        seatAuthors: q("SELECT DISTINCT lower(hex(_r_replica)) r FROM _dai_seat_current WHERE _r_session = ? ORDER BY 1").map((r: any) => String(r.r)),
+        bindings: q("SELECT lower(hex(seat)) seat, lower(hex(_r_replica)) r FROM _dai_binding_current WHERE _r_session = ? ORDER BY 1, 2"),
+        games: q("SELECT white_name w, black_name b, creator_color c, lower(hex(_r_replica)) r FROM games_current WHERE _r_session = ?"),
+        moves: q("SELECT ply, color, san, lower(hex(_r_replica)) r FROM moves_current WHERE _r_session = ? ORDER BY ply"),
+      };
+    });
+
+  /**
+   * Guard for the correct path, not D80's proof: the joiner reopens the invite
+   * on the same device and moves, and the move is the joiner's.
+   *
+   * Written while chasing D80 (19 September), where two phones ended with the
+   * joiner's move admitted as the creator's. This route does not reproduce
+   * that (Chromium and WebKit, and with the stored database removed first): the
+   * reopened copy keeps its own id. It is kept so that path stays right. D80's
+   * proof is the next test, which forces the precondition the phones reached.
+   */
+  test("the joiner reopens the invite and moves: the move is the joiner's, and both players stay seated", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    // Ada (White) starts a game with the opponent unnamed and invites; Bo names himself.
+    const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "", "e2", "e4");
+    const appB = await openLink(pageB, link);
+    await nameIfAsked(pageB, "Bo", "Ada");
+    await expect(appB.locator("#bottom-player")).toContainText("Bo");
+
+    // Bo plays e5, Ada hears it and plays Nf3, Bo hears that: Bo to move.
+    await play(appB, "e7", "e5");
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    await play(appA, "g1", "f3");
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB.locator("#move-history")).toContainText("Nf3", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    const bo = (await seatRows(pageB)).me;
+
+    // Bo opens the invite again on the same device: the link, and the card's Open.
+    await pageB.close();
+    const pageB2 = await deviceB.newPage();
+    await pageB2.goto(link);
+    await pageB2.locator("#card-open").click({ timeout: 60_000 });
+    const appB2 = app(pageB2);
+    await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB2);
+    await expect(async () => {
+      await pageB2.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB2.locator("#move-history")).toContainText("Nf3", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    await expect(appB2.locator("#bottom-player")).toContainText("Bo");
+
+    await play(appB2, "d7", "d6");
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#move-history")).toContainText("d6", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    const afterA = await seatRows(pageA);
+    const afterB = await seatRows(pageB2);
+
+    const last = afterA.moves[afterA.moves.length - 1] as { r: string; color: string };
+    expect(last.r, "the move arrived as Bo's").toBe(bo);
+    expect(last.color).toBe("b");
+    for (const [who, rows] of [["A", afterA], ["B", afterB]] as const) {
+      expect(rows.members, `${who} still holds two members`).toHaveLength(2);
+      expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(bo);
+      expect(rows.games[0], `${who} still names both players`).toMatchObject({ w: "Ada", b: "Bo" });
+    }
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * A copy can seat itself as any player, and the other copy believes it (D80).
+   *
+   * Found on two phones, 19 September: the player who joined moved, and the
+   * creator's phone announced the move as the creator's own and oriented as
+   * the creator, and both copies ended holding the creator's game with the
+   * joiner gone. The phones' route to it is d22 (a copy coming back under the
+   * sender's id); this test does not take that route. It forces the state the
+   * route produces, Bo's copy running under Ada's replica id, because that is
+   * the whole of what the merge would need to be fooled: `_r_replica` is set by
+   * the writer and trusted by the merge, and the per-game key (D37) is one both
+   * copies hold, so nothing tells Ada's copy which of the two wrote a row.
+   *
+   * Fails today, on purpose, until a seat is bound to something a copy cannot
+   * copy (D80's own sitting). Correct is either outcome: the move refused, or
+   * admitted as Bo's; and in both, two players still seated.
+   */
+  test("D80: a copy running under the creator's id is not believed to be the creator", async ({ browser }) => {
+    // Held as an expected failure: D80 is open, and its fix is its own sitting.
+    // When a seat is bound to something a copy cannot copy, this passes, the
+    // mark fails the run, and the mark comes off in the same change.
+    test.fail(true, "D80 open: _r_replica is writer-set and merge-trusted");
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "", "e2", "e4");
+    const appB = await openLink(pageB, link);
+    await nameIfAsked(pageB, "Bo", "Ada");
+    await play(appB, "e7", "e5");
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    const beforeA = await seatRows(pageA);
+    const beforeB = await seatRows(pageB);
+    console.log(`D80 before, A: ${JSON.stringify(beforeA)}`);
+    console.log(`D80 before, B: ${JSON.stringify(beforeB)}`);
+    expect(beforeA.members, "two players seated before").toHaveLength(2);
+
+    // The precondition the phones reached by d22's route: Bo's copy under Ada's id.
+    await appFrame(pageB).evaluate((ada) => {
+      (window as any).daiKit.db.exec(`UPDATE _dai_replica SET id = x'${ada}'`);
+    }, beforeA.me);
+    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+
+    // Bo moves. It is White's turn, and this copy now believes it holds White.
+    await play(appB, "d2", "d4");
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#move-history")).toContainText("d4", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    const afterA = await seatRows(pageA);
+    const afterB = await seatRows(pageB);
+    console.log(`D80 after, A: ${JSON.stringify(afterA)}`);
+    console.log(`D80 after, B: ${JSON.stringify(afterB)}`);
+
+    const last = afterA.moves[afterA.moves.length - 1] as { r: string };
+    expect(last.r, "Bo's move is not admitted as Ada's").not.toBe(beforeA.me);
+    for (const [who, rows] of [["A", afterA], ["B", afterB]] as const) {
+      expect(rows.members, `${who} still holds two members`).toHaveLength(2);
+      expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(beforeB.me);
+      expect(rows.games[0], `${who} still names both players`).toMatchObject({ w: "Ada", b: "Bo" });
+    }
+
+    await deviceA.close();
+    await deviceB.close();
+  });
 });
