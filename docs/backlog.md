@@ -3783,8 +3783,32 @@ The page, server, config and spec are kept outside the repo, ready to extend.
 
 #### D28 — A test's browser is sometimes already closed when it starts
 
-*Status: open. A browser crash at one site, not yet identified upstream; traces
-kept.*
+*Status: closed, 18 September. A Chromium 151 crash under context churn, gone
+in Chromium 153. Never our code.*
+
+**Closed with these numbers.** Chromium 151 (headless shell build 1234) crashes
+when a browser context is created after others are closed under load: 21 of 540
+tests died across three runs of the `icon-after-wipe` loop at 4 workers (6, 6,
+9). Chromium 153 (build 1243), same loop, same load: 0 of 540. It reproduces on
+demand and is gone on the upgrade, so it is a finding, not a sample. The fix is
+the upgrade to Playwright 1.63 (PR #4, which also carries the WebKit
+`loadStored` test fix). Merged 18 September after one fresh run rebased on
+`main` (35409533799): green on every engine; its three flaky tests carried no
+closed browser. Two were Firefox (D32). The third, Chromium
+`push-e2e.spec.ts:657` (a badge text assertion, passed on retry), is new as a
+flake and is not D28. The old builds (`chromium-1234`, `webkit-2336`) are no
+longer installed.
+
+**The reproduction, to rerun whenever "is it back?" comes up** (about fifteen
+minutes for three runs):
+
+```
+npx playwright test tests/icon-after-wipe.spec.ts --project=chromium --repeat-each=30 --workers=4 --reporter=line
+```
+
+Count the tests whose first `browser.newContext` fails with `Target page,
+context or browser has been closed`. On 1234 expect about 4%; on 1243, none.
+The record below is how it was found.
 
 **Where the evidence stands (18 September).** On Linux CI it is a crash: every
 sighting there with its log kept carries `Received signal 11 SEGV_MAPERR
@@ -3968,7 +3992,7 @@ lead was that the crash twice landed at `icon-after-wipe:74`, right after `:63`.
 **This is the merge evidence D28 asked for:** reproducible on the old build at
 a measured rate, and not at all on the new one under the same load. The WebKit
 test the upgrade broke is fixed on the branch (`437ecfa`), so the upgrade's
-known costs are paid. **Ready for a merge ruling.**
+known costs are paid. Ruled: merge (18 September).
 
 Side effect to know about: `npx playwright install` on the branch removed
 `main`'s browsers (`chromium_headless_shell-1234`, `webkit-2336`) as unused.
