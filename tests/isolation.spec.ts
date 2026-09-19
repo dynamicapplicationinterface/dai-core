@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { FRAME_INTERNAL } from "../src/frame.js";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -228,10 +229,10 @@ test.describe("the loader's handshake", () => {
     // being derived from a public UUID and carried in the message besides.
     const before = await app.locator("body").innerHTML();
 
-    await app.locator("body").evaluate(() => {
+    await app.locator("body").evaluate((_body, payloadType) => {
       window.postMessage(
         {
-          type: "dai:payload",
+          type: payloadType,
           entryHtml: "<h1 id='injected'>replaced</h1>",
           assets: [],
           sqlite: new ArrayBuffer(0),
@@ -245,7 +246,7 @@ test.describe("the loader's handshake", () => {
         },
         "*",
       );
-    });
+    }, FRAME_INTERNAL.PAYLOAD);
 
     await page.waitForTimeout(400);
     expect(await app.locator("#injected").count()).toBe(0);
@@ -263,9 +264,9 @@ test.describe("the loader's handshake", () => {
     // The buffers are transferred, so they are detached once sent. Answering a
     // second hello would re-post a transfer list of detached buffers and throw
     // DataCloneError out of the shell's own listener.
-    await app.locator("body").evaluate(() => {
-      parent.postMessage({ type: "dai:frame-hello" }, "*");
-    });
+    await app.locator("body").evaluate((_body, helloType) => {
+      parent.postMessage({ type: helloType }, "*");
+    }, FRAME_INTERNAL.FRAME_HELLO);
     await page.waitForTimeout(400);
 
     expect(errors.filter((message) => /detached|DataClone/i.test(message))).toEqual([]);

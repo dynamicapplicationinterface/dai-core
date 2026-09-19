@@ -886,6 +886,7 @@
       "tsup.config.ts"
     ],
     "tests/isolation.spec.ts": [
+      "src/frame.ts",
       "tests/isolation.spec.ts"
     ],
     "tests/keep-evidence.spec.ts": [

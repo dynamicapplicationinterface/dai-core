@@ -3669,6 +3669,21 @@ built (its output shows `build:lib`) left the hosts folder at 44 entries and
 CI's workflows still run `npm run build`, harmlessly: each CI run starts from a
 fresh checkout.
 
+#### D78 — The lint spells the public merge event by hand
+
+*Status: open, filed 18 September. Waits for the next planned fingerprint change.*
+
+**What it means to a person:** nothing today; the spelling is right. It is the
+one place outside `src/frame.ts` that still writes a frame name out, so a
+rename there would leave the lint looking for the old one and telling every
+author their shared app has no merge listener.
+
+`src/lint.ts:359` tests app source against `/["'`]dai:merged["'`]/`. The tests
+now take the name from `FRAME_PUBLIC.MERGED` (D69 step 5); this is runtime
+code, so routing it changes the runtime and keeps a host. The fix is one line
+(build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
+next runtime change that is keeping a host anyway, not on its own.
+
 #### D40 — A tier that reports success by running nothing
 
 *Status: open.*

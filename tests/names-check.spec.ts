@@ -23,19 +23,19 @@ test.describe("the owned message names", () => {
   });
 
   test("a value used twice is named, with both of its places", () => {
-    const twice = { FRAME_PUBLIC, FRAME_INTERNAL: { ...FRAME_INTERNAL, MERGED: "dai:merged" } };
-    expect(nameProblems(twice, frameValue)).toEqual(['"dai:merged" is both FRAME_PUBLIC.MERGED and FRAME_INTERNAL.MERGED']);
+    const twice = { FRAME_PUBLIC, FRAME_INTERNAL: { ...FRAME_INTERNAL, MERGED: FRAME_PUBLIC.MERGED } };
+    expect(nameProblems(twice, frameValue)).toEqual([`"${FRAME_PUBLIC.MERGED}" is both FRAME_PUBLIC.MERGED and FRAME_INTERNAL.MERGED`]);
   });
 
   test("a value that is not what its key says is named", () => {
     const off = { FRAME_PUBLIC, FRAME_INTERNAL: { ...FRAME_INTERNAL, INSETS_ASK: "dai:insets?" } };
-    expect(nameProblems(off, frameValue)).toEqual(['FRAME_INTERNAL.INSETS_ASK is "dai:insets?", not "dai:insets-ask"']);
+    expect(nameProblems(off, frameValue)).toEqual([`FRAME_INTERNAL.INSETS_ASK is "dai:insets?", not "${FRAME_INTERNAL.INSETS_ASK}"`]);
   });
 
   test("an exception excuses only its own key, and fails once it is not needed", () => {
     // Without it, the one bridge value off the rule is reported.
     expect(nameProblems({ TO_HOST, TO_DOCUMENT }, bridgeValue)).toEqual([
-      'TO_HOST.ISOLATION_REPORT is "dai:isolation-report", not "DAI_HOST_ISOLATION_REPORT"',
+      `TO_HOST.ISOLATION_REPORT is "${TO_HOST.ISOLATION_REPORT}", not "DAI_HOST_ISOLATION_REPORT"`,
     ]);
     // With it, but pointed at a key that follows the rule, the exception itself is the problem.
     expect(nameProblems({ TO_HOST, TO_DOCUMENT }, bridgeValue, { ...BRIDGE_EXCEPTIONS, "TO_HOST.SAVE": "no reason" })).toEqual([

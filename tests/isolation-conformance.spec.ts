@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
+import { TO_HOST } from "../src/bridge.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const probe = resolve(repo, "conformance", "isolation-probe.dai.html");
@@ -39,16 +40,16 @@ test.describe("the isolation probe", () => {
     );
     // Collected from the shell, which is where the probe posts: an isolated
     // frame can address no other window.
-    await page.addInitScript(() => {
+    await page.addInitScript((reportType: string) => {
       window.addEventListener("message", (event: MessageEvent) => {
         const data = event.data as { type?: string };
-        if (data?.type === "dai:isolation-report") {
+        if (data?.type === reportType) {
           void (window as unknown as { __probeReport: (payload: unknown) => void }).__probeReport(
             data,
           );
         }
       });
-    });
+    }, TO_HOST.ISOLATION_REPORT);
 
     await page.goto(pathToFileURL(probe).href);
 

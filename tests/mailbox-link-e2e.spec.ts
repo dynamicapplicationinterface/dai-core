@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
+import { FRAME_PUBLIC } from "../src/frame.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
 import { base64 } from "../src/mailbox-http.js";
 import { play } from "./chess-play.js";
@@ -955,12 +956,12 @@ test.describe("a game continues over a shared link (the key path)", () => {
       );
       expect(openForC, "the fresh open seat reached C").toBe(true);
     }).toPass({ timeout: 30_000 });
-    const cMemberAfterUntagged = await appFrame(pageC).evaluate(() => {
+    const cMemberAfterUntagged = await appFrame(pageC).evaluate((mergedType) => {
       const db = (window as any).daiKit.db;
-      window.dispatchEvent(new CustomEvent("dai:merged", { detail: { applied: 1 } })); // no `via`
+      window.dispatchEvent(new CustomEvent(mergedType, { detail: { applied: 1 } })); // no `via`
       const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
       return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
-    });
+    }, FRAME_PUBLIC.MERGED);
     expect(cMemberAfterUntagged, "an untagged merge event must not join").toBe(false);
 
     await pageA.evaluate(() => {

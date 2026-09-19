@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { TO_HOST } from "../src/bridge.js";
 import { compileDirectory } from "../src/compile.js";
+import { FRAME_INTERNAL } from "../src/frame.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const here = dirname(fileURLToPath(import.meta.url));
@@ -136,25 +138,25 @@ test.describe("the shell acts only on messages from its own frame", () => {
     // forged save below adds nothing, not that the number is zero.
     const downloadsBefore = downloads.length;
 
-    await page.evaluate(() => {
+    await page.evaluate((names) => {
       const forge = (window as unknown as { forgeToShell: (d: unknown) => void }).forgeToShell;
       const toApp = (window as unknown as { forgeToApp: (d: unknown) => void }).forgeToApp;
 
       // A save nobody asked for. Answered, before the check, to whoever asked.
-      forge({ type: "dai:save", id: "forged-save", sqlite: null, method: "download" });
+      forge({ type: names.save, id: "forged-save", sqlite: null, method: "download" });
 
       // A question about whether somebody's data may be written over.
-      forge({ type: "dai:schema", id: "forged-schema", actual: null });
+      forge({ type: names.schema, id: "forged-schema", actual: null });
 
       // A claim that the application is on screen, which stops the stall watch
       // and makes the shell report a finished boot to its host again.
-      forge("dai:ready");
+      forge(names.ready);
 
       // An isolation report saying a boundary held, which the shell would
       // forward to its host with the host's own profile attached — the check
       // in host-profile.spec.ts is worth nothing if this is repeated.
       forge({
-        type: "dai:isolation-report",
+        type: names.isolationReport,
         suite: "dai-isolation",
         version: 1,
         results: [{ id: "popup", status: "blocked" }],
@@ -162,7 +164,13 @@ test.describe("the shell acts only on messages from its own frame", () => {
 
       // And the other direction: the application told it is in app mode, by a
       // window that is not its shell.
-      toApp({ type: "dai:appmode", active: true });
+      toApp({ type: names.appmode, active: true });
+    }, {
+      save: FRAME_INTERNAL.SAVE,
+      schema: FRAME_INTERNAL.SCHEMA,
+      ready: FRAME_INTERNAL.READY,
+      isolationReport: TO_HOST.ISOLATION_REPORT,
+      appmode: FRAME_INTERNAL.APPMODE,
     });
 
     // Long enough for any of the five to have produced its answer.

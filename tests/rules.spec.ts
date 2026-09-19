@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { parseBundle } from "../src/bundle.js";
 import { EXAMPLE_APPS } from "../src/generated/examples.js";
+import { FRAME_PUBLIC } from "../src/frame.js";
 import { breaking, lintFiles } from "../src/lint.js";
 import { RECIPE } from "../src/recipe.js";
 import { rewriteReplicated } from "../src/replicated.js";
@@ -143,7 +144,7 @@ test.describe("the model file carries every constraint", () => {
       "_current",
       "_conflicts",
       "_r_conflicted",
-      '"dai:merged"',
+      `"${FRAME_PUBLIC.MERGED}"`,
       'via === "carrier"',
       "-- dai:profile session max_parties=N",
       "session.create()",
@@ -230,7 +231,7 @@ test.describe("the lint holds applications to the shared-table constraints", () 
       "schema.sql": shared,
       "index.html":
         '<dai-form run="INSERT INTO items (name) VALUES (:name)"><input name="name"></dai-form>' +
-        '<script type="module">addEventListener("dai:merged", () => {});</script>',
+        `<script type="module">addEventListener("${FRAME_PUBLIC.MERGED}", () => {});</script>`,
     }).map((f) => f.id);
     expect(ids).toContain("shared-raw-write");
   });
@@ -238,14 +239,14 @@ test.describe("the lint holds applications to the shared-table constraints", () 
   test("a sentence that mentions a shared table is not a read", () => {
     const ids = lintFiles({
       "schema.sql": shared,
-      "app.js": '// the list is derived from items every time\naddEventListener("dai:merged", () => {});\n',
+      "app.js": `// the list is derived from items every time\naddEventListener("${FRAME_PUBLIC.MERGED}", () => {});\n`,
     }).map((f) => f.id);
     expect(ids).not.toContain("shared-base-read");
   });
 
   test("a read of the table itself is caught, and a read of its view is not", () => {
-    const base = lintFiles({ "schema.sql": shared, "app.js": 'db.selectObjects("SELECT name FROM items"); "dai:merged";' });
-    const view = lintFiles({ "schema.sql": shared, "app.js": 'db.selectObjects("SELECT name FROM items_current"); "dai:merged";' });
+    const base = lintFiles({ "schema.sql": shared, "app.js": `db.selectObjects("SELECT name FROM items"); "${FRAME_PUBLIC.MERGED}";` });
+    const view = lintFiles({ "schema.sql": shared, "app.js": `db.selectObjects("SELECT name FROM items_current"); "${FRAME_PUBLIC.MERGED}";` });
     expect(base.map((f) => f.id)).toContain("shared-base-read");
     expect(view.map((f) => f.id)).not.toContain("shared-base-read");
   });
@@ -253,7 +254,7 @@ test.describe("the lint holds applications to the shared-table constraints", () 
   test("an application that edits shared rows and never shows a conflict is caught", () => {
     const ids = lintFiles({
       "schema.sql": shared,
-      "app.js": 'window.dai.replicated.change("items", e, { name: "x" }); addEventListener("dai:merged", () => {});',
+      "app.js": `window.dai.replicated.change("items", e, { name: "x" }); addEventListener("${FRAME_PUBLIC.MERGED}", () => {});`,
     }).map((f) => f.id);
     expect(ids).toContain("shared-conflicts-unshown");
   });
