@@ -643,10 +643,30 @@ yet know, or the object must reject a path segment that is a verb.
 
 #### d22-reopen — a reopened copy came back as the sender
 
-*Status: **ESCALATED, 19 September. Two replicas shared one id.** On Firefox CI
+*Status: **ESCALATED, 19 September. Two replicas shared one id; route reproduced (see D80).** On Firefox CI
 a reopened arrived copy came back under the sender's replica id: the
 game-killing class (T1-D22/D33). It failed its retry for the first time and
 turned `main` red (run 35410311642, `5ae32d0`). Not yet fixed or explained.*
+
+**The route, reproduced 19 September (6 of 6, Chromium and WebKit).** The
+condition is a reopen that lands **after the arrived copy's first save is asked
+and before it is written**. By then the library record exists, holding the
+arrived file, which carries the sender's id. The reopen finds no stored
+database, mounts that file as this device's own copy, and keeps the sender's id.
+The breadcrumbs match the Firefox CI traces line for line: adopted A → B, "save
+1 asked", no "written", then "reopen mounted the library's own copy", then
+"replica kept (own copy): A → A". Test: `d22-reopen`, "a reload between the
+first save asked and written keeps the copy's own id", which reloads on the
+"save 1 asked" line. It is held as `test.fail` until the fix.
+- **Why CI met it by chance:** `:132` waits on `__runner.saves`, which counts
+  saves *asked* (`hostSaves`, incremented where "asked" is logged), and its
+  comment says "a save is acknowledged". On a slow Firefox the write lost the
+  race. The earlier ruling-out ("the reload beating the adoption's save, twelve
+  runs") ran with that same wait, so it could not see it.
+- **What it means on a phone:** a joiner who closes or loses the page within
+  that window, or whose storage is not kept, comes back as the creator. That is
+  **D80's precondition**, and from there the other copy believes every move.
+  Not fixed.
 
 **19 September, matched by call from the kept traces.** In both attempts, page
 A's trace logs "adopted (arrived copy): none -> 95f8f8fb…" and keeps

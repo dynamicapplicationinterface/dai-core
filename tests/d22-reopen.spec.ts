@@ -191,4 +191,57 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
     await deviceA.close();
     await deviceB.close();
   });
+
+  /**
+   * The route d22 takes, and D80's precondition (19 September).
+   *
+   * Firefox CI traces: page B adopted its own id at mount, logged "save 1
+   * asked", and was reloaded before "save 1 written". The reload found no
+   * stored database, mounted the library's copy (the arrived file, which
+   * carries the sender's id) as this device's own, and kept the sender's id.
+   * The test above waits on `__runner.saves`, which counts saves asked, not
+   * written, so a slow write loses the race. This takes the race on purpose:
+   * the reload lands between asked and written.
+   */
+  test("a reload between the first save asked and written keeps the copy's own id", async ({ browser }) => {
+    // Held as an expected failure: reproduced 6 of 6 on Chromium and WebKit, 19
+    // September, and not fixed yet. The mark comes off with the fix.
+    test.fail(true, "d22 open: a reopen before the first save is written mounts the sender's id");
+    const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const deviceB: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openWith(pageA, container);
+    await appA.locator("[data-new-game]:visible").first().click();
+    await appA.locator("#setup-you").fill("Ada");
+    await appA.locator("#setup-them").fill("Bo");
+    await appA.locator('input[name="color"][value="w"]').check();
+    await appA.locator("#new-game-form button[type=submit]").click();
+    await play(appA, "e2", "e4");
+    const idA = await replicaId(pageA);
+    const seed = join(dirname(container), "seed-race.dai.html");
+    await saveOut(pageA, seed);
+
+    // Reload B the instant its first save is asked, before it is written.
+    const lines: string[] = [];
+    let reloading: Promise<unknown> | undefined;
+    pageB.on("console", (m) => {
+      const text = m.text();
+      if (text.startsWith("dai: ")) lines.push(text);
+      if (!reloading && /^dai: save 1 asked/.test(text)) reloading = pageB.reload();
+    });
+    const appB = await openWith(pageB, seed);
+    await expect.poll(() => reloading !== undefined, { timeout: 30_000 }).toBe(true);
+    await reloading;
+    await expect(app(pageB).locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+    void appB;
+    const idB = await replicaId(pageB);
+    const trail = lines.filter((l) => /save|stored|reopen|replica/.test(l)).join(" | ");
+    console.log(`d22 race: A=${idA} B-after-reload=${idB} :: ${trail}`);
+    expect(idB, "the reopened arrived copy is not the sender").not.toBe(idA);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
 });
