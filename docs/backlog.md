@@ -643,7 +643,23 @@ yet know, or the object must reject a path segment that is a verb.
 
 #### d22-reopen — a reopened copy came back as the sender
 
-*Status: waiting on the next sighting's trace.*
+*Status: **ESCALATED, 19 September. Two replicas shared one id.** On Firefox CI
+a reopened arrived copy came back under the sender's replica id: the
+game-killing class (T1-D22/D33). It failed its retry for the first time and
+turned `main` red (run 35410311642, `5ae32d0`). Not yet fixed or explained.*
+
+**19 September, matched by call from the kept traces.** In both attempts, page
+A's trace logs "adopted (arrived copy): none -> 95f8f8fb…" and keeps
+`95f8f8fb…` across its own reopen. That is A's id. Page B's trace logs "replica
+adopted (arrived copy): 95f8f8fb… -> 3283d704…", and after the reload "reopen
+mounted the library's own copy (no stored database)", then "replica kept (own
+copy): 95f8f8fb… -> 95f8f8fb…". **B came back as A.** The retry has the same
+sequence with its own ids (`3071deb1…` for A, `bdc3395c…` for B). The new
+fact is the fallback: the test had waited for B's first save to be acknowledged
+(`__runner.saves > 0`), yet the reopen found no stored database and mounted the
+arrived file, which carries A's id, as B's own copy. Where the acknowledged
+save went is the open question. Traces in the run's
+`playwright-report-firefox-whole` artifact.
 
 A cluster of tests fails on Firefox in CI and passes on retry or when run
 locally: `cli:88`, `mcp:129`, `mcp:147` (twice on 14 September: the list item
@@ -667,12 +683,12 @@ corruption the test exists for, where B's next move collides with A's rows. It
 had happened before: 13 September (run 34791102890), the same assertion, Firefox
 CI, passing on retry.
 
-**19 September (run 35410311642, `5ae32d0`, a backlog-only push, Firefox 155):
+**19 September (run 35410311642, `5ae32d0`, a backlog-only push, Firefox 155; matched above):
 failed and failed its retry**, the first time it has not passed on retry. It
 turned `main` red. Same assertion: B's id before the reload was `3283d704…`;
 after it, `95f8f8fb…`. The opener's own breadcrumb says "replica kept (own
-copy): 95f8f8fb… -> 95f8f8fb…", so the reopen kept whatever it mounted. Whether
-`95f8f8fb…` is A's id, as on 14 September, is not yet matched by call; the
+copy): 95f8f8fb… -> 95f8f8fb…", so the reopen kept whatever it mounted.
+`95f8f8fb…` is A's id, matched by call (see the top of this entry). The
 retry has the same shape with its own ids. Both traces are kept in the run's
 `playwright-report-firefox-whole` artifact. The run before it (`e875d6c`, same
 runtime) passed this test. Not investigated: held behind the iOS icon
