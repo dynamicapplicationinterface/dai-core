@@ -277,7 +277,7 @@ other namespaces named here are not covered yet.
 
 ### The other shape that keeps recurring — a check that passes for a reason unrelated to what it claims
 
-Seven instances, found in seven different kinds of check. Recorded as one pattern
+Eight instances, found in eight different kinds of check. Recorded as one pattern
 because each looked like a different accident and none of them was.
 
 - **A probe that could not tell "nothing" from "I could not look" (D37).** It
@@ -338,6 +338,20 @@ because each looked like a different accident and none of them was.
   *at the wait* (expected 1, received null), not later at the second runner.
   The lesson for a fix to a flaky wait: say what the next step needs, then check
   that the new condition cannot be true without it.
+- **A wait on saves asked, commented as saves acknowledged (d22).**
+  `d22-reopen:132` waited on `__runner.saves` before reopening, with the comment
+  "a save is acknowledged". `saves` is `hostSaves`, incremented on the line that
+  logs "asked". So the test reopened as soon as a save was *requested*, and on a
+  slow CI Firefox the reopen landed before the write. The copy came back under
+  the sender's id: the exact corruption the test exists for, reached through its
+  own wait, and read for a week as a rare unexplained flake. **The earlier
+  ruling-out used the same wait, so it could not see the race.** "The reload
+  beating the adoption's save: twelve runs, every one kept B's id" asked
+  whether a reload after `saves > 0` loses the id, and `saves > 0` was true
+  before the write either way. The fix is `__runner.savesWritten`, counted where
+  "written" is logged. Of the two tests reading `saves`, this was the one
+  confused; `schema-run` counts saves asked, after waiting for the "Saved"
+  label, which is what it means.
 
 **A rule, because this one has a preventable cause: tests import the constants
 they assert on.** The other instances were found by forcing a check's other
@@ -3728,7 +3742,14 @@ fresh checkout.
 
 #### D78 — The lint spells the public merge event by hand
 
-*Status: open, filed 18 September. Waits for the next planned fingerprint change.*
+*Status: fixed, 19 September, with the d22 fix.*
+
+**Fixed.** The check reads `FRAME_PUBLIC.MERGED` in any of the three quotes.
+The author-facing sentences at `lint.ts:258` and `:262` still say `dai:merged`
+as text. **It did not change the fingerprint:** the deliberate build after it
+kept the same host as before it (`1a89d50f2e0a5461`). `src/lint.ts` is not part
+of the runtime a host carries, so waiting for a fingerprint change was
+unnecessary; it could have gone in at any time.
 
 **What it means to a person:** nothing today; the spelling is right. It is the
 one place outside `src/frame.ts` that still writes a frame name out, so a

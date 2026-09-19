@@ -1153,6 +1153,8 @@ function bridgeMain(names: FrameNames): void {
    * document from its own library or took delivery of a file.
    */
   let mountIsOwnCopy = false;
+  /** The id the host has recorded for this device and document, when it has one (d22). */
+  let mountReplica: string | null = null;
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
   // `"any"` lets any member close; undefined for a document with no session. The
@@ -1581,7 +1583,17 @@ function bridgeMain(names: FrameNames): void {
     // Reopening this device's own copy keeps the id it has been writing under;
     // anything that arrived from elsewhere takes a new one, and the sender's
     // moves into `_dai_replicas` with their rows still theirs.
-    if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
+    /*
+     * The host's record wins over the file (d22). A reopen can mount a file
+     * this device did not write, the arrived file, when its first save had
+     * been asked and not yet written, and "own copy" then kept the sender's
+     * id. With an id recorded for this device, that id is written under
+     * whatever the file holds; the file's own moves to `_dai_replicas`.
+     */
+    if (mountReplica) {
+      const recorded = new Uint8Array(mountReplica.match(/../g)!.map((pair) => parseInt(pair, 16)));
+      (mergeModule as Any).adoptReplica(rows, recorded);
+    } else if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
     else (mergeModule as Any).adoptReplica(rows, fresh);
     /*
      * Permanent, on purpose (D22). A copy has come back from a reopen writing
@@ -1591,7 +1603,7 @@ function bridgeMain(names: FrameNames): void {
      * kept trace records, and a person using the app never sees it.
      */
     console.info(
-      `dai: replica ${mountIsOwnCopy ? "kept (own copy)" : "adopted (arrived copy)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
+      `dai: replica ${mountReplica ? (before === mountReplica ? "kept (this device's, recorded)" : "set to this device's (recorded)") : mountIsOwnCopy ? "kept (own copy)" : "adopted (arrived copy)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
     );
   };
 
@@ -2095,6 +2107,7 @@ function bridgeMain(names: FrameNames): void {
      */
     if (data.type === names.WRITE_RULES) {
       mountIsOwnCopy = data.ownCopy === true;
+      mountReplica = typeof data.replica === "string" && /^[0-9a-f]{32}$/.test(data.replica) ? data.replica : null;
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
@@ -2805,7 +2818,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; ownCopy: unknown; closePolicy: unknown } | null = null;
+let pendingRules: { source: unknown; ownCopy: unknown; replica: unknown; closePolicy: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -2814,7 +2827,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, ownCopy: rules.ownCopy, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, ownCopy: rules.ownCopy, replica: rules.replica, closePolicy: rules.closePolicy },
     "*",
   );
 }
@@ -3260,10 +3273,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; ownCopy?: unknown; closePolicy?: unknown };
+      const pushed = event.data as { source?: unknown; ownCopy?: unknown; replica?: unknown; closePolicy?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy, closePolicy: pushed.closePolicy };
+      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy, replica: pushed.replica, closePolicy: pushed.closePolicy };
       if (listeningWindow) deliverRules();
       return;
     }

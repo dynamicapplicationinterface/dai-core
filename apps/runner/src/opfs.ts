@@ -540,6 +540,49 @@ export async function deleteCartridgeFromLibrary(
   }
   // The mailbox state shares the document's lifetime and goes with it.
   await deleteMailbox(documentUuid);
+  await forgetOwnReplica(documentUuid);
+}
+
+/**
+ * The replica id this device writes a document under (d22).
+ *
+ * Recorded before a copy is first mounted and handed to the frame on every
+ * mount after, so the id a copy writes under is this device's, never whatever
+ * the mounted file carries. A reopen that fell back to the arrived file used to
+ * keep the sender's id, because "own copy" was decided by where the file came
+ * from rather than whose id was in it.
+ *
+ * Kept beside the document's database, under a key of its own, because the
+ * database's own key is deleted whenever the database moves to OPFS. A string,
+ * so the database reader, which takes only bytes, never mistakes it for one.
+ */
+const replicaKey = (documentUuid: string): string => `replica:${documentUuid}`;
+
+export async function ownReplicaOf(documentUuid: string): Promise<string | null> {
+  try {
+    const db = await openIdb();
+    return await new Promise((resolve) => {
+      const req = db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(replicaKey(documentUuid));
+      req.onsuccess = () => resolve(typeof req.result === "string" && /^[0-9a-f]{32}$/.test(req.result) ? req.result : null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function recordOwnReplica(documentUuid: string, replica: string): Promise<void> {
+  const db = await openIdb();
+  await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.put(replica, replicaKey(documentUuid)));
+}
+
+async function forgetOwnReplica(documentUuid: string): Promise<void> {
+  try {
+    const db = await openIdb();
+    await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.delete(replicaKey(documentUuid)));
+  } catch {
+    /* Nothing recorded, or no storage: nothing to forget. */
+  }
 }
 
 /**

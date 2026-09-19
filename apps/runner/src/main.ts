@@ -64,6 +64,8 @@ import {
   getCartridgeFromLibrary,
   listCartridgesFromLibrary,
   loadDatabaseFromOpfs,
+  ownReplicaOf,
+  recordOwnReplica,
   saveCartridgeToLibrary,
   trustStore,
   publisherStore,
@@ -561,6 +563,8 @@ function forgetOpen(): void {
 
 /** Whether this device holds the open document. Null until a store has answered. */
 let keptOnDevice: boolean | null = null;
+/** Saves this host has written, as opposed to asked (`hostSaves`). Read by tests. */
+let hostSavesWritten = 0;
 
 /** How many saves the running document has asked this host for. Read by tests. */
 let hostSaves = 0;
@@ -781,6 +785,7 @@ function eject(): void {
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
   hostSaves = 0;
+  hostSavesWritten = 0;
   window.clearTimeout(bootingGuard);
   keeper?.clear();
   hideCard();
@@ -1814,12 +1819,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
        * describes for standing consent and issued shares.
        */
       const kept = loaded;
-      await withLibraryLock(kept.manifest.documentUuid, async () => {
+      const keepRecord = async (): Promise<Parameters<typeof saveCartridgeToLibrary>[0]> => {
       // Read inside the lock, with the revision learned there too (D41): a
       // record read outside it can be written back over a save that committed
       // in between, rewinding the counter and refusing every later save.
       const keepItem = (await getCartridgeFromLibrary(kept.manifest.documentUuid).catch(() => null)) ?? heldItem;
-      await saveCartridgeToLibrary({
+      return {
         // Standing consent and issued shares belong to the copy, not to this
         // write. See the note on the save path above.
         ...keepItem,
@@ -1851,7 +1856,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(kept.manifest.documentUuid),
-      });
+      };
+      };
+      await withLibraryLock(kept.manifest.documentUuid, async () => {
+        await saveCartridgeToLibrary(await keepRecord());
       });
       keptOnDevice = true;
     } catch {
@@ -2280,6 +2288,7 @@ window.addEventListener("message", (event) => {
         );
         return;
       }
+      const replica = await replicaForMount(loaded.manifest.documentUuid, mountIsOwnCopy);
       (event.source as Window | null)?.postMessage(
         {
           type: TO_DOCUMENT.WRITE_RULES,
@@ -2288,6 +2297,9 @@ window.addEventListener("message", (event) => {
           // T1-D22: whether this copy keeps the replica id it holds or takes a
           // new one. See mountIsOwnCopy.
           ownCopy: mountIsOwnCopy,
+          // d22: the id this device writes this document under, when it has one
+          // recorded. The frame writes under it whatever the mounted file holds.
+          replica,
           // T1-D32: who may close this session, from the signed manifest. The
           // frame refuses a close the policy forbids at write time; the views are
           // the convergent net. Undefined for a document with no session.
@@ -2556,6 +2568,13 @@ window.addEventListener("message", (event) => {
       })
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
+          hostSavesWritten += 1;
+          // Off the save's path: the acknowledgment below must not wait on it.
+          void (async () => {
+            if ((await ownReplicaOf(documentUuid)) !== null) return;
+            const held = await requestReplicaId();
+            if (held && /^[0-9a-f]{32}$/.test(held)) await recordOwnReplica(documentUuid, held).catch(() => undefined);
+          })();
           (event.source as Window | null)?.postMessage(
             { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId },
             "*",
@@ -4245,6 +4264,30 @@ void confusables();
  * kept it across a reopen (D22), and that an own copy's id does not change —
  * rather than inferring it from whether a later exchange collided.
  */
+/**
+ * The replica id this copy is to write under, decided before the frame writes (d22).
+ *
+ * Recorded: that id, always. The frame takes it over whatever the mounted file
+ * carries, so a reopen that falls back to an arrived file is still this device.
+ * Not recorded and arriving: a new id, recorded before the frame is told, so
+ * a reload at any moment after this finds it. Not recorded and this device's
+ * own (a copy from before the record existed): nothing, and the frame keeps
+ * what it holds; the first written save records it (see the save path).
+ */
+async function replicaForMount(documentUuid: string, ownCopy: boolean): Promise<string | null> {
+  const recorded = await ownReplicaOf(documentUuid);
+  if (recorded) return recorded;
+  if (ownCopy) return null;
+  const fresh = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  try {
+    await recordOwnReplica(documentUuid, fresh);
+    return fresh;
+  } catch {
+    // No storage to record it in: the frame mints its own, as before.
+    return null;
+  }
+}
+
 function requestReplicaId(): Promise<string | null> {
   return new Promise((resolve) => {
     const target = cartridgeFrame.contentWindow;
@@ -4282,8 +4325,13 @@ Object.defineProperty(window, "__runner", {
     get handshakeEstablished() {
       return handshakeEstablished;
     },
+    /** Saves asked. A save asked is not a save kept: wait on savesWritten for that. */
     get saves() {
       return hostSaves;
+    },
+    /** Saves written to this device's storage. */
+    get savesWritten() {
+      return hostSavesWritten;
     },
     eject,
     exportContainer,

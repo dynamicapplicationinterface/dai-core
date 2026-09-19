@@ -17,6 +17,7 @@
  * what the reader will actually do next.
  */
 
+import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
 
 export interface Finding {
@@ -356,7 +357,11 @@ function lintShared(files: Record<string, string>): (Finding & { file: string })
 
   const everything = code.map(([, source]) => source).join("\n");
   const entry = code.find(([name]) => /(?:^|\/)index\.html?$/i.test(name))?.[0] ?? code[0]?.[0] ?? schemaName;
-  if (!/["'`]dai:merged["'`]/.test(everything)) findings.push(sharedFinding("shared-no-merge-listener", entry));
+  // The event an app listens for, spelled by its owner (D78): a rename there is a rename here.
+  const quoted = ['"', "'", "`"].some((open) =>
+    ['"', "'", "`"].some((close) => everything.includes(`${open}${FRAME_PUBLIC.MERGED}${close}`)),
+  );
+  if (!quoted) findings.push(sharedFinding("shared-no-merge-listener", entry));
   if (/\.(?:change|remove)\s*\(/.test(everything) && !/_r_conflicted|_conflicts\b/.test(everything)) {
     findings.push(sharedFinding("shared-conflicts-unshown", entry));
   }

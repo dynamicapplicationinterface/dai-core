@@ -166,9 +166,11 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
 
     // The adoption is persisted, not just held in memory — otherwise the reopen
     // below reads the sender's id back off disk. It flushes at mount, so a save
-    // is acknowledged without a move being played.
+    // is written without a move being played. Written, not asked: this waited on
+    // `saves`, which counts saves asked, and on a slow CI Firefox the reopen
+    // below landed before the write and came back as the sender (d22).
     await expect
-      .poll(() => pageB.evaluate(() => (window as any).__runner.saves), { timeout: 15_000 })
+      .poll(() => pageB.evaluate(() => (window as any).__runner.savesWritten), { timeout: 15_000 })
       .toBeGreaterThan(0);
 
     // The D22 window: B is reopened from the library BEFORE its first write. The
@@ -204,9 +206,6 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
    * the reload lands between asked and written.
    */
   test("a reload between the first save asked and written keeps the copy's own id", async ({ browser }) => {
-    // Held as an expected failure: reproduced 6 of 6 on Chromium and WebKit, 19
-    // September, and not fixed yet. The mark comes off with the fix.
-    test.fail(true, "d22 open: a reopen before the first save is written mounts the sender's id");
     const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
     const deviceB: BrowserContext = await browser.newContext({ acceptDownloads: true });
     const pageA = await deviceA.newPage();
@@ -231,23 +230,113 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
       if (text.startsWith("dai: ")) lines.push(text);
       if (!reloading && /^dai: save 1 asked/.test(text)) reloading = pageB.reload();
     });
-    const appB = await openWith(pageB, seed);
+    // Opened by hand rather than with openWith: the reload can land during the
+    // mount, before the application is on screen, so there is nothing to wait for.
+    await pageB.goto(RUNNER_URL);
+    await pageB.setInputFiles("#file", seed);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect.poll(() => reloading !== undefined, { timeout: 30_000 }).toBe(true);
     await reloading;
+    // The id B took at mount, before the reload, from its own line.
+    const adopted = lines
+      .map((l) => /^dai: replica [^:]*: \S+ -> ([0-9a-f]{32})$/.exec(l)?.[1])
+      .find((id): id is string => Boolean(id));
+
+    // The reopen: from the library if the first save landed, and otherwise the
+    // chooser, since a first arrival has no library record until its first save
+    // is written. Then the person opens the file again, as they would.
+    const reopened = await app(pageB)
+      .locator("#move-history")
+      .waitFor({ timeout: 15_000 })
+      .then(() => true, () => false);
+    if (!reopened) await openWith(pageB, seed);
     await expect(app(pageB).locator("#move-history")).toContainText("e4", { timeout: 30_000 });
-    void appB;
     const idB = await replicaId(pageB);
-    const trail = lines.filter((l) => /save|stored|reopen|replica/.test(l)).join(" | ");
-    console.log(`d22 race: A=${idA} B-after-reload=${idB} :: ${trail}`);
+    const trail = lines.filter((l) => /save|stored|reopen|replica|library/.test(l)).join(" | ");
+    console.log(`d22 race: A=${idA} B-before=${adopted} B-after=${idB} :: ${trail}`);
     // The reload is started on "asked", but the write often still lands first
     // (the old page can unload before it logs "written"). Then the reopen finds
     // the stored database and this run never reached the window. Say so instead
     // of passing or failing on a condition it never tested.
+    // Before the fix the reopen came from the library ("reopen mounted the
+    // stored database"); after it, a first arrival has no library record yet and
+    // the file is opened again, which resumes the stored database when the save
+    // landed. Either line means the write beat the reload.
+    // Only the first reopen after the reload decides it: a later one in the same
+    // run (the page settling) reads the database the first one went on to save.
+    const firstReopen = lines
+      .slice(lines.findIndex((l) => l.startsWith("dai: save 1 asked")) + 1)
+      .find((l) => /^dai: (reopen mounted|resumed this device's own copy)/.test(l));
     test.skip(
-      lines.some((l) => l.startsWith("dai: reopen mounted the stored database")),
+      firstReopen !== undefined && /stored database/.test(firstReopen) && !/no stored database/.test(firstReopen),
       "the first save landed before the reopen: the window was missed",
     );
     expect(idB, "the reopened arrived copy is not the sender").not.toBe(idA);
+    expect(idB, "and it is the id this device took before the reload").toBe(adopted);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /** The replica id this device has recorded for the one document it holds, read from storage. */
+  const recordedReplica = (page: Page): Promise<string | null> =>
+    page.evaluate(
+      () =>
+        new Promise<string | null>((done) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onerror = () => done(null);
+          open.onsuccess = () => {
+            const req = open.result.transaction("sqlite_databases", "readonly").objectStore("sqlite_databases").getAllKeys();
+            req.onerror = () => done(null);
+            req.onsuccess = () => {
+              const key = (req.result as IDBValidKey[]).map(String).find((k) => k.startsWith("replica:"));
+              if (!key) return done(null);
+              const get = open.result.transaction("sqlite_databases", "readonly").objectStore("sqlite_databases").get(key);
+              get.onsuccess = () => done(typeof get.result === "string" ? get.result : null);
+              get.onerror = () => done(null);
+            };
+          };
+        }),
+    );
+
+  /**
+   * The guard (d22): a copy mounted from this device's library writes under this
+   * device's recorded replica id, never one carried by the file it mounted.
+   *
+   * Checked for both kinds of copy a library holds, each across a reopen: one
+   * this device started (A), and one that arrived from A (B, which must also
+   * never be A). The race test above covers a reopen inside the window; this
+   * holds the ordinary reopen to the same rule, so a change that stopped
+   * handing the recorded id to the frame fails here on every run, not only
+   * when a race is won.
+   */
+  test("a copy reopened from the library writes under this device's recorded id", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const deviceB: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openWith(pageA, container);
+    await appA.locator("[data-new-game]:visible").first().click();
+    await appA.locator("#setup-you").fill("Ada");
+    await appA.locator("#setup-them").fill("Bo");
+    await appA.locator('input[name="color"][value="w"]').check();
+    await appA.locator("#new-game-form button[type=submit]").click();
+    await play(appA, "e2", "e4");
+    const seed = join(dirname(container), "seed-guard.dai.html");
+    await saveOut(pageA, seed);
+    await reopen(pageA);
+    const idA = await replicaId(pageA);
+    expect(await recordedReplica(pageA), "A writes under the id recorded for A").toBe(idA);
+
+    await openWith(pageB, seed);
+    await expect
+      .poll(() => pageB.evaluate(() => (window as any).__runner.savesWritten), { timeout: 15_000 })
+      .toBeGreaterThan(0);
+    await reopen(pageB);
+    const idB = await replicaId(pageB);
+    expect(await recordedReplica(pageB), "B writes under the id recorded for B").toBe(idB);
+    expect(idB, "and B is never A").not.toBe(idA);
 
     await deviceA.close();
     await deviceB.close();
