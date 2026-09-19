@@ -657,10 +657,35 @@ yet know, or the object must reject a path segment that is a verb.
 
 #### d22-reopen — a reopened copy came back as the sender
 
-*Status: **ESCALATED, 19 September. Two replicas shared one id; route reproduced (see D80).** On Firefox CI
-a reopened arrived copy came back under the sender's replica id: the
-game-killing class (T1-D22/D33). It failed its retry for the first time and
-turned `main` red (run 35410311642, `5ae32d0`). Not yet fixed or explained.*
+*Status: **fixed, 19 September** (`dfc8d31`, conformance `a716445`; CI
+35450652603 green on every engine). Escalated the same day: on Firefox CI a
+reopened arrived copy came back under the sender's replica id, the
+game-killing class (T1-D22/D33), and turned `main` red (run 35410311642). D80
+remains: this closes the route the phones took to it, not the forgery.*
+
+**The fix, and its numbers.** The host records this device's replica id per
+document before the frame first writes (`replica:<uuid>` in IndexedDB) and
+hands it over with the write rules on every mount. The frame writes under it
+whatever the mounted file carries. Before: **21 of 21** runs that hit the
+window came back as the sender. After: **0 of 15**, with the window hit in 15 of
+48 runs (Chromium and WebKit). A run that misses the window skips and says so.
+- **The hit rate is lower than before** (31%, against about 60%) and was not
+  made equal. The likely reason is that the record's own IndexedDB write, just
+  before the first save, speeds that save up. That is not verified.
+- **A guard** holds an ordinary reopen to the recorded id, for a copy started
+  here and one that arrived. With the frame made to ignore the record, it failed
+  on both engines ("A writes under the id recorded for A").
+- **`:132` now waits on saves written** (`__runner.savesWritten`), not asked.
+  Pattern: the eighth instance of a check passing for an unrelated reason.
+- **Tried and dropped:** not writing the library record until the first save.
+  It closed the window, but it also un-kept every document that had been
+  opened and not yet written. 27 failures, among them `runner:541` ("reopens
+  what was open"): open, reload, gone.
+- **Not explained:** the overnight local run that surfaced those 27 also hung
+  at 1407 of 1412 for three hours with no test timing out. The five queued
+  WebKit `push-e2e` tests never started. The in-flight test was probably
+  WebKit D80 at `[1407]`, which finished its logging. The line reporter cannot
+  say more.
 
 **The route, reproduced 19 September (21 of 21 reached, Chromium and WebKit).** The
 condition is a reopen that lands **after the arrived copy's first save is asked
@@ -3840,7 +3865,14 @@ which is a design question D48 already owns.
 
 #### D79 — push-e2e's badge text flaked once on Chromium 153
 
-*Status: noted, not investigated. First sighting, no signature yet.*
+*Status: **second sighting, 19 September; the investigation starts.** Not
+begun yet.*
+
+**Second sighting:** run 35450102259 (`dfc8d31`, Chromium, passed on retry),
+the same test. The signature this time: the tic-tac-toe board's
+`#board .cell` 4 was expected to read "O" and read "". The other player's move
+never reached the board within the wait. Trace kept in that run's
+`retried-chromium-whole` artifact.
 
 `push-e2e.spec.ts:657`, "the badge clears after this player's own move is
 sent, for an app that reports waiting games", failed once and passed on retry
