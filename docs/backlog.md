@@ -3580,8 +3580,14 @@ from a real manifest, as the store-link tests in the same file already do.
 
 #### D65 — Both players in the crossed-invite tests are named "Ada", so a swapped name cannot fail them
 
-*Status: open. Seen in a CI screenshot on 18 September; the product was checked
-and is right.*
+*Status: fixed, 19 September. Seen in a CI screenshot on 18 September; the
+product was checked and is right.*
+
+**Fixed.** `inviteNewGame` takes the player's name, and B sets up as "Bo" in
+both crossed-invite tests. `nameIfAsked` asserts the seat prompt names the other
+player ("Ada invited you" on B, "Bo invited you" on A), so a swapped name fails.
+Passed 4 of 4 on Chromium. Ruled urgent by D80, which is the class of bug two
+identical names could never catch.
 
 **What was seen.** In run 35341691229 (Firefox, `mailbox-link-e2e:1287`, the
 D32 sighting), page A's last screenshot shows the chess seat prompt: "Ada

@@ -295,9 +295,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * button — the way a person sends a second game — returning the link.
    * The opponent is left unnamed, so whoever takes the seat is asked.
    */
-  async function inviteNewGame(page: Page, appFrame: FrameLocator): Promise<string> {
+  async function inviteNewGame(page: Page, appFrame: FrameLocator, you = "Ada"): Promise<string> {
     await appFrame.locator("[data-new-game]:visible").first().click();
-    await appFrame.locator("#setup-you").fill("Ada");
+    await appFrame.locator("#setup-you").fill(you);
     await appFrame.locator("#setup-them").fill("");
     await appFrame.locator('input[name="color"][value="w"]').check();
     await appFrame.locator("#new-game-form button[type=submit]").click();
@@ -1138,9 +1138,11 @@ test.describe("a game continues over a shared link (the key path)", () => {
   }
 
   /** A copy that took an open seat is asked to name itself, once. */
-  async function nameIfAsked(page: Page, name: string): Promise<void> {
+  async function nameIfAsked(page: Page, name: string, inviter?: string): Promise<void> {
     const dialog = app(page).locator("#name-dialog");
     if (await dialog.waitFor({ state: "visible", timeout: 20_000 }).then(() => true, () => false)) {
+      // Who invited is the other player, never this one (D65: both were once "Ada").
+      if (inviter) await expect(app(page).locator("#name-detail")).toContainText(`${inviter} invited you`);
       await app(page).locator("#my-name").fill(name);
       await app(page).locator("#name-form button[type=submit]").click();
     }
@@ -1190,7 +1192,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB);
-    await nameIfAsked(pageB, "Bo");
+    await nameIfAsked(pageB, "Bo", "Ada");
 
     // Both copies hold the same key for that game — which is what makes their
     // derived mailbox addresses agree.
@@ -1229,7 +1231,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // under one key per document the two copies held different keys from here on.
     const linkFromA = await inviteNewGame(pageA, appA);
     const sessionA = await activeSession(pageA);
-    const linkFromB = await inviteNewGame(pageB, appB);
+    const linkFromB = await inviteNewGame(pageB, appB, "Bo");
     const sessionB = await activeSession(pageB);
     expect(sessionA, "two invites are two different games").not.toBe(sessionB);
 
@@ -1237,13 +1239,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB);
-    await nameIfAsked(pageB, "Bo");
+    await nameIfAsked(pageB, "Bo", "Ada");
 
     await pageA.goto(linkFromB);
     await pageA.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageA);
-    await nameIfAsked(pageA, "Ada");
+    await nameIfAsked(pageA, "Ada", "Bo");
 
     // B replies in A's game, and A replies in B's. Both must arrive: the failure
     // this guards is both of them looking healthy and neither hearing anything.
@@ -1278,7 +1280,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const appB = await openContainer(pageB);
     const linkFromA = await inviteNewGame(pageA, appA);
     const sessionA = await activeSession(pageA);
-    const linkFromB = await inviteNewGame(pageB, appB);
+    const linkFromB = await inviteNewGame(pageB, appB, "Bo");
     const sessionB = await activeSession(pageB);
 
     // A opens first this time. Opening order is the other half of "who acted
@@ -1287,13 +1289,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageA.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageA);
-    await nameIfAsked(pageA, "Ada");
+    await nameIfAsked(pageA, "Ada", "Bo");
 
     await pageB.goto(linkFromA);
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB);
-    await nameIfAsked(pageB, "Bo");
+    await nameIfAsked(pageB, "Bo", "Ada");
 
     await play(app(pageA), "e7", "e5");
     await reaches(pageB, `e5@${sessionB}`, "A's reply in B's game reaches B");
@@ -1322,7 +1324,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB);
-    await nameIfAsked(pageB, "Bo");
+    await nameIfAsked(pageB, "Bo", "Ada");
 
     // A second invite into a different game mints a different key. The first
     // game must keep working: under one key per document it did not, because
