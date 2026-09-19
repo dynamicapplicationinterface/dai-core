@@ -78,6 +78,64 @@ import {
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 
+/**
+ * How this page arrived, read before anything here touches the head.
+ *
+ * iOS names, draws and launches a home-screen icon from the manifest a page
+ * was linked with when it loaded. A phone once installed a document and got
+ * the opener, and nothing on screen could say which manifest that load had,
+ * which worker served it, or whether the iOS reload was taken. So the page
+ * says, beside the D49 reading: only what it can read, nothing inferred.
+ */
+const arrivedManifest = document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? null;
+/** The iOS reload's gate, as decided on this load: set where it is decided. */
+let reloadGate = "not reached";
+/** Set by the load that took the iOS reload, read by the load it caused. */
+const RELOAD_TAKEN = "dai:ios-reload-taken";
+try {
+  if (sessionStorage.getItem(RELOAD_TAKEN) !== null) {
+    sessionStorage.removeItem(RELOAD_TAKEN);
+    reloadGate = "taken on the load before this one";
+  }
+} catch {
+  /* No session storage: the line says only what this load decided. */
+}
+
+async function workerBuild(): Promise<string> {
+  const worker = navigator.serviceWorker?.controller;
+  if (!worker) return "no worker";
+  const channel = new MessageChannel();
+  const answer = new Promise<string>((done) => {
+    channel.port1.onmessage = (event) => done(String((event.data as { build?: unknown })?.build ?? "no build"));
+    window.setTimeout(() => done("no answer"), 2000);
+  });
+  worker.postMessage({ type: "dai:worker-build" }, [channel.port2]);
+  const build = await answer;
+  return /^[0-9a-f]{12,}$/.test(build) ? build.slice(0, 7) : build;
+}
+
+async function arrivedManifestReading(): Promise<string> {
+  if (!arrivedManifest) return "no manifest";
+  try {
+    const response = await fetch(arrivedManifest);
+    const read = (await response.json()) as { name?: unknown; start_url?: unknown };
+    // The key is in the address; the line shows where it leads, never the key.
+    const start = String(read.start_url ?? "").replace(/([#&]k=)[^&]*/, "$1…");
+    return `${String(read.name ?? "?")} → ${start}`;
+  } catch {
+    return `${arrivedManifest} (unreadable)`;
+  }
+}
+
+async function showArrival(): Promise<void> {
+  const [build, manifest] = await Promise.all([workerBuild(), arrivedManifestReading()]);
+  const text = `worker ${build} · arrived with ${manifest} · iOS reload: ${reloadGate}`;
+  for (const id of ["sheet-arrival", "chooser-arrival"]) {
+    const slot = document.getElementById(id);
+    if (slot) slot.textContent = text;
+  }
+}
+
 const openButton = document.getElementById("open") as HTMLButtonElement;
 const exportButton = document.getElementById("export") as HTMLButtonElement;
 const fileInput = document.getElementById("file") as HTMLInputElement;
@@ -1813,6 +1871,13 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * one gesture away from this moment on. One extra load, behind the
      * launch screen; other platforms read the manifest live and need none.
      */
+    // The arrival line reports which way this went, from the values decided here.
+    reloadGate =
+      platform() !== "ios"
+        ? `not taken: platform is ${platform()}`
+        : !keptOnDevice
+          ? `not taken: kept on device is ${String(keptOnDevice)}`
+          : "not needed: already at the document's address";
     if (platform() === "ios" && keptOnDevice) {
       const identity = {
         uuid: loaded.manifest.documentUuid,
@@ -1858,6 +1923,12 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // stays up on this same page, and the guard turns it into Tap to open
         // pointed at where the reload was trying to go. See guardLaunch.
         markStep("reloading at the document's address");
+        reloadGate = "taken";
+        try {
+          sessionStorage.setItem(RELOAD_TAKEN, "1");
+        } catch {
+          /* The reloaded page will say "not reached"; still true of that load. */
+        }
         guardLaunch(target);
         if (target.split("#")[0] === location.href.split("#")[0]) {
           location.hash = new URL(target).hash;
@@ -1869,6 +1940,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       }
     }
 
+    void showArrival();
     hostMark("prepared");
     await mount(loaded);
     hostMark("mounted");
@@ -4436,6 +4508,7 @@ function showPersistence(): void {
 }
 
 showPersistence();
+void showArrival();
 
 /**
  * On the menu opening — never on load — the stamp becomes a one-tap update when a

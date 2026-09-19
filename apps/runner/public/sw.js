@@ -397,6 +397,16 @@ async function releaseSelf(record, address) {
  * What arrived merges when the document opens, without a card, because the
  * shared mailbox was already the consent.
  */
+/*
+ * Which build this worker is, asked by the page (the arrival line, beside
+ * D49). A page and its worker can be different builds; this is the worker's
+ * own answer, so the line reports it rather than guessing from a cache name.
+ * A worker from before this existed does not answer, and the page says so.
+ */
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "dai:worker-build") event.ports[0]?.postMessage({ build: BUILD });
+});
+
 self.addEventListener("push", (event) => {
   event.waitUntil(
     handlePush().catch(async (error) => {

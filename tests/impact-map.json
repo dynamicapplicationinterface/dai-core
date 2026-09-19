@@ -1741,6 +1741,16 @@
       "src/unzip.ts",
       "tests/presign.spec.ts"
     ],
+    "tests/probe-icon-manifest.spec.ts": [
+      "apps/runner/",
+      "conformance/signing-key.pem",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/probe-icon-manifest.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/probe.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/",
