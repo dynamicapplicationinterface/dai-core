@@ -648,7 +648,7 @@ a reopened arrived copy came back under the sender's replica id: the
 game-killing class (T1-D22/D33). It failed its retry for the first time and
 turned `main` red (run 35410311642, `5ae32d0`). Not yet fixed or explained.*
 
-**The route, reproduced 19 September (6 of 6, Chromium and WebKit).** The
+**The route, reproduced 19 September (21 of 21 reached, Chromium and WebKit).** The
 condition is a reopen that lands **after the arrived copy's first save is asked
 and before it is written**. By then the library record exists, holding the
 arrived file, which carries the sender's id. The reopen finds no stored
@@ -657,7 +657,11 @@ The breadcrumbs match the Firefox CI traces line for line: adopted A → B, "sav
 1 asked", no "written", then "reopen mounted the library's own copy", then
 "replica kept (own copy): A → A". Test: `d22-reopen`, "a reload between the
 first save asked and written keeps the copy's own id", which reloads on the
-"save 1 asked" line. It is held as `test.fail` until the fix.
+"save 1 asked" line. The write still lands first in about a third of runs (the
+old page can unload before it logs "written"); the reopen then reads "mounted
+the stored database", and the test skips, saying the window was missed. Every
+run that reached the window, 21 of 21, came back under the sender's id. Held as
+`test.fail` until the fix.
 - **Why CI met it by chance:** `:132` waits on `__runner.saves`, which counts
   saves *asked* (`hostSaves`, incremented where "asked" is logged), and its
   comment says "a save is acknowledged". On a slow Firefox the write lost the

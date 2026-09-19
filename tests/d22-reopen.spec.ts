@@ -239,6 +239,14 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
     const idB = await replicaId(pageB);
     const trail = lines.filter((l) => /save|stored|reopen|replica/.test(l)).join(" | ");
     console.log(`d22 race: A=${idA} B-after-reload=${idB} :: ${trail}`);
+    // The reload is started on "asked", but the write often still lands first
+    // (the old page can unload before it logs "written"). Then the reopen finds
+    // the stored database and this run never reached the window. Say so instead
+    // of passing or failing on a condition it never tested.
+    test.skip(
+      lines.some((l) => l.startsWith("dai: reopen mounted the stored database")),
+      "the first save landed before the reopen: the window was missed",
+    );
     expect(idB, "the reopened arrived copy is not the sender").not.toBe(idA);
 
     await deviceA.close();
