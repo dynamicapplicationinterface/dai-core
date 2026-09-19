@@ -667,6 +667,17 @@ corruption the test exists for, where B's next move collides with A's rows. It
 had happened before: 13 September (run 34791102890), the same assertion, Firefox
 CI, passing on retry.
 
+**19 September (run 35410311642, `5ae32d0`, a backlog-only push, Firefox 155):
+failed and failed its retry**, the first time it has not passed on retry. It
+turned `main` red. Same assertion: B's id before the reload was `3283d704…`;
+after it, `95f8f8fb…`. The opener's own breadcrumb says "replica kept (own
+copy): 95f8f8fb… -> 95f8f8fb…", so the reopen kept whatever it mounted. Whether
+`95f8f8fb…` is A's id, as on 14 September, is not yet matched by call; the
+retry has the same shape with its own ids. Both traces are kept in the run's
+`playwright-report-firefox-whole` artifact. The run before it (`e875d6c`, same
+runtime) passed this test. Not investigated: held behind the iOS icon
+regression.
+
 Ruled out, each by evidence — do not propose them again without new evidence:
 
 - **A slow library read turning the reopen into an arrival.** A reload remounts
