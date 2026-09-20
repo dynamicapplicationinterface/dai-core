@@ -216,7 +216,21 @@ function drawBoard(game, st) {
     b.setAttribute("aria-label", mark ? `Square ${cell + 1}, ${mark}` : `Square ${cell + 1}, empty`);
     b.disabled = !canPlay || mark !== null;
     b.addEventListener("click", () => {
-      write(() => shared.insert("marks", { game_id: game.id, turn: st.turn, cell }, game.session));
+      // Read now, not from the draw that made this square (D79): a merge held
+      // back while the finger was down may have changed whose turn it is.
+      const now = state(game);
+      if (!now.canPlay || now.board[cell] !== null) {
+        say(
+          now.seats.closed
+            ? "That move wasn't made: the match was closed while you were tapping."
+            : now.board[cell] !== null
+              ? `That move wasn't made: square ${cell + 1} was taken while you were tapping.`
+              : "That move wasn't made: it's no longer your turn.",
+        );
+        draw();
+        return;
+      }
+      write(() => shared.insert("marks", { game_id: game.id, turn: now.turn, cell }, game.session));
       draw();
     });
     board.append(b);
@@ -229,6 +243,7 @@ function drawStatus(game, st) {
   if (st.winner) status = `${nameOf(game, st.winner)} wins.`;
   else if (st.over) status = "A draw.";
   else if (st.collision) status = "Two marks at one turn — settle it below.";
+  else if (s.closed) status = "This match is closed.";
   else if (st.canPlay) status = `Your move, ${nameOf(game, st.mySide)}.${s.opponent ? "" : " Then send the invite."}`;
   else if (!s.member) status = "You are not playing in this game.";
   else if (!s.opponent) status = "Waiting for your invite to be opened.";
@@ -294,7 +309,37 @@ function reportWaiting() {
   window.dai.reportWaiting(games().filter((g) => state(g).canPlay).map((g) => g.session));
 }
 
+/*
+ * Never redraw under a finger (D79, SHARED-POINTER-HOLDS-THE-SCREEN).
+ *
+ * A merge can arrive at any moment, and draw() replaces the squares. If that
+ * happens between a press and its release, the browser fires no click at all
+ * (the pressed square is gone), and the move is lost with nothing said. So while
+ * a pointer is down a draw is only noted, and it happens when the pointer lifts:
+ * after the click, which then lands on the square that was pressed.
+ */
+let pointerDown = false;
+let drawPending = false;
+document.addEventListener("pointerdown", () => {
+  pointerDown = true;
+}, true);
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, () => {
+    pointerDown = false;
+    // After this event's click, not before it: the click must meet the square
+    // it was pressed on.
+    setTimeout(() => {
+      if (drawPending && !pointerDown) draw();
+    }, 0);
+  }, true);
+}
+
 function draw() {
+  if (pointerDown) {
+    drawPending = true;
+    return;
+  }
+  drawPending = false;
   reportWaiting();
   drawGameList();
   const game = activeGame();

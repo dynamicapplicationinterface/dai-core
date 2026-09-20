@@ -469,6 +469,22 @@ export const CONSTRAINTS: readonly Constraint[] = [
     ],
   },
   {
+    id: "SHARED-POINTER-HOLDS-THE-SCREEN",
+    title: "Never redraw while a finger is down",
+    shapes: SHARED,
+    topic: "shared",
+    rule:
+      "A merge can arrive at any moment, including between a press and its release: never redraw while a pointer is down, draw when it lifts, and read the state when you act, not when you drew. Set a flag on `pointerdown`, clear it on `pointerup` and `pointercancel`, and have the redraw note itself and run when the flag clears; a redraw from the person's own action is already after their release and needs nothing. Then check, in the handler, that what the tap asks for is still legal — the merge you held back may have taken the square, ended the game or moved the turn — and say so if it is not.",
+    why:
+      "A redraw replaces the elements it drew. If that happens between a press and its release, the browser fires no click at all, because the element that was pressed is gone: the tap is lost with no error, nothing on screen changes, and the person taps again. It is not rare — a live opponent's move arrives exactly while somebody is tapping. Reimplementing the tap from press and release instead is worse: it inherits scrolling, pointer capture, a finger that slides off, long-press, touch-cancel, the keyboard and assistive technology, and one of those is always got wrong. Holding the redraw back for the length of a tap costs nothing and keeps `click` meaning what it means.",
+    enforced: [],
+    anchors: [
+      { file: "examples/tic-tac-toe/app.js", contains: "Never redraw under a finger (D79, SHARED-POINTER-HOLDS-THE-SCREEN)" },
+      { file: "examples/tic-tac-toe/app.js", contains: "let pointerDown = false;" },
+      { file: "src/kit.ts", contains: "if (refreshPending && !pointerDown) refresh();" },
+    ],
+  },
+  {
     id: "SHARED-NO-DERIVED-STATE",
     title: "Store facts, derive everything else",
     shapes: SHARED,

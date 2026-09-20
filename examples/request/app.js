@@ -566,7 +566,32 @@ $("close").addEventListener("click", () => {
 // or link was opened; a background mailbox merge never takes a seat. Unsaved
 // answers survive the redraw (they are drawn from drafts); the cursor is put
 // back where it was.
-window.addEventListener("dai:merged", (event) => {
+/*
+ * Never redraw under a finger (D79, SHARED-POINTER-HOLDS-THE-SCREEN).
+ *
+ * A merge can arrive at any moment, and a redraw replaces what was pressed. If
+ * it lands between a press and its release, the browser fires no click at all
+ * and the tap is lost with nothing said. So while a pointer is down, what a
+ * merge would do waits, and happens when the pointer lifts, after that
+ * release's click.
+ */
+let pointerDown = false;
+const afterPointer = [];
+document.addEventListener("pointerdown", () => {
+  pointerDown = true;
+}, true);
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, () => {
+    pointerDown = false;
+    setTimeout(() => {
+      if (pointerDown) return;
+      for (const run of afterPointer.splice(0)) run();
+    }, 0);
+  }, true);
+}
+const whenPointerLifts = (run) => (pointerDown ? afterPointer.push(run) : run());
+
+window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
   if (event.detail?.via === "carrier") joinIfInvited();
   const typing = document.activeElement?.id?.startsWith("answer-") ? document.activeElement : null;
   const at = typing ? { id: typing.id, start: typing.selectionStart } : null;
@@ -575,7 +600,7 @@ window.addEventListener("dai:merged", (event) => {
     $(at.id).focus();
     $(at.id).setSelectionRange(at.start, at.start);
   }
-});
+}));
 
 // Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
 // finished, and if it fails the person is told, not left at "Opening…".

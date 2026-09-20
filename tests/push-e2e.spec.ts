@@ -3,7 +3,8 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Browser, type BrowserContext, type CDPSession, type FrameLocator, type Page } from "@playwright/test";
+import { expect, test, type Browser, type BrowserContext, type CDPSession, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { FRAME_PUBLIC } from "../src/frame.js";
 import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
 import type { Vapid } from "../apps/relay/src/push.js";
@@ -13,6 +14,32 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
 const RUNNER_ORIGIN = "http://localhost:5175";
 const appIn = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocator("iframe");
+
+/**
+ * The app's own frame, and the first merge it takes in from its mailbox.
+ *
+ * A copy that has just pointed at the relay pulls, merges and redraws. A tap
+ * during that redraw used to be lost (D79, fixed in the app by deferring the
+ * redraw while a pointer is down). A test that taps there is racing the redraw
+ * for no reason: it waits for the merge, then taps.
+ */
+const frameOf = (page: Page): Frame =>
+  page.frames().find((f) => f.parentFrame()?.parentFrame() === page.mainFrame())!;
+
+async function firstMailboxMerge(page: Page): Promise<void> {
+  const frame = frameOf(page);
+  await frame.evaluate((merged) => {
+    const held = window as unknown as { __merges?: number };
+    if (held.__merges !== undefined) return;
+    held.__merges = 0;
+    window.addEventListener(merged, (event) => {
+      if ((event as CustomEvent).detail?.via === "mailbox") held.__merges = (held.__merges ?? 0) + 1;
+    });
+  }, FRAME_PUBLIC.MERGED);
+  await expect
+    .poll(() => frameOf(page).evaluate(() => (window as unknown as { __merges?: number }).__merges ?? 0), { timeout: 30_000 })
+    .toBeGreaterThan(0);
+}
 
 /**
  * A move arrives while the app is closed (Track 5, slice two).
@@ -566,6 +593,7 @@ test("the badge counts games waiting on this player, clears on open and after a 
 
   // Eve closes the app. Fay moves: a legitimate turn, and the count rises to 1.
   await pageA.close();
+  await firstMailboxMerge(pageB);
   await cell(appB, 4).click();
   await expect(cell(appB, 4)).toHaveText("O");
   await expect.poll(async () => (await entries())[0]?.shown, { timeout: 45_000 }).toBe(1);
@@ -644,7 +672,7 @@ async function nonReportingTicTacToe(): Promise<string> {
   cpSync(join(repo, "examples", "tic-tac-toe"), dir, { recursive: true });
   const app = join(dir, "app.js");
   const source = readFileSync(app, "utf8");
-  const stripped = source.replace("function draw() {\n  reportWaiting();", "function draw() {");
+  const stripped = source.replace("  drawPending = false;\n  reportWaiting();", "  drawPending = false;");
   if (stripped === source) throw new Error("the report call was not removed");
   writeFileSync(app, stripped);
   const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Tic-tac-toe" });
@@ -692,6 +720,7 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
     const appB = appIn(pageB);
     await expect(appB.locator("#status")).toContainText("Your move, Hal.", { timeout: 60_000 });
     await pageB.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+    await firstMailboxMerge(pageB);
     await cell(appB, 4).click();
     await expect(cell(appB, 4)).toHaveText("O");
 
@@ -766,3 +795,141 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
     for (const c of [ctxA, ctxB]) await c.close();
   });
 }
+
+/**
+ * D79 reproduction: B clicks a square the instant its mount's first save is
+ * asked, while that save is being written, and the frame records what the click
+ * met. A probe until the mechanism is known: run with D79_PROBE=1.
+ */
+test("D79 probe: a square clicked while the mount's first save is being written", async ({ browser }) => {
+  test.skip(!process.env.D79_PROBE, "a probe: run with D79_PROBE=1");
+  test.slow();
+  const { context: ctxA, page: pageA } = await device(browser, "d79-a");
+  const { context: ctxB, page: pageB } = await device(browser, "d79-b");
+  const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+
+  await pageA.goto(RUNNER_URL);
+  await pageA.setInputFiles("#file", container);
+  await pageA.locator("#card-open").click();
+  const appA = appIn(pageA);
+  await expect(appA.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+  await appA.locator("#you").fill("Gil");
+  await appA.locator("#them").fill("Hal");
+  await appA.locator("#new-game button[type=submit]").click();
+  await cell(appA, 0).click();
+  await expect(cell(appA, 0)).toHaveText("X");
+  await pageA.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  await pageA.evaluate(() => {
+    (window as any).__copied = undefined;
+    navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+  });
+  await appA.locator("#invite").click();
+  await pageA.click("#send-go");
+  await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+  const link = await pageA.evaluate(() => (window as any).__copied as string);
+
+  const lines: string[] = [];
+  pageB.on("console", (m) => {
+    const text = m.text();
+    if (/^(dai: |D79 )/.test(text)) lines.push(text);
+  });
+  const appB = appIn(pageB);
+  await pageB.goto(link);
+  await pageB.locator("#card-open").click({ timeout: 60_000 });
+  await expect(appB.locator("#status")).toContainText("Your move, Hal.", { timeout: 60_000 });
+
+  // Inside the app's own frame: what a click meets, every board rebuild, every notice.
+  const frame = pageB.frames().find((f) => f.parentFrame()?.parentFrame() === pageB.mainFrame())!;
+  await frame.evaluate(() => {
+    const log = (s: string) => console.log(`D79 ${Math.round(performance.now())} ${s}`);
+    const board = document.getElementById("board")!;
+    const cells = () => [...board.children].map((c) => c.textContent || ".").join("");
+    for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click"]) {
+      document.addEventListener(
+        type,
+        (event) => {
+          const t = event.target as HTMLElement;
+          log(`${type} on ${t?.id ? "#" + t.id : t?.className || t?.tagName} connected=${t?.isConnected}`);
+        },
+        true,
+      );
+    }
+    document.addEventListener(
+      "click",
+      (event) => {
+        const t = event.target as HTMLButtonElement;
+        if (!t?.classList?.contains("cell")) return;
+        log(`click on ${t.getAttribute("aria-label")} connected=${t.isConnected} disabled=${t.disabled}`);
+        setTimeout(() => log(`after click: target connected=${t.isConnected} board=[${cells()}] status="${document.getElementById("status")?.textContent}" notice="${document.getElementById("notice")?.textContent}"`), 0);
+      },
+      true,
+    );
+    new MutationObserver(() => log(`board rebuilt: [${cells()}] enabled=${[...board.children].filter((c) => !(c as HTMLButtonElement).disabled).length}`)).observe(board, { childList: true });
+    const notice = document.getElementById("notice")!;
+    new MutationObserver(() => log(`notice: "${notice.textContent}"`)).observe(notice, { childList: true, characterData: true, subtree: true });
+    window.addEventListener("dai:merged", (e) => log(`dai:merged via=${(e as CustomEvent).detail?.via}`));
+    log("instrumented");
+  });
+
+  // The sightings' order: the relay, then the click about 15 ms later, with no wait between.
+  await pageB.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  if (process.env.D79_CLOSE) {
+    // A merge that makes the move illegal mid-press: Gil closes the match (the
+    // row the Close match button writes, through the app's own write surface),
+    // and Hal's copy takes it in while Hal's finger is down.
+    await pageB.waitForTimeout(1_500);
+    const frameA = pageA.frames().find((f) => f.parentFrame()?.parentFrame() === pageA.mainFrame())!;
+    // The session, as Hal's copy reports it waiting on Hal (the badge store).
+    let session = "";
+    await expect(async () => {
+      session = await pageB.evaluate(
+        () =>
+          new Promise<string>((resolve) => {
+            const open = indexedDB.open("dai_badge", 1);
+            open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+            open.onsuccess = () => {
+              const all = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
+              all.onsuccess = () => resolve(String((all.result[0] as { waiting?: string[] })?.waiting?.[0] ?? ""));
+            };
+          }),
+      );
+      expect(session).not.toBe("");
+    }).toPass({ timeout: 15_000 });
+    const published: string[] = [];
+    pageA.on("console", (m) => {
+      if (/^dai: watermark published/.test(m.text())) published.push(m.text());
+    });
+    await frameA.evaluate((s) => (window as any).dai.replicated.session.close(s), session);
+    // The close is at the relay before Hal presses, so the merge mid-press carries it.
+    await expect.poll(() => published.length, { timeout: 20_000 }).toBeGreaterThan(0);
+    const box = (await cell(appB, 4).boundingBox())!;
+    await pageB.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await pageB.mouse.down();
+    const mergedBefore = lines.filter((l) => /dai:merged via=mailbox/.test(l)).length;
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      expect(lines.filter((l) => /dai:merged via=mailbox/.test(l)).length).toBeGreaterThan(mergedBefore);
+    }).toPass({ timeout: 20_000 });
+    await pageB.mouse.up();
+    await pageB.waitForTimeout(500);
+    console.log(`D79 notice after release: "${await appB.locator("#notice").textContent()}" hidden=${await appB.locator("#notice").isHidden()}`);
+    console.log(`D79 status after release: "${await appB.locator("#status").textContent()}"`);
+  } else if (process.env.D79_SPLIT) {
+    // The press and the release around one redraw of the board, which is what a
+    // merge arriving mid-click does: the app's own merged listener calls draw().
+    await pageB.waitForTimeout(1_500);
+    const box = (await cell(appB, 4).boundingBox())!;
+    await pageB.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await pageB.mouse.down();
+    await frame.evaluate((merged) => window.dispatchEvent(new CustomEvent(merged, { detail: { via: "mailbox" } })), FRAME_PUBLIC.MERGED);
+    await pageB.mouse.up();
+  } else {
+    await cell(appB, 4).click();
+  }
+  await pageB.waitForTimeout(4_000);
+  for (const l of lines.filter((l) => /^D79|save|replica|lane|watermark|merged/.test(l))) console.log(`D79 PROBE | ${l}`);
+  console.log(`D79 cell 4 now: "${await cell(appB, 4).textContent()}"`);
+
+  for (const c of [ctxA, ctxB]) await c.close();
+});

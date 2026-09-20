@@ -77,6 +77,51 @@ test.describe("the kit", () => {
     ]);
   });
 
+  test("a refresh that lands mid-tap waits for the finger to lift (D79)", async ({ page }) => {
+    /*
+     * The rule tells authors to refresh on `dai:merged`, and a refresh replaces
+     * what a view drew. A refresh between a press and its release used to take
+     * the pressed control away, and the browser then fires no click at all: the
+     * tap was lost with nothing said. Driven as a finger does it — press, the
+     * refresh a merge would cause, release — against the kit's own fixture.
+     */
+    const built = join(
+      execFileSync(
+        process.execPath,
+        [join(repo, "dist", "bin.js"), "build", app, "-o", join(tmpdir(), "kit-midtap.dai.html"), "--quiet"],
+        { cwd: repo, encoding: "utf8" },
+      ).trim(),
+    );
+    await page.goto(pathToFileURL(built).href);
+    await page.locator("body.dai-mounted").waitFor({ timeout: 30_000 });
+    const inside = page.frameLocator("#dai-app");
+    await inside.locator("#what").fill("one");
+    await inside.locator("#add").click();
+    await expect(inside.locator("#list li")).toHaveCount(1);
+
+    // The fixture draws no checked state from the row, so what the tap did is
+    // read from the database, as the kit's other tests read it.
+    const frame = page.frames().find((f) => f.parentFrame() === page.mainFrame())!;
+    const done = (): Promise<number | undefined> =>
+      frame.evaluate(
+        () =>
+          (window as unknown as { daiKit: { db: { selectObjects(sql: string): { done: number }[] } } }).daiKit.db.selectObjects(
+            "SELECT done FROM tasks",
+          )[0]?.done,
+      );
+    expect(await done()).toBe(0);
+
+    const box = (await inside.locator("#list li .tick").boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    // What a merge arriving now would do.
+    await frame.evaluate(() => (window as unknown as { daiKit: { refresh(): void } }).daiKit.refresh());
+    await page.mouse.up();
+
+    // The tap was taken, not swallowed by the redraw.
+    await expect.poll(done, { timeout: 10_000 }).toBe(1);
+  });
+
   test("stored text is rendered as text, never as markup", async () => {
     /*
      * The property that makes a container safe to open, extended to what the

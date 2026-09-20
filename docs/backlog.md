@@ -3787,6 +3787,34 @@ code, so routing it changes the runtime and keeps a host. The fix is one line
 (build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
 next runtime change that is keeping a host anyway, not on its own.
 
+#### D82 — A move the screen accepted was erased by a later merge, and the person was told nothing
+
+*Status: open, not fixed. Seen 19 September while building D79's second case.*
+
+**What it means to a person:** you made a move, you watched it appear, and later
+it was simply gone. Nothing said so, and nothing you can look at says why.
+
+Hal moved; the O was written and drawn. Gil's close of the session then arrived,
+and the close had not seen Hal's move, so the move is late by the session's own
+rule (T1-D31) and every copy drops it. The board went back to eight empty
+squares with no word. Read from the probe's frame log: the mark drawn at 2517
+ms, the close merged at 5553, the board redrawn without the mark.
+
+**It is general, not about closes.** Any row this copy accepted locally can be
+refused once other rows arrive: late relative to a close, a row from a seat that
+was contested or replaced (D80), a party that turns out not to be admitted. The
+screen shows the optimistic state until the merge says otherwise, and the app
+has no way to tell the person "the thing you did did not survive" — the merge
+reports what it applied, never what it took away from this copy.
+
+**What would be needed:** the merge's report would have to name rows this copy
+had authored and no longer holds, so an app can say so. Nothing does today, and
+that is the design question, not the sentence to show.
+
+**Related:** D46 (a move that failed to send waits for the next write, the same
+family of a write the person believes is done), D79 (the same screen lying by
+omission, there by dropping a tap), D80.
+
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
 
 *Status: **open, V1 blocker.** Proven 19 September; not fixed. The fix is what a
@@ -3863,23 +3891,79 @@ Readings are from the D80 guard test's fresh-storage variant, run once. It is no
 kept as a test yet; a test for this should assert what the walk is meant to do,
 which is a design question D48 already owns.
 
-#### D79 — push-e2e's badge text flaked once on Chromium 153
+#### D79 — A tap is lost when a merge redraws the screen under the finger
 
-*Status: **second sighting, 19 September; the investigation starts.** Not
-begun yet.*
+*Status: fixed, 19 September, in the applications and the kit. The screen not
+saying so when an accepted row is later refused is D82, open.*
 
-**Second sighting:** run 35450102259 (`dfc8d31`, Chromium, passed on retry),
-the same test. The signature this time: the tic-tac-toe board's
-`#board .cell` 4 was expected to read "O" and read "". The other player's move
-never reached the board within the wait. Trace kept in that run's
-`retried-chromium-whole` artifact.
+**What it means to a person:** you tap a square while the other player's move is
+arriving, and nothing happens. No mark, no message. You tap again.
 
-`push-e2e.spec.ts:657`, "the badge clears after this player's own move is
-sent, for an app that reports waiting games", failed once and passed on retry
-in PR #4's run 35409533799 (Chromium 153, build 1243): `expect(locator).
-toHaveText(expected) failed`. No closed browser, so not D28. Trace kept in that
-run's `retried-chromium-whole` artifact. A second sighting starts the
-investigation.
+**The mechanism.** A redraw replaces the elements it drew. Every app here
+redraws on `dai:merged`, which is what the rule tells authors to do, so a merge
+landing between a press and its release replaces the element that was pressed —
+and **Chromium then fires no `click` event at all**. Measured in the frame:
+`pointerdown` on a cell at 2349 ms, the board rebuilt at 2395, `pointerup` on
+the *new* cell at 2407, and no click, anywhere. The handler never runs, nothing
+is written, nothing is said.
+
+**That fact is why delegation is not the fix.** A listener on the board catches
+nothing, because there is no click to catch. Reimplementing the tap from press
+and release was rejected too: it inherits scrolling, pointer capture, a finger
+that slides off, long-press, touch-cancel, the keyboard and assistive technology
+— and every author who copies the pattern inherits them.
+
+**The fix: never redraw while a pointer is down.** A flag set on
+`pointerdown`, cleared on `pointerup`/`pointercancel`; a redraw notes itself
+and runs when the flag clears, after that release's click. `click` keeps its
+native meaning, the press and the release meet the same element, and
+`replaceChildren` stays in the fixture so the fix is proved on the hard case.
+The handler then reads the state **when it acts**, not from the draw that bound
+it, because the merge that was held back may have changed whose turn it is.
+
+- **Applications:** `examples/tic-tac-toe` (in `draw()`), and the merge
+  listeners of `examples/receipts`, `examples/request` and
+  `tests/fixture/chess`. Four apps were in this shape.
+- **The kit** (`src/kit.ts`, runtime): `daiKit.refresh()` defers the same way.
+  The rule tells authors to call it on a merge, so every kit application was in
+  the shape whether its author knew it or not.
+- **The rule:** `SHARED-POINTER-HOLDS-THE-SCREEN` in `src/rules.ts`, anchored
+  to the fixture's flag and the kit's, beside SHARED-REDRAW-ON-MERGE.
+
+**Proved, both cases.** The reproduction is kept, labelled, in
+`tests/push-e2e.spec.ts` behind switches:
+
+```
+D79_PROBE=1 D79_SPLIT=1 npx playwright test tests/push-e2e.spec.ts -g "D79 probe" --project=chromium
+D79_PROBE=1 D79_CLOSE=1 npx playwright test tests/push-e2e.spec.ts -g "D79 probe" --project=chromium
+```
+
+- **D79_SPLIT** presses, forces one redraw, releases: **5 of 5 dropped before
+  the fix, 5 of 5 accepted and shown after.**
+- **D79_CLOSE** does the same with a merge that makes the move illegal (the
+  creator's close): **refused with a notice, 5 of 5** — "That move wasn't made:
+  the match was closed while you were tapping" — with the board and the status
+  telling the truth. Two sentences were untrue and were fixed with it: the
+  notice blamed the turn, and `drawStatus` never looked at `closed`.
+- **The kit's guard** is `kit.spec`, "a refresh that lands mid-tap waits for
+  the finger to lift": press, refresh, release, and the row's update survives.
+  With the deferral removed it fails on Chromium and WebKit; with it, 6 of 6.
+- **In tic-tac-toe the opponent cannot already have moved** — turns alternate —
+  so the close is the merge that makes a move illegal there.
+
+**How CI met it, twice.** `push-e2e.spec.ts:696` (Chromium 153), runs
+35409533799 and 35450102259, each passing on retry. The click landed 4–6 ms
+after the mailbox lane started, which is when its first pull merges and
+redraws; Playwright's click takes 54–107 ms from "performing" to "done", which
+spans one. Both traces are kept in their runs' `retried-chromium-whole`.
+**First recorded here as a badge text mismatch, which was wrong**: both
+sightings are this assertion, on B's own board.
+
+**The tests wait for the merge now**, rather than racing it:
+`firstMailboxMerge` (`tests/mailbox-wait.ts`), used at the five places a spec
+taps an app control right after mount or after pointing at the relay —
+`push-e2e` (two), `invite-one-session`, `mailbox-link-e2e` (three sites) and
+`session-mailbox-e2e`.
 
 #### D40 — A tier that reports success by running nothing
 

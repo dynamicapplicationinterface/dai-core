@@ -360,7 +360,12 @@ async function boot(){
  // default is background, so a future dispatch site that forgets the tag cannot
  // silently reintroduce auto-rebinding. The tag says "carrier" or it does not join.
  // A mailbox merge is how the other player's moves arrive while the board is open: announce and animate them.
- window.addEventListener('dai:merged',e=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);});
+ // Never redraw under a finger (D79, SHARED-POINTER-HOLDS-THE-SCREEN): a merge that lands between a press and its release
+ // replaces the pressed square, the browser fires no click, and the move is lost. What a merge does waits for the lift.
+ let pointerDown=false;const afterPointer=[];
+ document.addEventListener('pointerdown',()=>{pointerDown=true;},true);
+ for(const type of ['pointerup','pointercancel'])document.addEventListener(type,()=>{pointerDown=false;setTimeout(()=>{if(pointerDown)return;for(const r of afterPointer.splice(0))r();},0);},true);
+ window.addEventListener('dai:merged',e=>{const merged=()=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);};if(pointerDown)afterPointer.push(merged);else merged();});
  const st=store.state();if(st?.last&&!store.draft(st.game.id))requestAnimationFrame(()=>{replay()?.catch?.(e=>notify(e.message));});
 }
 boot().catch(error=>{console.error(error);$('boot-notice').hidden=false;$('boot-notice').textContent='Your board could not be opened safely. '+error.message;});

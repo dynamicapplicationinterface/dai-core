@@ -872,7 +872,8 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
-      "tests/invite-one-session.spec.ts"
+      "tests/invite-one-session.spec.ts",
+      "tests/mailbox-wait.ts"
     ],
     "tests/isolation-conformance.spec.ts": [
       "apps/runner/",
@@ -1138,6 +1139,7 @@
       "tests/chess-play.ts",
       "tests/fixture/",
       "tests/mailbox-link-e2e.spec.ts",
+      "tests/mailbox-wait.ts",
       "tsup.config.ts"
     ],
     "tests/mailbox-mechanism.spec.ts": [
@@ -2473,6 +2475,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
+      "tests/mailbox-wait.ts",
       "tests/session-mailbox-e2e.spec.ts"
     ],
     "tests/session-mailbox.spec.ts": [

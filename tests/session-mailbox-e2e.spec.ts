@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { firstMailboxMerge } from "./mailbox-wait.js";
 import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
 import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
@@ -272,6 +273,7 @@ test("two games travel in two mailboxes, and one game's key opens only its own",
   const appB = appIn(pageB);
   await expect(appB.locator("#status")).toContainText("Your move, Bo.", { timeout: 60_000 });
   await pageB.evaluate((b) => (window as any).__runner.useRelay(b), relayBase);
+  await firstMailboxMerge(pageB);
   await cell(appB, 1).click();
   await expect(cell(appB, 1)).toHaveText("O");
   await expect(async () => {

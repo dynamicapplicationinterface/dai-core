@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { firstMailboxMerge } from "./mailbox-wait.js";
 import { compileDirectory } from "../src/compile.js";
 import { FRAME_PUBLIC } from "../src/frame.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
@@ -379,6 +380,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await useRelay(pageB);
 
     // B replies e5 over the mailbox; A pulls it. No key was injected anywhere.
+    await firstMailboxMerge(pageB);
     await play(appB, "e7", "e5");
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
@@ -1297,6 +1299,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await useRelay(pageB);
     await nameIfAsked(pageB, "Bo", "Ada");
 
+    await firstMailboxMerge(pageA);
     await play(app(pageA), "e7", "e5");
     await reaches(pageB, `e5@${sessionB}`, "A's reply in B's game reaches B");
 
@@ -1461,6 +1464,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "", "e2", "e4");
     const appB = await openLink(pageB, link);
     await nameIfAsked(pageB, "Bo", "Ada");
+    await firstMailboxMerge(pageB);
     await play(appB, "e7", "e5");
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
