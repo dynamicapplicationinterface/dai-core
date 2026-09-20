@@ -63,35 +63,18 @@ the format, and must never become something a cartridge consults or depends on.
 
 ## The host bridge
 
-> **Current as of 2 September 2026 (`ea0cb91`). The bridge has grown since.**
-> The code now uses 28 `DAI_HOST_*` message types and the tables below
-> document 6, so a host built from this section is incomplete. The rewrite is
-> [backlog D68](backlog.md). Until then, the messages in `src/` and
-> `apps/runner/src/` are the reference.
+The messages themselves are generated from `src/bridge.ts`, which owns them:
+[the host bridge's messages](../website/docs/bridge-reference.md). This section
+used to carry the tables by hand, dated "current as of 2 September", and by the
+time anybody noticed it documented six of twenty-nine — a host built from it was
+incomplete and nothing said so (D68). The generated page cannot fall behind:
+`build-docs --check` fails the moment the code gains a message it does not name.
 
 A cartridge speaks to exactly one party: the window that framed it, over
-`postMessage`. That is not a network connection — it is same-machine, in-process,
-initiated by the cartridge, and reaches only a host that already had the file.
-It is how a cartridge can be observed without being able to observe anything
-back.
-
-### What exists today
-
-Cartridge to host:
-
-| Message | Payload | When |
-|---|---|---|
-| `DAI_HOST_HANDSHAKE` | `bridgeVersion`, `documentUuid`, `verified`, `payloadFingerprint` | After the cartridge has verified itself and mounted its application |
-| `DAI_HOST_SAVE` | `html`, `databaseBytes`, `documentUuid` | When the application asks to persist |
-| `DAI_HOST_REFUSED` | `bridgeVersion`, `reason`, `message`, `detail`, `documentUuid` | The cartridge stopped before mounting. Sent without waiting for a handshake, because a refusal happens before one |
-| `DAI_HOST_CLOSING` | `bridgeVersion`, `documentUuid` | The document is going away. Best-effort |
-
-Host to cartridge:
-
-| Message | Payload | Meaning |
-|---|---|---|
-| `DAI_HOST_HANDSHAKE_ACK` | `bridgeVersion` | A host is present. Until this arrives the cartridge assumes none, and saves through the browser instead |
-| `DAI_HOST_SAVE_ACK` | `status`, `error` | Whether the write happened. `status: "ok"` on a save that did not occur is the worst available lie: the application stops offering to save |
+`postMessage`. That is not a network connection — it is same-machine,
+in-process, initiated by the cartridge, and reaches only a host that already had
+the file. It is how a cartridge can be observed without being able to observe
+anything back.
 
 The handshake is deliberately an acknowledgement rather than an announcement. A
 cartridge that assumed a host merely because it was framed would post into

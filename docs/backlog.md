@@ -2766,6 +2766,13 @@ CDDL and no byte vectors.
 reference would build one that cannot save a merge, share a link, or keep a
 session, and would believe it complete.
 
+**Closed, 20 September:** the reference is generated from `src/bridge.ts` by
+`scripts/build-docs.mjs` into `website/docs/bridge-reference.md` — all 29
+messages, each with its own note from the owner's doc comment — and the roadmap
+section points at it. The drift check is `build-docs --check`, which
+`rules.spec` runs: adding `DAI_HOST_THERMOSTAT` to `TO_HOST` fails it by name
+(`stale: website/docs/bridge-reference.md`, exit 1).
+
 `docs/roadmap.md`'s "The host bridge" section was last edited on 2 September
 (`ea0cb91`). The bridge has grown since: `DAI_HOST_REQUEST_SHARE` arrived on
 7 September (`15f4355`), and `DAI_HOST_MERGE` and `DAI_HOST_WRITE_RULES` on

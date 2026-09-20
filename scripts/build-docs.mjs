@@ -288,6 +288,74 @@ ${entries}
 `;
 }
 
+/**
+ * The host bridge's messages, read out of `src/bridge.ts` (D68).
+ *
+ * The reference for this was written by hand in `docs/roadmap.md` and dated:
+ * it documented six messages while the code sent twenty-nine, so a host built
+ * from it was incomplete and nothing said so. Generated here from the owner,
+ * it cannot fall behind — `build-docs --check` fails the moment the code
+ * gains a message this page does not name.
+ *
+ * Each message's own note is its doc comment in `src/bridge.ts`, first
+ * sentence, so the page says what the code says.
+ */
+function bridgeMessages(which) {
+  const source = readFileSync(join(repo, "src", "bridge.ts"), "utf8");
+  const block = new RegExp(`export const ${which} = \\{([\\s\\S]*?)\\n\\} as const;`).exec(source);
+  if (!block) throw new Error(`build-docs: no ${which} in src/bridge.ts`);
+  const entries = [];
+  // Each entry, with whatever comment sits immediately above it.
+  const pattern = /(?:\/\*\*([\s\S]*?)\*\/\s*)?(?:\/\*\*[\s\S]*?\*\/\s*)?([A-Z][A-Z0-9_]*): "([^"]+)",/g;
+  for (const match of block[1].matchAll(pattern)) {
+    const note = (match[1] ?? "")
+      .split("\n")
+      .map((line) => line.replace(/^\s*\*?\s?/, "").trim())
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const first = note.split(/(?<=\.)\s/)[0] ?? "";
+    entries.push({ key: match[2], value: match[3], note: first });
+  }
+  if (entries.length === 0) throw new Error(`build-docs: no messages read from ${which}`);
+  return entries;
+}
+
+function bridgeTable(which) {
+  const rows = bridgeMessages(which)
+    .map(({ key, value, note }) => `| \`${value}\` | \`${which}.${key}\` | ${note || "—"} |`)
+    .join("\n");
+  return `| Message | Named | Note |\n|---|---|---|\n${rows}`;
+}
+
+function bridgePage() {
+  const toHost = bridgeMessages("TO_HOST").length;
+  const toDocument = bridgeMessages("TO_DOCUMENT").length;
+  return `${title("The host bridge's messages")}
+
+Generated from \`src/bridge.ts\`, which owns these names. Do not edit this page:
+run \`node scripts/build-docs.mjs\`. A message added to the code and missing
+here fails \`build-docs --check\`.
+
+A document speaks to exactly one party: the window that framed it, over
+\`postMessage\`. Every message flows one way, so the names are split by
+direction — ${toHost} from the document to its host, ${toDocument} back.
+
+Everything in these messages is a **claim by the document**. A host that
+records \`verified: true\` because a document said so has recorded nothing: the
+host verifies the file itself, and the document's fingerprint is worth having
+only because it can be compared with the host's own.
+
+## From the document to its host
+
+${bridgeTable("TO_HOST")}
+
+## From the host to the document
+
+${bridgeTable("TO_DOCUMENT")}
+`;
+}
+
 function shapesPart() {
   const questions = SHAPE_DECISION.map(
     (step, index) => `${index + 1}. ${md(step.ask)}\n   - **Yes:** ${md(step.yes)}\n   - **No:** ${md(step.no)}`,
@@ -337,6 +405,7 @@ export function outputs() {
     [join(docs, "runtime-api.md"), runtimeApiPage()],
     [join(docs, "schema-reference.md"), schemaPage()],
     [join(docs, "refusals.md"), refusalsPage()],
+    [join(docs, "bridge-reference.md"), bridgePage()],
     [join(docs, "parts", "shapes.md"), shapesPart()],
   ]);
   for (const c of CONSTRAINTS) out.set(join(CONSTRAINT_PARTS, `${c.id}.md`), constraintPart(c));
