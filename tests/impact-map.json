@@ -80,6 +80,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/attachments.spec.ts",
       "tests/fixtures.ts",
@@ -135,6 +136,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/blind-agreement.spec.ts",
       "tests/fixtures.ts"
@@ -277,6 +279,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/container.spec.ts"
     ],
@@ -461,6 +464,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/examples-shared.spec.ts",
       "tests/fixtures.ts"
@@ -573,6 +577,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/frame-hold.spec.ts"
     ],
@@ -645,6 +650,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/host-profile.spec.ts",
       "tests/open.ts"
@@ -712,6 +718,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/icon-after-wipe.spec.ts"
@@ -760,6 +767,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/idb-timeout.spec.ts"
     ],
@@ -811,6 +819,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/identity.spec.ts"
     ],
@@ -883,6 +892,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/invite-one-session.spec.ts"
@@ -967,6 +977,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/launch-card.spec.ts"
     ],
@@ -1014,6 +1025,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/launch-failsafe.spec.ts"
     ],
@@ -1080,6 +1092,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/look-inside.spec.ts"
     ],
@@ -1266,6 +1279,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/make-one-page.spec.ts",
       "tests/open.ts",
@@ -1336,6 +1350,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/merge-card.spec.ts"
     ],
@@ -1421,6 +1436,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/no-beacon.spec.ts"
     ],
@@ -1468,6 +1484,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/offline-detector.spec.ts",
       "tests/offline.ts"
@@ -1518,6 +1535,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/offline-detector.spec.ts",
       "tests/offline-second-open.spec.ts",
@@ -1623,6 +1641,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/one-sentence.spec.ts",
       "website/"
@@ -1673,6 +1692,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/opener-thin.spec.ts"
@@ -1729,6 +1749,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/opener-updates.spec.ts"
     ],
@@ -1814,6 +1835,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/offline-detector.spec.ts",
       "tests/offline.ts",
@@ -1916,6 +1938,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/publisher.spec.ts"
@@ -1967,6 +1990,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/push-e2e.spec.ts",
@@ -2016,6 +2040,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/reference-head.spec.ts"
     ],
@@ -2067,6 +2092,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/reference-link.spec.ts"
@@ -2160,6 +2186,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/request-share.spec.ts"
     ],
@@ -2208,6 +2235,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/returning-document.spec.ts"
@@ -2300,6 +2328,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/safe-area.spec.ts"
     ],
@@ -2354,6 +2383,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/schema-run.spec.ts"
@@ -2497,6 +2527,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/fixtures.ts",
       "tests/mailbox-wait.ts",
@@ -2618,6 +2649,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/static-opener.spec.ts"
@@ -2666,6 +2698,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/storage-persistence.spec.ts"
     ],
@@ -2727,6 +2760,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/succession.spec.ts"
@@ -2813,6 +2847,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/trust-consent.spec.ts"
@@ -2916,6 +2951,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/unfurl.spec.ts"
     ],
@@ -2969,6 +3005,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/v3-reader.spec.ts"
     ],
@@ -3039,6 +3076,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/open.ts",
       "tests/version-update.spec.ts"
@@ -3088,6 +3126,7 @@
       "src/trust.ts",
       "src/unfurl.ts",
       "src/unzip.ts",
+      "src/worker.ts",
       "src/x509.ts",
       "tests/viewport.spec.ts"
     ],
@@ -3109,6 +3148,13 @@
       "src/",
       "tests/website.spec.ts",
       "tsup.config.ts"
+    ],
+    "tests/worker-names.spec.ts": [
+      "apps/runner/public/sw.js",
+      "src/bridge.ts",
+      "src/mailbox.ts",
+      "src/worker.ts",
+      "tests/worker-names.spec.ts"
     ],
     "tests/write-rules-race.spec.ts": [
       "apps/runner/",

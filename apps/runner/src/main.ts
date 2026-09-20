@@ -79,6 +79,7 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
+import { WORKER } from "../../../src/worker.js";
 
 /**
  * How this page arrived, read before anything here touches the head.
@@ -111,7 +112,7 @@ async function workerBuild(): Promise<string> {
     channel.port1.onmessage = (event) => done(String((event.data as { build?: unknown })?.build ?? "no build"));
     window.setTimeout(() => done("no answer"), 2000);
   });
-  worker.postMessage({ type: "dai:worker-build" }, [channel.port2]);
+  worker.postMessage({ type: WORKER.BUILD }, [channel.port2]);
   const build = await answer;
   return /^[0-9a-f]{12,}$/.test(build) ? build.slice(0, 7) : build;
 }
@@ -4465,17 +4466,17 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
   navigator.serviceWorker.addEventListener("message", (event) => {
     // A push woke a mailbox while this page was showing: read it now rather
     // than at the next poll (see sw.js).
-    if ((event.data as { type?: string } | null)?.type === "dai:mailbox-moved") {
+    if ((event.data as { type?: string } | null)?.type === WORKER.MAILBOX_MOVED) {
       wakeMailbox();
       return;
     }
     // The push worker asking whether this page is showing a document, so it
     // can tell a move the person is looking at from one they are not.
-    if ((event.data as { type?: string } | null)?.type === "dai:which-document") {
+    if ((event.data as { type?: string } | null)?.type === WORKER.WHICH_DOCUMENT) {
       event.ports[0]?.postMessage({ uuid: loaded?.manifest.documentUuid ?? null });
       return;
     }
-    if ((event.data as { type?: string } | null)?.type !== "dai:shell-updated") return;
+    if ((event.data as { type?: string } | null)?.type !== WORKER.SHELL_UPDATED) return;
     if (reloaded || document.body.classList.contains("loaded")) return;
     reloaded = true;
     location.reload();

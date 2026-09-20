@@ -3500,6 +3500,16 @@ in *Not doing*; this is an addition for people who already have one.
 
 #### D72 — The opener and its service worker speak in unowned names
 
+*Status: fixed, 20 September.* `src/worker.ts` owns the four names, and
+`apps/runner/src/main.ts` reads them from it. `sw.js` is a classic worker
+(`register("./sw.js")`, no `type: "module"`, one `importScripts`) and cannot
+import, so it keeps its literals and `worker-names.spec` holds them to the
+owner — the kit's arrangement, with `dai:isolation-report` as its one named
+exception (the bridge owns it) and the `dai:ground:` / `dai:mailbox:` prefixes
+left to D73 and `src/mailbox.ts`. Proved to fire both ways: renaming
+`SHELL_UPDATED` in the owner fails it, and giving `sw.js` a name nobody owns
+fails it.
+
 *Status: open. Split out of D69, 18 September; not collapsed in that pass.*
 
 `dai:which-document`, `dai:shell-updated` and `dai:mailbox-moved` pass between
