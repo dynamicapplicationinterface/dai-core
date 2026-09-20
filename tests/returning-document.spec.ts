@@ -99,6 +99,39 @@ async function through(page: Page): Promise<boolean> {
 
 const inside = (page: Page) => page.frameLocator("#cartridge").frameLocator("#dai-app");
 
+/**
+ * What every frame of every open page holds, when a test here fails (D32).
+ *
+ * The kept traces say a reopen ends with the shell's frame and its app frame
+ * gone and a new app frame made, and then a 90-second wait for text that never
+ * appears. What they cannot say is whether that new frame is the one the page
+ * is attached to and is simply empty, or whether the document mounted into a
+ * frame the page no longer shows — a frame that renders the right text but is
+ * not the document's frame is a product defect, not a lost locator. The
+ * snapshots are incremental and cannot be read back for that, so the frames are
+ * asked directly, at the moment it fails.
+ */
+test.afterEach(async ({ browser }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  for (const [c, context] of browser.contexts().entries()) {
+    for (const [p, page] of context.pages().entries()) {
+      for (const frame of page.frames()) {
+        const read = await frame
+          .evaluate(() => ({
+            url: location.href.slice(0, 70),
+            title: document.title.slice(0, 40),
+            body: (document.body?.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 70),
+            app: Boolean(document.getElementById("app") ?? document.getElementById("dai-app")),
+            frames: window.frames.length,
+            attached: document.defaultView !== null,
+          }))
+          .catch((error: Error) => ({ url: frame.url().slice(0, 70), error: String(error.message).slice(0, 60) }));
+        console.log(`D32 frame c${c}p${p} parent=${frame.parentFrame() ? "y" : "n"} ${JSON.stringify(read)}`);
+      }
+    }
+  }
+});
+
 /** Opens a file and waits for the application to be running. */
 async function open(page: Page, file: string): Promise<void> {
   await page.goto(RUNNER_URL);
