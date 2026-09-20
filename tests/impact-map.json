@@ -872,8 +872,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
-      "tests/invite-one-session.spec.ts",
-      "tests/mailbox-wait.ts"
+      "tests/invite-one-session.spec.ts"
     ],
     "tests/isolation-conformance.spec.ts": [
       "apps/runner/",
