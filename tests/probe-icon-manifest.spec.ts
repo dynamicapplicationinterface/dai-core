@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "@playwright/test";
+import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { publish } from "../src/store.js";
 import { fsStore } from "../src/store-fs.js";

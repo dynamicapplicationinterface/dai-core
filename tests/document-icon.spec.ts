@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures.js";
 import { HINT_KEY } from "../src/link.js";
 import { openFile } from "./open.js";
 

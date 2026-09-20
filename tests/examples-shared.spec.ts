@@ -2,7 +2,8 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { expect, test, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type FrameLocator, type Page } from "@playwright/test";
+import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");

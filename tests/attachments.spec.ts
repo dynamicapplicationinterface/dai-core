@@ -3,7 +3,8 @@ import { deflateSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { openFile } from "./open.js";
 

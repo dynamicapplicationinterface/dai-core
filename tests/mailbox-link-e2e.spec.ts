@@ -3,7 +3,8 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { test } from "./fixtures.js";
 import { firstMailboxMerge } from "./mailbox-wait.js";
 import { compileDirectory } from "../src/compile.js";
 import { FRAME_PUBLIC } from "../src/frame.js";
@@ -190,17 +191,6 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const builtRoles = await compileDirectory({ sourceDir: rolesDir, root: repo, appName: "Velvet Chess" });
     rolesContainer = join(mkdtempSync(join(tmpdir(), "dai-link-roles-")), "velvet-chess.dai.html");
     writeFileSync(rolesContainer, builtRoles.html, "utf8");
-  });
-
-  /*
-   * A test that fails never reaches its own closes, and this file has one that
-   * fails by design (D80). Its two contexts, with their pages and their mailbox
-   * polling, then outlive it for the rest of the worker — which is the shape of
-   * the run that hung at 1407 of 1412 on 19 September. Every test here takes the
-   * `browser` fixture and makes its own contexts, so closing them all is safe.
-   */
-  test.afterEach(async ({ browser }) => {
-    await Promise.all(browser.contexts().map((context) => context.close().catch(() => undefined)));
   });
 
   test.afterAll(() => {

@@ -82,6 +82,7 @@
       "src/unzip.ts",
       "src/x509.ts",
       "tests/attachments.spec.ts",
+      "tests/fixtures.ts",
       "tests/open.ts"
     ],
     "tests/badge-count.spec.ts": [
@@ -135,7 +136,8 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
-      "tests/blind-agreement.spec.ts"
+      "tests/blind-agreement.spec.ts",
+      "tests/fixtures.ts"
     ],
     "tests/bridge-nonce.spec.ts": [
       "scripts/generate-key.mjs",
@@ -187,6 +189,7 @@
       "scripts/retain-host.mjs",
       "src/",
       "tests/card-familiarity.spec.ts",
+      "tests/fixtures.ts",
       "tests/open.ts",
       "tsup.config.ts"
     ],
@@ -202,6 +205,7 @@
       "tests/chess-play.ts",
       "tests/chess.spec.ts",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tsup.config.ts"
     ],
     "tests/cli.spec.ts": [
@@ -276,6 +280,10 @@
       "src/x509.ts",
       "tests/container.spec.ts"
     ],
+    "tests/context-cleanup.spec.ts": [
+      "tests/context-cleanup.spec.ts",
+      "tests/fixtures.ts"
+    ],
     "tests/copy-choice.spec.ts": [
       "src/cbor.ts",
       "src/copy-choice.ts",
@@ -349,6 +357,7 @@
       "tests/chess-play.ts",
       "tests/d22-reopen.spec.ts",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tsup.config.ts"
     ],
     "tests/document-icon.spec.ts": [
@@ -359,6 +368,7 @@
       "src/",
       "tests/document-icon.spec.ts",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tests/open.ts",
       "tsup.config.ts"
     ],
@@ -452,7 +462,8 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
-      "tests/examples-shared.spec.ts"
+      "tests/examples-shared.spec.ts",
+      "tests/fixtures.ts"
     ],
     "tests/file-handoff.spec.ts": [
       "src/handoff.ts",
@@ -702,6 +713,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
+      "tests/fixtures.ts",
       "tests/icon-after-wipe.spec.ts"
     ],
     "tests/idb-timeout.spec.ts": [
@@ -872,6 +884,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
+      "tests/fixtures.ts",
       "tests/invite-one-session.spec.ts"
     ],
     "tests/isolation-conformance.spec.ts": [
@@ -1137,6 +1150,7 @@
       "src/",
       "tests/chess-play.ts",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tests/mailbox-link-e2e.spec.ts",
       "tests/mailbox-wait.ts",
       "tsup.config.ts"
@@ -1148,6 +1162,7 @@
       "src/",
       "tests/chess-play.ts",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tests/mailbox-mechanism.spec.ts",
       "tsup.config.ts"
     ],
@@ -1749,6 +1764,7 @@
       "scripts/retain-host.mjs",
       "src/",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tests/probe-icon-manifest.spec.ts",
       "tsup.config.ts"
     ],
@@ -1952,6 +1968,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
+      "tests/fixtures.ts",
       "tests/push-e2e.spec.ts",
       "tests/relay-memory.ts"
     ],
@@ -2188,6 +2205,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
+      "tests/fixtures.ts",
       "tests/returning-document.spec.ts"
     ],
     "tests/roster.spec.ts": [
@@ -2373,6 +2391,7 @@
       "apps/runner/",
       "scripts/retain-host.mjs",
       "src/",
+      "tests/fixtures.ts",
       "tests/open.ts",
       "tests/sectioned-mount.spec.ts",
       "tsup.config.ts"
@@ -2383,6 +2402,7 @@
       "scripts/retain-host.mjs",
       "src/",
       "tests/fixture/",
+      "tests/fixtures.ts",
       "tests/open.ts",
       "tests/send.spec.ts",
       "tsup.config.ts"
@@ -2474,6 +2494,7 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "src/x509.ts",
+      "tests/fixtures.ts",
       "tests/mailbox-wait.ts",
       "tests/session-mailbox-e2e.spec.ts"
     ],
