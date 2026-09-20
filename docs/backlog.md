@@ -4040,9 +4040,53 @@ a pass — a distinct exit code, or wording a person and a script both read as
 "not checked". The same question applies to the impact map's no-op case, which
 prints a stale-map warning and still exits 0 (seen twice tonight).
 
-#### D32 — On Firefox, a test loses the opener's frame when it is pointed at the document
+#### D32 — On Firefox, a reopened document's frame never gets a document
 
-*Status: open — fix undecided.*
+*Status: open, **and no longer read as a test problem** (20 September). Rate
+measured; the frame read at failure. Fix undecided.*
+
+**The rate, by the D28 method** (five fresh CI samples, Firefox 1543, the whole
+`returning-document` file at 10 repeats on 4 workers, 70 tests a sample, no
+retries; the loop is `.github/workflows/d32-loop.yml`, dispatch only, because
+this machine cannot start Firefox):
+
+| Sample | Failed | Of |
+|---|---|---|
+| 35527268876 | 5 | 70 |
+| 35527276608 | 4 | 70 |
+| 35527285336 | 7 | 70 |
+| 35527936943 | 4 | 70 |
+| 35528445493 | 6 | 70 |
+| **total** | **26** | **350 (7.4%)** |
+
+Always the reopen path: `:192` (opening your own copy after they moved) and
+`:167` (a link older than what this device holds), with `:318` twice.
+
+**The frame, read at the moment it fails.** The kept snapshots are incremental
+and cannot be read back for this, so the failing test now asks the browser
+directly (`test.afterEach` in `returning-document.spec.ts`). Every failure
+reads the same:
+
+- Playwright lists **one frame**, the shell page, while that page reports one
+  child in `window.frames`.
+- The DOM holds `#cartridge`, the shell's blob frame: `readyState` complete,
+  reachable, body "Enter App Mode", one child.
+- That child is `#dai-app`, **with its `srcdoc` attribute set and its
+  `contentDocument` null**.
+
+**So it is not a lost locator, and not the right text in the wrong frame.**
+There is no other frame holding the document: the app frame element exists,
+carries the document in its `srcdoc`, and has no document at all. Playwright
+lists no such frame because none was ever created. The old reading here — "the
+document is fine throughout, Playwright never registered the navigation" — was
+wrong, and the "tooling" label with it.
+
+**What is not yet known:** why Firefox leaves a `srcdoc` frame documentless
+about seven times in a hundred reopens, and whether the shell can see it (a
+frame with no document has no `load` to wait for). A fix that re-points the
+frame when its document never arrives would need something that notices — which
+is the same shape as the launch fail-safe (D31's Tap to open).
+
 
 **What happens.** The opener mounts a document by pointing its `#cartridge` frame at a fresh `blob:` URL (`apps/runner/src/main.ts`, `mount`). An eject first resets that frame to `about:blank`. Sometimes, on Firefox under load, Playwright never registers that navigation. For the rest of the test it holds the frame as `about:blank`, so a locator that enters `#cartridge`, then `#dai-app`, then the app finds nothing and times out. The document is fine throughout.
 
