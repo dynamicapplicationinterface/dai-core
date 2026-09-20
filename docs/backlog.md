@@ -3914,6 +3914,11 @@ the sender's id. The plain reopen of the invite on one device keeps the
 joiner's id (the guard test before this one, Chromium and WebKit, also with the
 stored database removed).
 
+**For the sitting:** `docs/d80-seat-brief.md` — every identity that exists
+today and what each survives, the five things a seat could be bound to with what
+each costs on the wire and in the four cases, and what D82 needs from the same
+design. Facts only; the recommendation is the sitting's.
+
 **Related:** D37 (the shared per-game key), D15 (roles), D48 (taking a lost seat
 back), D65 (two names, so a swap can fail a test), the key-holder identity
 primitive (*Three items now block on the same absent primitive*; this is a
