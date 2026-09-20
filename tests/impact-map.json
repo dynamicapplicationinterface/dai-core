@@ -2076,6 +2076,10 @@
       "src/rules.ts",
       "tests/refusal-registry.spec.ts"
     ],
+    "tests/refusal-wire.spec.ts": [
+      "src/refusals.ts",
+      "tests/refusal-wire.spec.ts"
+    ],
     "tests/relay-push.spec.ts": [
       "apps/relay/src/",
       "tests/relay-memory.ts",

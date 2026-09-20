@@ -2656,7 +2656,7 @@ consistent rename, which is exactly the dangerous change.
 | Container bytes (manifest, CBOR, envelope) | `src/core.ts`, `src/cose.ts` | `conformance/vectors.json`, `tests/vectors.spec.ts`, the Python reader | none |
 | Kept hosts | `apps/runner/public/hosts/*` | `tests/host-retention.spec.ts` | none |
 | The `window.dai` functions authors call | `bootloader.ts` `bridgeMain` | `rules.ts` anchors on some | no single list; not every function anchored |
-| Refusal codes a host records | `src/refusals`, registry | `refusal-registry.spec` checks presence | nothing stops a code being respelled |
+| Refusal codes a host records | `src/refusals`, registry | `refusal-registry.spec` checks presence; **`refusal-wire.spec` holds all 66 spellings** (20 Sep) | closed: a consistent rename of `BLOB_MISMATCH` through the registry, its thrower and its spec fails the wire test while the registry check passes |
 
 **The cheap move for each gap** is the one the two wire tests already make: one
 test per surface that writes every frozen value out in full, the allowed
