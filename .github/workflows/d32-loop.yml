@@ -1,0 +1,72 @@
+# The D32 loop: the reopen path, repeated on one engine, to measure a rate.
+#
+# D28 was settled by looping a spec until the failure had a number against it.
+# D32 — a reopened document whose frame is there and empty while the shell says
+# it mounted — cannot be looped on the maintainer's machine: Windows refuses to
+# start Firefox there ("spawn UNKNOWN"). So it is looped here instead. Each
+# dispatch is one sample, with its own kept traces; three dispatches are three
+# samples, and no run overwrites another's evidence.
+#
+# Dispatch only: nothing runs this on a push.
+name: d32-loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: Which engine to loop
+        default: firefox
+        type: choice
+        options: [firefox, webkit, chromium]
+      repeats:
+        description: How many times to repeat each test
+        default: "10"
+      workers:
+        description: How many workers
+        default: "4"
+
+permissions:
+  contents: read
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm --prefix website ci
+
+      - run: npx playwright install --with-deps ${{ inputs.browser }} chromium
+
+      # Every repeat runs, whatever fails: a rate needs the whole sample, and
+      # a run that stops at the first failure measures nothing.
+      - run: >
+          npx playwright test tests/returning-document.spec.ts
+          --project=${{ inputs.browser }}
+          --repeat-each=${{ inputs.repeats }}
+          --workers=${{ inputs.workers }}
+          --max-failures=0
+          --retries=0
+          --reporter=list
+        env:
+          DAI_LOOP: "1"
+
+      # Kept whatever happened: the failures are the point, and a green sample
+      # is a number too.
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d32-loop-${{ inputs.browser }}-${{ github.run_attempt }}
+          path: |
+            test-results/**/trace.zip
+            test-results/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 14
