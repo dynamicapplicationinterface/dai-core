@@ -79,6 +79,7 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
+import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
 
 /**
@@ -94,7 +95,7 @@ const arrivedManifest = document.querySelector('link[rel="manifest"]')?.getAttri
 /** The iOS reload's gate, as decided on this load: set where it is decided. */
 let reloadGate = "not reached";
 /** Set by the load that took the iOS reload, read by the load it caused. */
-const RELOAD_TAKEN = "dai:ios-reload-taken";
+const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
 try {
   if (sessionStorage.getItem(RELOAD_TAKEN) !== null) {
     sessionStorage.removeItem(RELOAD_TAKEN);
@@ -441,7 +442,7 @@ async function learnRevision(documentUuid: string): Promise<number> {
  * this exists to prevent.
  */
 function withLibraryLock<T>(documentUuid: string, work: () => Promise<T>): Promise<T> {
-  const key = `dai:${documentUuid}`;
+  const key = libraryLock(documentUuid);
   return navigator.locks?.request
     ? navigator.locks.request(key, { mode: "exclusive" }, work)
     : work();
@@ -484,7 +485,7 @@ const keeper = watchForInstall();
 /** Set for one open when the card called the publisher a conflict (4.3). */
 let installSuppressed = false;
 
-const RESUME_KEY = "dai:resume";
+const RESUME_KEY = KEYS.RESUME;
 
 /**
  * How many times this device has opened a document, counted here rather than
@@ -494,7 +495,7 @@ const RESUME_KEY = "dai:resume";
 /** How many times this document has been opened here, without counting this one. */
 function seenOpens(uuid: string): number {
   try {
-    return Number(localStorage.getItem(`dai:opens:${uuid}`) ?? "0");
+    return Number(localStorage.getItem(opensKey(uuid)) ?? "0");
   } catch {
     return 0;
   }
@@ -502,8 +503,8 @@ function seenOpens(uuid: string): number {
 
 function countOpen(uuid: string): number {
   try {
-    const next = Number(localStorage.getItem(`dai:opens:${uuid}`) ?? "0") + 1;
-    localStorage.setItem(`dai:opens:${uuid}`, String(next));
+    const next = Number(localStorage.getItem(opensKey(uuid)) ?? "0") + 1;
+    localStorage.setItem(opensKey(uuid), String(next));
     return next;
   } catch {
     // Storage refused. One open is the honest answer when nothing is remembered.

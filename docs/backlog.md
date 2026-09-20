@@ -3522,6 +3522,22 @@ unexercised. That is worth knowing before the owner is built.
 
 #### D73 — The opener's storage and lock keys share the dai: prefix with everything else
 
+*Status: fixed, 20 September.* `src/keys.ts` owns all seven — the three
+constants, the three per-document makers (`dai:ground:`, `dai:install-asked:`,
+`dai:opens:`) and the library lock (D41's `dai:<uuid>`, spelled once). `main.ts`
+and `install.ts` read them from it; `storage-keys.spec` refuses a second
+definer, checks no two makers can produce one string, and holds the head
+script's hand-built copy of the ground prefix to the owner, since a script that
+runs before any module cannot import. Proved to fire: a key spelled by hand in
+`main.ts` fails it, and renaming the ground key in the owner fails the head
+script check.
+
+**Found while routing it:** `install.ts` had its own `groundKey`, so the import
+collided — and the build reported the version-stamp plugin's ENOENT instead,
+because that plugin reads `dist/sw.js` in `closeBundle` and the real error
+never reached the console. Three clean builds in a row said the same wrong
+thing. The duplicate is renamed at its use; the masking is not fixed.
+
 *Status: open. Split out of D69.*
 
 `dai:opens:`, `dai:ground:`, `dai:resume`, `dai:install-asked`,

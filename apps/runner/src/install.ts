@@ -39,6 +39,7 @@
  * Other desktop browsers have no install of their own; their menu does, and
  * the text says where.
  */
+import { groundKey as groundStorageKey, installAskedKey, KEYS } from "../../../src/keys.js";
 import { HINT_KEY } from "../../../src/link.js";
 import { platform, standalone } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
@@ -120,7 +121,7 @@ export function manifestAddress(uuid: string): string {
 }
 
 /** Set before the page reloads at a document's own address, so the steps are shown after. */
-const KEEP_AFTER_RELOAD = "dai:keep-after-reload";
+const KEEP_AFTER_RELOAD = KEYS.KEEP_AFTER_RELOAD;
 
 /**
  * The address an icon for this document launches into.
@@ -199,7 +200,7 @@ function groundKey(uuid: string): string {
   } catch {
     /* No matchMedia: light, which is what the head script assumes too. */
   }
-  return `dai:ground:${uuid}:${scheme}`;
+  return groundStorageKey(uuid, scheme);
 }
 export function knownGround(uuid: string): string | undefined {
   try {
@@ -217,7 +218,7 @@ export function keepGround(uuid: string, colour: string): void {
 }
 
 function dismissedKey(uuid: string): string {
-  return `dai:install-asked:${uuid}`;
+  return installAskedKey(uuid);
 }
 
 function dismissed(uuid: string): boolean {
