@@ -4096,6 +4096,37 @@ refuses to start Firefox here ("spawn UNKNOWN"), which is why the loop runs in
 CI at all. **That reading is the next thing, and it needs a machine that can
 launch Firefox.**
 
+**Read on a Firefox this machine can now launch (20 September).** The Windows
+failure was never a permission: `firefox.exe` could not resolve its own
+private `mozglue` assembly under `%LOCALAPPDATA%` (SideBySide event 33). The
+same folder copied to `C:\\pw-firefox-test` ran; under any AppData path it did
+not. With `PLAYWRIGHT_BROWSERS_PATH=C:\\pw-browsers` the engine runs here, and
+the loop can be driven locally: **1 of 16, then 7 of 20, then 5 of 16** on the
+two reopen tests, which is the CI rate and worse under load.
+
+**Three readings at the moment of failure, and all three say the product is
+well:**
+1. The film kept in the trace, at 89 s of the 90 s wait: the document is on
+   screen, correct.
+2. The page's own DOM, read in one call: `#cartridge` is connected and has a
+   `contentWindow`; the app frame inside it has a window and is laid out
+   1280×720.
+3. The host's own round trip into the app frame (`__runner.replicaId()`,
+   which does not use Playwright's frame tree): **answered in 1–3 ms**. A null
+   there means either no window or the frame replying "no replica yet", and
+   reading 2 excludes the first — so the frame replied.
+
+**So what fails is Playwright's view.** `page.frames()` lists the main frame
+alone while that frame reports a child in `window.frames`, and every locator
+that must enter `#cartridge` then `#dai-app` waits for a frame the automation
+never registered. The document, the shell and the channel between them are
+alive throughout. This is the "tooling" reading again — reached this time from
+the product's side rather than assumed, and with the earlier claim of a
+documentless frame retracted.
+
+**What is still owed:** a person driving Firefox by hand through the reopen
+path. Automation cannot answer it, because automation is the thing in question.
+
 **Not carried forward:** the cause loop over how the frame is created
 (`srcdoc` before or after insertion, a tick between, a non-blob parent). It was
 designed against the retracted reading, and a variant's rate would measure

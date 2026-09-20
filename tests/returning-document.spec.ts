@@ -115,6 +115,45 @@ test.afterEach(async ({ browser }, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus) return;
   for (const [c, context] of browser.contexts().entries()) {
     for (const [p, page] of context.pages().entries()) {
+      // First, and on its own: a timed-out test leaves its hooks only what is
+      // left of the clock. This is the reading that decides whether the
+      // document is alive, so it goes before the slower ones.
+      if (page.mainFrame().url().startsWith("http://localhost:5175")) {
+        // One call, one document: asking the host and reading the element in
+        // two calls cannot tell "the host lost its frame" from "the page
+        // navigated between the two questions".
+        const answered = await page
+          .evaluate(async () => {
+            const runner = (window as unknown as { __runner?: { replicaId(): Promise<string | null> } }).__runner;
+            const frame = document.getElementById("cartridge") as HTMLIFrameElement | null;
+            const before = { window: Boolean(frame?.contentWindow), connected: Boolean(frame?.isConnected) };
+            if (!runner) return `no runner, frame ${JSON.stringify(before)}`;
+            const at = performance.now();
+            const id = await runner.replicaId();
+            const after = { window: Boolean(frame?.contentWindow), connected: Boolean(frame?.isConnected) };
+            return `${id ?? "null"} after ${Math.round(performance.now() - at)}ms, frame ${JSON.stringify(before)} then ${JSON.stringify(after)}`;
+          })
+          .catch((error: Error) => `error: ${String(error.message).slice(0, 40)}`);
+        const shown = await page
+          .evaluate(() => {
+            const frame = document.getElementById("cartridge") as HTMLIFrameElement | null;
+            const inner = frame?.contentDocument?.getElementById("dai-app") as HTMLIFrameElement | null;
+            const box = inner?.getBoundingClientRect();
+            return {
+              w: Math.round(box?.width ?? -1),
+              h: Math.round(box?.height ?? -1),
+              // Whether the page can reach the frame the host says it cannot:
+              // the host's helper answers null at once when it holds no window.
+              cartridges: document.querySelectorAll("#cartridge").length,
+              cartridgeWindow: Boolean(frame?.contentWindow),
+              cartridgeSrc: (frame?.getAttribute("src") ?? "").slice(0, 24),
+              appWindow: Boolean(inner?.contentWindow),
+              inDocument: frame ? frame.isConnected : false,
+            };
+          })
+          .catch(() => ({ w: -1, h: -1 }));
+        console.log(`D32 alive c${c}p${p} replicaId=${JSON.stringify(answered)} appFrameBox=${JSON.stringify(shown)}`);
+      }
       for (const frame of page.frames()) {
         const read = await frame
           .evaluate(() => ({
