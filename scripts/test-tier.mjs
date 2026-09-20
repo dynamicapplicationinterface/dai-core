@@ -112,13 +112,38 @@ if (tier === "push" || process.argv[2] === "push") {
    * these reads dist/.
    */
   const checks = [
-    // The library only: a test run never keeps a host (D77).
+    // The library only: a test run never keeps a host (D77). CI runs the
+    // deliberate `npm run build` here; locally that would keep a host on every
+    // push run, which is the one thing D77 exists to stop.
     ["npm", ["run", "build:lib"]],
+    // Everything the typecheck chain carries: tsc twice, the symbol, route,
+    // caller and name checks, and the impact map. Left out once, and CI caught
+    // a stale impact map that this tier had just run green over.
+    ["npm", ["run", "typecheck"]],
     [process.execPath, [join(repo, "scripts", "build-conformance.mjs"), "--check"]],
     [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"]],
     [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"]],
     ["npm", ["run", "fixtures:check"]],
   ];
+  /*
+   * The readers CI runs on the conformance suite, when this machine has what
+   * they need. They are the other implementations the format is held to, and a
+   * machine without python3 or cargo is told which of them CI will run instead
+   * — silence here would read as "checked".
+   */
+  for (const [tool, args, what] of [
+    ["python3", [join(repo, "conformance", "reference", "run.py")], "the Python reference reader"],
+    ["python3", [join(repo, "conformance", "reference", "dai_merge.py")], "the Python merge reader"],
+    [
+      "cargo",
+      ["run", "--release", "--quiet", "--manifest-path", join(repo, "conformance", "readers", "rust-merge", "Cargo.toml"), "--", join(repo, "conformance", "merge")],
+      "the Rust merge reader",
+    ],
+  ]) {
+    const have = spawnSync(tool, ["--version"], { cwd: repo, stdio: "ignore", shell: process.platform === "win32" });
+    if (have.status === 0) checks.push([tool, args]);
+    else console.log(`test-tier push: no ${tool} here, so ${what} is left to CI.`);
+  }
   for (const [command, args] of checks) {
     // A shell only for npm, which is npm.cmd on Windows. Node itself is spawned
     // directly: through a shell its path ("C:\Program Files\...") is split at

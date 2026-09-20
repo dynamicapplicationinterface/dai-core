@@ -393,6 +393,22 @@ the work:
   input has not tested anything. Redone with the loader in its own file and the
   control required to print `LOADED 28 names` before any mutation counted.
 
+- **The test run against a stale build (19 September).** `reuseExistingServer`
+  is on locally, so a preview server left from an earlier run is reused — and
+  the build step in its command is skipped with it. A run then tests the build
+  that server started with. `sender.spec` failed twice against a website built
+  before the runtime changed, and the failure read as the change; everything
+  else that day ran green against pages that were equally old, which reads
+  exactly like a green run. **A green run against a stale build is
+  indistinguishable from a green run** — nothing in the output says which build
+  answered. Guarded now in `tests/global-setup.ts`: when a server is already
+  listening and the build it serves is older than what builds it, the run is
+  refused with both timestamps and the ports to stop. Proved both ways — with a
+  stale server up the run refuses before a test starts, and with it stopped the
+  same spec runs. The guard's own first version was an instance of this
+  pattern: it asked `127.0.0.1` while the servers bind `localhost`, which on
+  Windows answers on `::1`, so it reported no server and stayed silent.
+
 **None of them complained.** Each produced a well-formed, plausible answer.
 The tell was never the tool; it was arithmetic or a stray detail beside the
 answer: "125 passed" for a proof that should have run one test, and a test
@@ -951,6 +967,17 @@ different causes:
   does have the API, so this is about the test engine, not the product.
 
 #### D55 — When persistence should be asked for
+
+**A sighting to keep, 19 September (one, not yet a pattern):**
+`runner.spec.ts:1138`, "an icon per document, not for every…", failed on
+Firefox in CI and passed on retry: `#keep-cta` never took its `nudge` class
+(`expect(locator).toHaveClass(/nudge/)`). The nudge is the offer to keep a
+document, raised on first use, which is the moment this cluster is about.
+Trace kept in run 35488662772, artifact `retried-firefox-whole`,
+`runner-keeping-it-per-devi-9428f-s-per-document-not-for-ev`. Not
+investigated, and not tied to the D79 change: that defers a redraw, and the
+nudge is raised from the kit's first-use signal, which it does not touch.
+
 
 *Status: open. Separated from D49 deliberately.*
 
@@ -3786,6 +3813,30 @@ now take the name from `FRAME_PUBLIC.MERGED` (D69 step 5); this is runtime
 code, so routing it changes the runtime and keeps a host. The fix is one line
 (build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
 next runtime change that is keeping a host anyway, not on its own.
+
+#### D83 — A test that fails never reaches its own teardown, and its contexts outlive it
+
+*Status: fixed for `mailbox-link-e2e`, 20 September. The general shape is open.*
+
+**What it means:** a local run that hangs after the last test, and a worker that
+never exits.
+
+Every test in `mailbox-link-e2e` makes its own browser contexts and closes them
+on its last two lines. A test that throws never reaches them, and this file has
+one that **throws by design on every run** (D80, held as `test.fail`). Its two
+contexts, their pages and their mailbox polling then outlive the test for the
+rest of the worker. That is the shape of the run that hung at 1407 of 1412 on
+19 September: the WebKit worker was last seen starting D80, five queued
+`push-e2e` tests never started, and no test timed out.
+
+**Fixed here** with one `test.afterEach` in that file, closing every context the
+browser still holds; every test in it takes the `browser` fixture, so there is
+no Playwright-owned context to close by mistake. Not proved to be the hang's
+cause — the hang has not been reproduced — only that the leak it would need is
+real and is now closed.
+
+**Open:** every other spec that closes contexts on its own last line has the
+same shape, and a `test.fail` is not needed for it — any failure does it.
 
 #### D82 — A move the screen accepted was erased by a later merge, and the person was told nothing
 

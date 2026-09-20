@@ -192,6 +192,17 @@ test.describe("a game continues over a shared link (the key path)", () => {
     writeFileSync(rolesContainer, builtRoles.html, "utf8");
   });
 
+  /*
+   * A test that fails never reaches its own closes, and this file has one that
+   * fails by design (D80). Its two contexts, with their pages and their mailbox
+   * polling, then outlive it for the rest of the worker — which is the shape of
+   * the run that hung at 1407 of 1412 on 19 September. Every test here takes the
+   * `browser` fixture and makes its own contexts, so closing them all is safe.
+   */
+  test.afterEach(async ({ browser }) => {
+    await Promise.all(browser.contexts().map((context) => context.close().catch(() => undefined)));
+  });
+
   test.afterAll(() => {
     relay?.close();
     store?.close();
