@@ -127,6 +127,37 @@ test.afterEach(async ({ browser }, testInfo) => {
           }))
           .catch((error: Error) => ({ url: frame.url().slice(0, 70), error: String(error.message).slice(0, 60) }));
         console.log(`D32 frame c${c}p${p} parent=${frame.parentFrame() ? "y" : "n"} ${JSON.stringify(read)}`);
+        // Into the DOM's own iframes, which is where a frame the page holds but
+        // Playwright does not list would be: what it is, and what is inside it.
+        const inDom = await frame
+          .evaluate(() => {
+            const seen: unknown[] = [];
+            const walk = (doc: Document, depth: number): void => {
+              for (const el of Array.from(doc.querySelectorAll("iframe"))) {
+                const child = el as HTMLIFrameElement;
+                let inner: Record<string, unknown> = {};
+                try {
+                  const d = child.contentDocument;
+                  inner = d
+                    ? {
+                        ready: d.readyState,
+                        url: d.location?.href?.slice(0, 50),
+                        text: (d.body?.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 60),
+                        kids: d.querySelectorAll("iframe").length,
+                      }
+                    : { reachable: false };
+                  if (d && depth < 2) walk(d, depth + 1);
+                } catch (error) {
+                  inner = { blocked: String((error as Error).message).slice(0, 40) };
+                }
+                seen.push({ depth, id: child.id, src: (child.getAttribute("src") ?? "").slice(0, 40), srcdoc: child.hasAttribute("srcdoc"), ...inner });
+              }
+            };
+            walk(document, 0);
+            return seen;
+          })
+          .catch((error: Error) => [{ error: String(error.message).slice(0, 60) }]);
+        console.log(`D32 dom   c${c}p${p} ${JSON.stringify(inDom)}`);
       }
     }
   }
