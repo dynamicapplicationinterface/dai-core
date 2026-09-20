@@ -4134,6 +4134,13 @@ refuses to start Firefox here ("spawn UNKNOWN"), which is why the loop runs in
 CI at all. **That reading is the next thing, and it needs a machine that can
 launch Firefox.**
 
+**Sighting, run 35544450215 (20 Sep, `1870609`, Firefox): both attempts of
+"opening your own copy after they moved" timed out at 90 s, and the run before
+and after it passed the same code.** The same run shows the cost of the
+instrumentation: the afterEach hook asked a wedged page and spent what was left
+of the clock, adding "timeout while running afterEach" to the failure. The hook
+is bounded to eight seconds now.
+
 **Read on a Firefox this machine can now launch (20 September).** The Windows
 failure was never a permission: `firefox.exe` could not resolve its own
 private `mozglue` assembly under `%LOCALAPPDATA%` (SideBySide event 33). The

@@ -114,8 +114,18 @@ const inside = (page: Page) => page.frameLocator("#cartridge").frameLocator("#da
  */
 test.afterEach(async ({ browser }, testInfo) => {
   if (testInfo.status === testInfo.expectedStatus) return;
+  /*
+   * Bounded, because a test that times out leaves its hooks whatever is left of
+   * the clock — and this hook asking a page that is already wedged spent it,
+   * adding "timeout while running afterEach" to a failure that had its own
+   * cause (seen in CI run 35544450215). A reading that cannot be taken in a few
+   * seconds is not worth a second failure line.
+   */
+  const deadline = Date.now() + 8_000;
+  const outOfTime = (): boolean => Date.now() > deadline;
   for (const [c, context] of browser.contexts().entries()) {
     for (const [p, page] of context.pages().entries()) {
+      if (outOfTime()) return;
       // First, and on its own: a timed-out test leaves its hooks only what is
       // left of the clock. This is the reading that decides whether the
       // document is alive, so it goes before the slower ones.
@@ -156,6 +166,7 @@ test.afterEach(async ({ browser }, testInfo) => {
         console.log(`D32 alive c${c}p${p} replicaId=${JSON.stringify(answered)} appFrameBox=${JSON.stringify(shown)}`);
       }
       for (const frame of page.frames()) {
+        if (outOfTime()) return;
         const read = await frame
           .evaluate(() => ({
             url: location.href.slice(0, 70),
