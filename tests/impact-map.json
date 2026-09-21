@@ -91,6 +91,17 @@
       "apps/runner/public/badge.js",
       "tests/badge-count.spec.ts"
     ],
+    "tests/badge-reported.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/badge-reported.spec.ts",
+      "tests/chess-play.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tsup.config.ts"
+    ],
     "tests/blind-agreement.spec.ts": [
       "apps/runner/",
       "src/bridge.ts",

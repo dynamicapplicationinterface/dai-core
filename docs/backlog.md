@@ -2200,6 +2200,39 @@ in the push handler, the `window.dai` surface for the app to report its count,
 and the five tests above — including the guard-both-ways one, which is what
 ruled out counting moved mailboxes.
 
+**The open item closed, 21 September: the badge means "games waiting on you", and
+only a document that says so is counted.** Two changes, one on each side of the
+report:
+- **The chess fixture reports.** `reportWaiting` sends the games where this
+  player can move, on every draw — which is after every move, every merge and
+  every open. It was the non-reporting app in every reading above, including the
+  phone reading where one move cleared a badge of 2.
+- **A document that has never reported is not counted at all** (`badge.js`:
+  `count` returns 0 unless the entry carries `reports`). The number is the
+  application's knowledge; for a document that never says, a count is the worker
+  guessing on its behalf, and nothing the person does can correct the guess,
+  because the correction *is* the report. An app that reports an empty list is
+  saying "none", which is different from never saying, so the flag is what the
+  report sets, not the presence of a `waiting` list.
+
+**Proven, 21 September.**
+- `tests/badge-count.spec.ts`, "a document that never reported is not counted at
+  all": two pushes for a silent document show 0; its first report counts both
+  games that moved while it was shut; a later report listing one drops the other,
+  and an empty report is 0. Red without the guard (`Expected 0, received 1`).
+- `tests/badge-reported.spec.ts`, driven as a person does it in the opener: two
+  chess games made as White, neither played, and the badge store reads two
+  waiting; one move in one game and it reads one. Red with the fixture's report
+  call removed (`Expected 2, received 0`) — the entry exists, because mounting
+  writes one, and it holds nothing.
+- `push-e2e.spec.ts` and the rest of `badge-count.spec.ts` unchanged and green,
+  with three of its cases adjusted for the new flag rather than for a new number.
+
+This also settles the "not ruled" note above for a reporting app: with chess
+reporting, a move in one of two games leaves the other's count standing, because
+the report after the move lists it. The clear-on-publish path is unchanged for
+apps that do not report, and there are now none in the fixtures.
+
 #### D44 — A burst of shared writes becomes one notification
 
 *Status: ruled — not built.*

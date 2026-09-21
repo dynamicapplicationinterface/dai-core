@@ -13,6 +13,13 @@
  * set: a game already waiting does not raise it, and a game that moves twice
  * counts once.
  *
+ * **A document that has never reported is not counted at all** (D34). The
+ * number means "games waiting on you", and only the application knows that; for
+ * a document that never says, a count would be the worker guessing on its
+ * behalf — one that nothing it does can ever correct, because the correction is
+ * the report. So the badge stays silent for it rather than saying a number
+ * nobody can trust. `reportWaiting` is what a document opts in with.
+ *
  * What the number is, plainly. The application is not running when a push
  * lands, so between opens the badge is a remembered report plus a guess. A game
  * moves for things that are not a turn (a rename, a close, a resend), and each
@@ -29,9 +36,16 @@
   var DB_NAME = "dai_badge";
   var STORE = "documents";
 
-  /** The number of distinct games waiting or moved, for one document's entry. */
+  /**
+   * The number of distinct games waiting or moved, for one document's entry.
+   *
+   * Zero for a document that has never reported: see the note at the top. The
+   * flag is what the report sets, not the presence of a `waiting` list — an
+   * application whose every game is answered reports an empty list, and that is
+   * a document saying "none", which is different from one that never says.
+   */
   function count(entry) {
-    if (!entry) return 0;
+    if (!entry || !entry.reports) return 0;
     var seen = {};
     var n = 0;
     var ids = [].concat(entry.waiting || [], entry.moved || []);
@@ -51,12 +65,17 @@
       var s = sessions[i];
       if (typeof s === "string" && /^[0-9a-f]{32}$/.test(s) && waiting.indexOf(s) < 0) waiting.push(s);
     }
-    return { uuid: uuid, waiting: waiting, moved: [], shown: 0 };
+    return { uuid: uuid, waiting: waiting, moved: [], shown: 0, reports: true };
   }
 
   /** A document's entry after a push for one of its games. */
   function afterPush(entry, uuid, game) {
-    var next = { uuid: uuid, waiting: (entry && entry.waiting) || [], moved: ((entry && entry.moved) || []).slice() };
+    var next = {
+      uuid: uuid,
+      waiting: (entry && entry.waiting) || [],
+      moved: ((entry && entry.moved) || []).slice(),
+      reports: Boolean(entry && entry.reports),
+    };
     if (typeof game === "string" && game && next.moved.indexOf(game) < 0) next.moved.push(game);
     // What the icon is given, kept beside the reason for it, so a trace can read both.
     next.shown = count(next);
@@ -65,7 +84,13 @@
 
   /** A document's entry once the person has it open: nothing is news any more. */
   function afterOpen(entry, uuid) {
-    return { uuid: uuid, waiting: (entry && entry.waiting) || [], moved: [], shown: 0 };
+    return {
+      uuid: uuid,
+      waiting: (entry && entry.waiting) || [],
+      moved: [],
+      shown: 0,
+      reports: Boolean(entry && entry.reports),
+    };
   }
 
   function open() {

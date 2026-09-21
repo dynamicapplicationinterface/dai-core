@@ -46,6 +46,26 @@ test.describe("the badge count", () => {
     expect(second.shown).toBe(2);
   });
 
+  test("a document that never reported is not counted at all", () => {
+    /*
+     * The number means "games waiting on you", and only the application knows
+     * that. For a document that never says, a count would be the worker
+     * guessing on its behalf, and nothing it does could correct the guess —
+     * the correction *is* the report. So it stays silent (D34).
+     */
+    const never = badge.afterPush(null, DOC, A);
+    expect(never.shown, "a push for a document that never reported shows nothing").toBe(0);
+    const twice = badge.afterPush(never, DOC, B);
+    expect(twice.shown, "and a second one still shows nothing").toBe(0);
+
+    // The moment it reports, it counts — including what moved while it was shut.
+    const reported = badge.afterReport(twice, DOC, [A, B]);
+    expect(badge.count(reported)).toBe(2);
+    const oneAnswered = badge.afterReport(reported, DOC, [B]);
+    expect(badge.count(oneAnswered), "a game it no longer lists drops out").toBe(1);
+    expect(badge.count(badge.afterReport(oneAnswered, DOC, [])), "and none is none").toBe(0);
+  });
+
   test("guard: a push for a game already waiting on this player does not raise it", () => {
     // Reported waiting on A (their turn). A push for A (a rename, a resend, the
     // second batch of one move) is not a new turn.
@@ -64,13 +84,13 @@ test.describe("the badge count", () => {
     expect(badge.count(moved)).toBe(2);
     // Opened; the player moved in A and B is now their turn.
     const reported = badge.afterReport(moved, DOC, [B]);
-    expect(reported).toEqual({ uuid: DOC, waiting: [B], moved: [], shown: 0 });
+    expect(reported).toEqual({ uuid: DOC, waiting: [B], moved: [], shown: 0, reports: true });
     expect(badge.count(reported)).toBe(1);
   });
 
   test("opening the document clears what moved and shows nothing, keeping the last report", () => {
     const moved = badge.afterPush(badge.afterReport(null, DOC, [A]), DOC, B);
-    expect(badge.afterOpen(moved, DOC)).toEqual({ uuid: DOC, waiting: [A], moved: [], shown: 0 });
+    expect(badge.afterOpen(moved, DOC)).toEqual({ uuid: DOC, waiting: [A], moved: [], shown: 0, reports: true });
   });
 
   test("only session ids are kept from a report, once each", () => {
@@ -80,7 +100,9 @@ test.describe("the badge count", () => {
   test("an entry is one document's: a push for one leaves another's count alone", () => {
     const other = "22222222-2222-4222-8222-222222222222";
     const theirs = badge.afterReport(null, other, [A]);
-    const ours = badge.afterPush(null, DOC, B);
+    // Both documents have reported, so the only thing separating them is which
+    // entry the push lands in.
+    const ours = badge.afterPush(badge.afterReport(null, DOC, []), DOC, B);
     expect(ours.uuid).toBe(DOC);
     expect(badge.count(theirs)).toBe(1);
     expect(ours.shown).toBe(1);

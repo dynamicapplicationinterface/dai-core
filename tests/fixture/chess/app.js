@@ -167,8 +167,19 @@ function renderGameId(g,seat,joined){
  line.textContent='Game '+g.session.slice(0,8)+' · '+who;
  line.hidden=false;
 }
+/* Which games wait on this person, for the home-screen badge (D34). The badge
+   means "games waiting on you", and only the application knows whose turn it is;
+   a document that never reports is not counted at all. Sent on every draw, which
+   is after every move, every merge and every open. */
+function reportWaiting(){
+ if(typeof window.dai?.reportWaiting!=="function")return;
+ const mine=store.games().filter(g=>!g.is_demo&&store.canMove(store.state(g.id))).map(g=>g.session);
+ window.dai.reportWaiting(mine);
+}
+
 function draw(){
  if(!store)return;
+ reportWaiting();
  const s=store.settings(),u=store.ui(),st=store.state();setTheme();
  for(const view of ['board','games','settings'])$('view-'+view).hidden=u.current_view!==view;
  for(const b of document.querySelectorAll('[data-view]')){if(b.dataset.view===u.current_view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}
