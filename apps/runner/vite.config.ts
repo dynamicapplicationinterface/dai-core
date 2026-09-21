@@ -54,9 +54,27 @@ function commitId(): string {
 }
 
 function stamp(): Plugin {
+  /*
+   * Whether this build got as far as producing anything.
+   *
+   * `closeBundle` runs even when the build failed, and what this plugin does
+   * there is read `dist/sw.js` — which a failed build never wrote. So a
+   * duplicate declaration in a source file was reported as "dist/sw.js carries
+   * no marker", and then, with dist cleared, as ENOENT. Three clean builds in a
+   * row said the same wrong thing while the real error, with its file and line,
+   * was never printed (D73, 20 September). Stamping is skipped when the build
+   * failed, so the failure a person reads is the one that happened.
+   */
+  let failed = false;
   return {
     name: "dai-version-stamp",
     apply: "build",
+    buildStart() {
+      failed = false;
+    },
+    buildEnd(error) {
+      failed = Boolean(error);
+    },
     /*
      * Into the page, not only into a file beside it.
      *
@@ -100,6 +118,7 @@ function stamp(): Plugin {
         .replace(/<meta name="dai-push-key" content="[^"]*" \/>/, `<meta name="dai-push-key" content="${pushKey}" />`);
     },
     closeBundle() {
+      if (failed) return;
       const commit = commitId();
 
       /*

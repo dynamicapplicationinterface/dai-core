@@ -3539,6 +3539,12 @@ runs before any module cannot import. Proved to fire: a key spelled by hand in
 `main.ts` fails it, and renaming the ground key in the owner fails the head
 script check.
 
+**The masking is fixed (20 September).** The version stamp now tracks
+`buildEnd(error)` and skips its work when the build failed, so `closeBundle`
+no longer reads a `dist/sw.js` that was never written. Proved by putting the
+duplicate back: the build reports `install.ts (196:9): Identifier "groundKey"
+has already been declared`, where it used to report ENOENT.
+
 **Found while routing it:** `install.ts` had its own `groundKey`, so the import
 collided — and the build reported the version-stamp plugin's ENOENT instead,
 because that plugin reads `dist/sw.js` in `closeBundle` and the real error
