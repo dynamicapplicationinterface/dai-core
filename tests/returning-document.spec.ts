@@ -101,6 +101,62 @@ async function through(page: Page): Promise<boolean> {
 const inside = (page: Page) => page.frameLocator("#cartridge").frameLocator("#dai-app");
 
 /**
+ * Waits until the automation can see the application's frame, and reloads once
+ * if it cannot (D32).
+ *
+ * About seven reopens in a hundred end with Firefox rendering the document
+ * while Playwright never registers its frame: `page.frames()` holds the main
+ * frame alone, the shell and the app frame both have windows, the host's round
+ * trip into the app answers in milliseconds, and the screen shows the document
+ * at the moment the wait times out. Nothing is wrong with the document, so
+ * every locator that must enter `#cartridge` then `#dai-app` waits ninety
+ * seconds for a frame that is there.
+ *
+ * This is the mitigation agreed after the third red: give it a few seconds,
+ * and if the frame is still invisible to the automation while the shell says
+ * it has one, reload and let the shell mount again. A reload is what a person
+ * would do, and the document is on disk either way. It is not a fix: the fix,
+ * if a person is ever affected, is upstream.
+ */
+async function appFrameVisible(page: Page, through: (page: Page) => Promise<boolean>): Promise<void> {
+  // What the test itself needs: the application's own element, through both
+  // frames. Asking whether *a* grandchild frame exists is not the same question
+  // — Playwright can hold one and still refuse to enter the app's.
+  const reachable = (timeout: number): Promise<boolean> =>
+    inside(page)
+      .locator("#app")
+      .waitFor({ state: "attached", timeout })
+      .then(() => true, () => false);
+
+  if (await reachable(8_000)) return;
+  const held = await page.evaluate(() =>
+    Boolean((document.getElementById("cartridge") as HTMLIFrameElement | null)?.contentWindow),
+  );
+  if (!held) return; // No shell frame yet: the caller's own wait is the right one.
+  console.log("D32: the document is mounted and its frame cannot be entered; reloading once");
+  await page.reload();
+  await through(page);
+  if (await reachable(20_000)) {
+    console.log("D32: a reload recovered it");
+    return;
+  }
+  // It did not. Whether this is the page object or the whole browser is the
+  // next persons question, so it is asked here, once, and logged.
+  const fresh = await page.context().newPage();
+  try {
+    await fresh.goto(page.url());
+    await through(fresh);
+    const seen = await inside(fresh)
+      .locator("#app")
+      .waitFor({ state: "attached", timeout: 20_000 })
+      .then(() => true, () => false);
+    console.log(`D32: a reload did not recover it; a fresh page in the same context ${seen ? "CAN" : "cannot"} enter the frame`);
+  } finally {
+    await fresh.close();
+  }
+}
+
+/**
  * What every frame of every open page holds, when a test here fails (D32).
  *
  * The kept traces say a reopen ends with the shell's frame and its app frame
@@ -272,6 +328,7 @@ test.describe("a move sent back to somebody who has the app", () => {
     // Answered if it appears, so the data underneath can be looked at on its
     // own. Whether it should appear at all is the next test.
     await through(bob);
+    await appFrameVisible(bob, through);
 
     // Her move, not his empty board. This is what failed: his stored database
     // was mounted over hers, and the move was silently dropped.
@@ -300,6 +357,7 @@ test.describe("a move sent back to somebody who has the app", () => {
     await bob.goto("about:blank");
     await bob.goto(stale);
     await through(bob);
+    await appFrameVisible(bob, through);
     await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
     await his.close();
   });
@@ -332,11 +390,13 @@ test.describe("a move sent back to somebody who has the app", () => {
     await bob.goto("about:blank");
     await bob.goto(RUNNER_URL);
     await through(bob);
+    await appFrameVisible(bob, through);
     await expect(inside(bob).locator("#app")).toHaveText("no moves");
 
     await bob.goto("about:blank");
     await bob.goto(link);
     await through(bob);
+    await appFrameVisible(bob, through);
     await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
     await his.close();
   });
@@ -391,6 +451,7 @@ test.describe("two copies of a document that cannot merge", () => {
     await bob.goto("about:blank");
     await bob.goto(link);
     await through(bob);
+    await appFrameVisible(bob, through);
     await expect(inside(bob).locator("#app")).toHaveText("move1", { timeout: 60_000 });
     await his.close();
   });
@@ -426,6 +487,7 @@ test.describe("two copies of a document that cannot merge", () => {
     await bob.goto("about:blank");
     await bob.goto(RUNNER_URL);
     await through(bob);
+    await appFrameVisible(bob, through);
     await expect(inside(bob).locator("#app")).toHaveText("move1", { timeout: 60_000 });
     await his.close();
   });
@@ -461,6 +523,7 @@ test.describe("two copies of a document that cannot merge", () => {
     await bob.goto("about:blank");
     await bob.goto(toHim);
     await through(bob);
+    await appFrameVisible(bob, through);
     await expect(inside(bob).locator("#app")).toHaveText("move1 move2", { timeout: 60_000 });
     expect(wasRefused, "a legitimate reply was refused as a divergence").toBe(false);
     await his.close();
@@ -513,6 +576,7 @@ test.describe("a newer copy arriving at its own icon's address", () => {
     await bob.goto("about:blank");
     await bob.goto(iconAddress);
     await through(bob);
+    await appFrameVisible(bob, through);
 
     // Her move. Under the old ordering this said "no moves": his own copy,
     // opened because the hint matched, with hers still sitting unread in the

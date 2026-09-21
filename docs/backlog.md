@@ -4134,6 +4134,15 @@ refuses to start Firefox here ("spawn UNKNOWN"), which is why the loop runs in
 CI at all. **That reading is the next thing, and it needs a machine that can
 launch Firefox.**
 
+**A reload does not recover it (20 September).** The mitigation agreed after
+the third red — wait eight seconds for the app frame, then reload once — fired
+in a local Firefox loop and the frame was still unenterable thirty seconds
+after the reload. So this is not a registration glitch that settles: once a
+`page` is in the state, it stays there. The helper now also asks, once, whether
+a *fresh page in the same context* can enter the frame, and logs the answer;
+nobody has caught it firing yet. It never masks a failure — after the reload it
+only logs, and the test's own wait fails as before.
+
 **Sighting, run 35544450215 (20 Sep, `1870609`, Firefox): both attempts of
 "opening your own copy after they moved" timed out at 90 s, and the run before
 and after it passed the same code.** The same run shows the cost of the
