@@ -2308,9 +2308,51 @@ apps that do not report, and there are now none in the fixtures.
 
 #### D44 — A burst of shared writes becomes one notification
 
-*Status: ruled — not built.*
+*Status: built, 21 September. Waiting on a phone reading of the window's
+length.*
 
-Ruled, not built.
+**Built.** One alert per game per quiet window, in the worker alone.
+`NOTIFY_WINDOW_MS` in `apps/runner/public/sw.js` is **15 seconds**, and a wake
+inside it is still shown — it replaces what is on screen, with the newest
+content — but does not alert: `renotify: false`, `silent: true`. It is never
+skipped, because a push that shows nothing is what gets a subscription revoked
+on iOS.
+
+- **The window runs from the last alert, not the last wake.** A game that keeps
+  moving then alerts once per window rather than never, which is what "one
+  notification per game per window" has to mean for a game that stays busy.
+- **A store of its own** (`dai_notify`), for the same reason the badge has one:
+  the open page writes its whole mailbox record back on every save and would
+  erase anything the worker had put there.
+- **A storage failure alerts.** The fallback is the behavior before this
+  existed, never a wake swallowed in silence.
+- **The number is provisional and marked so in the code.** This entry asks for
+  it to be chosen against real use; the only reading so far is that the setup
+  burst fits inside a few seconds. It wants a phone sitting.
+
+**Proved** by `push-e2e`, "a burst of writes while a game is set up alerts once,
+and a later one alerts again" — the sequence from the phone: Ada closes her app,
+Bo joins, saves his name, and moves. Three writes, three real wakes delivered to
+her device, one alert. Then the window passes with nothing happening and one more
+write alerts again.
+
+**What the test reads, and why not the obvious thing.** Not the number of
+notifications on screen: the tag means it is one either way. The first attempt
+read the current notification's `silent` flag and failed — the join travelled as
+two batches, so an alert was raised and folded over before the test could look.
+It reads the worker's own record of when each game last alerted, which is the
+decision itself rather than its shadow, and the on-screen notification for the
+content. A general form of the rule in part 3: **a state that gets overwritten
+cannot be sampled; read the decision, not the display.**
+
+**Proven to fail for the reason it guards, both halves:**
+- Alerting on every wake fails at "one notification on screen, carrying the
+  newest of them, not alerting" — `silent: false` where true is expected.
+- A window that never reopens (alert only if the game has never alerted) fails
+  at "a write after the window alerts again", with the recorded time unmoved.
+
+**Still open in this entry:** the window's length against real use, and whether
+a burst that folds should say how many writes it covered.
 
 **Seen on a phone, 16 September** (D34's first reading): setting up one game
 produced three alerts in quick succession: the other player joining, saving their
@@ -3979,6 +4021,24 @@ now take the name from `FRAME_PUBLIC.MERGED` (D69 step 5); this is runtime
 code, so routing it changes the runtime and keeps a host. The fix is one line
 (build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
 next runtime change that is keeping a host anyway, not on its own.
+
+#### D84 — `session-mailbox-e2e` timed out once on Firefox and passed on retry
+
+*Status: one sighting, recorded not chased.*
+
+CI run 35611549321 (commit `8be9630`, 21 September): `session-mailbox-e2e.spec.ts:175`,
+"two games travel in two mailboxes, and one game's key opens only its own",
+failed on Firefox after **1.2 minutes** and passed on retry #1 in **14 seconds**.
+The whole job was otherwise green, and nothing in that commit touches session
+lanes.
+
+The shape — a timeout on the first attempt and a fast pass on the second — is the
+same one D32 wore, and the same one the unexplained 1407 hang wore. It is
+recorded here rather than investigated because one sighting cannot tell a slow
+runner from a real stall. **What would make it readable:** the next time it
+appears, its trace is in that run's kept artifacts; two sightings with the same
+step stalled is the point at which it becomes a defect rather than a weather
+report.
 
 #### D83 — A test that fails never reaches its own teardown, and its contexts outlive it
 

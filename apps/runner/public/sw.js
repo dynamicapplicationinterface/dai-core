@@ -308,6 +308,88 @@ function mailboxRecord(address) {
   });
 }
 
+/**
+ * How long one game stays quiet after it has alerted (D44).
+ *
+ * Setting up a game on a phone produced three alerts in a row — the other
+ * player joining, saving their name, then moving — because the worker cannot
+ * tell those apart: the push carries nothing. Inside this window the game's
+ * notification is replaced rather than raised again, so a burst alerts once.
+ *
+ * The number is provisional and deliberately marked so. D44 asks for it to be
+ * chosen against real use, and the only reading so far is that the setup burst
+ * fits inside a few seconds. It is long enough to fold that burst and short
+ * enough that a reply in a live game still alerts.
+ */
+const NOTIFY_WINDOW_MS = 15_000;
+
+/** Where the last alert per game is kept, for the window above. */
+const NOTIFY_DB = "dai_notify";
+const NOTIFY_STORE = "games";
+
+/**
+ * When this game last alerted, and the record of alerting now.
+ *
+ * A store of its own, for the same reason the badge has one: the open page
+ * writes its whole mailbox record back on every save, which would erase
+ * anything the worker had put there.
+ *
+ * Returns whether this wake should alert. A storage failure alerts: the
+ * fallback is the behavior before this existed, never a wake swallowed in
+ * silence.
+ */
+function shouldAlert(game, now) {
+  return new Promise((resolve) => {
+    let request;
+    try {
+      request = indexedDB.open(NOTIFY_DB, 1);
+    } catch {
+      resolve(true);
+      return;
+    }
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(NOTIFY_STORE)) {
+        request.result.createObjectStore(NOTIFY_STORE, { keyPath: "game" });
+      }
+    };
+    request.onerror = () => resolve(true);
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const tx = db.transaction(NOTIFY_STORE, "readwrite");
+        const store = tx.objectStore(NOTIFY_STORE);
+        const read = store.get(game);
+        read.onsuccess = () => {
+          const last = Number(read.result && read.result.alertedAt) || 0;
+          /*
+           * The window runs from the last alert, not from the last wake. A
+           * steady stream of writes then alerts once per window instead of
+           * never, which is what "one notification per game per window" has to
+           * mean for a game that stays busy.
+           */
+          const alert = !(last && now - last < NOTIFY_WINDOW_MS);
+          if (alert) store.put({ game: game, alertedAt: now });
+          tx.oncomplete = () => {
+            resolve(alert);
+            db.close();
+          };
+          tx.onerror = () => {
+            resolve(true);
+            db.close();
+          };
+        };
+        read.onerror = () => {
+          resolve(true);
+          db.close();
+        };
+      } catch {
+        resolve(true);
+        db.close();
+      }
+    };
+  });
+}
+
 /** The mailbox this push registration is for: the last segment of its scope. */
 function scopeAddress() {
   return new URL(self.registration.scope).pathname.split("/").filter(Boolean).pop() || null;
@@ -455,8 +537,8 @@ async function handlePush() {
        * Never in the way of the notification below: a badge that fails is a
        * badge not shown.
        */
+      const game = String(record.documentUuid || "").split("/")[1] || address;
       if (fresh && !onScreen && self.daiBadge) {
-        const game = String(record.documentUuid || "").split("/")[1] || address;
         await self.daiBadge.pushed(uuid, game).catch(() => {});
       }
       const name = await documentName(uuid);
@@ -465,7 +547,20 @@ async function handlePush() {
       const data = { url: `/#opener-doc=${uuid}` };
 
       if (fresh && !onScreen) {
-        await self.registration.showNotification(name, { body: "Something new arrived.", tag: uuid, renotify: true, data });
+        /*
+         * One alert per game per quiet window (D44). A wake inside the window
+         * is still shown — it replaces the one on screen, with the newest
+         * content — but it does not alert again. It is never skipped: a push
+         * that shows nothing is what gets a subscription revoked on iOS.
+         */
+        const alert = await shouldAlert(game, Date.now()).catch(() => true);
+        await self.registration.showNotification(name, {
+          body: "Something new arrived.",
+          tag: uuid,
+          renotify: alert,
+          silent: !alert,
+          data,
+        });
         return;
       }
       await self.registration.showNotification(name, { body: "You're up to date.", tag: uuid, silent: true, data });

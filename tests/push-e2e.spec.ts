@@ -3,18 +3,32 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, type Browser, type BrowserContext, type CDPSession, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import {
+  expect,
+  type Browser,
+  type BrowserContext,
+  type CDPSession,
+  type Frame,
+  type FrameLocator,
+  type Page,
+} from "@playwright/test";
 import { test } from "./fixtures.js";
 import { FRAME_PUBLIC } from "../src/frame.js";
 import { HINT_KEY } from "../src/link.js";
 import { compileDirectory } from "../src/compile.js";
 import type { Vapid } from "../apps/relay/src/push.js";
-import { serveRelay, vapidKeys, verifyVapid, type ServedRelay } from "./relay-memory.js";
+import {
+  serveRelay,
+  vapidKeys,
+  verifyVapid,
+  type ServedRelay,
+} from "./relay-memory.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
 const RUNNER_ORIGIN = "http://localhost:5175";
-const appIn = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocator("iframe");
+const appIn = (page: Page): FrameLocator =>
+  page.frameLocator("iframe").frameLocator("iframe");
 
 /**
  * The app's own frame, and the first merge it takes in from its mailbox.
@@ -25,7 +39,9 @@ const appIn = (page: Page): FrameLocator => page.frameLocator("iframe").frameLoc
  * for no reason: it waits for the merge, then taps.
  */
 const frameOf = (page: Page): Frame =>
-  page.frames().find((f) => f.parentFrame()?.parentFrame() === page.mainFrame())!;
+  page
+    .frames()
+    .find((f) => f.parentFrame()?.parentFrame() === page.mainFrame())!;
 
 async function firstMailboxMerge(page: Page): Promise<void> {
   const frame = frameOf(page);
@@ -34,11 +50,18 @@ async function firstMailboxMerge(page: Page): Promise<void> {
     if (held.__merges !== undefined) return;
     held.__merges = 0;
     window.addEventListener(merged, (event) => {
-      if ((event as CustomEvent).detail?.via === "mailbox") held.__merges = (held.__merges ?? 0) + 1;
+      if ((event as CustomEvent).detail?.via === "mailbox")
+        held.__merges = (held.__merges ?? 0) + 1;
     });
   }, FRAME_PUBLIC.MERGED);
   await expect
-    .poll(() => frameOf(page).evaluate(() => (window as unknown as { __merges?: number }).__merges ?? 0), { timeout: 30_000 })
+    .poll(
+      () =>
+        frameOf(page).evaluate(
+          () => (window as unknown as { __merges?: number }).__merges ?? 0,
+        ),
+      { timeout: 30_000 },
+    )
     .toBeGreaterThan(0);
 }
 
@@ -66,7 +89,10 @@ async function firstMailboxMerge(page: Page): Promise<void> {
  * shows a notification only in the full browser's headless mode.
  */
 test.use({ channel: "chromium" });
-test.skip(({ browserName }) => browserName !== "chromium", "the push-service stand-in is a Chromium DevTools command");
+test.skip(
+  ({ browserName }) => browserName !== "chromium",
+  "the push-service stand-in is a Chromium DevTools command",
+);
 
 let relay: ServedRelay;
 let vapid: Vapid;
@@ -78,7 +104,10 @@ let container = "";
 /** Every push the stand-in received: which device, which scope, and whether it was delivered. */
 const pushes: { device: string; scope: string; delivered: boolean }[] = [];
 /** Per device, the DevTools session that can deliver to its service workers, and their registrations by scope. */
-const devices = new Map<string, { cdp: CDPSession; registrations: Map<string, string> }>();
+const devices = new Map<
+  string,
+  { cdp: CDPSession; registrations: Map<string, string> }
+>();
 
 test.beforeAll(async () => {
   vapid = await vapidKeys();
@@ -88,15 +117,29 @@ test.beforeAll(async () => {
     req.resume();
     req.on("end", () => {
       void (async () => {
-        const [device, scope] = (req.url ?? "/").split("/").filter(Boolean).map(decodeURIComponent) as [string, string];
+        const [device, scope] = (req.url ?? "/")
+          .split("/")
+          .filter(Boolean)
+          .map(decodeURIComponent) as [string, string];
         // What a real push service checks before it delivers anything.
-        await verifyVapid(String(req.headers["authorization"] ?? ""), vapid.publicKey);
+        await verifyVapid(
+          String(req.headers["authorization"] ?? ""),
+          vapid.publicKey,
+        );
         const held = devices.get(device);
         const registrationId = held?.registrations.get(scope);
         if (held && registrationId) {
-          await held.cdp.send("ServiceWorker.deliverPushMessage", { origin: RUNNER_ORIGIN, registrationId, data: "" });
+          await held.cdp.send("ServiceWorker.deliverPushMessage", {
+            origin: RUNNER_ORIGIN,
+            registrationId,
+            data: "",
+          });
         }
-        pushes.push({ device, scope, delivered: Boolean(held && registrationId) });
+        pushes.push({
+          device,
+          scope,
+          delivered: Boolean(held && registrationId),
+        });
         res.writeHead(201);
         res.end();
       })().catch(() => {
@@ -126,12 +169,31 @@ test.beforeAll(async () => {
     req.on("end", () => {
       const body = Buffer.concat(chunks);
       if (req.method === "POST" && url.pathname === "/presign") {
-        const ask = JSON.parse(body.toString()) as { hash: string; kind: string };
-        const name = ask.kind === "sidecar" ? `${ask.hash}.json` : ask.kind === "icon" ? `${ask.hash}.png` : ask.hash;
+        const ask = JSON.parse(body.toString()) as {
+          hash: string;
+          kind: string;
+        };
+        const name =
+          ask.kind === "sidecar"
+            ? `${ask.hash}.json`
+            : ask.kind === "icon"
+              ? `${ask.hash}.png`
+              : ask.hash;
         res.writeHead(200, { ...cors, "content-type": "application/json" });
-        res.end(JSON.stringify({ url: `${storeBase}/__put/${name}`, method: "PUT", headers: {}, href: `${storeBase}/${name}`, token: "t.link" }));
+        res.end(
+          JSON.stringify({
+            url: `${storeBase}/__put/${name}`,
+            method: "PUT",
+            headers: {},
+            href: `${storeBase}/${name}`,
+            token: "t.link",
+          }),
+        );
       } else if (req.method === "PUT" && url.pathname.startsWith("/__put/")) {
-        bucket.set(decodeURIComponent(url.pathname.slice("/__put/".length)), body);
+        bucket.set(
+          decodeURIComponent(url.pathname.slice("/__put/".length)),
+          body,
+        );
         res.writeHead(200, cors);
         res.end();
       } else if (req.method === "GET" || req.method === "HEAD") {
@@ -152,8 +214,15 @@ test.beforeAll(async () => {
   await new Promise<void>((r) => store.listen(0, r));
   storeBase = `http://localhost:${(store.address() as { port: number }).port}`;
 
-  const built = await compileDirectory({ sourceDir: join(repo, "examples", "tic-tac-toe"), root: repo, appName: "Tic-tac-toe" });
-  container = join(mkdtempSync(join(tmpdir(), "dai-push-")), "tic-tac-toe.dai.html");
+  const built = await compileDirectory({
+    sourceDir: join(repo, "examples", "tic-tac-toe"),
+    root: repo,
+    appName: "Tic-tac-toe",
+  });
+  container = join(
+    mkdtempSync(join(tmpdir(), "dai-push-")),
+    "tic-tac-toe.dai.html",
+  );
   writeFileSync(container, built.html, "utf8");
 });
 
@@ -171,7 +240,10 @@ test.afterAll(async () => {
  * a page off the opener's origin holds the DevTools session, so it is never a
  * window the service worker could count as the app being open.
  */
-async function device(browser: Browser, name: string): Promise<{ context: BrowserContext; page: Page }> {
+async function device(
+  browser: Browser,
+  name: string,
+): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext({ permissions: ["notifications"] });
   await context.addInitScript(
     (cfg) => {
@@ -181,13 +253,20 @@ async function device(browser: Browser, name: string): Promise<{ context: Browse
       // Kept in storage, as a browser keeps a subscription across reloads.
       const KEY = "__stand_in_push_subscriptions";
       const held = {
-        read: (): Record<string, string> => JSON.parse(localStorage.getItem(KEY) ?? "{}") as Record<string, string>,
+        read: (): Record<string, string> =>
+          JSON.parse(localStorage.getItem(KEY) ?? "{}") as Record<
+            string,
+            string
+          >,
         get(scope: string) {
           const endpoint = this.read()[scope];
           return endpoint ? { endpoint } : undefined;
         },
         set(scope: string, value: { endpoint: string }) {
-          localStorage.setItem(KEY, JSON.stringify({ ...this.read(), [scope]: value.endpoint }));
+          localStorage.setItem(
+            KEY,
+            JSON.stringify({ ...this.read(), [scope]: value.endpoint }),
+          );
         },
         delete(scope: string) {
           const all = this.read();
@@ -195,7 +274,9 @@ async function device(browser: Browser, name: string): Promise<{ context: Browse
           localStorage.setItem(KEY, JSON.stringify(all));
         },
       };
-      const registrationOf = async (manager: PushManager): Promise<ServiceWorkerRegistration> => {
+      const registrationOf = async (
+        manager: PushManager,
+      ): Promise<ServiceWorkerRegistration> => {
         for (const registration of await navigator.serviceWorker.getRegistrations()) {
           if (registration.pushManager === manager) return registration;
         }
@@ -210,7 +291,9 @@ async function device(browser: Browser, name: string): Promise<{ context: Browse
             return true;
           },
         }) as unknown as PushSubscription;
-      PushManager.prototype.getSubscription = async function (this: PushManager) {
+      PushManager.prototype.getSubscription = async function (
+        this: PushManager,
+      ) {
         const scope = (await registrationOf(this)).scope;
         const held1 = held.get(scope);
         return held1 ? subscription(scope, held1.endpoint) : null;
@@ -222,7 +305,14 @@ async function device(browser: Browser, name: string): Promise<{ context: Browse
         return subscription(scope, endpoint);
       };
     },
-    { store: { presignUrl: `${storeBase}/presign`, publicBase: `${storeBase}/` }, pushBase, name },
+    {
+      store: {
+        presignUrl: `${storeBase}/presign`,
+        publicBase: `${storeBase}/`,
+      },
+      pushBase,
+      name,
+    },
   );
   const tray = await context.newPage();
   const cdp = await context.newCDPSession(tray);
@@ -238,11 +328,14 @@ async function device(browser: Browser, name: string): Promise<{ context: Browse
   return { context, page: await context.newPage() };
 }
 
-test("a move made while the other app is closed arrives as a notification that opens it", async ({ browser }) => {
+test("a move made while the other app is closed arrives as a notification that opens it", async ({
+  browser,
+}) => {
   test.slow();
   const { context: ctxA, page: pageA } = await device(browser, "ada");
   const { context: ctxB, page: pageB } = await device(browser, "bo");
-  const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+  const cell = (app: FrameLocator, n: number) =>
+    app.locator("#board .cell").nth(n);
 
   // Ada starts a game against Bo and invites him.
   await pageA.goto(RUNNER_URL);
@@ -253,41 +346,61 @@ test("a move made while the other app is closed arrives as a notification that o
   await appA.locator("#you").fill("Ada");
   await appA.locator("#them").fill("Bo");
   await appA.locator("#new-game button[type=submit]").click();
-  await expect(appA.locator("#players")).toContainText("Bo (O)", { timeout: 30_000 });
+  await expect(appA.locator("#players")).toContainText("Bo (O)", {
+    timeout: 30_000,
+  });
   await cell(appA, 0).click();
   await expect(cell(appA, 0)).toHaveText("X");
-  await pageA.evaluate(({ base, key }) => {
-    (window as any).__runner.useRelay(base);
-    (window as any).__runner.usePush(key);
-  }, { base: relay.base, key: vapid.publicKey });
+  await pageA.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
   await pageA.evaluate(() => {
     (window as any).__copied = undefined;
-    navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    navigator.clipboard.writeText = async (t: string) =>
+      void ((window as any).__copied = t);
     // The full browser's headless mode has a share sheet, and the opener
     // prefers it to the clipboard; the link is what it would have shared.
-    navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+    navigator.share = async (data?: ShareData) =>
+      void ((window as any).__copied = data?.url);
   });
   await appA.locator("#invite").click();
   await pageA.click("#send-go");
-  await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+  await expect
+    .poll(() => pageA.evaluate(() => (window as any).__copied ?? null), {
+      timeout: 30_000,
+    })
+    .not.toBeNull();
   const link = await pageA.evaluate(() => (window as any).__copied as string);
 
   // The game's mailbox is the one address anything was written to, and Ada's
   // device subscribed to it on its own — no step here asked it to.
   await expect.poll(() => relay.appended.size, { timeout: 45_000 }).toBe(1);
   const [address] = [...relay.appended];
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 30_000 })
+    .toBe(1);
 
   // Bo opens the invite and joins; his device subscribes to the same mailbox.
   await pageB.goto(link);
   await pageB.locator("#card-open").click({ timeout: 60_000 });
   const appB = appIn(pageB);
-  await expect(appB.locator("#status")).toContainText("Your move, Bo.", { timeout: 60_000 });
-  await pageB.evaluate(({ base, key }) => {
-    (window as any).__runner.useRelay(base);
-    (window as any).__runner.usePush(key);
-  }, { base: relay.base, key: vapid.publicKey });
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(2);
+  await expect(appB.locator("#status")).toContainText("Your move, Bo.", {
+    timeout: 60_000,
+  });
+  await pageB.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 30_000 })
+    .toBe(2);
   // Each device's subscription is its own registration, scoped to this mailbox.
   const scope = `${RUNNER_URL}push/${address}/`;
   expect(devices.get("ada")!.registrations.has(scope)).toBe(true);
@@ -300,12 +413,15 @@ test("a move made while the other app is closed arrives as a notification that o
   await expect(cell(appB, 1)).toHaveText("O");
 
   // The relay woke Ada's device and not Bo's own.
-  await expect.poll(() => pushes.length, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect
+    .poll(() => pushes.length, { timeout: 30_000 })
+    .toBeGreaterThan(0);
   await relay.settled();
   // A move can travel as more than one batch, and each new batch is a wake;
   // the notification's tag (and a real push service's topic) folds them into
   // one. What must hold is who: every wake is Ada's, none is Bo's own.
-  for (const push of pushes) expect(push).toEqual({ device: "ada", scope, delivered: true });
+  for (const push of pushes)
+    expect(push).toEqual({ device: "ada", scope, delivered: true });
 
   // Ada's service worker asked the relay what moved and raised a notification
   // naming the document. Read from a page on the opener's origin that is not
@@ -317,9 +433,16 @@ test("a move made while the other app is closed arrives as a notification that o
     inspector.evaluate(async (s) => {
       const registration = await navigator.serviceWorker.getRegistration(s);
       const notes = registration ? await registration.getNotifications() : [];
-      return notes.map((n) => ({ title: n.title, body: n.body, tag: n.tag, url: (n.data as { url?: string } | null)?.url ?? "" }));
+      return notes.map((n) => ({
+        title: n.title,
+        body: n.body,
+        tag: n.tag,
+        url: (n.data as { url?: string } | null)?.url ?? "",
+      }));
     }, scope);
-  await expect.poll(async () => (await readNotes()).length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(async () => (await readNotes()).length, { timeout: 30_000 })
+    .toBe(1);
   const [note] = await readNotes();
   expect(note!.title.length).toBeGreaterThan(0);
   // The worker's copy of the hint key, held to HINT_KEY here (D56).
@@ -332,9 +455,15 @@ test("a move made while the other app is closed arrives as a notification that o
   await later.goto(new URL(note!.url, RUNNER_URL).href);
   const appLater = appIn(later);
   await expect(appLater.locator("#board")).toBeVisible({ timeout: 60_000 });
-  await later.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  await later.evaluate(
+    (base) => (window as any).__runner.useRelay(base),
+    relay.base,
+  );
   await expect(cell(appLater, 1)).toHaveText("O", { timeout: 30_000 });
-  await expect(later.locator("#card"), "a relayed move raises no card").toBeHidden();
+  await expect(
+    later.locator("#card"),
+    "a relayed move raises no card",
+  ).toBeHidden();
   await expect(later.locator("#card-merge")).toBeHidden();
   const uuid = note!.tag;
 
@@ -349,14 +478,29 @@ test("a move made while the other app is closed arrives as a notification that o
         new Promise<string>((resolve) => {
           const open = indexedDB.open("dai_runner_storage");
           open.onsuccess = () => {
-            const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
-            all.onsuccess = () => resolve(String((all.result as { address?: string; cursor?: string }[]).find((r) => r.address === a)?.cursor ?? ""));
+            const all = open.result
+              .transaction("mailboxes", "readonly")
+              .objectStore("mailboxes")
+              .getAll();
+            all.onsuccess = () =>
+              resolve(
+                String(
+                  (all.result as { address?: string; cursor?: string }[]).find(
+                    (r) => r.address === a,
+                  )?.cursor ?? "",
+                ),
+              );
           };
         }),
       address!,
     );
-  const head = async () => (await fetch(`${relay.base}/${address}/head`)).text();
-  await expect.poll(async () => (await savedCursor()) === (await head()), { timeout: 30_000 }).toBe(true);
+  const head = async () =>
+    (await fetch(`${relay.base}/${address}/head`)).text();
+  await expect
+    .poll(async () => (await savedCursor()) === (await head()), {
+      timeout: 30_000,
+    })
+    .toBe(true);
   await later.close();
   const ada = devices.get("ada")!;
   await ada.cdp.send("ServiceWorker.deliverPushMessage", {
@@ -369,12 +513,24 @@ test("a move made while the other app is closed arrives as a notification that o
   // Every notification on every registration, so nothing else was raised either.
   const notesOn = (page: Page) =>
     page.evaluate(async () => {
-      const out: { scope: string; body: string; tag: string; silent: boolean | null; error?: string }[] = [];
+      const out: {
+        scope: string;
+        body: string;
+        tag: string;
+        silent: boolean | null;
+        error?: string;
+      }[] = [];
       for (const registration of await navigator.serviceWorker.getRegistrations()) {
         for (const n of await registration.getNotifications()) {
           // `error` is set only by the worker's catch-all, and says what failed.
           const error = (n.data as { error?: string } | null)?.error;
-          out.push({ scope: registration.scope, body: n.body, tag: n.tag, silent: n.silent, ...(error ? { error } : {}) });
+          out.push({
+            scope: registration.scope,
+            body: n.body,
+            tag: n.tag,
+            silent: n.silent,
+            ...(error ? { error } : {}),
+          });
         }
       }
       return out;
@@ -391,11 +547,19 @@ test("a move made while the other app is closed arrives as a notification that o
   await adaGame.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appAda = appIn(adaGame);
   await expect(appAda.locator("#board")).toBeVisible({ timeout: 60_000 });
-  await adaGame.evaluate(({ base, key }) => {
-    (window as any).__runner.useRelay(base);
-    (window as any).__runner.usePush(key);
-  }, { base: relay.base, key: vapid.publicKey });
-  const arrives = async (page: Page, app: FrameLocator, at: number, mark: string) =>
+  await adaGame.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
+  const arrives = async (
+    page: Page,
+    app: FrameLocator,
+    at: number,
+    mark: string,
+  ) =>
     expect(async () => {
       await page.evaluate(() => (window as any).__runner.pullMailbox());
       await expect(cell(app, at)).toHaveText(mark, { timeout: 2_000 });
@@ -420,9 +584,19 @@ test("a move made while the other app is closed arrives as a notification that o
     await expect(appB.locator("#close-match")).toBeHidden({ timeout: 2_000 });
   }).toPass({ timeout: 45_000 });
 
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 45_000 }).toBe(0);
-  await expect.poll(() => devices.get("ada")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
-  await expect.poll(() => devices.get("bo")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 45_000 })
+    .toBe(0);
+  await expect
+    .poll(() => devices.get("ada")!.registrations.has(scope), {
+      timeout: 30_000,
+    })
+    .toBe(false);
+  await expect
+    .poll(() => devices.get("bo")!.registrations.has(scope), {
+      timeout: 30_000,
+    })
+    .toBe(false);
   /*
    * Nobody polls it now. Waited on the poll itself, not on the clock: a tick
    * on each page first, which settles any request already in flight when the
@@ -430,25 +604,36 @@ test("a move made while the other app is closed arrives as a notification that o
    * on both copies — and not one request may have reached the mailbox. The
    * sleeps this replaces assumed the timer fired inside them.
    */
-  const polls = (page: Page) => page.evaluate(() => (window as any).__runner.mailboxPolls as number);
+  const polls = (page: Page) =>
+    page.evaluate(() => (window as any).__runner.mailboxPolls as number);
   const ticks = async (count: number) => {
     const from = [await polls(adaGame), await polls(pageB)] as const;
     await expect
-      .poll(async () => (await polls(adaGame)) >= from[0] + count && (await polls(pageB)) >= from[1] + count, {
-        timeout: 60_000,
-      })
+      .poll(
+        async () =>
+          (await polls(adaGame)) >= from[0] + count &&
+          (await polls(pageB)) >= from[1] + count,
+        {
+          timeout: 60_000,
+        },
+      )
       .toBe(true);
   };
   await ticks(1);
   const before = relay.requests(address!);
   await ticks(2);
   const since = relay.requestLog(address!).slice(before);
-  expect(since, `nobody polls a closed game's mailbox; it received: ${since.join(", ")}`).toEqual([]);
+  expect(
+    since,
+    `nobody polls a closed game's mailbox; it received: ${since.join(", ")}`,
+  ).toEqual([]);
 
   for (const context of [ctxA, ctxB]) await context.close();
 });
 
-test("an opener update keeps push; removing the document releases it", async ({ browser }) => {
+test("an opener update keeps push; removing the document releases it", async ({
+  browser,
+}) => {
   test.slow();
   const { context, page } = await device(browser, "cy");
   await page.goto(RUNNER_URL);
@@ -459,11 +644,16 @@ test("an opener update keeps push; removing the document releases it", async ({ 
   await app.locator("#you").fill("Cy");
   await app.locator("#them").fill("Di");
   await app.locator("#new-game button[type=submit]").click();
-  await expect(app.locator("#players")).toContainText("Di (O)", { timeout: 30_000 });
-  await page.evaluate(({ base, key }) => {
-    (window as any).__runner.useRelay(base);
-    (window as any).__runner.usePush(key);
-  }, { base: relay.base, key: vapid.publicKey });
+  await expect(app.locator("#players")).toContainText("Di (O)", {
+    timeout: 30_000,
+  });
+  await page.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
   await page.evaluate(() => {
     navigator.clipboard.writeText = async () => undefined;
     navigator.share = async () => undefined;
@@ -471,17 +661,31 @@ test("an opener update keeps push; removing the document releases it", async ({ 
   const already = new Set(relay.appended);
   await app.locator("#invite").click();
   await page.click("#send-go");
-  await expect.poll(() => [...relay.appended].filter((a) => !already.has(a)).length, { timeout: 45_000 }).toBe(1);
+  await expect
+    .poll(() => [...relay.appended].filter((a) => !already.has(a)).length, {
+      timeout: 45_000,
+    })
+    .toBe(1);
   const [address] = [...relay.appended].filter((a) => !already.has(a));
   const scope = `${RUNNER_URL}push/${address}/`;
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 30_000 })
+    .toBe(1);
   const uuid = await page.evaluate(
     () =>
       new Promise<string>((resolve) => {
         const open = indexedDB.open("dai_runner_storage");
         open.onsuccess = () => {
-          const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
-          all.onsuccess = () => resolve(String((all.result[0] as { documentUuid: string }).documentUuid).split("/")[0]!);
+          const all = open.result
+            .transaction("mailboxes", "readonly")
+            .objectStore("mailboxes")
+            .getAll();
+          all.onsuccess = () =>
+            resolve(
+              String(
+                (all.result[0] as { documentUuid: string }).documentUuid,
+              ).split("/")[0]!,
+            );
         };
       }),
   );
@@ -489,14 +693,30 @@ test("an opener update keeps push; removing the document releases it", async ({ 
   // The menu's update: caches and the shell's worker go, and the page reloads.
   // The mailbox's push worker is not the shell's, and it stays.
   await context.route("**/version.json*", (route) =>
-    route.fulfill({ contentType: "application/json", body: JSON.stringify({ commit: "0000000deadbeefcafe" }) }),
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ commit: "0000000deadbeefcafe" }),
+    }),
   );
   await page.locator("#more").click();
-  await expect(page.locator("#sheet-version")).toHaveText("New version — update", { timeout: 15_000 });
-  await Promise.all([page.waitForEvent("load"), page.locator("#sheet-version").click()]);
+  await expect(page.locator("#sheet-version")).toHaveText(
+    "New version — update",
+    { timeout: 15_000 },
+  );
+  await Promise.all([
+    page.waitForEvent("load"),
+    page.locator("#sheet-version").click(),
+  ]);
   await context.unroute("**/version.json*");
-  await expect.poll(() => devices.get("cy")!.registrations.has(scope), { timeout: 10_000 }).toBe(true);
-  expect(relay.subscriptions(address!).length, "still subscribed at the relay").toBe(1);
+  await expect
+    .poll(() => devices.get("cy")!.registrations.has(scope), {
+      timeout: 10_000,
+    })
+    .toBe(true);
+  expect(
+    relay.subscriptions(address!).length,
+    "still subscribed at the relay",
+  ).toBe(1);
 
   // Removing the document from this device releases its push everywhere.
   await page.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
@@ -504,8 +724,14 @@ test("an opener update keeps push; removing the document releases it", async ({ 
   page.once("dialog", (dialog) => void dialog.accept());
   await page.locator("#more").click();
   await page.locator("#remove").click();
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(0);
-  await expect.poll(() => devices.get("cy")!.registrations.has(scope), { timeout: 30_000 }).toBe(false);
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 30_000 })
+    .toBe(0);
+  await expect
+    .poll(() => devices.get("cy")!.registrations.has(scope), {
+      timeout: 30_000,
+    })
+    .toBe(false);
 
   await context.close();
 });
@@ -520,11 +746,14 @@ test("an opener update keeps push; removing the document releases it", async ({ 
  * Per-install icons are a phone check: on a phone each home-screen install has
  * its own storage, so only that install's worker ever runs for its pushes.
  */
-test("the badge counts games waiting on this player, clears on open and after a move, and a push that is not a new turn does not raise it", async ({ browser }) => {
+test("the badge counts games waiting on this player, clears on open and after a move, and a push that is not a new turn does not raise it", async ({
+  browser,
+}) => {
   test.slow();
   const { context: ctxA, page: pageA } = await device(browser, "eve");
   const { context: ctxB, page: pageB } = await device(browser, "fay");
-  const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+  const cell = (app: FrameLocator, n: number) =>
+    app.locator("#board .cell").nth(n);
 
   // Eve starts a game, moves, and invites Fay. It is Fay's turn.
   await pageA.goto(RUNNER_URL);
@@ -535,36 +764,60 @@ test("the badge counts games waiting on this player, clears on open and after a 
   await appA.locator("#you").fill("Eve");
   await appA.locator("#them").fill("Fay");
   await appA.locator("#new-game button[type=submit]").click();
-  await expect(appA.locator("#players")).toContainText("Fay (O)", { timeout: 30_000 });
+  await expect(appA.locator("#players")).toContainText("Fay (O)", {
+    timeout: 30_000,
+  });
   await cell(appA, 0).click();
   await expect(cell(appA, 0)).toHaveText("X");
-  await pageA.evaluate(({ base, key }) => {
-    (window as any).__runner.useRelay(base);
-    (window as any).__runner.usePush(key);
-  }, { base: relay.base, key: vapid.publicKey });
+  await pageA.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
   await pageA.evaluate(() => {
     (window as any).__copied = undefined;
-    navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
-    navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+    navigator.clipboard.writeText = async (t: string) =>
+      void ((window as any).__copied = t);
+    navigator.share = async (data?: ShareData) =>
+      void ((window as any).__copied = data?.url);
   });
   const already = new Set(relay.appended);
   await appA.locator("#invite").click();
   await pageA.click("#send-go");
-  await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+  await expect
+    .poll(() => pageA.evaluate(() => (window as any).__copied ?? null), {
+      timeout: 30_000,
+    })
+    .not.toBeNull();
   const link = await pageA.evaluate(() => (window as any).__copied as string);
-  await expect.poll(() => [...relay.appended].filter((a) => !already.has(a)).length, { timeout: 45_000 }).toBe(1);
+  await expect
+    .poll(() => [...relay.appended].filter((a) => !already.has(a)).length, {
+      timeout: 45_000,
+    })
+    .toBe(1);
   const [address] = [...relay.appended].filter((a) => !already.has(a));
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(1);
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 30_000 })
+    .toBe(1);
 
   await pageB.goto(link);
   await pageB.locator("#card-open").click({ timeout: 60_000 });
   const appB = appIn(pageB);
-  await expect(appB.locator("#status")).toContainText("Your move, Fay.", { timeout: 60_000 });
-  await pageB.evaluate(({ base, key }) => {
-    (window as any).__runner.useRelay(base);
-    (window as any).__runner.usePush(key);
-  }, { base: relay.base, key: vapid.publicKey });
-  await expect.poll(() => relay.subscriptions(address!).length, { timeout: 30_000 }).toBe(2);
+  await expect(appB.locator("#status")).toContainText("Your move, Fay.", {
+    timeout: 60_000,
+  });
+  await pageB.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
+  await expect
+    .poll(() => relay.subscriptions(address!).length, { timeout: 30_000 })
+    .toBe(2);
 
   /** Eve's badge entries, read from a page on the opener's origin that is not the opener. */
   const entries = async () => {
@@ -572,11 +825,17 @@ test("the badge counts games waiting on this player, clears on open and after a 
     await reader.goto(`${RUNNER_URL}icons/icon-192.png`);
     const all = await reader.evaluate(
       () =>
-        new Promise<{ uuid: string; waiting: string[]; moved: string[]; shown: number }[]>((resolve) => {
+        new Promise<
+          { uuid: string; waiting: string[]; moved: string[]; shown: number }[]
+        >((resolve) => {
           const open = indexedDB.open("dai_badge", 1);
-          open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+          open.onupgradeneeded = () =>
+            open.result.createObjectStore("documents", { keyPath: "uuid" });
           open.onsuccess = () => {
-            const get = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
+            const get = open.result
+              .transaction("documents", "readonly")
+              .objectStore("documents")
+              .getAll();
             get.onsuccess = () => {
               resolve(get.result);
               open.result.close();
@@ -589,7 +848,12 @@ test("the badge counts games waiting on this player, clears on open and after a 
   };
 
   // Eve's own report, while her app is open: it is not her turn, so nothing waits.
-  await expect.poll(async () => (await entries()).map((e) => [e.waiting.length, e.shown]), { timeout: 30_000 }).toEqual([[0, 0]]);
+  await expect
+    .poll(
+      async () => (await entries()).map((e) => [e.waiting.length, e.shown]),
+      { timeout: 30_000 },
+    )
+    .toEqual([[0, 0]]);
   const [{ uuid }] = await entries();
 
   // Eve closes the app. Fay moves: a legitimate turn, and the count rises to 1.
@@ -597,7 +861,9 @@ test("the badge counts games waiting on this player, clears on open and after a 
   await firstMailboxMerge(pageB);
   await cell(appB, 4).click();
   await expect(cell(appB, 4)).toHaveText("O");
-  await expect.poll(async () => (await entries())[0]?.shown, { timeout: 45_000 }).toBe(1);
+  await expect
+    .poll(async () => (await entries())[0]?.shown, { timeout: 45_000 })
+    .toBe(1);
   const session = (await entries())[0]!.moved[0]!;
   expect(session).toMatch(/^[0-9a-f]{32}$/);
   await relay.settled();
@@ -607,12 +873,24 @@ test("the badge counts games waiting on this player, clears on open and after a 
   await again.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appAgain = appIn(again);
   await expect(appAgain.locator("#board")).toBeVisible({ timeout: 60_000 });
-  await again.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  await again.evaluate(
+    (base) => (window as any).__runner.useRelay(base),
+    relay.base,
+  );
   await expect(async () => {
     await again.evaluate(() => (window as any).__runner.pullMailbox());
     await expect(cell(appAgain, 4)).toHaveText("O", { timeout: 2_000 });
   }).toPass({ timeout: 45_000 });
-  await expect.poll(async () => (await entries()).map((e) => ({ waiting: e.waiting, moved: e.moved, shown: e.shown })), { timeout: 30_000 })
+  await expect
+    .poll(
+      async () =>
+        (await entries()).map((e) => ({
+          waiting: e.waiting,
+          moved: e.moved,
+          shown: e.shown,
+        })),
+      { timeout: 30_000 },
+    )
     .toEqual([{ waiting: [session], moved: [], shown: 0 }]);
 
   // Guard: while it is Eve's turn, Fay renames the game. The mailbox moves and
@@ -624,34 +902,66 @@ test("the badge counts games waiting on this player, clears on open and after a 
         new Promise<string>((resolve) => {
           const open = indexedDB.open("dai_runner_storage");
           open.onsuccess = () => {
-            const all = open.result.transaction("mailboxes", "readonly").objectStore("mailboxes").getAll();
-            all.onsuccess = () => resolve(String((all.result as { address?: string; cursor?: string }[]).find((r) => r.address === a)?.cursor ?? ""));
+            const all = open.result
+              .transaction("mailboxes", "readonly")
+              .objectStore("mailboxes")
+              .getAll();
+            all.onsuccess = () =>
+              resolve(
+                String(
+                  (all.result as { address?: string; cursor?: string }[]).find(
+                    (r) => r.address === a,
+                  )?.cursor ?? "",
+                ),
+              );
           };
         }),
       address!,
     );
-  const head = async () => (await fetch(`${relay.base}/${address}/head`)).text();
-  await expect.poll(async () => (await cursorRead()) === (await head()), { timeout: 30_000 }).toBe(true);
+  const head = async () =>
+    (await fetch(`${relay.base}/${address}/head`)).text();
+  await expect
+    .poll(async () => (await cursorRead()) === (await head()), {
+      timeout: 30_000,
+    })
+    .toBe(true);
   await again.close();
   pushes.length = 0;
   await appB.locator("#rename").click();
   await appB.locator("#rename-x").fill("Evelyn");
   await appB.locator("#rename-form button[type=submit]").click();
-  await expect.poll(() => pushes.filter((p) => p.device === "eve" && p.delivered).length, { timeout: 45_000 }).toBeGreaterThan(0);
+  await expect
+    .poll(
+      () => pushes.filter((p) => p.device === "eve" && p.delivered).length,
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
   await relay.settled();
-  await expect.poll(async () => (await entries())[0]?.moved, { timeout: 30_000 }).toEqual([session]);
-  expect((await entries())[0]!.shown, "a push for a game already waiting must not count it twice").toBe(1);
+  await expect
+    .poll(async () => (await entries())[0]?.moved, { timeout: 30_000 })
+    .toEqual([session]);
+  expect(
+    (await entries())[0]!.shown,
+    "a push for a game already waiting must not count it twice",
+  ).toBe(1);
 
   // Eve opens it and moves: after her own move nothing waits, and the badge is clear.
   const third = await ctxA.newPage();
   await third.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   const appThird = appIn(third);
   await expect(appThird.locator("#board")).toBeVisible({ timeout: 60_000 });
-  await expect.poll(async () => (await entries())[0]?.shown, { timeout: 30_000 }).toBe(0);
+  await expect
+    .poll(async () => (await entries())[0]?.shown, { timeout: 30_000 })
+    .toBe(0);
   await expect(cell(appThird, 8)).toBeEnabled({ timeout: 30_000 });
   await cell(appThird, 8).click();
   await expect(cell(appThird, 8)).toHaveText("X");
-  await expect.poll(async () => (await entries()).map((e) => ({ waiting: e.waiting, shown: e.shown })), { timeout: 30_000 })
+  await expect
+    .poll(
+      async () =>
+        (await entries()).map((e) => ({ waiting: e.waiting, shown: e.shown })),
+      { timeout: 30_000 },
+    )
     .toEqual([{ waiting: [], shown: 0 }]);
 
   for (const c of [ctxA, ctxB]) await c.close();
@@ -673,23 +983,36 @@ async function nonReportingTicTacToe(): Promise<string> {
   cpSync(join(repo, "examples", "tic-tac-toe"), dir, { recursive: true });
   const app = join(dir, "app.js");
   const source = readFileSync(app, "utf8");
-  const stripped = source.replace("  drawPending = false;\n  reportWaiting();", "  drawPending = false;");
+  const stripped = source.replace(
+    "  drawPending = false;\n  reportWaiting();",
+    "  drawPending = false;",
+  );
   if (stripped === source) throw new Error("the report call was not removed");
   writeFileSync(app, stripped);
-  const built = await compileDirectory({ sourceDir: dir, root: repo, appName: "Tic-tac-toe" });
+  const built = await compileDirectory({
+    sourceDir: dir,
+    root: repo,
+    appName: "Tic-tac-toe",
+  });
   const file = join(dir, "no-report.dai.html");
   writeFileSync(file, built.html, "utf8");
   return file;
 }
 
 for (const variant of ["reports waiting games", "does not report"] as const) {
-  test(`the badge clears after this player's own move is sent, for an app that ${variant}`, async ({ browser }) => {
+  test(`the badge clears after this player's own move is sent, for an app that ${variant}`, async ({
+    browser,
+  }) => {
     test.slow();
-    const file = variant === "reports waiting games" ? container : await nonReportingTicTacToe();
+    const file =
+      variant === "reports waiting games"
+        ? container
+        : await nonReportingTicTacToe();
     const tag = variant === "reports waiting games" ? "gil" : "hal";
     const { context: ctxA, page: pageA } = await device(browser, `${tag}-a`);
     const { context: ctxB, page: pageB } = await device(browser, `${tag}-b`);
-    const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+    const cell = (app: FrameLocator, n: number) =>
+      app.locator("#board .cell").nth(n);
 
     await pageA.goto(RUNNER_URL);
     await pageA.setInputFiles("#file", file);
@@ -699,28 +1022,44 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
     await appA.locator("#you").fill("Gil");
     await appA.locator("#them").fill("Hal");
     await appA.locator("#new-game button[type=submit]").click();
-    await expect(appA.locator("#players")).toContainText("Hal (O)", { timeout: 30_000 });
+    await expect(appA.locator("#players")).toContainText("Hal (O)", {
+      timeout: 30_000,
+    });
     await cell(appA, 0).click();
     await expect(cell(appA, 0)).toHaveText("X");
-    await pageA.evaluate(({ base, key }) => {
-      (window as any).__runner.useRelay(base);
-      (window as any).__runner.usePush(key);
-    }, { base: relay.base, key: vapid.publicKey });
+    await pageA.evaluate(
+      ({ base, key }) => {
+        (window as any).__runner.useRelay(base);
+        (window as any).__runner.usePush(key);
+      },
+      { base: relay.base, key: vapid.publicKey },
+    );
     await pageA.evaluate(() => {
       (window as any).__copied = undefined;
-      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
-      navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+      navigator.clipboard.writeText = async (t: string) =>
+        void ((window as any).__copied = t);
+      navigator.share = async (data?: ShareData) =>
+        void ((window as any).__copied = data?.url);
     });
     await appA.locator("#invite").click();
     await pageA.click("#send-go");
-    await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    await expect
+      .poll(() => pageA.evaluate(() => (window as any).__copied ?? null), {
+        timeout: 30_000,
+      })
+      .not.toBeNull();
     const link = await pageA.evaluate(() => (window as any).__copied as string);
 
     await pageB.goto(link);
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     const appB = appIn(pageB);
-    await expect(appB.locator("#status")).toContainText("Your move, Hal.", { timeout: 60_000 });
-    await pageB.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+    await expect(appB.locator("#status")).toContainText("Your move, Hal.", {
+      timeout: 60_000,
+    });
+    await pageB.evaluate(
+      (base) => (window as any).__runner.useRelay(base),
+      relay.base,
+    );
     await firstMailboxMerge(pageB);
     await cell(appB, 4).click();
     await expect(cell(appB, 4)).toHaveText("O");
@@ -735,11 +1074,20 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
     const entry = () =>
       pageA.evaluate(
         () =>
-          new Promise<{ uuid: string; waiting: string[]; moved: string[]; shown: number } | null>((resolve) => {
+          new Promise<{
+            uuid: string;
+            waiting: string[];
+            moved: string[];
+            shown: number;
+          } | null>((resolve) => {
             const open = indexedDB.open("dai_badge", 1);
-            open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+            open.onupgradeneeded = () =>
+              open.result.createObjectStore("documents", { keyPath: "uuid" });
             open.onsuccess = () => {
-              const all = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
+              const all = open.result
+                .transaction("documents", "readonly")
+                .objectStore("documents")
+                .getAll();
               all.onsuccess = () => {
                 resolve((all.result[0] as never) ?? null);
                 open.result.close();
@@ -747,7 +1095,9 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
             };
           }),
       );
-    await expect.poll(async () => (await entry())?.uuid ?? "", { timeout: 30_000 }).not.toBe("");
+    await expect
+      .poll(async () => (await entry())?.uuid ?? "", { timeout: 30_000 })
+      .not.toBe("");
     const uuid = (await entry())!.uuid;
     const standing = async () =>
       pageA.evaluate(
@@ -756,7 +1106,12 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
             const open = indexedDB.open("dai_badge", 1);
             open.onsuccess = () => {
               const tx = open.result.transaction("documents", "readwrite");
-              tx.objectStore("documents").put({ uuid: u, waiting: [], moved: ["a-game-that-moved"], shown: 1 });
+              tx.objectStore("documents").put({
+                uuid: u,
+                waiting: [],
+                moved: ["a-game-that-moved"],
+                shown: 1,
+              });
               tx.oncomplete = () => {
                 open.result.close();
                 resolve();
@@ -768,14 +1123,19 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
 
     // A move that cannot be sent does not clear it: nothing left this device.
     await standing();
-    await pageA.context().route(`${relay.base}/**`, (route) =>
-      route.request().method() === "POST" ? route.abort() : route.continue(),
-    );
+    await pageA
+      .context()
+      .route(`${relay.base}/**`, (route) =>
+        route.request().method() === "POST" ? route.abort() : route.continue(),
+      );
     await cell(appA, 8).click();
     await expect(cell(appA, 8)).toHaveText("X");
     if (variant === "does not report") {
       await pageA.waitForTimeout(3_000);
-      expect((await entry())!.shown, "a move that never left must not clear the badge").toBe(1);
+      expect(
+        (await entry())!.shown,
+        "a move that never left must not clear the badge",
+      ).toBe(1);
     }
 
     // Once it is sent, the badge clears. A failed publish is sent again on this
@@ -785,13 +1145,19 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
     await appA.locator("#rename").click();
     await appA.locator("#rename-x").fill("Gilbert");
     await appA.locator("#rename-form button[type=submit]").click();
-    await expect.poll(async () => (await entry())!.shown, { timeout: 45_000 }).toBe(0);
+    await expect
+      .poll(async () => (await entry())!.shown, { timeout: 45_000 })
+      .toBe(0);
     expect((await entry())!.moved).toEqual([]);
 
     // Coming back to a resumed page clears it too, without a reload.
     await standing();
-    await pageA.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await expect.poll(async () => (await entry())!.shown, { timeout: 15_000 }).toBe(0);
+    await pageA.evaluate(() =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    await expect
+      .poll(async () => (await entry())!.shown, { timeout: 15_000 })
+      .toBe(0);
 
     for (const c of [ctxA, ctxB]) await c.close();
   });
@@ -802,12 +1168,15 @@ for (const variant of ["reports waiting games", "does not report"] as const) {
  * asked, while that save is being written, and the frame records what the click
  * met. A probe until the mechanism is known: run with D79_PROBE=1.
  */
-test("D79 probe: a square clicked while the mount's first save is being written", async ({ browser }) => {
+test("D79 probe: a square clicked while the mount's first save is being written", async ({
+  browser,
+}) => {
   test.skip(!process.env.D79_PROBE, "a probe: run with D79_PROBE=1");
   test.slow();
   const { context: ctxA, page: pageA } = await device(browser, "d79-a");
   const { context: ctxB, page: pageB } = await device(browser, "d79-b");
-  const cell = (app: FrameLocator, n: number) => app.locator("#board .cell").nth(n);
+  const cell = (app: FrameLocator, n: number) =>
+    app.locator("#board .cell").nth(n);
 
   await pageA.goto(RUNNER_URL);
   await pageA.setInputFiles("#file", container);
@@ -819,15 +1188,24 @@ test("D79 probe: a square clicked while the mount's first save is being written"
   await appA.locator("#new-game button[type=submit]").click();
   await cell(appA, 0).click();
   await expect(cell(appA, 0)).toHaveText("X");
-  await pageA.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  await pageA.evaluate(
+    (base) => (window as any).__runner.useRelay(base),
+    relay.base,
+  );
   await pageA.evaluate(() => {
     (window as any).__copied = undefined;
-    navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
-    navigator.share = async (data?: ShareData) => void ((window as any).__copied = data?.url);
+    navigator.clipboard.writeText = async (t: string) =>
+      void ((window as any).__copied = t);
+    navigator.share = async (data?: ShareData) =>
+      void ((window as any).__copied = data?.url);
   });
   await appA.locator("#invite").click();
   await pageA.click("#send-go");
-  await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+  await expect
+    .poll(() => pageA.evaluate(() => (window as any).__copied ?? null), {
+      timeout: 30_000,
+    })
+    .not.toBeNull();
   const link = await pageA.evaluate(() => (window as any).__copied as string);
 
   const lines: string[] = [];
@@ -838,20 +1216,34 @@ test("D79 probe: a square clicked while the mount's first save is being written"
   const appB = appIn(pageB);
   await pageB.goto(link);
   await pageB.locator("#card-open").click({ timeout: 60_000 });
-  await expect(appB.locator("#status")).toContainText("Your move, Hal.", { timeout: 60_000 });
+  await expect(appB.locator("#status")).toContainText("Your move, Hal.", {
+    timeout: 60_000,
+  });
 
   // Inside the app's own frame: what a click meets, every board rebuild, every notice.
-  const frame = pageB.frames().find((f) => f.parentFrame()?.parentFrame() === pageB.mainFrame())!;
+  const frame = pageB
+    .frames()
+    .find((f) => f.parentFrame()?.parentFrame() === pageB.mainFrame())!;
   await frame.evaluate(() => {
-    const log = (s: string) => console.log(`D79 ${Math.round(performance.now())} ${s}`);
+    const log = (s: string) =>
+      console.log(`D79 ${Math.round(performance.now())} ${s}`);
     const board = document.getElementById("board")!;
-    const cells = () => [...board.children].map((c) => c.textContent || ".").join("");
-    for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click"]) {
+    const cells = () =>
+      [...board.children].map((c) => c.textContent || ".").join("");
+    for (const type of [
+      "pointerdown",
+      "pointerup",
+      "mousedown",
+      "mouseup",
+      "click",
+    ]) {
       document.addEventListener(
         type,
         (event) => {
           const t = event.target as HTMLElement;
-          log(`${type} on ${t?.id ? "#" + t.id : t?.className || t?.tagName} connected=${t?.isConnected}`);
+          log(
+            `${type} on ${t?.id ? "#" + t.id : t?.className || t?.tagName} connected=${t?.isConnected}`,
+          );
         },
         true,
       );
@@ -861,26 +1253,48 @@ test("D79 probe: a square clicked while the mount's first save is being written"
       (event) => {
         const t = event.target as HTMLButtonElement;
         if (!t?.classList?.contains("cell")) return;
-        log(`click on ${t.getAttribute("aria-label")} connected=${t.isConnected} disabled=${t.disabled}`);
-        setTimeout(() => log(`after click: target connected=${t.isConnected} board=[${cells()}] status="${document.getElementById("status")?.textContent}" notice="${document.getElementById("notice")?.textContent}"`), 0);
+        log(
+          `click on ${t.getAttribute("aria-label")} connected=${t.isConnected} disabled=${t.disabled}`,
+        );
+        setTimeout(
+          () =>
+            log(
+              `after click: target connected=${t.isConnected} board=[${cells()}] status="${document.getElementById("status")?.textContent}" notice="${document.getElementById("notice")?.textContent}"`,
+            ),
+          0,
+        );
       },
       true,
     );
-    new MutationObserver(() => log(`board rebuilt: [${cells()}] enabled=${[...board.children].filter((c) => !(c as HTMLButtonElement).disabled).length}`)).observe(board, { childList: true });
+    new MutationObserver(() =>
+      log(
+        `board rebuilt: [${cells()}] enabled=${[...board.children].filter((c) => !(c as HTMLButtonElement).disabled).length}`,
+      ),
+    ).observe(board, { childList: true });
     const notice = document.getElementById("notice")!;
-    new MutationObserver(() => log(`notice: "${notice.textContent}"`)).observe(notice, { childList: true, characterData: true, subtree: true });
-    window.addEventListener("dai:merged", (e) => log(`dai:merged via=${(e as CustomEvent).detail?.via}`));
+    new MutationObserver(() => log(`notice: "${notice.textContent}"`)).observe(
+      notice,
+      { childList: true, characterData: true, subtree: true },
+    );
+    window.addEventListener("dai:merged", (e) =>
+      log(`dai:merged via=${(e as CustomEvent).detail?.via}`),
+    );
     log("instrumented");
   });
 
   // The sightings' order: the relay, then the click about 15 ms later, with no wait between.
-  await pageB.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+  await pageB.evaluate(
+    (base) => (window as any).__runner.useRelay(base),
+    relay.base,
+  );
   if (process.env.D79_CLOSE) {
     // A merge that makes the move illegal mid-press: Gil closes the match (the
     // row the Close match button writes, through the app's own write surface),
     // and Hal's copy takes it in while Hal's finger is down.
     await pageB.waitForTimeout(1_500);
-    const frameA = pageA.frames().find((f) => f.parentFrame()?.parentFrame() === pageA.mainFrame())!;
+    const frameA = pageA
+      .frames()
+      .find((f) => f.parentFrame()?.parentFrame() === pageA.mainFrame())!;
     // The session, as Hal's copy reports it waiting on Hal (the badge store).
     let session = "";
     await expect(async () => {
@@ -888,10 +1302,20 @@ test("D79 probe: a square clicked while the mount's first save is being written"
         () =>
           new Promise<string>((resolve) => {
             const open = indexedDB.open("dai_badge", 1);
-            open.onupgradeneeded = () => open.result.createObjectStore("documents", { keyPath: "uuid" });
+            open.onupgradeneeded = () =>
+              open.result.createObjectStore("documents", { keyPath: "uuid" });
             open.onsuccess = () => {
-              const all = open.result.transaction("documents", "readonly").objectStore("documents").getAll();
-              all.onsuccess = () => resolve(String((all.result[0] as { waiting?: string[] })?.waiting?.[0] ?? ""));
+              const all = open.result
+                .transaction("documents", "readonly")
+                .objectStore("documents")
+                .getAll();
+              all.onsuccess = () =>
+                resolve(
+                  String(
+                    (all.result[0] as { waiting?: string[] })?.waiting?.[0] ??
+                      "",
+                  ),
+                );
             };
           }),
       );
@@ -901,21 +1325,34 @@ test("D79 probe: a square clicked while the mount's first save is being written"
     pageA.on("console", (m) => {
       if (/^dai: watermark published/.test(m.text())) published.push(m.text());
     });
-    await frameA.evaluate((s) => (window as any).dai.replicated.session.close(s), session);
+    await frameA.evaluate(
+      (s) => (window as any).dai.replicated.session.close(s),
+      session,
+    );
     // The close is at the relay before Hal presses, so the merge mid-press carries it.
-    await expect.poll(() => published.length, { timeout: 20_000 }).toBeGreaterThan(0);
+    await expect
+      .poll(() => published.length, { timeout: 20_000 })
+      .toBeGreaterThan(0);
     const box = (await cell(appB, 4).boundingBox())!;
     await pageB.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await pageB.mouse.down();
-    const mergedBefore = lines.filter((l) => /dai:merged via=mailbox/.test(l)).length;
+    const mergedBefore = lines.filter((l) =>
+      /dai:merged via=mailbox/.test(l),
+    ).length;
     await expect(async () => {
       await pageB.evaluate(() => (window as any).__runner.pullMailbox());
-      expect(lines.filter((l) => /dai:merged via=mailbox/.test(l)).length).toBeGreaterThan(mergedBefore);
+      expect(
+        lines.filter((l) => /dai:merged via=mailbox/.test(l)).length,
+      ).toBeGreaterThan(mergedBefore);
     }).toPass({ timeout: 20_000 });
     await pageB.mouse.up();
     await pageB.waitForTimeout(500);
-    console.log(`D79 notice after release: "${await appB.locator("#notice").textContent()}" hidden=${await appB.locator("#notice").isHidden()}`);
-    console.log(`D79 status after release: "${await appB.locator("#status").textContent()}"`);
+    console.log(
+      `D79 notice after release: "${await appB.locator("#notice").textContent()}" hidden=${await appB.locator("#notice").isHidden()}`,
+    );
+    console.log(
+      `D79 status after release: "${await appB.locator("#status").textContent()}"`,
+    );
   } else if (process.env.D79_SPLIT) {
     // The press and the release around one redraw of the board, which is what a
     // merge arriving mid-click does: the app's own merged listener calls draw().
@@ -923,14 +1360,250 @@ test("D79 probe: a square clicked while the mount's first save is being written"
     const box = (await cell(appB, 4).boundingBox())!;
     await pageB.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await pageB.mouse.down();
-    await frame.evaluate((merged) => window.dispatchEvent(new CustomEvent(merged, { detail: { via: "mailbox" } })), FRAME_PUBLIC.MERGED);
+    await frame.evaluate(
+      (merged) =>
+        window.dispatchEvent(
+          new CustomEvent(merged, { detail: { via: "mailbox" } }),
+        ),
+      FRAME_PUBLIC.MERGED,
+    );
     await pageB.mouse.up();
   } else {
     await cell(appB, 4).click();
   }
   await pageB.waitForTimeout(4_000);
-  for (const l of lines.filter((l) => /^D79|save|replica|lane|watermark|merged/.test(l))) console.log(`D79 PROBE | ${l}`);
+  for (const l of lines.filter((l) =>
+    /^D79|save|replica|lane|watermark|merged/.test(l),
+  ))
+    console.log(`D79 PROBE | ${l}`);
   console.log(`D79 cell 4 now: "${await cell(appB, 4).textContent()}"`);
 
+  for (const c of [ctxA, ctxB]) await c.close();
+});
+
+/**
+ * The worker's quiet window (D44), read from the worker itself.
+ *
+ * `sw.js` cannot be imported — it is a classic worker script — so the number
+ * is taken from its source rather than written down twice, where the two would
+ * drift and this test would wait out a window that is no longer the window.
+ */
+function notifyWindowMs(): number {
+  const source = readFileSync(
+    join(repo, "apps", "runner", "public", "sw.js"),
+    "utf8",
+  );
+  const found = /NOTIFY_WINDOW_MS = ([0-9_]+)/.exec(source);
+  if (!found) throw new Error("sw.js no longer declares NOTIFY_WINDOW_MS");
+  return Number(found[1]!.replace(/_/g, ""));
+}
+
+/**
+ * A burst of writes while setting a game up alerts once (D44).
+ *
+ * On a phone, setting up one game produced three alerts in a row: the other
+ * player joining, saving their name, then moving. Each was a real shared write
+ * that woke the device, and the worker cannot tell them apart, because the push
+ * carries nothing.
+ *
+ * The rule from the entry: one notification per game per quiet window, latest
+ * content wins. A wake inside the window is still *shown* — it replaces the one
+ * on screen — but it does not alert again, because a push that shows nothing is
+ * what gets a subscription revoked on iOS.
+ *
+ * So the count on screen is not the thing to read: the tag means it is one
+ * either way. What separates an alert from a fold is the notification's own
+ * `silent` flag, and that is what this reads.
+ */
+test("a burst of writes while a game is set up alerts once, and a later one alerts again", async ({
+  browser,
+}) => {
+  test.slow();
+  const mailboxesBefore = new Set(relay.appended);
+  const { context: ctxA, page: pageA } = await device(browser, "ada");
+  const { context: ctxB, page: pageB } = await device(browser, "bo");
+  const cell = (app: FrameLocator, n: number) =>
+    app.locator("#board .cell").nth(n);
+
+  // Ada starts a game against Bo, invites him, and closes her app. Everything
+  // after this happens while her device is not looking.
+  await pageA.goto(RUNNER_URL);
+  await pageA.setInputFiles("#file", container);
+  await pageA.locator("#card-open").click();
+  const appA = appIn(pageA);
+  await expect(appA.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+  await appA.locator("#you").fill("Ada");
+  await appA.locator("#them").fill("Bo");
+  await appA.locator("#new-game button[type=submit]").click();
+  await expect(appA.locator("#players")).toContainText("Bo (O)", {
+    timeout: 30_000,
+  });
+  await cell(appA, 0).click();
+  await expect(cell(appA, 0)).toHaveText("X");
+  await pageA.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
+  await pageA.evaluate(() => {
+    (window as any).__copied = undefined;
+    navigator.clipboard.writeText = async (t: string) =>
+      void ((window as any).__copied = t);
+    navigator.share = async (data?: ShareData) =>
+      void ((window as any).__copied = data?.url);
+  });
+  await appA.locator("#invite").click();
+  await pageA.click("#send-go");
+  await expect
+    .poll(() => pageA.evaluate(() => (window as any).__copied ?? null), {
+      timeout: 30_000,
+    })
+    .not.toBeNull();
+  const link = await pageA.evaluate(() => (window as any).__copied as string);
+  // The relay is shared by every test in this file, so this game's mailbox is
+  // the one that was not there before it started — not the only one there.
+  await expect
+    .poll(() => [...relay.appended].filter((a) => !mailboxesBefore.has(a)).length, { timeout: 45_000 })
+    .toBe(1);
+  const address = [...relay.appended].find((a) => !mailboxesBefore.has(a))!;
+  await expect
+    .poll(() => relay.subscriptions(address).length, { timeout: 30_000 })
+    .toBe(1);
+  await pageA.close();
+
+  /*
+   * Read from a page on the opener's origin that is not the opener — an icon —
+   * so reading cannot itself put the document on screen, which would rightly
+   * make the worker take the notification down.
+   */
+  const inspector = await ctxA.newPage();
+  await inspector.goto(`${RUNNER_URL}icons/icon-192.png`);
+  const notes = () =>
+    inspector.evaluate(async () => {
+      const out: { body: string; silent: boolean | null }[] = [];
+      for (const registration of await navigator.serviceWorker.getRegistrations()) {
+        for (const n of await registration.getNotifications())
+          out.push({ body: n.body, silent: n.silent });
+      }
+      return out;
+    });
+
+  /*
+   * When each game last alerted, from the worker's own store.
+   *
+   * The notification on screen cannot answer this. Its tag means the newest
+   * one replaces the last, so an alert raised and then folded over is gone
+   * before a test can look — measured here: the join travelled as two batches,
+   * two wakes landed, and by the first read only the folded one was left. The
+   * store holds the decision itself, which is the thing D44 is about.
+   */
+  const alerts = () =>
+    inspector.evaluate(
+      () =>
+        new Promise<{ game: string; alertedAt: number }[]>((resolve) => {
+          const open = indexedDB.open("dai_notify", 1);
+          open.onupgradeneeded = () => open.result.createObjectStore("games", { keyPath: "game" });
+          open.onsuccess = () => {
+            const all = open.result.transaction("games", "readonly").objectStore("games").getAll();
+            all.onsuccess = () => {
+              resolve(all.result as { game: string; alertedAt: number }[]);
+              open.result.close();
+            };
+            all.onerror = () => resolve([]);
+          };
+          open.onerror = () => resolve([]);
+        }),
+    );
+
+  /*
+   * Bo opens the invite and joins. His join is written before his copy is
+   * pointed at the relay, so it travels when it is — which is the first thing
+   * that wakes Ada, and the first thing that alerts her.
+   */
+  pushes.length = 0;
+  await pageB.goto(link);
+  await pageB.locator("#card-open").click({ timeout: 60_000 });
+  const appB = appIn(pageB);
+  await expect(appB.locator("#status")).toContainText("Your move, Bo.", {
+    timeout: 60_000,
+  });
+  await pageB.evaluate(
+    ({ base, key }) => {
+      (window as any).__runner.useRelay(base);
+      (window as any).__runner.usePush(key);
+    },
+    { base: relay.base, key: vapid.publicKey },
+  );
+  // The join reaches Ada: she is woken, and that wake alerts her.
+  await expect
+    .poll(async () => (await alerts()).length, {
+      timeout: 45_000,
+      message: "the first wake alerted Ada's device",
+    })
+    .toBe(1);
+  const firstAlert = (await alerts())[0]!;
+  const startedAt = Date.now();
+
+  // The rest of the setup, straight after: Bo saves his name, then moves. Both
+  // are inside the quiet window, so each replaces what is on screen and neither
+  // alerts again — the alert on record stays the one the join raised.
+  await appB.locator("#rename").click();
+  await appB.locator("#rename-o").fill("Bo Bradley");
+  await appB.locator("#rename-form button[type=submit]").click();
+  await cell(appB, 1).click();
+  await expect(cell(appB, 1)).toHaveText("O");
+  // Wait for the move's own wake before reading, so what follows is about
+  // three wakes and not about two and one still in flight.
+  await expect
+    .poll(() => pushes.filter((p) => p.device === "ada" && p.delivered).length, {
+      timeout: 20_000,
+      message: "every write really did wake the device: the folding is the worker's, not the relay's",
+    })
+    .toBeGreaterThan(2);
+  await relay.settled();
+  expect(
+    await alerts(),
+    "one alert on record for the whole burst: the later wakes were folded into it",
+  ).toEqual([firstAlert]);
+  expect(
+    await notes(),
+    "and one notification on screen, carrying the newest of them, not alerting",
+  ).toEqual([{ body: "Something new arrived.", silent: true }]);
+  // The assumption the assertions above rest on, stated rather than hoped: the
+  // burst happened inside the window. On a machine slow enough that it did not,
+  // this says so instead of failing as if the folding were broken.
+  expect(
+    Date.now() - startedAt,
+    "the burst finished inside the quiet window",
+  ).toBeLessThan(notifyWindowMs());
+
+  /*
+   * The window passes with nothing happening, and then one more write. It
+   * alerts again, because the point of the window is to fold a burst, not to
+   * silence a game.
+   *
+   * A move would do as well as a rename and is what the entry names, but it is
+   * Ada's turn now and Bo cannot move twice. The write kind is not what is
+   * under test here: what the worker sees of any of them is the same wake with
+   * nothing in it.
+   */
+  await inspector.waitForTimeout(notifyWindowMs() + 1_000);
+  await appB.locator("#rename").click();
+  await appB.locator("#rename-o").fill("Bo Bradley II");
+  await appB.locator("#rename-form button[type=submit]").click();
+  await expect
+    .poll(async () => (await alerts())[0]?.alertedAt ?? 0, {
+      timeout: 45_000,
+      message: "a write after the window alerts again",
+    })
+    .toBeGreaterThan(firstAlert.alertedAt);
+  expect(
+    (await alerts())[0]!.alertedAt - firstAlert.alertedAt,
+    "the second alert is a window later, not a moment later",
+  ).toBeGreaterThanOrEqual(notifyWindowMs());
+
+  await inspector.close();
   for (const c of [ctxA, ctxB]) await c.close();
 });
