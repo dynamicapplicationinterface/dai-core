@@ -64,6 +64,26 @@ thing, D18.
 Rulings from closed work that govern what comes next. The history of each is in
 git. If a ruling is overturned, it is replaced here, not annotated.
 
+**Updates, counting, and the author's voice** (21 September, with the V1
+direction; the walk these serve is `docs/v1-walk.md`)
+- **What an update may touch.** An update changes the author's part and never
+  the person's rows. Taking it is the person's choice, and their data stays
+  either way. An update that cannot carry the rows forward **is not applied**:
+  the person is told why in one sentence, and the version they already had keeps
+  working. The card says three things — what changed, that their data is kept,
+  and **Update / Not now**. Nothing here is automatic, and nothing here is
+  silent: an update that cannot be explained is an update that does not happen.
+- **The relay counts version pings and nothing else.** A copy tells the relay
+  which version it holds. The count is "copies checking in" — not people, not
+  installs, not sessions, and nothing is derived from it. It is the smallest
+  fact that answers "did the update reach anyone", and the relay learning less
+  than that would answer nothing.
+- **An author's message travels with an update** and shows as a card on next
+  open, under D45's authority: the person decides, the author sets a default,
+  and the default is never an authority. It is **never a push the author
+  chose** — an author who can wake a device at will is a different product from
+  this one.
+
 **Carriers and copies**
 - **Send a link, keep a file.** The link is the first-contact carrier; the file is
   canonical.
@@ -4123,6 +4143,56 @@ code, so routing it changes the runtime and keeps a host. The fix is one line
 (build the pattern from `FRAME_PUBLIC.MERGED`), made in the same change as the
 next runtime change that is keeping a host anyway, not on its own.
 
+#### D85 — A rebuild under the same id replaces the person's rows, and says nothing
+
+*Status: open. Found reading for `docs/v1-walk.md`, 21 September. V1 step 4.*
+
+**What it means to a person:** the author ships a new version of the app they use
+every day, they open it, and their history is gone — or the app will not open at
+all. Which of the two depends on a comparison they never see.
+
+An author who rebuilds a document keeping its `documentUuid` has not made an
+update: the id is the document, so the arrival is a contest between two
+databases. `chooseCopy()` (`src/copy-choice.ts:113`) decides it, and:
+- where it returns `take`, `main.ts:1861-1866` writes the arriving database over
+  the stored one — **with no sentence on screen**. A rebuild carrying an empty
+  database is exactly the shape that takes a person's log with it;
+- where it returns `diverged`, nothing opens, which is the right refusal to the
+  wrong question: their copy and the author's build were never two edits of the
+  same data.
+
+**The silence is defensible where it was designed and not here.** `take` was
+built for a copy of your own document coming back from somebody you play with —
+further along, descended from your own history, which `matchedDigest` and
+`history` establish. An author's rebuild is none of those things and reaches the
+same branch.
+
+**What exists instead, and is most of the answer:** succession — a *new* uuid
+with a signed `supersedes`, adopted only under the key this device already
+pinned, copying the old database across once (`main.ts:3588`, `main.ts:1721`).
+`tests/succession.spec.ts` already proves data carried forward, adoption refused
+under a different key, and "refuses loudly when no migration reaches, and loses
+nothing". It meets the update contract in decision 1 — except that nothing
+delivers it: an installed copy cannot learn a successor exists.
+
+**When it is picked up:** the contract is decision 1 in part 2, and the walk's
+step 4 is the case to satisfy. Two things to decide, neither ruled here:
+1. whether a same-uuid rebuild should be refused outright, with a sentence, so
+   that "update" has exactly one spelling (succession);
+2. what a copy does to learn of one, given decision 2's ping is the only thing
+   the relay will know.
+
+#### D86 — `Identity` declares `link` twice
+
+*Status: open, trivial, filed because it is the kind of thing that stops being
+trivial later.*
+
+`apps/runner/src/install.ts` declares `link?: string` at **line 64** and again at
+**line 80**, with a doc comment on each. TypeScript tolerates it because the
+types match, so nothing fails today. Two declarations of one field are two places
+to write down what it means, and the naming family's whole argument is that one
+fact gets one owner. Noticed while reading the install path for the V1 walk.
+
 #### D84 — `session-mailbox-e2e` timed out once on Firefox and passed on retry
 
 *Status: one sighting, recorded not chased.*
@@ -4140,6 +4210,12 @@ runner from a real stall. **What would make it readable:** the next time it
 appears, its trace is in that run's kept artifacts; two sightings with the same
 step stalled is the point at which it becomes a defect rather than a weather
 report.
+
+**Not to be merged with D32, which had its own sighting the same day**
+(`returning-document:365`, run 35618925872, filed in D32's table). That one is
+in the file and on the path D32's measured rate covers; this one is neither. Two
+Firefox retries in a day is the reason to write both down and the reason not to
+call them one thing.
 
 #### D83 — A test that fails never reaches its own teardown, and its contexts outlive it
 
@@ -4544,6 +4620,7 @@ Playwright's frame registration, not a defect anybody has seen.
 
 | CI, run 35507468526 (20 Sep, `638a17b`) | `returning-document:192`, Firefox, **failed and failed its retry** | Test timeout at 90 s on both attempts, and `main` red on Firefox alone. The kept snapshot shows the shell with its iframe and nothing inside it, the same shape as the rest of this table. The commit touched a test-only afterEach in another spec, a global-setup guard that cannot fire in CI (nothing is reused there) and the push tier, so it is this family, not the change. Second time this test has failed its retry rather than passing it. |
 | CI, run 35361313964 (18 Sep, `28e978d`, a docs-only push) | `returning-document:192`, Firefox, passed on retry | The trace shows the step: line 220, `toHaveText("no moves")` after bob reopens his own copy, never ended. The page's last breadcrumb is "reopen mounted the stored database (16384 bytes)", and its last screenshot shows "no moves", the expected text, on screen. That was checked against the later `toHaveText("move1 move2")`, where the same screenshot would have meant a real failure; the trace places the stall at the earlier step. |
+| CI, run 35618925872 (21 Sep, `b9b8232`) | `returning-document:365`, "opening your own copy after they moved does not make yours look newer", Firefox, passed on retry in 10.4 s | Same file, same engine, same reopen path, and the job was otherwise green (701 passed). The commit was test-only — pinning the platform two specs run as — so it is this family and not the change. Filed as a sighting rather than chased: it is the line the rate above already measures. The one worth watching beside it is `session-mailbox-e2e:175` the same day (D84), which is **not** this file and not yet this shape. |
 | CI, run 35341691229 (18 Sep, `7afb8c9`) | `mailbox-link-e2e:1287`, crossed invites in the other opening order, Firefox, passed on retry | Page A clicked Open on B's link, and `#app` was never found in 60 s. A's frame-side breadcrumbs show the app ran: "reopen mounted the stored database", "replica kept (own copy)", "pending merge applied (5 rows)", "save 1 written" at 4.2 s. A's last screenshot, 60 s after Open, shows the chess app on screen with its seat prompt. Both halves of the signature, read from the kept trace. |
 
 In each failing trace, the first-level frame is `about:blank` and later a lone `about:srcdoc` frame appears, with the `blob:` frame that should sit between them missing. A healthy mount earlier in the same test shows main, then `blob:`, then `about:srcdoc`. Both specs reproduce it locally at about 1 in 6 on Firefox under load. Each local failure has a screenshot of the app on screen while the locator waits.
