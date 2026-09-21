@@ -503,6 +503,9 @@ export function startMailboxSession(config: {
           config.onPublished?.(lane.address);
           lane.upToDate = !lane.publishAgain;
         } catch {
+          // Said on screen, and left in the trace: a kept failure is how the
+          // retry below can be shown to be the thing that sent it (D46).
+          note(`send failed at ${lane.address.slice(0, 12)}; kept pending`);
           config.onNote?.("A move could not be sent yet; it will send when the connection returns.");
         }
       } else {
@@ -523,6 +526,40 @@ export function startMailboxSession(config: {
         retireIfDone(lane);
       }
     }
+  }
+
+  /**
+   * Sends again what a failed send left behind (D46).
+   *
+   * A publish that fails keeps its sealed bytes in `pending`, and the screen
+   * says the move "will send when the connection returns". Nothing made that
+   * true: the batch went again only when this copy wrote something else or the
+   * document was opened again, so a move made offline and then left alone sat
+   * here while the other player waited. The poll timer is already the thing
+   * that runs on its own, so it carries this too.
+   *
+   * The bytes are the ones already sealed and saved, not a fresh ask of the
+   * frame: re-sealing would defeat the relay's dedup by digest, and the rows
+   * are the same rows.
+   */
+  async function retryPending(lane: Lane): Promise<boolean> {
+    await lane.ready;
+    if (lane.retired || lane.publishing || !lane.state.pending) return false;
+    const { sealed, head, replica } = lane.state.pending;
+    note(`pending send retried by the poll timer at ${lane.address.slice(0, 12)}`);
+    try {
+      await publishSealed(mailbox, lane.address, sealed);
+    } catch {
+      // Still no connection. The next tick tries again, and the sentence on
+      // screen stays true.
+      return false;
+    }
+    lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
+    save(lane);
+    noteWatermark(lane, "published by the poll timer's retry");
+    config.onPublished?.(lane.address);
+    config.onNote?.("");
+    return true;
   }
 
   async function runPublish(): Promise<void> {
@@ -666,6 +703,12 @@ export function startMailboxSession(config: {
       return;
     }
     if (await runPull(true)) lastActivity = Date.now(); // something arrived; a reply may be next.
+    // A send that failed is this timer's work too (D46), and it is tried even
+    // when nothing arrived: the connection can come back with nothing to read.
+    for (const lane of [...lanes.values()]) {
+      if (stopped) break;
+      if (await retryPending(lane).catch(() => false)) lastActivity = Date.now();
+    }
     polls += 1;
     schedulePoll(pollRate());
   }

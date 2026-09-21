@@ -38,6 +38,18 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
 
   let server: Server;
   let relayBase: string;
+  /**
+   * When set, the relay refuses to take a batch: the send fails as it does with
+   * no connection.
+   *
+   * Not `context.setOffline(true)`, which is the faithful cut this repository
+   * uses elsewhere (tests/offline.ts): measured 21 September, it stops a
+   * loopback request on Chromium and does not on Firefox, where the publish
+   * went through and nothing failed. What D46 is about is a send that failed
+   * and what happens next, so the failure is made at the relay, where every
+   * engine sees it the same way.
+   */
+  let relayRefusesAppends = false;
   let container: string;
   let key: string;
 
@@ -52,6 +64,12 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
       };
       if (req.method === "OPTIONS") {
         res.writeHead(204, cors);
+        res.end();
+        return;
+      }
+      if (relayRefusesAppends && req.method === "POST") {
+        req.resume();
+        res.writeHead(503, cors);
         res.end();
         return;
       }
@@ -218,6 +236,100 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
     // ceiling is for a loaded CI machine, not the expected latency.
     await play(appB, "e7", "e5");
     await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 30_000 });
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  test("a move that could not be sent goes when the connection returns, with no further writes", async ({ browser }) => {
+    /*
+     * D46. A publish that fails keeps its sealed bytes and the screen says the
+     * move "will send when the connection returns". Nothing made that true: the
+     * bytes went again only on the next write or the next open, so a move made
+     * offline and then left alone sat on the device while the other player
+     * waited.
+     *
+     * The sequence is the claim: offline, one move, **nothing else**, online,
+     * and then only a timer can carry it. No pull is asked for on either side,
+     * and B never writes again — a second write would publish for its own
+     * reasons and prove nothing.
+     *
+     * Its own freshly compiled document, so the shared relay's mailbox is empty
+     * at the start (see the test above).
+     */
+    const built = await compileDirectory({
+      sourceDir: join(repo, "tests", "fixture", "chess"),
+      root: repo,
+      appName: "Velvet Chess",
+    });
+    const own = join(mkdtempSync(join(tmpdir(), "dai-offline-send-")), "offline.dai.html");
+    writeFileSync(own, built.html, "utf8");
+
+    const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const deviceB: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+    const breadcrumbs: string[] = [];
+    pageB.on("console", (message) => {
+      if (message.text().startsWith("dai: ")) breadcrumbs.push(message.text());
+    });
+
+    const appA = await openWith(pageA, own);
+    await appA.locator("[data-new-game]:visible").first().click();
+    await appA.locator("#setup-you").fill("Ada");
+    await appA.locator("#setup-them").fill("Bo");
+    await appA.locator('input[name="color"][value="w"]').check();
+    await appA.locator("#new-game-form button[type=submit]").click();
+    await play(appA, "e2", "e4");
+    await pageA.evaluate(([b, k]) => (window as any).__runner.useRelay(b, k), [relayBase, key] as const);
+
+    const seed = join(dirname(own), "seed.dai.html");
+    await saveOut(pageA, seed);
+    const appB = await openWith(pageB, seed);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+    await pageB.evaluate(([b, k]) => (window as any).__runner.useRelay(b, k), [relayBase, key] as const);
+    // B's own first publish (its seat) is done before the cut, so what is
+    // pending afterwards is the move and only the move.
+    await expect
+      .poll(() => breadcrumbs.filter((line) => line.includes("watermark published")).length, { timeout: 30_000 })
+      .toBeGreaterThan(0);
+
+    // The cut. B plays e5; the send fails and the screen says what it says.
+    relayRefusesAppends = true;
+    await play(appB, "e7", "e5");
+    await expect
+      .poll(() => breadcrumbs.filter((line) => line.includes("send failed")).length, {
+        timeout: 30_000,
+        message: "the send failed while the connection was cut",
+      })
+      .toBeGreaterThan(0);
+    // And the sentence a person reads, which is what D46 is about.
+    await expect(pageB.locator("#report")).toContainText("it will send when the connection returns", {
+      timeout: 30_000,
+    });
+    expect(
+      breadcrumbs.some((line) => line.includes("pending send retried by the poll timer")),
+      "nothing retried while the connection was still cut",
+    ).toBe(false);
+
+    // The connection returns, and nothing else happens: no write, no pull, no
+    // reopen. Only B's poll timer is left to carry the move.
+    relayRefusesAppends = false;
+    await expect
+      .poll(() => breadcrumbs.filter((line) => line.includes("pending send retried by the poll timer")).length, {
+        timeout: 60_000,
+        message: "the poll timer retried the send",
+      })
+      .toBeGreaterThan(0);
+    await expect
+      .poll(() => breadcrumbs.filter((line) => line.includes("published by the poll timer's retry")).length, {
+        timeout: 60_000,
+        message: "the retry published it",
+      })
+      .toBeGreaterThan(0);
+
+    // And it really reached the other player: A is never told to pull either.
+    await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 60_000 });
 
     await deviceA.close();
     await deviceB.close();

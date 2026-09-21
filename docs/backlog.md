@@ -538,6 +538,27 @@ the commit that built it, `9815648`.
 
 #### D46 — A move that failed to send waits for the next write, not for the connection
 
+*Status: fixed, 21 September.* The poll timer retries a pending send. The
+sealed bytes already saved are sent again — not a fresh ask of the frame, which
+would re-seal and defeat the relay's dedup by digest — and the breadcrumbs name
+the timer: `send failed at <address>; kept pending`, then `pending send retried
+by the poll timer`, then `watermark published by the poll timer's retry`. The
+sentence on screen ("it will send when the connection returns") and
+`MAILBOX_APPEND_FAILED`'s wording are now true, so neither changed.
+
+**Proved** by `mailbox-mechanism`, "a move that could not be sent goes when the
+connection returns, with no further writes": the relay refuses the append, B
+plays one move, **nothing else happens** — no write, no pull, no reopen — the
+relay accepts again, and the timer carries it; A sees the move without being
+told to pull. With the retry removed it fails at "the poll timer retried the
+send" on Chromium and Firefox.
+
+**A note on cutting the connection:** `context.setOffline(true)` stops a
+loopback request on Chromium and **not** on Firefox (measured 21 September; the
+publish went through and nothing failed). So this test refuses the append at the
+relay instead, which every engine sees the same way. `tests/offline.ts` stays
+the way to cut a real network for serving-from-cache tests.
+
 *Status: open.*
 
 Open, not ruled. Found writing D34's clear-on-move test.
