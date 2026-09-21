@@ -1463,7 +1463,32 @@ When it is picked up:
 
 #### D59 — On a Mac, "Add to Dock" gets the assertive D50 sentence
 
-*Status: open, waiting on a Mac. From the review of `454858c..7abb896`.*
+*Status: the wrong sentence is gone, 21 September. The Mac reading is still
+wanted, and is what would move it back.*
+
+**Fixed by narrowing what may be asserted, not by deciding the open question.**
+`installStorageIsRead()` (`platform.ts`) says whether a platform's installs have
+been read, and a standalone install on macOS is unread, so it gets the neutral
+sentence: *"This icon is for X, and it isn't on this device."* If a Dock app
+does have its own storage, that sentence is true on a first launch and after a
+wipe alike; if it shares the browser's, it is still true, only less specific
+than it could be. Neither reading can make it false.
+
+- **Narrow to macOS on purpose.** Windows and Linux installs are the same origin
+  and the same storage, which is not in doubt; calling every desktop unread
+  would take a true sentence from them to fix a Mac.
+- **Both witnesses count.** `navigator.platform` and the user agent: on a real
+  Mac they agree, and a Mac claimed by either is treated as one. The first
+  version read `platform` alone and the test's Mac was not a Mac to it — a check
+  that passed because the thing it checked had not happened.
+
+**What a Mac would settle:** add a document's page to the Dock, launch it, and
+read whether its library is Safari's. If it has its own, this entry is closed as
+built; if it shares, the assertive sentence can come back for macOS.
+
+`tests/icon-after-wipe.spec.ts` holds it: an install on a Mac never says "any
+more". Proved by making macOS read as known, which brings the assertive sentence
+back and fails the test.
 
 **What it means to a person:** a Mac user whose Dock app has never held a
 document may be told it "isn't on this device any more", which is D50's
@@ -1479,7 +1504,35 @@ Dock, launch it, and read whether its library is Safari's.
 
 #### D60 — A notification tap can reach the D50 sentence, which says "icon"
 
-*Status: open. From the review of `454858c..7abb896`.*
+*Status: fixed, 21 September.*
+
+**Built.** The sentence follows how the person arrived, which the address says:
+an icon's carries the document's name, a notification's carries only the id
+(`sw.js`). With no name, the words are *"That document isn't on this device any
+more. If you still have the file or a link to it, open it here."* — and on iOS,
+or any install whose storage is unread, the same without "any more". No "icon",
+because they did not tap one, and no "your document", which was a stand-in for
+the name the address never had.
+
+`documentNotHere(name, fromIcon)` replaces `iconWithoutItsFile(name)`: four
+sentences, because two things vary and only one of them is the platform.
+
+**How "did they tap an icon?" is answered, and the first answer was wrong.** It
+was read from the absence of a name, which looks right and is not: an icon made
+without a name launches with `?doc=` and no name, so its owner was told about a
+notification they had not tapped. The runner's own `?doc=` test caught it within
+the hour. It is read from the address now — a query naming the document is an
+icon, a bare fragment is not — and an icon with no name gets a sentence of its
+own, *"This icon is for a document that isn't on this device"*, rather than
+borrowing the stand-in "your document".
+
+**Still open, and separate:** whether a notification for a wiped document should
+say something else entirely. It is the D54 moment — the first thing seen after a
+wipe — and that is a question about what a notification is for, not about this
+sentence.
+
+`tests/icon-after-wipe.spec.ts` holds both notification cases. Proved by making
+the no-name path fall back to the icon sentence, which fails on the word "icon".
 
 A notification opens `/#opener-doc=<uuid>` (`sw.js`). If the document is no
 longer held and the page is standalone, that is D50's file-icon path, and the
@@ -1492,7 +1545,12 @@ the question.
 
 #### D64 — `iconLostItsDocument()` is named for a detection it does not do
 
-*Status: open. From the review of `454858c..7abb896`.*
+*Status: fixed, 21 September, in the change that rewrote the sentences it feeds
+(D59, D60).* It is `installSharesBrowserStorage()` now, which is what it checks;
+"so the document was here" is left to the caller, where D50's reasoning is
+written down. Renamed there rather than filed for later because the change was
+already rewriting the branch, and leaving a name that claims a finding next to
+new wording invites exactly the misreading this entry predicted.
 
 It is `standalone() && installShareStorage()`: a platform check. It detects
 nothing about whether a document was lost. The name claims the case D50 argues

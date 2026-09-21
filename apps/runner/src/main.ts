@@ -50,7 +50,7 @@ import {
   type Identity,
 } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
-import { installShareStorage, platform, standalone } from "./platform.js";
+import { installShareStorage, installStorageIsRead, platform, standalone } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
@@ -1238,35 +1238,74 @@ let arrivedByLink: string | undefined;
 let arrivedInClear = false;
 
 /**
- * Whether an icon launch for a document this device does not hold means the
- * document was here and is gone (D50).
+ * Whether a launch for a document this device does not hold means the document
+ * was here and is gone (D50).
  *
- * True only where the icon shares storage with the browser and this is the
- * icon: an icon is made from a document the device holds, so on Android and
- * desktop a launch for one it does not hold means it was there — wiped, or
- * removed by the person. "Any more" is true for both and claims neither.
+ * True only where the install shares storage with the browser: an icon is made
+ * from a document the device holds, so on Android a launch for one it does not
+ * hold means it was there — wiped, or removed by the person. "Any more" is
+ * true for both and claims neither.
  *
  * Never on iOS. The icon has storage of its own there (6.3), and its first
  * launch is indistinguishable from a wiped one: a marker saying "this icon has
  * launched before" would live in the storage the wipe reaches. That is a
  * boundary, not a gap — the same shape as D18's hole versus empty stretch —
  * so iOS gets the sentence that is true in both cases.
+ *
+ * Never on a desktop install either, since D59: a macOS "Add to Dock" app is
+ * standalone and classes as desktop, but whether it has its own storage has
+ * not been read on a Mac. Asserting a loss on an inference is how a person
+ * gets told they lost something they never had. `installStorageIsRead()` holds
+ * that line, and a Mac reading is what moves it.
+ *
+ * The old name for this, `iconLostItsDocument`, claimed a detection it does not
+ * do (D64): it is a question about storage, answered from the platform, and
+ * nothing in it looks at whether a document was lost.
  */
-function iconLostItsDocument(): boolean {
-  return standalone() && installShareStorage();
+function installSharesBrowserStorage(): boolean {
+  return standalone() && installShareStorage() && installStorageIsRead();
 }
 
 /**
- * What an icon says when its document arrived as a file and is not here (D50).
+ * What the opener says when a document it was sent to is not here (D50, D60).
  *
  * It used to say "Open {name} from your files once … and it will be here every
  * time after that": right for an iOS icon's first launch, wrong for every wipe,
  * and in the wiped case a promise repeated at the moment it had been broken.
- * Neither sentence says why the document is not here, because that cannot be
- * known, and neither promises anything about next time.
+ * No sentence here says why the document is not here, because that cannot be
+ * known, and none promises anything about next time.
+ *
+ * Two things vary, and only one of them is the platform. The other is how the
+ * person got here, which the address says: an icon launches with the document
+ * in the query (`?doc=`, and `?name=` where the icon was made with a name),
+ * and a notification carries only the id in the fragment (`sw.js`). Telling
+ * somebody who tapped a notification that "this icon will open it again"
+ * describes a thing they did not do (D60).
+ *
+ * `fromIcon` is read from the address and not from the absence of a name: an
+ * icon made without one is still an icon, and keying on the name told its owner
+ * they had tapped a notification. That is what the runner's own `?doc=` test
+ * caught.
  */
-function iconWithoutItsFile(name: string): string {
-  return iconLostItsDocument()
+function documentNotHere(name: string | null, fromIcon: boolean): string {
+  const lost = installSharesBrowserStorage();
+  if (!fromIcon) {
+    // A notification tap, or any address carrying only the id. Nothing here is
+    // an icon, so nothing here says icon.
+    return lost
+      ? `That document isn't on this device any more. If you still have the file or a link to it, open it here.`
+      : `That document isn't on this device. If you have the file or a link to it, open it here.`;
+  }
+  if (!name) {
+    // An icon whose address never carried a name. It used to borrow one — "This
+    // icon is for your document" — which named nothing and read as a stand-in.
+    return lost
+      ? `The document this icon is for isn't on this device any more. If you still have the file, ` +
+          `open it here and this icon will open it again.`
+      : `This icon is for a document that isn't on this device. If you have the file, open it here ` +
+          `and this icon will open it.`;
+  }
+  return lost
     ? `${name} isn't on this device any more. If you still have the file, open it here ` +
         `and this icon will open it again.`
     : `This icon is for ${name}, and it isn't on this device. If you have the file, open ` +
@@ -4150,7 +4189,7 @@ async function start(): Promise<void> {
     document.body.classList.remove("launching");
     // An icon whose document is gone, with a link to fetch it again: the card
     // for it says so, on a device where that can be known (D50).
-    if (iconLostItsDocument()) returningTo = wanted;
+    if (installSharesBrowserStorage()) returningTo = wanted;
     if (!referenceFrom(location.pathname, location.search, location.hash)) arrived(false);
   }
 
@@ -4249,7 +4288,8 @@ async function start(): Promise<void> {
     // Not held here, and no link to follow (a document that arrived as a
     // file exists nowhere else): the address carries the name so this can
     // ask for exactly that file rather than showing an empty chooser.
-    say(iconWithoutItsFile(parameters.get("name") ?? "your document"));
+    // An icon launch names the document in the query; a notification does not.
+    say(documentNotHere(parameters.get("name"), parameters.has("doc") || parameters.has("name")));
     return;
   }
 

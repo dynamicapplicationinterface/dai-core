@@ -15,6 +15,9 @@ const KEY = resolve(repo, "conformance", "signing-key.pem");
 const RUNNER_URL = "http://localhost:5175/";
 const IPHONE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148";
+/** A Mac, where a standalone install is an "Add to Dock" app (D59). */
+const MAC =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 
 /**
  * An icon whose document is gone (D50).
@@ -90,6 +93,86 @@ test.describe("an icon for a document that arrived as a file", () => {
     const slot = page.locator("#slot");
     await expect(slot).toContainText("This icon is for Chores, and it isn't on this device.", { timeout: 30_000 });
     await expect(slot).not.toContainText("any more");
+    await page.context().close();
+  });
+
+  test("an icon with no name in its address is still an icon", async ({ browser }) => {
+    /*
+     * The guard on how "did they tap an icon?" is answered. Keying it on the
+     * absence of a name looks right and is not: an icon made without one
+     * launches with `?doc=` and no name, and its owner was then told about a
+     * notification they never tapped. The runner's own `?doc=` test caught it.
+     */
+    const page = await wipedDevice(browser, { installed: false });
+    await page.goto(`${RUNNER_URL}?doc=00000000-0000-0000-0000-000000000000`);
+
+    const slot = page.locator("#slot");
+    await expect(slot).toContainText("This icon is for a document that isn't on this device.", { timeout: 30_000 });
+    await expect(slot, "no borrowed name in place of the one it never had").not.toContainText("your document");
+    await page.context().close();
+  });
+
+  test("on a Mac, where an install's storage has not been read, never says 'any more' (D59)", async ({ browser }) => {
+    /*
+     * A Safari "Add to Dock" app is standalone and classes as desktop, so the
+     * old answer was "it shares the browser's storage" — from the platform
+     * name, not from anything anyone has seen. If a Dock app has storage of its
+     * own, as the review says, its first launch looks exactly like a wipe and
+     * the assertive sentence tells a person they lost something they never had.
+     *
+     * Held to the neutral sentence until a Mac is read. What moves this test is
+     * that reading, not an argument.
+     */
+    const context = await browser.newContext({ userAgent: MAC });
+    const page = await context.newPage();
+    await asInstalled(page);
+    await page.goto(FILE_ICON);
+
+    const slot = page.locator("#slot");
+    await expect(slot).toContainText("This icon is for Chores, and it isn't on this device.", { timeout: 30_000 });
+    await expect(slot).not.toContainText("any more");
+    await context.close();
+  });
+});
+
+/**
+ * What a notification tap reaches when the document is not here (D60).
+ *
+ * The worker's notification opens `/#opener-doc=<uuid>` — the id and nothing
+ * else. That address lands in the same place an icon does, so the person who
+ * tapped a notification was told "this icon will open it again", about a thing
+ * they did not do, and their document was called "your document" because the
+ * address carried no name to use.
+ *
+ * The sentence follows how they arrived, which the address says: an icon names
+ * the document in the query (`?doc=`, and `?name=` where it has one), and a
+ * notification carries only the id in the fragment. Not the presence of a name
+ * — an icon made without one is still an icon, which the test above holds.
+ */
+test.describe("a notification tap for a document that is not here", () => {
+  /** Exactly what `sw.js` puts in a notification: the hint key and the id. */
+  const FROM_NOTIFICATION = `${RUNNER_URL}#${HINT_KEY}=00000000-0000-0000-0000-000000000000`;
+
+  test("says nothing about an icon, and does not call it 'your document'", async ({ browser }) => {
+    const page = await wipedDevice(browser, { installed: true });
+    await page.goto(FROM_NOTIFICATION);
+
+    const slot = page.locator("#slot");
+    await expect(slot).toContainText("That document isn't on this device any more.", { timeout: 30_000 });
+    await expect(slot).toContainText("If you still have the file or a link to it, open it here.");
+    await expect(slot, "the word for a thing they did not tap").not.toContainText("icon");
+    await expect(slot, "a name it never had").not.toContainText("your document");
+    await page.context().close();
+  });
+
+  test("on iOS, where a first launch looks the same as a wipe, never says 'any more'", async ({ browser }) => {
+    const page = await wipedDevice(browser, { installed: true, iphone: true });
+    await page.goto(FROM_NOTIFICATION);
+
+    const slot = page.locator("#slot");
+    await expect(slot).toContainText("That document isn't on this device.", { timeout: 30_000 });
+    await expect(slot).not.toContainText("any more");
+    await expect(slot).not.toContainText("icon");
     await page.context().close();
   });
 });
