@@ -53,9 +53,31 @@ async function asInstalled(page: Page): Promise<void> {
   });
 }
 
-async function wipedDevice(browser: Browser, options: { installed: boolean; iphone?: boolean }): Promise<Page> {
-  const context = await browser.newContext(options.iphone ? { userAgent: IPHONE } : {});
+/**
+ * A wiped device of a stated kind: same icon address, empty storage.
+ *
+ * The kind is pinned rather than inherited, because every sentence here depends
+ * on it and an engine's own idea of what it is running on is not the platform
+ * the test means. Playwright's WebKit is the case that proves it: measured, it
+ * reports a Macintosh user agent with a `Win32` platform, so tests that left
+ * this to the engine were about macOS on WebKit and Windows everywhere else —
+ * and said nothing about which. Both witnesses are set here, as they agree on
+ * a real device.
+ */
+const WINDOWS =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
+async function wipedDevice(
+  browser: Browser,
+  options: { installed: boolean; iphone?: boolean; mac?: boolean },
+): Promise<Page> {
+  const userAgent = options.iphone ? IPHONE : options.mac ? MAC : WINDOWS;
+  const platform = options.iphone ? "iPhone" : options.mac ? "MacIntel" : "Win32";
+  const context = await browser.newContext({ userAgent });
   const page = await context.newPage();
+  await page.addInitScript((value) => {
+    Object.defineProperty(navigator, "platform", { get: () => value, configurable: true });
+  }, platform);
   if (options.installed) await asInstalled(page);
   return page;
 }
@@ -123,15 +145,13 @@ test.describe("an icon for a document that arrived as a file", () => {
      * Held to the neutral sentence until a Mac is read. What moves this test is
      * that reading, not an argument.
      */
-    const context = await browser.newContext({ userAgent: MAC });
-    const page = await context.newPage();
-    await asInstalled(page);
+    const page = await wipedDevice(browser, { installed: true, mac: true });
     await page.goto(FILE_ICON);
 
     const slot = page.locator("#slot");
     await expect(slot).toContainText("This icon is for Chores, and it isn't on this device.", { timeout: 30_000 });
     await expect(slot).not.toContainText("any more");
-    await context.close();
+    await page.context().close();
   });
 });
 

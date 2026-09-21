@@ -1486,6 +1486,17 @@ than it could be. Neither reading can make it false.
 read whether its library is Safari's. If it has its own, this entry is closed as
 built; if it shares, the assertive sentence can come back for macOS.
 
+**It reaches every Safari desktop, which is the point and was also a surprise on
+CI.** Safari desktop only runs on macOS, so a standalone Safari install *is* the
+Dock app this entry is about. What that exposed: Playwright's WebKit reports a
+Macintosh user agent with a `Win32` platform (measured, 21 September), so four
+tests that had left the platform to the engine were about macOS on WebKit and
+about Windows everywhere else, and said nothing about which. They pin both
+witnesses now. **The rule:** a test whose subject is platform-dependent states
+its platform; the engine's own idea of what it is running on is not the
+platform the test means. The assertive sentence and the "fetched again" card
+both rest on the same claim, so both follow this line.
+
 `tests/icon-after-wipe.spec.ts` holds it: an install on a Mac never says "any
 more". Proved by making macOS read as known, which brings the assertive sentence
 back and fails the test.
