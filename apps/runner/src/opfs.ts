@@ -171,6 +171,15 @@ export interface LibraryItem {
    */
   wrote?: boolean;
   /**
+   * Which build of the application this copy is running: a digest over the
+   * container's app bytes, with the database left out (`buildDigest`).
+   *
+   * Kept so an arriving copy can be told apart from this one by its
+   * application rather than by its data, which cannot tell them apart: every
+   * build of a document ships the same empty database (D85).
+   */
+  build?: string;
+  /**
    * When the copy this device holds was last saved, from the manifest that
    * was sealed around it (`savedAt`).
    *

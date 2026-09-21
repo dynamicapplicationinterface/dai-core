@@ -4250,7 +4250,58 @@ next runtime change that is keeping a host anyway, not on its own.
 
 #### D85 — A rebuild under the same id replaces the person's rows, and says nothing
 
-*Status: open. Found reading for `docs/v1-walk.md`, 21 September. V1 step 4.*
+*Status: refused, 22 September. The update path it points at is the ping
+(`docs/version-ping.md`), which is designed and not built.*
+
+**Built: a different build of the application, arriving over something a person
+wrote here, is refused before any question about the data is asked.** One
+sentence, and nothing on the device changes:
+
+> This copy of *Logbook* did not come from the one on this device, so opening it
+> would have put what you have written aside; nothing was opened and nothing
+> here was changed. A new version from the same author keeps your entries and
+> says so before it opens.
+
+- **The build is the signature** (`buildOf`), which covers the author's files
+  and not the database, so it is identical for every copy of one build however
+  it travelled and different for every rebuild. The library record keeps it as
+  `build`.
+- **Both sides must be able to say which build they are.** An unsigned
+  container cannot — anybody can make one that looks like any other — and an
+  older record does not have it written down. Either way it is undecided and
+  nothing is refused.
+- **Only where something of the person's is here** (`wrote`, D51's flag).
+- **`chooseCopy` is untouched.** The refusal stands in front of it, because it
+  is not a question about data and the data cannot answer it.
+
+**Three wrong answers first, each caught by an ordinary test, and each worth
+keeping because they all looked right.**
+1. *A digest over the archive.* It moved on every save: the manifest inside the
+   archive carries `savedAt`. Reopening a document you had been writing to read
+   as a different application, which the succession spec caught.
+2. *A digest over the manifest's entry digests.* It moved between carriers: an
+   inline link rebuilds them, so a copy that arrived as a link read as a
+   different application. `returning-document` caught that.
+3. *Refusing inside `chooseCopy`.* To reach it, "no arriving database" had to
+   become `BLANK_DIGEST` rather than `undefined` — and that value is also what
+   gets **recorded** as the match, so a blank first open changed what every
+   later comparison was measured against. A test about a move sent back went
+   red, in a place with no obvious connection to the change.
+
+**What the measurements corrected in this entry's own premise.** It said a
+rebuild "takes a person's log". A rebuild straight from the compiler has never
+saved, so it carries **no stamp**, and the old rule kept it out silently — the
+person opened the new version of their app and was shown the old one with
+nothing said. The taking happens only where the author opened the build before
+shipping it. Both are refused now, and the entry's claim was half right about a
+real problem.
+
+**Proved** by `tests/rebuild-refused.spec.ts`: an app is installed, two entries
+are written and saved, the author rebuilds under the same id, and the arrival is
+refused with the sentence while both entries stay on screen in the copy that was
+already open. The guard is proved by disabling the refusal, which lets the
+rebuild through. Its companion holds the other half: the same rebuild arriving
+at a copy nobody has written to opens as it always has.
 
 **What it means to a person:** the author ships a new version of the app they use
 every day, they open it, and their history is gone — or the app will not open at

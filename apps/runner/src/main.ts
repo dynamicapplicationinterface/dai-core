@@ -16,7 +16,7 @@ import { ICON_CAP, openFromStore, publish, referenceFrom, strippedReference } fr
 import { presignedStore } from "../../../src/store-presigned.js";
 import { labelPublisher, publisherState, recordPublisher } from "../../../src/publisher.js";
 import { declaresReplication, siblingTest, whyNotSibling } from "../../../src/sibling.js";
-import { afterSave, BLANK_DIGEST, chooseCopy, databaseDigest, remember } from "../../../src/copy-choice.js";
+import { afterSave, BLANK_DIGEST, buildOf, chooseCopy, databaseDigest, remember } from "../../../src/copy-choice.js";
 import { confusables } from "./confusables.js";
 import { verifyIdentity } from "../../../src/identity.js";
 
@@ -1816,6 +1816,42 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     const hasStored = Boolean(opfsDb && opfsDb.byteLength > 0);
     const localDigest = hasStored ? await databaseDigest(opfsDb!) : undefined;
     const arrivingDigest = incomingDb && incomingDb.byteLength > 0 ? await databaseDigest(incomingDb) : undefined;
+
+    /*
+     * A different build of the application, arriving over something a person
+     * wrote here: refused before any of the questions below are asked (D85).
+     *
+     * It is asked here rather than inside `chooseCopy` because it is not a
+     * question about data, and the data cannot answer it. A rebuild ships the
+     * same empty database its first build did, so every comparison of
+     * databases reads an author's new version and a person's own install file
+     * exactly alike — by stamps, by digest, by history. What tells them apart
+     * is the signature, which covers the author's files and not the database,
+     * and is the same for every copy of one build however it travelled.
+     *
+     * Both sides must be able to say which build they are. An unsigned
+     * container cannot, and an older record does not have it written down;
+     * either way this is undecided and nothing is refused on a guess.
+     */
+    const arrivingBuild = buildOf(cartridge.manifest);
+    const differentBuild =
+      heldItem?.build !== undefined && arrivingBuild !== undefined && heldItem.build !== arrivingBuild;
+    if (hasStored && heldItem?.wrote === true && differentBuild) {
+      console.error(
+        `dai: refused a different build of ${cartridge.manifest.documentUuid}: ` +
+          `this device holds one somebody has written to, and succession is the only update`,
+      );
+      slot.classList.remove("busy");
+      const appName = cartridge.manifest.appName ?? "this document";
+      say(
+        `This copy of ${appName} did not come from the one on this device, so opening it would have put what you have ` +
+          `written aside; nothing was opened and nothing here was changed. A new version from the same author keeps your ` +
+          `entries and says so before it opens.`,
+        true,
+      );
+      return;
+    }
+
     const decided =
       hasStored && heldItem && localDigest !== undefined && arrivingDigest !== undefined
         ? chooseCopy(heldItem, localDigest, { savedAt: arriving, digest: arrivingDigest })
@@ -1845,6 +1881,20 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
           `arriving ${arrivingDigest !== undefined && heldItem?.history?.includes(arrivingDigest) ? "is" : "is not"} this copy's own)`,
       );
     }
+    /*
+     * A copy with no relationship to the one here, arriving over something a
+     * person has written (D85).
+     *
+     * Same id, and nothing says they are related: not this copy's own past, not
+     * the copy it last matched, and no match to reason from at all. An author
+     * who rebuilds their app under the same id lands exactly here, and what
+     * used to happen is that the newer stamp won and the person's rows were
+     * replaced with the ones in the rebuild — usually none — with nothing said.
+     *
+     * Succession is the only update (the ruling): a new id, signed
+     * `supersedes`, adopted under the key this device already pinned, and the
+     * rows carried across. This branch is what stands where that is missing.
+     */
     if (hasStored && decided.kind === "diverged") {
       console.error(
         `dai: refused to choose between diverged copies of ${cartridge.manifest.documentUuid}: both changed since they last matched`,
@@ -2652,6 +2702,9 @@ window.addEventListener("message", (event) => {
             // any write an application makes before a person has touched it
             // (D51). Once true, it stays true.
             ...(data.payload?.setup === true ? {} : { wrote: true }),
+            // Which build this copy is running, so an arriving copy can be told
+            // apart by its application rather than by its data (D85).
+            ...(buildOf(loaded.manifest) ? { build: buildOf(loaded.manifest) } : {}),
           });
         } else if (held) {
           await saveCartridgeToLibrary({ ...held, revision: next });

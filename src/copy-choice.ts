@@ -139,3 +139,29 @@ export function chooseCopy(held: HeldCopy, localDigest: string, arriving: Arrivi
 export function databaseDigest(bytes: Uint8Array): Promise<string> {
   return sha256Hex(bytes);
 }
+
+/**
+ * Which build of an application a container is: its signature.
+ *
+ * Not part of choosing between copies — nothing below reads it — but the fact
+ * that decides whether a copy is a copy of *this* document at all, which is a
+ * question the data cannot answer (D85). The signature covers the author's
+ * files and not the database (§9.2), so it is identical for every copy of one
+ * build, however that copy travelled and whatever has been written into it,
+ * and different for every rebuild.
+ *
+ * **Undefined for an unsigned container, and that is an answer.** An unsigned
+ * document cannot say which build it is — anyone can produce one that looks
+ * like any other — so a build read off it would be a guess, and the caller
+ * refuses nothing on a guess.
+ *
+ * Two earlier attempts are recorded because both looked right and neither was:
+ * a digest over the archive drifted on every save, since the manifest inside
+ * it carries `savedAt`; a digest over the manifest's entry digests drifted
+ * between carriers, since an inline link rebuilds them. Each was caught by a
+ * test of an ordinary thing — reopening a document you have been writing to,
+ * and taking in a copy that arrived as a link.
+ */
+export function buildOf(manifest: { signature?: string }): string | undefined {
+  return manifest.signature;
+}
