@@ -39,6 +39,11 @@ const PAGE = `<!doctype html><title>shell</title>
   (document.body ?? document.documentElement).append(frame);
 </script>`;
 
+// The page is a mock, and the runner's worker serves same-origin requests
+// cache-first: without this it can answer before the route does, and the test
+// would be looking at the opener rather than at these two frames.
+test.use({ serviceWorkers: "block" });
+
 test("the inner frame of a blob frame can be entered", async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
