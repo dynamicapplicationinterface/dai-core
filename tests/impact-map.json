@@ -3207,6 +3207,11 @@
       "src/unzip.ts",
       "tests/vectors.spec.ts"
     ],
+    "tests/version-relay.spec.ts": [
+      "apps/relay/src/",
+      "tests/relay-memory.ts",
+      "tests/version-relay.spec.ts"
+    ],
     "tests/version-update.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/",

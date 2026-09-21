@@ -17,12 +17,23 @@ compatibility_date = "2026-09-01"
 name = "MAILBOX"
 class_name = "MailboxDO"
 
+# One object per document for version check-ins (docs/version-ping.md): what
+# build a copy holds, and whether the author has published a successor. Kept
+# apart from the mailbox because the two learn different things.
+[[durable_objects.bindings]]
+name = "VERSION"
+class_name = "VersionDO"
+
 # A SQLite-backed object: it is the only kind the free plan will create, and the
 # storage this one uses — the counter and the digest→cursor index — is the same
 # key/value API on either backend, so nothing in the object changes.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MailboxDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["VersionDO"]
 
 # The bytes go to R2 — the same bucket as the reference store, under the
 # `mailbox/` prefix. Set `bucket_name` to that bucket before deploying.

@@ -12,11 +12,14 @@
  * that runs.
  */
 import { MailboxDO } from "./mailbox-do.js";
+import { VersionDO } from "./version-do.js";
 
-export { MailboxDO };
+export { MailboxDO, VersionDO };
 
 interface Env {
   MAILBOX: DurableObjectNamespace;
+  /** One object per document, for version check-ins (`docs/version-ping.md`). */
+  VERSION: DurableObjectNamespace;
 }
 
 const ALLOW_ORIGIN = /^https:\/\/(opendai\.app|[a-z0-9-]+\.opendai\.app)$/;
@@ -44,6 +47,26 @@ export default {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
     const url = new URL(request.url);
+
+    /*
+     * The version door: `/v/<doc>` and `/v/<doc>/announce`, one object per
+     * document (`docs/version-ping.md`).
+     *
+     * Kept apart from the mailbox rather than folded into it. They hold
+     * different things and learn different things — the mailbox holds sealed
+     * bytes it cannot read, and this holds what an author published in the
+     * open — and one object holding both would be one place where those two
+     * facts sit together.
+     */
+    const version = /^\/v\/([0-9a-zA-Z._-]{1,128})(?:\/announce)?\/?$/.exec(url.pathname);
+    if (version) {
+      const stub = env.VERSION.get(env.VERSION.idFromName(version[1]!));
+      const answer = await stub.fetch(request);
+      const out = new Response(answer.body, answer);
+      for (const [key, value] of Object.entries(headers)) out.headers.set(key, value);
+      return out;
+    }
+
     // /m/<doc>, /m/<doc>/head, /m/<doc>/subscribe, /m/<doc>/unsubscribe — the
     // mailbox id is the segment after /m/.
     const match = /^\/m\/([0-9a-zA-Z._-]{1,128})(?:\/head|\/subscribe|\/unsubscribe)?\/?$/.exec(url.pathname);
