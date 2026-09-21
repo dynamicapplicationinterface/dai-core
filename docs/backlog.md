@@ -4140,6 +4140,22 @@ refuses to start Firefox here ("spawn UNKNOWN"), which is why the loop runs in
 CI at all. **That reading is the next thing, and it needs a machine that can
 launch Firefox.**
 
+**The minimal page does not reproduce it (20 September): 0 of 210.**
+`tests/d32-minimal.spec.ts` is the shape and nothing else — a page that makes a
+`blob:` frame, whose document makes a sandboxed `srcdoc` frame, which says one
+word. No service worker, no storage, no runtime, no document, one mount on a
+fresh page. 60 runs then 150 runs on Firefox 155 at 4 workers: every one
+entered the inner frame. The opener fails the same shape about 7 times in 100,
+so the difference is something the opener does and this page does not.
+
+**What to add next, in this order:** (1) a *second* mount in the same page —
+`#cartridge` to `about:blank`, then to a fresh blob — because every sighting is
+a **reopen**, not a first open; (2) a navigation between mounts (`goto` the
+same URL again), which is what the failing tests do; (3) a service worker
+controlling the page, since the opener always has one; (4) size — the opener's
+blob carries the runtime and a document, this one carries 120 bytes. Stop at
+the first that reproduces; that is the upstream report.
+
 **A reload does not recover it (20 September).** The mitigation agreed after
 the third red — wait eight seconds for the app frame, then reload once — fired
 in a local Firefox loop and the frame was still unenterable thirty seconds
