@@ -387,6 +387,17 @@ test.describe("what a share carries", () => {
     await expect(app.locator("#state")).toHaveText("1");
     await page.click("#more");
     await page.click("#send");
+    // This half is about a share that carries the data, and this document
+    // declares no replicated tables, so the data travels because the person
+    // asked for it (ruled 21 September). Set rather than assumed: the two
+    // halves below are the two states of this control, and a test about what
+    // a link carries should say which one it is sending.
+    //
+    // After the sheet is up, not before: the sheet sets the control's starting
+    // state as part of opening, so a click that lands first is undone by it.
+    await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+    await page.locator("#send-with-data").check();
+    await expect(page.locator("#send-note")).toContainText("with what is in it now");
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
     const withData = (await copied())!;
@@ -395,7 +406,10 @@ test.describe("what a share carries", () => {
     await resetShare(page);
     await page.click("#more");
     await page.click("#send");
-    await page.locator("#send-with-data").uncheck();
+    // The blank copy, which is now what this sheet offers without being asked:
+    // a document nobody joins sends the app, not the sender's entries.
+    await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#send-with-data")).not.toBeChecked();
     await expect(page.locator("#send-note")).toContainText("none of your entries");
     await page.click("#send-go");
     await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });

@@ -288,6 +288,22 @@ async function shareLink(page: Page): Promise<string> {
   });
   await page.click("#more");
   await page.click("#send");
+  /*
+   * Every test in this file is about a copy of a document travelling with what
+   * is written in it — a move sent back, a stale board, two copies that cannot
+   * merge. The document here declares no replicated tables, so the data goes
+   * only because the person asks for it (ruled 21 September); before that
+   * ruling this control started on and these tests said nothing about it.
+   *
+   * Set here rather than in each test because it is this helper's meaning:
+   * `shareLink` is "share what I have", and a share without it is a different
+   * act with its own sentence on screen.
+   *
+   * After the sheet is up, not before: opening it sets the control's starting
+   * state, so a click that lands first is undone by it.
+   */
+  await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+  await page.locator("#send-with-data").check();
   await page.click("#send-go");
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { __copied?: string }).__copied), {
