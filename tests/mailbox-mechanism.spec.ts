@@ -318,28 +318,36 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
       timeout: 30_000,
     });
     /*
-     * Give the cut some duration before asking what was reported during it: the
-     * relay must have turned away more than the one send, so the copy is still
-     * trying and the state below is not simply "nothing has happened yet".
-     *
-     * This is weaker than it looks, and deliberately says so. A move publishes
-     * on more than one lane, so several refusals can arrive together without a
-     * single poll tick, and the breadcrumb travels over the console while the
-     * count is made in the relay's own process — the two are not ordered
-     * against each other. So a local pass here does not prove a tick reported
-     * nothing; only that nothing was reported by the time it was asked.
-     *
-     * The assertion is still worth making, because it is what caught the real
-     * defect — on CI, on Chromium and Firefox, where a tick did land inside the
-     * window. What makes the property hold everywhere is the code: the
-     * breadcrumb is written after the send succeeds, so it can only ever name a
-     * retry that happened.
+     * Wait for the timer's own first failed retry to say so. This is the state
+     * the assertions below are about, and the line is proof a tick ran inside
+     * the cut — which is what the earlier version of this test could not
+     * establish, so it asserted "nothing was retried" at a moment when nothing
+     * had yet been tried, and a breadcrumb that named a retry before
+     * attempting one passed locally and failed on CI.
      */
     await expect
-      .poll(() => refusedAppends, { timeout: 30_000, message: "the copy is still being turned away" })
-      .toBeGreaterThan(1);
+      .poll(() => breadcrumbs.filter((line) => line.includes("still failing")).length, {
+        timeout: 30_000,
+        message: "the poll timer tried, failed, and said so once",
+      })
+      .toBe(1);
     expect(
-      breadcrumbs.some((line) => line.includes("pending send retried by the poll timer")),
+      breadcrumbs.find((line) => line.includes("still failing")),
+      "the line names the interval, so a reader knows how often it is trying",
+    ).toMatch(/retrying every \d+s/);
+
+    // Ticks keep coming, and say nothing more: the relay turning away further
+    // appends is the evidence that they do. One outage, one line.
+    const refusalsBefore = refusedAppends;
+    await expect
+      .poll(() => refusedAppends, { timeout: 30_000, message: "more ticks tried and were refused" })
+      .toBeGreaterThan(refusalsBefore);
+    expect(
+      breadcrumbs.filter((line) => line.includes("still failing")).length,
+      "the ticks after the first carry no new fact and stay silent",
+    ).toBe(1);
+    expect(
+      breadcrumbs.some((line) => line.includes("retried by the poll timer")),
       "nothing is reported as retried while the connection is still cut",
     ).toBe(false);
 

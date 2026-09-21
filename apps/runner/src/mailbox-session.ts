@@ -132,6 +132,14 @@ interface Lane {
   upToDate: boolean;
   /** Its session closed and it has published and read all it will: no more polling, no push. */
   retired: boolean;
+  /**
+   * A retry of its pending send has already failed and said so (D46).
+   *
+   * One line when the retrying starts, then silence until something changes:
+   * the ticks that follow carry no new fact, and a line per tick would bury
+   * the one that matters in a reader's trace.
+   */
+  retryFailureNoted: boolean;
 }
 
 export function startMailboxSession(config: {
@@ -322,6 +330,7 @@ export function startMailboxSession(config: {
       publishAgain: false,
       upToDate: false,
       retired: false,
+      retryFailureNoted: false,
     };
     lane.ready = (async () => {
       const saved = await loadMailbox(name);
@@ -505,6 +514,9 @@ export function startMailboxSession(config: {
         } catch {
           // Said on screen, and left in the trace: a kept failure is how the
           // retry below can be shown to be the thing that sent it (D46).
+          // A fresh failure starts a fresh outage as far as the trace is
+          // concerned, so the retry line below is allowed to speak once more.
+          lane.retryFailureNoted = false;
           note(`send failed at ${lane.address.slice(0, 12)}; kept pending`);
           config.onNote?.("A move could not be sent yet; it will send when the connection returns.");
         }
@@ -549,16 +561,29 @@ export function startMailboxSession(config: {
     try {
       await publishSealed(mailbox, lane.address, sealed);
     } catch {
-      // Still no connection. The next tick tries again, and the sentence on
-      // screen stays true. Deliberately silent: this runs every few seconds
-      // while a connection is down, and a breadcrumb per tick would bury the
-      // one that matters.
+      /*
+       * The first failed retry says so, and names the interval, so a reader of
+       * the trace knows the copy is trying and how often. Every tick after it
+       * is silent: it carries no new fact, and a line every few seconds would
+       * bury the one that matters.
+       *
+       * The rate is read here rather than written into the sentence, because
+       * the poll slows as the page sits idle and a fixed number would become a
+       * lie by the second minute.
+       */
+      if (!lane.retryFailureNoted) {
+        lane.retryFailureNoted = true;
+        note(
+          `pending send still failing at ${lane.address.slice(0, 12)}; retrying every ${Math.round(pollRate() / 1000)}s`,
+        );
+      }
       return false;
     }
     // Written only now, because it names something that happened. The first
     // version of this line was written before the attempt, and said a send had
     // been retried while the connection was still cut — a breadcrumb that
     // described an intention, which CI caught on Chromium and Firefox.
+    lane.retryFailureNoted = false;
     note(`pending send retried by the poll timer at ${lane.address.slice(0, 12)}`);
     lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
     save(lane);

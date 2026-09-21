@@ -471,6 +471,50 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+- **A tool that reports success for work it did not do (21 September).**
+  `context.setOffline(true)` stops a loopback request on Chromium and does not
+  on Firefox: the call returns, the flag reads as set, and the publish goes
+  straight through to a relay on `localhost`. A test written on it does not
+  fail — it stops being a test of anything, because the connection it cuts was
+  never cut, and the code path it exists for is never entered. It belongs to
+  this pattern rather than to a Firefox bug list: the danger is not that the
+  call is broken, it is that the green stays green. Found writing D46, where
+  the cut is now made by refusing the append at the relay, which every engine
+  sees the same way; `tests/offline.ts` is still right for cutting a real
+  network to test serving from cache. **The general form:** when a test's setup
+  is an instruction to the browser rather than something the test can observe,
+  assert the setup took effect before trusting what follows.
+
+### A third shape — a breadcrumb written before the thing it describes
+
+One instance so far, kept here because the reasoning generalizes past it and
+because breadcrumbs are what this project reaches for when a product bug cannot
+be reproduced.
+
+- **D46, 21 September.** `pending send retried by the poll timer` was written at
+  the top of the retry, before the send was attempted. It read as a record of a
+  retry; it was a statement of intent. So the trace claimed a send had been
+  retried while the connection was still cut, and the test's own assertion —
+  that nothing is reported as retried during a cut — failed on CI on Chromium
+  and Firefox after passing locally every time.
+
+**What makes it a shape and not a slip.** A line written before its subject is a
+prediction, and a prediction is wrong exactly when the thing fails — which is
+precisely the run someone is reading the trace to understand. The breadcrumbs
+are then most misleading in the only case they exist for. It is the mirror of
+the two-identities pattern: there a value means two things, here a line means
+"about to" and is read as "did".
+
+**The rule.** Write the line after the thing succeeds, and name what happened,
+not what is about to. Where the attempt itself is worth recording — a retry loop
+a reader needs to know is running — say so once, in words that are true at the
+moment they are written ("still failing; retrying every 3s"), and stay silent
+after: a line per tick buries the one that matters, and repetition is not
+information.
+
+**The question to ask of a breadcrumb:** if the next line of code throws, is
+this line still true? If not, it is in the wrong place.
+
 ---
 
 ## 4. The work
@@ -564,16 +608,25 @@ intention, not an event.** `pending send retried by the poll timer` was written
 before the send was attempted, so it appeared while the connection was still
 cut — and the test's own assertion, that nothing is reported as retried during
 the cut, failed on Chromium and Firefox. Locally it had passed every time.
-- **Fixed** by writing the line after the send succeeds. A failed attempt is now
-  silent, deliberately: it runs every few seconds while a connection is down,
-  and a breadcrumb per tick would bury the one that matters.
-- **The local pass was not luck to be waited out.** The test now waits for the
-  relay to have turned away more than the one send before asking what was
-  reported, so the state is not "nothing has happened yet". That is still weaker
-  than it looks and the test says so: a move publishes on more than one lane, so
-  several refusals can arrive without a single poll tick, and the breadcrumb
-  travels over the console while the count is made in the relay's own process.
-  What makes the property hold everywhere is the code, not the wait.
+- **Fixed** by writing the line after the send succeeds, and by giving the
+  failing case a line of its own that is true when written: the **first** failed
+  retry says `pending send still failing at <address>; retrying every 3s`, and
+  every tick after it is silent until something changes. The interval is read
+  from the live poll rate, not written into the sentence, because the poll slows
+  as the page sits idle and a fixed number would become a lie by the second
+  minute. A fresh send failure starts a fresh outage, so the line may speak
+  again.
+- **The local pass is fixed, not waited out.** The first attempt at a local
+  guard counted refused appends and waited for a second one, reasoning that the
+  publish path tries once so anything further is the timer. That was wrong — a
+  move publishes on more than one lane, so refusals arrive in a group with no
+  tick involved — and it did not reproduce the red. The new failing-retry line
+  is the signal that was missing: the test waits for it, which is proof a tick
+  ran inside the cut, and only then asks what was reported. **Reproduced
+  locally with that wait in place:** putting the breadcrumb back above the
+  attempt fails on Chromium exactly as CI did, and making every failed tick
+  speak fails at "the ticks after the first carry no new fact and stay silent",
+  2 where 1 is expected.
 - **The general shape,** which is worth remembering: a breadcrumb written before
   the thing it describes is a claim about what is about to happen, and it will
   be wrong exactly when the thing fails — which is the case anyone reading the
