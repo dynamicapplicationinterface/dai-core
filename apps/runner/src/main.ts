@@ -51,6 +51,7 @@ import {
 } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
 import { installShareStorage, installStorageIsRead, platform, standalone } from "./platform.js";
+import { askForSuccessor, checkIsDue, type Successor } from "./version-check.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
@@ -934,11 +935,107 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
 
     rememberOpen(loaded.manifest.documentUuid);
     await mount(loaded);
+    // Off the open's path: the app is on screen before anything is asked.
+    void offerNewVersion(loaded);
   } catch (error) {
     say(`Failed to load ${item.appName} (${(error as Error).message})`, true);
   } finally {
     slot.classList.remove("busy");
   }
+}
+
+/**
+ * Ask whether the author has published a newer version, and offer it (C).
+ *
+ * After the document is on screen, never before: the check is for somebody
+ * using their app, and nothing about it may delay the app appearing. Once a day
+ * per document, and only when a relay address is configured — a build with none
+ * asks nothing of anybody.
+ *
+ * Everything here can come to nothing quietly. That is the design: a check that
+ * finds nothing is not news, and a check that cannot be made is not a failure a
+ * person should read about.
+ */
+async function offerNewVersion(cartridge: Cartridge): Promise<void> {
+  if (!relayBase) return;
+  const uuid = cartridge.manifest.documentUuid;
+  const version = buildOf(cartridge.manifest);
+  if (!version) return; // An unsigned document cannot say which build it is.
+
+  const held = await getCartridgeFromLibrary(uuid).catch(() => null);
+  if (!checkIsDue(held?.versionCheckedAt, Date.now())) return;
+
+  // The key this device pinned for the document, which is the only one whose
+  // successor it will take.
+  const pinned = await trustStore()
+    .get(uuid)
+    .catch(() => null);
+  const successor = await askForSuccessor({
+    relayBase,
+    documentUuid: uuid,
+    version,
+    trustedKey: pinned?.publicKey ?? undefined,
+  });
+
+  // Asked, whatever came back: the next ask is a day away either way, so a
+  // relay that is down is not asked again on every open.
+  await withLibraryLock(uuid, async () => {
+    const now = await getCartridgeFromLibrary(uuid).catch(() => null);
+    if (now) await saveCartridgeToLibrary({ ...now, versionCheckedAt: new Date().toISOString() });
+  }).catch(() => undefined);
+
+  if (successor) showUpdateCard(cartridge, successor);
+}
+
+/**
+ * What a person reads when their app has a new version (the ruling's order):
+ * what changed, that their data is kept, Update or Not now.
+ *
+ * Not now is answered by the card closing. It comes back on the next open,
+ * because the successor is still there and the question is still open; nothing
+ * is scheduled and nothing happens on its own.
+ */
+function showUpdateCard(cartridge: Cartridge, successor: Successor): void {
+  const sheet = document.getElementById("update-sheet");
+  const title = document.getElementById("update-title");
+  const note = document.getElementById("update-note");
+  const icon = document.getElementById("update-icon") as HTMLImageElement | null;
+  const go = document.getElementById("update-go") as HTMLButtonElement | null;
+  const later = document.getElementById("update-later");
+  if (!sheet || !title || !note || !icon || !go || !later) return;
+
+  const name = cartridge.manifest.appName ?? "this document";
+  title.textContent = `${successor.label} of ${name}`;
+  note.textContent = successor.note;
+  const art = faviconUrl(cartridge.manifest.favicon);
+  icon.hidden = !art;
+  if (art) icon.src = art;
+
+  const close = (): void => {
+    slideClose(sheet);
+    go.onclick = null;
+    later.onclick = null;
+  };
+  later.onclick = close;
+  sheet.onclick = (event) => {
+    if (event.target === sheet) close();
+  };
+  go.onclick = async () => {
+    go.disabled = true;
+    go.textContent = "Updating…";
+    close();
+    /*
+     * The address the author published, opened the way any address is opened.
+     * What happens next is succession's, not this card's: the successor names
+     * the document it replaces, it is adopted only under the key this device
+     * pinned, and the rows are carried across once. If it cannot be adopted,
+     * the person is told why and the version they have keeps working.
+     */
+    await openFromUrl(successor.address);
+    go.disabled = false;
+    go.textContent = "Update";
+  };
+  slideOpen(sheet);
 }
 
 async function deleteApp(documentUuid: string): Promise<void> {
@@ -4555,6 +4652,22 @@ Object.defineProperty(window, "__runner", {
     },
     // Pull now, as the foreground poll would.
     pullMailbox: (): void => mailboxSession?.pull(),
+    /*
+     * Ask the version relay now, as the next open would (`docs/version-ping.md`).
+     *
+     * The same seam as `useRelay` beside it, and for the same reason: the check
+     * happens on a mount, against an address a deploy stamps into the page, and
+     * a test stands its relay up after the page has loaded. Without this a test
+     * could only reach the check by reloading — which throws away the address
+     * it just injected.
+     *
+     * It does not shorten the day between checks; it makes the one that would
+     * happen on the next open happen now. Whether a day has passed is
+     * `checkIsDue`, which is its own test.
+     */
+    checkForNewVersion: async (): Promise<void> => {
+      if (loaded) await offerNewVersion(loaded);
+    },
     // How many timer polls have run, so a test that must show nothing is
     // polled can wait for polls to happen instead of for time to pass.
     get mailboxPolls(): number | undefined {

@@ -1,4 +1,15 @@
-# The version ping — design
+# The version ping — design, and what was built
+
+*Built 22 September, as designed below.* The relay is `apps/relay/src/version-do.ts`
+(one object per document, routed at `/v/` by `worker.ts`); the copy's side is
+`apps/runner/src/version-check.ts` and `offerNewVersion` in `main.ts`; the card
+is `#update-sheet`. Proven by `tests/version-relay.spec.ts` (the deployed class,
+in-memory storage), `tests/version-check.spec.ts` (what a copy sends, and every
+way the answer comes to nothing) and `tests/version-update-e2e.spec.ts` (the
+whole loop, including Not now and a relay that is not there).
+
+Where the built thing differs from the page, the page has been corrected rather
+than annotated, and the difference is named in the section it belongs to.
 
 One mechanism for V1's steps 4 and 5: a copy tells the relay which version it
 holds, and the relay answers whether there is a successor under that publisher
@@ -34,11 +45,23 @@ service worker: a copy that is not being used does not speak.
 
 **What "version" is.** There is no version field in the format today — the
 manifest carries `manifestVersion` (the format's), `documentUuid`, `appName`,
-`supersedes` and the signed entries, and nothing an author bumps. So the build
-digest is **the SHA-256 of the manifest's signed entries**, which exists now,
-changes exactly when the author's files change, and does not move when the
-person writes a row (the data is not in the signed set). No format change, and
-older readers are unaffected.
+`supersedes` and the signed entries, and nothing an author bumps. The build is
+therefore read from what the signature covers: the author's files and not the
+data.
+
+**Built as the signature itself** (`buildOf`, `src/copy-choice.ts`), which is a
+digest over that signed set by definition and needs nothing computed. Two
+earlier attempts are recorded in that file because both looked right and were
+caught by ordinary tests: hashing the archive drifted on every save, because the
+manifest inside it carries `savedAt`; hashing the manifest's entry digests
+drifted between carriers, because an inline link rebuilds them. A copy of a
+document is the same application however it travelled and whatever has been
+written into it, and the signature is the only thing in the container that
+behaves that way.
+
+**An unsigned document has no version, and asks nothing.** It cannot say which
+build it is — anybody can produce one that looks like any other — so it takes no
+part in this. That is also the line D85's refusal draws.
 
 Its one weakness, stated: a digest has no order. A copy cannot tell whether the
 relay's answer is newer than what it holds — only that it differs. What makes

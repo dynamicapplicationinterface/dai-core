@@ -657,6 +657,37 @@
       }
       #keep-done:hover { background: var(--accent-press); }
 
+      /* The update card wears the sheet the send and keep cards wear. */
+      #update-sheet[hidden] { display: none; }
+      #update-sheet {
+        position: fixed;
+        inset: 0;
+        z-index: 11;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background: var(--scrim);
+      }
+      #update-icon { border-radius: 16px; background: var(--surface-2); margin-top: 6px; box-shadow: var(--icon-shadow); }
+      #update-icon[hidden] { display: none; }
+      #update-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+      #update-note { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      #update-note:empty { display: none; }
+      #update-kept { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--faint); max-width: 32ch; }
+      #update-go {
+        margin-top: 10px;
+        width: 100%;
+        padding: 14px 18px;
+        border: 0;
+        border-radius: 14px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      #update-go:disabled { opacity: 0.6; }
+
       #send-sheet[hidden] { display: none; }
       #send-sheet {
         position: fixed;
@@ -1136,6 +1167,25 @@
       ones are sealed with a fresh key and put in the store, and only the link
       holds the key. Then the phone's own share sheet, or the clipboard.
     -->
+    <!--
+      A new version of a document somebody already has (docs/version-ping.md).
+
+      Three things, in one order: what changed, that their data is kept, and
+      the two answers. Not now is not a deferral with a timer — the card comes
+      back on the next open, and nothing happens on its own.
+    -->
+    <div id="update-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="update-title">
+      <div class="keep-panel">
+        <div class="sheet-grip"></div>
+        <img id="update-icon" alt="" width="72" height="72" />
+        <h2 id="update-title"></h2>
+        <p id="update-note"></p>
+        <p id="update-kept">Your entries are kept. This changes the app, not what you have written in it.</p>
+        <button id="update-go" type="button">Update</button>
+        <button id="update-later" type="button" class="quiet">Not now</button>
+      </div>
+    </div>
+
     <div id="send-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="send-title">
       <div class="keep-panel">
         <div class="sheet-grip"></div>

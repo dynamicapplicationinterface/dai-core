@@ -180,6 +180,15 @@ export interface LibraryItem {
    */
   build?: string;
   /**
+   * When this copy last asked the relay whether the author had published
+   * anything (`docs/version-ping.md`). Absent until it has asked once.
+   *
+   * Kept per document, because the asking is per document: a copy checks in
+   * for the document it is, at most once a day, and only while somebody is
+   * using it.
+   */
+  versionCheckedAt?: string;
+  /**
    * When the copy this device holds was last saved, from the manifest that
    * was sealed around it (`savedAt`).
    *
