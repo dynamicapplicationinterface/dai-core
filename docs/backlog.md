@@ -92,7 +92,23 @@ direction; the walk these serve is `docs/v1-walk.md`)
   its document id, its version and its publisher key, and the relay answers
   whether there is a successor under that publisher key. The relay learns those
   three things and **nothing else** — not who, not when beyond the count, not
-  what is in the document.
+  what is in the document. Designed in `docs/version-ping.md`; its four open
+  choices were ruled 21 September and are the next four lines.
+- **The version is the build digest** — the SHA-256 of the manifest's signed
+  entries. No format change, and it does not move when a person writes a row.
+  Because a digest carries nothing a person could read, **the announcement
+  carries a human-readable label and the author's note beside it**: the label
+  is what the card shows, the digest is what the machinery compares.
+- **The announcement carries the successor's full address**, and therefore its
+  key. **The relay holds what the author published, never what a person
+  wrote** — that sentence is in the page, in those words, because the property
+  it draws the line around is the one everything else here rests on.
+- **The count is kept per version and per document.** Per version answers "did
+  the update reach anyone"; per document answers "is this app used"; both are
+  check-ins, never copies, and never reported as installs.
+- **One relay object per document**, matching the mailbox. A busy author does
+  not serialize every reader of every document they have published through one
+  object, and the blast radius of one document's traffic stays that document's.
 - **Persistence is asked after the first thing worth keeping is written**
   (D55), never at boot. The request that follows a person's own first save is
   the one a browser is willing to grant, and the one they can make sense of.
@@ -168,6 +184,15 @@ direction; the walk these serve is `docs/v1-walk.md`)
   that calls the API cannot see a control shown by mistake; a passing test cannot
   see how a screen reads cold.
 - **Reading the code is the hypothesis; running it is the test.**
+- **"Landed" means the CI verdict was read.** Until then it is "pushed, CI
+  running". Written down because it was broken the day it mattered: a report
+  called three screen changes landed while their run was still going, and the
+  verdict two minutes later was a failure on three engines.
+- **A change to a shared surface runs everything that presses that surface**,
+  found by the control's own id — `grep send-go` — and not by what was edited.
+  The same failure's first half: the local set was chosen by searching for the
+  ids in the diff, and the six tests that broke reach that sheet through a
+  helper naming none of them.
 
 ### manifestVersion 3
 

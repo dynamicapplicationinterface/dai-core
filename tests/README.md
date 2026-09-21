@@ -162,3 +162,21 @@ worker — they are testing what the page does when a given request returns a gi
 thing, and the mock is how they say what it returns. A test that *is* about the
 worker keeps it and does not mock through it. `idb-timeout`, `launch-failsafe` and
 the `write-rules` specs are the standing examples.
+
+## The rule for changing a shared surface
+
+**A change to a control that many tests press runs every spec that presses it,
+found by the control's own id — `grep -l send-go tests/*.spec.ts` — and not by
+searching for what was edited.**
+
+The share sheet's data toggle changed which way it starts, on 21 September. The
+local run before the push was chosen by searching for the ids in the diff
+(`send-with-data`, `keep-backup`), which found three specs and missed the two
+that matter: `returning-document` reaches that sheet through a `shareLink`
+helper, and `send.spec`'s share tests through a sequence that names the sheet
+and not the control. CI failed seven tests on three engines.
+
+The search that would have found them is the one that asks what presses the
+button — `send-go` — because a helper that wraps a control still has to press
+it. The same holds for `#card-open`, `#file`, `#more` and any other id a
+helper hides. **Ask what a change can be seen through, not what it touches.**

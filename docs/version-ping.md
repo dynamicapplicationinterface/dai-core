@@ -1,4 +1,4 @@
-# The version ping — design, for agreement
+# The version ping — design
 
 One mechanism for V1's steps 4 and 5: a copy tells the relay which version it
 holds, and the relay answers whether there is a successor under that publisher
@@ -15,14 +15,18 @@ update and is never a push the author chose (D45).
 ## What a copy sends
 
 ```
-POST /v/<publisher fingerprint>
+POST /v/<documentUuid>
 content-type: application/json
 
-{ "document": "<documentUuid>", "version": "<build digest>" }
+{ "version": "<build digest>", "publisher": "<fingerprint>" }
 ```
 
 Three facts, and the route carries the first of them. No replica id, no cursor,
 no mailbox address, no count of anything local, no name.
+
+The publisher key is sent so the answer can be refused when it does not match
+the one this copy already trusts — the copy checks the successor's signature
+itself either way, and this only saves it fetching something it would reject.
 
 **When.** On open, and at most once per document per 24 hours, held in the
 library record. Never on a timer, never in the background, never from the
@@ -52,21 +56,24 @@ below.
 
 ## What the relay stores, per publisher
 
-One Durable Object per publisher fingerprint (`idFromName(fingerprint)`), the
-same shape as one per mailbox today.
+One Durable Object **per document** (`idFromName(documentUuid)`), the same shape
+as the mailbox. The publisher key is in the route and is checked against the
+announcement's signature; it is not what names the object.
 
 | Key | What | Written by |
 |---|---|---|
-| `current:<documentUuid>` | `{ version, successor, published }` — the newest build the author has announced for that document | the author's announcement |
-| `count:<version>:<day>` | an integer: check-ins for that version on that UTC day | each ping |
+| `current` | `{ version, label, note, successor, publisher, published }` — the newest build this document's author has announced | the author's announcement |
+| `count:<version>:<day>` | check-ins for that version on that UTC day | each ping |
+| `count:<day>` | check-ins for the document that day, whatever version | each ping |
 
 **How the author announces.** A signed announcement, verified by the relay
 before it is stored:
 
 ```
-POST /v/<publisher fingerprint>/announce
-{ "document": "<uuid>", "version": "<digest>", "successor": "<address>",
-  "changed": "<one sentence>", "signature": "<COSE-ES256 over the above>" }
+POST /v/<documentUuid>/announce
+{ "document": "<uuid>", "version": "<digest>", "label": "<the author's name for it>",
+  "note": "<one sentence, the author's words>", "successor": "<full address>",
+  "publisher": "<fingerprint>", "signature": "<COSE-ES256 over the above>" }
 ```
 
 The relay verifies the signature against the fingerprint in the route — ES256,
@@ -84,9 +91,12 @@ mistake in another costume.
 ## What the relay answers
 
 ```
-200 { "current": "<digest>", "successor": "<address>|null",
-      "changed": "<one sentence>|null" }
+200 { "current": "<digest>|null", "label": "<the author's name for it>|null",
+      "note": "<the author's sentence>|null", "successor": "<full address>|null" }
 ```
+
+The label and the note are the author's words and travel unchanged. The card
+shows them; nothing compares them.
 
 When `current` equals what the copy sent, the copy does nothing and the person
 sees nothing. When it differs and a successor is offered, the copy fetches it,
@@ -146,23 +156,25 @@ requests a month, inside the free plan's 100,000 per day and far inside every
 included allowance. A million daily check-ins would be about $15 a month. The
 cost that matters at V1 is not money.
 
-## What needs agreement before anything is built
+## Ruled, 21 September
 
-1. **The build digest as the version.** It needs no format change and does not
-   move when data does, but it carries no order and no name a person could read.
-   The alternative is a signed `version` field, which is a `manifestVersion`
-   bump that every deployed reader refuses by name.
-2. **Where the successor's address points, and what it carries.** A store link's
-   key lives in its fragment and never reaches a server. An announcement that
-   includes a fetchable address hands the relay the means to read the successor
-   — which is the author's public app, so the loss may be nil, but it is a
-   deliberate departure from "the relay cannot read what it holds" and should be
-   agreed rather than assumed.
-3. **Whether the count is per version or per document.** Per version answers
-   "did the update reach anyone"; per document answers "is this app used". The
-   table above can hold either and the ping carries both, so this is a decision
-   about what the relay is allowed to keep, not about the wire.
-4. **One publisher object, or one per document.** Per publisher makes the
-   counts trivially readable and puts every document by one author in one
-   object; per document keeps the blast radius smaller and matches the mailbox
-   shape. This affects what a busy author's object has to serialize.
+1. **The build digest is the version**, as above. Because a digest carries
+   nothing a person could read, the announcement carries a **label** — the
+   author's own name for the version — and the **note** beside it. The label is
+   what the card shows; the digest is what the machinery compares. Neither the
+   label nor the note is ever compared, matched or ordered: they are the
+   author's words, shown as the author's words.
+2. **The announcement carries the successor's full address**, key and all. The
+   relay can therefore fetch and read the successor — and the sentence that
+   draws the line is this: **the relay holds what the author published, never
+   what a person wrote.** An author's build is made to be handed to strangers;
+   a person's rows never leave their device except in a link they make
+   themselves. The relay is on the first side of that line and must never be on
+   the second, which is why an announcement is the only thing it stores that
+   has an address in it.
+3. **The count is kept per version and per document.** Per version answers "did
+   the update reach anyone"; per document answers "is this app used". Both are
+   check-ins, never copies; neither is ever reported as installs.
+4. **One relay object per document**, matching the mailbox. A busy author does
+   not serialize every reader of every document they have published through one
+   object.
