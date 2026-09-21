@@ -2678,6 +2678,17 @@
       "src/replicated.ts",
       "tests/session-roles.spec.ts"
     ],
+    "tests/share-and-keep-sentences.spec.ts": [
+      "apps/runner/",
+      "examples/packing-list/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/share-and-keep-sentences.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/sibling.spec.ts": [
       "apps/runner/src/card.ts",
       "apps/runner/src/main.ts",

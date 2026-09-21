@@ -50,12 +50,20 @@ test.describe("an application's own share button", () => {
     // The choice is still there, and still the person's to make.
     const withData = page.locator("#send-with-data");
     await expect(withData).toBeVisible();
-    await expect(withData).toBeChecked();
+    // This document declares no replicated tables — nobody joins it — so the
+    // data stays behind unless the person says otherwise (ruled 21 September).
+    // What this test is about is that the choice is theirs, not which way it
+    // starts.
+    await expect(withData).not.toBeChecked();
 
     // No send happens on its own: the sheet sits open until Send is pressed.
     await page.waitForTimeout(500);
     await expect(page.locator("#send-sheet")).toBeVisible();
 
+    // Pressed both ways, so the control is exercised rather than assumed: on,
+    // and off again, before the send that the person alone starts.
+    await withData.check();
+    await expect(withData).toBeChecked();
     await withData.uncheck();
     await page.click("#send-go");
     await expect(page.locator("#send-sheet")).toBeHidden({ timeout: 15_000 });

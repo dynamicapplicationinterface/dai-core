@@ -166,8 +166,17 @@ let handshakeEstablished = false;
  * context each belongs to, because an installed app and a tab can be granted
  * differently and it is the install that matters.
  *
- * When the request is made — still page boot, still the weakest moment for the
- * browser's heuristics — is D55, deliberately not changed here.
+ * When the request is made is D55, **ruled 21 September: after the first thing
+ * worth keeping is written, never at boot.** Boot is the weakest moment the
+ * code could pick — no document open, no engagement, nothing the person has
+ * done with this origin — and it was the only moment it picked. The request
+ * now follows the first save this device commits for a document, which is the
+ * first moment there is something to lose. `askForPersistence()` below makes
+ * it, once per page.
+ *
+ * The *reading* stays at boot. It asks the browser nothing and answers the
+ * question "is what I already have kept", which the person can be looking at
+ * before they have written anything (D49).
  *
  * The standing state never waits on the request. On Firefox `persist()` can go
  * unanswered — most likely held on a permission prompt — and when the reading
@@ -179,18 +188,33 @@ let handshakeEstablished = false;
  * never asking.
  */
 void readPersistence().then((standing) => console.info(`dai: ${persistenceLine(standing)}`));
-if (typeof navigator !== "undefined" && typeof navigator.storage?.persist === "function") {
-  console.info("dai: storage persistence asked at boot; waiting on the browser");
+
+/** Asked once per page, and only where there is something to keep (D55). */
+let persistenceRequested = false;
+
+/**
+ * Ask the browser to keep this origin, now that this device has written
+ * something it would mind losing.
+ *
+ * Called from the save path, after a save is written and off its acknowledgment,
+ * so nothing a person is waiting for waits on this.
+ */
+function askForPersistence(why: string): void {
+  if (persistenceRequested) return;
+  persistenceRequested = true;
+  if (typeof navigator !== "undefined" && typeof navigator.storage?.persist === "function") {
+    console.info(`dai: storage persistence asked ${why}; waiting on the browser`);
+  }
+  void askToPersist().then((asked) => {
+    if (!asked) return;
+    console.info(`dai: ${requestLine(asked)} (asked ${why})`);
+    // The answer may have changed what is true: read it again, for the log and
+    // for the line on screen. Whatever the answer — a rejection can still leave
+    // the state different from what was read before the request.
+    void readPersistence().then((after) => console.info(`dai: ${persistenceLine(after)} (after the request)`));
+    showPersistence();
+  });
 }
-void askToPersist().then((asked) => {
-  if (!asked) return;
-  console.info(`dai: ${requestLine(asked)} (asked at boot)`);
-  // The answer may have changed what is true: read it again, for the log and
-  // for the line on screen. Whatever the answer — a rejection can still leave
-  // the state different from what was read before the request.
-  void readPersistence().then((after) => console.info(`dai: ${persistenceLine(after)} (after the request)`));
-  showPersistence();
-});
 
 function say(message: string, isError = false): void {
   report.textContent = message;
@@ -2629,6 +2653,16 @@ window.addEventListener("message", (event) => {
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
           hostSavesWritten += 1;
+          /*
+           * The first thing worth keeping is on this device, so now is when the
+           * browser is asked to keep it (D55).
+           *
+           * Not the document's own setup SQL, which every copy runs on first
+           * open and which nobody would mind losing: the runtime says which
+           * this was, and the library write above already reads it for the same
+           * reason. Off the save's path, like the replica record below.
+           */
+          if (data.payload?.setup !== true) askForPersistence("after the first save");
           // Off the save's path: the acknowledgment below must not wait on it.
           void (async () => {
             if ((await ownReplicaOf(documentUuid)) !== null) return;
@@ -3275,6 +3309,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
   const sub = document.getElementById("send-sub");
   const withData = document.getElementById("send-with-data") as HTMLInputElement | null;
   const note = document.getElementById("send-note");
+  const backup = document.getElementById("send-backup");
   const go = document.getElementById("send-go") as HTMLButtonElement | null;
   const cancel = document.getElementById("send-cancel");
   const retire = document.getElementById("send-retire") as HTMLButtonElement | null;
@@ -3316,7 +3351,17 @@ async function sendDocument(inviteSession?: string): Promise<void> {
   sub.textContent = viaStore
     ? "Sealed with a key that only the link holds, then put in the store, which cannot read it."
     : "The whole app travels inside the link. Nothing is uploaded.";
-  withData.checked = true;
+  /*
+   * What the toggle starts on, ruled 21 September.
+   *
+   * A document with replicated tables is shared to be joined: the data is the
+   * point, and sending it without would send an app the other person cannot
+   * play with. A document with none is a single person's — a log, a list — and
+   * "here is the app I use" should hand over the app, not the sender's
+   * entries. The default is the common case, and the toggle is still there for
+   * the other one.
+   */
+  withData.checked = Boolean(loaded.manifest.replication);
   // An invite always carries its one game, so there is no data choice to make.
   // Set on the style rather than `hidden`: the row is a flex label, and a
   // display rule beats the hidden attribute.
@@ -3330,6 +3375,31 @@ async function sendDocument(inviteSession?: string): Promise<void> {
         : withData.checked
           ? "Anyone with the link can open it, with what is in it now."
           : "Anyone with the link gets the app as it arrived, with none of your entries.";
+    /*
+     * What this link is to the person making it (D53).
+     *
+     * The key lives in this device's library row and on no server, so a store
+     * holds ciphertext nobody can read again once this device forgets the
+     * document. The link carries the key, which is what makes it the way back
+     * — a property the person is otherwise never told, and one that can only
+     * be acted on before the loss.
+     *
+     * Both states, because the fact is the same one and only the sentence
+     * changes: a link with the data is the way back, and a link without it is
+     * not — which is worth more to somebody who is about to send the app to a
+     * friend and assume they have a copy of their own.
+     *
+     * Not for an invite. That carries one game to one person, and calling it
+     * either a backup or not-a-backup would be answering a question nobody
+     * inviting somebody into a game is asking.
+     */
+    if (backup) {
+      backup.textContent = invite
+        ? ""
+        : withData.checked
+          ? "Keep this link yourself: it is the way back if this device ever forgets this app."
+          : "This link carries the app without your entries, so it is not a copy of them. What you have written lives on this device only.";
+    }
   };
   describe();
   withData.onchange = describe;

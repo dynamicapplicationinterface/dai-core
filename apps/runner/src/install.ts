@@ -585,6 +585,34 @@ export function howToKeep(identity: Identity, prompt: boolean): { title: string;
   }
 }
 
+/**
+ * Where the only other copy is (D53), said while somebody is deciding to keep
+ * the document on this device.
+ *
+ * The property: a document's key lives in this device's library row and on no
+ * server. If this device forgets the document, what a store holds is ciphertext
+ * nobody can read again — by them or by anyone. That is the design working, and
+ * it is the same property that makes a link safe on a home screen and a
+ * stranger's file safe to keep. It is also useless to a person who is never
+ * told it, because the action it implies — keep the link, keep the file — can
+ * only be taken before the loss.
+ *
+ * One sentence, and it deliberately does not promise the entries come back.
+ * The first version split on whether the document arrived by link and said the
+ * link was "the way back". It is — to the app. The opener mints an inline link
+ * for a document that came as a file (`launchLinkForDocument`), and a link,
+ * however it was made, carries the document as it was when the link was made:
+ * what somebody writes afterwards is not in it. A sentence that says "the way
+ * back" beside a person's log is read as "my log is safe", and the moment it
+ * is read that way is the moment this entry exists to prevent.
+ */
+function backupLine(identity: Pick<Identity, "name">): string {
+  return (
+    `Keeping ${identity.name} here is not a backup. The link or file you opened it from brings the app back; ` +
+    `what you write in it stays on this device.`
+  );
+}
+
 /** The one word on the button, in the vocabulary of the device it is on. */
 function ctaLabel(prompt: boolean): string {
   if (prompt) return "Install";
@@ -643,6 +671,7 @@ export function watchForInstall(): Keeper | null {
   const sheetTitle = document.getElementById("keep-title");
   const sheetSub = document.getElementById("keep-sub");
   const sheetSteps = document.getElementById("keep-steps");
+  const sheetBackup = document.getElementById("keep-backup");
   const done = document.getElementById("keep-done");
   if (!cta || !label || !titleIcon || !sheet || !sheetIcon || !sheetTitle || !sheetSub || !sheetSteps || !done) return null;
 
@@ -678,6 +707,7 @@ export function watchForInstall(): Keeper | null {
     sheetIcon.src = faviconUrl(identity.favicon) ?? new URL("/icons/icon-192.png", location.origin).href;
     sheetTitle.textContent = guide.title;
     sheetSub.textContent = guide.sub;
+    if (sheetBackup) sheetBackup.textContent = backupLine(identity);
     sheetSteps.replaceChildren(
       ...guide.steps.map((step) => {
         const item = document.createElement("li");

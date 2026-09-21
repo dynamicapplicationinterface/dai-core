@@ -618,6 +618,9 @@
       #keep-icon { border-radius: 16px; background: var(--surface-2); margin-top: 6px; box-shadow: var(--icon-shadow); }
       #keep-title { margin: 6px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
       #keep-sub { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); max-width: 30ch; }
+      /* The one thing here a person cannot find out later (D53). */
+      #keep-backup { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); max-width: 32ch; }
+      #keep-backup:empty { display: none; }
       #keep-steps {
         list-style: none;
         margin: 10px 0 4px;
@@ -683,6 +686,9 @@
       }
       .send-toggle input { width: 22px; height: 22px; accent-color: var(--accent); flex: 0 0 auto; }
       #send-note { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--faint); max-width: 32ch; }
+      /* What the link is to the sender, not to whoever gets it (D53). */
+      #send-backup { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--faint); max-width: 32ch; }
+      #send-backup:empty { display: none; }
       #send-go {
         margin-top: 8px;
         width: 100%;
@@ -1141,6 +1147,12 @@
           <span>Send personal saved data</span>
         </label>
         <p id="send-note"></p>
+        <!--
+          The other thing a link is (D53): the way back to this document if
+          this device ever forgets it. Said here because sharing is the one
+          moment a person makes a link on purpose.
+        -->
+        <p id="send-backup"></p>
         <button id="send-go" type="button">Send</button>
         <button id="send-cancel" type="button" class="quiet">Not now</button>
         <!-- Shown only when this device has shared this app through the store before. -->
@@ -1165,6 +1177,13 @@
         <h2 id="keep-title"></h2>
         <p id="keep-sub"></p>
         <ol id="keep-steps"></ol>
+        <!--
+          What a person cannot work out for themselves (D53): this device is
+          the only place the document lives, and the link or file it came from
+          is the only way back. Said where they are deciding to keep it, which
+          is the moment it can still be acted on.
+        -->
+        <p id="keep-backup"></p>
         <button id="keep-done" type="button">Done</button>
       </div>
     </div>

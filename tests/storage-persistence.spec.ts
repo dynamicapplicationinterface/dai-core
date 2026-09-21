@@ -1,5 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { expect, test, type Frame, type Page } from "@playwright/test";
 
+const here = dirname(fileURLToPath(import.meta.url));
+const CONTAINER = resolve(here, "fixture/fixture.dai.html");
 const RUNNER_URL = "http://localhost:5175/";
 
 /**
@@ -75,6 +79,8 @@ async function storageThatAnswers(
           return new Promise<boolean>((resolve) => setTimeout(() => resolve(answer), delay));
         },
         persist: () => {
+          const held = window as unknown as { __persistCalls?: number };
+          held.__persistCalls = (held.__persistCalls ?? 0) + 1;
           if (given.persist === "never") return new Promise<boolean>(() => {});
           if (given.persist === "reject") {
             return Promise.reject(new DOMException("persistence is not available here", "NotAllowedError"));
@@ -94,6 +100,41 @@ async function storageThatAnswers(
       },
     });
   }, answers);
+}
+
+/** How many times the page has asked the browser to keep this origin. */
+const requestsMade = (page: Page): Promise<number> =>
+  page.evaluate(() => (window as unknown as { __persistCalls?: number }).__persistCalls ?? 0);
+
+/** The document's own frame, once its API is up. */
+async function appFrameOf(page: Page): Promise<Frame> {
+  const runnerFrameEl = page.locator("#cartridge");
+  await runnerFrameEl.waitFor({ state: "attached" });
+  const runnerFrame = await runnerFrameEl.elementHandle().then((h) => h!.contentFrame());
+  if (!runnerFrame) throw new Error("no runner frame");
+  const appEl = runnerFrame.locator("#dai-app");
+  await appEl.waitFor({ state: "attached" });
+  const appFrame = await appEl.elementHandle().then((h) => h!.contentFrame());
+  if (!appFrame) throw new Error("no app frame");
+  await appFrame.waitForFunction(() => Boolean((window as never as { dai?: unknown }).dai));
+  return appFrame;
+}
+
+/** Opens the fixture and waits until it is on screen, writing nothing. */
+async function openDocument(page: Page): Promise<void> {
+  await page.setInputFiles("#file", CONTAINER);
+  await page.locator("#card-open").click();
+  await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+}
+
+/** The first thing worth keeping: a save this person's use of the app caused. */
+async function writeSomething(page: Page, said: string[]): Promise<void> {
+  const frame = await appFrameOf(page);
+  await frame.evaluate(async () => {
+    const dai = (window as unknown as { dai: { saveState: (bytes: Uint8Array) => Promise<unknown> } }).dai;
+    await dai.saveState(new Uint8Array([1, 2, 3, 4]));
+  });
+  await expect.poll(() => said.some((s) => /^dai: save \d+ written$/.test(s)), { timeout: 30_000 }).toBe(true);
 }
 
 /** Every `dai:` breadcrumb the page writes, from before the first script runs. */
@@ -150,21 +191,70 @@ test.describe("the storage persistence reading", () => {
     expect(said.some((s) => s.includes("storage persistence (tab)"))).toBe(false);
   });
 
-  test("records what the boot request answered, instead of discarding it", async ({ page }) => {
+  test("is not asked at boot, nor on opening a document, but after the first thing worth keeping", async ({
+    page,
+  }) => {
+    /*
+     * D55, ruled 21 September. The request used to be made at page boot: no
+     * document open, no engagement, nothing the person had done with this
+     * origin — the moment a browser is least likely to grant it, and the only
+     * moment the code made it.
+     *
+     * Three moments, in order, because the ruling is about *when* and a test
+     * that only checked the end state would pass with the request back at
+     * boot. Opening a document is deliberately included: it is the obvious
+     * place to move it to, and it is still before there is anything to lose.
+     *
+     * What this cannot see is whether moving it changes what a browser
+     * answers. That is engagement heuristics on a real device, and it is the
+     * phone reading this entry has always wanted; a headless Chromium grants
+     * freely, which is the opposite of the case that matters.
+     */
+    test.slow();
+    await storageThatAnswers(page, { persisted: false, persist: false });
+    const said = await breadcrumbs(page);
+
+    await page.goto(RUNNER_URL);
+    // The reading is at boot and stays there: it asks the browser nothing.
+    await expect(page.locator("#chooser-storage")).toHaveText("not kept · tab", { timeout: 30_000 });
+    expect(await requestsMade(page), "nothing is asked for at boot").toBe(0);
+
+    await openDocument(page);
+    expect(await requestsMade(page), "nor merely for opening a document").toBe(0);
+
+    await writeSomething(page, said);
+    await expect
+      .poll(() => requestsMade(page), { timeout: 30_000, message: "asked once the first save is written" })
+      .toBe(1);
+
+    // And once only: the second save does not ask again.
+    const frame = await appFrameOf(page);
+    await frame.evaluate(async () => {
+      const dai = (window as unknown as { dai: { saveState: (bytes: Uint8Array) => Promise<unknown> } }).dai;
+      await dai.saveState(new Uint8Array([5, 6, 7, 8]));
+    });
+    await expect.poll(() => said.filter((s) => /^dai: save \d+ written$/.test(s)).length).toBeGreaterThan(1);
+    expect(await requestsMade(page), "asked once, not once per save").toBe(1);
+  });
+
+  test("records what the request answered, instead of discarding it", async ({ page }) => {
+    test.slow();
     await storageThatAnswers(page, { persisted: false, persist: false });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
     await expect(page.locator("#chooser-storage")).not.toHaveText("", { timeout: 30_000 });
+    await openDocument(page);
+    await writeSomething(page, said);
 
     // The defect was that this answer existed and went nowhere: the request is
     // written down when it is made, and its answer when it comes.
-    await expect.poll(() => said.filter((s) => s.includes("(asked at boot)"))).toEqual([
-      "dai: storage persistence (tab): not kept (asked at boot)",
+    await expect.poll(() => said.filter((s) => s.includes("(asked after the first save)"))).toEqual([
+      "dai: storage persistence (tab): not kept (asked after the first save)",
     ]);
-    expect(said).toContain("dai: storage persistence asked at boot; waiting on the browser");
+    expect(said).toContain("dai: storage persistence asked after the first save; waiting on the browser");
   });
 
-  test("when the boot request is granted, the line on screen says so", async ({ page }) => {
+  test("when the request is granted, the line on screen says so", async ({ page }) => {
     /*
      * The case the first build missed. The line was read once at load, beside
      * the request, and never again: on a device that granted it, the screen
@@ -172,13 +262,15 @@ test.describe("the storage persistence reading", () => {
      * installing is when this is read before a multi-day phone test, so the
      * test would have measured something other than what the screen said.
      */
+    test.slow();
     await storageThatAnswers(page, { persisted: false, persist: true });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
+    await openDocument(page);
+    await writeSomething(page, said);
 
-    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · tab", { timeout: 30_000 });
-    await expect(page.locator("#sheet-storage")).toHaveText("kept on this device · tab");
-    await expect.poll(() => said).toContain("dai: storage persistence (tab): kept (asked at boot)");
+    await expect(page.locator("#sheet-storage")).toHaveText("kept on this device · tab", { timeout: 30_000 });
+    await expect.poll(() => said).toContain("dai: storage persistence (tab): kept (asked after the first save)");
     await expect.poll(() => said).toContain("dai: storage persistence (tab): kept (after the request)");
   });
 
@@ -186,28 +278,35 @@ test.describe("the storage persistence reading", () => {
     // The load-time reading is slow here and answers with what was true when
     // it was asked. It comes back well after the grant, and must be dropped
     // rather than put "not kept" back on the screen.
+    test.slow();
     await storageThatAnswers(page, { persisted: false, persist: true, staleReadMs: 1_500 });
+    const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
+    await openDocument(page);
+    await writeSomething(page, said);
 
-    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · tab", { timeout: 30_000 });
+    await expect(page.locator("#sheet-storage")).toHaveText("kept on this device · tab", { timeout: 30_000 });
     // Past the moment the stale reading answers, and still right.
     await page.waitForTimeout(2_000);
-    await expect(page.locator("#chooser-storage")).toHaveText("kept on this device · tab");
+    await expect(page.locator("#sheet-storage")).toHaveText("kept on this device · tab");
   });
 
   test("a request the browser would not take is not reported as a refusal", async ({ page }) => {
     // A rejection is the browser declining the question, not answering it.
     // "Not kept" would be a fact it never gave.
+    test.slow();
     await storageThatAnswers(page, { persisted: false, persist: "reject" });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
+    await openDocument(page);
+    await writeSomething(page, said);
 
     await expect
-      .poll(() => said.filter((s) => s.includes("(asked at boot)")))
+      .poll(() => said.filter((s) => s.includes("(asked after the first save)")))
       .toEqual([
-        "dai: storage persistence (tab): the browser did not take the request (persistence is not available here) (asked at boot)",
+        "dai: storage persistence (tab): the browser did not take the request (persistence is not available here) (asked after the first save)",
       ]);
-    expect(said).not.toContain("dai: storage persistence (tab): not kept (asked at boot)");
+    expect(said).not.toContain("dai: storage persistence (tab): not kept (asked after the first save)");
     // The standing reading is its own fact, and still reported.
     await expect(page.locator("#chooser-storage")).toHaveText("not kept · tab");
   });
@@ -220,15 +319,18 @@ test.describe("the storage persistence reading", () => {
      * The reading is independent now, and the request is on record as asked
      * and unanswered, which is the truth.
      */
+    test.slow();
     await storageThatAnswers(page, { persisted: false, persist: "never" });
     const said = await breadcrumbs(page);
     await page.goto(RUNNER_URL);
-
     await expect(page.locator("#chooser-storage")).toHaveText("not kept · tab", { timeout: 30_000 });
+    await openDocument(page);
+    await writeSomething(page, said);
+
     await expect.poll(() => said.some((s) => s === "dai: storage persistence (tab): not kept")).toBe(true);
-    expect(said).toContain("dai: storage persistence asked at boot; waiting on the browser");
+    expect(said).toContain("dai: storage persistence asked after the first save; waiting on the browser");
     // No answer was given, so none is written.
-    expect(said.some((s) => s.includes("(asked at boot)"))).toBe(false);
+    expect(said.some((s) => s.includes("(asked after the first save)"))).toBe(false);
   });
 
   test("a browser that will not answer says nothing, rather than saying no", async ({ page }) => {
@@ -258,6 +360,6 @@ test.describe("the storage persistence reading", () => {
     expect(said.some((s) => s.includes("storage persistence: the browser will not say"))).toBe(
       true,
     );
-    expect(said.some((s) => s.includes("(asked at boot)"))).toBe(false);
+    expect(said.some((s) => s.includes("(asked after the first save)"))).toBe(false);
   });
 });

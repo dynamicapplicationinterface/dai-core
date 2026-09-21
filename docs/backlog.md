@@ -83,6 +83,25 @@ direction; the walk these serve is `docs/v1-walk.md`)
   and the default is never an authority. It is **never a push the author
   chose** — an author who can wake a device at will is a different product from
   this one.
+- **Succession is the only update** (D85). A rebuild under the same
+  `documentUuid` with no shared ancestry is **refused, with a sentence**. The
+  `take` path stays for what it was built for: a copy descended from this
+  device's own history coming back. Update has one spelling, and it is the one
+  that carries the rows forward under the pinned key.
+- **The ping is one mechanism, for both counting and updates.** A copy sends
+  its document id, its version and its publisher key, and the relay answers
+  whether there is a successor under that publisher key. The relay learns those
+  three things and **nothing else** — not who, not when beyond the count, not
+  what is in the document.
+- **Persistence is asked after the first thing worth keeping is written**
+  (D55), never at boot. The request that follows a person's own first save is
+  the one a browser is willing to grant, and the one they can make sense of.
+- **A share defaults to data off for a document with no replicated tables.**
+  A document that replicates is shared to be joined, and its data is the point;
+  a single-user document shared to a friend is the app, not the sender's
+  entries.
+- **The link is the backup, and it is said on screen** (D53): at install, and
+  in the share card. A property nobody is told is a property nobody can act on.
 
 **Carriers and copies**
 - **Send a link, keep a file.** The link is the first-contact carrier; the file is
@@ -1093,7 +1112,32 @@ investigated, and not tied to the D79 change: that defers a redraw, and the
 nudge is raised from the kit's first-use signal, which it does not touch.
 
 
-*Status: open. Separated from D49 deliberately.*
+*Status: ruled and built, 21 September. The phone reading is what remains.*
+
+**Ruled: the request is made after the first thing worth keeping is written,
+never at boot.** Built in `main.ts` — `askForPersistence()`, called from the save
+path once a save is written, once per page, and never for the document's own
+setup SQL, which every copy runs and nobody would mind losing. The *reading*
+stays at boot: it asks the browser nothing and answers a question somebody can
+be looking at before they have written anything (D49).
+
+**Proved** by `tests/storage-persistence.spec.ts`, "is not asked at boot, nor on
+opening a document, but after the first thing worth keeping": three moments in
+order, because a test that only checked the end state would pass with the
+request back at boot. Opening a document is in the test deliberately — it is the
+obvious place to move the request to, and it is still before there is anything
+to lose. Proved the other way by putting the ask back at boot, which fails at
+"nothing is asked for at boot".
+
+**What no test here can see, and it is the whole point of the change:** whether
+moving the moment changes what a browser answers. That is engagement heuristics
+on a real device; a headless Chromium grants freely, the opposite of the case
+that matters. The phone reading this entry has always wanted is now the only
+thing left in it.
+
+---
+
+*Status before the ruling, kept because the reasoning is the record:*
 
 **What it means to a person:** whether the browser says yes when the opener asks
 for durable storage depends almost entirely on when it asks, and today it asks at
@@ -1450,6 +1494,29 @@ design — `opfs.ts` says so in the field's own documentation:
 fault: it is the same property that makes a link safe on a home screen (3.5) and
 makes a stranger's file safe to keep. What is missing is that a person is never
 told it, and cannot act on it if they are not.
+
+**Said on screen, 21 September**, in the two places where the action it implies
+is still available:
+- **The keep sheet**, while somebody is deciding to keep the document here:
+  *"Keeping Beach trip here is not a backup. The link or file you opened it from
+  brings the app back; what you write in it stays on this device."*
+- **The share card**, the one moment a person makes a link on purpose. With the
+  data travelling: *"Keep this link yourself: it is the way back if this device
+  ever forgets this app."* Without it: *"This link carries the app without your
+  entries, so it is not a copy of them. What you have written lives on this
+  device only."* Not on an invite, which carries one game to one person and is
+  not answering this question.
+
+**The first version of the keep sentence was wrong in the way this entry warns
+about.** It split on whether the document arrived by link and called the link
+"the way back" — true of the app, false of the entries, because a link carries
+the document as it was when the link was made and the opener mints one for a
+file-borne document at mount. Beside somebody's log, "the way back" reads as
+"my log is safe". Caught by the test, which was reading the sentence on screen
+rather than asserting a flag.
+
+`tests/share-and-keep-sentences.spec.ts` holds both, proven by removing each
+sentence.
 
 When it is picked up:
 
