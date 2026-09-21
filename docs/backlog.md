@@ -559,6 +559,26 @@ publish went through and nothing failed). So this test refuses the append at the
 relay instead, which every engine sees the same way. `tests/offline.ts` stays
 the way to cut a real network for serving-from-cache tests.
 
+**Caught by CI on both engines, and worth keeping: the first breadcrumb named an
+intention, not an event.** `pending send retried by the poll timer` was written
+before the send was attempted, so it appeared while the connection was still
+cut — and the test's own assertion, that nothing is reported as retried during
+the cut, failed on Chromium and Firefox. Locally it had passed every time.
+- **Fixed** by writing the line after the send succeeds. A failed attempt is now
+  silent, deliberately: it runs every few seconds while a connection is down,
+  and a breadcrumb per tick would bury the one that matters.
+- **The local pass was not luck to be waited out.** The test now waits for the
+  relay to have turned away more than the one send before asking what was
+  reported, so the state is not "nothing has happened yet". That is still weaker
+  than it looks and the test says so: a move publishes on more than one lane, so
+  several refusals can arrive without a single poll tick, and the breadcrumb
+  travels over the console while the count is made in the relay's own process.
+  What makes the property hold everywhere is the code, not the wait.
+- **The general shape,** which is worth remembering: a breadcrumb written before
+  the thing it describes is a claim about what is about to happen, and it will
+  be wrong exactly when the thing fails — which is the case anyone reading the
+  breadcrumbs is investigating.
+
 *Status: open.*
 
 Open, not ruled. Found writing D34's clear-on-move test.

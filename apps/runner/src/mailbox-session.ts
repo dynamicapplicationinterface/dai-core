@@ -546,14 +546,20 @@ export function startMailboxSession(config: {
     await lane.ready;
     if (lane.retired || lane.publishing || !lane.state.pending) return false;
     const { sealed, head, replica } = lane.state.pending;
-    note(`pending send retried by the poll timer at ${lane.address.slice(0, 12)}`);
     try {
       await publishSealed(mailbox, lane.address, sealed);
     } catch {
       // Still no connection. The next tick tries again, and the sentence on
-      // screen stays true.
+      // screen stays true. Deliberately silent: this runs every few seconds
+      // while a connection is down, and a breadcrumb per tick would bury the
+      // one that matters.
       return false;
     }
+    // Written only now, because it names something that happened. The first
+    // version of this line was written before the attempt, and said a send had
+    // been retried while the connection was still cut — a breadcrumb that
+    // described an intention, which CI caught on Chromium and Firefox.
+    note(`pending send retried by the poll timer at ${lane.address.slice(0, 12)}`);
     lane.state = { ...lane.state, watermark: { replica, seq: head }, pending: null };
     save(lane);
     noteWatermark(lane, "published by the poll timer's retry");
