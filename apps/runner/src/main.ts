@@ -872,12 +872,15 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
        * opens, looks right, and is empty. The opener knew: the breadcrumb below
        * has always logged the difference. The person was not told.
        *
-       * Said only where this device is known to have written something, which
-       * `revision` counts. A document opened for the first time has no stored
-       * database either, and telling that person their data is missing would be
-       * inventing a loss.
+       * Said only where this device is known to have written something worth
+       * keeping. Not `revision`, which counts every committed save: the setup
+       * SQL every copy runs, and whatever an application writes for itself
+       * before a person has touched it — chess lays out a practice board on
+       * open. Read through `revision`, a copy nobody had used was told it had
+       * lost something, and the test guarding this sentence turned on whether
+       * the count was read before or after that write.
        */
-      if ((item.revision ?? 0) > 0) {
+      if (item.wrote === true) {
         say(
           `${item.appName} opened empty: what this device had saved for it isn't here any more. ` +
             `If you have a link to it, or another copy, open that here and the data comes back with it.`,
@@ -2644,6 +2647,11 @@ window.addEventListener("message", (event) => {
             html: loaded.html,
             publicKeyFingerprint: loaded.publicKeyFingerprint,
             revision: next,
+            // "Something has been written here that nobody would want to lose."
+            // Not `revision`, which counts the setup SQL every copy runs and
+            // any write an application makes before a person has touched it
+            // (D51). Once true, it stays true.
+            ...(data.payload?.setup === true ? {} : { wrote: true }),
           });
         } else if (held) {
           await saveCartridgeToLibrary({ ...held, revision: next });

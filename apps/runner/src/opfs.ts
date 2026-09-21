@@ -154,6 +154,23 @@ export interface LibraryItem {
    */
   revision?: number;
   /**
+   * This device has written something that was not the document's own setup.
+   *
+   * Kept apart from `revision`, which counts every committed save — including
+   * the setup SQL every copy runs on first open, and any write an application
+   * makes for itself before a person has touched it. Read as "has anything
+   * been written here", `revision` says yes for a document nobody has used,
+   * which is how a copy that had lost nothing was told it had (D51), and how
+   * the test guarding that sentence flaked on WebKit: chess writes its
+   * practice board on open, and whether the count was read before or after
+   * that write decided the answer.
+   *
+   * Set once, on the first save the runtime does not mark as setup. It is the
+   * same signal the storage request waits for (D55): the first thing worth
+   * keeping.
+   */
+  wrote?: boolean;
+  /**
    * When the copy this device holds was last saved, from the manifest that
    * was sealed around it (`savedAt`).
    *

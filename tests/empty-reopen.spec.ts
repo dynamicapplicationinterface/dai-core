@@ -154,12 +154,20 @@ test.describe("a reopen with the database gone", () => {
     await page.locator("#card-open").click();
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
 
-    // Nothing has been done in the app, so nothing should have been written.
-    // Both halves are swept, so the reopen below is the branch under test.
+    /*
+     * Nothing a person would miss has been written, which is not the same as
+     * nothing having been written: this app lays out a practice board when it
+     * opens. The first version of this test read `revision`, which counts that
+     * save, and so turned on whether the read landed before or after it — it
+     * passed on Chromium and flaked on WebKit (run 35640958946).
+     *
+     * `wrote` is the fact the sentence is about, and it is not a race: it is
+     * set by the first save the runtime does not mark as setup.
+     */
     await sweepDatabases(page);
-    const saves = await page.evaluate(
+    const wrote = await page.evaluate(
       () =>
-        new Promise<number>((resolve2) => {
+        new Promise<string>((resolve2) => {
           // Every path settles, including the one where the store is not what
           // this test thinks it is: an unsettled promise here reads as a
           // 90-second timeout with nothing said about the cause, which is how
@@ -172,19 +180,19 @@ test.describe("a reopen with the database gone", () => {
                 .objectStore("cartridges")
                 .getAll();
               all.onsuccess = () => {
-                const rows = all.result as { revision?: number }[];
-                resolve2(rows.reduce((most, row) => Math.max(most, row.revision ?? 0), 0));
+                const rows = all.result as { wrote?: boolean }[];
+                resolve2(rows.length === 0 ? "no row" : String(rows.some((row) => row.wrote === true)));
                 open.result.close();
               };
-              all.onerror = () => resolve2(-1);
+              all.onerror = () => resolve2("unreadable");
             } catch {
-              resolve2(-1);
+              resolve2("unreadable");
             }
           };
-          open.onerror = () => resolve2(-1);
+          open.onerror = () => resolve2("unreadable");
         }),
     );
-    expect(saves, "the library has this copy and no save of it").toBe(0);
+    expect(wrote, "the library has this copy, and nothing worth keeping written into it").toBe("false");
 
     await page.reload();
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });

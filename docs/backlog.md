@@ -1417,10 +1417,23 @@ here recovers data, and nothing can.*
   a link or another copy is what brings it back (D53 is why there is no other).
 - **It does not guess why.** Nothing in the opener can know whether the storage
   was swept, cleared or never written; a cause would be invention.
-- **Said only where this device is known to have written something**, which
-  `revision` counts. A copy stored on arrival and reopened before anything was
-  written to it reaches the same branch, and telling that person they lost data
-  would be inventing a loss.
+- **Said only where this device is known to have written something worth
+  keeping**, which the library record's `wrote` says. A copy stored on arrival
+  and reopened before anything was written to it reaches the same branch, and
+  telling that person they lost data would be inventing a loss.
+
+**The first version of that condition read `revision`, and was wrong** (fixed 22
+September). `revision` counts every committed save — the setup SQL every copy
+runs, and whatever an application writes for itself before a person has touched
+it: chess lays out a practice board when it opens. So a copy nobody had used
+could be told it had lost something, and the test guarding the sentence turned
+on whether it read the count before or after that write. It passed on Chromium
+and flaked on WebKit (run 35640958946, passed on retry), which is how it was
+found.
+
+`wrote` is set by the first save the runtime does not mark as setup — the same
+signal D55's storage request waits for, which is not a coincidence: "the first
+thing worth keeping" is one fact and now has one name.
 
 **Proved** by `tests/empty-reopen.spec.ts`: a game is made, the save is waited
 for, the stored database is swept from both OPFS and the IndexedDB fallback
