@@ -840,6 +840,25 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
       loaded = cartridge;
+      /*
+       * The library kept the app and the database is gone (D51).
+       *
+       * This is the state a partial sweep leaves: the row survives, the stored
+       * database does not, and the container mounts as it arrived — so the app
+       * opens, looks right, and is empty. The opener knew: the breadcrumb below
+       * has always logged the difference. The person was not told.
+       *
+       * Said only where this device is known to have written something, which
+       * `revision` counts. A document opened for the first time has no stored
+       * database either, and telling that person their data is missing would be
+       * inventing a loss.
+       */
+      if ((item.revision ?? 0) > 0) {
+        say(
+          `${item.appName} opened empty: what this device had saved for it isn't here any more. ` +
+            `If you have a link to it, or another copy, open that here and the data comes back with it.`,
+        );
+      }
     }
     // Permanent, on purpose (D22): which database a reopen mounts as its own
     // is the other half of which replica id it keeps.

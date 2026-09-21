@@ -474,6 +474,16 @@
       "src/unzip.ts",
       "tests/editable-value.spec.ts"
     ],
+    "tests/empty-reopen.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/empty-reopen.spec.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tsup.config.ts"
+    ],
     "tests/evaluation.spec.ts": [
       "eval/candidates/reference/",
       "examples/tic-tac-toe/",

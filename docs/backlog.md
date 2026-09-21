@@ -1313,7 +1313,39 @@ When it is picked up:
 
 #### D51 — The library remembers the app and the database is gone
 
-*Status: open. Silent loss.*
+*Status: the silence is fixed, 21 September. The loss itself is not — nothing
+here recovers data, and nothing can.*
+
+**Built.** The reopen says one true sentence:
+
+> *Velvet Chess* opened empty: what this device had saved for it isn't here any
+> more. If you have a link to it, or another copy, open that here and the data
+> comes back with it.
+
+- **It names the app**, so it is about something the person recognizes.
+- **It says what they can do.** That is the half a notice usually leaves out,
+  and it is the only way out that exists: the copy is gone from this device, and
+  a link or another copy is what brings it back (D53 is why there is no other).
+- **It does not guess why.** Nothing in the opener can know whether the storage
+  was swept, cleared or never written; a cause would be invention.
+- **Said only where this device is known to have written something**, which
+  `revision` counts. A copy stored on arrival and reopened before anything was
+  written to it reaches the same branch, and telling that person they lost data
+  would be inventing a loss.
+
+**Proved** by `tests/empty-reopen.spec.ts`: a game is made, the save is waited
+for, the stored database is swept from both OPFS and the IndexedDB fallback
+while the library row is left alone — the exact half-state — and the reopen is
+read from the screen. Both halves proven to fail for the reason they guard:
+with the sentence gone the screen still says "Loading…", and with the condition
+gone the copy that was never written to is told it lost something.
+
+**One of those guards was worthless when first written, and the pattern caught
+it.** The honesty test opened a file and checked the screen said nothing — but a
+first open does not come through the library at all, so it passed however wrong
+the condition was. It now constructs the state that does reach the branch: a
+library row with no saves and no database. *What else would make this pass?*
+answered it.
 
 **What it means to a person:** their app opens, looks right, and is empty. No
 entries, no games, no answer.
