@@ -1,3 +1,4 @@
+import type { Browser, Page } from "@playwright/test";
 import { expect, test } from "./fixtures.js";
 
 /**
@@ -83,4 +84,98 @@ test("the inner frame of a blob frame can be entered", async ({ browser }) => {
     page.frames().length,
     `the automation sees both frames; it saw ${page.frames().length} and the page holds ${JSON.stringify(held)}`,
   ).toBeGreaterThanOrEqual(3);
+});
+
+/** Opens the mock page, with the runner's worker kept out of the way. */
+async function mockPage(browser: Browser): Promise<Page> {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.route("**/d32-minimal", (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: PAGE }),
+  );
+  await page.goto("http://localhost:5175/d32-minimal");
+  return page;
+}
+
+/** The application's element, through both frames, within a bound. */
+const enterable = (page: Page, timeout = 15_000): Promise<boolean> =>
+  page
+    .frameLocator("#cartridge")
+    .frameLocator("#dai-app")
+    .locator("#app")
+    .waitFor({ state: "attached", timeout })
+    .then(() => true, () => false);
+
+/** Points the shell's frame at about:blank, then at a fresh blob of the same document. */
+async function remount(page: Page): Promise<void> {
+  await page.evaluate(
+    ([outer]) => {
+      const frame = document.getElementById("cartridge") as HTMLIFrameElement;
+      frame.src = "about:blank";
+      // The next mount on the turn after, as the opener's eject-then-mount does.
+      setTimeout(() => {
+        const blob = new Blob([outer], { type: "text/html" });
+        frame.src = URL.createObjectURL(blob);
+      }, 50);
+    },
+    [OUTER],
+  );
+}
+
+/**
+ * Variant (a): a second mount in the same page.
+ *
+ * Every sighting of D32 is a reopen, never a first open, and the opener's
+ * reopen points the same `#cartridge` at `about:blank` and then at a fresh
+ * blob. One mount did not reproduce it in 210 runs; this is the next rung.
+ */
+test("the inner frame can be entered after a second mount in the same page", async ({ browser }) => {
+  const page = await mockPage(browser);
+  expect(await enterable(page), "the first mount is enterable").toBe(true);
+
+  await remount(page);
+  const entered = await enterable(page);
+  if (!entered) {
+    const held = await page.evaluate(() => {
+      const outer = document.getElementById("cartridge") as HTMLIFrameElement | null;
+      const inner = outer?.contentDocument?.getElementById("dai-app") as HTMLIFrameElement | null;
+      return {
+        outerWindow: Boolean(outer?.contentWindow),
+        outerDoc: outer?.contentDocument?.readyState ?? "unreachable",
+        innerPresent: Boolean(inner),
+        innerWindow: Boolean(inner?.contentWindow),
+      };
+    });
+    console.log(`D32 second mount: unenterable; page holds ${JSON.stringify(held)}, automation sees ${page.frames().length} frames`);
+  }
+  expect(entered, "the second mount is enterable").toBe(true);
+});
+
+/**
+ * Variant (b): a navigation between the mounts.
+ *
+ * What the failing tests do — `goto` the same address again, which is a fresh
+ * document with a fresh shell, and then mount into it.
+ */
+test("the inner frame can be entered after a navigation between mounts", async ({ browser }) => {
+  const page = await mockPage(browser);
+  expect(await enterable(page), "the first mount is enterable").toBe(true);
+
+  await page.goto("about:blank");
+  await page.goto("http://localhost:5175/d32-minimal");
+  const entered = await enterable(page);
+  if (!entered) {
+    const held = await page.evaluate(() => {
+      const outer = document.getElementById("cartridge") as HTMLIFrameElement | null;
+      const inner = outer?.contentDocument?.getElementById("dai-app") as HTMLIFrameElement | null;
+      return {
+        outerWindow: Boolean(outer?.contentWindow),
+        outerDoc: outer?.contentDocument?.readyState ?? "unreachable",
+        innerPresent: Boolean(inner),
+        innerWindow: Boolean(inner?.contentWindow),
+      };
+    });
+    console.log(`D32 after navigation: unenterable; page holds ${JSON.stringify(held)}, automation sees ${page.frames().length} frames`);
+  }
+  expect(entered, "the mount after a navigation is enterable").toBe(true);
 });

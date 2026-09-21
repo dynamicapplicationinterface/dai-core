@@ -4140,6 +4140,33 @@ refuses to start Firefox here ("spawn UNKNOWN"), which is why the loop runs in
 CI at all. **That reading is the next thing, and it needs a machine that can
 launch Firefox.**
 
+**The ladder, and where it stopped (20 September). 370 runs, 0 failures.**
+`tests/d32-minimal.spec.ts` is the shape and nothing else — a page that makes a
+`blob:` frame, whose document makes a sandboxed `srcdoc` frame saying one
+word. No service worker, no storage, no runtime, no document. Firefox 155, 4
+workers, no retries:
+
+| Rung | What it adds | Runs | Unenterable |
+|---|---|---|---|
+| one mount | the two frames, once, on a fresh page | 210 | 0 |
+| a second mount | `#cartridge` to `about:blank`, then a fresh blob, in the same page | 80 | 0 |
+| a navigation between mounts | `goto` the same address again, then mount | 80 | 0 |
+
+The opener fails the same shape about 7 times in 100 on the reopen path, so the
+difference is still something the opener does and this page does not. **Not
+tried, in the order worth trying:** a service worker controlling the page (the
+opener always has one); a blob carrying the runtime and a real document rather
+than 120 bytes; and the opener's own sequence — a card, a stored database read,
+a reseal — rather than a bare mount.
+
+**So there is no upstream report yet.** "It does not reproduce in isolation" is
+not a bug report, and filing one would waste the reader's time and ours. What
+is in hand for whoever picks it up: the rate (26 of 350, 7.4%), the three
+product-side readings that say the document is well, the fact that a reload
+does not recover a page once it is in the state, and this ladder. **The next
+reading is a person's hand-driven one in Firefox**, which no automation here
+can stand in for, because automation is the thing in question.
+
 **The minimal page does not reproduce it (20 September): 0 of 210.**
 `tests/d32-minimal.spec.ts` is the shape and nothing else — a page that makes a
 `blob:` frame, whose document makes a sandboxed `srcdoc` frame, which says one
