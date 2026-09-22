@@ -2802,6 +2802,10 @@
       "tests/sectioned-mount.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/self-write-mark.spec.ts": [
+      "apps/runner/src/",
+      "tests/self-write-mark.spec.ts"
+    ],
     "tests/send.spec.ts": [
       "apps/runner/",
       "scripts/generate-key.mjs",

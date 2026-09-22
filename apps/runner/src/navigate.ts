@@ -18,6 +18,21 @@
 
 let writing = false;
 
+/*
+ * The mark is for the moment between the write and the load it asks for, and
+ * for nothing else. A load that never comes -- one iOS drops, one a throw
+ * stops -- used to leave it set, and a tab restored from the back/forward
+ * cache came back with it still set: every real link arriving there was taken
+ * for the tab's own write and ignored (cold review of 8b9273c, Q1.1). So it
+ * is dropped whenever this tab is put away or shown again, and whenever the
+ * navigation itself fails.
+ */
+const forget = (): void => {
+  writing = false;
+};
+window.addEventListener("pagehide", forget);
+window.addEventListener("pageshow", forget);
+
 /** Whether the fragment change being heard is one this page made itself. */
 export function ownWrite(): boolean {
   return writing;
@@ -32,7 +47,12 @@ export function ownWrite(): boolean {
 export function loadAt(target: string, how: "replace" | "assign"): void {
   const sameDocument = target.split("#")[0] === location.href.split("#")[0];
   writing = true;
-  if (how === "replace") location.replace(target);
-  else location.assign(target);
-  if (sameDocument) location.reload();
+  try {
+    if (how === "replace") location.replace(target);
+    else location.assign(target);
+    if (sameDocument) location.reload();
+  } catch (error) {
+    forget();
+    throw error;
+  }
 }
