@@ -315,4 +315,57 @@ test.describe("a move merged into a held copy on an iPhone", () => {
     await other.close();
     await page.context().close();
   });
+
+  test("a merge that answers during the mount is still answered, and leaves no stale tap", async ({ browser }) => {
+    /*
+     * The merge starts on the frame's handshake, which can arrive while the
+     * mount is still finishing. The wait used to be declared open after the
+     * mount, so a merge that answered before that ran into a finishMerge that
+     * returned at its first line: no reload, no sentence, and the cover left
+     * standing over a copy nobody could reach (second cold review of c1490cb).
+     *
+     * This does not fail on the code before that change: measured, the frame's
+     * handshake lands after the mount returns every time here, with a light
+     * document and with one heavy enough to take a second over sealing its
+     * link. It holds the order the fix put things in, and it is honest about
+     * being a guard rather than a reproduction.
+     */
+    const { file, uuid } = await built();
+    const page = await iphoneHolding(browser, file);
+    await page.addInitScript(() => {
+      (window as unknown as { __daiTimers: { launchStallMs: number } }).__daiTimers = { launchStallMs: 1000 };
+    });
+    await page.reload();
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+    // Not a database: the merge refuses as soon as the frame answers, which is
+    // as near the mount as this can be driven.
+    await mergeInto(page, uuid, [1, 2, 3, 4]);
+
+    await expect(page.locator("#doc-note"), "answered, whenever it answered").toHaveText(
+      "The move that arrived couldn't be added to your copy, so your copy is as it was.",
+      { timeout: 30_000 },
+    );
+    await expect(page.locator("body"), "and the copy is on screen").not.toHaveClass(/booting/, { timeout: 30_000 });
+    await expect(appIn(page).locator("#new-game")).toBeVisible({ timeout: 30_000 });
+
+    /*
+     * And the wait left nothing behind it. A mounted document is not something
+     * the launch guard rescues — that is the whole of "nothing to rescue" —
+     * unless a merge is being rehearsed behind the cover. So a stall forced
+     * here reveals nothing: no control, and no tap that would end a merge that
+     * is already over. Left standing, the rehearsal would show one.
+     */
+    await page.evaluate(() => {
+      document.body.classList.add("launching");
+      (window as unknown as { __runner: { guardLaunch(t: string): void } }).__runner.guardLaunch(
+        "http://localhost:5175/?probe=1",
+      );
+    });
+    await page.waitForTimeout(4_000);
+    await expect(page.locator("#launch-open"), "no control from a wait that has ended").toBeHidden();
+    await expect(page.locator("#doc-note"), "and the sentence is still the one it left").toBeVisible();
+
+    await page.context().close();
+  });
 });

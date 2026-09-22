@@ -1148,25 +1148,36 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       hostMark("prepared");
       rehearsing = true;
       rehearsingMerge = true;
-    } else if (await relaunchAtOwnAddress(identity, entry)) {
-      return;
-    }
-    await mount(loaded);
-    if (rehearsingMerge) {
       /*
-       * The cover is never a dead end, here either. `mount` clears the launch
-       * guard, so it is armed again after it: the merge can wait on a frame
-       * that never answers, and without this the launch screen stood over it
-       * with no way off (cold review of c424598, Q2.1). Tap to open ends the
-       * wait rather than navigating — see `onLaunchTap`.
+       * Before the mount, not after it.
+       *
+       * The merge starts on the frame's handshake, which can arrive while the
+       * mount is still finishing. With `mergeFinished` still true from the
+       * last one, that merge answered into a finishMerge that returned at its
+       * first line: no reload, no sentence, and the cover left standing
+       * (second cold review of c1490cb). The wait is declared open before
+       * anything can answer it.
        */
-      markStep("merging the move that arrived");
       mergeFinished = false;
       mergeCancelled = false;
       onLaunchTap = () => {
         mergeCancelled = true;
         void finishMerge(false);
       };
+    } else if (await relaunchAtOwnAddress(identity, entry)) {
+      return;
+    }
+    await mount(loaded);
+    /*
+     * The cover is never a dead end, here either. `mount` clears the launch
+     * guard, so it is armed again after it: the merge can wait on a frame that
+     * never answers, and without this the launch screen stood over it with no
+     * way off (cold review of c424598, Q2.1). Tap to open ends the wait rather
+     * than navigating — see `onLaunchTap`. Only while the wait is still on: a
+     * merge that answered during the mount has ended it already.
+     */
+    if (rehearsingMerge) {
+      markStep("merging the move that arrived");
       guardLaunch(launchAddress(identity));
     }
     void showArrival();
