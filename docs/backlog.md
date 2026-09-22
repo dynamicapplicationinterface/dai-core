@@ -4830,6 +4830,27 @@ prints a stale-map warning and still exits 0 (seen twice tonight).
 *Status: open, **and no longer read as a test problem** (20 September). Rate
 measured; the frame read at failure. Fix undecided.*
 
+**It is getting through the retry now (22 September).** Counted over every
+failed run of `test` this week (25 of them, 16–22 September), the case that
+fails both attempts and takes the whole run red with it —
+`returning-document.spec.ts:381`, "opening your own copy after they moved does
+not make yours look newer" — did so **three times, all on 22 September**:
+`35678368339`, `35679531628`, `35763149723`. It was retried and passed in four
+more that day (`35679064956`, `35680220168`, `35681323325`, `35682355285`), and
+in none of the failures before 22 September. Two sibling cases retried the same
+day as well: `:511` twice and `invite-one-session.spec.ts:182` once.
+
+Locally it is the same shape and has been seen on WebKit too, under parallel
+load: `ios-merge-relaunch.spec.ts` "is saved before the page reloads" failed
+twice in mixed runs with the frame present and empty — `- main: - iframe`, no
+`#app` inside it — and passed 12 of 12 run on its own.
+
+Nothing in the relaunch or merge work of 21–22 September touches it: neither
+spec sets an iPhone user agent, so none of the iOS paths those commits changed
+run in them. What this changes is the cost of leaving it: a red `main` is now
+the ordinary outcome of a bad afternoon rather than a retry line in a green
+one.
+
 **The rate, by the D28 method** (five fresh CI samples, Firefox 1543, the whole
 `returning-document` file at 10 repeats on 4 workers, 70 tests a sample, no
 retries; the loop is `.github/workflows/d32-loop.yml`, dispatch only, because
