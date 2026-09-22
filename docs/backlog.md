@@ -4338,6 +4338,54 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D91 — The data: manifest decode has no test for a malformed address
+
+*Status: open, filed from the review of b8e39e3 (Q3), 22 September. Not
+fixed.*
+
+`dataManifest()` in `apps/runner/src/main.ts` is read inside the `try` of
+`arrivedManifestReading()`, so a malformed `data:` address cannot throw out of
+the arrival line or the launch panel. Traced by reading, not by running: a
+missing comma, bad percent-encoding, bad base64, invalid JSON, and JSON `null`
+(which throws on `.start_url`) each land in the `catch` and print "a data:
+manifest (unreadable)"; JSON that parses to a string prints "? → ". None of
+these has a test. `tests/arrival-line.spec.ts` covers the well-formed case and
+a fetch that never answers. What closes it: one test per shape above, each
+asserting the line reads "(unreadable)" and the panel still fills.
+
+#### D90 — Keep can cost an extra load when the relaunch could not reach the document's address
+
+*Status: open, filed from the review of 454e2db (Q1.7), 22 September. Not
+fixed.*
+
+`keepHere()` (`apps/runner/src/install.ts`) navigates when the page is not at
+the document's launch address, and does not set `KEYS.IOS_RELOAD_TAKEN`. Since
+the relaunch gate moves every open there first, `keepHere` navigates only when
+the gate could not get there — `sameLaunch` disagreeing with the address the
+reload landed on, which the gate reports as "not taken: still not at the
+document's address after a reload". In that state each press of Keep loads the
+page, and the load after it is not marked as a reload, so the gate reloads once
+more before the guard stops it: two loads per press, no loop. Not seen; needs
+`sameLaunch` to mismatch persistently. What closes it: `keepHere` marks its load
+the way the gate does, or defers to the gate, with a test that forces the
+mismatch and counts loads.
+
+#### D89 — A resume reload that stalls on the bare opener has no Tap to open
+
+*Status: open, filed from the review of 454e2db (Q1.6), 22 September. Not
+fixed.*
+
+`guardLaunch()` rescues a stalled relaunch only when the body carries
+`launching` or `booting` (`apps/runner/src/main.ts`, the guard's timeout). The
+worker paints `launching` only on a document's own address. A resume from the
+bare opener (`/`, the document open last time) relaunches before mounting, so
+its body has neither class: if that reload is the one iOS drops, the person is
+left on "Loading …" in the chooser with no Tap to open. The icon, link and file
+paths are covered — they are under the splash or a mounted cover. What closes
+it: mark the body as launching when a relaunch is taken from a page that is not
+already under the splash, and a test that stalls the reload on `/` and expects
+Tap to open.
+
 #### D88 — On a phone-sized screen, the menu's Share control is below the fold and scrolling does not reach it
 
 *Status: **fixed 22 September.** The mechanism was not "below the fold": the
