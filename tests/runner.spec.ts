@@ -1143,8 +1143,16 @@ test.describe("keeping it, per device", () => {
     });
     await page.goto(RUNNER_URL);
     await openFile(page, CONTAINER);
-    // Used on the page a person can touch, after the first open's rehearsal.
-    await page.waitForURL(new RegExp(`[#&]${HINT_KEY}=`), { timeout: 30_000 });
+    /*
+     * Used on the page a person can touch: the load after the relaunch, which
+     * says so. Not the address changing — that is the first thing that can be
+     * seen, and it happens on the page about to be replaced, so a use made then
+     * lands on a page nobody will see.
+     */
+    await expect(page.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
+      timeout: 30_000,
+    });
+    expect(page.url()).toMatch(new RegExp(`[#&]${HINT_KEY}=`));
     await expect(page.locator("body")).toHaveClass(/loaded/);
     await useIt(page);
     await expect(page.locator("#keep-cta")).toHaveClass(/nudge/);

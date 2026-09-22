@@ -9,6 +9,8 @@ import { HINT_KEY } from "../src/link.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
+/** Small enough for an inline link, and declares no colour. */
+const FIXTURE = resolve(repo, "tests", "fixture", "fixture.dai.html");
 const IPHONE =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
@@ -21,10 +23,15 @@ const IPHONE =
  * an icon, a resume, a merge — stayed wherever the page was, and Add to Home
  * Screen there made the opener's icon. A phone read "iOS reload: not reached".
  *
- * WebKit only: this is the iPhone's path, and an iPhone's user agent on another
- * engine tests that engine, not the phone.
+ * WebKit, because this is the iPhone's path. Firefox too, for one thing only:
+ * it runs the `hashchange` from the relaunch's own fragment write before the
+ * reload lands, which is where the page used to hear itself as a link and
+ * reload a second time (review of 454e2db, Q1.1). Counted here on both.
  */
-test.skip(({ browserName }) => browserName !== "webkit", "the iOS reload is an iPhone's: WebKit only");
+test.skip(
+  ({ browserName }) => browserName === "chromium",
+  "the iOS reload is an iPhone's: WebKit, and Firefox for the order its hashchange runs in",
+);
 
 /** The name and start_url of the manifest the page is linked with, read the way the page itself would not need to. */
 async function linkedManifest(page: Page): Promise<{ name?: string; start_url?: string }> {
@@ -37,12 +44,12 @@ async function linkedManifest(page: Page): Promise<{ name?: string; start_url?: 
     const text = head.endsWith(";base64") ? Buffer.from(body, "base64").toString("utf8") : decodeURIComponent(body);
     return JSON.parse(text) as { name?: string; start_url?: string };
   }
-  // Answered by the worker, so read through a page it controls, not from outside.
-  const reader = await page.context().newPage();
-  await reader.goto(new URL(href, page.url()).href);
-  const text = await reader.evaluate(() => document.body.innerText);
-  await reader.close();
-  return JSON.parse(text) as { name?: string; start_url?: string };
+  // Answered by the worker, so read from inside the page it controls. (Opened
+  // in a tab of its own, Firefox downloads a manifest rather than showing it.)
+  return page.evaluate(async (address) => (await fetch(address)).json(), href) as Promise<{
+    name?: string;
+    start_url?: string;
+  }>;
 }
 
 test.describe("opening a copy already on an iPhone", () => {
@@ -66,8 +73,15 @@ test.describe("opening a copy already on an iPhone", () => {
       Object.defineProperty(navigator, "platform", { get: () => "iPhone", configurable: true });
     });
 
+    // Every load of the page from here on, counted: one relaunch is one load.
+    let loads = 0;
+    page.on("load", () => {
+      loads += 1;
+    });
+
     // First open, from a file: the ingest path. It keeps the copy and reloads.
     await page.goto(RUNNER_URL);
+    loads = 0;
     await page.setInputFiles("#file", file);
     await page.locator("#card-open:visible, body.loaded").first().waitFor({ timeout: 60_000 });
     if (await page.locator("#card-open").isVisible()) await page.locator("#card-open").click();
@@ -76,9 +90,18 @@ test.describe("opening a copy already on an iPhone", () => {
       { timeout: 60_000 },
     );
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(page.locator("#sheet-arrival"), "the settled load, the one after the reload").toContainText(
+      "iOS reload: taken on the load before this one",
+      { timeout: 30_000 },
+    );
+    // Long enough for a second reload, which followed the first by a save.
+    await page.waitForTimeout(3_000);
+    expect(loads, "the first open's relaunch is exactly one load").toBe(1);
 
     // Back to the opener's own address, the way a phone comes back to it: the
     // document open last time is resumed from the library, not from a file.
+    // Counted from before the visit: the visit itself is one load, the relaunch one more.
+    loads = 0;
     await page.goto(RUNNER_URL);
     await expect(page, "the resumed copy is moved to its own address").toHaveURL(
       new RegExp(`#.*${HINT_KEY}=${uuid}`),
@@ -98,6 +121,49 @@ test.describe("opening a copy already on an iPhone", () => {
     );
     await expect(line).toContainText("iOS reload: taken on the load before this one");
     await expect(line).not.toContainText("not reached");
+    await page.waitForTimeout(3_000);
+    expect(loads, "the visit and the resume's relaunch: two loads, not three").toBe(2);
+
+    await device.close();
+  });
+
+  test("a relaunch that moves only the fragment is exactly one load", async ({ browser }) => {
+    /*
+     * The fragment-only case. A document small enough for an inline link, whose
+     * colour is not learned in the rehearsal, has a launch address that differs
+     * from the page's only after the `#` — so the relaunch is a fragment change
+     * and then a reload. The page used to hear that change as a link arriving
+     * while a document was open, save, and reload a second time (the retry in
+     * runner.spec, "the offer is per document").
+     */
+    const device = await browser.newContext({ userAgent: IPHONE, viewport: { width: 390, height: 844 } });
+    const page = await device.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "iPhone", configurable: true });
+    });
+    let loads = 0;
+    page.on("load", () => {
+      loads += 1;
+    });
+    const heardAsLink: string[] = [];
+    page.on("console", (message) => {
+      if (message.text().includes("a link arrived while a document was open")) heardAsLink.push(message.text());
+    });
+
+    await page.goto(RUNNER_URL);
+    loads = 0;
+    await page.setInputFiles("#file", FIXTURE);
+    await page.locator("#card-open:visible, body.loaded").first().waitFor({ timeout: 60_000 });
+    if (await page.locator("#card-open").isVisible()) await page.locator("#card-open").click();
+    await expect(page.locator("#sheet-arrival"), "the settled load, the one after the reload").toContainText(
+      "iOS reload: taken on the load before this one",
+      { timeout: 60_000 },
+    );
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    expect(new URL(page.url()).pathname + new URL(page.url()).search, "only the fragment moved").toBe("/");
+    await page.waitForTimeout(3_000);
+    expect(heardAsLink, "the page's own fragment write is not a link arriving").toEqual([]);
+    expect(loads, "the relaunch is exactly one load").toBe(1);
 
     await device.close();
   });

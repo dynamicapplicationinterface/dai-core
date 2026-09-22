@@ -39,6 +39,7 @@
  * Other desktop browsers have no install of their own; their menu does, and
  * the text says where.
  */
+import { loadAt } from "./navigate.js";
 import { groundKey as groundStorageKey, installAskedKey, KEYS } from "../../../src/keys.js";
 import { HINT_KEY } from "../../../src/link.js";
 import { platform, standalone } from "./platform.js";
@@ -474,13 +475,7 @@ function keepHere(identity: Identity & { link?: string }): boolean {
    * the open to run, and the navigation was lost. The announcement is written
    * when the document is described instead, which is well before this.
    */
-  const here = location.href.split("#")[0];
-  if (target.split("#")[0] === here) {
-    location.hash = new URL(target).hash;
-    location.reload();
-  } else {
-    location.assign(target);
-  }
+  loadAt(target, "assign");
   return true;
 }
 

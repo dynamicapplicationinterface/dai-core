@@ -82,6 +82,7 @@ import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
+import { loadAt, ownWrite } from "./navigate.js";
 
 /**
  * How this page arrived, read before anything here touches the head.
@@ -843,17 +844,8 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   // If this relaunch does not complete — the iOS reload bug — the splash stays
   // up on this same page, and the guard turns it into Tap to open.
   guardLaunch(target);
-  /*
-   * A real load, even when only the fragment moved: a navigation that changes
-   * nothing but the fragment is a same-document navigation, and neither the
-   * colour nor the manifest is re-read.
-   */
-  if (target.split("#")[0] === location.href.split("#")[0]) {
-    location.hash = new URL(target).hash;
-    location.reload();
-  } else {
-    location.replace(target);
-  }
+  // A real load, and marked as this page's own so it is not heard as a link.
+  loadAt(target, "replace");
   return true;
 }
 
@@ -4395,6 +4387,8 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
  * every link takes — the card, a merge, or a refusal in words.
  */
 window.addEventListener("hashchange", () => {
+  // The page moving itself to a document's address, not a link arriving.
+  if (ownWrite()) return;
   const carried = inlineFrom(location.hash);
   if (!carried) return;
   if (!loaded) {
