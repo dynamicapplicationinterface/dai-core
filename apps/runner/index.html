@@ -397,6 +397,22 @@
       }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
+      /* The same floating pill as a failed save, for a sentence rather than a state. */
+      #doc-note {
+        flex: 0 1 auto;
+        margin: 0;
+        padding: 4px 10px;
+        border-radius: 14px;
+        font-size: 12.5px;
+        line-height: 1.35;
+        color: var(--bad);
+        background: color-mix(in srgb, var(--bad) 12%, transparent);
+        -webkit-backdrop-filter: saturate(180%) blur(14px);
+        backdrop-filter: saturate(180%) blur(14px);
+        box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
+        cursor: pointer;
+      }
+      #doc-note[hidden] { display: none; }
 
       /*
        * The one control, over whatever the application is drawing.
@@ -1175,6 +1191,9 @@
         to the menu, where Save a copy is. Nothing here is a promise.
       -->
       <button id="save-state" type="button" hidden></button>
+      <!-- One sentence over an open document, when something it asked for did
+           not happen (a move that arrived and was not added). Tap to dismiss. -->
+      <p id="doc-note" role="status" hidden></p>
       <span class="spacer"></span>
       <button id="more" type="button" aria-label="More" aria-haspopup="dialog">&#8943;</button>
     </header>

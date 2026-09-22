@@ -909,6 +909,8 @@ function eject(): void {
   paintAbove();
   const saveState = document.getElementById("save-state");
   if (saveState) saveState.hidden = true;
+  const docNote = document.getElementById("doc-note");
+  if (docNote) docNote.hidden = true;
   hostSaves = 0;
   hostSavesWritten = 0;
   window.clearTimeout(bootingGuard);
@@ -1037,10 +1039,19 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
      * move waits to be merged: it is held only in this page, so the reload
      * waits until the merge is in and flushed (`applyPendingMerge`).
      */
-    if (pendingMerge) {
+    const identity = await identityOf(loaded);
+    if (
+      pendingMerge &&
+      platform() === "ios" &&
+      reloadGate !== "taken on the load before this one" &&
+      !sameLaunch(location.href, launchAddress(identity))
+    ) {
+      // Rehearsed, like a first open: see finishMerge.
       entryPoint = entry;
       reloadGate = "waiting: the arriving move is merged first";
-    } else if (await relaunchAtOwnAddress(await identityOf(loaded), entry)) {
+      hostMark("prepared");
+      rehearsing = true;
+    } else if (await relaunchAtOwnAddress(identity, entry)) {
       return;
     }
     await mount(loaded);
@@ -2943,6 +2954,9 @@ moreButton.addEventListener("click", () => {
   // that a held document asks the network for nothing (T1 note in showVersion).
   void checkForUpdate();
 });
+document.getElementById("doc-note")?.addEventListener("click", (event) => {
+  (event.currentTarget as HTMLElement).hidden = true;
+});
 document.getElementById("save-state")?.addEventListener("click", (event) => {
   if ((event.currentTarget as HTMLElement).dataset.state === "failed") slideOpen(sheet);
 });
@@ -3297,28 +3311,53 @@ async function applyPendingMerge(): Promise<void> {
         const record = held ?? job.heldItem;
         await saveCartridgeToLibrary({ ...record, mergeStanding: true }).catch(() => undefined);
       }
-      await relaunchAfterMerge();
+      await finishMerge(!report.refused);
       return;
     }
     if (Date.now() > deadline) {
-      await relaunchAfterMerge();
+      await finishMerge(false);
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
 }
 
+/** What a person is told when a move that arrived was not added to their copy. */
+const MOVE_NOT_APPLIED = "The move that arrived couldn't be added to your copy, so your copy is as it was.";
+
 /**
- * The iOS reload a merge held back (`launchFromLibrary`): taken once the move
- * is in and written, so the load that follows opens the merged copy.
+ * The end of a merge folded in after a cold launch.
+ *
+ * On iOS away from the document's address, the merge was rehearsed
+ * (`launchFromLibrary`): the copy mounted behind the launch screen, nothing
+ * usable. Applied, the move is saved and only then is the page loaded at the
+ * address, where the merged copy is drawn — the reload never runs ahead of the
+ * save, and nobody is using a page that is about to be replaced. Not applied —
+ * refused, or given up at the deadline — the page does not reload: the copy is
+ * shown here as it was, and one sentence says the move did not land.
  */
-async function relaunchAfterMerge(): Promise<void> {
+async function finishMerge(applied: boolean): Promise<void> {
   const open = loaded;
-  if (open) {
+  if (rehearsing && applied && open) {
     await flushDocument();
     if (await relaunchAtOwnAddress(await identityOf(open), entryPoint)) return;
   }
+  if (rehearsing) {
+    rehearsing = false;
+    window.clearTimeout(bootingGuard);
+    document.body.classList.remove("booting");
+    if (!applied) reloadGate = "not taken: the arriving move was not applied";
+  }
+  if (!applied) tellOverDocument(MOVE_NOT_APPLIED);
   void showArrival();
+}
+
+/** One sentence over an open document, where the chooser's report cannot be seen. */
+function tellOverDocument(sentence: string): void {
+  const note = document.getElementById("doc-note");
+  if (!note) return;
+  note.textContent = sentence;
+  note.hidden = false;
 }
 
 async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<MergeReport> {
@@ -4744,6 +4783,13 @@ Object.defineProperty(window, "__runner", {
     // can draw it with a weaker profile than this host has, which is the only
     // way to check that a sentence disappears when its clause does.
     showCard,
+    // A move folded into this device's copy on a cold launch, as a link or a
+    // card would ask for it: the merge path's own test drives this.
+    openThenMerge: async (uuid: string, bytes: number[]): Promise<void> => {
+      const held = (await listCartridgesFromLibrary()).find((item) => item.documentUuid === uuid);
+      if (!held) throw new Error("not held here");
+      await openThenMerge(held, new Uint8Array(bytes), false);
+    },
     // The launch fail-safe arms inside iOS-only launch paths a desktop test
     // cannot enter (the service worker injects the launching class; the
     // relaunch is platform-gated). Exposed so the reveal, and the gesture it
