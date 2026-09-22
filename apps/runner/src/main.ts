@@ -1162,7 +1162,11 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
        */
       markStep("merging the move that arrived");
       mergeFinished = false;
-      onLaunchTap = () => void finishMerge(false);
+      mergeCancelled = false;
+      onLaunchTap = () => {
+        mergeCancelled = true;
+        void finishMerge(false);
+      };
       guardLaunch(launchAddress(identity));
     }
     void showArrival();
@@ -3392,6 +3396,8 @@ async function applyPendingMerge(): Promise<void> {
 
   const deadline = Date.now() + 15_000;
   for (;;) {
+    // Ended by the person: nothing more is asked of the frame.
+    if (mergeCancelled) return;
     const report = await mergeSiblingInto(job.data);
     // Permanent, on purpose: a merge folded in after a cold launch has no other
     // trace, and "it did not land" looked exactly like "nothing to merge".
@@ -3429,12 +3435,24 @@ async function applyPendingMerge(): Promise<void> {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 400));
+    if (mergeCancelled) return;
   }
 }
 
 /** Whether a merge is being rehearsed behind the launch screen, and whether it has ended. */
 let rehearsingMerge = false;
 let mergeFinished = true;
+/*
+ * A merge the person ended before it landed.
+ *
+ * Tapping the cover's control says the copy as it stands is what they want to
+ * see, and the sentence under it says the move was not added. The retry loop
+ * kept going, so the move could land a moment later under a sentence saying it
+ * had not (second cold review of c1490cb). Cancelled, it stops asking: the
+ * move is not applied here, and it is still wherever it came from — a mailbox
+ * keeps it for the next open.
+ */
+let mergeCancelled = false;
 
 /** What a person is told when a move that arrived was not added to their copy. */
 const MOVE_NOT_APPLIED = "The move that arrived couldn't be added to your copy, so your copy is as it was.";

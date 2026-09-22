@@ -232,4 +232,87 @@ test.describe("a move merged into a held copy on an iPhone", () => {
 
     await page.context().close();
   });
+
+  test("the tap ends the merge: a frame that answers late does not apply the move", async ({ browser }) => {
+    /*
+     * Tapping the cover says the copy as it stands is what they want to see,
+     * and the sentence says the move was not added. The retry loop kept going,
+     * so a frame that answered a moment later applied the move under a sentence
+     * saying it had not (second cold review of c1490cb).
+     */
+    const { file, uuid } = await built();
+
+    // Somebody else's copy, with a move in it.
+    const other = await browser.newContext();
+    const theirs = await other.newPage();
+    await firstOpen(theirs, file);
+    const app = appIn(theirs);
+    await expect(app.locator("#new-game")).toBeVisible({ timeout: 60_000 });
+    await app.locator("#you").fill("Ada");
+    await app.locator("#them").fill("Bo");
+    await app.locator("#new-game button[type=submit]").click();
+    await app.locator("#board .cell").nth(0).click();
+    await expect(app.locator("#board .cell").nth(0)).toHaveText("X");
+    const read = async (): Promise<number[]> =>
+      theirs.evaluate(async (id) => {
+        const runner = (window as unknown as { __runner: { loadStored(u: string): Promise<Uint8Array | null> } })
+          .__runner;
+        return Array.from((await runner.loadStored(id)) ?? []);
+      }, uuid);
+    // Written, not merely asked for: the move has to be in the bytes we hand on.
+    await expect.poll(async () => (await read()).length, { timeout: 30_000 }).toBeGreaterThan(0);
+    const bytes = await read();
+
+    const page = await iphoneHolding(browser, file);
+    /*
+     * A frame whose handshake is held back and delivered later, on a word from
+     * the test: the wait the person ends, and then the answer arriving after.
+     */
+    await page.addInitScript(() => {
+      (window as unknown as { __daiTimers: { launchStallMs: number } }).__daiTimers = { launchStallMs: 1000 };
+      const held: { listener: EventListener; event: Event }[] = [];
+      (window as unknown as { __release: () => void }).__release = () => {
+        for (const one of held.splice(0)) one.listener(one.event);
+      };
+      const add = window.addEventListener.bind(window);
+      window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+        if (type !== "message") return add(type, listener, options as AddEventListenerOptions);
+        const hold = (event: Event): void => {
+          const data = (event as MessageEvent).data as { type?: string } | null;
+          if (data && data.type === "DAI_HOST_HANDSHAKE") {
+            held.push({ listener: listener as EventListener, event });
+            return;
+          }
+          (listener as EventListener)(event);
+        };
+        return add(type, hold, options as AddEventListenerOptions);
+      }) as typeof window.addEventListener;
+    });
+    await page.reload();
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+
+    await mergeInto(page, uuid, bytes);
+    await expect(page.locator("#launch-open")).toBeVisible({ timeout: 30_000 });
+    await page.locator("#launch-open").click();
+    await expect(page.locator("#doc-note")).toHaveText(
+      "The move that arrived couldn't be added to your copy, so your copy is as it was.",
+      { timeout: 30_000 },
+    );
+
+    // The frame answers now. Nothing is asked of it: the move is not applied.
+    await page.evaluate(() => (window as unknown as { __release: () => void }).__release());
+    await page.waitForTimeout(6_000);
+    const cells = appIn(page).locator("#board .cell");
+    expect(await cells.count(), "the copy as it was: their game is not in it").toBe(0);
+    await expect(appIn(page).locator("#new-game"), "still the copy that has no game").toBeVisible();
+    await expect(page.locator("#doc-note"), "and the sentence still true").toBeVisible();
+    const held = await page.evaluate(async (id) => {
+      const runner = (window as unknown as { __runner: { loadStored(u: string): Promise<Uint8Array | null> } }).__runner;
+      return Array.from((await runner.loadStored(id)) ?? []);
+    }, uuid);
+    expect(held.length, "this device holds its own copy still").toBeGreaterThan(0);
+
+    await other.close();
+    await page.context().close();
+  });
 });
