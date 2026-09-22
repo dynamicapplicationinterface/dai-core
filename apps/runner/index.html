@@ -1283,7 +1283,14 @@
           is the moment it can still be acted on.
         -->
         <p id="keep-backup"></p>
-        <button id="keep-done" type="button">Done</button>
+        <!--
+          Not just "Done": the sheet comes back while the request stands, and on
+          iOS a person finishes in the Share sheet, where nothing tells this
+          page it happened. The label says what tapping it means, so a sheet
+          seen again by somebody who has already added it says what to press
+          (cold review of 6979d91, Q4; D92).
+        -->
+        <button id="keep-done" type="button">Done — I’ve added it</button>
       </div>
     </div>
 

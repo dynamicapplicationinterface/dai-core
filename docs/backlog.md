@@ -4338,6 +4338,45 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D93 — Five more tests wait for the address to change rather than for the load it causes
+
+*Status: open, filed 22 September while fixing the cold review's Q1.1. Not
+fixed.*
+
+`runner.spec.ts:955`, `:994`, `:1029`, `:1321` and `viewport.spec.ts:216` wait
+with `page.waitForURL(/opener-doc=/)` after a first open on iOS. The address
+changes on the page that is about to be replaced, so anything done next can
+land on a page nobody will see — the defect behind the retry in "the offer is
+per document" (cold review, Q6), fixed there by waiting for the arrival line to
+say the load after the relaunch. Measured here: `runner.spec.ts:949` failed
+once under parallel load on WebKit and passed 5 of 5 alone.
+
+What closes it: each waits for the settled load — the arrival line's "iOS
+reload: taken on the load before this one" — and then asserts the address.
+
+#### D92 — A keep request written in the browser cannot be ended by the install that answers it
+
+*Status: open, filed from the cold review of 6979d91 (Q4), 22 September.
+Partly mitigated, not fixed.*
+
+The keep sheet's request is held until the person answers it, and one of the
+answers is the document being seen running as an installed app
+(`apps/runner/src/install.ts`, `describe`). That clear cannot reach the case it
+was written for: session storage belongs to one tab, and a home-screen app is a
+separate one — on iOS it is a separate partition entirely. So the note written
+in the browser tab is never seen by the installed app, and the tab still shows
+the sheet again for an app the person has already added. The test that holds
+the clear writes the note and reports standalone in the same tab, which is a
+state no device reaches.
+
+Mitigated on 22 September by the sheet's own words: Done now reads "Done — I've
+added it", so a sheet seen again says what to press.
+
+What would close it: something the browser tab can read that the install
+happened — `getInstalledRelatedApps` where it exists, a launch of the icon
+writing to storage both sides share (not iOS), or the page asking plainly
+the next time it is opened. Undecided which; the phone reading comes first.
+
 #### D91 — The data: manifest decode has no test for a malformed address
 
 *Status: open, filed from the review of b8e39e3 (Q3), 22 September. Not
