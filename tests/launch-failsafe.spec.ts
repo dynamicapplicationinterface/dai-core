@@ -102,6 +102,11 @@ test.describe("the launch fail-safe", () => {
     await expect(panel).toContainText(`hint (${HINT_KEY}): 11111111-1111-4111-8111-111111111111`);
     await expect(panel).toContainText(/library holds it:\s*(yes|no|n\/a)/);
     await expect(panel).toContainText(/service worker controls page:\s*(yes|no|unavailable)/);
+    // Both causes of a wrong icon, readable in one place: whether the iOS
+    // reload was taken, and the build of the worker that served the page (D56).
+    await expect(panel).toContainText("iOS reload: ");
+    await expect(panel).toContainText(/arrived with: \S/);
+    await expect(panel).toContainText(/worker build that served this page: .+ \(page build \S+\)/);
     // The error captured before the panel ever opened.
     await expect(panel).toContainText("boom-from-the-start");
   });

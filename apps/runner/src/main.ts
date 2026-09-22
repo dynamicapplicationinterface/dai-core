@@ -746,6 +746,17 @@ async function launchDetails(): Promise<string> {
   lines.push(
     `service worker controls page: ${sw ? (sw.controller ? "yes" : "no") : "unavailable"}`,
   );
+  /*
+   * Both causes of the wrong icon in one place. The manifest this load arrived
+   * with and whether the iOS reload was taken (and by which path); and beside
+   * them the build of the worker that served this page, which is D56's case —
+   * a worker from an older deploy serving the page describes it the old way.
+   */
+  const [workerStamp, arrivedWith] = await Promise.all([workerBuild(), arrivedManifestReading()]);
+  lines.push(`arrived with: ${arrivedWith}`);
+  lines.push(`opened from: ${entryPoint || "(nothing opened yet)"}`);
+  lines.push(`iOS reload: ${reloadGate}`);
+  lines.push(`worker build that served this page: ${workerStamp} (page build ${build.slice(0, 7)})`);
 
   // D49: a stall on a device whose storage was swept is a case worth having
   // here, and the panel already exists for exactly this argument.
