@@ -95,11 +95,16 @@ import { WORKER } from "../../../src/worker.js";
 const arrivedManifest = document.querySelector('link[rel="manifest"]')?.getAttribute("href") ?? null;
 /** The iOS reload's gate, as decided on this load: set where it is decided. */
 let reloadGate = "not reached";
+/** The entry point of the load that took the reload, carried across it. */
+let reloadedFrom: string | undefined;
 /** Set by the load that took the iOS reload, read by the load it caused. */
 const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
 try {
-  if (sessionStorage.getItem(RELOAD_TAKEN) !== null) {
+  const taken = sessionStorage.getItem(RELOAD_TAKEN);
+  if (taken !== null) {
     sessionStorage.removeItem(RELOAD_TAKEN);
+    // The path that asked for the reload, which this load would otherwise hide.
+    if (taken !== "1") reloadedFrom = taken;
     reloadGate = "taken on the load before this one";
   }
 } catch {
@@ -134,7 +139,8 @@ async function arrivedManifestReading(): Promise<string> {
 
 async function showArrival(): Promise<void> {
   const [build, manifest] = await Promise.all([workerBuild(), arrivedManifestReading()]);
-  const text = `worker ${build} · arrived with ${manifest} · iOS reload: ${reloadGate}`;
+  const entry = entryPoint ? ` · opened from ${entryPoint}` : "";
+  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}`;
   for (const id of ["sheet-arrival", "chooser-arrival"]) {
     const slot = document.getElementById(id);
     if (slot) slot.textContent = text;
@@ -751,6 +757,77 @@ function guardLaunch(target: string): void {
   }, launchStallMs());
 }
 
+/** Which way the document on screen was opened, for the arrival line. */
+let entryPoint = "";
+
+/** What the worker and the manifest are told about a document. */
+async function identityOf(cartridge: Cartridge): Promise<Identity> {
+  return {
+    uuid: cartridge.manifest.documentUuid,
+    name: cartridge.manifest.appName ?? "container",
+    favicon: cartridge.manifest.favicon,
+    opens: 0,
+    link: arrivedByLink ?? (await launchLinkForDocument(cartridge.html)),
+  };
+}
+
+/**
+ * On iOS, a document is on screen only at its own launch address.
+ *
+ * iOS names and launches a home-screen icon from the manifest the page was
+ * linked with when it loaded, so Add to Home Screen gives the document's icon
+ * only on a page loaded at the document's address. This used to be decided in
+ * `ingest` alone, so a copy already held — opened from an icon, a resume or a
+ * merge — was never moved there, and its icon was the opener's. Every path that
+ * opens a document asks here, and names itself (`entry`) for the arrival line.
+ *
+ * Returns true when it navigated: the caller stops, the next load opens it.
+ * A load that was itself the reload never reloads again, whatever the address
+ * says, so a mismatch can cost one extra load and never a loop.
+ */
+async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<boolean> {
+  entryPoint = reloadedFrom ?? entry;
+  const reloadedAlready = reloadGate === "taken on the load before this one";
+  if (platform() !== "ios") {
+    reloadGate = `not taken: platform is ${platform()}`;
+    return false;
+  }
+  describedIdentity = identity;
+  const target = launchAddress(identity);
+  if (sameLaunch(location.href, target)) {
+    if (!reloadedAlready) reloadGate = "not needed: already at the document's address";
+    return false;
+  }
+  if (reloadedAlready) {
+    reloadGate = "not taken: still not at the document's address after a reload";
+    return false;
+  }
+  // The worker describes the next load with this document's manifest.
+  await describeDocument(identity);
+  markStep("reloading at the document's address");
+  reloadGate = "taken";
+  try {
+    sessionStorage.setItem(RELOAD_TAKEN, entryPoint);
+  } catch {
+    /* The reloaded page cannot say it was reloaded; still true of this load. */
+  }
+  // If this relaunch does not complete — the iOS reload bug — the splash stays
+  // up on this same page, and the guard turns it into Tap to open.
+  guardLaunch(target);
+  /*
+   * A real load, even when only the fragment moved: a navigation that changes
+   * nothing but the fragment is a same-document navigation, and neither the
+   * colour nor the manifest is re-read.
+   */
+  if (target.split("#")[0] === location.href.split("#")[0]) {
+    location.hash = new URL(target).hash;
+    location.reload();
+  } else {
+    location.replace(target);
+  }
+  return true;
+}
+
 function clearLaunchGuard(): void {
   window.clearTimeout(launchGuard);
   document.body.classList.remove("launch-stalled");
@@ -836,7 +913,7 @@ async function refreshLibrary(): Promise<void> {
   /* Nothing to draw. */
 }
 
-async function launchFromLibrary(item: LibraryItem): Promise<void> {
+async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void> {
   markStep("opening this device's own copy");
   // Out of this device's own library: the copy it has been writing.
   mountIsOwnCopy = true;
@@ -934,7 +1011,19 @@ async function launchFromLibrary(item: LibraryItem): Promise<void> {
     });
 
     rememberOpen(loaded.manifest.documentUuid);
+    /*
+     * At the document's own address before it is mounted (iOS). Not while a
+     * move waits to be merged: it is held only in this page, so the reload
+     * waits until the merge is in and flushed (`applyPendingMerge`).
+     */
+    if (pendingMerge) {
+      entryPoint = entry;
+      reloadGate = "waiting: the arriving move is merged first";
+    } else if (await relaunchAtOwnAddress(await identityOf(loaded), entry)) {
+      return;
+    }
     await mount(loaded);
+    void showArrival();
     // Off the open's path: the app is on screen before anything is asked.
     void offerNewVersion(loaded);
   } catch (error) {
@@ -1713,7 +1802,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       who.state !== "conflict"
     ) {
       slot.classList.remove("busy");
-      await launchFromLibrary(heldHere);
+      await launchFromLibrary(heldHere, "a link to a copy already here");
       return;
     }
 
@@ -2128,25 +2217,19 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * one gesture away from this moment on. One extra load, behind the
      * launch screen; other platforms read the manifest live and need none.
      */
-    // The arrival line reports which way this went, from the values decided here.
-    reloadGate =
-      platform() !== "ios"
-        ? `not taken: platform is ${platform()}`
-        : !keptOnDevice
-          ? `not taken: kept on device is ${String(keptOnDevice)}`
-          : "not needed: already at the document's address";
-    if (platform() === "ios" && keptOnDevice) {
-      const identity = {
-        uuid: loaded.manifest.documentUuid,
-        name: loaded.manifest.appName ?? "container",
-        favicon: loaded.manifest.favicon,
-        opens: 0,
-        link: arrivedByLink ?? (await launchLinkForDocument(loaded.html)),
-      };
-      // Kept, so the manifest can be described again once the app's colour
-      // is known, which is after it has drawn.
-      describedIdentity = identity;
-      if (!sameLaunch(location.href, launchAddress(identity))) {
+    const entry = "a file or a link, opened here";
+    if (!keptOnDevice) {
+      // Nothing held to launch into: the address would open an empty chooser.
+      entryPoint = entry;
+      reloadGate =
+        platform() !== "ios" ? `not taken: platform is ${platform()}` : "not taken: this device could not keep a copy";
+    } else {
+      const identity = await identityOf(loaded);
+      if (
+        platform() === "ios" &&
+        reloadGate !== "taken on the load before this one" &&
+        !sameLaunch(location.href, launchAddress(identity))
+      ) {
         /*
          * The colour under the clock, learned before the load that counts.
          *
@@ -2163,38 +2246,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         rehearsing = true;
         await mount(loaded);
         await groundSettled(loaded.manifest.documentUuid, 2500);
-        await describeDocument(identity);
-        /*
-         * A real load, even when only the fragment moved.
-         *
-         * The point of this navigation is the load: iOS reads the status bar
-         * colour and the manifest as a page first appears, and not again. The
-         * hint moved from `?doc=` into the fragment (`#u=`), and a navigation
-         * that changes nothing but the fragment is a same-document navigation
-         * — the address changes, no load happens, and neither the colour nor
-         * the manifest is re-read. So when that is the only difference, the
-         * address is set and the reload asked for explicitly.
-         */
-        const target = launchAddress(identity);
-        // If this relaunch does not complete — the iOS reload bug — the splash
-        // stays up on this same page, and the guard turns it into Tap to open
-        // pointed at where the reload was trying to go. See guardLaunch.
-        markStep("reloading at the document's address");
-        reloadGate = "taken";
-        try {
-          sessionStorage.setItem(RELOAD_TAKEN, "1");
-        } catch {
-          /* The reloaded page will say "not reached"; still true of that load. */
-        }
-        guardLaunch(target);
-        if (target.split("#")[0] === location.href.split("#")[0]) {
-          location.hash = new URL(target).hash;
-          location.reload();
-        } else {
-          location.replace(target);
-        }
-        return;
       }
+      if (await relaunchAtOwnAddress(identity, entry)) return;
     }
 
     void showArrival();
@@ -3175,7 +3228,7 @@ async function openThenMerge(
   recordStanding: boolean,
 ): Promise<void> {
   pendingMerge = { data, heldItem, recordStanding };
-  await launchFromLibrary(heldItem);
+  await launchFromLibrary(heldItem, "a copy already here, with an arriving move to merge");
 }
 
 /**
@@ -3223,11 +3276,28 @@ async function applyPendingMerge(): Promise<void> {
         const record = held ?? job.heldItem;
         await saveCartridgeToLibrary({ ...record, mergeStanding: true }).catch(() => undefined);
       }
+      await relaunchAfterMerge();
       return;
     }
-    if (Date.now() > deadline) return;
+    if (Date.now() > deadline) {
+      await relaunchAfterMerge();
+      return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
+}
+
+/**
+ * The iOS reload a merge held back (`launchFromLibrary`): taken once the move
+ * is in and written, so the load that follows opens the merged copy.
+ */
+async function relaunchAfterMerge(): Promise<void> {
+  const open = loaded;
+  if (open) {
+    await flushDocument();
+    if (await relaunchAtOwnAddress(await identityOf(open), entryPoint)) return;
+  }
+  void showArrival();
 }
 
 async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<MergeReport> {
@@ -4424,7 +4494,7 @@ async function start(): Promise<void> {
       if (inlineFrom(location.hash) || referenceFrom(location.pathname, location.search, location.hash)) {
         arrivedByLink = location.href;
       }
-      await launchFromLibrary(held);
+      await launchFromLibrary(held, "an icon, or an address naming a copy already here");
       return;
     }
     // Painted as launching into it by the worker, and it is not here: the
@@ -4552,7 +4622,7 @@ async function start(): Promise<void> {
     return;
   }
 
-  await launchFromLibrary(item);
+  await launchFromLibrary(item, "the document open last time, resumed");
 }
 
 void start();
