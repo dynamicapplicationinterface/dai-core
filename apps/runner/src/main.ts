@@ -154,11 +154,29 @@ function dataManifest(address: string): unknown {
   return JSON.parse(text);
 }
 
+/**
+ * The arrived manifest, asked for with a bound.
+ *
+ * The panel that prints this is for a launch that has stalled, and a fetch
+ * with no bound on that same stalled page left the whole panel on
+ * "gathering…" — the error ring with it (review of 2e371a5, Q4). Two seconds,
+ * as the worker's build is given, and then it is unreadable, which says so.
+ */
+async function fetchManifest(address: string): Promise<unknown> {
+  const abort = new AbortController();
+  const timer = window.setTimeout(() => abort.abort(), 2000);
+  try {
+    return await (await fetch(address, { signal: abort.signal })).json();
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 async function arrivedManifestReading(): Promise<string> {
   if (!arrivedManifest) return "no manifest";
   try {
     const read = (
-      arrivedManifest.startsWith("data:") ? dataManifest(arrivedManifest) : await (await fetch(arrivedManifest)).json()
+      arrivedManifest.startsWith("data:") ? dataManifest(arrivedManifest) : await fetchManifest(arrivedManifest)
     ) as { name?: unknown; start_url?: unknown };
     // The key is in the address; the line shows where it leads, never the key.
     const start = String(read.start_url ?? "").replace(/([#&]k=)[^&]*/, "$1…");
@@ -931,6 +949,8 @@ function eject(): void {
   reloadedFrom = undefined;
   reloadedFor = undefined;
   entryPoint = "";
+  // And the lines that print them, so the panel does not describe what is gone.
+  void showArrival();
   hostSaves = 0;
   hostSavesWritten = 0;
   window.clearTimeout(bootingGuard);

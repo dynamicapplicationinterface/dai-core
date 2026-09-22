@@ -37,9 +37,11 @@
     ],
     "tests/arrival-line.spec.ts": [
       "apps/runner/",
+      "examples/packing-list/",
       "src/bridge.ts",
       "src/bundle.ts",
       "src/cbor.ts",
+      "src/compile.ts",
       "src/confusables-id.ts",
       "src/container.ts",
       "src/copy-choice.ts",
