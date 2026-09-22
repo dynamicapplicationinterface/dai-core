@@ -4364,8 +4364,55 @@ and on the device the walk is for, the control that does it cannot be pressed.
 
 #### D87 — On iOS, Keep reloads and the instructions it asks for can be closed before they are read
 
-*Status: open, found driving the V1 walk on 22 September. Walk step 1, the
-install. Not fixed.*
+*Status: **closed as a misdiagnosis, 22 September — it was D88.** The race this
+entry describes could not be produced; the failure it was filed for never
+reached the code it blames. The original text is kept below, because the way it
+went wrong is the useful part.*
+
+**What the probe showed.** Instrumenting `keep()`, `describe()` and the one call
+site of `describe()` in `main.ts`, and driving the walk's step 1 on an iPhone
+viewport:
+
+```
+dai: PROBE mount describe, rehearsing=true,  href=http://localhost:5175/
+dai: PROBE describe start, sheet open=false, pending=none
+dai: PROBE mount describe, rehearsing=false, href=…/?ground=%23f2f8fb#a=…
+dai: PROBE describe start, sheet open=false, pending=none
+```
+
+and **no `keep pressed` line at all**, across four presses. `keep()` was never
+called. There was no reload from Keep and no note waiting — the second mount is
+the ordinary open, landing at the document's launch address, which the opener
+had already made the page's address. The press landed on nothing, because the
+button was above the top of the screen: the menu, taller than 390 points, had
+overflowed upward out of a layer that cannot scroll (D88). Add to Home Screen is
+the first button in that menu.
+
+**Tested directly, the race does not happen.** `tests/keep-intent.spec.ts` writes
+the note Keep leaves and then drives a first open — the two-load case, a
+rehearsal mount and then the load that counts, each describing the document —
+which is where this entry said the intent would be consumed on a page about to
+be discarded. The sheet appears and stays. The test is kept as a guard (proved
+to go red when the pending sheet is never shown); no code was changed for it,
+because there was nothing reproduced to change.
+
+**How the first diagnosis went wrong.** One early probe caught the sheet open
+six seconds after a press, and four later runs did not. The story fitted —
+`describe()` does close any open sheet before it shows one, and a reload is two
+mounts — and it was written down before the one probe that would have tested it:
+whether `keep()` ran at all. Reading the code produced a mechanism that exists;
+running it showed the failure was somewhere else.
+
+**One question left for a ruling rather than code:** `describe()` still closes an
+open sheet on every mount, so a remount while a person has the keep sheet open —
+a copy arriving, a succession — would take it away. That is not what the walk
+hit and has not been seen, and the ruling on D87 asked for the intent to survive
+whatever draws next. Making the note last until the person answers is a small
+change; it is not made here because nothing has yet shown it is needed.
+
+---
+
+*The entry as first filed:*
 
 **What it means to a person:** they tap **Add to Home Screen** on an iPhone, the
 page blinks, and nothing happens. Tapping it again works.
