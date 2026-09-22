@@ -45,6 +45,7 @@ import {
   keepGround,
   knownGround,
   launchAddress,
+  RELAUNCHED,
   sameLaunch,
   watchForInstall,
   manifestFallback,
@@ -119,7 +120,7 @@ let reloadedFrom: string | undefined;
  * the next open is a new one.
  */
 let reloadedFor: string | undefined;
-let reloadedThisLoad = false;
+let reloadedThisLoad = new URLSearchParams(location.search).has(RELAUNCHED);
 
 /** Whether this load was already the relaunch — for this document, or at all. */
 function relaunchedAlready(uuid: string): boolean {
@@ -128,6 +129,8 @@ function relaunchedAlready(uuid: string): boolean {
 /** Set by the load that took the iOS reload, read by the load it caused. */
 const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
 try {
+  // The second witness. The address is the first, and the only one a device
+  // that refuses storage still has.
   const taken = sessionStorage.getItem(RELOAD_TAKEN);
   if (taken !== null) {
     sessionStorage.removeItem(RELOAD_TAKEN);
@@ -890,6 +893,11 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
     reloadGate = "not taken: still not at the document's address after a reload";
     return false;
   }
+  // Marked in the address, so the load it causes knows it was a relaunch
+  // whatever its storage says.
+  const marked = new URL(target);
+  marked.searchParams.set(RELAUNCHED, "1");
+  const address = marked.href;
   // The worker describes the next load with this document's manifest.
   await describeDocument(identity);
   markStep("reloading at the document's address");
@@ -901,9 +909,9 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   }
   // If this relaunch does not complete — the iOS reload bug — the splash stays
   // up on this same page, and the guard turns it into Tap to open.
-  guardLaunch(target);
+  guardLaunch(address);
   // A real load, and marked as this page's own so it is not heard as a link.
-  loadAt(target, "replace");
+  loadAt(address, "replace");
   return true;
 }
 

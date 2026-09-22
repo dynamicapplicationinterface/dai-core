@@ -160,7 +160,12 @@ test.describe("opening a copy already on an iPhone", () => {
       { timeout: 60_000 },
     );
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
-    expect(new URL(page.url()).pathname + new URL(page.url()).search, "only the fragment moved").toBe("/");
+    const landed = new URL(page.url());
+    expect(landed.pathname, "the same place").toBe("/");
+    expect(
+      [...landed.searchParams.keys()],
+      "nothing in the query but the mark the relaunch leaves for the load it causes",
+    ).toEqual(["relaunched"]);
     await page.waitForTimeout(3_000);
     expect(heardAsLink, "the page's own fragment write is not a link arriving").toEqual([]);
     expect(loads, "the relaunch is exactly one load").toBe(1);
@@ -225,14 +230,17 @@ test.describe("opening a copy already on an iPhone", () => {
     await device.close();
   });
 
-  test("a load that lost its hint on the way relaunches once, not for ever", async ({ browser }) => {
+  test("a load that lost its hint, on a device that refuses storage, relaunches once", async ({ browser }) => {
     /*
      * The guard that stops a relaunch relaunching was held for one document,
      * read from the hint in the address the reload landed on. An address that
      * loses its fragment on the way has no hint: the guard could not match, the
      * page was not where it meant to be, and it relaunched again — 24 loads in
      * 20 seconds, measured in the cold review of 025166c. A load that was
-     * itself a relaunch never relaunches again, whatever its address says.
+     * itself a relaunch never relaunches again. The guard read session storage,
+     * which a device can refuse — with both gone it looped again, measured in
+     * the second cold review. The relaunch marks the address it loads, and an
+     * address is the one witness that cannot be refused.
      */
     const out = await compileDirectory({ sourceDir: join(repo, "examples", "packing-list"), root: repo, appName: "Beach trip" });
     const file = join(mkdtempSync(join(tmpdir(), "dai-ios-nohint-")), "trip.dai.html");
@@ -251,8 +259,19 @@ test.describe("opening a copy already on an iPhone", () => {
       timeout: 60_000,
     });
 
-    // From here every load arrives with its hint gone, as a lost fragment leaves it.
+    /*
+     * From here every load arrives with its hint gone, as a lost fragment
+     * leaves it — and with session storage refusing, which is the other
+     * witness the guard used to be. The address is what is left.
+     */
     await page.addInitScript(() => {
+      const deny = (): never => {
+        throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+      };
+      Object.defineProperty(window, "sessionStorage", {
+        configurable: true,
+        get: () => ({ getItem: deny, setItem: deny, removeItem: deny }),
+      });
       if (location.hash.includes("opener-doc=")) {
         const kept = location.hash.replace(/[#&]opener-doc=[^&]*/, "").replace(/^&/, "#");
         history.replaceState(null, "", location.pathname + location.search + (kept === "#" ? "" : kept));

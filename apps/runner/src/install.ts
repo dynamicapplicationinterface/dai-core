@@ -135,6 +135,23 @@ const KEEP_AFTER_RELOAD = KEYS.KEEP_AFTER_RELOAD;
  * the browser and never sent to a server — the same property that makes the
  * link private makes it safe to put on a home screen.
  */
+/**
+ * The mark a relaunch puts on the address it loads.
+ *
+ * The guard that stops a relaunch relaunching read session storage, and a
+ * device that refuses storage has none: with the hint lost as well, the page
+ * relaunched for ever (24 loads in 20 seconds, measured twice — the second
+ * cold review of 5281961). The address itself is the one witness that cannot
+ * be refused, so the relaunch carries this and a load that arrives with it
+ * never relaunches.
+ *
+ * In the query, not the fragment: a fragment is not read back by the worker
+ * and is the place this design keeps what must not reach a server. This is a
+ * bare flag — no document, no key — and it is stripped from every address
+ * built for an icon or a link below, so it never outlives the load it marks.
+ */
+export const RELAUNCHED = "relaunched";
+
 export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link?: string }): string {
   const url = identity.link ? new URL(identity.link) : new URL("/", location.origin);
   /*
@@ -150,6 +167,8 @@ export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link
    * id belongs there with them.
    */
   url.searchParams.delete("doc");
+  // Never carried forward: an icon's address is not a relaunch.
+  url.searchParams.delete(RELAUNCHED);
   url.hash = withHint(url.hash, identity.uuid);
   if (!identity.link) url.searchParams.set("name", identity.name);
   /*
@@ -177,6 +196,8 @@ export function sameLaunch(a: string, b: string): boolean {
     try {
       const url = new URL(address);
       url.searchParams.delete("ground");
+      // Nor does the mark a relaunch left make this a different place.
+      url.searchParams.delete(RELAUNCHED);
       return url.href;
     } catch {
       return address;
