@@ -99,3 +99,39 @@ test("putting a document away takes its lines off the panel", async ({ page }) =
   });
   await expect(line).toContainText("iOS reload: not reached");
 });
+
+test("a manifest written as data: says why, on the launch panel, in the tab it happened in", async ({ page }) => {
+  /*
+   * The one writer of a data: manifest is the fallback for a cache that
+   * refused, and a phone read one with nothing to say how. Which step refused,
+   * and the error's own name and message, are kept for the panel.
+   */
+  await page.addInitScript(() => {
+    // On the prototype: WebKit ignores an own property set on `caches`.
+    CacheStorage.prototype.open = () =>
+      Promise.reject(new DOMException("The operation is insecure.", "SecurityError"));
+  });
+  const built = await compileDirectory({ sourceDir: join(repo, "examples", "packing-list"), root: repo, appName: "Beach trip" });
+  const file = join(mkdtempSync(join(tmpdir(), "dai-arrival-fallback-")), "trip.dai.html");
+  writeFileSync(file, built.html, "utf8");
+  await page.goto(RUNNER_URL);
+  await page.setInputFiles("#file", file);
+  await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+  await page.locator("#card-open").click();
+  await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+  await expect
+    .poll(() => page.locator('link[rel="manifest"]').getAttribute("href"), { timeout: 15_000 })
+    .toMatch(/^data:/);
+
+  // Later in the same tab, on a launch that has stalled: the panel a phone reads.
+  await page.evaluate(() => (window as unknown as { __runner: { eject(): void } }).__runner.eject());
+  await page.evaluate((to) => {
+    document.body.classList.add("launching");
+    (window as unknown as { __runner: { guardLaunch(t: string): void } }).__runner.guardLaunch(to);
+  }, `${RUNNER_URL}#${HINT_KEY}=11111111-1111-4111-8111-111111111111`);
+  await page.locator("#launch-details-toggle").click({ timeout: 15_000 });
+  await expect(page.locator("#launch-details")).toContainText(
+    "manifest written as data: caches.open: SecurityError: The operation is insecure.",
+    { timeout: 5_000 },
+  );
+});

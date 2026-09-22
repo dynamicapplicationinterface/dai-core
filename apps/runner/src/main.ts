@@ -47,6 +47,7 @@ import {
   launchAddress,
   sameLaunch,
   watchForInstall,
+  manifestFallback,
   type Identity,
 } from "./install.js";
 import { describeApp, hideCard, showCard, type CardInput } from "./card.js";
@@ -788,6 +789,7 @@ async function launchDetails(): Promise<string> {
   lines.push(`arrived with: ${arrivedWith}`);
   lines.push(`opened from: ${entryPoint || "(nothing opened yet)"}`);
   lines.push(`iOS reload: ${reloadGate}`);
+  lines.push(`manifest written as data: ${manifestFallback() ?? "never, in this tab"}`);
   lines.push(`worker build that served this page: ${workerStamp} (page build ${build.slice(0, 7)})`);
 
   // D49: a stall on a device whose storage was swept is a case worth having

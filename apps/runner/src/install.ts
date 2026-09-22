@@ -418,8 +418,10 @@ export async function describeDocument(identity: Identity): Promise<void> {
   // one. Milder than a cache bug and a different shape, but it is the reason
   // this put is unconditional rather than skipped when an entry exists.
   const address = manifestAddress(identity.uuid);
+  let step = "caches.open";
   try {
     const cache = await caches.open(ICON_CACHE);
+    step = "cache.put";
     await cache.put(
       address,
       new Response(JSON.stringify(manifest), { headers: { "content-type": "application/manifest+json" } }),
@@ -429,11 +431,34 @@ export async function describeDocument(identity: Identity): Promise<void> {
     // cannot read `#u=` from a fragment, and it rewrites the head on the way
     // out. Cleared by describeSelf when nothing is open.
     void describeNext(identity.uuid);
-  } catch {
+  } catch (error) {
+    /*
+     * Said where it happens, and kept for the launch panel. A phone read a
+     * data: manifest on its panel and nothing could say how it got there:
+     * this is the only writer of one, and it writes one only when the cache
+     * refused. Which step refused, and the error's own name and message, are
+     * the reading the next phone sitting takes.
+     */
+    const why = `${step}: ${(error as Error)?.name ?? "Error"}: ${(error as Error)?.message ?? String(error)}`;
+    console.info(`dai: manifest written as a data: URL, because ${why}`);
+    try {
+      sessionStorage.setItem(KEYS.MANIFEST_FALLBACK, why);
+    } catch {
+      /* The console line is still there. */
+    }
     headTag("link", 'rel="manifest"').setAttribute(
       "href",
       "data:application/manifest+json," + encodeURIComponent(JSON.stringify(manifest)),
     );
+  }
+}
+
+/** Why a manifest was last written as a data: URL in this tab, if it ever was. */
+export function manifestFallback(): string | null {
+  try {
+    return sessionStorage.getItem(KEYS.MANIFEST_FALLBACK);
+  } catch {
+    return null;
   }
 }
 
