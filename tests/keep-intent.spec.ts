@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect } from "@playwright/test";
+import { expect, type Browser, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { KEYS } from "../src/keys.js";
@@ -124,5 +124,90 @@ test.describe("asking to keep a document", () => {
     await expect(page.locator("#keep-sheet"), "answered is answered").toBeHidden();
 
     await device.close();
+  });
+
+  /** A device with packing-list open and its keep sheet asked for, the way a person asks. */
+  async function askedToKeep(
+    browser: Browser,
+    options: { installed?: boolean } = {},
+  ): Promise<{ page: Page; uuid: string; file: string }> {
+    const built = await compileDirectory({
+      sourceDir: join(repo, "examples", "packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+    const file = join(mkdtempSync(join(tmpdir(), "dai-keep-ends-")), "trip.dai.html");
+    writeFileSync(file, built.html, "utf8");
+    const device = await browser.newContext();
+    const page = await device.newPage();
+    if (options.installed) {
+      // Running as an installed app: `standalone()` reads display-mode first.
+      await page.addInitScript(() => {
+        const real = window.matchMedia.bind(window);
+        window.matchMedia = ((query: string) =>
+          query.includes("display-mode: standalone")
+            ? ({ matches: true, media: query, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList)
+            : real(query)) as typeof window.matchMedia;
+      });
+    }
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await page.locator("#card-open:visible, body.loaded").first().waitFor({ timeout: 60_000 });
+    if (await page.locator("#card-open").isVisible()) await page.locator("#card-open").click();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(page.locator("#launch")).toBeHidden({ timeout: 60_000 });
+    return { page, uuid: built.manifest.documentUuid, file };
+  }
+
+  const note = (page: Page) => page.evaluate((key) => sessionStorage.getItem(key), KEYS.KEEP_AFTER_RELOAD);
+
+  async function pressKeep(page: Page): Promise<void> {
+    await page.locator("#more").click();
+    await expect(page.locator("#sheet")).toBeVisible({ timeout: 15_000 });
+    await page.locator("#keep-cta").click();
+    await expect(page.locator("#keep-sheet")).toBeVisible({ timeout: 15_000 });
+  }
+
+  test("the backdrop answers it: the note goes, and a reload does not bring the sheet back", async ({ browser }) => {
+    const { page, uuid } = await askedToKeep(browser);
+    await pressKeep(page);
+    expect(await note(page), "asked, and written down").toBe(uuid);
+
+    // Off the panel, at the top of the screen: the backdrop, where a person taps away.
+    await page.locator("#keep-sheet").click({ position: { x: 10, y: 10 } });
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+    expect(await note(page), "answered by the backdrop").toBeNull();
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.waitForTimeout(3_000);
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+    await page.context().close();
+  });
+
+  test("putting the document away ends the request", async ({ browser }) => {
+    const { page, uuid } = await askedToKeep(browser);
+    await pressKeep(page);
+    expect(await note(page)).toBe(uuid);
+
+    await page.evaluate(() => (window as unknown as { __runner: { eject(): void } }).__runner.eject());
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+    expect(await note(page), "the document is gone, and the request with it").toBeNull();
+    await page.context().close();
+  });
+
+  test("seen running installed, the request is over: no sheet, and the note is gone", async ({ browser }) => {
+    /*
+     * On iOS a person finishes in the Share sheet and never taps Done. The
+     * request lasted, and the next time the document was described the sheet
+     * came back for an app they already had. Running installed is the install.
+     */
+    const { page, uuid } = await askedToKeep(browser, { installed: true });
+    await page.evaluate(([key, id]) => sessionStorage.setItem(key, id), [KEYS.KEEP_AFTER_RELOAD, uuid] as const);
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.waitForTimeout(3_000);
+    await expect(page.locator("#keep-sheet"), "nothing to ask an installed app").toBeHidden();
+    expect(await note(page), "and nothing left to ask it later").toBeNull();
+    await page.context().close();
   });
 });

@@ -694,13 +694,23 @@ export function watchForInstall(): Keeper | null {
   const closeSheet = () => {
     slideClose(sheet);
   };
-  const answer = () => {
+  /*
+   * The request is over. Answered (Done, the backdrop); the document put away
+   * (eject); or the document seen running as an installed app, which is the
+   * install the sheet was asking for — on iOS a person finishes in the Share
+   * sheet and never taps Done, and their browser tab kept the request and
+   * showed the sheet again, for an app they already had (review of 0fba668).
+   */
+  const forget = () => {
     asked = null;
     try {
       sessionStorage.removeItem(KEEP_AFTER_RELOAD);
     } catch {
       /* Nothing was left. */
     }
+  };
+  const answer = () => {
+    forget();
     closeSheet();
   };
   done.addEventListener("click", answer);
@@ -759,6 +769,8 @@ export function watchForInstall(): Keeper | null {
 
     describe(identity) {
       current = identity;
+      // Running installed: kept, so there is nothing left to ask.
+      if (standalone()) forget();
       // Back from the reload `keepHere` asked for, or the same request still
       // unanswered: kept until the person answers the sheet.
       let pending: string | null = null;
@@ -796,6 +808,7 @@ export function watchForInstall(): Keeper | null {
     keep,
 
     clear() {
+      forget();
       current = null;
       cta.hidden = true;
       cta.classList.remove("nudge");
