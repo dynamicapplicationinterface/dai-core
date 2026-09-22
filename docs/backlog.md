@@ -4338,6 +4338,53 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D87 — On iOS, Keep reloads and the instructions it asks for can be closed before they are read
+
+*Status: open, found driving the V1 walk on 22 September. Walk step 1, the
+install. Not fixed.*
+
+**What it means to a person:** they tap **Add to Home Screen** on an iPhone, the
+page blinks, and nothing happens. Tapping it again works.
+
+On iOS there is no install prompt, so `keep()` calls `keepHere()`
+(`install.ts:452`), which reloads the page at the document's own launch address
+— that is what makes the icon belong to the document rather than to the opener —
+and leaves a note in `sessionStorage` (`KEEP_AFTER_RELOAD`) asking for the sheet
+of instructions to be shown once the page comes back. After the reload,
+`describe()` shows it.
+
+**`describe()` closes any open sheet before it shows one** (`install.ts`,
+`closeSheet()` at the top of `describe`). It runs on every mount, so a later
+call — a remount, a rehearsal, the document being described again — closes the
+sheet the reload just opened. Whether the person sees the instructions depends
+on which happens last.
+
+**Measured, in the walk spec's own run.** Six seconds after the tap, with an
+iPhone user agent on WebKit:
+
+```
+KEEP {"url":"http://localhost:5175/?ground=%23f2f8fb#a=AfGfjpHtXW1sU1UY3gcKNCAR…",
+      "body":"loaded","cta":false,"sheet":false}
+```
+
+`sheet: false` is `hidden === false` — the sheet was open at that moment, and the
+document had remounted from its inline launch address. In four later runs of the
+same test the sheet was gone by the time anything read it, and in two it stood.
+That is the race, and its rate here is roughly one in three.
+
+**Why it is not a test problem.** The second tap is reliable because the page is
+already at the document's launch address, so `keepHere` does not reload again —
+which is exactly what a person discovers by accident. `tests/v1-walk.spec.ts`
+taps twice and says why, so the sentences can be read; the defect is the first
+tap.
+
+**When it is picked up:** the fix is presumably for `describe()` not to close a
+sheet it is about to be asked to open, or for the pending note to be honoured
+after the last describe rather than the first. Neither is decided here. What a
+test can see is the sheet's state after a mount; whether a person on a real
+iPhone sees the blink is a phone check, and it is the same one step 1 of the
+walk already needs.
+
 #### D86 — `Identity` declares `link` twice
 
 *Status: open, trivial, filed because it is the kind of thing that stops being
