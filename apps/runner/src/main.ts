@@ -121,6 +121,23 @@ let reloadedFrom: string | undefined;
  */
 let reloadedFor: string | undefined;
 let reloadedThisLoad = new URLSearchParams(location.search).has(RELAUNCHED);
+/*
+ * Read, and then taken off the address.
+ *
+ * The mark is for this load and nothing after it, and the address is a
+ * person's: it is what they see, copy, and put on a home screen. Everything
+ * else is kept exactly as it stands — the fragment above all, which carries
+ * the document and its key and must survive untouched.
+ */
+if (reloadedThisLoad) {
+  try {
+    const clean = new URL(location.href);
+    clean.searchParams.delete(RELAUNCHED);
+    history.replaceState(history.state, "", clean.href);
+  } catch {
+    /* The mark stays in the address; it means the same either way. */
+  }
+}
 
 /** Whether this load was already the relaunch — for this document, or at all. */
 function relaunchedAlready(uuid: string): boolean {
@@ -3459,9 +3476,10 @@ let mergeFinished = true;
  * Tapping the cover's control says the copy as it stands is what they want to
  * see, and the sentence under it says the move was not added. The retry loop
  * kept going, so the move could land a moment later under a sentence saying it
- * had not (second cold review of c1490cb). Cancelled, it stops asking: the
- * move is not applied here, and it is still wherever it came from — a mailbox
- * keeps it for the next open.
+ * had not (second cold review of c1490cb). Cancelled, it stops asking, and
+ * the move is not applied here. What keeps it is whatever carried it — the
+ * file, or the link it arrived by — which is still where it was; this path
+ * has no mailbox behind it, and nothing here is holding the move for later.
  */
 let mergeCancelled = false;
 

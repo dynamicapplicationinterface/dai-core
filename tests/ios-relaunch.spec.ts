@@ -121,6 +121,15 @@ test.describe("opening a copy already on an iPhone", () => {
     );
     await expect(line).toContainText("iOS reload: taken on the load before this one");
     await expect(line).not.toContainText("not reached");
+    /*
+     * The mark is off the address, and the load still knows what it was: the
+     * line above says so. The address is the document's own launch address
+     * still — which is what `sameLaunch` is asked, and what keeps this load
+     * from relaunching again.
+     */
+    const address = new URL(page.url());
+    expect(address.searchParams.has("relaunched"), "nothing of ours left in a person's address").toBe(false);
+    expect(address.hash, "and the document is still named in the fragment").toContain(`${HINT_KEY}=${uuid}`);
     await page.waitForTimeout(3_000);
     expect(loads, "the visit and the resume's relaunch: two loads, not three").toBe(2);
 
@@ -162,10 +171,10 @@ test.describe("opening a copy already on an iPhone", () => {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     const landed = new URL(page.url());
     expect(landed.pathname, "the same place").toBe("/");
-    expect(
-      [...landed.searchParams.keys()],
-      "nothing in the query but the mark the relaunch leaves for the load it causes",
-    ).toEqual(["relaunched"]);
+    expect([...landed.searchParams.keys()], "and nothing left in the query: the mark is read and taken off").toEqual(
+      [],
+    );
+    expect(landed.hash, "the fragment is untouched — the document and its key are in it").toContain(`${HINT_KEY}=`);
     await page.waitForTimeout(3_000);
     expect(heardAsLink, "the page's own fragment write is not a link arriving").toEqual([]);
     expect(loads, "the relaunch is exactly one load").toBe(1);

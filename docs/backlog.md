@@ -4338,6 +4338,45 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D95 — The relaunch mark rides in `identity.link`, and only `launchAddress` takes it out
+
+*Status: open, filed 22 September beside the fix that added the mark. Not
+fixed.*
+
+A relaunch loads `?relaunched=1` (`apps/runner/src/install.ts`, `RELAUNCHED`),
+and the load that arrives with it reads it, then takes it off the visible
+address. Between those two moments the page's own address carries it, and
+`arrivedByLink` is set from `location.href` on the link paths — so the mark can
+be copied into `identity.link`, and from there into anything built from that
+link. One place removes it: `launchAddress`, which deletes the key before it
+writes an icon's address. Everything else that builds on a link — a sent copy,
+a manifest's `start_url`, a card's address — is clean only because it goes
+through there or because the strip happens first.
+
+That is one guard for a value that travels, and the review that asked for the
+strip asked for this to be written down rather than trusted. What would close
+it: the mark never reaching `arrivedByLink` at all (read and dropped before
+anything copies the address), so no builder has to know about it.
+
+#### D94 — `mergeCancelled` outlives the merge it cancelled
+
+*Status: open, filed 22 September from the second cold review's follow-up. Not
+fixed.*
+
+`mergeCancelled` (`apps/runner/src/main.ts`) is set when the person ends a
+rehearsed merge with Tap to open, and it is set back to false where the next
+merge is armed — which is the rehearsal branch in `launchFromLibrary`, and
+nowhere else. A merge that does not go through that branch (a copy arriving
+while a document is already open, a merge on a platform that never rehearses)
+runs with whatever the last cancellation left. Nothing has been seen to fail:
+`applyPendingMerge` is the only reader, and it is reached from the same branch.
+It is a flag whose lifetime is shorter than its scope, which is how the
+`reloadGate` guard went wrong (D-review of 025166c, Q1.3).
+
+What would close it: clear it where a merge is asked for — `openThenMerge` and
+the card's merge action — rather than where one is rehearsed, and a test that
+cancels a rehearsed merge on one document and then merges into another.
+
 #### D93 — Five more tests wait for the address to change rather than for the load it causes
 
 *Status: open, filed 22 September while fixing the cold review's Q1.1. Not
