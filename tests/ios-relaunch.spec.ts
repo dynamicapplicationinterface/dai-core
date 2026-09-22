@@ -224,4 +224,46 @@ test.describe("opening a copy already on an iPhone", () => {
 
     await device.close();
   });
+
+  test("a load that lost its hint on the way relaunches once, not for ever", async ({ browser }) => {
+    /*
+     * The guard that stops a relaunch relaunching was held for one document,
+     * read from the hint in the address the reload landed on. An address that
+     * loses its fragment on the way has no hint: the guard could not match, the
+     * page was not where it meant to be, and it relaunched again — 24 loads in
+     * 20 seconds, measured in the cold review of 025166c. A load that was
+     * itself a relaunch never relaunches again, whatever its address says.
+     */
+    const out = await compileDirectory({ sourceDir: join(repo, "examples", "packing-list"), root: repo, appName: "Beach trip" });
+    const file = join(mkdtempSync(join(tmpdir(), "dai-ios-nohint-")), "trip.dai.html");
+    writeFileSync(file, out.html, "utf8");
+
+    const device = await browser.newContext({ userAgent: IPHONE, viewport: { width: 390, height: 844 } });
+    const page = await device.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "iPhone", configurable: true });
+    });
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+    await page.locator("#card-open").click();
+    await expect(page.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
+      timeout: 60_000,
+    });
+
+    // From here every load arrives with its hint gone, as a lost fragment leaves it.
+    await page.addInitScript(() => {
+      if (location.hash.includes("opener-doc=")) {
+        const kept = location.hash.replace(/[#&]opener-doc=[^&]*/, "").replace(/^&/, "#");
+        history.replaceState(null, "", location.pathname + location.search + (kept === "#" ? "" : kept));
+      }
+    });
+    let loads = 0;
+    page.on("load", () => {
+      loads += 1;
+    });
+    await page.goto(RUNNER_URL);
+    await page.waitForTimeout(20_000);
+    expect(loads, "the visit and one relaunch, and then it stops").toBe(2);
+  });
 });

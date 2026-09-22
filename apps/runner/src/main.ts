@@ -109,8 +109,22 @@ let reloadedFrom: string | undefined;
  * handoff while this one is open — is a new open, owed a reload of its own,
  * which a guard for the whole page refused it (Q1.2). Read from the address
  * the reload landed on, which names the document in its hint.
+ *
+ * Beside it, `reloadedThisLoad`: this load was a relaunch, whatever document
+ * it names. The hint is how the document is known, and an address that lost
+ * its fragment on the way has none — then the document guard cannot match, the
+ * page is not where it meant to be, and it relaunched for ever (24 loads in
+ * 20 seconds, measured in the cold review of 025166c, Q3). A load that was
+ * itself a relaunch never relaunches again. Both are cleared on eject, where
+ * the next open is a new one.
  */
 let reloadedFor: string | undefined;
+let reloadedThisLoad = false;
+
+/** Whether this load was already the relaunch — for this document, or at all. */
+function relaunchedAlready(uuid: string): boolean {
+  return reloadedThisLoad || reloadedFor === uuid;
+}
 /** Set by the load that took the iOS reload, read by the load it caused. */
 const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
 try {
@@ -121,6 +135,7 @@ try {
     if (taken !== "1") reloadedFrom = taken;
     reloadGate = "taken on the load before this one";
     reloadedFor = hintedUuid(location.hash, location.search);
+    reloadedThisLoad = true;
   }
 } catch {
   /* No session storage: the line says only what this load decided. */
@@ -849,7 +864,7 @@ async function identityOf(cartridge: Cartridge): Promise<Identity> {
  * says, so a mismatch can cost one extra load and never a loop.
  */
 async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<boolean> {
-  const reloadedAlready = reloadedFor === identity.uuid;
+  const reloadedAlready = relaunchedAlready(identity.uuid);
   // The path that asked for the reload names this open only when it was this document.
   entryPoint = (reloadedAlready ? reloadedFrom : undefined) ?? entry;
   if (platform() !== "ios") {
@@ -950,6 +965,7 @@ function eject(): void {
   reloadGate = "not reached";
   reloadedFrom = undefined;
   reloadedFor = undefined;
+  reloadedThisLoad = false;
   entryPoint = "";
   // And the lines that print them, so the panel does not describe what is gone.
   void showArrival();
@@ -1085,7 +1101,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     if (
       pendingMerge &&
       platform() === "ios" &&
-      reloadedFor !== identity.uuid &&
+      !relaunchedAlready(identity.uuid) &&
       !sameLaunch(location.href, launchAddress(identity))
     ) {
       // Rehearsed, like a first open: see finishMerge.
@@ -2301,7 +2317,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       const identity = await identityOf(loaded);
       if (
         platform() === "ios" &&
-        reloadedFor !== identity.uuid &&
+        !relaunchedAlready(identity.uuid) &&
         !sameLaunch(location.href, launchAddress(identity))
       ) {
         /*
