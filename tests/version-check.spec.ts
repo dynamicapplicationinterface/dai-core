@@ -39,7 +39,7 @@ test.describe("what a copy sends and takes back", () => {
   test("sends the three facts and nothing else", async () => {
     const relay = answering({ current: "build-2", successor: "https://store.invalid/2#k=k", publicKey: KEY, label: "Two", note: "n" });
     await askForSuccessor({
-      relayBase: "https://relay.invalid",
+      relayOrigin: "https://relay.invalid",
       documentUuid: DOC,
       version: "build-1",
       trustedKey: KEY,
@@ -62,7 +62,7 @@ test.describe("what a copy sends and takes back", () => {
       note: "the exercise list has 40 more movements",
     });
     const successor = await askForSuccessor({
-      relayBase: "https://relay.invalid",
+      relayOrigin: "https://relay.invalid",
       documentUuid: DOC,
       version: "build-1",
       trustedKey: KEY,
@@ -91,7 +91,7 @@ test.describe("what a copy sends and takes back", () => {
       note: "n",
     });
     const successor = await askForSuccessor({
-      relayBase: "https://relay.invalid",
+      relayOrigin: "https://relay.invalid",
       documentUuid: DOC,
       version: "build-1",
       trustedKey: KEY,
@@ -104,7 +104,7 @@ test.describe("what a copy sends and takes back", () => {
     const relay = answering({ current: "build-2", successor: "https://store.invalid/2#k=k", publicKey: KEY, label: "Two", note: "n" });
     expect(
       await askForSuccessor({
-        relayBase: "https://relay.invalid",
+        relayOrigin: "https://relay.invalid",
         documentUuid: DOC,
         version: "build-1",
         trustedKey: undefined,
@@ -130,7 +130,7 @@ test.describe("what a copy sends and takes back", () => {
     for (const { what, relay } of cases) {
       expect(
         await askForSuccessor({
-          relayBase: "https://relay.invalid",
+          relayOrigin: "https://relay.invalid",
           documentUuid: DOC,
           version: "build-1",
           trustedKey: KEY,
@@ -144,7 +144,7 @@ test.describe("what a copy sends and takes back", () => {
   test("a build with no relay address asks nobody", async () => {
     const relay = answering({ current: "build-2", successor: "https://store.invalid/2#k=k", publicKey: KEY });
     expect(
-      await askForSuccessor({ relayBase: "", documentUuid: DOC, version: "build-1", trustedKey: KEY, fetcher: relay.fetcher }),
+      await askForSuccessor({ relayOrigin: "", documentUuid: DOC, version: "build-1", trustedKey: KEY, fetcher: relay.fetcher }),
     ).toBeNull();
     expect(relay.calls, "and asks nothing of anybody").toEqual([]);
   });

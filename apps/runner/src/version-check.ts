@@ -46,19 +46,30 @@ export function checkIsDue(lastCheckedAt: string | undefined, now: number): bool
  * on a stranger's say-so.
  */
 export async function askForSuccessor(options: {
-  relayBase: string;
+  /**
+   * The relay's **origin**, not its mailbox path.
+   *
+   * The opener carries one address for the relay (`DAI_RELAY_BASE`), and the
+   * mailbox client is handed it with `/m` already on the end — `httpMailbox`
+   * builds `<base>/<document>`. The version door is `/v` on the same worker,
+   * so this takes the origin and the caller derives it. Written down because
+   * the first version of this took "the relay base" and built `<base>/v/…`,
+   * which is `…/m/v/…` on a deploy: one name meaning two things, which is the
+   * shape the backlog's first pattern is about.
+   */
+  relayOrigin: string;
   documentUuid: string;
   version: string;
   trustedKey?: string;
   fetcher?: typeof fetch;
 }): Promise<Successor | null> {
-  const { relayBase, documentUuid, version, trustedKey } = options;
-  if (!relayBase || !version) return null;
+  const { relayOrigin, documentUuid, version, trustedKey } = options;
+  if (!relayOrigin || !version) return null;
   const call = options.fetcher ?? fetch;
 
   let answer: Record<string, unknown>;
   try {
-    const response = await call(`${relayBase.replace(/\/$/, "")}/v/${encodeURIComponent(documentUuid)}`, {
+    const response = await call(`${relayOrigin.replace(/\/$/, "")}/v/${encodeURIComponent(documentUuid)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       // The three facts, and the route carries the first.

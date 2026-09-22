@@ -249,10 +249,19 @@ test.describe("a new version offered to somebody using the app", () => {
       successor: hosted.address,
     });
 
-    // Their next open. The copy checks in, and the card comes up.
-    // Their next open, reached through the seam rather than a reload: a
-    // reload would throw away the relay address the test just injected.
-    await page.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+    /*
+     * Their next open, reached through the seam rather than a reload: a reload
+     * would throw away the relay address the test just injected.
+     *
+     * Pointed at the relay the way a deploy points at it — `DAI_RELAY_BASE`
+     * carries the mailbox path, `<origin>/m`, because that is what the mailbox
+     * client appends a document to. The version door is `/v` on the same
+     * worker. The first build of this check took the configured value and
+     * appended `/v/<document>` to it, which on a deploy is `…/m/v/<document>`:
+     * one name meaning two things, and nothing here would have noticed,
+     * because a test that passes a bare origin never sees it.
+     */
+    await page.evaluate((base) => (window as any).__runner.useRelay(`${base}/m`), relay.base);
     await page.evaluate(() => (window as any).__runner.checkForNewVersion());
 
     const sheet = page.locator("#update-sheet");
@@ -307,7 +316,8 @@ test.describe("a new version offered to somebody using the app", () => {
       successor: hosted.address,
     });
 
-    await page.evaluate((base) => (window as any).__runner.useRelay(base), relay.base);
+    // The deploy's shape here too: the configured address carries the mailbox path.
+    await page.evaluate((base) => (window as any).__runner.useRelay(base + "/m"), relay.base);
     await page.evaluate(() => (window as any).__runner.checkForNewVersion());
     await expect(page.locator("#update-sheet")).toBeVisible({ timeout: 60_000 });
     await page.locator("#update-later").click();

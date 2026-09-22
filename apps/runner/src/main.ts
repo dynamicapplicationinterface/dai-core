@@ -970,8 +970,23 @@ async function offerNewVersion(cartridge: Cartridge): Promise<void> {
   const pinned = await trustStore()
     .get(uuid)
     .catch(() => null);
+  /*
+   * The relay's origin, not the address the mailbox uses.
+   *
+   * One value configures the relay (`DAI_RELAY_BASE`), and the mailbox is
+   * handed it with `/m` on the end — `httpMailbox` appends the document to
+   * whatever it is given. The version door is `/v` on the same worker, so the
+   * origin is what this needs, and deriving it here keeps one address in the
+   * page rather than two that can disagree.
+   */
+  let origin: string;
+  try {
+    origin = new URL(relayBase, location.href).origin;
+  } catch {
+    return;
+  }
   const successor = await askForSuccessor({
-    relayBase,
+    relayOrigin: origin,
     documentUuid: uuid,
     version,
     trustedKey: pinned?.publicKey ?? undefined,
