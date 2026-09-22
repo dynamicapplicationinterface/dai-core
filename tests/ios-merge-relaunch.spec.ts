@@ -180,4 +180,56 @@ test.describe("a move merged into a held copy on an iPhone", () => {
 
     await page.context().close();
   });
+
+  test("a frame that never answers leaves a cover with a way off it", async ({ browser }) => {
+    /*
+     * The merge waits on the frame's handshake, and can wait on one that never
+     * comes. The launch screen stood over that wait with no way off: `mount`
+     * clears the launch guard, and nothing armed it again (cold review of
+     * c424598, Q2.1). Now the cover carries Tap to open, and tapping it shows
+     * the copy as it stands with the sentence that says the move did not land.
+     */
+    const { file, uuid } = await built();
+    const page = await iphoneHolding(browser, file);
+    // A frame whose handshake never reaches the host: the merge waits for ever.
+    await page.addInitScript(() => {
+      (window as unknown as { __daiTimers: { launchStallMs: number } }).__daiTimers = { launchStallMs: 1000 };
+      const add = window.addEventListener.bind(window);
+      window.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+        if (type !== "message") return add(type, listener, options as AddEventListenerOptions);
+        const filtered = (event: Event): void => {
+          const data = (event as MessageEvent).data as { type?: string } | null;
+          if (data && data.type === "DAI_HOST_HANDSHAKE") return;
+          (listener as EventListener)(event);
+        };
+        return add(type, filtered, options as AddEventListenerOptions);
+      }) as typeof window.addEventListener;
+    });
+    await page.reload();
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+    let loads = 0;
+    page.on("load", () => {
+      loads += 1;
+    });
+
+    await mergeInto(page, uuid, [1, 2, 3, 4]);
+
+    // The cover, and then a way off it.
+    await expect(page.locator("body"), "behind the launch screen while it waits").toHaveClass(/booting/, {
+      timeout: 30_000,
+    });
+    await expect(page.locator("#launch-open"), "a way off the cover").toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#launch-stall-note")).toBeVisible();
+
+    await page.locator("#launch-open").click();
+    await expect(page.locator("body"), "the copy, as it was").not.toHaveClass(/booting/, { timeout: 30_000 });
+    await expect(appIn(page).locator("#new-game")).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toHaveText(
+      "The move that arrived couldn't be added to your copy, so your copy is as it was.",
+    );
+    await page.waitForTimeout(3_000);
+    expect(loads, "the tap is not a navigation").toBe(0);
+
+    await page.context().close();
+  });
 });

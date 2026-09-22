@@ -825,8 +825,12 @@ function guardLaunch(target: string): void {
   window.clearTimeout(launchGuard);
   launchGuard = window.setTimeout(() => {
     const body = document.body.classList;
-    // Mounted, or no longer launching: nothing to rescue.
-    if (body.contains("loaded")) return;
+    /*
+     * Mounted, or no longer launching: nothing to rescue. A merge rehearsed
+     * behind the launch screen is the exception — mounted, and deliberately
+     * covered, which is exactly the wait that needs a way off it.
+     */
+    if (body.contains("loaded") && !rehearsingMerge) return;
     if (!body.contains("launching") && !body.contains("booting")) return;
     body.add("launch-stalled");
     // The splash is aria-hidden while it is only decoration; now it holds the
@@ -905,11 +909,29 @@ function clearLaunchGuard(): void {
 }
 
 const launchOpenButton = document.getElementById("launch-open") as HTMLButtonElement | null;
+/**
+ * What Tap to open does, when it is not a navigation.
+ *
+ * A merge rehearsed behind the launch screen has nowhere to send the person:
+ * the address it would go to is where it will go by itself once the move is
+ * in, and going there now would leave the move behind. So the cover's control
+ * ends the wait instead — the copy as it stands, and a sentence saying the
+ * move did not land (cold review of c424598, Q2.1). Set while a rehearsal is
+ * on; cleared when it ends.
+ */
+let onLaunchTap: (() => void) | undefined;
+
 launchOpenButton?.addEventListener("click", () => {
+  clearLaunchGuard();
+  if (onLaunchTap) {
+    const end = onLaunchTap;
+    onLaunchTap = undefined;
+    end();
+    return;
+  }
   // The gesture the automatic path could not make. Plain navigation to the
   // launch address — the `#u=` open path is the same one a healthy launch
   // takes, and it is known to work; only reaching it by script was the problem.
-  clearLaunchGuard();
   location.assign(launchTarget ?? location.href);
 });
 
@@ -966,6 +988,9 @@ function eject(): void {
   reloadedFrom = undefined;
   reloadedFor = undefined;
   reloadedThisLoad = false;
+  // A rehearsal cannot outlive the document it was for.
+  onLaunchTap = undefined;
+  rehearsingMerge = false;
   entryPoint = "";
   // And the lines that print them, so the panel does not describe what is gone.
   void showArrival();
@@ -1109,10 +1134,24 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       reloadGate = "waiting: the arriving move is merged first";
       hostMark("prepared");
       rehearsing = true;
+      rehearsingMerge = true;
     } else if (await relaunchAtOwnAddress(identity, entry)) {
       return;
     }
     await mount(loaded);
+    if (rehearsingMerge) {
+      /*
+       * The cover is never a dead end, here either. `mount` clears the launch
+       * guard, so it is armed again after it: the merge can wait on a frame
+       * that never answers, and without this the launch screen stood over it
+       * with no way off (cold review of c424598, Q2.1). Tap to open ends the
+       * wait rather than navigating — see `onLaunchTap`.
+       */
+      markStep("merging the move that arrived");
+      mergeFinished = false;
+      onLaunchTap = () => void finishMerge(false);
+      guardLaunch(launchAddress(identity));
+    }
     void showArrival();
     // Off the open's path: the app is on screen before anything is asked.
     void offerNewVersion(loaded);
@@ -3380,6 +3419,10 @@ async function applyPendingMerge(): Promise<void> {
   }
 }
 
+/** Whether a merge is being rehearsed behind the launch screen, and whether it has ended. */
+let rehearsingMerge = false;
+let mergeFinished = true;
+
 /** What a person is told when a move that arrived was not added to their copy. */
 const MOVE_NOT_APPLIED = "The move that arrived couldn't be added to your copy, so your copy is as it was.";
 
@@ -3395,6 +3438,13 @@ const MOVE_NOT_APPLIED = "The move that arrived couldn't be added to your copy, 
  * shown here as it was, and one sentence says the move did not land.
  */
 async function finishMerge(applied: boolean): Promise<void> {
+  // Once. The person's tap ends the wait, and a merge that answers afterwards
+  // must not then reload the page under the copy they are looking at.
+  if (mergeFinished) return;
+  mergeFinished = true;
+  onLaunchTap = undefined;
+  rehearsingMerge = false;
+  clearLaunchGuard();
   const open = loaded;
   if (rehearsing && applied && open) {
     await flushDocument();
