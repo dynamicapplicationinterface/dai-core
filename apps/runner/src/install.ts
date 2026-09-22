@@ -686,12 +686,31 @@ export function watchForInstall(): Keeper | null {
     label.textContent = ctaLabel(true);
   });
 
+  /*
+   * The document whose keep sheet the person asked for, until they answer it.
+   *
+   * The request is the thing that must last, not the element: a redraw —
+   * a reload, a remount, a copy arriving — describes the document again, and
+   * describing used to close whatever sheet was open. Asked for, the sheet
+   * stays until Done or the backdrop, and the note left across a reload is
+   * cleared then too, not when it is first read (D87).
+   */
+  let asked: string | null = null;
   const closeSheet = () => {
     slideClose(sheet);
   };
-  done.addEventListener("click", closeSheet);
+  const answer = () => {
+    asked = null;
+    try {
+      sessionStorage.removeItem(KEEP_AFTER_RELOAD);
+    } catch {
+      /* Nothing was left. */
+    }
+    closeSheet();
+  };
+  done.addEventListener("click", answer);
   sheet.addEventListener("click", (event) => {
-    if (event.target === sheet) closeSheet();
+    if (event.target === sheet) answer();
   });
 
   const install = () => {
@@ -718,7 +737,15 @@ export function watchForInstall(): Keeper | null {
         return item;
       }),
     );
-    slideOpen(sheet);
+    asked = identity.uuid;
+    // Written where the next load reads it, so a reload does not lose it.
+    try {
+      sessionStorage.setItem(KEEP_AFTER_RELOAD, identity.uuid);
+    } catch {
+      /* This page still holds it; a reload will not. */
+    }
+    // Already up: the words are refreshed where they stand, not slid in again.
+    if (sheet.hidden) slideOpen(sheet);
   };
 
   const keep = () => {
@@ -737,7 +764,17 @@ export function watchForInstall(): Keeper | null {
 
     describe(identity) {
       current = identity;
-      closeSheet();
+      // Back from the reload `keepHere` asked for, or the same request still
+      // unanswered: kept until the person answers the sheet.
+      let pending: string | null = null;
+      try {
+        pending = sessionStorage.getItem(KEEP_AFTER_RELOAD);
+      } catch {
+        /* Nothing pending. */
+      }
+      if (pending === identity.uuid) asked = identity.uuid;
+      // A sheet for another document, or none the person asked for, goes.
+      if (asked !== identity.uuid) closeSheet();
       label.textContent = ctaLabel(Boolean(saved));
       // Already an app on this device: nothing to add.
       cta.hidden = standalone();
@@ -749,16 +786,7 @@ export function watchForInstall(): Keeper | null {
       // get the right name and icon.
       void describeDocument(identity);
 
-      // Back from the reload `keepHere` asked for: the page was loaded with
-      // this document's manifest, and the gesture is worth showing now.
-      let pending: string | null = null;
-      try {
-        pending = sessionStorage.getItem(KEEP_AFTER_RELOAD);
-        if (pending) sessionStorage.removeItem(KEEP_AFTER_RELOAD);
-      } catch {
-        /* Nothing pending. */
-      }
-      if (pending === identity.uuid && !standalone()) showSheet(identity);
+      if (asked === identity.uuid && !standalone()) showSheet(identity);
     },
 
     offer() {

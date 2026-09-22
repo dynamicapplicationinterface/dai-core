@@ -81,4 +81,48 @@ test.describe("asking to keep a document", () => {
 
     await device.close();
   });
+
+  test("a redraw while the keep sheet is open leaves it open, until the person answers it", async ({ browser }) => {
+    const built = await compileDirectory({
+      sourceDir: join(repo, "examples", "packing-list"),
+      root: repo,
+      appName: "Beach trip",
+    });
+    const file = join(mkdtempSync(join(tmpdir(), "dai-keep-redraw-")), "trip.dai.html");
+    writeFileSync(file, built.html, "utf8");
+
+    const device = await browser.newContext();
+    const page = await device.newPage();
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", file);
+    await page.locator("#card-open:visible, body.loaded").first().waitFor({ timeout: 60_000 });
+    if (await page.locator("#card-open").isVisible()) await page.locator("#card-open").click();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(page.locator("#launch")).toBeHidden({ timeout: 60_000 });
+
+    // The person asks: the menu, then Add to Home Screen.
+    await page.locator("#more").click();
+    await expect(page.locator("#sheet")).toBeVisible({ timeout: 15_000 });
+    await page.locator("#keep-cta").click();
+    await expect(page.locator("#keep-sheet"), "the sheet the person opened").toBeVisible({ timeout: 15_000 });
+
+    // Whatever draws next: the page loads again and the document is described
+    // again. The sheet was the person's, so it is there after.
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect(page.locator("#launch")).toBeHidden({ timeout: 60_000 });
+    await expect(page.locator("#keep-sheet"), "still open after the redraw").toBeVisible({ timeout: 15_000 });
+    await page.waitForTimeout(3_000);
+    await expect(page.locator("#keep-sheet"), "and it stays").toBeVisible();
+
+    // Answered, it goes, and the next redraw does not bring it back.
+    await page.locator("#keep-done").click();
+    await expect(page.locator("#keep-sheet")).toBeHidden();
+    await page.reload();
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await page.waitForTimeout(3_000);
+    await expect(page.locator("#keep-sheet"), "answered is answered").toBeHidden();
+
+    await device.close();
+  });
 });
