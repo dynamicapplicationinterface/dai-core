@@ -419,6 +419,9 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
     for (let press = 0; press < 4; press += 1) {
       if (await page.locator("#keep-sheet").isVisible()) break;
       await menu(page);
+      // Scrolled to first: on a phone the menu is taller than the screen, and a
+      // control below the fold cannot be pressed — forcing it fails outright.
+      await page.locator("#keep-cta").scrollIntoViewIfNeeded();
       await page.locator("#keep-cta").click({ force: true });
       await page
         .locator("#keep-sheet")
@@ -530,9 +533,16 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
     await expect(page.locator("#update-sheet"), "not asked again the same day").toBeHidden();
 
     /*
-     * A day passes. Written into the library rather than waited for, and it is
-     * the one piece of state this test sets by hand — said plainly, because a
-     * test that quietly rewrites what it is measuring is worse than a slow one.
+     * A day passes — twenty-five hours, written into the library's
+     * `versionCheckedAt` rather than waited for.
+     *
+     * **The one piece of state this test sets by hand**, said plainly here
+     * because a test that quietly rewrites what it is measuring is worse than
+     * a slow one. What it stands in for is the clock, and nothing else: the
+     * rule it is exercising — a check is due when a day has passed, and an
+     * unreadable record counts as due — is `checkIsDue`, a pure function with
+     * its own cases in `version-check.spec.ts`. This step's job is only to get
+     * the copy to the far side of that day so the card can be asked for twice.
      */
     await page.evaluate(
       () =>
@@ -591,17 +601,20 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
      * happen.
      */
     await onScreen(page);
-    // Pressed until it opens, like Keep above: the menu sheet animates, and a
-    // press that lands on it while it is moving lands nowhere.
-    for (let press = 0; press < 4; press += 1) {
-      if (await page.locator("#send-sheet").isVisible()) break;
-      await menu(page);
-      await page.locator("#send").click({ force: true });
-      await page
-        .locator("#send-sheet")
-        .waitFor({ state: "visible", timeout: 8_000 })
-        .catch(() => undefined);
-    }
+    await menu(page);
+    /*
+     * One press, an ordinary click: it scrolls the control into view and waits
+     * for it to settle, which is exactly what this needs on a phone-sized
+     * sheet. Pressing in a loop here was worse than useless — once the share
+     * sheet is open it covers the menu button, so a second pass sat retrying a
+     * press it could never land, and the test timed out five minutes after the
+     * thing it was waiting for had already happened.
+     */
+    await page
+      .locator("#send")
+      .scrollIntoViewIfNeeded({ timeout: 15_000 })
+      .catch(() => undefined);
+    await page.locator("#send").click({ force: true, timeout: 15_000 });
     await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
     await expect(page.locator("#send-with-data"), "their list stays theirs").not.toBeChecked();
     await expect(page.locator("#send-note")).toHaveText(
