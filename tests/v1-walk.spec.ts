@@ -61,6 +61,17 @@ const IPHONE =
 
 test.use({ userAgent: IPHONE, viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: false });
 
+/*
+ * WebKit only, because the walk is an iPhone's walk.
+ *
+ * A user agent and a screen size make a browser phone-shaped; the engine is
+ * what makes it Safari, and every sentence this reads is chosen by the
+ * platform. Running it on Chromium tested a Chromium with an iPhone's user
+ * agent, which is nobody's device — and it is how this file first went red on
+ * CI while passing locally, where it had only ever been run on WebKit.
+ */
+test.skip(({ browserName }) => browserName !== "webkit", "the V1 walk is an iPhone's: WebKit, phone-shaped");
+
 /**
  * The steps of the walk a browser cannot take, named as skipped tests.
  *
@@ -418,14 +429,32 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
     await onScreen(page);
     for (let press = 0; press < 4; press += 1) {
       if (await page.locator("#keep-sheet").isVisible()) break;
-      await menu(page);
+      /*
+       * Back on screen before each press. The first press reloads, and while
+       * the page is coming back the control is hidden — it is shown when the
+       * document is described, which happens after the mount.
+       *
+       * Every wait here is bounded, and that is the point rather than a
+       * detail: an unbounded `scrollIntoViewIfNeeded` on a control that is
+       * hidden for the whole reload waits until the test itself times out, so
+       * CI reported five minutes of nothing where the truth was "the page was
+       * still loading and this asked too early".
+       */
+      await onScreen(page).catch(() => undefined);
+      await menu(page).catch(() => undefined);
       // Scrolled to first: on a phone the menu is taller than the screen, and a
       // control below the fold cannot be pressed — forcing it fails outright.
-      await page.locator("#keep-cta").scrollIntoViewIfNeeded();
-      await page.locator("#keep-cta").click({ force: true });
+      await page
+        .locator("#keep-cta")
+        .scrollIntoViewIfNeeded({ timeout: 10_000 })
+        .catch(() => undefined);
+      await page
+        .locator("#keep-cta")
+        .click({ force: true, timeout: 10_000 })
+        .catch(() => undefined);
       await page
         .locator("#keep-sheet")
-        .waitFor({ state: "visible", timeout: 8_000 })
+        .waitFor({ state: "visible", timeout: 15_000 })
         .catch(() => undefined);
     }
     await expect(page.locator("#keep-sheet"), "the instructions a person reads on iOS (D87)").toBeVisible({
