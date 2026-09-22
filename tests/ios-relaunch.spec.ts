@@ -167,4 +167,61 @@ test.describe("opening a copy already on an iPhone", () => {
 
     await device.close();
   });
+
+  test("a second document opened on the same page gets its own reload and its own manifest", async ({ browser }) => {
+    /*
+     * The loop guard was the page's, not the document's: after the reload for
+     * A, every later open on that page was refused one, so B opened at A's
+     * address with A's manifest linked — and Add to Home Screen made A's icon
+     * for B (review of 454e2db, Q1.2).
+     */
+    const compile = async (appName: string) => {
+      const out = await compileDirectory({ sourceDir: join(repo, "examples", "packing-list"), root: repo, appName });
+      const file = join(mkdtempSync(join(tmpdir(), "dai-ios-second-")), "doc.dai.html");
+      writeFileSync(file, out.html, "utf8");
+      return { file, uuid: out.manifest.documentUuid };
+    };
+    const a = await compile("Beach trip");
+    const b = await compile("Ski trip");
+    expect(b.uuid).not.toBe(a.uuid);
+
+    const device = await browser.newContext({ userAgent: IPHONE, viewport: { width: 390, height: 844 } });
+    const page = await device.newPage();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "iPhone", configurable: true });
+    });
+    // A document this device has never seen always asks: the card, pressed as a person does.
+    const open = async (file: string) => {
+      await page.setInputFiles("#file", file);
+      await expect(page.locator("#card-open")).toBeVisible({ timeout: 60_000 });
+      await page.locator("#card-open").click();
+      await expect(page.locator("#card-open")).toBeHidden({ timeout: 60_000 });
+    };
+
+    await page.goto(RUNNER_URL);
+    await open(a.file);
+    await expect(page.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
+      timeout: 60_000,
+    });
+    expect(page.url()).toMatch(new RegExp(`[#&]${HINT_KEY}=${a.uuid}`));
+
+    // A is put away, on this same page, and B is opened here.
+    await page.evaluate(() => (window as unknown as { __runner: { eject(): void } }).__runner.eject());
+    await expect(page.locator("body")).not.toHaveClass(/loaded/);
+    await open(b.file);
+
+    await expect(page, "B is moved to its own address").toHaveURL(new RegExp(`[#&]${HINT_KEY}=${b.uuid}`), {
+      timeout: 60_000,
+    });
+    await expect(page.locator("#sheet-arrival"), "by a reload of its own").toContainText(
+      "iOS reload: taken on the load before this one",
+      { timeout: 60_000 },
+    );
+    await expect(page.locator("#sheet-arrival")).toContainText("opened from a file or a link, opened here");
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    const manifest = await linkedManifest(page);
+    expect(manifest.name, "B's manifest is the one linked, not A's").toBe("Ski trip");
+
+    await device.close();
+  });
 });

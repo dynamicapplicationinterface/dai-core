@@ -98,6 +98,18 @@ const arrivedManifest = document.querySelector('link[rel="manifest"]')?.getAttri
 let reloadGate = "not reached";
 /** The entry point of the load that took the reload, carried across it. */
 let reloadedFrom: string | undefined;
+/**
+ * The document this load was the iOS reload for: the loop guard.
+ *
+ * Kept apart from `reloadGate`, which is a line for a person to read and is
+ * rewritten by the paths that decide it; compared as text, the guard was lost
+ * whenever a path wrote the line (review of 454e2db, Q1.3). And held for that
+ * one document: another opened on this page — after Remove, or arriving by
+ * handoff while this one is open — is a new open, owed a reload of its own,
+ * which a guard for the whole page refused it (Q1.2). Read from the address
+ * the reload landed on, which names the document in its hint.
+ */
+let reloadedFor: string | undefined;
 /** Set by the load that took the iOS reload, read by the load it caused. */
 const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
 try {
@@ -107,6 +119,7 @@ try {
     // The path that asked for the reload, which this load would otherwise hide.
     if (taken !== "1") reloadedFrom = taken;
     reloadGate = "taken on the load before this one";
+    reloadedFor = hintedUuid(location.hash, location.search);
   }
 } catch {
   /* No session storage: the line says only what this load decided. */
@@ -816,8 +829,9 @@ async function identityOf(cartridge: Cartridge): Promise<Identity> {
  * says, so a mismatch can cost one extra load and never a loop.
  */
 async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<boolean> {
-  entryPoint = reloadedFrom ?? entry;
-  const reloadedAlready = reloadGate === "taken on the load before this one";
+  const reloadedAlready = reloadedFor === identity.uuid;
+  // The path that asked for the reload names this open only when it was this document.
+  entryPoint = (reloadedAlready ? reloadedFrom : undefined) ?? entry;
   if (platform() !== "ios") {
     reloadGate = `not taken: platform is ${platform()}`;
     return false;
@@ -911,6 +925,12 @@ function eject(): void {
   if (saveState) saveState.hidden = true;
   const docNote = document.getElementById("doc-note");
   if (docNote) docNote.hidden = true;
+  // What the arrival line and the loop guard say about the document that was
+  // open. The next open on this page decides its own.
+  reloadGate = "not reached";
+  reloadedFrom = undefined;
+  reloadedFor = undefined;
+  entryPoint = "";
   hostSaves = 0;
   hostSavesWritten = 0;
   window.clearTimeout(bootingGuard);
@@ -1043,7 +1063,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     if (
       pendingMerge &&
       platform() === "ios" &&
-      reloadGate !== "taken on the load before this one" &&
+      reloadedFor !== identity.uuid &&
       !sameLaunch(location.href, launchAddress(identity))
     ) {
       // Rehearsed, like a first open: see finishMerge.
@@ -2259,7 +2279,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       const identity = await identityOf(loaded);
       if (
         platform() === "ios" &&
-        reloadGate !== "taken on the load before this one" &&
+        reloadedFor !== identity.uuid &&
         !sameLaunch(location.href, launchAddress(identity))
       ) {
         /*
