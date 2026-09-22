@@ -284,12 +284,25 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
       return (await runner.listLibrary()).some((item) => item.wrote === true);
     });
 
+  /**
+   * The id of the document this device holds.
+   *
+   * Asked while a successor is arriving, so the page can be between loads:
+   * the opener's test surface is not there yet, or the page navigates while
+   * the answer is on its way. Neither is an answer, so both read as "not yet"
+   * and a poll keeps asking — rather than throwing, which ended the poll on
+   * the first ask that landed in the gap.
+   */
   const documentId = (page: Page): Promise<string> =>
-    page.evaluate(async () => {
-      const runner = (window as unknown as { __runner: { listLibrary: () => Promise<{ documentUuid: string }[]> } })
-        .__runner;
-      return (await runner.listLibrary())[0]?.documentUuid ?? "";
-    });
+    page
+      .evaluate(async () => {
+        const runner = (
+          window as unknown as { __runner?: { listLibrary: () => Promise<{ documentUuid: string }[]> } }
+        ).__runner;
+        if (!runner) return "";
+        return (await runner.listLibrary())[0]?.documentUuid ?? "";
+      })
+      .catch(() => "");
 
   /**
    * Waits until the document is really on screen, not merely mounted.
@@ -302,6 +315,33 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
   async function onScreen(page: Page): Promise<void> {
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await expect(page.locator("#launch")).toBeHidden({ timeout: 60_000 });
+  }
+
+  /**
+   * Every control in an open sheet can be pressed on this screen (D88).
+   *
+   * For each button: scroll it into view inside the sheet, then check it sits
+   * wholly inside the viewport. A control past the top or the bottom that no
+   * scroll can reach is a control nobody can press, and the check names it,
+   * so a sheet that grows a button it cannot show fails with the button's
+   * words in the message rather than as a timeout three steps later.
+   */
+  async function expectReachable(page: Page, sheet: string, what: string): Promise<void> {
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("no viewport");
+    const buttons = page.locator(`${sheet} button:visible`);
+    const count = await buttons.count();
+    const unreachable: string[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const button = buttons.nth(i);
+      await button.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined);
+      const box = await button.boundingBox();
+      const label = ((await button.textContent()) ?? "").trim() || (await button.getAttribute("aria-label")) || "?";
+      if (!box || box.y < 0 || box.y + box.height > viewport.height || box.x < 0 || box.x + box.width > viewport.width) {
+        unreachable.push(label);
+      }
+    }
+    expect(unreachable, `every control in ${what} can be reached on a ${viewport.width}×${viewport.height} screen`).toEqual([]);
   }
 
   /**
@@ -383,20 +423,13 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
   /**
    * Step 1, the part that is ours: what a person reads when they keep it.
    *
-   * **Held as a known failure (D87), not a passing test.** On iOS, Keep reloads
-   * the page so the document's own manifest is the one linked at load, and asks
-   * for this sheet once the page is back; `describe()` shows it and closes any
-   * open sheet before it does, so the remount that follows the reload can close
-   * the sheet the reload just asked for. Pressing again is what a person
-   * discovers by accident, and on CI's WebKit even four presses do not survive
-   * it.
-   *
-   * It is a separate test so the rest of the walk is not held hostage to it,
-   * and `fixme` rather than `skip` because this is a defect in the product and
-   * not a step a browser cannot take — it turns green by fixing D87.
+   * Pressed the way a person presses it. This was held as a known failure
+   * under D87, which blamed a reload for closing the sheet; the probe showed
+   * `keep()` was never called at all. The button was above the top of the
+   * screen — the menu, taller than a 390-point screen, overflowed upward out of
+   * a layer that cannot scroll — so every press landed on nothing (D88).
    */
   test("step 1: the instructions for keeping it, on iOS", async ({ browser }) => {
-    test.fixme(true, "D87: the reload asks for this sheet and the next describe() closes it");
     test.setTimeout(180_000);
     const she = await author();
     const device = await browser.newContext({ userAgent: IPHONE, viewport: { width: 390, height: 844 } });
@@ -409,68 +442,22 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
     await onScreen(page);
 
     await menu(page);
-    await page.locator("#keep-cta").click({ force: true });
+    await expectReachable(page, "#sheet", "the document menu");
     /*
-     * On iOS, Keep reloads first.
+     * One press, an ordinary click: it scrolls the control into view inside the
+     * menu and presses it where a finger would. Nothing forced, nothing reached
+     * through the element — if a person could not press it, neither can this.
      *
-     * `keepHere` reloads the page at the document's own launch address so the
-     * document's manifest is the one linked when the page loads — which is what
-     * makes "Add to Home Screen" produce an icon for the document rather than
-     * for the opener. The sheet of instructions is shown after that reload, so
-     * this waits through a navigation, not just for an element.
+     * On iOS it may reload first, to put the document's own manifest in the
+     * page, and show the sheet when the page is back; the wait below covers
+     * either way.
      */
-    /*
-     * The document comes back — the reload reopens it from its own launch
-     * address — and then Keep is pressed again.
-     *
-     * The second press is not what a person should have to do, and it is
-     * filed: **D87**. The sheet the reload asks for is shown by `describe()`,
-     * and `describe()` closes any sheet before it shows one, so a later call —
-     * the remount is one — can close the sheet the reload just opened. Measured
-     * here: sometimes it stands, sometimes it is gone by the time anything can
-     * read it. The second press is reliable because the page is already at the
-     * document's launch address, so `keepHere` does not reload again.
-     *
-     * What this step is for is the sentences, and those are the same however
-     * many presses it took. So it presses until the sheet is there — which is
-     * what a person does, and it is the shape of the defect rather than a
-     * workaround for a flake: a second press is usually enough, a third has
-     * been needed, and the count is the measurement D87 records.
-     */
+    await page.locator("#keep-cta").click();
     await onScreen(page);
-    for (let press = 0; press < 4; press += 1) {
-      if (await page.locator("#keep-sheet").isVisible()) break;
-      /*
-       * Back on screen before each press. The first press reloads, and while
-       * the page is coming back the control is hidden — it is shown when the
-       * document is described, which happens after the mount.
-       *
-       * Every wait here is bounded, and that is the point rather than a
-       * detail: an unbounded `scrollIntoViewIfNeeded` on a control that is
-       * hidden for the whole reload waits until the test itself times out, so
-       * CI reported five minutes of nothing where the truth was "the page was
-       * still loading and this asked too early".
-       */
-      await onScreen(page).catch(() => undefined);
-      await menu(page).catch(() => undefined);
-      // Scrolled to first: on a phone the menu is taller than the screen, and a
-      // control below the fold cannot be pressed — forcing it fails outright.
-      await page
-        .locator("#keep-cta")
-        .scrollIntoViewIfNeeded({ timeout: 10_000 })
-        .catch(() => undefined);
-      await page
-        .locator("#keep-cta")
-        .click({ force: true, timeout: 10_000 })
-        .catch(() => undefined);
-      await page
-        .locator("#keep-sheet")
-        .waitFor({ state: "visible", timeout: 15_000 })
-        .catch(() => undefined);
-    }
-    await expect(page.locator("#keep-sheet"), "the instructions a person reads on iOS (D87)").toBeVisible({
+    await expect(page.locator("#keep-sheet"), "the instructions a person reads on iOS").toBeVisible({
       timeout: 30_000,
     });
+    await expectReachable(page, "#keep-sheet", "the keep sheet");
     await expect(page.locator("#keep-title")).toHaveText(`Add ${APP_NAME} to your Home Screen`);
     await expect(page.locator("#keep-sub")).toHaveText(
       "It opens like an app, works without a connection, and stays on this device.",
@@ -659,9 +646,21 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
      * was not rendering, and it failed while saying "version two is not
      * running", which was false.
      */
+    /*
+     * A real id, and not the old one. Both halves, because the reader answers
+     * "" while the page is between loads — and "" is not the old id, so a poll
+     * for "anything but the old id" would pass on the gap itself, before the
+     * successor had arrived at all.
+     */
     await expect
-      .poll(() => documentId(page), { timeout: 60_000, message: "the successor is the document now" })
-      .not.toBe(uuid);
+      .poll(
+        async () => {
+          const id = await documentId(page);
+          return id !== "" && id !== uuid;
+        },
+        { timeout: 60_000, message: "the successor is the document now" },
+      )
+      .toBe(true);
     for (const what of ["sun cream", "goggles", "hat"]) {
       // Exactly, because the list is seeded: "hat" is also inside "Hats".
       await expect(inside(page).getByText(what, { exact: true }), `${what} came across`).toBeVisible({
@@ -684,16 +683,13 @@ test.describe("the V1 walk, on a phone-shaped browser", () => {
      * press it could never land, and the test timed out five minutes after the
      * thing it was waiting for had already happened.
      */
-    /*
-     * Pressed through the element itself, because on a 390-point screen this
-     * control is below the fold of the menu and scrolling does not bring it
-     * back: CI reported "done scrolling" and then "element is outside of the
-     * viewport", and forcing a press needs a point on screen. Filed as D88 —
-     * a control a person cannot reach on a phone is a product problem, and
-     * reaching it this way here is how the rest of the step gets read.
-     */
-    await page.locator("#send").evaluate((element: HTMLElement) => element.click());
+    await expectReachable(page, "#sheet", "the document menu");
+    // Pressed the way a person presses it: an ordinary click, which is what the
+    // element-level reach stood in for while D88 hid this control above the
+    // top of a phone-sized screen.
+    await page.locator("#send").click();
     await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+    await expectReachable(page, "#send-sheet", "the share card");
     await expect(page.locator("#send-with-data"), "their list stays theirs").not.toBeChecked();
     await expect(page.locator("#send-note")).toHaveText(
       "Anyone with the link gets the app as it arrived, with none of your entries.",

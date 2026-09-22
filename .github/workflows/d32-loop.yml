@@ -21,6 +21,9 @@ on:
       repeats:
         description: How many times to repeat each test
         default: "10"
+      spec:
+        description: Which spec to loop
+        default: tests/returning-document.spec.ts
       workers:
         description: How many workers
         default: "4"
@@ -49,7 +52,7 @@ jobs:
       # Every repeat runs, whatever fails: a rate needs the whole sample, and
       # a run that stops at the first failure measures nothing.
       - run: >
-          npx playwright test tests/returning-document.spec.ts
+          npx playwright test "$LOOP_SPEC"
           --project=${{ inputs.browser }}
           --repeat-each=${{ inputs.repeats }}
           --workers=${{ inputs.workers }}
@@ -58,6 +61,7 @@ jobs:
           --reporter=list
         env:
           DAI_LOOP: "1"
+          LOOP_SPEC: ${{ inputs.spec }}
 
       # Kept whatever happened: the failures are the point, and a green sample
       # is a number too.

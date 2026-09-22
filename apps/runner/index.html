@@ -448,6 +448,28 @@
         flex-direction: column;
         gap: 4px;
       }
+      /*
+       * Every sheet stays inside the screen and scrolls within itself (D88).
+       *
+       * The sheets sit at the bottom of a fixed, full-screen layer
+       * (justify-content: flex-end). With no limit on their height, one taller
+       * than the screen overflowed *upward* — past the top, where a fixed
+       * layer cannot be scrolled — and the controls at the top of it were
+       * simply gone. On a 390-point screen that was the menu's first two:
+       * Add to Home Screen and Share, the actions the walk depends on.
+       *
+       * Capped at the screen, less a strip of scrim at the top so it still
+       * reads as a sheet over the app, and scrolled inside. Nothing is made
+       * smaller to fit: the sentences are the point of these sheets.
+       * `100vh` first for any browser without the dynamic unit.
+       */
+      .sheet-panel,
+      .keep-panel {
+        max-height: calc(100vh - 24px - env(safe-area-inset-top));
+        max-height: calc(100dvh - 24px - env(safe-area-inset-top));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
       .sheet-grip {
         width: 36px;
         height: 4px;

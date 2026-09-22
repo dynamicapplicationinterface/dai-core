@@ -4340,8 +4340,18 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 
 #### D88 — On a phone-sized screen, the menu's Share control is below the fold and scrolling does not reach it
 
-*Status: open, found driving the V1 walk on 22 September. Walk step 5, the
-share. Not fixed.*
+*Status: **fixed 22 September.** The mechanism was not "below the fold": the
+sheet layer is fixed and anchored to the bottom, so a menu taller than the
+screen overflowed **upward**, past the top, where nothing can scroll. At
+390×844 the controls lost were Add to Home Screen and Share app (which is also
+D87 — the keep press landed on nothing). `.sheet-panel` and `.keep-panel` are
+now capped to the viewport (`100dvh` less the top inset) and scroll inside it;
+no sentence was shortened. The walk now presses Keep and Share with ordinary
+clicks, and `expectReachable` checks every button in the menu, the keep sheet
+and the share card on the iPhone viewport — without the fix it fails naming
+those two controls. No other control was past an edge at that size.*
+
+*The entry as first filed:*
 
 **What it means to a person:** on a 390-point screen — an iPhone's width — the
 document menu is taller than the screen, and **Share app** is past the bottom of
