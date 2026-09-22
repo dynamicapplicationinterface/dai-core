@@ -26,7 +26,7 @@ npx wrangler deploy
 
 Set `bucket_name` in `wrangler.toml` to the store bucket first (it defaults to
 `dai-store`). Point the opener's `httpMailbox({ base })` at the deployed
-worker's `/m` path, e.g. `https://relay.opendai.app/m`.
+worker's `/m` path, e.g. `https://dai-relay.opendai.workers.dev/m`.
 
 **After a deploy, check with a read before you post anything.** The worker and
 its Durable Objects do not change version at the same instant: for a short

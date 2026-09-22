@@ -11,7 +11,18 @@ document:
 |---|---|---|
 | the website | `www.dynamicapplicationinterface.io` | Vercel, promoted by hand |
 | **the opener** | `opendai.app` | Vercel, promoted by hand |
-| **the relay** | a Cloudflare Worker | `wrangler`, from this machine |
+| **the relay** | `dai-relay.opendai.workers.dev` | `wrangler`, from this machine |
+
+**The relay has no custom domain, and no DNS step.** It answers on its
+`workers.dev` address, which is where it has always been and where the opener
+points. This page used to give it as `relay.opendai.app` in three places — the
+environment variable to set and both live checks — and that name has never
+existed: it does not resolve, so the checks written here returned nothing at
+all and read as a relay that was down. Corrected on 22 September, from the
+address the live opener is stamped with (`<meta name="dai-relay">`) and a
+mailbox head that answered on it. `wrangler.toml` carries no `routes` and no
+custom domain, which is the same fact from the other side: a deploy publishes
+to the `workers.dev` address and nowhere else.
 
 **Order matters once.** The opener carries the relay's address in its page,
 stamped at build from `DAI_RELAY_BASE`. If the relay's address is changing, or
@@ -92,7 +103,7 @@ their next open, and any wake owed to them before that is lost.
 2. Set or confirm the build environment on the **opener** project
    (Settings → Environment Variables), Production:
    - `DAI_RELAY_BASE` — **the mailbox path, including `/m`**, e.g.
-     `https://relay.opendai.app/m`. The mailbox client appends the document to
+     `https://dai-relay.opendai.workers.dev/m`. The mailbox client appends the document to
      whatever it is given, which is why the `/m` belongs here. The version door
      is `/v` on the same worker and the opener derives it from this value's
      origin, so there is one address to set and not two.
@@ -124,7 +135,7 @@ example `4135982 · 2026-09-22`. A preview that was never promoted says so
 The mailbox, with a read (safe at any time):
 
 ```bash
-curl -s https://relay.opendai.app/m/00000000-0000-4000-8000-000000000000/head
+curl -s https://dai-relay.opendai.workers.dev/m/00000000-0000-4000-8000-000000000000/head
 ```
 
 A cursor — `0` for a mailbox nobody has written to. Anything else means the
@@ -133,7 +144,7 @@ route is not live.
 The version door, which is live only after this release:
 
 ```bash
-curl -s -X POST https://relay.opendai.app/v/00000000-0000-4000-8000-000000000000 \
+curl -s -X POST https://dai-relay.opendai.workers.dev/v/00000000-0000-4000-8000-000000000000 \
   -H 'content-type: application/json' \
   -d '{"version":"none","publisher":""}'
 ```
