@@ -397,19 +397,19 @@
       }
       #save-state[hidden] { display: none; }
       #save-state[data-state="failed"] { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); cursor: pointer; }
-      /* The same floating pill as a failed save, for a sentence rather than a state. */
+      /* A row of its own under the bar: opaque, so nothing shows through it. */
       #doc-note {
-        flex: 0 1 auto;
         margin: 0;
-        padding: 4px 10px;
-        border-radius: 14px;
-        font-size: 12.5px;
+        /*
+         * Clear of the floating controls, which are fixed over the top right:
+         * the row is full width, and its sentence starts below them.
+         */
+        padding: calc(env(safe-area-inset-top) + 48px) 16px 10px;
+        font-size: 13px;
         line-height: 1.35;
         color: var(--bad);
-        background: color-mix(in srgb, var(--bad) 12%, transparent);
-        -webkit-backdrop-filter: saturate(180%) blur(14px);
-        backdrop-filter: saturate(180%) blur(14px);
-        box-shadow: 0 1px 6px rgb(0 0 0 / 0.16);
+        background: color-mix(in srgb, var(--bad) 12%, var(--surface));
+        border-bottom: 1px solid color-mix(in srgb, var(--bad) 28%, transparent);
         cursor: pointer;
       }
       #doc-note[hidden] { display: none; }
@@ -1191,12 +1191,20 @@
         to the menu, where Save a copy is. Nothing here is a promise.
       -->
       <button id="save-state" type="button" hidden></button>
-      <!-- One sentence over an open document, when something it asked for did
-           not happen (a move that arrived and was not added). Tap to dismiss. -->
-      <p id="doc-note" role="status" hidden></p>
       <span class="spacer"></span>
       <button id="more" type="button" aria-label="More" aria-haspopup="dialog">&#8943;</button>
     </header>
+
+    <!--
+      One sentence over an open document, when something it asked for did not
+      happen (a move that arrived and was not added). Tap to dismiss.
+
+      Its own row under the bar rather than a pill inside it: in the bar it
+      wrapped past the bar’s height and its translucent ground let the
+      application’s own words show through the sentence (cold review of
+      c424598, Q2.3). Opaque, full width, and the rows below it move down.
+    -->
+    <p id="doc-note" role="status" hidden></p>
 
     <!--
       Sending it.
