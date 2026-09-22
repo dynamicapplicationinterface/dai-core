@@ -1,5 +1,9 @@
 # Deploying
 
+**The steps are in `docs/deploy.md`.** This page is why they are what they
+are: which origin is canonical, where the store credential lives, and what must
+not be cached. Read once; run the other one.
+
 Two sites, both static, both built from this repository:
 
 | | |
