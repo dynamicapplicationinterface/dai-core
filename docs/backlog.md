@@ -4338,6 +4338,30 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D88 — On a phone-sized screen, the menu's Share control is below the fold and scrolling does not reach it
+
+*Status: open, found driving the V1 walk on 22 September. Walk step 5, the
+share. Not fixed.*
+
+**What it means to a person:** on a 390-point screen — an iPhone's width — the
+document menu is taller than the screen, and **Share app** is past the bottom of
+it. Scrolling does not bring it back.
+
+Measured on CI's WebKit at 390×844: Playwright scrolled, reported *"done
+scrolling"*, and then refused the press with *"element is outside of the
+viewport"*. A forced press needs a point on screen and there is none. The walk
+reaches the control through the element itself so the rest of step 5 can be
+read, and says so where it does it.
+
+**What is not yet known:** whether the sheet is meant to scroll and does not, or
+whether it is simply too tall for the shortest screens with every control shown.
+The menu holds the keep control, Share, Save a copy, Change something, Remove,
+the build stamp, the storage line and the worker line — which is a lot for a
+phone, and D87 is about the first of those on the same screen.
+
+**Why it matters for V1:** step 5 of the walk is "share the link to a friend",
+and on the device the walk is for, the control that does it cannot be pressed.
+
 #### D87 — On iOS, Keep reloads and the instructions it asks for can be closed before they are read
 
 *Status: open, found driving the V1 walk on 22 September. Walk step 1, the
