@@ -124,16 +124,34 @@ async function workerBuild(): Promise<string> {
   return /^[0-9a-f]{12,}$/.test(build) ? build.slice(0, 7) : build;
 }
 
+/**
+ * A `data:` manifest, read where it stands.
+ *
+ * Fetched, it is refused: the opener's policy lists `connect-src 'self' https:`
+ * and no `data:` (measured on the live deploy, 22 September), so the line fell
+ * back to printing the whole address — the manifest's bytes, on a phone.
+ */
+function dataManifest(address: string): unknown {
+  const comma = address.indexOf(",");
+  const body = address.slice(comma + 1);
+  const text = address.slice(0, comma).endsWith(";base64")
+    ? new TextDecoder().decode(Uint8Array.from(atob(body), (c) => c.charCodeAt(0)))
+    : decodeURIComponent(body);
+  return JSON.parse(text);
+}
+
 async function arrivedManifestReading(): Promise<string> {
   if (!arrivedManifest) return "no manifest";
   try {
-    const response = await fetch(arrivedManifest);
-    const read = (await response.json()) as { name?: unknown; start_url?: unknown };
+    const read = (
+      arrivedManifest.startsWith("data:") ? dataManifest(arrivedManifest) : await (await fetch(arrivedManifest)).json()
+    ) as { name?: unknown; start_url?: unknown };
     // The key is in the address; the line shows where it leads, never the key.
     const start = String(read.start_url ?? "").replace(/([#&]k=)[^&]*/, "$1…");
     return `${String(read.name ?? "?")} → ${start}`;
   } catch {
-    return `${arrivedManifest} (unreadable)`;
+    // Never the address itself: a data: one is the manifest's bytes.
+    return arrivedManifest.startsWith("data:") ? "a data: manifest (unreadable)" : `${arrivedManifest} (unreadable)`;
   }
 }
 
