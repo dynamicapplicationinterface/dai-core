@@ -4372,11 +4372,17 @@ document had remounted from its inline launch address. In four later runs of the
 same test the sheet was gone by the time anything read it, and in two it stood.
 That is the race, and its rate here is roughly one in three.
 
-**Why it is not a test problem.** The second tap is reliable because the page is
-already at the document's launch address, so `keepHere` does not reload again —
-which is exactly what a person discovers by accident. `tests/v1-walk.spec.ts`
-taps twice and says why, so the sentences can be read; the defect is the first
-tap.
+**Why it is not a test problem.** The second tap is reliable *locally*, because
+the page is already at the document's launch address and `keepHere` does not
+reload again — which is exactly what a person discovers by accident.
+
+**On CI it does not survive at all** (runs 35680220168 and 35681323325, WebKit).
+Four presses, each waiting fifteen seconds for the sheet, and it is never there:
+a slower machine remounts more times and `describe()` closes it each time. So
+the walk holds step 1 as its own test, marked `fixme` with this entry named —
+a known failure rather than a false green, and `fixme` rather than `skip`
+because it is a defect in the product and not a step a browser cannot take. It
+turns green by fixing this, and nothing else in the walk waits on it.
 
 **When it is picked up:** the fix is presumably for `describe()` not to close a
 sheet it is about to be asked to open, or for the pending note to be honoured
