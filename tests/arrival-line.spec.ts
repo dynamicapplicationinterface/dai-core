@@ -129,9 +129,17 @@ test("a manifest written as data: says why, on the launch panel, in the tab it h
     document.body.classList.add("launching");
     (window as unknown as { __runner: { guardLaunch(t: string): void } }).__runner.guardLaunch(to);
   }, `${RUNNER_URL}#${HINT_KEY}=11111111-1111-4111-8111-111111111111`);
-  await page.locator("#launch-details-toggle").click({ timeout: 15_000 });
-  await expect(page.locator("#launch-details")).toContainText(
-    "manifest written as data: caches.open: SecurityError: The operation is insecure.",
-    { timeout: 5_000 },
+  // The line a phone reads first, before any launch has stalled.
+  await expect(page.locator("#chooser-arrival")).toContainText(
+    "manifest as data: caches.open: SecurityError: The operation is insecure.",
+    { timeout: 15_000 },
   );
+
+  await page.locator("#launch-details-toggle").click({ timeout: 15_000 });
+  const panel = page.locator("#launch-details");
+  await expect(panel).toContainText("manifest written as data: caches.open: SecurityError: The operation is insecure.", {
+    timeout: 5_000,
+  });
+  // And in the trace, beside the steps, so one screenshot carries the order.
+  await expect(panel).toContainText(/manifest as data: caches.open: SecurityError/);
 });

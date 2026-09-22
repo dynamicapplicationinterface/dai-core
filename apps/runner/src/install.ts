@@ -441,6 +441,13 @@ export async function describeDocument(identity: Identity): Promise<void> {
      */
     const why = `${step}: ${(error as Error)?.name ?? "Error"}: ${(error as Error)?.message ?? String(error)}`;
     console.info(`dai: manifest written as a data: URL, because ${why}`);
+    /*
+     * Into the ring the launch panel prints, beside the steps: a phone with no
+     * inspector reads the panel, not a console, and one screenshot should carry
+     * this with everything else that happened (cold review of 8f0dd9f, Q5).
+     */
+    const ring = (window as unknown as { __daiLog?: string[] }).__daiLog;
+    ring?.push(`${new Date().toISOString().slice(11, 23)} manifest as data: ${why}`);
     try {
       sessionStorage.setItem(KEYS.MANIFEST_FALLBACK, why);
     } catch {

@@ -206,7 +206,12 @@ async function arrivedManifestReading(): Promise<string> {
 async function showArrival(): Promise<void> {
   const [build, manifest] = await Promise.all([workerBuild(), arrivedManifestReading()]);
   const entry = entryPoint ? ` · opened from ${entryPoint}` : "";
-  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}`;
+  // Said here too, not only on the launch panel: this line is the reading a
+  // phone takes, and a data: manifest with no account of it is what sent the
+  // last sitting looking (cold review of 8f0dd9f, Q5).
+  const fallback = manifestFallback();
+  const wrote = fallback ? ` · manifest as data: ${fallback}` : "";
+  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}${wrote}`;
   for (const id of ["sheet-arrival", "chooser-arrival"]) {
     const slot = document.getElementById(id);
     if (slot) slot.textContent = text;
