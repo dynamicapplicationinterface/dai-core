@@ -41,7 +41,7 @@
  */
 import { loadAt } from "./navigate.js";
 import { groundKey as groundStorageKey, installAskedKey, KEYS } from "../../../src/keys.js";
-import { HINT_KEY, INLINE_KEY } from "../../../src/link.js";
+import { HINT_KEY } from "../../../src/link.js";
 import { platform, standalone } from "./platform.js";
 import { closeSheet as slideClose, openSheet as slideOpen } from "./sheet.js";
 
@@ -108,15 +108,6 @@ function iconAddress(uuid: string): string {
  * An icon's address may already be a link with a document or a store
  * reference in its fragment, so this adds a field rather than replacing one.
  */
-/** The fragment without the document in it: everything else is kept in order. */
-function withoutPayload(hash: string): string {
-  const parts = hash
-    .replace(/^#/, "")
-    .split("&")
-    .filter((part) => part.length > 0 && !part.startsWith(`${INLINE_KEY}=`));
-  return parts.length > 0 ? `#${parts.join("&")}` : "";
-}
-
 function withHint(hash: string, uuid: string): string {
   const parts = hash
     .replace(/^#/, "")
@@ -162,37 +153,24 @@ const KEEP_AFTER_RELOAD = KEYS.KEEP_AFTER_RELOAD;
 export const RELAUNCHED = "relaunched";
 
 export function launchAddress(identity: Pick<Identity, "uuid" | "name"> & { link?: string }): string {
+  const url = identity.link ? new URL(identity.link) : new URL("/", location.origin);
   /*
-   * Short, and never the document.
+   * The link, and the document's id beside it in the fragment: an opener that
+   * already holds this document opens its own copy — offline, and without
+   * asking the store again — and one that does not follows the link.
    *
-   * This is built from the link the document arrived by, and an inline link
-   * *is* the document: its payload sat in the fragment, so the address went
-   * whole into the manifest the worker serves — the one iOS reads a
-   * `start_url` from. A phone read an 11,847-character one on e1f9b45, which
-   * would have launched the snapshot in the address rather than the copy on
-   * the device that has been written to since.
-   *
-   * So the payload is dropped here and nowhere else is it allowed into an
-   * address that is stored or launched. Everything short stays: the colour,
-   * the name the wiped-device sentence needs, the document's id — and, for a
-   * document that came from a store, the `/d/<hash>` path and its key, which
-   * are how that icon fetches the document again on a device that no longer
-   * holds it (D50/D56). An inline icon has no such way back and does not need
-   * one: the library answers by id, and a device that has lost the document
-   * says so (D51/D53).
-   */
-  const url = identity.link ? new URL(identity.link, location.origin) : new URL("/", location.origin);
-  /*
    * `#u=`, not `?doc=`. A query parameter is sent to the server, and this is
    * an address launched every time somebody taps an icon, so the retired form
-   * put the document's UUID in the opener's request log on every launch.
+   * put the document's UUID in the opener's request log on every launch. It is
+   * the one part of this design that ever reached a server; the key, the hash
+   * and the payload are all in the fragment for exactly this reason, and the
+   * id belongs there with them.
    */
   url.searchParams.delete("doc");
   // Never carried forward: an icon's address is not a relaunch.
   url.searchParams.delete(RELAUNCHED);
-  url.hash = withHint(withoutPayload(url.hash), identity.uuid);
-  // The name the sentence uses when the document is not on the device.
-  if (identity.name) url.searchParams.set("name", identity.name);
+  url.hash = withHint(url.hash, identity.uuid);
+  if (!identity.link) url.searchParams.set("name", identity.name);
   /*
    * The colour under the clock, in the address itself.
    *

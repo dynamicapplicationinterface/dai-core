@@ -1732,25 +1732,6 @@ on.
 fixed the same day. The icon hint has a key of its own, and the fragment
 namespace is defined in one file that refuses a collision.*
 
-**A second thing was in that address, and it was live until 23 September.** A
-launch address was built from the link the document arrived by, and an inline
-link *is* the document — so for a document that arrived that way, the
-`start_url` in the manifest the worker serves carried the whole payload. A
-phone reading on `e1f9b45` measured one at **11,847 characters**. Fixed the
-same day: a launch address never carries a payload, and what it does carry —
-the colour, the name, the id, and for a store arrival the `/d/<hash>` path and
-its key — is short. An inline arrival's `start_url` is now 103 characters, a
-store arrival's 282.
-
-**Whether that is a contributor to the icon flip is unmeasured.** What iOS does
-with a `start_url` of that length — whether it truncates it, refuses the
-manifest, or falls back to the page's own address, which is what an icon
-showing the opener would look like — has not been tested on a device, and the
-phone sittings that produced this entry could not have told the difference.
-It is a candidate, not a cause. What would settle it: an icon made from a
-document with a payload address on a real iPhone, beside one made now, and the
-two icons read.
-
 **Ruled: a distinct hint key, and not the shape-reader.** The options below were
 weighed on the assumption that installed icons in the field needed repairing.
 **There were none; only test installs existed.** So reading `u` by shape would

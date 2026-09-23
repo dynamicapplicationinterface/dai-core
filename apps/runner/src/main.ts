@@ -208,51 +208,18 @@ async function fetchManifest(address: string): Promise<unknown> {
   }
 }
 
-/**
- * An address as a line, never as its contents.
- *
- * A phone read a `start_url` that was 11,847 characters of document. A line
- * that prints an address in full prints whatever it carries — a payload, a
- * key — onto a screen somebody may photograph and send on, and it pushes
- * everything else off the reading. So an address is printed as where it
- * points and what its fragment carries: each field by name and by size, with
- * the document's id in full because that is the one value a reading is for.
- */
-export function addressLine(address: string): string {
-  let url: URL;
-  try {
-    url = new URL(address, location.href);
-  } catch {
-    return `an unreadable address (${address.length} B)`;
-  }
-  const fields = url.hash
-    .replace(/^#/, "")
-    .split("&")
-    .filter((part) => part.length > 0)
-    .map((part) => {
-      const at = part.indexOf("=");
-      const key = at < 0 ? part : part.slice(0, at);
-      const value = at < 0 ? "" : part.slice(at + 1);
-      // The id in full: it is what names the document, and it is short.
-      if (key === HINT_KEY) return `${key}=${value}`;
-      return `${key}=(${value.length} B)`;
-    });
-  const where = `${url.origin}${url.pathname}`;
-  return fields.length > 0 ? `${where}#${fields.join("&")}` : where;
-}
-
 async function arrivedManifestReading(): Promise<string> {
   if (!arrivedManifest) return "no manifest";
   try {
     const read = (
       arrivedManifest.startsWith("data:") ? dataManifest(arrivedManifest) : await fetchManifest(arrivedManifest)
     ) as { name?: unknown; start_url?: unknown };
-    return `${String(read.name ?? "?")} → ${addressLine(String(read.start_url ?? ""))}`;
+    // The key is in the address; the line shows where it leads, never the key.
+    const start = String(read.start_url ?? "").replace(/([#&]k=)[^&]*/, "$1…");
+    return `${String(read.name ?? "?")} → ${start}`;
   } catch {
     // Never the address itself: a data: one is the manifest's bytes.
-    return arrivedManifest.startsWith("data:")
-      ? "a data: manifest (unreadable)"
-      : `${addressLine(arrivedManifest)} (unreadable)`;
+    return arrivedManifest.startsWith("data:") ? "a data: manifest (unreadable)" : `${arrivedManifest} (unreadable)`;
   }
 }
 
@@ -839,7 +806,7 @@ async function launchDetails(): Promise<string> {
     /* A malformed address is itself worth seeing, below. */
   }
   lines.push(`hint (${HINT_KEY}): ${uuid || "(none)"}`);
-  lines.push(`address: ${addressLine(address)}`);
+  lines.push(`address: ${address.slice(0, 200)}`);
 
   try {
     const held = (await listCartridgesFromLibrary()).some((item) => item.documentUuid === uuid);
@@ -4861,8 +4828,9 @@ async function start(): Promise<void> {
    * this can ask for exactly that file rather than showing an empty chooser.
    */
   if (wanted) {
-    // Not held here, and nothing in the address to open: a launch address
-    // carries no payload now, so there is no snapshot to fall back into.
+    // Not held here, and no link to follow (a document that arrived as a
+    // file exists nowhere else): the address carries the name so this can
+    // ask for exactly that file rather than showing an empty chooser.
     // An icon launch names the document in the query; a notification does not.
     say(documentNotHere(parameters.get("name"), parameters.has("doc") || parameters.has("name")));
     return;

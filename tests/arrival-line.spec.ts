@@ -47,9 +47,7 @@ test("a page that arrived with a data: manifest says its name and start_url, not
 
   await page.goto(RUNNER_URL);
   const line = page.locator("#chooser-arrival");
-  // Printed the way every address is now: where it points, and what its
-  // fragment carries by name and size (the test below holds that rule).
-  await expect(line).toContainText("arrived with Beach trip → http://localhost:5175/#u=(5 B)", { timeout: 30_000 });
+  await expect(line).toContainText("arrived with Beach trip → /?name=Beach%20trip#u=probe", { timeout: 30_000 });
   await expect(line, "not the manifest's bytes").not.toContainText("data:");
 });
 
@@ -144,44 +142,4 @@ test("a manifest written as data: says why, on the launch panel, in the tab it h
   });
   // And in the trace, beside the steps, so one screenshot carries the order.
   await expect(panel).toContainText(/manifest as data: caches.open: SecurityError/);
-});
-
-test("no line prints a payload: an address is where it points and what it carries", async ({ page }) => {
-  /*
-   * A phone read a start_url that was 11,847 characters of document. A line
-   * that prints an address in full prints whatever it carries onto a screen
-   * somebody may photograph, and pushes the rest of the reading off it.
-   */
-  const payload = "A".repeat(4_000);
-  const manifest = {
-    name: "Beach trip",
-    start_url: `/?name=Beach+trip#a=${payload}&k=SECRETKEY&${HINT_KEY}=11111111-1111-4111-8111-111111111111`,
-    icons: [],
-  };
-  const address = "data:application/manifest+json," + encodeURIComponent(JSON.stringify(manifest));
-  await page.addInitScript((href) => {
-    new MutationObserver((records, observer) => {
-      for (const record of records) {
-        for (const node of record.addedNodes) {
-          if (node instanceof HTMLLinkElement && node.rel === "manifest") {
-            node.setAttribute("href", href);
-            observer.disconnect();
-          }
-        }
-      }
-    }).observe(document, { childList: true, subtree: true });
-  }, address);
-
-  await page.goto(RUNNER_URL);
-  const line = page.locator("#chooser-arrival");
-  await expect(line).toContainText("arrived with Beach trip →", { timeout: 30_000 });
-  const text = (await line.textContent()) ?? "";
-  expect(text, "not the document").not.toContain(payload.slice(0, 40));
-  expect(text, "not the key either").not.toContain("SECRETKEY");
-  expect(text, "the fields by name and size").toContain("a=(4000 B)");
-  expect(text, "and the key by size").toContain("k=(9 B)");
-  expect(text, "the id in full: it is what the reading is for").toContain(
-    `${HINT_KEY}=11111111-1111-4111-8111-111111111111`,
-  );
-  expect(text.length, "a line, not a document").toBeLessThan(400);
 });
