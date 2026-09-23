@@ -1732,6 +1732,32 @@ on.
 fixed the same day. The icon hint has a key of its own, and the fragment
 namespace is defined in one file that refuses a collision.*
 
+**How long that address can be, measured: 11,847 characters.** A launch
+address is built from the link the document arrived by, and an inline link
+*is* the document, so for a file or inline arrival the `start_url` in the
+manifest the worker serves carries the whole payload. A phone reading on
+`e1f9b45` measured one at 11,847 characters; the same document measured here
+gives 2,124, and a store arrival — which needs no payload, because its
+`/d/<hash>` path and key fetch the document again — gives 266.
+
+**That is deliberate and stays.** An iOS home-screen app starts with storage of
+its own and nothing in it, so for a file or inline arrival the address is the
+only thing the icon can open from; shortening it would take an inline icon's
+one way in (`document-icon.spec.ts` holds this, and a change that shortened it
+was reverted on 23 September for exactly that reason). What was fixed instead
+is the *printing* of it: no line on the sheet, the launch panel or the
+breadcrumb prints a fragment payload.
+
+**Whether the length contributes to the icon flip is unmeasured, and this is
+the ask.** What iOS does with a `start_url` that long — whether Add to Home
+Screen accepts the manifest at all, truncates it, or silently falls back to the
+page's own address, which is what an icon showing the opener would look like —
+has not been tested on a device, and the sittings that produced this entry
+could not have told the difference. It is a candidate, not a cause. What would
+settle it: on a real iPhone, add two icons — one for a document that arrived
+inline (a long address) and one for a store arrival (a short one) — and read
+what each icon is called and what it opens.
+
 **Ruled: a distinct hint key, and not the shape-reader.** The options below were
 weighed on the assumption that installed icons in the field needed repairing.
 **There were none; only test installs existed.** So reading `u` by shape would
@@ -4337,6 +4363,34 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
    that "update" has exactly one spelling (succession);
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
+
+#### D96 — Keep could offer to put a file-borne document in the store, so its icon is short
+
+*Status: open, filed 23 September for the storage sitting. Not fixed, and not
+to be built without the sentence below being settled first.*
+
+An icon for a document that arrived as a file or an inline link carries the
+document in its own address, because an iOS home-screen app starts with empty
+storage and the address is the only thing it can open from (D56: 11,847
+characters, measured). A document that came from a store needs none of that —
+its `/d/<hash>` path and key fetch it again — so those icons are short.
+
+So Keep could offer the same footing to a file: seal this document, put it in
+the store, and make the icon from the short address. The icon would then
+survive a wipe the way a store arrival does (D50), and nothing long would ride
+in an address that iOS may or may not tolerate.
+
+**It needs a sentence, and the sentence is the hard part.** The opener's
+promise is that nothing is uploaded — it is on the chooser, in the words a
+person reads before they open anything. Putting the document in a store is an
+upload, sealed or not, and it cannot happen because the icon would be tidier.
+So it is an offer, made once, in words that say what leaves the device and what
+the store can and cannot read, with the file-only icon as the answer for
+somebody who says no.
+
+Whoever takes this: decide the sentence first, then the mechanism. The
+mechanism is small — `publish()` already exists and the store path is the one
+`/d/` arrivals use.
 
 #### D95 — The relaunch mark rides in `identity.link`, and only `launchAddress` takes it out
 
