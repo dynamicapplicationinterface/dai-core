@@ -206,6 +206,12 @@
       "tests/blind-agreement.spec.ts",
       "tests/fixtures.ts"
     ],
+    "tests/bridge-literals.spec.ts": [
+      "scripts/check-names.mjs",
+      "src/bridge.ts",
+      "src/frame.ts",
+      "tests/bridge-literals.spec.ts"
+    ],
     "tests/bridge-nonce.spec.ts": [
       "scripts/generate-key.mjs",
       "scripts/retain-host.mjs",

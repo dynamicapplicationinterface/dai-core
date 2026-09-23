@@ -35,7 +35,8 @@ const cors = {
  * Desktop never relaunches, so it never had the bug: it is here to hold that
  * the fix did not move it.
  */
-test.skip(({ browserName }) => browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
+const webkitOnly = (): void =>
+  test.skip(({ browserName }) => browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
 
 let store: Server;
 let storeBase = "";
@@ -127,55 +128,74 @@ async function openHere(page: Page): Promise<void> {
   await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 }
 
+/**
+ * The host's person key, as the author id it fingerprints to (docs/identity.md).
+ * Read from the host, never from the document: that is the whole point.
+ */
+const hostAuthorOf = (page: Page): Promise<string | null> =>
+  page.evaluate(async () => {
+    const runner = (window as unknown as { __runner: { authorId?: () => Promise<string | null> } }).__runner;
+    return typeof runner.authorId === "function" ? await runner.authorId() : null;
+  });
+
+/** An author id as shown: 16 bytes, base64url. */
+const AUTHOR_ID = /^[A-Za-z0-9_-]{22}$/;
+
+/** A creator starts a game and shares it with the data in it; a guest opens the link. */
+async function inviteWithData(browser: Browser, iphone: boolean) {
+  const built = await compileDirectory({
+    sourceDir: join(repo, "tests", "fixture", "chess"),
+    root: repo,
+    appName: "Velvet Chess",
+  });
+  const file = join(mkdtempSync(join(tmpdir(), "dai-invite-identity-")), "chess.dai.html");
+  writeFileSync(file, built.html, "utf8");
+
+  // The creator starts a game, and shares it with the data in it.
+  const creator = await device(browser);
+  await creator.goto(RUNNER_URL);
+  await creator.setInputFiles("#file", file);
+  await openHere(creator);
+  const app = appIn(creator);
+  await app.locator("[data-new-game]:visible").first().click({ timeout: 60_000 });
+  await app.locator("#setup-you").fill("Ada");
+  await app.locator("#setup-them").fill("");
+  await app.locator('input[name="color"][value="w"]').check();
+  await app.locator("#new-game-form button[type=submit]").click();
+  await creator.waitForTimeout(2_000);
+  await app.locator("#share").click();
+  await expect(creator.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+  await creator.locator("#send-with-data").check();
+  await creator.locator("#send-go").click();
+  await expect
+    .poll(() => creator.evaluate(() => (window as unknown as { __copied?: string }).__copied ?? null), {
+      timeout: 60_000,
+    })
+    .not.toBeNull();
+  const link = (await creator.evaluate(() => (window as unknown as { __copied: string }).__copied)) as string;
+  // The recipient opens it on a device that has never seen the document.
+  const guest = await device(browser, { iphone });
+  await guest.goto(link);
+  await openHere(guest);
+  if (iphone) {
+    // The load after the relaunch is the one a person is looking at.
+    await expect(guest.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
+      timeout: 60_000,
+    });
+    await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+  }
+  return { creator, guest };
+}
+
 test.describe("an invite that carries the game", () => {
+  webkitOnly();
   test.slow();
 
   for (const iphone of [true, false]) {
     test(`the recipient is not the sender, on ${iphone ? "an iPhone" : "a desktop"}`, async ({ browser }) => {
-      const built = await compileDirectory({
-        sourceDir: join(repo, "tests", "fixture", "chess"),
-        root: repo,
-        appName: "Velvet Chess",
-      });
-      const file = join(mkdtempSync(join(tmpdir(), "dai-invite-identity-")), "chess.dai.html");
-      writeFileSync(file, built.html, "utf8");
-
-      // The creator starts a game, and shares it with the data in it.
-      const creator = await device(browser);
-      await creator.goto(RUNNER_URL);
-      await creator.setInputFiles("#file", file);
-      await openHere(creator);
-      const app = appIn(creator);
-      await app.locator("[data-new-game]:visible").first().click({ timeout: 60_000 });
-      await app.locator("#setup-you").fill("Ada");
-      await app.locator("#setup-them").fill("");
-      await app.locator('input[name="color"][value="w"]').check();
-      await app.locator("#new-game-form button[type=submit]").click();
-      await creator.waitForTimeout(2_000);
-      await app.locator("#share").click();
-      await expect(creator.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
-      await creator.locator("#send-with-data").check();
-      await creator.locator("#send-go").click();
-      await expect
-        .poll(() => creator.evaluate(() => (window as unknown as { __copied?: string }).__copied ?? null), {
-          timeout: 60_000,
-        })
-        .not.toBeNull();
-      const link = (await creator.evaluate(() => (window as unknown as { __copied: string }).__copied)) as string;
+      const { creator, guest } = await inviteWithData(browser, iphone);
       const sender = await replicaOf(creator);
       expect(sender, "the sender writes under an id of its own").toMatch(/^[0-9a-f]{32}$/);
-
-      // The recipient opens it on a device that has never seen the document.
-      const guest = await device(browser, { iphone });
-      await guest.goto(link);
-      await openHere(guest);
-      if (iphone) {
-        // The load after the relaunch is the one a person is looking at.
-        await expect(guest.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
-          timeout: 60_000,
-        });
-        await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
-      }
       await expect
         .poll(() => replicaOf(guest), { timeout: 30_000 })
         .toMatch(/^[0-9a-f]{32}$/);
@@ -190,4 +210,46 @@ test.describe("an invite that carries the game", () => {
       await guest.context().close();
     });
   }
+});
+
+/**
+ * Who a copy is comes from the key this device holds (docs/identity.md, tests 1
+ * and 6 of the sitting).
+ *
+ * The test above holds that the recipient is not the sender. These hold why: the
+ * id a copy writes under is the fingerprint of the host's person key, so a copy
+ * on another device cannot be the sender whatever rows arrived with it. The
+ * frame's id is read through `__runner.replicaId()`, the host's through
+ * `__runner.authorId()`; they are asked separately so neither can vouch for the
+ * other.
+ */
+test.describe("an arrived copy writes under this device's key", () => {
+  test.slow();
+
+  async function holds(browser: Browser, iphone: boolean): Promise<void> {
+    const { creator, guest } = await inviteWithData(browser, iphone);
+    const creatorKey = await hostAuthorOf(creator);
+    expect(creatorKey, "the creator's host holds a person key").toMatch(AUTHOR_ID);
+    expect(await replicaOf(creator), "and the creator's copy writes under it").toBe(creatorKey);
+
+    const guestKey = await hostAuthorOf(guest);
+    expect(guestKey, "the guest's device made a key of its own").toMatch(AUTHOR_ID);
+    expect(guestKey, "a different device holds a different key").not.toBe(creatorKey);
+    await expect.poll(() => replicaOf(guest), { timeout: 30_000 }).toBe(guestKey);
+    await expect(appIn(guest).locator("#name-dialog[open]"), "a new author is asked who they are").toHaveCount(1, {
+      timeout: 30_000,
+    });
+
+    await creator.context().close();
+    await guest.context().close();
+  }
+
+  test("test 1: on an iPhone, through the relaunch, the recipient is the key its device holds", async ({ browser, browserName }) => {
+    test.skip(browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
+    await holds(browser, true);
+  });
+
+  test("test 6: a new device is a new author", async ({ browser }) => {
+    await holds(browser, false);
+  });
 });

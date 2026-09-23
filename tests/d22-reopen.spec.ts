@@ -342,4 +342,59 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
     await deviceA.close();
     await deviceB.close();
   });
+
+  /** The host's person key, as the author id it fingerprints to. Asked of the host, not the frame. */
+  const hostAuthorId = (page: Page): Promise<string | null> =>
+    page.evaluate(async () => {
+      const runner = (window as any).__runner as { authorId?: () => Promise<string | null> };
+      return typeof runner.authorId === "function" ? await runner.authorId() : null;
+    });
+
+  /**
+   * The key survives a reopen (docs/identity.md, test 5 of the sitting).
+   *
+   * The test above, reworded for the key: what survives a reopen is not a
+   * recorded id but the key the host holds, and the id a copy writes under is
+   * that key's fingerprint, before the reopen and after it, for a copy this
+   * device started and for one that arrived.
+   */
+  test("test 5: the author id after a reopen is the one before it, and is the host key's fingerprint", async ({
+    browser,
+  }) => {
+    const deviceA: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const deviceB: BrowserContext = await browser.newContext({ acceptDownloads: true });
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const appA = await openWith(pageA, container);
+    await appA.locator("[data-new-game]:visible").first().click();
+    await appA.locator("#setup-you").fill("Ada");
+    await appA.locator("#setup-them").fill("Bo");
+    await appA.locator('input[name="color"][value="w"]').check();
+    await appA.locator("#new-game-form button[type=submit]").click();
+    await play(appA, "e2", "e4");
+    const keyA = await hostAuthorId(pageA);
+    expect(keyA, "A's host holds a person key").toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(await replicaId(pageA), "A writes under it").toBe(keyA);
+    const seed = join(dirname(container), "seed-key.dai.html");
+    await saveOut(pageA, seed);
+    await reopen(pageA);
+    expect(await hostAuthorId(pageA), "the key survived the reopen").toBe(keyA);
+    expect(await replicaId(pageA), "and A still writes under it").toBe(keyA);
+
+    await openWith(pageB, seed);
+    await expect
+      .poll(() => pageB.evaluate(() => (window as any).__runner.savesWritten), { timeout: 15_000 })
+      .toBeGreaterThan(0);
+    const keyB = await hostAuthorId(pageB);
+    expect(keyB, "B's device made its own key").toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(keyB).not.toBe(keyA);
+    expect(await replicaId(pageB), "the arrived copy writes under B's key").toBe(keyB);
+    await reopen(pageB);
+    expect(await hostAuthorId(pageB)).toBe(keyB);
+    expect(await replicaId(pageB), "and still does after a reopen").toBe(keyB);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
 });

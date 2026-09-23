@@ -4364,6 +4364,34 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D101 — `MergeReport.refused` is a name a quieter one would serve
+
+*Status: open. A naming nit, filed 23 September during the identity sitting; no
+behavior changes with it.*
+
+`MergeReport.refused?: string` (`src/replicated-frame.ts`) means "the merge
+did not run", and about a dozen callers test it for truthiness. The identity
+sitting adds `refusedBatches: {author, reason}[]`, meaning "the merge ran and
+refused these", so the two are kept apart by name, as ruled. The old name reads
+as though it might be the list. What closes it: rename it to what it means
+(for example `notRun`) across its callers on a quiet day, as its own change.
+
+#### D100 — A frame message name written as a literal outside its owner
+
+*Status: open. Filed 23 September; fixed in step 2 of the identity sitting,
+under the naming family (binding rule 8 of `docs/identity.md`).*
+
+`"DAI_FRAME_REPLICA_ID"` is spelled out at `src/runtime/bootloader.ts:3546`
+(the frame's answer to a replica id request) and at
+`apps/runner/src/main.ts:4994` (the host's listener for it). Neither `src/bridge.ts`
+nor `src/frame.ts` owns it, so nothing keeps the two copies in step and
+`check-names` never sees it. It is the replica id request the tests read
+identity through, so it is exactly the name the identity sitting touches.
+
+Held by `tests/bridge-literals.spec.ts`: once `check-names` scans for message
+literals outside their owners, this literal turns the typecheck red, so the
+scan and the fix land in the same change.
+
 #### D99 — After a merge from a link, the sample game is on screen and the invited one is only in the list
 
 *Status: open. Found on a phone 19 September, seen again 23 September; never
