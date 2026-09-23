@@ -1029,6 +1029,16 @@
       "tests/offline.ts",
       "tsup.config.ts"
     ],
+    "tests/invite-identity.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/invite-identity.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/invite-one-session.spec.ts": [
       "apps/runner/",
       "examples/tic-tac-toe/",

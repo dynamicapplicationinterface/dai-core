@@ -1121,8 +1121,18 @@ async function refreshLibrary(): Promise<void> {
 
 async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void> {
   markStep("opening this device's own copy");
-  // Out of this device's own library: the copy it has been writing.
-  mountIsOwnCopy = true;
+  /*
+   * Out of this device's own library — which is not the same as a copy this
+   * device has written, and identity turns on the difference.
+   *
+   * An arrival is in the library within a moment of arriving, and on iOS the
+   * relaunch that follows opens it from there. Calling that "my own copy" told
+   * the frame to keep whatever `_dai_replica` the file carried, and for an
+   * invite sent with data that is the sender's: the recipient came up as the
+   * creator, in the creator's seat, asked for no name (the phone sitting on
+   * 7653c44). Set below, from whether this device has ever written this copy.
+   */
+  mountIsOwnCopy = false;
   slot.classList.add("busy");
   say(`Loading ${item.appName}…`);
 
@@ -1144,6 +1154,8 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    // Written here, so the id it has been writing under is this device's.
+    mountIsOwnCopy = Boolean(opfsDb && opfsDb.byteLength > 0);
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {

@@ -297,7 +297,22 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * button — the way a person sends a second game — returning the link.
    * The opponent is left unnamed, so whoever takes the seat is asked.
    */
-  async function inviteNewGame(page: Page, appFrame: FrameLocator, you = "Ada"): Promise<string> {
+  /**
+   * A new game, invited.
+   *
+   * `withData` is the checkbox a person ticks to send what they have entered
+   * along with the app. Every invite here went without it until 23 September,
+   * so the recipient always got a blank copy -- which is the one shape where
+   * a copy cannot come up wearing the sender's identity, because there is no
+   * `_dai_replica` row in it to keep. The phone found the other shape
+   * (tests/invite-identity.spec.ts).
+   */
+  async function inviteNewGame(
+    page: Page,
+    appFrame: FrameLocator,
+    you = "Ada",
+    options: { withData?: boolean } = {},
+  ): Promise<string> {
     await appFrame.locator("[data-new-game]:visible").first().click();
     await appFrame.locator("#setup-you").fill(you);
     await appFrame.locator("#setup-them").fill("");
@@ -309,6 +324,10 @@ test.describe("a game continues over a shared link (the key path)", () => {
       navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
     });
     await appFrame.locator("#share").click();
+    if (options.withData) {
+      await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+      await page.locator("#send-with-data").check();
+    }
     await page.locator("#send-go").click();
     await expect.poll(() => page.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
     return page.evaluate(() => (window as any).__copied as string);
@@ -1219,7 +1238,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceB.close();
   });
 
-  test("both invite before either opens, and each game still reaches the other copy", async ({ browser }) => {
+  for (const withData of [false, true]) {
+  test(`both invite before either opens, and each game still reaches the other copy${withData ? " (with data)" : ""}`, async ({ browser }) => {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1232,9 +1252,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     // The reported order: each mints an invite before either has opened one, so
     // under one key per document the two copies held different keys from here on.
-    const linkFromA = await inviteNewGame(pageA, appA);
+    const linkFromA = await inviteNewGame(pageA, appA, "Ada", { withData });
     const sessionA = await activeSession(pageA);
-    const linkFromB = await inviteNewGame(pageB, appB, "Bo");
+    const linkFromB = await inviteNewGame(pageB, appB, "Bo", { withData });
     const sessionB = await activeSession(pageB);
     expect(sessionA, "two invites are two different games").not.toBe(sessionB);
 
@@ -1271,7 +1291,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceB.close();
   });
 
-  test("the same crossed invites in the other opening order reach each other too", async ({ browser }) => {
+  test(`the same crossed invites in the other opening order reach each other too${withData ? " (with data)" : ""}`, async ({ browser }) => {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1281,9 +1301,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     const appA = await openContainer(pageA);
     const appB = await openContainer(pageB);
-    const linkFromA = await inviteNewGame(pageA, appA);
+    const linkFromA = await inviteNewGame(pageA, appA, "Ada", { withData });
     const sessionA = await activeSession(pageA);
-    const linkFromB = await inviteNewGame(pageB, appB, "Bo");
+    const linkFromB = await inviteNewGame(pageB, appB, "Bo", { withData });
     const sessionB = await activeSession(pageB);
 
     // A opens first this time. Opening order is the other half of "who acted
@@ -1310,6 +1330,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceA.close();
     await deviceB.close();
   });
+  }
 
   test("a second invite from the same copy leaves the first game reaching its player", async ({ browser }) => {
     const deviceA: BrowserContext = await browser.newContext();

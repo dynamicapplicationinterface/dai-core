@@ -4744,6 +4744,24 @@ omission, there by dropping a tap), D80.
 *Status: **open, V1 blocker.** Proven 19 September; not fixed. The fix is what a
 seat is bound to, and that is its own sitting.*
 
+**One way in closed, 23 September, and it was not this one.** A phone found a
+recipient opening an invite that carried the game and coming up as the creator:
+same seat, same position, no name asked. That was an *accident of identity* —
+on iOS the arrival is followed by a relaunch, the load after it opened the copy
+out of the library, called it this device's own, and so kept the
+`_dai_replica` row the file carried, which is the sender's. Nobody chose
+anything; the copy simply was the sender, and the seat followed. Fixed by
+making ownership mean "this device has written this copy" (a stored database)
+rather than "this came from the library", held by
+`tests/invite-identity.spec.ts`.
+
+D80 is the deliberate path and stays open: a copy that *sets* `_r_replica` to
+somebody else's id, or claims a seat it was never bound, is still believed by
+the other copy, because a row's author is writer-set and merge-trusted. Closing
+the accident narrows what can happen by mistake; it does nothing about what can
+be done on purpose, and the sitting that settles what a seat is bound to is
+still owed.
+
 **What it means to a person:** the other player's phone can make moves as you,
 and your phone will show them as yours. Nothing on either screen says anything
 is wrong.
