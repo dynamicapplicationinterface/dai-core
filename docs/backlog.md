@@ -4364,6 +4364,106 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D99 — After a merge from a link, the sample game is on screen and the invited one is only in the list
+
+*Status: open. Found on a phone 19 September, seen again 23 September; never
+fixed. Not reproduced under test yet.*
+
+Opening an invite `/d/` link lands on the practice board the app lays out for
+itself, and the game the link was for is one row down in the games list. The
+person taps a link somebody sent them and arrives somewhere that is not what
+was sent.
+
+**Repro, from the phone:** on a device that already holds the document, open an
+invite link for a game that copy does not yet have. The merge lands — the game
+is in the list and playable when chosen — but the board on screen is the
+sample. A device that has never held the document does not show it; there the
+invited game is what opens.
+
+**What it is probably about:** which game a copy calls active after a merge.
+The application decides that for itself (`tests/fixture/chess/store.js`, the
+active-session read), and a merge that brings a game in does not say "and this
+is the one to show". Until it is decided, whichever game the copy was last on
+wins, and on a fresh copy that is the sample.
+
+What closes it: after a merge that brings in a session this copy did not have,
+the session the arriving link named is the one on screen — with a test that
+opens an invite on a copy that already holds the document and asserts the board
+shows the invited game rather than the sample.
+
+#### D98 — The notification permission is asked in the middle of sealing an invite, and the share sheet does not come back
+
+*Status: open. Found on a phone 23 September; not fixed.*
+
+Sharing a game asks for notification permission while the invite is being
+sealed. The system prompt takes the screen, and when it is answered the share
+sheet is gone — the person is left on the board with no link and nothing said.
+Whatever they answered, they have to start the share again.
+
+**Repro, from the phone:** on iOS, with notifications not yet decided for this
+origin, open a game, Share, tick *Send personal saved data*, press *Copy link*.
+The permission prompt appears during the seal; answer it either way; the sheet
+is not on screen afterwards.
+
+**The rule this breaks:** a flow a person started is theirs until they finish
+it. Asking for a permission mid-flow takes the screen away from a thing they
+asked for, and a system prompt is not something the page can draw over or
+recover from — so the ask belongs after the share is done, never inside it, and
+a flow interrupted by a system prompt resumes where it was.
+
+What closes it: the ask moves to after the link exists and the sheet has been
+answered; and a test that resolves a permission prompt mid-share and asserts
+the share sheet is still on screen with its link.
+
+#### D97 — A copy opened from the library was called this device's own, and an arrival kept the sender's identity
+
+*Status: **fixed 23 September**, same day it was found on a phone. Ruled and
+fixed; the deliberate path it shades into is D80, still open.*
+
+**What a person saw:** opening an invite that carried the game gave the
+recipient the creator's seat — the same position, no name asked, and "waiting
+on player 2" from the creator's side. An invite shared with the data checkbox
+off gave a fresh game, correctly.
+
+**The mechanism, measured.** A replica id is per copy, and the chess fixture
+decides "am I the creator" by asking whether any seat row was authored by its
+own replica — so a copy running under the sender's id *is* the sender, to the
+application. On iOS an arrival is followed by the relaunch to the document's
+address, and the load after it opens the copy out of the library.
+`launchFromLibrary` declared that "this device's own copy", which tells the
+frame to keep whatever `_dai_replica` the file carries; for an invite sent with
+data that row is the sender's, and nothing had been written on this device yet,
+so `ensureReplica` kept it. Desktop never relaunches and never had it. A blank
+copy has no `_dai_replica` row to keep, which is why every invite sent without
+data looked right.
+
+**Ruled, 23 September.** The host's recorded replica id is the sole owner of
+this device's identity; the frame takes it over on every mount, resume or
+arrival; `ensureReplica` never keeps a row that differs from the id the host
+handed it; and `mountIsOwnCopy` no longer decides identity. Ownership now means
+*this device has written this copy* — the stored database is the witness.
+
+**Why the invite tests did not catch it.** `inviteNewGame` never touched
+`#send-with-data`, so every invite in that suite was a blank copy, and the
+suite runs desktop contexts, where the relaunch does not happen. Nothing
+compared the recipient's replica id with the sender's. The helper now takes a
+`withData` option and the two crossed-invite tests run both shapes; measured on
+the code before the fix, those two at six repeats of each shape failed 9 of 12.
+None of them was passing *because* the copy was blank — they assert that moves
+cross, which they do either way.
+
+Held by `tests/invite-identity.spec.ts`: an invite with data, a fake store, a
+recipient on an iPhone user agent, asserting after the relaunch that the
+recipient's replica differs from the sender's and that the app asks who they
+are. Red on `7653c44` on the iPhone case; the desktop case passes on both sides
+of the fix.
+
+**Note for whoever holds identity next.** This closed an accident. It does not
+touch what a copy can do on purpose (D80), and it leaves the identity primitive
+where it was: an id recorded per document per device, taken over by a frame at
+mount. The sitting that redesigns that primitive subsumes this entry — see
+`docs/identity.md`.
+
 #### D96 — Keep could offer to put a file-borne document in the store, so its icon is short
 
 *Status: open, filed 23 September for the storage sitting. Not fixed, and not
@@ -4941,14 +5041,14 @@ prints a stale-map warning and still exits 0 (seen twice tonight).
 *Status: open, **and no longer read as a test problem** (20 September). Rate
 measured; the frame read at failure. Fix undecided.*
 
-**It is getting through the retry now (22 September).** Counted over every
-failed run of `test` this week (25 of them, 16–22 September), the case that
-fails both attempts and takes the whole run red with it —
-`returning-document.spec.ts:381`, "opening your own copy after they moved does
-not make yours look newer" — did so **three times, all on 22 September**:
-`35678368339`, `35679531628`, `35763149723`. It was retried and passed in four
-more that day (`35679064956`, `35680220168`, `35681323325`, `35682355285`), and
-in none of the failures before 22 September. Two sibling cases retried the same
+**It is getting through the retry now (22–23 September).** Counted over every
+failed run of `test` in that week, the case that fails both attempts and takes
+the whole run red with it — `returning-document.spec.ts:381`, "opening your own
+copy after they moved does not make yours look newer" — has now done so **four
+times**: `35678368339`, `35679531628`, `35763149723` on 22 September, and
+`35807249998` on 23 September (the run for the revert commit `33192a6`). It was
+retried and passed in four more on 22 September (`35679064956`, `35680220168`,
+`35681323325`, `35682355285`), and in none of the failures before that day. Two sibling cases retried the same
 day as well: `:511` twice and `invite-one-session.spec.ts:182` once.
 
 Locally it is the same shape and has been seen on WebKit too, under parallel
