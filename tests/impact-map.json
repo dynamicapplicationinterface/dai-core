@@ -1232,6 +1232,16 @@
       "tests/kit.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/launch-address.spec.ts": [
+      "apps/runner/",
+      "conformance/signing-key.pem",
+      "examples/packing-list/",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixtures.ts",
+      "tests/launch-address.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/launch-card.spec.ts": [
       "apps/runner/",
       "src/bridge.ts",
