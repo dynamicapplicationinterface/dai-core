@@ -157,6 +157,22 @@ test.describe("the address a home-screen icon launches into", () => {
       expect(start, "the key that opens what the store holds").toContain(`k=${sealed.key}`);
       expect(start, "and the id, for the copy on this device").toContain(`${HINT_KEY}=${built.manifest.documentUuid}`);
       expect(start, "no document in it").not.toContain("#a=");
+
+      /*
+       * And again on the next open, which is where a phone reads it: the icon
+       * is added days later, from a page that opened the document out of the
+       * library rather than by following the link.
+       */
+      await page.goto(RUNNER_URL);
+      // The settled load: a resume on iOS relaunches at the document's address.
+      await expect(page.locator("#sheet-arrival")).toContainText("iOS reload: taken on the load before this one", {
+        timeout: 60_000,
+      });
+      await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+      const again = (await servedManifest(page)).start_url ?? "";
+      console.log(`STORE start_url, second open (${again.length} chars): ${again.slice(0, 120)}`);
+      expect(again, "still the store address, not a document").not.toContain("#a=");
+      expect(again, "still the path the worker serves").toContain(`/d/${sealed.hash}`);
       await page.context().close();
     } finally {
       server.server.close();

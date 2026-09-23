@@ -120,6 +120,20 @@ export interface LibraryItem {
   html: string;
   publicKeyFingerprint?: string;
   /**
+   * The short address this copy came by, when it came by one.
+   *
+   * A store arrival is a `/d/<hash>` path and a key, and that is the whole way
+   * back into the document on a device that no longer holds it — so an icon
+   * made for it should launch there. The load that makes the icon is usually
+   * not the load that followed the link: it resumed the document out of here,
+   * and knows no link at all, so it is kept with the copy.
+   *
+   * Short ones only. A link that carries the document inline is the document,
+   * and this row already holds that in `html`; an icon for one of those is
+   * made from a link minted at the time (see identityOf).
+   */
+  link?: string;
+  /**
    * The document's own key (base64url, 32 bytes), for a replicated document.
    *
    * The root the whole exchange runs on: minted once at creation, kept here for

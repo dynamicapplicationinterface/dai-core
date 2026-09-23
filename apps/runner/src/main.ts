@@ -904,13 +904,47 @@ function guardLaunch(target: string): void {
 let entryPoint = "";
 
 /** What the worker and the manifest are told about a document. */
+/**
+ * The short address a document came by, when this device kept one.
+ *
+ * A document that arrived from a store has a way back in that is nothing but
+ * an address — its `/d/<hash>` path and key. That is worth remembering,
+ * because the load that opens the document is usually not the load that
+ * followed the link: an icon is made days later, from a page that resumed the
+ * document out of the library, and that page knows no link at all.
+ */
+function shortArrivalLink(): string | undefined {
+  if (!arrivedByLink) return undefined;
+  try {
+    // Inline is the document itself, and the library already holds that.
+    return inlineFrom(new URL(arrivedByLink).hash) ? undefined : arrivedByLink;
+  } catch {
+    return undefined;
+  }
+}
+
+async function keptLink(uuid: string): Promise<string | undefined> {
+  const held = await getCartridgeFromLibrary(uuid).catch(() => null);
+  return held?.link;
+}
+
 async function identityOf(cartridge: Cartridge): Promise<Identity> {
+  /*
+   * The address this load arrived by, then the one this device kept, and only
+   * then a freshly minted inline link.
+   *
+   * Minting was tried first once, by accident of ordering: a store arrival
+   * opened from the library got an inline address with the whole document in
+   * it, and the icon made from it launched a snapshot rather than the stored
+   * copy. On the phone that read as the icon flipping (D56).
+   */
+  const uuid = cartridge.manifest.documentUuid;
   return {
-    uuid: cartridge.manifest.documentUuid,
+    uuid,
     name: cartridge.manifest.appName ?? "container",
     favicon: cartridge.manifest.favicon,
     opens: 0,
-    link: arrivedByLink ?? (await launchLinkForDocument(cartridge.html)),
+    link: arrivedByLink ?? (await keptLink(uuid)) ?? (await launchLinkForDocument(cartridge.html)),
   };
 }
 
@@ -2401,6 +2435,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
          * recorded, from before this existed, starts one here, at what it holds.
          */
         ...matchAfterOpen(keepItem, brought, hasStored, localDigest, arrivingDigest, arriving),
+        // The address this copy came by, when it is short enough to be an
+        // address rather than the document (a store link). See identityOf.
+        link: shortArrivalLink() ?? heldItem?.link,
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
         revision: await learnRevision(kept.manifest.documentUuid),
