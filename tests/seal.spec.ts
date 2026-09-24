@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { authoredBatchAbove, decodeBatch, headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
-import { applyRow, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
+import { applyRow, coversText, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 
 /**
@@ -162,8 +162,8 @@ test("an invite for one session keeps the headers that list its rows, pointer or
   // save); session two is sealed as usual.
   const lost = await signBatch(ofOne, { document: DOC, keys: ada.keys });
   db.run(
-    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [lost.id, lost.replica, lost.lc, lost.sig, lost.pub, lost.att, lost.version, lost.digest, JSON.stringify(lost.entries.map((e) => e.row._r_seq))],
+    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [lost.id, lost.replica, lost.lc, lost.sig, lost.pub, lost.att, lost.version, lost.digest, coversText(lost.entries)],
   );
   const sealed = await signBatch(ofTwo, { document: DOC, keys: ada.keys });
   recordSeal(db, sealed);

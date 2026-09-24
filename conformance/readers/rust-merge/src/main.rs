@@ -208,7 +208,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         new_replicas: 0,
         refused: vec![],
     };
-    let mut refusals: BTreeMap<(String, String), Vec<u8>> = BTreeMap::new();
+    let mut refusals: BTreeMap<(String, String, String), Vec<u8>> = BTreeMap::new();
 
     let local_lc: i64 = c
         .query_row("SELECT lc FROM main._dai_replica", [], |r| r.get(0))
@@ -237,11 +237,11 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             > 0
     };
     let mut held: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let mut covering: BTreeMap<String, String> = BTreeMap::new(); // "author:seq" -> lowest ok id
-    let mut covers: BTreeSet<String> = BTreeSet::new(); // "id|author:seq"
+    let mut covering: BTreeMap<String, String> = BTreeMap::new(); // "table|author:seq" -> lowest ok id
+    let mut covers: BTreeSet<String> = BTreeSet::new(); // "id|table|author:seq"
     if has("main") && has("S") {
         let headers: Vec<(Vec<u8>, Vec<u8>, String)> = {
-            let mut st = c.prepare("SELECT id, author, seqs FROM S._dai_batch").unwrap();
+            let mut st = c.prepare("SELECT id, author, covers FROM S._dai_batch").unwrap();
             let v = st
                 .query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, String>(2)?)))
                 .unwrap()
@@ -251,23 +251,23 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         };
         let mut headers = headers;
         headers.sort_by(|a, b| hexlc(&a.0).cmp(&hexlc(&b.0)));
-        for (id, author, seqs) in headers {
+        for (id, author, listed) in headers {
             let hid = hexlc(&id);
             held.insert(hid.clone(), id.clone());
             let verdict = verdicts.get(&hid).cloned().unwrap_or_else(|| "BATCH_SIGNATURE_INVALID".to_string());
             if verdict != "ok" {
-                refusals.insert((hid, verdict), author);
+                refusals.insert((hid, verdict, hexlc(&author)), author);
                 continue;
             }
             c.execute(
-                "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) \
-                 SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM S._dai_batch WHERE id = ?1",
+                "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, covers) \
+                 SELECT id, author, lc, sig, pub, att, version, digest, covers FROM S._dai_batch WHERE id = ?1",
                 [&id],
             )
             .unwrap();
-            if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&seqs) {
-                for seq in list {
-                    let key = format!("{}:{}", hexlc(&author), seq);
+            if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&listed) {
+                for pair in list {
+                    let key = format!("{}|{}:{}", pair[0].as_str().unwrap_or(""), hexlc(&author), pair[1]);
                     covers.insert(format!("{}|{}", hid, key));
                     covering.entry(key).or_insert_with(|| hid.clone());
                 }
@@ -276,61 +276,118 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     }
 
 
-    for t in &tables {
+    // Signed means listed by an ok header, whatever the row says. Signed rows are
+    // placed first and unsigned after, so table order never decides.
+    let mut signed_rows: Vec<(usize, Row)> = vec![];
+    let mut unsigned_rows: Vec<(usize, Row)> = vec![];
+    for (ti, t) in tables.iter().enumerate() {
         if !s_tables.iter().any(|x| x.name == t.name) {
             continue;
         }
         let m: i64 = c
-            .query_row(
-                &format!("SELECT coalesce(max(_r_lc),0) FROM S.\"{}\"", t.name),
-                [],
-                |r| r.get(0),
-            )
+            .query_row(&format!("SELECT coalesce(max(_r_lc),0) FROM S.\"{}\"", t.name), [], |r| r.get(0))
             .unwrap();
         lc_max = lc_max.max(m);
-
-        let local = load(&c, "main", t);
-        let mut by_id: BTreeMap<String, Row> = BTreeMap::new();
-        for r in local {
-            by_id.insert(rowid(t, &r), r);
-        }
-        let incoming = load(&c, "S", t);
-        let mut to_insert: Vec<Row> = vec![];
-        let mut to_seal: Vec<(Vec<u8>, V, V)> = vec![];
-        for mut r in incoming {
+        for mut r in load(&c, "S", t) {
             let id = rowid(t, &r);
-            // Signed means listed by an ok header, whatever the row says.
-            if let Some(b) = t.i_batch {
-                let named = match &r.vals[b] {
-                    V::Blob(x) => Some(hexlc(x)),
-                    _ => None,
-                };
-                if let Some(cover) = covering.get(&id) {
-                    let keep = match &named {
-                        Some(n) if covers.contains(&format!("{}|{}", n, id)) => n.clone(),
-                        _ => cover.clone(),
-                    };
-                    r.vals[b] = V::Blob(held[&keep].clone());
-                } else if let Some(n) = named {
-                    // It names a header that does not vouch for it.
-                    if !held.contains_key(&n) || verdicts.get(&n).map(|v| v == "ok").unwrap_or(false) {
-                        let author = match &r.vals[t.i_replica] {
-                            V::Blob(x) => x.clone(),
-                            _ => vec![],
-                        };
-                        refusals.insert((n, "BATCH_DIGEST_MISMATCH".to_string()), author);
-                    }
+            let key = format!("{}|{}", t.name, id);
+            let b = match t.i_batch {
+                Some(b) => b,
+                None => {
+                    unsigned_rows.push((ti, r));
                     continue;
                 }
-            }
-            match by_id.get(&id) {
-                None => {
-                    counts.applied += 1;
-                    to_insert.push(r);
+            };
+            let named = match &r.vals[b] {
+                V::Blob(x) => Some(hexlc(x)),
+                _ => None,
+            };
+            if let Some(cover) = covering.get(&key) {
+                let keep = match &named {
+                    Some(n) if covers.contains(&format!("{}|{}", n, key)) => n.clone(),
+                    _ => cover.clone(),
+                };
+                r.vals[b] = V::Blob(held[&keep].clone());
+                signed_rows.push((ti, r));
+            } else if let Some(n) = named {
+                // It names a header that does not vouch for it: refused in the
+                // name of whoever wrote the row.
+                if !held.contains_key(&n) || verdicts.get(&n).map(|v| v == "ok").unwrap_or(false) {
+                    let author = match &r.vals[t.i_replica] {
+                        V::Blob(x) => x.clone(),
+                        _ => vec![],
+                    };
+                    refusals.insert((n, "BATCH_DIGEST_MISMATCH".to_string(), hexlc(&author)), author);
                 }
+            } else {
+                unsigned_rows.push((ti, r));
+            }
+        }
+    }
+
+    let value = |v: &V| match v {
+        V::Null => rusqlite::types::Value::Null,
+        V::Int(i) => rusqlite::types::Value::Integer(*i),
+        V::Real(f) => rusqlite::types::Value::Real(*f),
+        V::Text(s) => rusqlite::types::Value::Text(s.clone()),
+        V::Blob(b) => rusqlite::types::Value::Blob(b.clone()),
+    };
+    // The row this copy holds at (author, seq) in a table, if any. By value, not
+    // by the arriving row's column positions: the tables differ in layout.
+    let held_row = |t: &Table, replica: &V, seq: &V| -> Option<Row> {
+        let sel = t.cols.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(",");
+        let n = t.cols.len();
+        c.query_row(
+            &format!("SELECT {} FROM main.\"{}\" WHERE _r_replica = ?1 AND _r_seq = ?2", sel, t.name),
+            rusqlite::params![value(replica), value(seq)],
+            |x| Ok(Row { vals: (0..n).map(|i| V::from(x.get_ref(i).unwrap())).collect() }),
+        )
+        .ok()
+    };
+    let unsigned = |t: &Table, r: &Row| t.i_batch.map(|b| r.vals[b] == V::Null).unwrap_or(true);
+    // A signed row outranks an unsigned one at its id: the unsigned one goes, and
+    // what it superseded is recomputed below from the row set.
+    let displace = |t: &Table, replica: &V, seq: &V| {
+        c.execute(
+            &format!("DELETE FROM main.\"{}\" WHERE _r_replica = ?1 AND _r_seq = ?2", t.name),
+            rusqlite::params![value(replica), value(seq)],
+        )
+        .unwrap();
+    };
+    let reject = |id: String, rejected: &mut Vec<String>| {
+        if !rejected.contains(&id) {
+            rejected.push(id);
+        }
+    };
+    for (rows, signed) in [(signed_rows, true), (unsigned_rows, false)] {
+        for (ti, r) in rows {
+            let t = &tables[ti];
+            let id = rowid(t, &r);
+            let (replica, seq) = (r.vals[t.i_replica].clone(), r.vals[t.i_seq].clone());
+            // One author's seq names one row, whatever table it is in.
+            let mut refused = false;
+            for (oi, o) in tables.iter().enumerate() {
+                if oi == ti {
+                    continue;
+                }
+                if let Some(there) = held_row(o, &replica, &seq) {
+                    if signed && unsigned(o, &there) {
+                        displace(o, &replica, &seq);
+                        reject(id.clone(), &mut counts.rejected);
+                    } else {
+                        refused = true;
+                    }
+                }
+            }
+            if refused {
+                reject(id.clone(), &mut counts.rejected);
+                continue;
+            }
+            match held_row(t, &replica, &seq) {
+                None => {}
                 Some(ex) => {
-                    // T1-D11: _r_superseded is not row content, not compared;
-                    // nor is _r_batch, which names a batch after the row.
+                    // T1-D11: _r_superseded is not row content, not compared; nor
+                    // is _r_batch, which names a batch after the row.
                     let same = r
                         .vals
                         .iter()
@@ -341,77 +398,53 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
                         // Sealed where this copy still holds it pending: it takes
                         // the seal, once, from NULL.
                         if let Some(b) = t.i_batch {
-                            if ex.vals[b] == V::Null {
-                                if let V::Blob(batch) = &r.vals[b] {
-                                    to_seal.push((batch.clone(), r.vals[t.i_replica].clone(), r.vals[t.i_seq].clone()));
-                                }
+                            if ex.vals[b] == V::Null && r.vals[b] != V::Null {
+                                c.execute(
+                                    &format!(
+                                        "UPDATE main.\"{}\" SET _r_batch = ?1 WHERE _r_replica = ?2 AND _r_seq = ?3",
+                                        t.name
+                                    ),
+                                    rusqlite::params![value(&r.vals[b]), value(&r.vals[t.i_replica]), value(&r.vals[t.i_seq])],
+                                )
+                                .unwrap();
                             }
                         }
+                        continue;
+                    }
+                    if signed && unsigned(t, &ex) {
+                        displace(t, &replica, &seq);
+                        reject(id.clone(), &mut counts.rejected);
                     } else {
-                        counts.rejected.push(id);
+                        reject(id.clone(), &mut counts.rejected);
+                        continue;
                     }
                 }
             }
+            let colnames = t.cols.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(",");
+            let ph = (1..=t.cols.len()).map(|i| format!("?{}", i)).collect::<Vec<_>>().join(",");
+            let params: Vec<rusqlite::types::Value> = r
+                .vals
+                .iter()
+                .enumerate()
+                .map(|(i, v)| if i == t.i_superseded { rusqlite::types::Value::Integer(0) } else { value(v) })
+                .collect();
+            c.execute(
+                &format!("INSERT INTO main.\"{}\" ({}) VALUES ({})", t.name, colnames, ph),
+                rusqlite::params_from_iter(params.iter()),
+            )
+            .unwrap();
+            counts.applied += 1;
         }
+    }
 
-        let colnames = t
-            .cols
-            .iter()
-            .map(|x| format!("\"{}\"", x))
-            .collect::<Vec<_>>()
-            .join(",");
-        let ph = (1..=t.cols.len())
-            .map(|i| format!("?{}", i))
-            .collect::<Vec<_>>()
-            .join(",");
-        {
-            let mut st = c
-                .prepare(&format!(
-                    "INSERT OR IGNORE INTO main.\"{}\" ({}) VALUES ({})",
-                    t.name, colnames, ph
-                ))
-                .unwrap();
-            for r in &to_insert {
-                let params: Vec<rusqlite::types::Value> = r
-                    .vals
-                    .iter()
-                    .map(|v| match v {
-                        V::Null => rusqlite::types::Value::Null,
-                        V::Int(i) => rusqlite::types::Value::Integer(*i),
-                        V::Real(f) => rusqlite::types::Value::Real(*f),
-                        V::Text(s) => rusqlite::types::Value::Text(s.clone()),
-                        V::Blob(b) => rusqlite::types::Value::Blob(b.clone()),
-                    })
-                    .collect();
-                st.execute(rusqlite::params_from_iter(params.iter())).unwrap();
-            }
-        }
-
-        {
-            let mut st = c
-                .prepare(&format!(
-                    "UPDATE main.\"{}\" SET _r_batch = ?1 WHERE _r_replica = ?2 AND _r_seq = ?3 AND _r_batch IS NULL",
-                    t.name
-                ))
-                .unwrap();
-            for (batch, replica, seq) in &to_seal {
-                let value = |v: &V| match v {
-                    V::Int(i) => rusqlite::types::Value::Integer(*i),
-                    V::Blob(b) => rusqlite::types::Value::Blob(b.clone()),
-                    _ => rusqlite::types::Value::Null,
-                };
-                st.execute(rusqlite::params![batch, value(replica), value(seq)]).unwrap();
-            }
-        }
-
-        // T1-D2: supersession is a pure function of the row set. Recompute over all rows.
+    // T1-D2: supersession is a pure function of the row set, recomputed over all
+    // rows: superseded exactly while some row names it.
+    for t in &tables {
         let all = load(&c, "main", t);
         let mut parented: BTreeSet<String> = BTreeSet::new();
         for r in &all {
             if let V::Text(p) = &r.vals[t.i_parents] {
-                if let Ok(serde_json::Value::Array(a)) =
-                    serde_json::from_str::<serde_json::Value>(p)
-                {
+                if let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(p) {
                     for e in a {
                         if let serde_json::Value::String(s) = e {
                             parented.insert(s.to_lowercase());
@@ -420,14 +453,19 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
                 }
             }
         }
-        let mut st = c
-            .prepare(&format!(
-                "UPDATE main.\"{}\" SET _r_superseded = 1 WHERE lower(hex(_r_replica))||':'||_r_seq = ?1 AND _r_superseded = 0",
-                t.name
-            ))
-            .unwrap();
-        for id in &parented {
-            st.execute([id]).unwrap();
+        for r in &all {
+            let id = rowid(t, r);
+            let want = if parented.contains(&id) { 1 } else { 0 };
+            if r.vals[t.i_superseded] != V::Int(want) {
+                c.execute(
+                    &format!(
+                        "UPDATE main.\"{}\" SET _r_superseded = ?1 WHERE lower(hex(_r_replica))||':'||_r_seq = ?2",
+                        t.name
+                    ),
+                    rusqlite::params![want, id],
+                )
+                .unwrap();
+            }
         }
     }
 
@@ -458,7 +496,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     c.execute_batch("COMMIT").unwrap();
     counts.refused = refusals
         .into_iter()
-        .map(|((_, reason), author)| (shown(&author), reason))
+        .map(|((_, reason, _), author)| (shown(&author), reason))
         .collect();
 
     let mut out = String::new();
@@ -515,7 +553,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     if has_batch > 0 {
         out.push_str("# _dai_batch\n");
         let mut st = c
-            .prepare("SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM main._dai_batch ORDER BY hex(id) ASC")
+            .prepare("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM main._dai_batch ORDER BY hex(id) ASC")
             .unwrap();
         let rows: Vec<String> = st
             .query_map([], |r| {
@@ -618,12 +656,13 @@ fn main() {
         }
         // The signature check's answer for every header (README, Verdicts).
         // Required: a vector without it is one nothing checked.
-        let verdicts: BTreeMap<String, String> = match std::fs::read_to_string(f.join("verdicts.json")) {
+        // Per copy: B into A reads b's verdicts, A into B reads a's.
+        let verdicts: BTreeMap<String, BTreeMap<String, String>> = match std::fs::read_to_string(f.join("verdicts.json")) {
             Err(_) => {
                 problems.push("verdicts.json is missing".to_string());
                 BTreeMap::new()
             }
-            Ok(text) => serde_json::from_str::<BTreeMap<String, String>>(&text).unwrap(),
+            Ok(text) => serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(&text).unwrap(),
         };
         for (dirn, base, sib, exp) in [
             ("ab", "a.db", "b.db", "expected-ab.txt"),
@@ -631,7 +670,8 @@ fn main() {
         ] {
             let work = tmp.join(format!("{}-{}.db", name, dirn));
             std::fs::copy(f.join(base), &work).unwrap();
-            let (c, dump) = merge(&work, &f.join(sib), &verdicts);
+            let theirs = verdicts.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
+            let (c, dump) = merge(&work, &f.join(sib), &theirs);
             let want = std::fs::read_to_string(f.join(exp))
                 .unwrap()
                 .replace("\r\n", "\n");

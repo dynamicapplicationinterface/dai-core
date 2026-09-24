@@ -563,11 +563,23 @@ CREATE TRIGGER IF NOT EXISTS ${q}__batch_known_update BEFORE UPDATE OF _r_batch 
   WHEN NEW._r_batch IS NOT NULL AND NOT EXISTS (SELECT 1 FROM _dai_batch WHERE id = NEW._r_batch)
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE: _r_batch names no header in _dai_batch'); END;
 
+-- Append-only, with one exception: a signed row outranks an unsigned row at
+-- the same id. (author, seq) names one row whatever table it sits in, so an
+-- unsigned row whose id a header this copy holds lists, in any table, is an
+-- impostor at a signed id, and the merge removes it to take the signed one.
 CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
+  WHEN NOT (OLD._r_batch IS NULL AND EXISTS (
+    SELECT 1 FROM _dai_batch b, json_each(b.covers) c
+     WHERE b.author = OLD._r_replica AND json_extract(c.value, '$[1]') = OLD._r_seq))
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
+-- Superseded exactly while some row names it (T1-D2): a flag that is a function
+-- of the row set. It goes back to 0 only when nothing names the row any more,
+-- which happens only when an unsigned row that named it gave way to a signed one.
 CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_superseded ON ${q}
-  WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
+  WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0 AND EXISTS (
+    SELECT 1 FROM ${q} n, json_each(n._r_parents) p
+     WHERE p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
 ${headsView(q, admissionFiltered, closeCreator, author)}
@@ -617,9 +629,10 @@ CREATE TABLE IF NOT EXISTS _dai_replica (
 -- covers the rows. pub is the author's raw public key, which the author id
 -- must fingerprint to; att is reserved for an authority's attestation and is
 -- outside the signature, so vouching can arrive later without re-signing.
--- seqs lists the rows the batch covers, as the JSON array of the author's
--- seqs, ascending: a merge verifies a batch by finding those rows, never by
--- trusting a row's _r_batch, which a lost save can leave unset (docs/format.md).
+-- covers lists the rows the batch covers, as a JSON array of [table, seq]
+-- (the author is the header's): a merge verifies a batch by finding those rows,
+-- never by trusting a row's _r_batch, which a lost save can leave unset
+-- (docs/format.md).
 CREATE TABLE IF NOT EXISTS _dai_batch (
   id      BLOB PRIMARY KEY CHECK (length(id) = 16),
   author  BLOB NOT NULL CHECK (length(author) = 16),
@@ -629,7 +642,7 @@ CREATE TABLE IF NOT EXISTS _dai_batch (
   att     BLOB,
   version INTEGER NOT NULL,
   digest  BLOB NOT NULL CHECK (length(digest) = 32),
-  seqs    TEXT NOT NULL
+  covers  TEXT NOT NULL
 );
 
 -- Every column but the id is LOCAL: true of this copy, not of the document.

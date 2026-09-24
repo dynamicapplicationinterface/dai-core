@@ -14,7 +14,7 @@ import {
   type SignedBatch,
 } from "../src/replicated-batch.js";
 import { mergeSibling } from "../src/replicated-frame.js";
-import { createEntity, ensureReplica, mergeFrom, type Rows } from "../src/replicated-rows.js";
+import { coversText, createEntity, ensureReplica, mergeFrom, type Rows } from "../src/replicated-rows.js";
 
 /**
  * The merge verifies before it applies (docs/identity.md, binding rules 3-6;
@@ -250,9 +250,8 @@ test.describe("verification by signed row set (ruling #3)", () => {
   /** A header put into a copy by hand, as a copy that sealed these rows holds it. */
   const holdHeader = (db: Rows, batch: SignedBatch) =>
     db.run(
-      "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [batch.id, batch.replica, batch.lc, batch.sig, batch.pub, batch.att, batch.version, batch.digest,
-        JSON.stringify(batch.entries.map((e) => e.row._r_seq).sort((a, b) => a - b))],
+      "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [batch.id, batch.replica, batch.lc, batch.sig, batch.pub, batch.att, batch.version, batch.digest, coversText(batch.entries)],
     );
 
   test("the same rows sealed twice: both headers verify, both are kept, and the row keeps the one it names", async () => {
@@ -363,14 +362,141 @@ test.describe("verification by signed row set (ruling #3)", () => {
   });
 });
 
+/**
+ * A forger's unsigned rows against an honest signed batch (cold review of step
+ * 4, findings 1-3; ruled 24 September).
+ *
+ * A per-author seq is one counter per document, so `(author, seq)` names one
+ * row whatever table it sits in: the same number in two tables is a collision,
+ * not two rows. And a signed row always outranks an unsigned row at the same
+ * id, whichever arrived first. A forger's row can therefore never spoil a
+ * signed batch, here or downstream, and a refusal names who wrote the refused
+ * row, not whose batch it pointed at.
+ */
+test.describe("a forger's unsigned rows cannot spoil a signed batch (review of step 4)", () => {
+  const moves = (db: Rows) => db.all("SELECT san, _r_batch IS NOT NULL AS sealed FROM moves").map((r) => ({ san: r["san"], sealed: Number(r["sealed"]) }));
+  const seats = (db: Rows) => db.all("SELECT name FROM seats").map((r) => r["name"]);
+  /** A row written into a copy by hand under someone else's author id, with no batch. */
+  const forge = (db: Rows, table: "moves" | "seats", author: Uint8Array, seq: number, columns: Record<string, unknown>) => {
+    const names = Object.keys(columns);
+    db.run(
+      `INSERT INTO ${table} (${names.join(", ")}, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES (${names.map(() => "?").join(", ")}, ?, ?, ?, ?, '[]', 0)`,
+      [...names.map((n) => columns[n]), author, seq, seq, crypto.getRandomValues(new Uint8Array(16))],
+    );
+  };
+  const idOf = (author: Uint8Array, seq: number) => `${Buffer.from(author).toString("hex")}:${seq}`;
+
+  /** Ada's signed move at seq 1, as a file: header and row. */
+  async function adasMove() {
+    const ada = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    const batch = await signed(adaCopy, ada);
+    const file = open();
+    stageBatch(file, batch, TABLES);
+    adaCopy.close();
+    return { ada, file };
+  }
+
+  test("the same (author, seq) in another table is a collision: refused, and the signed batch still verifies downstream", async () => {
+    const { ada, file } = await adasMove();
+    // Mal's copy: a seat under Ada's id at Ada's seq 1, unsigned.
+    const mal = copyFor(await person());
+    forge(mal, "seats", ada.author, 1, { role: "creator", name: "Mallory" });
+
+    const bo = copyFor(await person());
+    await mergeSibling(bo, file, { document: DOC });
+    const fromMal = await mergeSibling(bo, mal, { document: DOC });
+    expect(fromMal.rejected, "Mal's seat is Ada's seq 1 again, in another table").toEqual([idOf(ada.author, 1)]);
+    expect(seats(bo)).toEqual([]);
+
+    // And Bo's copy, passed on, still carries Ada's move signed.
+    const carol = copyFor(await person());
+    const fromBo = await mergeSibling(carol, bo, { document: DOC });
+    expect(fromBo.refusedBatches).toEqual([]);
+    expect(moves(carol)).toEqual([{ san: "e4", sealed: 1 }]);
+    for (const db of [file, mal, bo, carol]) db.close();
+  });
+
+  test("the forgery first, the signed row after: the signed row takes its id, whatever table the forgery sits in", async () => {
+    const { ada, file } = await adasMove();
+    const mal = copyFor(await person());
+    forge(mal, "seats", ada.author, 1, { role: "creator", name: "Mallory" });
+
+    const bo = copyFor(await person());
+    await mergeSibling(bo, mal, { document: DOC });
+    expect(seats(bo), "unsigned, it merged under the legacy rule").toEqual(["Mallory"]);
+    const fromAda = await mergeSibling(bo, file, { document: DOC });
+    expect(moves(bo), "the signed row outranks the unsigned one at its id").toEqual([{ san: "e4", sealed: 1 }]);
+    expect(seats(bo)).toEqual([]);
+    expect(fromAda.rejected, "the displaced row is reported as a different row wearing that id").toEqual([idOf(ada.author, 1)]);
+    expect(fromAda.refusedBatches).toEqual([]);
+    for (const db of [file, mal, bo]) db.close();
+  });
+
+  test("one hostile file holding both: the signed row is taken and the forgery refused, in either table order", async () => {
+    const { ada, file } = await adasMove();
+    // The forgery rides in the same file as Ada's honest, signed move.
+    forge(file, "seats", ada.author, 1, { role: "creator", name: "Mallory" });
+
+    const carol = copyFor(await person());
+    const report = await mergeSibling(carol, file, { document: DOC });
+    expect(moves(carol)).toEqual([{ san: "e4", sealed: 1 }]);
+    expect(seats(carol)).toEqual([]);
+    expect(report.refusedBatches, "Ada's batch verified; nothing of hers was refused").toEqual([]);
+    expect(report.rejected).toEqual([idOf(ada.author, 1)]);
+    file.close();
+    carol.close();
+  });
+
+  test("a signed row outranks an unsigned row at the same id in the same table, whichever arrived first", async () => {
+    const { ada, file } = await adasMove();
+    const mal = copyFor(await person());
+    forge(mal, "moves", ada.author, 1, { ply: 1, san: "f3" });
+
+    const fay = copyFor(await person());
+    await mergeSibling(fay, mal, { document: DOC });
+    expect(moves(fay)).toEqual([{ san: "f3", sealed: 0 }]);
+    const fromAda = await mergeSibling(fay, file, { document: DOC });
+    expect(moves(fay), "Ada's signed e4, not Mal's unsigned f3").toEqual([{ san: "e4", sealed: 1 }]);
+    expect(fromAda.rejected).toEqual([idOf(ada.author, 1)]);
+    expect(fromAda.refusedBatches).toEqual([]);
+
+    // And the other order: the signed row held, the forgery refused.
+    const gus = copyFor(await person());
+    await mergeSibling(gus, file, { document: DOC });
+    const fromMal = await mergeSibling(gus, mal, { document: DOC });
+    expect(moves(gus)).toEqual([{ san: "e4", sealed: 1 }]);
+    expect(fromMal.rejected).toEqual([idOf(ada.author, 1)]);
+    for (const db of [file, mal, fay, gus]) db.close();
+  });
+
+  test("a stowaway naming someone else's batch is refused in the name of whoever wrote it", async () => {
+    const { ada, file } = await adasMove();
+    const mal = await person();
+    const named = file.all("SELECT _r_batch FROM moves LIMIT 1")[0]!["_r_batch"] as Uint8Array;
+    // Mal's own row, claiming Ada's batch, which does not list it.
+    file.run(
+      "INSERT INTO moves (ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES (2, 'Qh5', ?, 7, 7, ?, '[]', 0, ?)",
+      [mal.author, crypto.getRandomValues(new Uint8Array(16)), named],
+    );
+    const carol = copyFor(await person());
+    const report = await mergeSibling(carol, file, { document: DOC });
+    expect(report.refusedBatches, "Mal wrote the refused row; Ada's batch was taken").toEqual([{ author: mal.shown, reason: "BATCH_DIGEST_MISMATCH" }]);
+    expect(moves(carol)).toEqual([{ san: "e4", sealed: 1 }]);
+    file.close();
+    carol.close();
+  });
+});
+
 test.describe("the stored form (ruling B)", () => {
   test("a replicated table carries _r_batch and no _r_sig; the signed headers live in _dai_batch", () => {
     const db = open();
     const columns = (table: string) => db.all("SELECT name FROM pragma_table_info(?)", [table]).map((r) => String(r["name"]));
     expect(columns("moves")).toContain("_r_batch");
     expect(columns("moves"), "one place a signature lives, not two").not.toContain("_r_sig");
-    // seqs: the rows each header covers, which is what a merge verifies (ruling #3).
-    expect(columns("_dai_batch").sort()).toEqual(["att", "author", "digest", "id", "lc", "pub", "seqs", "sig", "version"]);
+    // covers: the rows each header lists, as [table, seq], which is what a merge verifies (ruling #3).
+    expect(columns("_dai_batch").sort()).toEqual(["att", "author", "covers", "digest", "id", "lc", "pub", "sig", "version"]);
     db.close();
   });
 });

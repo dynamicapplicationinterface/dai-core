@@ -49,11 +49,14 @@ part: doing so would make every past batch unvouchable without re-signing.
 
 ## The rows a header covers
 
-A stored header (`_dai_batch`) lists the rows it covers: `seqs`, the JSON array
-of the author's seqs, distinct and ascending, in exactly that spelling (`[1,2,3]`).
-The author is the header's own; a batch has one. `seqs` is not in the signed
-bytes and does not need to be: the digest commits to the rows, and so to their
-seqs, and a list that names other rows digests to something else.
+A stored header (`_dai_batch`) lists the rows it covers: `covers`, a JSON array
+of `[table, seq]` pairs ordered by table (UTF-8 bytes) and then seq, in exactly
+that spelling (`[["moves",1],["moves",2]]`). The author is the header's own; a
+batch has one. `covers` is not in the signed bytes and does not need to be: the
+digest commits to the rows, their tables and their seqs, and a list that names
+other rows digests to something else. It names the table as well as the seq so
+that a row is looked for only where it was signed: a row of the same number in
+another table is not one the header covers, and cannot spoil it.
 
 **The header lists its rows because saves get lost, not for convenience.** A
 row is written first and sealed later, and the seal reaches the disk only in a
@@ -65,8 +68,8 @@ row that was signed, and a row can claim a batch it was never part of. The
 header, which is signed, is what says which rows it covers, and `_r_batch` is a
 cache of one header that covers the row.
 
-**Verifying a batch** is: find the rows the header lists (the author's rows at
-those seqs, each found exactly once), digest them as above, and check the
+**Verifying a batch** is: find the rows the header lists (the author's row at
+each listed table and seq, found exactly once), digest them as above, and check the
 signature over the canonical header that digest makes, for this document, under
 a `pub` that fingerprints to the author. Then check that the id is that header's.
 A rows or id failure is `BATCH_DIGEST_MISMATCH`; a key or signature failure is
@@ -77,8 +80,22 @@ anything. It keeps the headers that verify and refuses the rest. It takes a row
 when a verified header lists it, whatever the row says, and fills the row's
 `_r_batch` with the header it names if that one lists it, else the lowest listed
 id. A row may be covered by more than one header. A row that names a header and
-is listed by none is refused, `BATCH_DIGEST_MISMATCH` against the header it
-names. A seal nobody verified is never adopted onto a row a copy holds pending.
+is listed by none is refused, `BATCH_DIGEST_MISMATCH`, reported in the name of
+whoever wrote the row, not of the header's author, whose batch was taken. A seal
+nobody verified is never adopted onto a row a copy holds pending.
+
+**One id, one row.** A per-author seq is one counter per document, so
+`(author, seq)` names one row whatever table it sits in. The same number in two
+tables is a collision, refused as `ROW_REJECTED`, not two rows.
+
+**A signed row always outranks an unsigned row at the same id**, whichever
+arrived first. The unsigned row is removed and the signed one takes its place;
+the removed id is reported in `rejected`, and whatever the removed row
+superseded is a head again unless something else names it. The engine holds
+this itself: a replicated row can be deleted only when it is unsigned and a
+header the copy holds lists its id. A merge places signed rows before unsigned
+ones, so the answer never depends on table order. The principle outlives the
+legacy rule: once unsigned rows are refused outright, it is still true.
 A row that names no header and that no header lists is unsigned; until the
 legacy rule changes (`BATCH_UNSIGNED`, step 6 of the sitting), it merges as
 rows did before signing. The merge reports refused batches as `refusedBatches`,
@@ -108,3 +125,10 @@ BigInt, and refusing a whole number past 2^53 rather than floating it) were set
 by the identity sitting's step 3 review, before version 1 was
 frozen. No document signed under an earlier rule exists outside the sitting's
 own tests.
+
+**Documents built during the sitting's steps 3 and 4 are dead ends.** The
+`_dai_batch` table is created from the document's own schema block with
+`CREATE TABLE IF NOT EXISTS`, so a document built before a column was added or
+renamed (`seqs` at step 4, then `covers`) keeps the table it was built with,
+and sealing fails in it. They are not migrated: none left the sitting's tests
+and test devices, and the example apps are rebuilt at step 7.

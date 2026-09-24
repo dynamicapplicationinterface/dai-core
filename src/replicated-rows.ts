@@ -611,11 +611,15 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
   const hasBatches =
     db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").length > 0;
   if (hasBatches) {
-    const kept = replicated.map((table) => `SELECT _r_replica AS r, _r_seq AS s FROM "${table}"`).join(" UNION ALL ");
+    const kept = replicated
+      .map((table) => `SELECT '${table}' AS t, _r_replica AS r, _r_seq AS s FROM "${table}"`)
+      .join(" UNION ALL ");
     db.run(
       kept
-        ? `DELETE FROM _dai_batch WHERE EXISTS (SELECT 1 FROM json_each(_dai_batch.seqs) AS listed
-             WHERE NOT EXISTS (SELECT 1 FROM (${kept}) AS k WHERE k.r = _dai_batch.author AND k.s = listed.value))`
+        ? `DELETE FROM _dai_batch WHERE EXISTS (SELECT 1 FROM json_each(_dai_batch.covers) AS listed
+             WHERE NOT EXISTS (SELECT 1 FROM (${kept}) AS k
+               WHERE k.t = json_extract(listed.value, '$[0]') AND k.r = _dai_batch.author
+                 AND k.s = json_extract(listed.value, '$[1]')))`
         : "DELETE FROM _dai_batch",
     );
   }
@@ -699,9 +703,9 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
   if (db.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0) {
     lines.push("# _dai_batch");
     for (const row of db.all(
-      "SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch ORDER BY hex(id) ASC",
+      "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch ORDER BY hex(id) ASC",
     )) {
-      lines.push(["id", "author", "lc", "sig", "pub", "att", "version", "digest", "seqs"].map((c) => encodeValue(row[c])).join("\t"));
+      lines.push(["id", "author", "lc", "sig", "pub", "att", "version", "digest", "covers"].map((c) => encodeValue(row[c])).join("\t"));
     }
   }
   return `${lines.join("\n")}\n`;
@@ -717,7 +721,7 @@ export type BatchRefusal = "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH" |
  * or why it covers none. Keyed by the header's id in lowercase hex.
  */
 export type BatchVerdict =
-  | { ok: true; author: Uint8Array; seqs: readonly number[] }
+  | { ok: true; author: Uint8Array; covers: readonly (readonly [string, number])[] }
   | { ok: false; author: Uint8Array; reason: BatchRefusal };
 
 /** A batch the merge refused, by the author it names and the reason's code. */
@@ -729,17 +733,33 @@ export interface RefusedBatch {
 /** Code-unit order, the same in every reader; never a locale's. */
 const plainOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** The `seqs` a header stores: its rows' seqs, distinct and ascending, as JSON. */
-export function seqsText(entries: readonly { row: { _r_seq: number } }[]): string {
-  return JSON.stringify([...new Set(entries.map((e) => e.row._r_seq))].sort((a, b) => a - b));
+/** Bytewise order of two strings' UTF-8, the order every canonical list is sorted by. */
+function utf8Order(a: string, b: string): number {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
+  return x.length - y.length;
 }
 
 /**
- * A header's `seqs`, or null when it is not the one spelling `seqsText` writes:
- * a non-empty JSON array of distinct positive integers, ascending. One spelling,
- * so two readers never disagree about which rows a header lists.
+ * The `covers` a header stores: its rows as `[table, seq]`, the author being the
+ * header's, ordered by table (UTF-8 bytes) and then seq, as JSON. By table as
+ * well as seq, so a row is found where it was signed and nowhere else (cold
+ * review of step 4, finding 1).
  */
-export function coveredSeqsOf(text: unknown): number[] | null {
+export function coversText(entries: readonly { table: string; row: { _r_seq: number } }[]): string {
+  const pairs = entries.map((e) => [e.table, e.row._r_seq] as const);
+  pairs.sort((a, b) => utf8Order(a[0], b[0]) || a[1] - b[1]);
+  return JSON.stringify(pairs);
+}
+
+/**
+ * A header's `covers`, or null when it is not the one spelling `coversText`
+ * writes: a non-empty JSON array of distinct `[table, seq]` pairs, each seq a
+ * positive integer, in that order. One spelling, so two readers never disagree
+ * about which rows a header lists.
+ */
+export function coveredRowsOf(text: unknown): [string, number][] | null {
   if (typeof text !== "string") return null;
   let parsed: unknown;
   try {
@@ -748,9 +768,17 @@ export function coveredSeqsOf(text: unknown): number[] | null {
     return null;
   }
   if (!Array.isArray(parsed) || parsed.length === 0) return null;
-  if (!parsed.every((n, i) => Number.isSafeInteger(n) && n > 0 && (i === 0 || n > parsed[i - 1]))) return null;
-  if (JSON.stringify(parsed) !== text) return null;
-  return parsed as number[];
+  const shaped = parsed.every(
+    (p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "string" && Number.isSafeInteger(p[1]) && p[1] > 0,
+  );
+  if (!shaped) return null;
+  const pairs = parsed as [string, number][];
+  for (let i = 1; i < pairs.length; i++) {
+    const order = utf8Order(pairs[i - 1]![0], pairs[i]![0]) || pairs[i - 1]![1] - pairs[i]![1];
+    if (order >= 0) return null;
+  }
+  if (JSON.stringify(pairs) !== text) return null;
+  return pairs;
 }
 
 export interface MergeResult {
@@ -798,7 +826,7 @@ export function mergeFrom(
   const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0, refusedBatches: [] };
   const refusals = new Map<string, { id: string; author: Uint8Array; reason: BatchRefusal }>();
   const refuseBatch = (id: string, who: Uint8Array, reason: BatchRefusal): void => {
-    refusals.set(`${id}:${reason}`, { id, author: who, reason });
+    refusals.set(`${id}|${reason}|${hex(who)}`, { id, author: who, reason });
   };
 
   /*
@@ -835,11 +863,11 @@ export function mergeFrom(
   const hasBatchTable = (rows: Rows): boolean =>
     rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
   const held = new Map<string, Uint8Array>(); // every header the sibling holds, by id
-  const covering = new Map<string, string>(); // "author:seq" -> the lowest verified id that covers it
-  const covers = new Set<string>(); // "id|author:seq", every verified cover
+  const covering = new Map<string, string>(); // "table|author:seq" -> the lowest verified id listing it
+  const covers = new Set<string>(); // "id|table|author:seq", every verified listing
   if (hasBatchTable(local) && hasBatchTable(sibling)) {
     const headers = sibling
-      .all("SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch")
+      .all("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch")
       .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
     for (const header of headers) {
       const id = hex(header["id"] as Uint8Array);
@@ -852,11 +880,11 @@ export function mergeFrom(
         continue;
       }
       local.run(
-        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], header["seqs"]],
+        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], header["covers"]],
       );
-      for (const seq of verdict.seqs) {
-        const key = `${hex(verdict.author)}:${seq}`;
+      for (const [table, seq] of verdict.covers) {
+        const key = `${table}|${rowId(verdict.author, seq)}`;
         covers.add(`${id}|${key}`);
         if (!covering.has(key)) covering.set(key, id);
       }
@@ -898,35 +926,95 @@ export function mergeFrom(
     ]);
   }
 
+  /*
+   * Signed means listed by a verified header, whatever the row says. The row's
+   * own pointer is kept when it names a header that lists it, and otherwise set
+   * to the one that does. A row that claims a batch and is listed by none is
+   * refused: it names a signature that does not vouch for it
+   * (BATCH_DIGEST_MISMATCH, in the name of whoever wrote the row, unless the
+   * batch it names was refused already). A row that claims none and is listed by
+   * none is unsigned, and merges under the legacy rule until step 6.
+   */
+  const signedRows: { table: string; row: ReplicatedRow }[] = [];
+  const unsignedRows: { table: string; row: ReplicatedRow }[] = [];
   for (const table of tables) {
     const authored = authorColumnsOf(sibling, table);
     for (const incoming of sibling.all(`SELECT * FROM "${table}"`)) {
       const row = readRow(incoming, authored);
-      /*
-       * Signed means covered by a verified header, whatever the row says. The
-       * row's own pointer is kept when it names a header that covers it, and
-       * otherwise set to the one that does. A row that claims a batch and is
-       * covered by none is refused: it names a signature that does not vouch
-       * for it (BATCH_DIGEST_MISMATCH against the batch it names, unless that
-       * batch was refused already). A row that claims none and is covered by
-       * none is unsigned, and merges under the legacy rule until step 6.
-       */
-      const key = `${hex(row._r_replica)}:${row._r_seq}`;
+      const key = `${table}|${rowId(row._r_replica, row._r_seq)}`;
       const named = row._r_batch instanceof Uint8Array ? hex(row._r_batch) : null;
       const cover = covering.get(key);
       if (cover) {
         const keep = named && covers.has(`${named}|${key}`) ? named : cover;
         row._r_batch = held.get(keep)!;
+        signedRows.push({ table, row });
       } else if (named) {
         const verdict = verdicts.get(named);
-        if (!held.has(named) || verdict?.ok) {
-          refuseBatch(named, verdict?.author ?? row._r_replica, "BATCH_DIGEST_MISMATCH");
-        }
+        if (!held.has(named) || verdict?.ok) refuseBatch(named, row._r_replica, "BATCH_DIGEST_MISMATCH");
+      } else {
+        unsignedRows.push({ table, row });
+      }
+    }
+  }
+
+  /*
+   * One id, one row. A per-author seq is one counter per document, so
+   * `(author, seq)` names one row whatever table it sits in: the same number in
+   * two tables is a collision, refused as a different row wearing that id. And a
+   * signed row always outranks an unsigned row at the same id, whichever arrived
+   * first: the unsigned one is removed and the signed one takes its place (the
+   * delete trigger allows exactly that), and the removed id is reported the same
+   * way. Signed rows go first, so which one wins never depends on table order.
+   * (Cold review of identity step 4, findings 1 and 2.)
+   */
+  const reject = (id: string): void => {
+    if (!result.rejected.includes(id)) result.rejected.push(id);
+  };
+  const displace = (table: string, row: ReplicatedRow): void => {
+    const gone = local.all(`SELECT _r_parents FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
+    local.run(`DELETE FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
+    // What the removed row superseded is a head again unless something else names it (T1-D2).
+    for (const parent of parentsOf({ _r_parents: String(gone?.["_r_parents"] ?? "[]") })) {
+      local.run(
+        `UPDATE "${table}" SET _r_superseded = 0
+          WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1
+            AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(n._r_parents) p WHERE p.value = ?)`,
+        [parent, parent],
+      );
+    }
+    reject(rowId(row._r_replica, row._r_seq));
+  };
+  const place = (table: string, row: ReplicatedRow, signed: boolean): void => {
+    for (const other of tables) {
+      if (other === table) continue;
+      const there = local.all(`SELECT _r_batch FROM "${other}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
+      if (!there) continue;
+      if (signed && there["_r_batch"] == null) {
+        displace(other, row);
         continue;
       }
+      throw new RowRejected(
+        `${rowId(row._r_replica, row._r_seq)} is already a row of ${other}. One author's seq names one row, whatever table it is in.`,
+      );
+    }
+    try {
+      if (applyRow(local, table, row) === "added") result.applied += 1;
+      else result.duplicate += 1;
+    } catch (error) {
+      const there = local.all(`SELECT _r_batch FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
+      if (!(error instanceof RowRejected) || !signed || !there || there["_r_batch"] != null) throw error;
+      displace(table, row);
+      applyRow(local, table, row);
+      result.applied += 1;
+    }
+  };
+  for (const [rows, signed] of [
+    [signedRows, true],
+    [unsignedRows, false],
+  ] as const) {
+    for (const { table, row } of rows) {
       try {
-        if (applyRow(local, table, row) === "added") result.applied += 1;
-        else result.duplicate += 1;
+        place(table, row, signed);
       } catch (error) {
         if (!(error instanceof RowRejected)) throw error;
         /*
@@ -943,7 +1031,7 @@ export function mergeFrom(
          * is a claim, and reporting it as authorship would dress a guess as a
          * fact.
          */
-        result.rejected.push(rowId(row._r_replica, row._r_seq));
+        reject(rowId(row._r_replica, row._r_seq));
       }
     }
   }
@@ -957,7 +1045,7 @@ export function mergeFrom(
   if (author instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, author));
 
   result.refusedBatches = [...refusals.values()]
-    .sort((a, b) => plainOrder(a.id, b.id) || plainOrder(a.reason, b.reason))
+    .sort((a, b) => plainOrder(a.id, b.id) || plainOrder(a.reason, b.reason) || plainOrder(hex(a.author), hex(b.author)))
     .map(({ author: who, reason }) => ({ author: showAuthorId(who), reason }));
   return result;
 }

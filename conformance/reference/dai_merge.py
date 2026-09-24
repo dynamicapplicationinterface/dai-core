@@ -108,7 +108,7 @@ def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
     if db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").fetchone():
         lines.append("# _dai_batch")
         for header in db.execute(
-            "SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch ORDER BY hex(id) ASC"
+            "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch ORDER BY hex(id) ASC"
         ):
             lines.append("\t".join(encode(value) for value in header))
     return "\n".join(lines) + "\n"
@@ -245,7 +245,10 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
     """
     tables = replicated_tables(local)
     result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
-    refusals: dict[tuple[str, str], bytes] = {}
+    refusals: dict[tuple[str, str, str], bytes] = {}  # (id, reason, author hex) -> author
+
+    def refuse_batch(hid: str, author: bytes, reason: str) -> None:
+        refusals[(hid, reason, bytes(author).hex())] = author
 
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
@@ -282,35 +285,39 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
         )
 
     # The signed headers: a union by id of the verified ones, before any row.
-    # A header lists the rows it covers (its author, its seqs); a row's own
-    # _r_batch is a cache of one header that lists it, never the truth.
+    # A header lists the rows it covers as [table, seq], its author being its
+    # own; a row's _r_batch is a cache of one header that lists it, never the truth.
     has_batches = lambda db: db.execute(
         "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'"
     ).fetchone()
     held: dict[str, bytes] = {}
-    covering: dict[str, str] = {}  # "author:seq" -> the lowest ok id listing it
-    covers: set[str] = set()  # "id|author:seq"
+    covering: dict[str, str] = {}  # "table|author:seq" -> the lowest ok id listing it
+    covers: set[str] = set()  # "id|table|author:seq"
     if has_batches(local) and has_batches(sibling):
         headers = sibling.execute(
-            "SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch"
+            "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch"
         ).fetchall()
         for header in sorted(headers, key=lambda h: bytes(h[0]).hex()):
             hid = bytes(header[0]).hex()
             held[hid] = header[0]
             verdict = verdicts.get(hid, "BATCH_SIGNATURE_INVALID")
             if verdict != "ok":
-                refusals[(hid, verdict)] = header[1]
+                refuse_batch(hid, header[1], verdict)
                 continue
             local.execute(
-                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs)"
+                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 header,
             )
-            for seq in json.loads(header[8]):
-                key = f"{bytes(header[1]).hex()}:{seq}"
+            for table, seq in json.loads(header[8]):
+                key = f"{table}|{row_id(header[1], seq)}"
                 covers.add(f"{hid}|{key}")
                 covering.setdefault(key, hid)
 
+    # Signed means listed by an ok header, whatever the row says. Signed rows
+    # are placed first, unsigned after, so table order never decides.
+    signed_rows: list[tuple[str, dict]] = []
+    unsigned_rows: list[tuple[str, dict]] = []
     for table in tables:
         names = columns_of(sibling, table)
         authored = [name for name in names if not name.startswith("_r_")]
@@ -326,25 +333,81 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                 "_r_batch": incoming.get("_r_batch"),
                 "columns": {name: incoming[name] for name in authored},
             }
-            # Signed means listed by an ok header, whatever the row says.
-            key = f"{bytes(row['_r_replica']).hex()}:{row['_r_seq']}"
+            key = f"{table}|{row_id(row['_r_replica'], row['_r_seq'])}"
             named = bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else None
             cover = covering.get(key)
             if cover is not None:
                 keep = named if named is not None and f"{named}|{key}" in covers else cover
                 row["_r_batch"] = held[keep]
+                signed_rows.append((table, row))
             elif named is not None:
-                # It names a header that does not vouch for it.
+                # It names a header that does not vouch for it: refused in the
+                # name of whoever wrote the row.
                 if named not in held or verdicts.get(named) == "ok":
-                    refusals[(named, "BATCH_DIGEST_MISMATCH")] = row["_r_replica"]
+                    refuse_batch(named, row["_r_replica"], "BATCH_DIGEST_MISMATCH")
+            else:
+                unsigned_rows.append((table, row))
+
+    def reject(rid: str) -> None:
+        if rid not in result["rejected"]:
+            result["rejected"].append(rid)
+
+    def held_batch(table: str, row: dict):
+        return local.execute(
+            f'SELECT _r_batch FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        ).fetchone()
+
+    def displace(table: str, row: dict) -> None:
+        # A signed row outranks an unsigned one at its id: the unsigned one goes,
+        # and what it superseded is a head again unless something else names it.
+        (parents,) = local.execute(
+            f'SELECT _r_parents FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        ).fetchone()
+        local.execute(
+            f'DELETE FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        )
+        for parent in parents_of(parents):
+            local.execute(
+                f'UPDATE "{table}" SET _r_superseded = 0'
+                " WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1"
+                f' AND NOT EXISTS (SELECT 1 FROM "{table}" n, json_each(n._r_parents) p WHERE p.value = ?)',
+                (parent, parent),
+            )
+        reject(row_id(row["_r_replica"], row["_r_seq"]))
+
+    def place(table: str, row: dict, signed: bool) -> None:
+        # One author's seq names one row, whatever table it is in.
+        for other in tables:
+            if other == table:
                 continue
+            there = held_batch(other, row)
+            if there is None:
+                continue
+            if signed and there[0] is None:
+                displace(other, row)
+                continue
+            raise ValueError(f"ROW_REJECTED: {row_id(row['_r_replica'], row['_r_seq'])} is a row of {other}")
+        try:
+            outcome = apply_row(local, table, row)
+        except ValueError:
+            there = held_batch(table, row)
+            if not signed or there is None or there[0] is not None:
+                raise
+            displace(table, row)
+            outcome = apply_row(local, table, row)
+        result["applied" if outcome == "added" else "duplicate"] += 1
+
+    for rows, signed in ((signed_rows, True), (unsigned_rows, False)):
+        for table, row in rows:
             try:
-                outcome = apply_row(local, table, row)
-                result["applied" if outcome == "added" else "duplicate"] += 1
+                place(table, row, signed)
             except ValueError:
                 # One refused row does not deny the rest (T1-D13): a refusal
                 # must never be cheaper than the thing it refuses.
-                result["rejected"].append(row_id(row["_r_replica"], row["_r_seq"]))
+                reject(row_id(row["_r_replica"], row["_r_seq"]))
     result["refusedBatches"] = [
         {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)
     ]
@@ -419,7 +482,7 @@ def check(name: str) -> list[str]:
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
-        result = merge(local, sibling, verdicts)
+        result = merge(local, sibling, verdicts.get(other.split(".")[0], {}))
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 

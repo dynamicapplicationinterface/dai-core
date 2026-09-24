@@ -38,6 +38,7 @@ import {
 } from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
 import { adoptReplica, pendingBatches, recordSeal, signBatch, stageBatch, verifyBatches } from "../dist/dai-merge.js";
+import { coversText } from "../dist/replicated-rows.js";
 import { authorIdOf, signBytes } from "../dist/identity.js";
 import { createECDH, webcrypto } from "node:crypto";
 
@@ -51,9 +52,15 @@ CREATE TABLE cases (
   status TEXT NOT NULL DEFAULT 'open',
   weight REAL
 );
+-- dai:replicated
+CREATE TABLE notes (
+  body TEXT NOT NULL
+);
 `;
 
-const TABLES = ["cases"];
+// Two shared tables, because one author's seq names one row across all of them
+// (a collision in another table is a vector of its own).
+const TABLES = ["cases", "notes"];
 const id = (byte) => new Uint8Array(16).fill(byte);
 const A = id(0xaa);
 const B = id(0xbb);
@@ -124,19 +131,21 @@ function open(path, extra) {
  * file does, and then lets the recipient adopt an identity of its own.
  */
 function receiveInto(to, from, id) {
-  for (const row of from.all('SELECT * FROM "cases"')) {
-    const names = Object.keys(row);
-    to.run(
-      `INSERT INTO "cases" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
-      names.map((n) => row[n]),
-    );
-  }
   for (const header of from.all("SELECT * FROM _dai_batch")) {
     const names = Object.keys(header);
     to.run(
       `INSERT INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
       names.map((n) => header[n]),
     );
+  }
+  for (const table of TABLES) {
+    for (const row of from.all(`SELECT * FROM "${table}"`)) {
+      const names = Object.keys(row);
+      to.run(
+        `INSERT INTO "${table}" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+        names.map((n) => row[n]),
+      );
+    }
   }
   const theirs = from.all("SELECT id, seq, lc FROM _dai_replica")[0];
   to.run("DELETE FROM _dai_replica");
@@ -384,6 +393,50 @@ const VECTORS = [
     },
   },
   {
+    name: "merge-seal-cross-table",
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds an unsigned note under Ada's id at the seq of Ada's signed case. One author's seq names one row in any table: A refuses the note as a collision, and B gives it up for the signed case, which outranks it.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      forge(b, "notes", ADA.author, 1, { body: "forged under Ada's id" });
+    },
+  },
+  {
+    name: "merge-seal-outranks",
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds an unsigned case under Ada's id and seq with other content. A signed row outranks an unsigned one at the same id: A keeps its own and refuses B's; B gives its up for A's.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      forge(b, "cases", ADA.author, 1, { title: "forged", status: "open", weight: null });
+    },
+  },
+  {
+    name: "merge-seal-stowaway-other",
+    cites: ["6", "T1-D13"],
+    what:
+      "B received Ada's signed case, then wrote a row of its own naming Ada's batch, which does not list it. The refusal names Bo, who wrote the row, not Ada, whose batch was taken.",
+    authors: true,
+    receives: true,
+    converges: false,
+    fill: async (a) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+    },
+    afterReceive: async (a, b) => {
+      const named = b.all("SELECT _r_batch FROM cases WHERE _r_entity = ?", [E1])[0]["_r_batch"];
+      b.run(
+        "INSERT INTO cases (title, status, weight, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES ('stowaway', 'open', NULL, ?, 5, 5, ?, '[]', 0, ?)",
+        [BO.author, id(0x55), named],
+      );
+    },
+  },
+  {
     name: "heads-via-superseded-flag",
     cites: ["4", "T1-D2", "T1-D10"],
     what: "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
@@ -440,22 +493,33 @@ async function writeInputs(vector) {
   const a = open(join(dir, "a.db"), vector.localOnA);
   const b = open(join(dir, "b.db"));
   await populate(vector, a, b);
+  // Per copy: a header is verified against the rows of the copy that holds it,
+  // so the same header can verify in one and not in the other.
   const verdicts = {};
-  for (const copy of [a, b]) {
-    for (const [id, verdict] of await verifyBatches(copy, TABLES, DOC)) verdicts[id] = verdict.ok ? "ok" : verdict.reason;
+  for (const [name, copy] of [["a", a], ["b", b]]) {
+    const found = {};
+    for (const [id, verdict] of await verifyBatches(copy, TABLES, DOC)) found[id] = verdict.ok ? "ok" : verdict.reason;
+    verdicts[name] = Object.fromEntries(Object.entries(found).sort(([x], [y]) => (x < y ? -1 : 1)));
   }
-  const ordered = Object.fromEntries(Object.entries(verdicts).sort(([x], [y]) => (x < y ? -1 : 1)));
-  compare(join(dir, "verdicts.json"), `${JSON.stringify(ordered, null, 2)}\n`);
+  compare(join(dir, "verdicts.json"), `${JSON.stringify(verdicts, null, 2)}\n`);
   a.close();
   b.close();
+}
+
+/** A row written into a copy by hand under someone else's author id and seq, with no batch. */
+function forge(db, table, author, seq, columns) {
+  const names = Object.keys(columns);
+  db.run(
+    `INSERT INTO "${table}" (${names.join(", ")}, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES (${names.map(() => "?").join(", ")}, ?, ?, ?, ?, '[]', 0)`,
+    [...names.map((n) => columns[n]), author, seq, seq, id(0x66)],
+  );
 }
 
 /** A header put into a copy by hand, as a copy holds one whose rows' pointers a lost save never wrote. */
 function holdHeader(db, sealed) {
   db.run(
-    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest,
-      JSON.stringify(sealed.entries.map((e) => e.row._r_seq).sort((x, y) => x - y))],
+    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, coversText(sealed.entries)],
   );
 }
 
@@ -487,7 +551,7 @@ Per vector:
 | \`expected-ab.txt\` | the canonical dump of A after merging B into it |
 | \`expected-ba.txt\` | the canonical dump of B after merging A into it |
 | \`result.json\` | the counts, refused ids and refused batches the merge reports |
-| \`verdicts.json\` | the verdict on every signed header in either copy: \`ok\` or a \`BATCH_\` code |
+| \`verdicts.json\` | per copy (\`a\`, \`b\`), the verdict on every signed header it holds: \`ok\` or a \`BATCH_\` code |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -528,23 +592,34 @@ fixtures are written and reused after.
 **Verdicts.** A merge verifies every header the other copy holds before it takes
 anything (docs/format.md): it finds the rows the header lists, digests them, and
 checks the signature. \`verdicts.json\` is that check's answer for every header in
-\`a.db\` and \`b.db\`, made by the TypeScript verifier; the canonical bytes and the
+\`a.db\` and in \`b.db\`, each against its own copy's rows (so a header can verify in
+one and not the other), made by the TypeScript verifier; a merge of B into A
+reads \`b\`'s, and of A into B, \`a\`'s; the canonical bytes and the
 signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
 the verdicts and does the rest itself, which is the part these vectors test:
 
 - a header that is not \`ok\` is not kept and lists nothing;
-- a row is taken when an \`ok\` header lists it (its author, one of its seqs),
-  whatever the row says, and names the header it names if that one lists it,
-  else the lowest listed id;
+- a header lists its rows in \`covers\` as \`[table, seq]\`, the author being its own;
+- a row is taken when an \`ok\` header lists it (its table, its author, its
+  seq), whatever the row says, and names the header it names if that one lists
+  it, else the lowest listed id;
 - a row that names a header and is listed by none is refused, as
-  \`BATCH_DIGEST_MISMATCH\` against the header it names unless that header was
-  refused already;
-- a row that names none and is listed by none is unsigned, and merges as before.
+  \`BATCH_DIGEST_MISMATCH\` in the name of the row's own author, unless the
+  header it names was refused already;
+- a row that names none and is listed by none is unsigned, and merges as before;
+- one author's seq names one row whatever table it is in: a row whose
+  (author, seq) the copy holds in another table is refused (\`rejected\`);
+- a signed row outranks an unsigned row at the same id: the unsigned one is
+  removed, the signed one takes its place, and the removed id is reported in
+  \`rejected\`; whatever the removed row superseded is a head again unless
+  something else names it. Signed rows are placed before unsigned ones, so the
+  answer never depends on table order.
 
-\`merge-seal-stowaway\`, \`merge-seal-tampered\` and \`merge-seal-lost-pointer\` each
-disagree with a reader that has one of those wrong. \`refusedBatches\` in
-\`result.json\` is one entry per batch and reason, ordered by batch id, with the
-author id shown as base64url.
+\`merge-seal-stowaway\`, \`merge-seal-stowaway-other\`, \`merge-seal-tampered\`,
+\`merge-seal-lost-pointer\`, \`merge-seal-cross-table\` and \`merge-seal-outranks\`
+each disagree with a reader that has one of those wrong. \`refusedBatches\` in
+\`result.json\` is one entry per batch, reason and author, ordered by batch id,
+then reason, then author id in hex, with the author id shown as base64url.
 `;
 
 let differences = 0;

@@ -18,9 +18,9 @@ import { authorIdOf, rawPublicKey, signBytes, verifySignature, type SubtleKey } 
 import {
   authorColumnsOf,
   CARRIED_R_FIELDS,
-  coveredSeqsOf,
+  coveredRowsOf,
+  coversText,
   readRow,
-  seqsText,
   type BatchVerdict,
   type ReplicatedRow,
   type Rows,
@@ -240,8 +240,8 @@ export function recordSeal(db: Rows, sealed: SignedBatch): void {
   db.run("SAVEPOINT dai_seal");
   try {
     db.run(
-      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, seqsText(sealed.entries)],
+      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, coversText(sealed.entries)],
     );
     for (const { table, row } of sealed.entries) {
       db.run(`UPDATE "${table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL`, [
@@ -262,7 +262,7 @@ export function recordSeal(db: Rows, sealed: SignedBatch): void {
  * Verifies every signed header a copy holds, against that copy's own rows
  * (identity ruling #3: verification by signed row set).
  *
- * A header names the rows it covers, by its author and the seqs it lists.
+ * A header names the rows it covers: its author, and `[table, seq]` for each.
  * Verifying one is: find those rows, digest them, and check the signature over
  * the header that digest makes, under a key that fingerprints to the author.
  * What a row says about its batch (`_r_batch`) plays no part: the row set is
@@ -272,9 +272,11 @@ export function recordSeal(db: Rows, sealed: SignedBatch): void {
  *
  * Every header gets a verdict, keyed by its id in lowercase hex. The checks, in
  * order:
- *  - the listed seqs are a list of distinct positive integers, each found in
- *    exactly one row of this author, and the digest over those rows is the
- *    header's (else BATCH_DIGEST_MISMATCH);
+ *  - the listed rows are `[table, seq]` pairs in the one spelling, each table
+ *    one the merge carries and each found as exactly one row of this author in
+ *    that table, and the digest over those rows is the header's (else
+ *    BATCH_DIGEST_MISMATCH). By table as well as seq: a row of the same number
+ *    in another table is not a row this header signed, and cannot spoil it;
  *  - `pub` fingerprints to the author, and the signature verifies over the
  *    canonical header for `document` (else BATCH_SIGNATURE_INVALID). A batch
  *    signed for another document fails here;
@@ -299,23 +301,25 @@ export async function verifyBatches(
       verdicts.set(hex(id), { ok: false, author, reason });
     };
 
-    const seqs = coveredSeqsOf(header["seqs"]);
-    if (!seqs) {
+    const covers = coveredRowsOf(header["covers"]);
+    const carried = new Set(tables);
+    if (!covers || covers.some(([table]) => !carried.has(table))) {
       refuse("BATCH_DIGEST_MISMATCH");
       continue;
     }
+    // Each listed row found once, where it was listed: a missing one is not the
+    // set that was signed.
     const entries: BatchEntry[] = [];
-    const wanted = seqs.join(",");
-    for (const table of tables) {
-      const authored = authorColumnsOf(db, table);
-      for (const record of db.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq IN (${wanted})`, [author])) {
-        entries.push({ table, row: readRow(record, authored) });
+    let whole = true;
+    for (const [table, seq] of covers) {
+      const found = db.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [author, seq]);
+      if (found.length !== 1) {
+        whole = false;
+        break;
       }
+      entries.push({ table, row: readRow(found[0]!, authorColumnsOf(db, table)) });
     }
-    // Each listed row found once: a missing one, or two rows under one seq,
-    // is not the set that was signed.
-    const found = new Set(entries.map((e) => e.row._r_seq));
-    if (entries.length !== seqs.length || found.size !== seqs.length) {
+    if (!whole) {
       refuse("BATCH_DIGEST_MISMATCH");
       continue;
     }
@@ -341,7 +345,7 @@ export async function verifyBatches(
       refuse("BATCH_DIGEST_MISMATCH");
       continue;
     }
-    verdicts.set(hex(id), { ok: true, author, seqs });
+    verdicts.set(hex(id), { ok: true, author, covers });
   }
   return verdicts;
 }
@@ -622,8 +626,8 @@ export function stageBatch(staged: Rows, batch: Batch | SignedBatch, tables: rea
   const sealed = isSigned(batch) ? batch : null;
   if (sealed) {
     staged.run(
-      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, seqsText(sealed.entries)],
+      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, coversText(sealed.entries)],
     );
   }
   staged.run("INSERT OR REPLACE INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
