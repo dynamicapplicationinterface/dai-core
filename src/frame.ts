@@ -34,6 +34,13 @@ export const FRAME_PUBLIC = {
   MERGED: "dai:merged",
   /** Posted by the kit when a person first uses a control. */
   USED: "dai:used",
+  /**
+   * Fired on `window` when this device is a new author for a document it wrote
+   * before: its key was lost and made again (docs/identity.md, "Loss"). The kit
+   * says the loss sentence on it; `window.dai.newPlayer` holds it for a kit
+   * that loads after.
+   */
+  NEW_PLAYER: "dai:new-player",
 } as const;
 
 /** Names between the shell and the runtime's own frame code. Renamable together. */

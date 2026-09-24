@@ -1899,6 +1899,41 @@ function bridgeMain(names: FrameNames): void {
       const found = rows.all(`SELECT _r_session AS s FROM "${table.replace(/"/g, '""')}" WHERE _r_entity = ? LIMIT 1`, [id])[0]?.["s"];
       return found instanceof Uint8Array ? found : undefined;
     };
+    /*
+     * Whether `me` (hex) is the session's creator: the author of its first
+     * verified seat row, as `_dai_creator` decides it (identity step 5). Not
+     * "wrote any seat row": a seat another author minted is not a seat.
+     */
+    const creatorIs = (session: Uint8Array, me: string): boolean =>
+      rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_creator'").length > 0
+        ? rows.all("SELECT 1 FROM _dai_creator WHERE session = ? AND lower(hex(replica)) = ? LIMIT 1", [session, me]).length > 0
+        : rows.all("SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1", [session, me]).length > 0;
+
+    /*
+     * A seated table's row names the seat it acts for (identity step 5), and
+     * this copy may write it only for a seat it holds. The merge's admission is
+     * what holds against a copy that skips this; this tells an honest author at
+     * once, by name, instead of writing a row every copy will refuse.
+     */
+    const seatGate = (table: string, values: Any, sessionOf: () => Uint8Array | undefined): void => {
+      if (rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_seat_rules'").length === 0) return;
+      const column = rows.all("SELECT col FROM _dai_seat_rules WHERE tbl = ?", [table])[0]?.["col"];
+      if (typeof column !== "string") return;
+      const seat = values?.[column];
+      const session = sessionOf();
+      if (!(seat instanceof Uint8Array) || !session) {
+        throw new Error(`SEAT_NOT_HELD (${table} rows act for a seat, and this write names none)`);
+      }
+      const me = mountReplica ? hex(mountReplica) : String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+      const held = rows.all(
+        "SELECT 1 FROM _dai_holder WHERE session = ? AND seat = ? AND lower(hex(replica)) = ? LIMIT 1",
+        [session, seat, me],
+      );
+      if (held.length === 0) {
+        throw new Error(`SEAT_NOT_HELD (this copy does not hold the seat this ${table} row names)`);
+      }
+    };
+
     const authorGate = (table: string, sessionOf: () => Uint8Array | undefined): void => {
       if (rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_author_rules'").length === 0) return;
       const required = rows.all("SELECT author FROM _dai_author_rules WHERE tbl = ?", [table])[0]?.["author"];
@@ -1908,8 +1943,7 @@ function bridgeMain(names: FrameNames): void {
         throw new Error(`ROLE_NOT_PERMITTED (${table} may be written only by a session's ${required}, and this write names no session)`);
       }
       const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
-      const isCreator =
-        rows.all("SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1", [session, me]).length > 0;
+      const isCreator = creatorIs(session, me);
       if (required === "creator" && !isCreator) {
         throw new Error(`ROLE_NOT_PERMITTED (the joiner wrote ${table}, which only the session's creator may write)`);
       }
@@ -1920,10 +1954,28 @@ function bridgeMain(names: FrameNames): void {
 
     // Every write settles the identity first; it does the work once.
     return {
+      /*
+       * This copy's author id, hex, as the host handed it on this mount (binding
+       * rule 1): never read from a row. Null until the host has said. The kit's
+       * seat reads are built on it.
+       */
+      author: (): string | null => (mountReplica ? hex(mountReplica) : null),
+      /*
+       * Whether this mount can write shared rows: the rules arrived and were
+       * adopted, and the host gave this copy an author id. Waits for the rules to
+       * settle, as a database open does, so a read-only mount answers false
+       * rather than never. The kit's whenWritable is built on it.
+       */
+      writable: async (): Promise<boolean> => {
+        if (!expectsRules) return false;
+        await awaitRules();
+        return Boolean(mergeModule) && Boolean(mountReplica);
+      },
       insert: (table: string, values: Any, sessionHex?: string): string => {
         const id = entity();
         settleReplica(rows);
         authorGate(table, () => (sessionHex ? fromHex(sessionHex) : undefined));
+        seatGate(table, values, () => (sessionHex ? fromHex(sessionHex) : undefined));
         // A session document threads the session onto every row (T1-D26); the
         // app passes the game's session id. A plain document passes none.
         rules().createEntity(rows, table, id, values, sessionHex ? fromHex(sessionHex) : undefined);
@@ -1934,6 +1986,7 @@ function bridgeMain(names: FrameNames): void {
         const id = fromHex(entityHex);
         settleReplica(rows);
         authorGate(table, () => sessionOfEntity(table, id));
+        seatGate(table, values, () => sessionOfEntity(table, id));
         // The session is inherited from the entity's head (T1-D28) — the app
         // never restates it, so a change cannot move a row to another session.
         rules().changeEntity(rows, table, id, values);
@@ -2000,11 +2053,7 @@ function bridgeMain(names: FrameNames): void {
           // check is on the author, so it cannot be forged — the seat rows say
           // who the creator is, and the key is the author.
           if (closePolicy === "creator") {
-            const isCreator =
-              rows.all(
-                "SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1",
-                [sid, me],
-              ).length > 0;
+            const isCreator = creatorIs(sid, me);
             if (!isCreator) throw new Error("CLOSE_NOT_PERMITTED");
           }
           // The frontier: per replica, the highest seq it authored in this
@@ -2052,11 +2101,7 @@ function bridgeMain(names: FrameNames): void {
           const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
           // Only the creator — the author of the seats — may reseat; a non-creator
           // authoring a seat change would itself contest the roster.
-          const isCreator =
-            rows.all(
-              "SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1",
-              [sid, me],
-            ).length > 0;
+          const isCreator = creatorIs(sid, me);
           if (!isCreator) throw new Error("NOT_SEAT_CREATOR");
           // The seat to replace is the CONTESTED one — a seat two or more replicas
           // bound. Reseating drops every binding to the old value, so on a healthy
@@ -2327,6 +2372,13 @@ function bridgeMain(names: FrameNames): void {
       mountFloor = Number.isSafeInteger(data.seqFloor) && data.seqFloor > 0 ? data.seqFloor : 0;
       mountDocument = typeof data.document === "string" ? data.document : "";
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
+      // A new author for a document this device wrote before (docs/identity.md,
+      // "Loss"): held on window.dai for a kit that loads after, and fired for one
+      // already listening. The kit owns the sentence.
+      if (data.newAuthor === true) {
+        (window as unknown as Any).dai.newPlayer = true;
+        window.dispatchEvent(new CustomEvent(names.NEW_PLAYER));
+      }
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
       // read-only for its replicated tables rather than writing rows under
@@ -3056,7 +3108,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown; newAuthor: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -3065,7 +3117,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true },
     "*",
   );
 }
@@ -3511,10 +3563,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown; newAuthor?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy };
+      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor };
       if (listeningWindow) deliverRules();
       return;
     }

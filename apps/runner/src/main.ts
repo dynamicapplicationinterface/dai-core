@@ -82,7 +82,7 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
-import { authorId, person, type Person } from "./person.js";
+import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
 import { BATCH_FORMAT_VERSION } from "../../../src/replicated-batch.js";
@@ -2869,6 +2869,11 @@ window.addEventListener("message", (event) => {
       }
       const replica = decision.me.id;
       const seqFloor = decision.seqFloor;
+      // Written on this device before this page, by the library's record; a
+      // save this page made is not "before" (its key is the one it has now).
+      const wroteBefore =
+        !writtenThisPage.has(writingUuid) &&
+        (await getCartridgeFromLibrary(writingUuid).catch(() => null))?.wrote === true;
       (event.source as Window | null)?.postMessage(
         {
           type: TO_DOCUMENT.WRITE_RULES,
@@ -2885,6 +2890,11 @@ window.addEventListener("message", (event) => {
           // frame refuses a close the policy forbids at write time; the views are
           // the convergent net. Undefined for a document with no session.
           closePolicy: loaded.manifest.session ? (loaded.manifest.session.close ?? "any") : undefined,
+          // This device made its key on this page, and its library says it wrote
+          // this document before: it is a new author for a document it had
+          // written, which is what losing a key looks like (docs/identity.md,
+          // "Loss"). The kit says so, in its words or the application's.
+          newAuthor: mintedThisPage() && wroteBefore,
         },
         "*",
       );
@@ -3224,6 +3234,7 @@ window.addEventListener("message", (event) => {
       })
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
+          writtenThisPage.add(documentUuid);
           hostSavesWritten += 1;
           /*
            * The first thing worth keeping is on this device, so now is when the
@@ -3375,6 +3386,9 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * been acknowledged. A shell that does not answer — an older one — is given
  * a moment and then not waited for.
  */
+/** Documents this page has saved: a key made on this page wrote them, so they are not a loss. */
+const writtenThisPage = new Set<string>();
+
 /** Said when outgoing bytes would carry a row of this device's that nobody signed. */
 const UNSIGNED_LEAVE =
   "This has changes of yours that were never signed, so it was not sent or saved to a file. " +

@@ -569,9 +569,116 @@ customElements.define('dai-form', DaiForm);
 customElements.define('dai-attach', DaiAttach);
 customElements.define('dai-save', DaiSave);
 
-// Anything outside these four is ordinary JavaScript against window.dai, which
-// is still there. This is a shortcut, not a framework.
-window.daiKit = { db: db, run: run, refresh: refresh };
+/*
+ * Seats (docs/identity.md, step 5). The seat tables are the kit's: an
+ * application starts a session, claims a seat and asks who holds one here, and
+ * never writes _dai_seat or _dai_binding itself (the build refuses one that
+ * does). Who this copy is comes from the host, never from a row, so a copy that
+ * rewrote its own replica row cannot read itself into someone else's seat.
+ * Sessions and seats are lowercase hex.
+ */
+const shared = () => window.dai.replicated;
+const me = () => (shared() && shared().author ? shared().author() : null);
+const first = (sql, values) => db.selectObjects(sql, values || [])[0] || null;
+const hasRoster = () => !!first("SELECT 1 AS x FROM sqlite_schema WHERE name = '_dai_holder'");
+/** The seat this copy holds in a session, or null: held means the first verified signer of its binding. */
+function mySeat(session) {
+  const id = me();
+  if (!id || !hasRoster()) return null;
+  const r = first('SELECT lower(hex(seat)) AS seat FROM _dai_holder WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ? ORDER BY since LIMIT 1', [session, id]);
+  return r ? r.seat : null;
+}
+/** Whether this copy started the session: it is the author of the session's first seat. */
+function amCreator(session) {
+  const id = me();
+  return !!id && hasRoster() && !!first('SELECT 1 AS x FROM _dai_creator WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?', [session, id]);
+}
+/*
+ * A session's current seats: each with its holder (hex, or null while open),
+ * whether the creator holds it, and every value it has had (a reseat gives a
+ * seat a new value; rows made from an old one still act for that seat).
+ */
+function seats(session) {
+  if (!hasRoster()) return [];
+  return db.selectObjects(
+    'SELECT lower(hex(s.seat)) AS seat, s._r_entity AS entity, lower(hex(h.replica)) AS holder, (h.replica = c.replica) AS creator ' +
+    'FROM _dai_seat_current s JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica ' +
+    'LEFT JOIN _dai_holder h ON h.session = s._r_session AND h.seat = s.seat ' +
+    'WHERE lower(hex(s._r_session)) = ? ORDER BY s._r_lc, s._r_seq', [session]
+  ).map(function (r) {
+    const values = db.selectObjects('SELECT DISTINCT lower(hex(seat)) AS v FROM _dai_seat WHERE _r_entity = ?', [r.entity]).map(function (x) { return x.v; });
+    return { seat: r.seat, holder: r.holder || null, creator: !!r.creator, values: values };
+  });
+}
+/** A new session: this copy's seat and one open seat. solo also takes the open seat (a board one copy plays alone). */
+function newSession(options) {
+  const made = shared().session.create();
+  if (options && options.solo) shared().session.join(made.session, made.seat);
+  return made.session;
+}
+/**
+ * Take the session's open seat, once. Returns the seat this copy then holds,
+ * or null: none open, or another copy's earlier binding holds it.
+ */
+function claimSeat(session) {
+  const held = mySeat(session);
+  if (held) return held;
+  const open = seats(session).find(function (s) { return !s.holder; });
+  if (!open) return null;
+  shared().session.join(session, open.seat);
+  return mySeat(session);
+}
+/** The creator's repair for a contested seat: a fresh open seat, for a new invite. */
+function reseat(session) { shared().session.reseat(session); }
+/** Seat hex as the bytes a seat column holds. */
+function seatBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+/*
+ * Runs fn when this mount can write shared rows, and never on a read-only one
+ * (rules refused or never delivered): a boot write that would throw there, and
+ * stop the page drawing, waits here instead. Resolves with fn's result, or
+ * undefined when read-only.
+ */
+function whenWritable(fn) {
+  const surface = shared();
+  if (!surface || !surface.writable) return Promise.resolve(undefined);
+  return surface.writable().then(function (ok) { return ok ? fn() : undefined; });
+}
+/*
+ * This device is a new author for a document it wrote before: its key was lost
+ * and made again (docs/identity.md, "Loss"). Said once, in the kit's words
+ * unless the application takes the hook. onNewPlayer(fn) takes it: fn gets the
+ * sentence, and shows it however the application shows things.
+ */
+const NEW_PLAYER = 'This device is a new player here. Your earlier moves are still on the board.';
+let newPlayerHandler = null;
+let newPlayerSaid = false;
+function sayNewPlayer() {
+  if (newPlayerSaid) return;
+  newPlayerSaid = true;
+  if (newPlayerHandler) { newPlayerHandler(NEW_PLAYER); return; }
+  const line = document.createElement('p');
+  line.setAttribute('role', 'status');
+  line.setAttribute('data-dai-new-player', '');
+  line.textContent = NEW_PLAYER;
+  line.style.cssText = 'margin:0;padding:.5em 1em;font:inherit;background:Canvas;color:CanvasText;border-bottom:1px solid GrayText';
+  line.addEventListener('click', function () { line.remove(); });
+  document.body.prepend(line);
+}
+function onNewPlayer(fn) { newPlayerHandler = fn; }
+window.addEventListener('dai:new-player', function () { setTimeout(sayNewPlayer, 0); });
+if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
+
+// Anything outside these is ordinary JavaScript against window.dai, which is
+// still there. This is a shortcut, not a framework.
+window.daiKit = {
+  db: db, run: run, refresh: refresh,
+  newSession: newSession, claimSeat: claimSeat, reseat: reseat, mySeat: mySeat, amCreator: amCreator,
+  seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer, author: me,
+};
 `;
 
 /** Where the compiler puts it, and what an application references. */

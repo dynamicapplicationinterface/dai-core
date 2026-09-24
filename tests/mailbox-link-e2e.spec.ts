@@ -1586,38 +1586,57 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * Bo's copy, under Ada's id and with nothing pulled since, believes it holds
    * White and plays d2-d4.
    *
-   * **Red until step 5 of the identity sitting, on purpose.** Since step 2 the
-   * write is stamped with the host's key, re-asserted on every write
-   * (docs/identity.md, binding rule 2), so the row reaches Ada's copy honestly
-   * as Bo's: the first half of this test passes. What must refuse it is the
-   * seat, not the signature: a signature answers who wrote a row, a seat
-   * answers whether they may, and Bo, holding Black, may not play White's move
-   * (IDENTITY-SEAT-ADMITS in src/rules.ts). The signature never refuses this
-   * path, because the runtime signs as Bo and Bo's batch verifies. At step 5
-   * the kit admits a row only from the author holding its seat, inside its
-   * merge path, and this test then also asserts the refusal is reported as
+   * Since step 2 the write is stamped with the host's key, re-asserted on
+   * every write (docs/identity.md, binding rule 2), so the row reaches Ada's
+   * copy honestly as Bo's. What refuses it is the seat, not the signature: a
+   * signature answers who wrote a row, a seat answers whether they may, and
+   * Bo, holding Black, may not play from White's seat (IDENTITY-SEAT-ADMITS in
+   * src/rules.ts). The signature never refuses this path, because Bo's copy
+   * signs as Bo and Bo's batch verifies. Since step 5 a move names the seat it
+   * acts for, and the document admits it only from whoever held that seat when
+   * it was written; Ada's copy stores the row and reports it as
    * `SEAT_NOT_HELD` with Bo's id. The forger who stamps Ada's id outside the
    * runtime is the signature's to refuse, and is held by signed-batch test 2.
+   *
+   * The strongest form of the forgery: the move names Ada's own seat. (A move
+   * that names no seat is refused the same way; tests/seat-admission.spec.ts
+   * holds that case.)
    */
-  test("D80: a forged copy's move as the creator is refused by the seat, and both players stay seated (red until step 5)", async ({ browser }) => {
+  test("D80: a forged copy's move as the creator is refused by the seat, and both players stay seated", async ({ browser }) => {
     const { deviceA, deviceB, pageA, pageB, appB, beforeA, beforeB } = await forgedPair(browser);
+    const refusals: string[] = [];
+    pageA.on("console", (message) => {
+      if (/^dai: merge refused /.test(message.text())) refusals.push(message.text());
+    });
 
-    // The forged copy writes White's move at once, through the application's own
-    // write surface (the runtime's path, stamped by the host). Not through the
-    // board: the copy's next write of any kind puts its key back, and a mailbox
-    // poll landing first would disable the move before the test could play it.
+    // The forged copy writes White's move at once, around every gate an honest
+    // copy passes (a hostile copy owns its frame): straight into the table, as
+    // Bo (the key the host signs with) but for Ada's seat. Bo's copy then seals
+    // and publishes it like any row of its own. Not through the board, and not
+    // through the write surface, which refuses a seat this copy does not hold.
     // How the forger produces the row is scenery; Ada's copy refusing it is the
     // fact under test.
     await appFrame(pageB).evaluate(() => {
-      const db = (window as any).daiKit.db;
+      const kit = (window as any).daiKit;
+      const db = kit.db;
       const game = db.selectObjects(
         "SELECT lower(hex(_r_entity)) id, lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'",
       )[0];
-      (window as any).dai.replicated.insert(
-        "moves",
-        { game_id: game.id, ply: 3, color: "w", from_sq: "d2", to_sq: "d4", promotion: null, san: "d4", draw_offer: 0 },
-        game.s,
+      const adasSeat = kit.seats(game.s).find((seat: { creator: boolean }) => seat.creator).seat;
+      const bo = kit.author();
+      const tables = ["games", "moves", "game_events", "_dai_seat", "_dai_binding", "_dai_close"];
+      const top = Math.max(
+        ...tables.map((t) => Number(db.selectObjects(`SELECT coalesce(max(_r_seq), 0) AS n FROM "${t}" WHERE lower(hex(_r_replica)) = ?`, [bo])[0].n)),
       );
+      const lc = Number(db.selectObjects("SELECT lc FROM _dai_replica")[0].lc) + 1;
+      const entity = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+      db.exec({
+        sql:
+          "INSERT INTO moves (seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer, " +
+          "_r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) " +
+          "VALUES (?, ?, 3, 'w', 'd2', 'd4', NULL, 'd4', 0, ?, ?, ?, ?, '[]', 0, ?)",
+        bind: [kit.seatBytes(adasSeat), game.id, kit.seatBytes(bo), top + 1, lc, kit.seatBytes(entity), kit.seatBytes(game.s)],
+      });
     });
 
     // Wait for what the refusal is about: the row arriving at Ada's copy.
@@ -1640,8 +1659,11 @@ test.describe("a game continues over a shared link (the key path)", () => {
     // Who wrote it (step 2, holds now): stamped as Bo, not as Ada.
     expect((await arrived())[0]!.r, "the move is stamped with Bo's key, not the forged id").toBe(beforeB.me);
     expect((await arrived())[0]!.r).not.toBe(beforeA.me);
-    // Whether Bo may (step 5): Bo holds Black, and this is White's move.
+    // Whether Bo may (step 5): Bo holds Black, and this move acts for White's seat.
     expect(afterA.moves.map((m: { san: string }) => m.san), "the seat refuses it: Ada's game does not admit it").not.toContain("d4");
+    // And the refusal is said, with the author it belongs to.
+    const bosShownId = Buffer.from(beforeB.me, "hex").toString("base64url");
+    expect(refusals.join("\n"), "reported as SEAT_NOT_HELD with Bo's id").toContain(`${bosShownId} SEAT_NOT_HELD`);
     stillSeated("A", afterA, beforeB.me);
 
     await deviceA.close();

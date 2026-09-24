@@ -113,4 +113,26 @@ test.describe("a person key that cannot be read", () => {
 
     await context.close();
   });
+
+  /*
+   * A read-only mount still draws (identity step 5). The chess fixture used to
+   * seed its practice board, a shared write, at boot, and on a mount that
+   * refuses writes it threw there and never drew. The boot writes now go
+   * through the kit's whenWritable, which runs them only on a mount that can
+   * write; the page draws what it holds either way.
+   */
+  test("a read-only mount still draws: the boot write waits for a mount that can write", async ({ browser }) => {
+    const context = await browser.newContext();
+    await failKeyReads(context, -1);
+    const page = await context.newPage();
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", container);
+    await page.locator("#card-open").waitFor({ timeout: 60_000 });
+    await page.locator("#card-open").click();
+    const ui = app(page);
+    await expect(ui.locator("#app"), "the application drew").toBeVisible({ timeout: 60_000 });
+    await expect(ui.locator("#boot-notice"), "and did not stop at its boot").toBeHidden();
+    expect(await page.evaluate(() => (window as any).__runner.savesWritten ?? 0), "nothing was written").toBe(0);
+    await context.close();
+  });
 });

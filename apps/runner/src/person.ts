@@ -67,17 +67,26 @@ async function readKept(): Promise<Exclude<KeptPersonKey, { kept: "unreadable" }
   }
 }
 
+/** Whether this page made the person key, rather than finding one kept (docs/identity.md, "Loss"). */
+let mintedHere = false;
+export const mintedThisPage = (): boolean => mintedHere;
+
 async function load(): Promise<Person> {
   const kept = await readKept();
   if (kept.kept === "key") return describe(kept.keys);
   const minted = await mintPersonKey();
+  mintedHere = true;
   try {
     await keepPersonKey(minted);
   } catch {
     // Either another tab kept one first (its add won), or storage refused the
     // write. Read back: a key kept by the other tab is this device's key too.
     const winner = await readKept();
-    if (winner.kept === "key") return describe(winner.keys);
+    if (winner.kept === "key") {
+      // Another tab's key, kept first: this page did not make the one it uses.
+      mintedHere = false;
+      return describe(winner.keys);
+    }
     const person = await describe(minted);
     console.info(`dai: person key not kept; this page writes as ${person.author} until it closes`);
     return person;

@@ -31,11 +31,15 @@ CREATE TABLE IF NOT EXISTS games (
   initial_fen   TEXT NOT NULL
 );
 
--- dai:replicated
+-- A move acts for a seat, and names it: the document admits it only when its
+-- author held that seat when it was written (docs/identity.md, step 5). The
+-- side that moved is the seat's, not a column anyone can write.
+-- dai:replicated seat=seat
 CREATE TABLE IF NOT EXISTS moves (
+  seat       BLOB,               -- the seat this move acts for
   game_id    TEXT NOT NULL,      -- hex entity of the games row
   ply        INTEGER NOT NULL,   -- 1-based; the move's own ordinal, the only ordering key
-  color      TEXT NOT NULL,      -- 'w' | 'b' — the side that claims to have moved
+  color      TEXT NOT NULL,      -- 'w' | 'b' — for display; the side is the seat's
   from_sq    TEXT NOT NULL,
   to_sq      TEXT NOT NULL,
   promotion  TEXT,               -- 'q' | 'r' | 'b' | 'n' | NULL
@@ -43,11 +47,13 @@ CREATE TABLE IF NOT EXISTS moves (
   draw_offer INTEGER NOT NULL DEFAULT 0
 );
 
--- dai:replicated
+-- A resignation or a draw answer acts for a seat too.
+-- dai:replicated seat=seat
 CREATE TABLE IF NOT EXISTS game_events (
+  seat      BLOB,               -- the seat this event acts for
   game_id   TEXT NOT NULL,
   after_ply INTEGER NOT NULL,    -- the ply count the event was made at; only valid at that count
-  color     TEXT NOT NULL,       -- the side acting
+  color     TEXT NOT NULL,       -- for display; the side is the seat's
   kind      TEXT NOT NULL,       -- 'resign' | 'draw-accept' | 'draw-decline' | 'claim'
   detail    TEXT NOT NULL DEFAULT ''
 );
