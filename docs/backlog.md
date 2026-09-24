@@ -535,6 +535,23 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+- **A test project chosen by a word in a comment (24 September).** Playwright's
+  `node` project is every spec whose text never says "page", "browser" or
+  "context"; a spec that does is sent to the browser projects instead, where a
+  test with no `page` fixture runs as a node test would. `tests/seal.spec.ts`
+  said "the page is killed" in a comment, left the node project, and its first
+  "pass" was the file never running under the project it was run with. The fix
+  is not rewording comments: it is making project membership explicit, a list
+  or a path convention, so a file cannot fall out of a project by prose (D110).
+- **Reference readers that agreed on everything while covering nothing (24
+  September).** After the identity sitting's step 3, the Python and Rust merge
+  readers agreed with the TypeScript on every merge vector while neither
+  handled a seal at all: no vector carried one, so agreement said nothing about
+  seals, and Rust would have refused honest sealed rows as tampering. **The fix
+  was adding cases the readers had to disagree on** (two vectors with real
+  signed batches, and the headers in the canonical dump), watching both readers
+  fail, and then bringing them level. The reusable lesson: agreement between
+  implementations is evidence only for what the vectors exercise.
 - **A tool that reports success for work it did not do (21 September).**
   `context.setOffline(true)` stops a loopback request on Chromium and does not
   on Firefox: the call returns, the flag reads as set, and the publish goes
@@ -4363,6 +4380,19 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
    that "update" has exactly one spelling (succession);
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
+
+#### D110 — Which Playwright project a spec runs in is decided by its prose
+
+*Status: open. Filed 24 September; an instance of "a check that passes for a
+reason unrelated to what it claims" (part 3).*
+
+`playwright.config.ts` builds the `node` project from every spec whose text
+never matches `\b(page|browser|context|browserName)\b`. A comment or a test
+title with one of those words moves a node-only spec into the browser projects,
+silently: `tests/seal.spec.ts` did, and a run of `--project=node` then ran none
+of it and reported green. What closes it: membership stated, not inferred: a
+path convention (for example `tests/node/`) or an explicit list, with a check
+that every spec is in exactly one.
 
 #### D109 — The sequence floor's publish route has no test of its own
 
