@@ -5,3 +5,4 @@ yours	open	nil	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	1	2	1111111111111111111111111111
 # _dai_replicas
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# _dai_batch

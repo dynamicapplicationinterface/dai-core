@@ -75,6 +75,9 @@ struct Table {
     i_seq: usize,
     i_parents: usize,
     i_superseded: usize,
+    // The signed batch a row left in (docs/identity.md), when the table has one.
+    // Not row content: the batch is named after the rows.
+    i_batch: Option<usize>,
 }
 
 fn table_cols(c: &Connection, schema: &str, t: &str) -> Vec<String> {
@@ -112,6 +115,7 @@ fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
             idx("_r_parents"),
             idx("_r_superseded"),
         ) {
+            let i_batch = idx("_r_batch");
             out.push(Table {
                 name: n,
                 cols,
@@ -119,6 +123,7 @@ fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
                 i_seq: b,
                 i_parents: p,
                 i_superseded: s,
+                i_batch,
             });
         }
     }
@@ -215,6 +220,7 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         }
         let incoming = load(&c, "S", t);
         let mut to_insert: Vec<Row> = vec![];
+        let mut to_seal: Vec<(Vec<u8>, V, V)> = vec![];
         for r in incoming {
             let id = rowid(t, &r);
             match by_id.get(&id) {
@@ -223,14 +229,24 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
                     to_insert.push(r);
                 }
                 Some(ex) => {
-                    // T1-D11: _r_superseded is not row content, not compared.
+                    // T1-D11: _r_superseded is not row content, not compared;
+                    // nor is _r_batch, which names a batch after the row.
                     let same = r
                         .vals
                         .iter()
                         .enumerate()
-                        .all(|(i, v)| i == t.i_superseded || v.same(&ex.vals[i]));
+                        .all(|(i, v)| i == t.i_superseded || Some(i) == t.i_batch || v.same(&ex.vals[i]));
                     if same {
                         counts.duplicate += 1;
+                        // Sealed where this copy still holds it pending: it takes
+                        // the seal, once, from NULL.
+                        if let Some(b) = t.i_batch {
+                            if ex.vals[b] == V::Null {
+                                if let V::Blob(batch) = &r.vals[b] {
+                                    to_seal.push((batch.clone(), r.vals[t.i_replica].clone(), r.vals[t.i_seq].clone()));
+                                }
+                            }
+                        }
                     } else {
                         counts.rejected.push(id);
                     }
@@ -268,6 +284,23 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
                     })
                     .collect();
                 st.execute(rusqlite::params_from_iter(params.iter())).unwrap();
+            }
+        }
+
+        {
+            let mut st = c
+                .prepare(&format!(
+                    "UPDATE main.\"{}\" SET _r_batch = ?1 WHERE _r_replica = ?2 AND _r_seq = ?3 AND _r_batch IS NULL",
+                    t.name
+                ))
+                .unwrap();
+            for (batch, replica, seq) in &to_seal {
+                let value = |v: &V| match v {
+                    V::Int(i) => rusqlite::types::Value::Integer(*i),
+                    V::Blob(b) => rusqlite::types::Value::Blob(b.clone()),
+                    _ => rusqlite::types::Value::Null,
+                };
+                st.execute(rusqlite::params![batch, value(replica), value(seq)]).unwrap();
             }
         }
 
@@ -320,6 +353,24 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         counts.new_replicas += n as i64;
     }
 
+    // The signed headers travel with the rows that name them: a union by id.
+    let has = |schema: &str| -> bool {
+        c.query_row(
+            &format!("SELECT count(*) FROM {}.sqlite_master WHERE type='table' AND name='_dai_batch'", schema),
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 0
+    };
+    if has("main") && has("S") {
+        c.execute_batch(
+            "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest) \
+             SELECT id, author, lc, sig, pub, att, version, digest FROM S._dai_batch",
+        )
+        .unwrap();
+    }
+
     c.execute("UPDATE main._dai_replica SET lc = ?1", [lc_max])
         .unwrap();
     c.execute_batch("COMMIT").unwrap();
@@ -365,6 +416,33 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         v.sort();
         for x in v {
             out.push_str(&x);
+            out.push('\n');
+        }
+    }
+    let has_batch: i64 = c
+        .query_row(
+            "SELECT count(*) FROM main.sqlite_master WHERE type='table' AND name='_dai_batch'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    if has_batch > 0 {
+        out.push_str("# _dai_batch\n");
+        let mut st = c
+            .prepare("SELECT id, author, lc, sig, pub, att, version, digest FROM main._dai_batch ORDER BY hex(id) ASC")
+            .unwrap();
+        let rows: Vec<String> = st
+            .query_map([], |r| {
+                Ok((0..8)
+                    .map(|i| V::from(r.get_ref(i).unwrap()).enc())
+                    .collect::<Vec<_>>()
+                    .join("\t"))
+            })
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        for line in rows {
+            out.push_str(&line);
             out.push('\n');
         }
     }

@@ -102,6 +102,14 @@ def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
     lines.append("# _dai_replicas")
     for (rid,) in db.execute("SELECT id FROM _dai_replicas ORDER BY hex(id) ASC"):
         lines.append(encode(rid))
+    # The signed batch headers, every column: the same bytes on every copy that
+    # holds one, so two copies that merged agree on the set (docs/identity.md).
+    if db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").fetchone():
+        lines.append("# _dai_batch")
+        for header in db.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch ORDER BY hex(id) ASC"
+        ):
+            lines.append("\t".join(encode(value) for value in header))
     return "\n".join(lines) + "\n"
 
 
@@ -180,6 +188,13 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             and all(existing[name] == row["columns"].get(name) for name in authored)
         )
         if same:
+            # The same row, sealed where this copy still holds it pending: it
+            # takes the seal, once, from NULL (docs/identity.md, step 3).
+            if existing.get("_r_batch") is None and row.get("_r_batch") is not None:
+                db.execute(
+                    f'UPDATE "{table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?',
+                    (row["_r_batch"], row["_r_replica"], row["_r_seq"]),
+                )
             return "duplicate"
         raise ValueError(f"ROW_REJECTED: a different row already exists as {rid}")
 
@@ -252,6 +267,20 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
             "INSERT INTO _dai_replicas (id, label, first_seen, rows_seen) VALUES (?, NULL, ?, 0)",
             (rid, before),
         )
+
+    # The signed headers travel with the rows that name them: a union by id.
+    has_batches = lambda db: db.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'"
+    ).fetchone()
+    if has_batches(local) and has_batches(sibling):
+        for header in sibling.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch"
+        ).fetchall():
+            local.execute(
+                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                header,
+            )
 
     for table in tables:
         names = columns_of(sibling, table)

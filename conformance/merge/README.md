@@ -35,3 +35,13 @@ pinned rather than described.
 A second implementation reads `a.db` and `b.db`, performs its own merge in both
 directions, and diffs its own dump against these files. It never reads the
 generator's output at run time.
+
+**Seals.** Every dump ends with a `# _dai_batch` section: the signed batch
+headers the copy holds (docs/identity.md), which are the same bytes on every copy
+that merged. `merge-sealed` and `merge-seal-adopted` carry real seals, so a
+reader that does not union the headers, or does not let a row it holds pending
+take the seal that arrives for it, disagrees here rather than passing without
+ever meeting one. Their two authors sign with fixed keys, so the author ids are
+real key fingerprints; the signatures themselves are not deterministic, so each
+is kept in `signatures.json` by the header it covers, signed once when the
+fixtures are written and reused after.

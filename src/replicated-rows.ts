@@ -682,6 +682,20 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
   for (const row of db.all("SELECT id FROM _dai_replicas ORDER BY hex(id) ASC")) {
     lines.push(encodeValue(row["id"]));
   }
+  /*
+   * The signed batch headers (docs/identity.md), every column: a header is the
+   * same bytes on every copy that holds it, so two copies that merged agree on
+   * the set. In the dump so that a reader that does not carry them disagrees
+   * out loud, rather than passing for an unrelated reason.
+   */
+  if (db.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0) {
+    lines.push("# _dai_batch");
+    for (const row of db.all(
+      "SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch ORDER BY hex(id) ASC",
+    )) {
+      lines.push(["id", "author", "lc", "sig", "pub", "att", "version", "digest"].map((c) => encodeValue(row[c])).join("\t"));
+    }
+  }
   return `${lines.join("\n")}\n`;
 }
 
