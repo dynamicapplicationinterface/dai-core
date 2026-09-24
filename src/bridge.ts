@@ -56,6 +56,12 @@ export const TO_HOST = {
   SAVE: "DAI_HOST_SAVE",
   SAVE_STATE: "DAI_HOST_SAVE_STATE",
   SESSIONS_ANSWER: "DAI_HOST_SESSIONS_ANSWER",
+  /**
+   * Sign this batch header with the person key (docs/identity.md, step 3). The
+   * private key never leaves the host; the host signs only for its own author
+   * and the mounted document, and raises the sequence floor first.
+   */
+  SIGN: "DAI_HOST_SIGN",
   TIMING: "DAI_HOST_TIMING",
   USED: "DAI_HOST_USED",
   WAITING: "DAI_HOST_WAITING",
@@ -74,6 +80,8 @@ export const TO_DOCUMENT = {
   REPLICA_ID: "DAI_HOST_REPLICA_ID",
   SAVE_ACK: "DAI_HOST_SAVE_ACK",
   SESSIONS: "DAI_HOST_SESSIONS",
+  /** The signature, or why the host would not sign. */
+  SIGNED: "DAI_HOST_SIGNED",
   WRITE_RULES: "DAI_HOST_WRITE_RULES",
 } as const;
 

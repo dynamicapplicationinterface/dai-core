@@ -83,7 +83,9 @@ import {
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { authorId, person, type Person } from "./person.js";
-import { showAuthorId } from "../../../src/identity.js";
+import { showAuthorId, signBytes } from "../../../src/identity.js";
+import { decode as decodeCbor } from "../../../src/cbor.js";
+import { BATCH_FORMAT_VERSION } from "../../../src/replicated-batch.js";
 import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
 import { loadAt, ownWrite } from "./navigate.js";
@@ -2509,7 +2511,12 @@ async function exportContainer(): Promise<void> {
    * `currentHtml` has always flushed first. This path did not, which is the
    * cost of two functions packaging the same document.
    */
-  await flushDocument();
+  try {
+    await flushBeforeLeaving();
+  } catch (error) {
+    say((error as Error).message, true);
+    return;
+  }
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const activeCartridge = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   loaded = activeCartridge;
@@ -2864,6 +2871,8 @@ window.addEventListener("message", (event) => {
           // file holds, on every mount (docs/identity.md, binding rule 1).
           replica,
           seqFloor,
+          // The document every batch header names (docs/identity.md, step 3).
+          document: loaded.manifest.documentUuid,
           // T1-D32: who may close this session, from the signed manifest. The
           // frame refuses a close the policy forbids at write time; the views are
           // the convergent net. Undefined for a document with no session.
@@ -3040,6 +3049,45 @@ window.addEventListener("message", (event) => {
     // Not during a rehearsal: that use is the kit's own, on a page nobody
     // has touched, and the offer is once per document.
     if (fromMountedContainer(event, data) && !installSuppressed && !rehearsing) keeper?.offer();
+  } else if (data.type === TO_HOST.SIGN) {
+    /*
+     * Signing a batch header with this device's person key (docs/identity.md,
+     * step 3). The private key never leaves here. Signed only when the header
+     * is this device's own author, for the document that is open, in the
+     * format this host speaks; and only after the sequence floor has counted
+     * the batch, so the order at a leave point is floor, seal, send.
+     */
+    if (!fromMountedContainer(event, data)) return;
+    const reply = (answer: { sig?: Uint8Array; pub?: Uint8Array; error?: string }): void => {
+      (event.source as Window | null)?.postMessage({ type: TO_DOCUMENT.SIGNED, id: data.id, ...answer }, "*");
+    };
+    void (async () => {
+      const mount = mountWrites;
+      const writes = mount ? await mount.decided : null;
+      if (!mount || !writes) return reply({ error: "This document is not open for writing here." });
+      if ("refused" in writes) return reply({ error: writes.refused });
+      const header = data.header instanceof Uint8Array ? data.header : null;
+      let fields: unknown = null;
+      try {
+        fields = header ? decodeCbor(header) : null;
+      } catch {
+        fields = null;
+      }
+      const ours =
+        Array.isArray(fields) &&
+        fields.length === 5 &&
+        fields[0] === BATCH_FORMAT_VERSION &&
+        fields[1] === mount.documentUuid &&
+        fields[2] instanceof Uint8Array &&
+        showAuthorId(fields[2]) === writes.me.author;
+      if (!header || !ours) return reply({ error: "This device signs only its own changes to the document that is open." });
+      try {
+        await raiseSeqFloor(mount.documentUuid, Number(data.seq) || 0);
+      } catch {
+        return reply({ error: "This device could not record how far it has written, so the change was not signed." });
+      }
+      reply({ sig: await signBytes(writes.me.keys.privateKey, header), pub: writes.me.pub });
+    })();
   } else if (data.type === TO_HOST.SAVE) {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
@@ -3298,16 +3346,33 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * been acknowledged. A shell that does not answer — an older one — is given
  * a moment and then not waited for.
  */
+/**
+ * Flushes before the document leaves this device (an export, a share, an
+ * invite). For a replicated document a flush that did not land refuses the
+ * leave: its rows are sealed as part of the flush, and a document whose seal
+ * or save failed would carry rows nobody signed (docs/identity.md, step 3).
+ */
+async function flushBeforeLeaving(): Promise<void> {
+  const landed = await flushDocument();
+  if (!landed && loaded && declaresReplication(loaded.manifest)) {
+    throw new Error(
+      "The latest changes here could not be signed and saved, so this was not sent. Try again in a moment.",
+    );
+  }
+}
+
 /** Resolves true once the frame confirms its pending writes are stored, false if it did not say so in time. */
 function flushDocument(): Promise<boolean> {
   const target = cartridgeFrame.contentWindow;
   if (!target || !mountedNonce) return Promise.resolve(false);
   const id = Math.random().toString(36).slice(2);
   return new Promise((resolve) => {
+    // Long enough for a seal: the frame asks this host to sign before it saves
+    // (identity step 3), and its own wait for a signature is 15 seconds.
     const timer = window.setTimeout(() => {
       window.removeEventListener("message", onFlushed);
       resolve(false);
-    }, 2500);
+    }, 10_000);
     const onFlushed = (event: MessageEvent): void => {
       const data = event.data as { type?: string; id?: string; sessionNonce?: string; saved?: boolean } | null;
       if (!data || data.type !== TO_HOST.FLUSHED || data.id !== id) return;
@@ -3682,7 +3747,7 @@ async function currentHtml(withData = true): Promise<string> {
     const blank = await resealCartridge(loaded, new Uint8Array(0));
     return blank.supplied.length > 0 ? refatten(blank) : blank.html;
   }
-  await flushDocument();
+  await flushBeforeLeaving();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   if (opfsDb) await noteSentOut(current, opfsDb);
@@ -3714,7 +3779,7 @@ async function noteSentOut(sent: Cartridge, database: Uint8Array): Promise<void>
  */
 async function inviteHtml(session: string): Promise<string> {
   if (!loaded) throw new Error("nothing open");
-  await flushDocument();
+  await flushBeforeLeaving();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
   // Made by the one invite function every host shares (exportSession), then

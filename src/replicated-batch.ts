@@ -338,19 +338,69 @@ export function authoredBatchAbove(
   watermark: Watermark,
   tables: readonly string[],
   session?: Uint8Array,
-): { batch: Uint8Array | null; head: number; replica: string } {
+  document = "",
+): { batch: Uint8Array | null; head: number; replica: string; more: boolean } {
   const held = db.all("SELECT id, lc FROM _dai_replica LIMIT 1")[0];
   const replica = held?.["id"];
-  if (!(replica instanceof Uint8Array)) return { batch: null, head: watermark.seq, replica: "" };
+  if (!(replica instanceof Uint8Array)) return { batch: null, head: watermark.seq, replica: "", more: false };
   const replicaHex = hex(replica);
   const since = watermark.replica === replicaHex ? watermark.seq : 0;
   // Scoped to the session when one is given (T1-D30): a copy is in many sessions
   // and each session's mailbox carries only its own rows.
-  const head = authoredHead(db, replica, tables, session);
   const entries = authoredSince(db, replica, since, tables, session);
-  if (entries.length === 0) return { batch: null, head, replica: replicaHex };
-  const lc = Number(held?.["lc"] ?? 0);
-  return { batch: encodeBatch({ replica, lc, entries }), head, replica: replicaHex };
+
+  /*
+   * Sealed batches only (docs/identity.md, step 3): nothing unsigned leaves the
+   * device. The frame seals what is pending before it asks, so a pending row
+   * here is one whose seal has not happened yet, and it waits for it.
+   *
+   * The head never passes a pending row. The host moves its watermark to the
+   * head even when nothing is sent, and a watermark above an unsealed row would
+   * leave that row unsent for good. A batch sent twice is a duplicate; a row
+   * never sent is lost.
+   */
+  const pendingSeqs = entries.filter((e) => !(e.row._r_batch instanceof Uint8Array)).map((e) => e.row._r_seq);
+  const ceiling = pendingSeqs.length > 0 ? Math.min(...pendingSeqs) - 1 : Number.POSITIVE_INFINITY;
+  const byBatch = new Map<string, number>();
+  for (const e of entries) {
+    if (!(e.row._r_batch instanceof Uint8Array)) continue;
+    const key = hex(e.row._r_batch);
+    byBatch.set(key, Math.min(byBatch.get(key) ?? Number.POSITIVE_INFINITY, e.row._r_seq));
+  }
+  if (byBatch.size === 0) return { batch: null, head: since, replica: replicaHex, more: false };
+
+  // The lowest batch first, and the whole of it: a batch is signed as one, so
+  // it travels as one, whatever part of it the watermark has already passed.
+  const [lowest] = [...byBatch.entries()].sort((a, b) => a[1] - b[1])[0]!;
+  const id = Uint8Array.from(lowest.match(/../g)!.map((pair) => parseInt(pair, 16)));
+  const header = db.all("SELECT * FROM _dai_batch WHERE id = ?", [id])[0];
+  if (!header) throw new Error("A row names a batch this copy holds no header for; it cannot be sent signed.");
+  const whole: BatchEntry[] = [];
+  for (const table of tables) {
+    const authored = authorColumnsOf(db, table);
+    for (const record of db.all(`SELECT * FROM "${table}" WHERE _r_batch = ? ORDER BY _r_seq ASC`, [id])) {
+      whole.push({ table, row: readRow(record, authored) });
+    }
+  }
+  const top = Math.max(...whole.map((e) => e.row._r_seq));
+  const signed: SignedBatch = {
+    replica,
+    lc: Number(header["lc"]),
+    entries: whole,
+    document,
+    version: Number(header["version"]),
+    digest: header["digest"] as Uint8Array,
+    id,
+    sig: header["sig"] as Uint8Array,
+    pub: header["pub"] as Uint8Array,
+    att: (header["att"] as Uint8Array | null) ?? null,
+  };
+  return {
+    batch: encodeBatch(signed),
+    head: Math.max(since, Math.min(top, ceiling)),
+    replica: replicaHex,
+    more: byBatch.size > 1,
+  };
 }
 
 function rowToMap(entry: BatchEntry): Map<CborValue, CborValue> {

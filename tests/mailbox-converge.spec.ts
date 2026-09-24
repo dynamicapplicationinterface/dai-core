@@ -11,9 +11,13 @@ import {
   authoredSince,
   decodeBatch,
   encodeBatch,
+  pendingBatches,
+  recordSeal,
+  signBatch,
   stageBatch,
   type Batch,
 } from "../src/replicated-batch.js";
+import { mintPersonKey } from "../src/identity.js";
 import {
   adoptReplica,
   canonicalDump,
@@ -63,6 +67,18 @@ const bytes = (byte: number) => new Uint8Array(16).fill(byte);
 const A = bytes(0xaa);
 const B = bytes(0xbb);
 const tables = ["moves"];
+
+/**
+ * Seals what an author has pending, as the frame does before a publish: the
+ * mailbox sends sealed batches only (docs/identity.md, step 3). The key is any
+ * key; nothing here verifies (that is step 4's merge).
+ */
+async function sealAll(db: Rows, author: Uint8Array): Promise<void> {
+  const keys = await mintPersonKey();
+  for (const batch of pendingBatches(db, author, tables)) {
+    recordSeal(db, await signBatch(batch, { document: "mailbox-converge", keys }));
+  }
+}
 
 /** Publish a copy's newly-authored rows to the mailbox, sealed. */
 async function publish(
@@ -272,7 +288,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
   b.close();
 });
 
-test("a watermark is bound to its replica: a count from a shed identity reads as zero", () => {
+test("a watermark is bound to its replica: a count from a shed identity reads as zero", async () => {
   /*
    * The (replica, seq) watermark, in one function.
    *
@@ -293,6 +309,7 @@ test("a watermark is bound to its replica: a count from a shed identity reads as
   // A authors two moves; its watermark is now (A, 2) and there is nothing above.
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "e5" });
+  await sealAll(a, A);
   const settled = authoredBatchAbove(a, { replica: hex(A), seq: 2 }, tables);
   expect(settled.batch).toBeNull();
   expect(settled.head).toBe(2);
@@ -302,6 +319,7 @@ test("a watermark is bound to its replica: a count from a shed identity reads as
   // old watermark (A, 2) is now a count in a sequence space it no longer writes.
   adoptReplica(a, B);
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 3, san: "Nf3" });
+  await sealAll(a, B);
 
   // Read as a bare number, seq 2 would sit above B's first row and strand it.
   // Scoped to its replica, the stale watermark is zero here and the row is sent.

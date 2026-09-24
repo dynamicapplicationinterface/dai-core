@@ -1012,13 +1012,35 @@ function bridgeMain(names: FrameNames): void {
       clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
     }
+    // Rows left pending by an earlier page (a tab closed before anything left)
+    // go with the next flush too: they are not orphans (identity step 3).
+    if (!autosaveDb && liveDb && hasPendingOwn()) autosaveDb = liveDb;
     if (!autosaveDb) return saving ?? undefined;
     // One save in flight at a time; a write during a save is saved after it.
     if (saving) return saving.then((): Promise<unknown> | undefined => flushAutosave());
     const db = autosaveDb;
     autosaveDb = null;
     tellSaveStatus("saving");
-    saving = saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }).then(
+    /*
+     * The leave point (docs/identity.md, step 3): seal, then save. The host
+     * raises the sequence floor and signs as one step of the seal, so the order
+     * is floor, seal, save, and the bytes are taken after the seal: what is
+     * saved is what was signed. A seal that fails is a save that fails, kept,
+     * retried and said, never a save of rows left unsigned.
+     */
+    saving = sealPending()
+      .then(() => {
+        // The seal is a write, and queues a save of its own; the bytes taken
+        // here already hold it (and anything written while it was signed), so
+        // that save is this one.
+        if (autosaveDb === db) {
+          autosaveDb = null;
+          if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+          autosaveTimer = undefined;
+        }
+        return saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) });
+      })
+      .then(
       (result: Any) => {
         saving = null;
         if (result && result.saved === false) throw new Error(String(result.method || "the host did not save"));
@@ -1161,6 +1183,8 @@ function bridgeMain(names: FrameNames): void {
    * than what was sent, not one whose application rewound the counter.
    */
   let mountFloor = 0;
+  /** The document these rows belong to, as the host handed it with the write rules: signed into every batch header. */
+  let mountDocument = "";
   const heldSeq = (rows: Any): number => Number(rows.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
@@ -1359,8 +1383,8 @@ function bridgeMain(names: FrameNames): void {
   const authoredBatch = (
     watermark: { replica: string; seq: number },
     session?: Uint8Array,
-  ): { batch: Uint8Array | null; head: number; replica: string } => {
-    if (!liveDb || !mergeModule) return { batch: null, head: watermark.seq, replica: watermark.replica };
+  ): { batch: Uint8Array | null; head: number; replica: string; more: boolean } => {
+    if (!liveDb || !mergeModule) return { batch: null, head: watermark.seq, replica: watermark.replica, more: false };
     const merge = mergeModule as Any;
     // Settle this copy's identity before reasoning about what it authored. A
     // copy that arrived by file still holds the sender's id until it takes its
@@ -1379,7 +1403,8 @@ function bridgeMain(names: FrameNames): void {
     // back with the head, so the host rebinds its watermark to what it advanced.
     // Scoped to one session when the host asks for one (T1-D30): each session's
     // mailbox carries only that session's rows.
-    return merge.authoredBatchAbove(r, watermark, tables, session);
+    // Sealed batches only, one at a time, lowest first (identity step 3).
+    return merge.authoredBatchAbove(r, watermark, tables, session, mountDocument);
   };
 
   /** The sessions this copy holds seats for, as hex — each has a mailbox of its own. */
@@ -1580,6 +1605,73 @@ function bridgeMain(names: FrameNames): void {
     } catch {
       return null;
     }
+  };
+
+  /*
+   * Asking the host to sign (docs/identity.md, step 3). The private key never
+   * enters the frame: the header goes out, a signature and the public key come
+   * back, or the reason the host would not sign. `seq` is the batch's highest,
+   * so the host raises its floor before it signs.
+   */
+  const signWaiters = new Map<
+    string,
+    { resolve: (value: { sig: Uint8Array; pub: Uint8Array }) => void; reject: (error: Error) => void }
+  >();
+  const requestSignature = (header: Uint8Array, seq: number): Promise<{ sig: Uint8Array; pub: Uint8Array }> =>
+    new Promise((resolve, reject) => {
+      const id = Math.random().toString(36).slice(2);
+      const timer = setTimeout(() => {
+        signWaiters.delete(id);
+        reject(new Error("The host did not sign this change in time, so it was not sent or saved."));
+      }, 15000);
+      signWaiters.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      window.parent.postMessage({ type: names.SIGN, id, header, seq }, "*");
+    });
+
+  /** Whether this copy's own author has rows written and not yet sealed. */
+  const hasPendingOwn = (): boolean => {
+    if (!mergeModule || !liveDb || !mountReplica) return false;
+    try {
+      const rows = frameRows(liveDb);
+      return (mergeModule as Any).pendingBatches(rows, mountReplica, (mergeModule as Any).mergeTablesOf(rows)).length > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  /*
+   * Seals what this author has pending into signed batches: one per leave, one
+   * author's rows only, one per session in a session document. One seal at a
+   * time, so a save and a publish never seal the same rows twice. Rows written
+   * while a signature is on its way stay pending for the next one.
+   */
+  let sealing: Promise<void> = Promise.resolve();
+  const sealPending = (): Promise<void> => {
+    const run = async (): Promise<void> => {
+      if (!mergeModule || !liveDb || !mountReplica) return;
+      const merge = mergeModule as Any;
+      const rows = frameRows(liveDb);
+      settleReplica(rows);
+      for (const batch of merge.pendingBatches(rows, mountReplica, merge.mergeTablesOf(rows))) {
+        const top = Math.max(...batch.entries.map((entry: Any) => Number(entry.row._r_seq)));
+        const signed = await merge.signBatch(batch, {
+          document: mountDocument,
+          sign: (header: Uint8Array) => requestSignature(header, top),
+        });
+        merge.recordSeal(frameRows(liveDb), signed);
+      }
+    };
+    sealing = sealing.then(run, run);
+    return sealing;
   };
 
   const settleReplica = (rows: Any): void => {
@@ -2111,19 +2203,33 @@ function bridgeMain(names: FrameNames): void {
     if (event.source !== window.parent) return;
     const data = event.data as Any;
     if (!data) return;
+    if (data.type === names.SIGNED) {
+      const waiter = signWaiters.get(String(data.id));
+      if (!waiter) return;
+      signWaiters.delete(String(data.id));
+      if (data.sig instanceof Uint8Array && data.pub instanceof Uint8Array) waiter.resolve({ sig: data.sig, pub: data.pub });
+      else waiter.reject(new Error(String(data.error || "The host would not sign this change.")));
+      return;
+    }
     if (data.type === names.FLUSH) {
       // The host is about to package this document — to share it — and
       // wants what the person sees, not the last autosave. Anything pending
       // is written now, and the answer waits for the host to have it.
-      const pending = flushAutosave();
-      void Promise.resolve(pending).then(() => {
-        // Whether it landed, not just that the attempt is over: a failed save
-        // settles this too (it is retried, not thrown), and a host that moves a
-        // mailbox cursor on this answer must not move it past rows still only
-        // in memory.
-        const saved = autosaveDb === null && saveStatus !== "failed";
-        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved }, "*");
-      });
+      // Whether it landed, not just that the attempt is over: a failed save
+      // settles this too (it is retried, not thrown), and a host that moves a
+      // mailbox cursor on this answer must not move it past rows still only in
+      // memory. And sealed: a row still pending would leave with the package
+      // unsigned (docs/identity.md, step 3). A write can land while a seal is
+      // being signed (an invite writes its game and asks to share at once), so
+      // the flush goes round again for it, a few times, before it says no.
+      const landed = (): boolean => autosaveDb === null && saveStatus !== "failed" && !hasPendingOwn();
+      void (async () => {
+        for (let pass = 0; pass < 3; pass++) {
+          await Promise.resolve(flushAutosave());
+          if (landed()) break;
+        }
+        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved: landed() }, "*");
+      })();
       return;
     }
     /*
@@ -2149,6 +2255,7 @@ function bridgeMain(names: FrameNames): void {
     if (data.type === names.WRITE_RULES) {
       mountReplica = data.replica instanceof Uint8Array && data.replica.length === 16 ? data.replica : null;
       mountFloor = Number.isSafeInteger(data.seqFloor) && data.seqFloor > 0 ? data.seqFloor : 0;
+      mountDocument = typeof data.document === "string" ? data.document : "";
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
@@ -2166,19 +2273,28 @@ function bridgeMain(names: FrameNames): void {
       const session = sessionHex
         ? new Uint8Array(sessionHex.match(/../g)!.map((pair: string) => parseInt(pair, 16)))
         : undefined;
-      const { batch, head, replica } = authoredBatch(
-        {
-          replica: String(data.replica ?? ""),
-          seq: Number(data.seq) || 0,
-        },
-        session,
-      );
-      // Cloned, not transferred: a batch is a few rows, and a transfer list of
-      // one detached buffer is a footgun for the saving it does not make.
-      window.parent.postMessage(
-        { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch },
-        "*",
-      );
+      const watermark = { replica: String(data.replica ?? ""), seq: Number(data.seq) || 0 };
+      // The leave point for a publish: seal, then answer. A seal that fails
+      // sends nothing and says why; the watermark does not move.
+      void sealPending()
+        .then(
+          () => ({ ...authoredBatch(watermark, session), error: undefined as string | undefined }),
+          (error: unknown) => ({
+            batch: null,
+            head: watermark.seq,
+            replica: watermark.replica,
+            more: false,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        )
+        .then(({ batch, head, replica, more, error }) => {
+          // Cloned, not transferred: a batch is a few rows, and a transfer list of
+          // one detached buffer is a footgun for the saving it does not make.
+          window.parent.postMessage(
+            { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch, more, ...(error ? { error } : {}) },
+            "*",
+          );
+        });
       return;
     }
     if (data.type === names.REPLICA_ID) {
@@ -2445,7 +2561,8 @@ function bridgeMain(names: FrameNames): void {
       if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
       autosaveDb = null;
-      return saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) });
+      // Sealed first, as an automatic save is (identity step 3).
+      return sealPending().then(() => saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) }));
     },
     saveState: saveState,
     /*
@@ -2860,7 +2977,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; closePolicy: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -2869,7 +2986,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy },
     "*",
   );
 }
@@ -3315,10 +3432,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; closePolicy?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, closePolicy: pushed.closePolicy };
+      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy };
       if (listeningWindow) deliverRules();
       return;
     }
@@ -3336,6 +3453,12 @@ async function boot(): Promise<void> {
         level: payload.level,
       };
       toFrame(message);
+      return;
+    }
+    // The host's signature for a batch header, or why it would not sign.
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.SIGNED) {
+      const answer = event.data as { id?: string; sig?: unknown; pub?: unknown; error?: unknown };
+      toFrame({ type: FRAME_INTERNAL.SIGNED, id: answer.id, sig: answer.sig, pub: answer.pub, error: answer.error });
       return;
     }
     // The host asking the frame for what it authored above a watermark (Track 5).
@@ -3562,6 +3685,8 @@ async function boot(): Promise<void> {
         head?: number;
         replica?: string;
         batch?: Uint8Array | null;
+        more?: boolean;
+        error?: string;
       };
       window.parent.postMessage(
         {
@@ -3572,7 +3697,18 @@ async function boot(): Promise<void> {
           head: answer.head,
           replica: answer.replica ?? "",
           batch: answer.batch ?? null,
+          more: answer.more === true,
+          ...(typeof answer.error === "string" ? { error: answer.error } : {}),
         },
+        "*",
+      );
+      return;
+    }
+    // The frame asking the host to sign a batch header (identity step 3).
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SIGN) {
+      const ask = event.data as { id?: string; header?: unknown; seq?: unknown };
+      window.parent.postMessage(
+        { type: TO_HOST.SIGN, sessionNonce, id: ask.id, header: ask.header, seq: ask.seq },
         "*",
       );
       return;

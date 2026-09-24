@@ -3,7 +3,16 @@ import { expect, test } from "@playwright/test";
 import { deriveSessionMailbox } from "../src/mailbox.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
-import { authoredBatchAbove, decodeBatch } from "../src/replicated-batch.js";
+import { authoredBatchAbove, decodeBatch, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
+import { mintPersonKey } from "../src/identity.js";
+
+/** Seals what an author has pending, as the frame does before a publish (identity step 3). */
+async function sealAll(db: Rows, author: Uint8Array): Promise<void> {
+  const keys = await mintPersonKey();
+  for (const batch of pendingBatches(db, author, ["moves"])) {
+    recordSeal(db, await signBatch(batch, { document: "session-mailbox", keys }));
+  }
+}
 
 /**
  * A mailbox per session (T1-D30).
@@ -81,11 +90,12 @@ CREATE TABLE moves (
   const E1 = bytes(0x11);
   const E2 = bytes(0x22);
 
-  test("a copy in two sessions publishes only the asked session's rows", () => {
+  test("a copy in two sessions publishes only the asked session's rows", async () => {
     const db = open();
     ensureReplica(db, A);
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
     createEntity(db, "moves", E2, { ply: 1, san: "d4" }, S2);
+    await sealAll(db, A);
 
     const forS1 = authoredBatchAbove(db, { replica: "", seq: 0 }, ["moves"], S1);
     const s1 = decodeBatch(forS1.batch!);
@@ -98,16 +108,25 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("with no session, the batch is unscoped — a plain replicated document is unchanged", () => {
+  test("with no session, the ask is unscoped: every sealed batch comes out, one at a time", async () => {
     const db = open();
     ensureReplica(db, A);
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
     createEntity(db, "moves", E2, { ply: 1, san: "d4" }, S2);
+    await sealAll(db, A);
 
-    // No session argument: every authored row, both sessions.
-    const all = authoredBatchAbove(db, { replica: "", seq: 0 }, ["moves"]);
-    const decoded = decodeBatch(all.batch!);
-    expect(decoded.entries.map((e) => e.row.columns["san"]).sort()).toEqual(["d4", "e4"]);
+    // No session argument: every authored row, both sessions. Sealed per
+    // session, so two batches, sent lowest first, each saying whether more wait.
+    const sans: string[] = [];
+    let watermark = { replica: "", seq: 0 };
+    for (let round = 0; round < 3; round++) {
+      const answer = authoredBatchAbove(db, watermark, ["moves"]);
+      if (!answer.batch) break;
+      sans.push(...decodeBatch(answer.batch).entries.map((e) => String(e.row.columns["san"])));
+      watermark = { replica: answer.replica, seq: answer.head };
+      if (!answer.more) break;
+    }
+    expect(sans.sort()).toEqual(["d4", "e4"]);
     db.close();
   });
 });

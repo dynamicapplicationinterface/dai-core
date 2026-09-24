@@ -6,7 +6,7 @@ here fails `build-docs --check`.
 
 A document speaks to exactly one party: the window that framed it, over
 `postMessage`. Every message flows one way, so the names are split by
-direction — 19 from the document to its host, 11 back.
+direction — 20 from the document to its host, 12 back.
 
 Everything in these messages is a **claim by the document**. A host that
 records `verified: true` because a document said so has recorded nothing: the
@@ -32,6 +32,7 @@ only because it can be compared with the host's own.
 | `DAI_HOST_SAVE` | `TO_HOST.SAVE` | — |
 | `DAI_HOST_SAVE_STATE` | `TO_HOST.SAVE_STATE` | — |
 | `DAI_HOST_SESSIONS_ANSWER` | `TO_HOST.SESSIONS_ANSWER` | — |
+| `DAI_HOST_SIGN` | `TO_HOST.SIGN` | Sign this batch header with the person key (docs/identity.md, step 3). |
 | `DAI_HOST_TIMING` | `TO_HOST.TIMING` | — |
 | `DAI_HOST_USED` | `TO_HOST.USED` | — |
 | `DAI_HOST_WAITING` | `TO_HOST.WAITING` | — |
@@ -51,4 +52,5 @@ only because it can be compared with the host's own.
 | `DAI_HOST_REPLICA_ID` | `TO_DOCUMENT.REPLICA_ID` | — |
 | `DAI_HOST_SAVE_ACK` | `TO_DOCUMENT.SAVE_ACK` | — |
 | `DAI_HOST_SESSIONS` | `TO_DOCUMENT.SESSIONS` | — |
+| `DAI_HOST_SIGNED` | `TO_DOCUMENT.SIGNED` | The signature, or why the host would not sign. |
 | `DAI_HOST_WRITE_RULES` | `TO_DOCUMENT.WRITE_RULES` | — |

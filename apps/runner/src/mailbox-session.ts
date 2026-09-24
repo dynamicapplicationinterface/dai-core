@@ -503,6 +503,13 @@ export function startMailboxSession(config: {
         TO_HOST.AUTHORED_BATCH,
       );
       const batchBytes = answer["batch"];
+      // A seal that failed sends nothing and moves nothing (identity step 3),
+      // and is said: the rows are still here, unsigned, until it succeeds.
+      if (typeof answer["error"] === "string") {
+        note(`seal failed at ${lane.address.slice(0, 12)}: ${answer["error"]}`);
+        config.onNote?.(`A move could not be signed, so it was not sent: ${answer["error"]}`);
+        return;
+      }
       const head = Number(answer["head"] ?? lane.state.watermark.seq);
       const replica = String(answer["replica"] ?? lane.state.watermark.replica);
       if (batchBytes instanceof Uint8Array && batchBytes.byteLength > 0) {
@@ -517,6 +524,8 @@ export function startMailboxSession(config: {
           save(lane);
           noteWatermark(lane, "published");
           config.onPublished?.(lane.address);
+          // One sealed batch per publish; the frame says when more are waiting.
+          if (answer["more"] === true) lane.publishAgain = true;
           lane.upToDate = !lane.publishAgain;
         } catch {
           // Said on screen, and left in the trace: a kept failure is how the

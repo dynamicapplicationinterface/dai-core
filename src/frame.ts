@@ -72,6 +72,10 @@ export const FRAME_INTERNAL = {
   SCHEMA: "dai:schema",
   SCHEMA_VERDICT: "dai:schema-verdict",
   SESSIONS: "dai:sessions",
+  /** The frame asking the host to sign a batch header (docs/identity.md, step 3). */
+  SIGN: "dai:sign",
+  /** The host's signature, relayed back, or why it would not sign. */
+  SIGNED: "dai:signed",
   SESSIONS_ANSWER: "dai:sessions-answer",
   TIMING: "dai:timing",
   WAITING: "dai:waiting",

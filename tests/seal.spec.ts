@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
 import { rewriteReplicated } from "../src/replicated.js";
-import { headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
+import { authoredBatchAbove, decodeBatch, headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
 import { applyRow, createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
 
 /**
@@ -137,6 +137,32 @@ test("in a session document, one batch per session: a lane never carries another
     const sessions = new Set(batch.entries.map((e) => [...(e.row._r_session as Uint8Array)].join(",")));
     expect(sessions.size, "each batch is one session's rows").toBe(1);
   }
+  db.close();
+});
+
+test("the mailbox sends sealed batches only, and its head never passes a row still pending", async () => {
+  /*
+   * The host moves its watermark to the head even when nothing is sent, so a
+   * head above an unsealed row would leave that row unsent for good. Here the
+   * sealed batch sits above a pending row (another session's, not yet sealed):
+   * the batch goes, and the head stays below the pending row.
+   */
+  const ada = await person();
+  const db = open(SESSIONS);
+  ensureReplica(db, ada.author);
+  const one = new Uint8Array(16).fill(1);
+  const two = new Uint8Array(16).fill(2);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "d4" }, two); // seq 1, stays pending
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" }, one); // seq 2
+  const [forOne] = pendingBatches(db, ada.author, ["moves"]).filter((b) =>
+    b.entries.every((e) => (e.row._r_session as Uint8Array)[0] === 1),
+  );
+  recordSeal(db, await signBatch(forOne!, { document: DOC, keys: ada.keys }));
+
+  const answer = authoredBatchAbove(db, { replica: "", seq: 0 }, ["moves"], undefined, DOC);
+  expect(answer.batch, "the sealed batch is sent").not.toBeNull();
+  expect(decodeBatch(answer.batch!).entries.map((e) => e.row.columns["san"])).toEqual(["e4"]);
+  expect(answer.head, "and the head stays below the pending row, seq 1").toBe(0);
   db.close();
 });
 
