@@ -1061,6 +1061,17 @@ authors (Step 3).** *The model is recorded here to be validated by the
 implementation, not settled ahead of it — the inferred roster this replaced
 looked sound in prose and was a clock race underneath.*
 
+*Amended by signed authorship (docs/identity.md, step 5). A contested seat no
+longer admits neither: it is held by the first verified signer, a signed
+binding before an unsigned one, then the lowest clock, then the lowest author
+id (`IDENTITY-FIRST-SIGNER` in `src/rules.ts`). That brings a clock back into
+the roster, which the paragraph below rejected, but only among bindings to a
+seat the creator minted and signed, from people who each hold the invite: a
+contender who backdates its clock wins the contest, and could have played
+anyway. A seat offer signed by the creator would settle it without trusting a
+clock (backlog D114). The creator is decided the same way, as the author of the
+session's first seat row, so a seat another author mints is not a seat.*
+
 An earlier design inferred the roster from who wrote first, ordered by Lamport
 clock. It was wrong twice over: a Lamport clock does not order events across
 replicas, and at Level 1 it is a **claim** — an integer an attacker chooses — so

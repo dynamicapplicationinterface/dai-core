@@ -44,14 +44,22 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `window.dai.replicated.remove(table, entity)` — Deletes a shared row by writing a tombstone. The row leaves t\_current. Returns the entity.
 - `window.addEventListener("dai:merged", fn)` — Fired when another copy's rows arrive. event.detail: { applied, duplicate, rejected, newReplicas, conflicts, via } — via is "carrier" (a file or link was opened) or "mailbox" (rows arrived in the background).
 - `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the dai:merged listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
+- `window.daiKit.whenWritable(fn)` — Runs fn when this mount can write shared rows, and never on a read-only one. Resolves with fn's result, or undefined when read-only.
+- `window.daiKit.author()` — This copy's author id, hex, as the host handed it: never read from a row. Null until the host has said.
 
 ## Sessions
 
 - `window.dai.reportWaiting(sessions)` — Tells the host which sessions (hex) wait on this person, such as the games where it is their turn. The host uses the latest report to badge the home-screen icon when a move arrives while the app is closed. Send the whole set whenever it may have changed: at start-up, after a merge, after this person's move. The badge is a hint between opens, not a count to rely on.
-- `window.dai.replicated.session.create()` — Starts a session: seats this copy and leaves one open seat. Returns { session, seat } as hex.
-- `window.dai.replicated.session.join(session, seat)` — Binds this copy to an open seat. Call it when this copy opens an invite (SESSION-JOIN-ON-OPEN).
+- `window.dai.replicated.session.create()` — The runtime's session writer, which the kit wraps: call window.daiKit.newSession() instead (IDENTITY-KIT-SEATS). Starts a session: seats this copy and leaves one open seat. Returns { session, seat } as hex.
+- `window.dai.replicated.session.join(session, seat)` — The runtime's seat writer, which the kit wraps: call window.daiKit.claimSeat(session) instead (IDENTITY-KIT-SEATS, SESSION-JOIN-ON-OPEN). Binds this copy to an open seat.
 - `window.dai.replicated.session.close(session)` — Closes a session at what this copy has seen. Throws CLOSE\_NOT\_PERMITTED for a non-creator under close=creator.
-- `window.dai.replicated.session.reseat(session)` — The creator's repair for a contested seat: replaces the open seat so a fresh invite can be taken. Throws NOT\_SEAT\_CREATOR for anyone else and CANNOT\_RESEAT when no seat is contested.
+- `window.dai.replicated.session.reseat(session)` — The runtime's seat writer, which the kit wraps: call window.daiKit.reseat(session) instead (IDENTITY-KIT-SEATS). The creator's repair for a contested seat: replaces the open seat so a fresh invite can be taken. Throws NOT\_SEAT\_CREATOR for anyone else and CANNOT\_RESEAT when no seat is contested.
+- `window.daiKit.newSession(options?)` — Starts a session: this copy's seat and one open seat. { solo: true } also takes the open seat, for a board one copy plays alone. Returns the session, hex.
+- `window.daiKit.claimSeat(session)` — Takes the session's open seat, once. Returns the seat this copy then holds, hex, or null when none is open or another copy's earlier binding holds it.
+- `window.daiKit.mySeat(session) / .amCreator(session) / .seats(session)` — Reads, on the host's author id: the seat this copy holds (or null), whether it started the session, and every current seat with its holder, whether the creator holds it, and every value it has had.
+- `window.daiKit.reseat(session)` — The creator's repair for a contested seat: a fresh open seat, for a new invite.
+- `window.daiKit.seatBytes(hex)` — A seat, as the bytes a seat column holds: what a row names in its seat=&lt;column&gt;.
+- `window.daiKit.onNewPlayer(fn)` — Takes the loss sentence: fn gets the kit's sentence when this device is a new author for a document it wrote before, and shows it the application's way.
 
 ## Custom properties
 

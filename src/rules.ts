@@ -537,10 +537,61 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ["session"],
     topic: "identity",
     rule:
-      "A session app admits a row only from the author holding the seat that row's action belongs to: a move for White only from whoever holds White's seat. That the row is correctly signed is not enough, because a signature answers who wrote it and not whether they may. The kit does the check inside its merge path, so an app cannot skip it, and reports a refused row as SEAT_NOT_HELD with its author. Until the kit provides it (step 5 of docs/identity.md), nothing enforces this.",
-    why: "D80: a copy under the creator's id played the creator's move. Once every row is stamped with its author's own key, the move arrives honestly as the other player's, and it is still the wrong player's move. Only the seat can say so.",
-    enforced: ["prose"],
-    anchors: [{ file: "docs/identity.md", contains: "A signature answers who wrote a row; a seat answers whether they may." }],
+      "A session table whose rows act for a seat says so on its marker, `-- dai:replicated seat=<column>`, and each row names in that column the seat it acts for: a move for White names White's seat. The document admits such a row only when its author held that seat when the row was written: its binding to the seat is the one that holds it (IDENTITY-FIRST-SIGNER), at or before the row's clock, and the seat had that value then, with no reseat between. A row that names no seat, or a seat outside its session, is stored and never admitted. That the row is correctly signed is not enough, because a signature answers who wrote it and not whether they may. The check is the document's own admission, not the application's, so an app cannot skip it; a merge reports a row it took and did not admit as SEAT_NOT_HELD with its author. Read which side a row acts for from its seat, never from a column any copy writes.",
+    why: "D80: a copy under the creator's id played the creator's move. Once every row is stamped with its author's own key, the move arrives honestly as the other player's, and it is still the wrong player's move. Only the seat can say so. And held then, not held now: a check against the current holder would admit a move written before its author took the seat, the moment they took it.",
+    enforced: ["compiler", "runtime"],
+    anchors: [
+      { file: "docs/identity.md", contains: "A signature answers who wrote a row; a seat answers whether they may." },
+      { file: "src/replicated.ts", contains: "is admitted only when its author held that seat when the row was written" },
+    ],
+  },
+  {
+    id: "IDENTITY-FIRST-SIGNER",
+    title: "A contested seat is held by the first verified signer",
+    shapes: ["session"],
+    topic: "identity",
+    rule:
+      "When two bindings name one seat (two people opened the same invite), the seat is held by the first verified signer: a signed binding before an unsigned one (a copy's own pending binding counts as signed, since it is sealed when it leaves), then the lowest clock, then the lowest author id, then the lowest seq. The other binder is not a member, and the creator can still repair the seat with a reseat. The same rule decides the creator: the author of the session's first seat row. Show a contested seat to the creator; do not treat either binder as locked out by the contest itself.",
+    why: "The answer must be the same on every copy, whatever order the bindings arrive in, and a contest that admitted neither left a game nobody could play until the creator acted. The clock is the author's own, so a joiner who backdates it wins a contest; that is acceptable where the contender already holds the invite and could simply play, and a seat offer signed by the creator would settle it without trusting a clock (backlog D114).",
+    enforced: ["compiler"],
+    anchors: [{ file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_holder AS" }],
+  },
+  {
+    id: "IDENTITY-KIT-SEATS",
+    title: "The seat tables are the kit's",
+    shapes: ["session"],
+    topic: "identity",
+    rule:
+      "Start a session with `window.daiKit.newSession()` (`{ solo: true }` for a board one copy plays alone), take the open seat with `claimSeat(session)`, repair a contested one with `reseat(session)`, and read with `mySeat(session)`, `amCreator(session)` and `seats(session)`. Never write `_dai_seat` or `_dai_binding` with SQL, and never call `window.dai.replicated.session` yourself: the kit is their only writer. Never decide who this copy is from `_dai_replica` or an author column: `daiKit.author()` is the host's id.",
+    why: "Who holds a seat is what the document admits a row by. The kit's reads are built on the host's author id, never on a row a copy can rewrite, and a seat written around the kit is a seat nothing vouches for.",
+    enforced: ["lint"],
+    lint: ["seat-table-write"],
+    anchors: [
+      { file: "src/kit.ts", contains: "function claimSeat(session)" },
+      { file: "src/seat-check.ts", contains: "export function seatWritesIn(source: string): SeatWrite[]" },
+    ],
+  },
+  {
+    id: "IDENTITY-LOSS-SENTENCE",
+    title: "A device that lost its key is told it is a new player",
+    shapes: ["session"],
+    topic: "identity",
+    rule:
+      "When this device made a new key and its library says it wrote the document before, the kit says once: \"This device is a new player here. Your earlier moves are still on the board.\" An application may say it in its own words with `window.daiKit.onNewPlayer(fn)`, where fn gets the kit's sentence; it never says identity, key or storage, and it never pretends the earlier moves are still this device's to continue.",
+    why: "A lost key is a new author: the old moves stay readable, and this device can no longer write as the one who made them. Nothing may pretend a continuity that does not exist.",
+    enforced: ["runtime"],
+    anchors: [{ file: "src/kit.ts", contains: "This device is a new player here. Your earlier moves are still on the board." }],
+  },
+  {
+    id: "IDENTITY-BOOT-WRITES",
+    title: "Shared writes at boot wait for a mount that can write",
+    shapes: SHARED,
+    topic: "identity",
+    rule:
+      "Put any shared write an application makes as it opens (a first practice board, taking a seat) inside `window.daiKit.whenWritable(fn)`, and draw first. On a mount that cannot write (its rules were refused, or never arrived) the write waits instead of throwing, and the page still shows what it holds.",
+    why: "A read-only mount is how a document opens when its host cannot vouch for writes. A boot write that throws there stops the page drawing at all, and the person sees an error instead of their document.",
+    enforced: ["runtime"],
+    anchors: [{ file: "src/kit.ts", contains: "function whenWritable(fn)" }],
   },
   {
     id: "SHARED-SEED-THROUGH-SURFACE",
@@ -576,7 +627,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Declare a session document with one line comment in schema.sql: -- dai:profile session max_parties=N close=any|creator. N is the most people the document allows, at least 1 — but today a session seats two whatever N says: `session.create()` mints the creator's seat and one open seat, and no call adds another (backlog D6). Declare max_parties=2, and do not build an application that needs a third member. close=any lets any member close a session; close=creator lets only the person who created it; it defaults to any. The document must also have at least one table marked -- dai:replicated. Every replicated table then carries the session of each row.",
+      "Declare a session document with one line comment in schema.sql: -- dai:profile session max_parties=N close=any|creator. N is the most people the document allows, at least 1 — but today a session seats two whatever N says: `window.daiKit.newSession()` mints the creator's seat and one open seat, and no call adds another (backlog D6). Declare max_parties=2, and do not build an application that needs a third member. close=any lets any member close a session; close=creator lets only the person who created it; it defaults to any. The document must also have at least one table marked -- dai:replicated. Every replicated table then carries the session of each row.",
     why:
       "The profile is signed into the document, so the size of the group is the creator's stated limit rather than something the application decides. A malformed profile, or one with no replicated table, is refused at build.",
     enforced: ["compiler"],
@@ -591,7 +642,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Start each game, match or agreement with `const { session, seat } = window.dai.replicated.session.create()`. It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex), `seat` is the open seat. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them: `session.create()` and `insert` work inside a `BEGIN` … `COMMIT` you open. The creator is a member from the moment the session exists, so the creator's rows are admitted before anyone has joined — the first move can be made before the invite is sent.",
+      "Start each game, match or agreement with `const session = window.daiKit.newSession()` (IDENTITY-KIT-SEATS). It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex). A board one copy plays alone takes both seats: `newSession({ solo: true })`. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them: `newSession()` and `insert` work inside a `BEGIN` … `COMMIT` you open. The creator is a member from the moment the session exists, so the creator's rows are admitted before anyone has joined — the first move can be made before the invite is sent.",
     why: "A session is the unit of membership. Rows written outside one belong to nobody, and a second game in the same session would share the first game's roster.",
     enforced: ["prose"],
     anchors: [{ file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string } =>" }],
@@ -618,12 +669,12 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "When the two parties in a session are not interchangeable — one asks and the other answers, one offers and the other accepts — put the role on the table's marker: `-- dai:replicated author=creator` for a table only the session's creator writes, `-- dai:replicated author=joiner` for a table only the party who took the invite writes. A table with no role is written by either member. The creator is the copy that called `session.create()`; the joiner is the other member. A write by the wrong party throws ROLE_NOT_PERMITTED, which names the table and which party wrote it, and nothing is written. Hide or disable the other party's controls, and read which party this copy is from the seats (SESSION-MEMBERSHIP), never from a stored column.",
+      "When the two parties in a session are not interchangeable — one asks and the other answers, one offers and the other accepts — put the role on the table's marker: `-- dai:replicated author=creator` for a table only the session's creator writes, `-- dai:replicated author=joiner` for a table only the party who took the invite writes. A table with no role is written by either member. The creator is the copy that started the session (`window.daiKit.amCreator(session)`); the joiner is the other member. A write by the wrong party throws ROLE_NOT_PERMITTED, which names the table and which party wrote it, and nothing is written. Hide or disable the other party's controls, and read which party this copy is from the seats (SESSION-MEMBERSHIP), never from a stored column.",
     why:
       "The role is signed into the document and held twice. The write surface refuses the wrong party, and a row that reaches a copy some other way — a copy with the check removed, a hand-built batch — is stored but never admitted to the _current views, so it never shows and never buries a legitimate row. At build, a role other than creator or joiner is refused, a role in a document with no session profile is refused, and a marker that begins as -- dai:replicated but does not parse is refused rather than built as a local table.",
     enforced: ["compiler", "runtime"],
     anchors: [
-      { file: "src/replicated.ts", contains: "const AUTHOR_CLAUSE = /^dai:replicated\\s+author\\s*=\\s*([A-Za-z]+)$/i;" },
+      { file: "src/replicated.ts", contains: "function markerClauses(marker: string): Record<string, string> | null {" },
       { file: "src/replicated.ts", contains: "role, but the document has no session profile." },
       { file: "src/runtime/bootloader.ts", contains: "ROLE_NOT_PERMITTED (the joiner wrote ${table}" },
     ],
@@ -634,7 +685,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "When this copy opens an invite, bind its open seat with `window.dai.replicated.session.join(session, seat)`: once at start-up, and again in the `dai:merged` listener only when `event.detail.via === \"carrier\"` — never for \"mailbox\". Join only if this copy is not already a member and an open seat exists: the open seat is a `_dai_seat_current` row for the session whose seat no `_dai_binding_current` row binds. Join the session the invite was sent for. An invite carries only that session and none of the sender's local rows (SESSION-INVITE), so it is a session with an open seat that this copy did not create and is not a member of — in a fresh copy made from an invite there is exactly one. That includes a copy whose seat was contested or replaced: opening the creator's fresh invite is how it gets back in, and excluding copies that were ever seated would lock it out for good. Prefer the item that is showing when it is joinable (a copy that arrived as a whole document carries the sender's local rows, including which item was showing), otherwise take the newest joinable one, and make it the item showing.",
+      "When this copy opens an invite, take its open seat with `window.daiKit.claimSeat(session)`: once at start-up, inside `window.daiKit.whenWritable` (IDENTITY-BOOT-WRITES), and again in the `dai:merged` listener only when `event.detail.via === \"carrier\"` — never for \"mailbox\". The kit takes the open seat only if this copy holds none and one is open, and returns the seat it then holds, or null. Join the session the invite was sent for. An invite carries only that session and none of the sender's local rows (SESSION-INVITE), so it is a session with an open seat that this copy did not create and is not a member of — in a fresh copy made from an invite there is exactly one. That includes a copy whose seat was contested or replaced: opening the creator's fresh invite is how it gets back in, and excluding copies that were ever seated would lock it out for good. Prefer the item that is showing when it is joinable (a copy that arrived as a whole document carries the sender's local rows, including which item was showing), otherwise take the newest joinable one, and make it the item showing.",
     why:
       "Membership comes from opening an invite, not from rows arriving. A copy that joined on every background merge would re-take a seat it had lost, and a copy that joined twice would contest its own seat.",
     enforced: ["prose"],
@@ -649,7 +700,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "This copy's replica id is `SELECT lower(hex(id)) AS id FROM _dai_replica`. It is a member of a session when `_dai_member` has a row for (session, replica). Enable writing only for members, and show a copy that is not one which of three states it is in: it holds the rows but is not a member, and no seat is open to it — which is both a copy forwarded to someone who was never in the game and a player's own new device or browser, and the copy cannot tell them apart, so say that the seats belong to other devices and never that the person was not invited; it joined but its seat was contested or replaced (SESSION-CONTESTED-SEAT); or the session is closed (SESSION-CLOSE). The _current views of a session document show only admitted rows — rows by members, written before any close.",
+      "This copy is a member of a session when `window.daiKit.mySeat(session)` is not null: the seat it holds, read on the host's author id and never on `_dai_replica`, which a copy can rewrite (IDENTITY-KIT-SEATS). Enable writing only for members, and show a copy that is not one which of three states it is in: it holds the rows but is not a member, and no seat is open to it — which is both a copy forwarded to someone who was never in the game and a player's own new device or browser, and the copy cannot tell them apart, so say that the seats belong to other devices and never that the person was not invited; it joined but its seat was contested or replaced (SESSION-CONTESTED-SEAT); or the session is closed (SESSION-CLOSE). The _current views of a session document show only admitted rows — rows by members, written before any close.",
     why:
       "A non-member's rows are kept but never admitted, so an application that let a non-member play would show them their own moves and nobody else ever would. Saying which state a copy is in is the difference between a message and a hang.",
     enforced: ["prose"],
@@ -661,7 +712,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "A seat bound by two or more different replicas is contested — two people opened the same invite — and admits neither. Detect it as a `_dai_binding_current` seat with `count(DISTINCT _r_replica) > 1` for the session. Show the creator that the invite went to more than one device and offer a fresh invite: `window.dai.replicated.session.reseat(session)`, then share again. Show a copy whose own seat was lost that nothing it did lost its place, and that the creator can send a new invite. `reseat` refuses with NOT_SEAT_CREATOR for anyone but the creator and with CANNOT_RESEAT when no seat is contested.",
+      "A seat bound by two or more different replicas is contested — two people opened the same invite — and is held by the first verified signer (IDENTITY-FIRST-SIGNER); the other binder is not a member. Detect it as a `_dai_binding_current` seat with `count(DISTINCT _r_replica) > 1` for the session. Show the creator that the invite went to more than one device and offer a fresh invite: `window.daiKit.reseat(session)`, then share again. Show a copy whose own seat was lost that nothing it did lost its place, and that the creator can send a new invite. `reseat` refuses with NOT_SEAT_CREATOR for anyone but the creator and with CANNOT_RESEAT when no seat is contested.",
     why: "It is resolved without a clock deciding who opened the invite first, so neither copy can be admitted until the creator repairs it; an application that treated it as an error would leave both people stuck.",
     enforced: ["runtime", "prose"],
     anchors: [
@@ -721,13 +772,13 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "kit",
     rule:
-      "The kit's write controls — data-run, <dai-form run=…>, <dai-attach run=…> — run plain SQL, so they are for local tables only. On a shared table they fail (SHARED-WRITE-SURFACE), and the kit neither catches the error nor shows it. The kit's reading elements, <dai-rows> and <dai-value>, work over t_current views; redraw them on a merge with `window.daiKit.refresh()` (SHARED-REDRAW-ON-MERGE). Write shared rows in JavaScript through `window.dai.replicated`.",
+      "The kit's write controls — data-run, <dai-form run=…>, <dai-attach run=…> — run plain SQL, so they are for local tables only (its seat calls are the one shared write it makes, through window.dai.replicated; IDENTITY-KIT-SEATS). On a shared table they fail (SHARED-WRITE-SURFACE), and the kit neither catches the error nor shows it. The kit's reading elements, <dai-rows> and <dai-value>, work over t_current views; redraw them on a merge with `window.daiKit.refresh()` (SHARED-REDRAW-ON-MERGE). Write shared rows in JavaScript through `window.dai.replicated`.",
     why: "Run against the rewrite: a kit INSERT into a replicated table fails with SQLite's NOT NULL error, and an UPDATE or DELETE with REPLICATED_TABLE_IMMUTABLE — uncaught, so the person sees nothing happen.",
     enforced: ["lint"],
     lint: ["shared-raw-write"],
     anchors: [
       { file: "src/kit.ts", contains: "if (names.length === 0) db.exec(sql);" },
-      { file: "src/kit.ts", contains: "window.daiKit = { db: db, run: run, refresh: refresh };" },
+      { file: "src/kit.ts", contains: "db: db, run: run, refresh: refresh," },
     ],
   },
 
@@ -930,13 +981,13 @@ export const SURFACE: readonly SurfaceEntry[] = [
   },
   {
     call: "window.dai.replicated.session.create()",
-    does: "Starts a session: seats this copy and leaves one open seat. Returns { session, seat } as hex.",
+    does: "The runtime's session writer, which the kit wraps: call window.daiKit.newSession() instead (IDENTITY-KIT-SEATS). Starts a session: seats this copy and leaves one open seat. Returns { session, seat } as hex.",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string } =>" },
   },
   {
     call: "window.dai.replicated.session.join(session, seat)",
-    does: "Binds this copy to an open seat. Call it when this copy opens an invite (SESSION-JOIN-ON-OPEN).",
+    does: "The runtime's seat writer, which the kit wraps: call window.daiKit.claimSeat(session) instead (IDENTITY-KIT-SEATS, SESSION-JOIN-ON-OPEN). Binds this copy to an open seat.",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: "join: (sessionHex: string, seatHex: string): void =>" },
   },
@@ -949,7 +1000,7 @@ export const SURFACE: readonly SurfaceEntry[] = [
   {
     call: "window.dai.replicated.session.reseat(session)",
     does:
-      "The creator's repair for a contested seat: replaces the open seat so a fresh invite can be taken. Throws NOT_SEAT_CREATOR for anyone else and CANNOT_RESEAT when no seat is contested.",
+      "The runtime's seat writer, which the kit wraps: call window.daiKit.reseat(session) instead (IDENTITY-KIT-SEATS). The creator's repair for a contested seat: replaces the open seat so a fresh invite can be taken. Throws NOT_SEAT_CREATOR for anyone else and CANNOT_RESEAT when no seat is contested.",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: "reseat: (sessionHex: string): void =>" },
   },
@@ -964,7 +1015,55 @@ export const SURFACE: readonly SurfaceEntry[] = [
     call: "window.daiKit.refresh()",
     does: "Re-runs every kit query on the page. Call it in the dai:merged listener when the page uses <dai-rows> or <dai-value>.",
     shapes: ALL,
-    anchor: { file: "src/kit.ts", contains: "window.daiKit = { db: db, run: run, refresh: refresh };" },
+    anchor: { file: "src/kit.ts", contains: "db: db, run: run, refresh: refresh," },
+  },
+  {
+    call: "window.daiKit.newSession(options?)",
+    does: "Starts a session: this copy's seat and one open seat. { solo: true } also takes the open seat, for a board one copy plays alone. Returns the session, hex.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function newSession(options)" },
+  },
+  {
+    call: "window.daiKit.claimSeat(session)",
+    does: "Takes the session's open seat, once. Returns the seat this copy then holds, hex, or null when none is open or another copy's earlier binding holds it.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function claimSeat(session)" },
+  },
+  {
+    call: "window.daiKit.mySeat(session) / .amCreator(session) / .seats(session)",
+    does: "Reads, on the host's author id: the seat this copy holds (or null), whether it started the session, and every current seat with its holder, whether the creator holds it, and every value it has had.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function mySeat(session)" },
+  },
+  {
+    call: "window.daiKit.reseat(session)",
+    does: "The creator's repair for a contested seat: a fresh open seat, for a new invite.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function reseat(session)" },
+  },
+  {
+    call: "window.daiKit.seatBytes(hex)",
+    does: "A seat, as the bytes a seat column holds: what a row names in its seat=<column>.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function seatBytes(hex)" },
+  },
+  {
+    call: "window.daiKit.whenWritable(fn)",
+    does: "Runs fn when this mount can write shared rows, and never on a read-only one. Resolves with fn's result, or undefined when read-only.",
+    shapes: SHARED,
+    anchor: { file: "src/kit.ts", contains: "function whenWritable(fn)" },
+  },
+  {
+    call: "window.daiKit.onNewPlayer(fn)",
+    does: "Takes the loss sentence: fn gets the kit's sentence when this device is a new author for a document it wrote before, and shows it the application's way.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function onNewPlayer(fn)" },
+  },
+  {
+    call: "window.daiKit.author()",
+    does: "This copy's author id, hex, as the host handed it: never read from a row. Null until the host has said.",
+    shapes: SHARED,
+    anchor: { file: "src/kit.ts", contains: "const me = () =>" },
   },
 ];
 
@@ -1085,7 +1184,14 @@ export const MARKERS: readonly MarkerEntry[] = [
     where: "In place of -- dai:replicated, directly above a CREATE TABLE, in a document with a session profile.",
     does: "Makes the table replicated and writable by one party only: the session's creator, or the member who took the invite. The wrong party's write is refused with ROLE_NOT_PERMITTED; its rows, if they arrive another way, are never admitted.",
     shapes: SESSION,
-    anchor: { file: "src/replicated.ts", contains: "const AUTHOR_CLAUSE = /^dai:replicated\\s+author\\s*=\\s*([A-Za-z]+)$/i;" },
+    anchor: { file: "src/replicated.ts", contains: "function markerClauses(marker: string): Record<string, string> | null {" },
+  },
+  {
+    marker: "-- dai:replicated seat=<column>",
+    where: "In place of -- dai:replicated (with or without author=), directly above a CREATE TABLE that has <column>, in a document with a session profile.",
+    does: "Makes each row of the table act for the seat named in <column>: it is admitted only when its author held that seat when the row was written, and a row naming no seat, or a seat outside its session, never is. Combines with author=. See IDENTITY-SEAT-ADMITS.",
+    shapes: SESSION,
+    anchor: { file: "src/replicated.ts", contains: "names seat=${column}, and has no column ${column}." },
   },
 ];
 

@@ -3,7 +3,7 @@
 ::: info SESSION-CONTESTED-SEAT
 **A contested seat is a state to show**
 
-A seat bound by two or more different replicas is contested — two people opened the same invite — and admits neither. Detect it as a `_dai_binding_current` seat with `count(DISTINCT _r_replica) > 1` for the session. Show the creator that the invite went to more than one device and offer a fresh invite: `window.dai.replicated.session.reseat(session)`, then share again. Show a copy whose own seat was lost that nothing it did lost its place, and that the creator can send a new invite. `reseat` refuses with NOT\_SEAT\_CREATOR for anyone but the creator and with CANNOT\_RESEAT when no seat is contested.
+A seat bound by two or more different replicas is contested — two people opened the same invite — and is held by the first verified signer (IDENTITY-FIRST-SIGNER); the other binder is not a member. Detect it as a `_dai_binding_current` seat with `count(DISTINCT _r_replica) > 1` for the session. Show the creator that the invite went to more than one device and offer a fresh invite: `window.daiKit.reseat(session)`, then share again. Show a copy whose own seat was lost that nothing it did lost its place, and that the creator can send a new invite. `reseat` refuses with NOT\_SEAT\_CREATOR for anyone but the creator and with CANNOT\_RESEAT when no seat is contested.
 
 **Why.** It is resolved without a clock deciding who opened the invite first, so neither copy can be admitted until the creator repairs it; an application that treated it as an error would leave both people stuck.
 

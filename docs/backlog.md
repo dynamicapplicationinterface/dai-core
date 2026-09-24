@@ -4384,6 +4384,21 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D114 — A backdated clock wins a contested seat
+
+*Status: open. Ruled 24 September (identity step 5): accepted at this version,
+filed, not built.*
+
+A contested seat is held by the first verified signer: among signed bindings,
+the lowest clock, then the lowest author id (`IDENTITY-FIRST-SIGNER`). The
+rule is the same on every copy, which is the property that matters. But the
+clock is the author's own, so a joiner who backdates it wins the contest. For
+friend to friend that contender already holds the invite and could simply
+play, so it is acceptable here. What closes it: a seat offer signed by the
+creator, carried in the invite ("seat X is open, for the holder of this
+invite"), so a contest is settled by what the creator signed rather than by a
+clock anyone sets.
+
 #### D113 — A publish in flight overwrote a write's "not up to date"
 
 *Status: closed 24 September (740b2cb). Kept for the cross-reference below.*

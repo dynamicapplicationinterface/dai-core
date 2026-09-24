@@ -31,6 +31,12 @@ way: [Why rows never change](/docs/why-rows-never-change).
 
 **Does:** Makes the table replicated and writable by one party only: the session's creator, or the member who took the invite. The wrong party's write is refused with ROLE\_NOT\_PERMITTED; its rows, if they arrive another way, are never admitted.
 
+### `-- dai:replicated seat=<column>`
+
+**Where:** In place of -- dai:replicated (with or without author=), directly above a CREATE TABLE that has &lt;column&gt;, in a document with a session profile.
+
+**Does:** Makes each row of the table act for the seat named in &lt;column&gt;: it is admitted only when its author held that seat when the row was written, and a row naming no seat, or a seat outside its session, never is. Combines with author=. See IDENTITY-SEAT-ADMITS.
+
 ## Views and system tables
 
 ### `t_current`

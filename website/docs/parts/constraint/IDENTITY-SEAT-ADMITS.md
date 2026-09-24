@@ -3,9 +3,9 @@
 ::: info IDENTITY-SEAT-ADMITS
 **A signature says who wrote a row; a seat says whether they may**
 
-A session app admits a row only from the author holding the seat that row's action belongs to: a move for White only from whoever holds White's seat. That the row is correctly signed is not enough, because a signature answers who wrote it and not whether they may. The kit does the check inside its merge path, so an app cannot skip it, and reports a refused row as SEAT\_NOT\_HELD with its author. Until the kit provides it (step 5 of docs/identity.md), nothing enforces this.
+A session table whose rows act for a seat says so on its marker, `-- dai:replicated seat=<column>`, and each row names in that column the seat it acts for: a move for White names White's seat. The document admits such a row only when its author held that seat when the row was written: its binding to the seat is the one that holds it (IDENTITY-FIRST-SIGNER), at or before the row's clock, and the seat had that value then, with no reseat between. A row that names no seat, or a seat outside its session, is stored and never admitted. That the row is correctly signed is not enough, because a signature answers who wrote it and not whether they may. The check is the document's own admission, not the application's, so an app cannot skip it; a merge reports a row it took and did not admit as SEAT\_NOT\_HELD with its author. Read which side a row acts for from its seat, never from a column any copy writes.
 
-**Why.** D80: a copy under the creator's id played the creator's move. Once every row is stamped with its author's own key, the move arrives honestly as the other player's, and it is still the wrong player's move. Only the seat can say so.
+**Why.** D80: a copy under the creator's id played the creator's move. Once every row is stamped with its author's own key, the move arrives honestly as the other player's, and it is still the wrong player's move. Only the seat can say so. And held then, not held now: a check against the current holder would admit a move written before its author took the seat, the moment they took it.
 
-<small>Applies to session · not checked by anything · [IDENTITY-SEAT-ADMITS in Constraints](/docs/constraints#IDENTITY-SEAT-ADMITS)</small>
+<small>Applies to session · refused at build; refused at run time · [IDENTITY-SEAT-ADMITS in Constraints](/docs/constraints#IDENTITY-SEAT-ADMITS)</small>
 :::

@@ -16,13 +16,21 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 126,773 bytes: SHARED-POINTER-HOLDS-THE-SCREEN (D79) — never redraw while a
- * pointer is down, draw when it lifts, read the state when you act. It bought
- * 4,402 bytes, and what it buys is every author avoiding a tap that vanishes
- * with no error whenever a merge lands mid-press: the failure is invisible to
- * the person, unreproducible on a desk, and routine with a live opponent.
+ * 135,450 bytes: identity step 5, seats into the kit. It bought 8,677 bytes:
+ * five constraints (IDENTITY-SEAT-ADMITS as built, IDENTITY-FIRST-SIGNER,
+ * IDENTITY-KIT-SEATS, IDENTITY-LOSS-SENTENCE, IDENTITY-BOOT-WRITES), the
+ * seat= marker and eight kit calls, and the session rules rewritten onto the
+ * kit. What it buys is an author who names the seat a row acts for and reads
+ * who this copy is from the host, which is what closes D80 for their app too.
+ *
+ * Before that, 126,773 bytes: SHARED-POINTER-HOLDS-THE-SCREEN (D79) — never
+ * redraw while a pointer is down, draw when it lifts, read the state when you
+ * act. It bought 4,402 bytes, and what it buys is every author avoiding a tap
+ * that vanishes with no error whenever a merge lands mid-press: the failure is
+ * invisible to the person, unreproducible on a desk, and routine with a live
+ * opponent.
  */
-const BUDGET_BYTES = 126_773;
+const BUDGET_BYTES = 135_450;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;
