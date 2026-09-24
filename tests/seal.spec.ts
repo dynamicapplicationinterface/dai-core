@@ -7,6 +7,7 @@ import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src
 import { rewriteReplicated } from "../src/replicated.js";
 import { authoredBatchAbove, decodeBatch, headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
 import { applyRow, createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
+import { mergeSibling } from "../src/replicated-frame.js";
 
 /**
  * Sealing on leave (docs/identity.md, step 3, ruled 24 September).
@@ -162,11 +163,47 @@ test("the mailbox sends sealed batches only, and its head never passes a row sti
   );
   recordSeal(db, await signBatch(forOne!, { document: DOC, keys: ada.keys }));
 
-  const answer = authoredBatchAbove(db, { replica: "", seq: 0 }, ["moves"], undefined, DOC);
+  const answer = authoredBatchAbove(db, ada.author, { replica: "", seq: 0 }, ["moves"], undefined, DOC);
   expect(answer.batch, "the sealed batch is sent").not.toBeNull();
   expect(decodeBatch(answer.batch!).entries.map((e) => e.row.columns["san"])).toEqual(["e4"]);
   expect(answer.head, "and the head stays below the pending row, seq 1").toBe(0);
   db.close();
+});
+
+test("the mailbox answers for the author it is told, not for whatever _dai_replica says", async () => {
+  /*
+   * Binding rule 1 (cold review of identity step 3, #6): who this copy is comes
+   * from the host, never from a row. A copy whose _dai_replica names somebody
+   * else still publishes its own author's batch, under that author.
+   */
+  const ada = await person();
+  const db = open(PLAIN);
+  ensureReplica(db, ada.author);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+  recordSeal(db, await signBatch(pendingBatches(db, ada.author, ["moves", "notes"])[0]!, { document: DOC, keys: ada.keys }));
+  db.run("UPDATE _dai_replica SET id = ?", [new Uint8Array(16).fill(0xee)]);
+
+  const answer = authoredBatchAbove(db, ada.author, { replica: "", seq: 0 }, ["moves", "notes"], undefined, DOC);
+  expect(answer.batch, "Ada's sealed batch is still hers to send").not.toBeNull();
+  expect(decodeBatch(answer.batch!).replica).toEqual(ada.author);
+  expect(answer.replica).toBe(Buffer.from(ada.author).toString("hex"));
+  db.close();
+});
+
+test("a merge raises the counter for the author it is told, not for whatever _dai_replica says", async () => {
+  const ada = await person();
+  const source = open(PLAIN);
+  ensureReplica(source, ada.author);
+  for (const san of ["e4", "d4", "c4", "Nf3"]) {
+    createEntity(source, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san });
+  }
+  // The copy that gets them back holds a _dai_replica naming somebody else.
+  const back = open(PLAIN);
+  ensureReplica(back, new Uint8Array(16).fill(0xee));
+  mergeSibling(back, source, { author: ada.author });
+  expect(Number(back.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to Ada's highest, 4").toBe(4);
+  back.close();
+  source.close();
 });
 
 test("a row is sealed once: _r_batch goes from NULL to an id, and the engine refuses any change after", async () => {

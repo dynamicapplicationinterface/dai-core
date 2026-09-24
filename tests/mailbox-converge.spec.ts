@@ -310,7 +310,7 @@ test("a watermark is bound to its replica: a count from a shed identity reads as
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "e5" });
   await sealAll(a, A);
-  const settled = authoredBatchAbove(a, { replica: hex(A), seq: 2 }, tables);
+  const settled = authoredBatchAbove(a, A, { replica: hex(A), seq: 2 }, tables);
   expect(settled.batch).toBeNull();
   expect(settled.head).toBe(2);
   expect(settled.replica).toBe(hex(A));
@@ -323,14 +323,14 @@ test("a watermark is bound to its replica: a count from a shed identity reads as
 
   // Read as a bare number, seq 2 would sit above B's first row and strand it.
   // Scoped to its replica, the stale watermark is zero here and the row is sent.
-  const stale = authoredBatchAbove(a, { replica: hex(A), seq: 2 }, tables);
+  const stale = authoredBatchAbove(a, B, { replica: hex(A), seq: 2 }, tables);
   expect(stale.replica).toBe(hex(B));
   expect(stale.batch).not.toBeNull();
   expect(decodeBatch(stale.batch!).entries.map((e) => e.row.columns["san"])).toEqual(["Nf3"]);
 
   // And a watermark correctly bound to B still suppresses what B has already
   // sent — the scoping floors a foreign seq, it does not discard a real one.
-  const bound = authoredBatchAbove(a, { replica: hex(B), seq: stale.head }, tables);
+  const bound = authoredBatchAbove(a, B, { replica: hex(B), seq: stale.head }, tables);
   expect(bound.batch).toBeNull();
   expect(bound.head).toBe(stale.head);
 

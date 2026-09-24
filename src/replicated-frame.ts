@@ -181,7 +181,7 @@ export function replicatedSchemaOf(rows: Rows, tables?: readonly string[]): stri
 export function mergeSibling(
   local: Rows,
   sibling: Rows,
-  options: number | { level?: number; document?: string } = 1,
+  options: number | { level?: number; document?: string; author?: Uint8Array } = 1,
 ): MergeReport {
   /*
    * A level, as every caller has passed it, or the options the identity sitting
@@ -235,7 +235,7 @@ export function mergeSibling(
     return { ...empty, conflicts: 0, refused: "SCHEMA_MISMATCH" };
   }
 
-  const result = mergeFrom(local, sibling, tables);
+  const result = mergeFrom(local, sibling, tables, typeof options === "number" ? undefined : options.author);
   return { ...result, conflicts: conflictsIn(local, replicatedTablesOf(local)) };
 }
 

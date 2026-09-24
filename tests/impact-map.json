@@ -2854,6 +2854,7 @@
       "src/cbor.ts",
       "src/identity.ts",
       "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "tests/seal.spec.ts"

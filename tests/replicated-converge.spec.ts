@@ -793,7 +793,7 @@ test.describe("a copy that arrived from somebody else", () => {
     createEntity(alice, "cases", bytes(0x71), { title: "c4", status: "open", weight: null });
     createEntity(alice, "cases", bytes(0x72), { title: "Nf3", status: "open", weight: null });
 
-    const report = mergeSibling(reopened, alice); // its own rows, back from the mailbox
+    const report = mergeSibling(reopened, alice, { author: A }); // its own rows, back from the mailbox
     expect(report.rejected).toEqual([]);
     expect(Number(reopened.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to the highest it brought in").toBe(4);
     createEntity(reopened, "cases", bytes(0x73), { title: "g3", status: "open", weight: null });

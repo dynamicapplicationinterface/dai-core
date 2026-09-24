@@ -335,14 +335,15 @@ export interface Watermark {
  */
 export function authoredBatchAbove(
   db: Rows,
+  author: Uint8Array,
   watermark: Watermark,
   tables: readonly string[],
   session?: Uint8Array,
   document = "",
 ): { batch: Uint8Array | null; head: number; replica: string; more: boolean } {
-  const held = db.all("SELECT id, lc FROM _dai_replica LIMIT 1")[0];
-  const replica = held?.["id"];
-  if (!(replica instanceof Uint8Array)) return { batch: null, head: watermark.seq, replica: "", more: false };
+  // Whose rows these are is the caller's to say (the host's key, binding rule
+  // 1), never _dai_replica's: a row is not a source of identity.
+  const replica = author;
   const replicaHex = hex(replica);
   const since = watermark.replica === replicaHex ? watermark.seq : 0;
   // Scoped to the session when one is given (T1-D30): a copy is in many sessions
@@ -383,8 +384,9 @@ export function authoredBatchAbove(
     }
   }
   const top = Math.max(...whole.map((e) => e.row._r_seq));
+  // The batch is the header's: its author and clock are what was signed.
   const signed: SignedBatch = {
-    replica,
+    replica: header["author"] as Uint8Array,
     lc: Number(header["lc"]),
     entries: whole,
     document,

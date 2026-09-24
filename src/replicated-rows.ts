@@ -714,6 +714,8 @@ export function mergeFrom(
   local: Rows,
   sibling: Rows,
   tables: readonly string[],
+  /** This copy's own author, as the host holds it (binding rule 1); never read from a row. */
+  author?: Uint8Array,
 ): MergeResult {
   const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0 };
 
@@ -822,8 +824,7 @@ export function mergeFrom(
    * highest of them, or this copy's next row reissues a seq it already issued
    * (cold review of identity step 2, #3).
    */
-  const mine = local.all("SELECT id FROM _dai_replica LIMIT 1")[0]?.["id"];
-  if (mine instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, mine));
+  if (author instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, author));
 
   return result;
 }

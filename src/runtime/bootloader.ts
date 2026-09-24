@@ -1326,7 +1326,11 @@ function bridgeMain(names: FrameNames): void {
       liveDb.exec("BEGIN");
       try {
         const merge = mergeModule as Any;
-        const report = merge.mergeSibling(rows(liveDb), rows(sibling), request.level || 1);
+        const report = merge.mergeSibling(rows(liveDb), rows(sibling), {
+          level: request.level || 1,
+          document: mountDocument,
+          author: mountReplica ?? undefined,
+        });
         if (report.refused) {
           // Nothing was written. Rolled back rather than assumed: a refusal
           // that left a transaction open would take the next write with it.
@@ -1384,7 +1388,7 @@ function bridgeMain(names: FrameNames): void {
     watermark: { replica: string; seq: number },
     session?: Uint8Array,
   ): { batch: Uint8Array | null; head: number; replica: string; more: boolean } => {
-    if (!liveDb || !mergeModule) return { batch: null, head: watermark.seq, replica: watermark.replica, more: false };
+    if (!liveDb || !mergeModule || !mountReplica) return { batch: null, head: watermark.seq, replica: watermark.replica, more: false };
     const merge = mergeModule as Any;
     // Settle this copy's identity before reasoning about what it authored. A
     // copy that arrived by file still holds the sender's id until it takes its
@@ -1404,7 +1408,7 @@ function bridgeMain(names: FrameNames): void {
     // Scoped to one session when the host asks for one (T1-D30): each session's
     // mailbox carries only that session's rows.
     // Sealed batches only, one at a time, lowest first (identity step 3).
-    return merge.authoredBatchAbove(r, watermark, tables, session, mountDocument);
+    return merge.authoredBatchAbove(r, mountReplica, watermark, tables, session, mountDocument);
   };
 
   /** The sessions this copy holds seats for, as hex — each has a mailbox of its own. */
@@ -1478,7 +1482,11 @@ function bridgeMain(names: FrameNames): void {
       merge.stageBatch(frameRows(staged), batch, tables);
       liveDb.exec("BEGIN");
       try {
-        const report = merge.mergeSibling(local, frameRows(staged), 1);
+        const report = merge.mergeSibling(local, frameRows(staged), {
+          level: 1,
+          document: mountDocument,
+          author: mountReplica ?? undefined,
+        });
         if (report.refused) {
           liveDb.exec("ROLLBACK");
           return report;

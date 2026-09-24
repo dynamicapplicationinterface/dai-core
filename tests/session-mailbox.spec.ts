@@ -97,11 +97,11 @@ CREATE TABLE moves (
     createEntity(db, "moves", E2, { ply: 1, san: "d4" }, S2);
     await sealAll(db, A);
 
-    const forS1 = authoredBatchAbove(db, { replica: "", seq: 0 }, ["moves"], S1);
+    const forS1 = authoredBatchAbove(db, A, { replica: "", seq: 0 }, ["moves"], S1);
     const s1 = decodeBatch(forS1.batch!);
     expect(s1.entries.map((e) => e.row.columns["san"])).toEqual(["e4"]);
 
-    const forS2 = authoredBatchAbove(db, { replica: "", seq: 0 }, ["moves"], S2);
+    const forS2 = authoredBatchAbove(db, A, { replica: "", seq: 0 }, ["moves"], S2);
     const s2 = decodeBatch(forS2.batch!);
     expect(s2.entries.map((e) => e.row.columns["san"])).toEqual(["d4"]);
 
@@ -120,7 +120,7 @@ CREATE TABLE moves (
     const sans: string[] = [];
     let watermark = { replica: "", seq: 0 };
     for (let round = 0; round < 3; round++) {
-      const answer = authoredBatchAbove(db, watermark, ["moves"]);
+      const answer = authoredBatchAbove(db, A, watermark, ["moves"]);
       if (!answer.batch) break;
       sans.push(...decodeBatch(answer.batch).entries.map((e) => String(e.row.columns["san"])));
       watermark = { replica: answer.replica, seq: answer.head };
