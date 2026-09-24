@@ -2933,6 +2933,16 @@
       "tsup.config.ts",
       "website/"
     ],
+    "tests/seq-floor-read.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/seq-floor-read.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/seq-floor.spec.ts": [
       "apps/runner/",
       "scripts/generate-key.mjs",

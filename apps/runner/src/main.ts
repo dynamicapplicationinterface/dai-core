@@ -64,7 +64,7 @@ import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/tr
 import {
   deleteCartridgeFromLibrary,
   raiseSeqFloor,
-  seqFloorOf,
+  seqFloorWithin,
   deleteDatabaseFromOpfs,
   getCartridgeFromLibrary,
   listCartridgesFromLibrary,
@@ -2823,7 +2823,9 @@ window.addEventListener("message", (event) => {
               "Reload the page to try again.",
           };
         }
-        const seqFloor = await seqFloorOf(writingUuid).catch(() => null);
+        // Read again for up to four seconds, the key's deadline: a store that
+        // never answers is not waited on forever (cold review, step 3, #4).
+        const seqFloor = await seqFloorWithin(writingUuid).catch(() => null);
         if (seqFloor === null) {
           return {
             refused:

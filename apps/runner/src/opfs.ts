@@ -649,13 +649,56 @@ export async function keepPersonKey(pair: CryptoKeyPair): Promise<void> {
  * is kept. A read that fails is thrown, not read as 0: a floor of 0 on a
  * device that has written would reissue what it already sent.
  */
-export async function seqFloorOf(documentUuid: string): Promise<number> {
-  const db = await openIdb();
-  return await new Promise((resolve, reject) => {
-    const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(seqFloorKey(documentUuid));
-    req.onsuccess = () => resolve(typeof req.result === "number" ? req.result : 0);
-    req.onerror = () => reject(req.error ?? new Error("The sequence floor could not be read."));
+export type KeptSeqFloor = { kept: "floor"; seq: number } | { kept: "none" } | { kept: "unreadable"; why: string };
+
+/**
+ * One read of the floor, bounded: the three answers the person key has, for
+ * the same reason (cold review of identity step 3, #4). A store that throws,
+ * errors or does not answer within `withinMs` is unreadable, never "none": a
+ * floor read as 0 on a device that has written would reissue what it sent.
+ */
+export async function keptSeqFloor(documentUuid: string, withinMs = 1_000): Promise<KeptSeqFloor> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<KeptSeqFloor>((resolve) => {
+    timer = setTimeout(() => resolve({ kept: "unreadable", why: `no answer within ${withinMs}ms` }), withinMs);
   });
+  const read = (async (): Promise<KeptSeqFloor> => {
+    try {
+      const db = await openIdb();
+      return await new Promise<KeptSeqFloor>((resolve) => {
+        try {
+          const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(seqFloorKey(documentUuid));
+          req.onsuccess = () =>
+            resolve(typeof req.result === "number" && req.result > 0 ? { kept: "floor", seq: req.result } : { kept: "none" });
+          req.onerror = () => resolve({ kept: "unreadable", why: String(req.error?.message ?? "the read failed") });
+        } catch (error) {
+          resolve({ kept: "unreadable", why: String((error as Error)?.message ?? error) });
+        }
+      });
+    } catch (error) {
+      return { kept: "unreadable", why: String((error as Error)?.message ?? error) };
+    }
+  })();
+  try {
+    return await Promise.race([read, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The floor, read again while it is unreadable, for up to `deadlineMs`: the
+ * key's deadline. Null when it stays unreadable; the caller refuses writes.
+ */
+export async function seqFloorWithin(documentUuid: string, deadlineMs = 4_000): Promise<number | null> {
+  const until = Date.now() + deadlineMs;
+  for (;;) {
+    const answer = await keptSeqFloor(documentUuid, Math.max(250, Math.min(1_000, until - Date.now())));
+    if (answer.kept === "floor") return answer.seq;
+    if (answer.kept === "none") return 0;
+    if (Date.now() >= until) return null;
+    await new Promise((wait) => setTimeout(wait, 250));
+  }
 }
 
 /**
@@ -672,16 +715,28 @@ export async function raiseSeqFloor(documentUuid: string, seq: number): Promise<
   const tx = db.transaction(KEY_STORE, "readwrite");
   const store = tx.objectStore(KEY_STORE);
   const key = seqFloorKey(documentUuid);
-  await new Promise<void>((resolve, reject) => {
-    const read = store.get(key);
-    read.onsuccess = () => {
-      const held = typeof read.result === "number" ? read.result : 0;
-      if (seq > held) store.put(seq, key);
-    };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
-    tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
-  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          const held = typeof read.result === "number" ? read.result : 0;
+          if (seq > held) store.put(seq, key);
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
+        tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
+      }),
+      // A write that never answers fails, like one that errors, and the save or
+      // the seal waiting on it fails closed rather than holding the lock (#4).
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("The sequence floor did not answer within 4 seconds.")), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
