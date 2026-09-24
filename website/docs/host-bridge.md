@@ -220,6 +220,9 @@ show the name, not only the sentence.
 | `UNSUPPORTED_LEVEL` | no | The other copy asks for a replication level this runtime does not implement. Refused rather than merged as though it were the level this one knows — checks it expected would not have run. |
 | `MERGE_FAILED` | no | A merge failed for a reason with no name of its own; the message says what. |
 | `APPLY_FAILED` | no | A batch from the mailbox failed to apply for a reason with no name of its own; the message says what. |
+| `BATCH_SIGNATURE_INVALID` | no | A batch whose signature does not verify, or whose public key does not fingerprint to the author it names: not written by who it says. Its rows are refused; the rest of the merge runs. Reported per batch in `refusedBatches`. |
+| `BATCH_DIGEST_MISMATCH` | no | A batch whose rows are not the rows it signed: a row changed after signing, a row it lists is missing, or a row claims the batch and is not among the rows it lists. Those rows are refused; the rest of the merge runs. Reported per batch in `refusedBatches`. |
+| `BATCH_UNSIGNED` | no | A row no valid batch covers, in a document whose rows must be signed. Refused; the rest of the merge runs. Reported per batch in `refusedBatches`. |
 | `MAILBOX_KEY_INVALID` | no | A mailbox key that is not 32 bytes: the key in the link was cut or edited. |
 | `MAILBOX_BATCH_TRUNCATED` | no | A sealed batch shorter than its own header, so it cannot be opened. Dropped; the next one is read. |
 | `MAILBOX_BATCH_MALFORMED` | no | A batch that opened under its key and is not the shape a batch has. Dropped; the next one is read. |
