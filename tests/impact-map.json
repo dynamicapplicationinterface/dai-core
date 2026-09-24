@@ -3084,6 +3084,16 @@
       "tests/sibling.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/sign-scope.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/sign-scope.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/signed-batch.spec.ts": [
       "src/cbor.ts",
       "src/identity.ts",

@@ -2754,6 +2754,10 @@ window.addEventListener("message", (event) => {
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+    // A new mount: whatever this host agreed to write for the last one is gone
+    // with it (cold review of identity step 3, finding 1). A document that
+    // follows a shared one must not inherit the right to have its headers signed.
+    mountWrites = null;
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -2829,7 +2833,7 @@ window.addEventListener("message", (event) => {
         }
         return { me, seqFloor };
       })();
-      mountWrites = { documentUuid: writingUuid, decided };
+      mountWrites = { nonce: mountedNonce, documentUuid: writingUuid, decided };
       /*
        * A failure here is said out loud, because the alternative already
        * happened.
@@ -3062,9 +3066,15 @@ window.addEventListener("message", (event) => {
       (event.source as Window | null)?.postMessage({ type: TO_DOCUMENT.SIGNED, id: data.id, ...answer }, "*");
     };
     void (async () => {
-      const mount = mountWrites;
+      // Only for the document mounted now, under the decision made for this
+      // very mount: never a header for a document opened before this one.
+      const mount = mountWrites && mountWrites.nonce === mountedNonce ? mountWrites : null;
       const writes = mount ? await mount.decided : null;
-      if (!mount || !writes) return reply({ error: "This document is not open for writing here." });
+      if (!mount || !writes || !loaded || loaded.manifest.documentUuid !== mount.documentUuid) {
+        return reply({ error: "This document is not open for writing here." });
+      }
+      const seq = Number(data.seq);
+      if (!Number.isSafeInteger(seq) || seq <= 0) return reply({ error: "A batch names no sequence this device can record." });
       if ("refused" in writes) return reply({ error: writes.refused });
       const header = data.header instanceof Uint8Array ? data.header : null;
       let fields: unknown = null;
@@ -3082,7 +3092,7 @@ window.addEventListener("message", (event) => {
         showAuthorId(fields[2]) === writes.me.author;
       if (!header || !ours) return reply({ error: "This device signs only its own changes to the document that is open." });
       try {
-        await raiseSeqFloor(mount.documentUuid, Number(data.seq) || 0);
+        await raiseSeqFloor(mount.documentUuid, seq);
       } catch {
         return reply({ error: "This device could not record how far it has written, so the change was not signed." });
       }
@@ -5031,6 +5041,8 @@ void confusables();
  * save of that document. Null before a replicated document mounts.
  */
 let mountWrites: {
+  /** The mount this was decided for: a decision never outlives the frame it was made for. */
+  nonce: string | null;
   documentUuid: string;
   decided: Promise<{ me: Person; seqFloor: number } | { refused: string }>;
 } | null = null;
