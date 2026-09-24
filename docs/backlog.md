@@ -4410,8 +4410,11 @@ close unsent. Now a write (or a landed seal's nudge) during an in-flight
 publish asks for another. Found by the no-retire test in
 `tests/mailbox-link-e2e.spec.ts`, red 3 of 6 on the code before the fix.
 
-**The fix likely also cleared returning-document:511 and two Firefox retries in
-run 36033989571; not isolated.** If any of those recurs, start here.
+**Corrected 24 September: it did not clear returning-document:511.** That was
+recorded here as likely, not isolated, and it recurred on Firefox in run
+36059363617 (7d5a3f0), both attempts, carrying D32's full signature: the
+document mounted, its frame cannot be entered, a reload does not recover it, a
+fresh page in the same context can enter it. It is D32 (see there), not this.
 
 #### D112 — A move held for a save that never lands is honest but silent
 
@@ -5271,6 +5274,13 @@ prints a stale-map warning and still exits 0 (seen twice tonight).
 
 *Status: open, **and no longer read as a test problem** (20 September). Rate
 measured; the frame read at failure. Fix undecided.*
+
+**Bumped 24 September: `:511` now fails both attempts.** "A turn sent and
+answered, with nothing written in between, is taken without a question" failed
+both attempts, with D32's signature, in two of the last three Firefox runs:
+`36033989571` (96e6d11) and `36059363617` (7d5a3f0); it passed in
+`36041107841` (098e187). Not chased in the identity sitting; recorded so the
+rate is known when it is.
 
 **It is getting through the retry now (22–23 September).** Counted over every
 failed run of `test` in that week, the case that fails both attempts and takes
