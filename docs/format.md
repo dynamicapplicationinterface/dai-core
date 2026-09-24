@@ -48,6 +48,48 @@ without touching any signature. It must never be "tidied" into the signed
 part: doing so would make every past batch unvouchable without re-signing,
 which is the enterprise story's failure mode.
 
+## The rows a header covers
+
+A stored header (`_dai_batch`) lists the rows it covers: `seqs`, the JSON array
+of the author's seqs, distinct and ascending, in exactly that spelling (`[1,2,3]`).
+The author is the header's own; a batch has one. `seqs` is not in the signed
+bytes and does not need to be: the digest commits to the rows, and so to their
+seqs, and a list that names other rows digests to something else.
+
+**The header lists its rows because saves get lost, not for convenience.** A
+row is written first and sealed later, and the seal reaches the disk only in a
+later save. A save can be lost between the two: a tab closed, a write the store
+refused. Then a copy holds the rows with no batch named, and when they leave
+again they are sealed again, under a second header over the same rows. So a
+row's own `_r_batch` cannot be what says it was signed. It can be unset on a
+row that was signed, and a row can claim a batch it was never part of. The
+header, which is signed, is what says which rows it covers, and `_r_batch` is a
+cache of one header that covers the row.
+
+**Verifying a batch** is: find the rows the header lists (the author's rows at
+those seqs, each found exactly once), digest them as above, and check the
+signature over the canonical header that digest makes, for this document, under
+a `pub` that fingerprints to the author. Then check that the id is that header's.
+A rows or id failure is `BATCH_DIGEST_MISMATCH`; a key or signature failure is
+`BATCH_SIGNATURE_INVALID`.
+
+**A merge** verifies every header the other copy holds before it takes
+anything. It keeps the headers that verify and refuses the rest. It takes a row
+when a verified header lists it, whatever the row says, and fills the row's
+`_r_batch` with the header it names if that one lists it, else the lowest listed
+id. A row may be covered by more than one header. A row that names a header and
+is listed by none is refused, `BATCH_DIGEST_MISMATCH` against the header it
+names. A seal nobody verified is never adopted onto a row a copy holds pending.
+A row that names no header and that no header lists is unsigned; until the
+legacy rule changes (`BATCH_UNSIGNED`, step 6 of the sitting), it merges as
+rows did before signing. The merge reports refused batches as `refusedBatches`,
+one `{author, reason}` per batch and reason, ordered by batch id.
+
+**Published after the save lands.** A batch leaves by the mailbox only once a
+save holding its seal has landed, meaning the host has confirmed the write to
+the device's store. A batch published on a save that was then lost would be on
+the relay and gone from the device that signed it.
+
 ## Values in canonical CBOR
 
 Deterministic CBOR (RFC 8949 §4.2.1), in the project's own encoder

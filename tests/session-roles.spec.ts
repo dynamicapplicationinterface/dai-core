@@ -148,7 +148,7 @@ CREATE TABLE advice (
 });
 
 test.describe("the merge: a row from the wrong party is not admitted, whichever copy it came from (D15)", () => {
-  test("the joiner's row in a creator-only table arrives and is dropped; the creator's stands", () => {
+  test("the joiner's row in a creator-only table arrives and is dropped; the creator's stands", async () => {
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
@@ -161,7 +161,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     // enforced nothing, so the row exists and travels.
     put(joinerCopy, "advice", J, 2, 6, { note: "forged by the joiner" });
 
-    expect(mergeSibling(creatorCopy, joinerCopy).refused).toBeUndefined();
+    expect((await mergeSibling(creatorCopy, joinerCopy)).refused).toBeUndefined();
 
     // The forged row reached the creator's copy — the merge carried it — and is
     // not admitted. That it is stored and absent is what shows the admission
@@ -173,7 +173,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     joinerCopy.close();
   });
 
-  test("the creator's row in a joiner-only table arrives and is dropped; the joiner's stands", () => {
+  test("the creator's row in a joiner-only table arrives and is dropped; the joiner's stands", async () => {
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
@@ -183,7 +183,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     put(joinerCopy, "answers", J, 2, 5, { note: "a reply" });
     put(creatorCopy, "answers", C, 4, 6, { note: "forged by the creator" });
 
-    expect(mergeSibling(joinerCopy, creatorCopy).refused).toBeUndefined();
+    expect((await mergeSibling(joinerCopy, creatorCopy)).refused).toBeUndefined();
 
     expect(stored(joinerCopy, "answers")).toContain("forged by the creator");
     expect(current(joinerCopy, "answers")).toEqual(["a reply"]);
@@ -192,7 +192,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     creatorCopy.close();
   });
 
-  test("legitimate rows are admitted on both copies, and an unroled table admits both parties", () => {
+  test("legitimate rows are admitted on both copies, and an unroled table admits both parties", async () => {
     // The guard staying silent: nothing here is refused, and both copies agree.
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
@@ -205,8 +205,8 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     put(joinerCopy, "answers", J, 2, 7, { note: "a reply" });
     put(joinerCopy, "notes", J, 3, 8, { note: "from the joiner" });
 
-    expect(mergeSibling(creatorCopy, joinerCopy).refused).toBeUndefined();
-    expect(mergeSibling(joinerCopy, creatorCopy).refused).toBeUndefined();
+    expect((await mergeSibling(creatorCopy, joinerCopy)).refused).toBeUndefined();
+    expect((await mergeSibling(joinerCopy, creatorCopy)).refused).toBeUndefined();
 
     for (const copy of [creatorCopy, joinerCopy]) {
       expect(current(copy, "advice")).toEqual(["first note"]);

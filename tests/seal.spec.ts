@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { authoredBatchAbove, decodeBatch, headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
-import { applyRow, createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
+import { applyRow, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 
 /**
@@ -144,6 +144,36 @@ test("in a session document, one batch per session: a lane never carries another
   db.close();
 });
 
+test("an invite for one session keeps the headers that list its rows, pointer or not, and no other session's", async () => {
+  // Ruling #3: a header lists its rows, and a row's pointer is a cache a lost
+  // save can leave unset. The copy an invite sends keeps a header by what it
+  // lists, or the session's rows arrive signed by nothing.
+  const ada = await person();
+  const db = open(SESSIONS);
+  ensureReplica(db, ada.author);
+  const one = new Uint8Array(16).fill(1);
+  const two = new Uint8Array(16).fill(2);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" }, one);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "d4" }, two);
+  const [first, second] = pendingBatches(db, ada.author, ["moves"]);
+  const ofOne = [first!, second!].find((b) => (b.entries[0]!.row._r_session as Uint8Array)[0] === 1)!;
+  const ofTwo = [first!, second!].find((b) => b !== ofOne)!;
+  // Session one's seal is held and its rows' pointers never written (the lost
+  // save); session two is sealed as usual.
+  const lost = await signBatch(ofOne, { document: DOC, keys: ada.keys });
+  db.run(
+    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [lost.id, lost.replica, lost.lc, lost.sig, lost.pub, lost.att, lost.version, lost.digest, JSON.stringify(lost.entries.map((e) => e.row._r_seq))],
+  );
+  const sealed = await signBatch(ofTwo, { document: DOC, keys: ada.keys });
+  recordSeal(db, sealed);
+
+  filterToSession(db, one);
+  const kept = db.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => String(r["id"]));
+  expect(kept, "the header that lists session one's rows travels with them").toEqual([Buffer.from(lost.id).toString("hex")]);
+  db.close();
+});
+
 test("the mailbox sends sealed batches only, and its head never passes a row still pending", async () => {
   /*
    * The host moves its watermark to the head even when nothing is sent, so a
@@ -200,7 +230,7 @@ test("a merge raises the counter for the author it is told, not for whatever _da
   // The copy that gets them back holds a _dai_replica naming somebody else.
   const back = open(PLAIN);
   ensureReplica(back, new Uint8Array(16).fill(0xee));
-  mergeSibling(back, source, { author: ada.author });
+  await mergeSibling(back, source, { author: ada.author });
   expect(Number(back.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to Ada's highest, 4").toBe(4);
   back.close();
   source.close();

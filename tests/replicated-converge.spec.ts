@@ -520,7 +520,7 @@ test.describe("merge", () => {
 test.describe("the frame's side of a merge", () => {
   const rowsFor = (db: ReturnType<typeof open>) => db;
 
-  test("a sibling with the same tables merges and reports the conflict count", () => {
+  test("a sibling with the same tables merges and reports the conflict count", async () => {
     const a = open();
     const b = open();
     a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
@@ -529,11 +529,11 @@ test.describe("the frame's side of a merge", () => {
     b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
 
     createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-    mergeSibling(rowsFor(b), rowsFor(a));
+    await mergeSibling(rowsFor(b), rowsFor(a));
     changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
     changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     // The one number a person is shown, and not derivable from the other four.
@@ -542,7 +542,7 @@ test.describe("the frame's side of a merge", () => {
     b.close();
   });
 
-  test("a sibling whose replicated schema differs is refused, not merged", () => {
+  test("a sibling whose replicated schema differs is refused, not merged", async () => {
     /*
      * T1-D14, at the point it actually bites. Refusing loudly is safe to
      * tighten now and loosen later: the migration chain turns some of these
@@ -563,7 +563,7 @@ CREATE TABLE cases (
     b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null, extra: "x" });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBe("SCHEMA_MISMATCH");
     expect(report.applied).toBe(0);
     // Refused means nothing happened, not that some of it happened.
@@ -572,7 +572,7 @@ CREATE TABLE cases (
     b.close();
   });
 
-  test("a second compiler's rewrite is still a sibling (T1-D21)", () => {
+  test("a second compiler's rewrite is still a sibling (T1-D21)", async () => {
     /*
      * The distinction the schema digest depends on, asserted rather than
      * assumed.
@@ -607,7 +607,7 @@ CREATE TABLE cases (
     ensureReplica(b, B);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: 1.5 });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     expect(a.all("SELECT title FROM cases_current")[0]!["title"]).toBe("theirs");
@@ -623,20 +623,20 @@ CREATE TABLE cases (
     b.close();
   });
 
-  test("a level this frame does not implement is refused rather than treated as Level 1", () => {
+  test("a level this frame does not implement is refused rather than treated as Level 1", async () => {
     // A Level 2 sibling merged as Level 1 would have its signatures unchecked
     // while the person was told the merge succeeded.
     const a = open();
     const b = open();
     a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
     b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
-    const report = mergeSibling(rowsFor(a), rowsFor(b), 2);
+    const report = await mergeSibling(rowsFor(a), rowsFor(b), 2);
     expect(report.refused).toBe("UNSUPPORTED_LEVEL");
     a.close();
     b.close();
   });
 
-  test("a local table on one side only does not stop the merge", () => {
+  test("a local table on one side only does not stop the merge", async () => {
     // Local tables never travel and never merge, so a difference in them says
     // nothing about whether these two copies can exchange rows.
     const a = openWith(`${SCHEMA}\nCREATE TABLE notes_local (body TEXT);\n`);
@@ -647,7 +647,7 @@ CREATE TABLE cases (
     b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     a.close();
@@ -677,7 +677,7 @@ test.describe("a copy that arrived from somebody else", () => {
     return to;
   }
 
-  test("writes under its own identity, not the sender's", () => {
+  test("writes under its own identity, not the sender's", async () => {
     /*
      * The bug this exists for, found by an application author writing a
      * fixture for two people playing correspondence chess.
@@ -709,7 +709,7 @@ test.describe("a copy that arrived from somebody else", () => {
 
     // And Alice's next move does not collide with it.
     changeEntity(alice, "cases", E1, { title: "Nf3", status: "open", weight: null });
-    const report = mergeSibling(alice, bob);
+    const report = await mergeSibling(alice, bob);
     expect(report.refused).toBeUndefined();
     expect(report.rejected).toEqual([]);
     expect(report.applied).toBe(1);
@@ -739,7 +739,7 @@ test.describe("a copy that arrived from somebody else", () => {
     alice.close();
   });
 
-  test("a file that comes back carrying this id's rows resumes its seq above them", () => {
+  test("a file that comes back carrying this id's rows resumes its seq above them", async () => {
     /*
      * An author id is a device's key, the same for every copy the device holds
      * (docs/identity.md). So a file can come back to the device that wrote
@@ -767,7 +767,7 @@ test.describe("a copy that arrived from somebody else", () => {
     expect(issued, "Alice's new row takes the next seq, not one she already issued").toEqual([1, 2, 3]);
 
     // And Bob, who holds Alice's first two rows, takes the new one without a refusal.
-    const report = mergeSibling(bob, back);
+    const report = await mergeSibling(bob, back);
     expect(report.rejected, "no (replica, seq) was issued twice").toEqual([]);
     expect(report.applied).toBe(1);
 
@@ -776,7 +776,7 @@ test.describe("a copy that arrived from somebody else", () => {
     back.close();
   });
 
-  test("a merge that brings back this author's own rows raises its seq above them", () => {
+  test("a merge that brings back this author's own rows raises its seq above them", async () => {
     /*
      * The lost save (cold review of step 2, #3): this copy wrote rows 1..4 and
      * they reached the mailbox, but its save of rows 3 and 4 never landed, so
@@ -793,7 +793,7 @@ test.describe("a copy that arrived from somebody else", () => {
     createEntity(alice, "cases", bytes(0x71), { title: "c4", status: "open", weight: null });
     createEntity(alice, "cases", bytes(0x72), { title: "Nf3", status: "open", weight: null });
 
-    const report = mergeSibling(reopened, alice, { author: A }); // its own rows, back from the mailbox
+    const report = await mergeSibling(reopened, alice, { author: A }); // its own rows, back from the mailbox
     expect(report.rejected).toEqual([]);
     expect(Number(reopened.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to the highest it brought in").toBe(4);
     createEntity(reopened, "cases", bytes(0x73), { title: "g3", status: "open", weight: null });
@@ -1175,7 +1175,7 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("every replicated table is covered by the merge, and one that is not is a named refusal", () => {
+  test("every replicated table is covered by the merge, and one that is not is a named refusal", async () => {
     // mergeTablesOf decides what converges; a replicated table it omits never
     // merges, silently. The negative case proves the guard has teeth: a rogue
     // replicated system table — a future _dai_* table added without extending
@@ -1189,12 +1189,12 @@ CREATE TABLE moves (
     expect(mergeCoverageGap(ok)).toContain("_dai_future");
 
     const other = open3();
-    expect(mergeSibling(ok, other).refused).toBe("MERGE_COVERAGE");
+    expect((await mergeSibling(ok, other)).refused).toBe("MERGE_COVERAGE");
     ok.close();
     other.close();
   });
 
-  test("the frame merge unions the roster tables, and admission holds after it", () => {
+  test("the frame merge unions the roster tables, and admission holds after it", async () => {
     // The wiring: mergeSibling includes _dai_seat and _dai_binding in the union,
     // so a fresh copy that merges the game gets the seats and bindings, and its
     // admission view resolves the same members.
@@ -1205,7 +1205,7 @@ CREATE TABLE moves (
     put(a, "moves", O, 2, 3, { ply: 1, san: "e5" });
 
     const b = open3();
-    const report = mergeSibling(b, a);
+    const report = await mergeSibling(b, a);
     expect(report.refused).toBeUndefined();
 
     // The seats and bindings crossed, so b resolves O as a member and shows its

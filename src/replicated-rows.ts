@@ -12,6 +12,7 @@
  * text again from the other side; a module that reached for one of them would
  * be untestable in the other two.
  */
+import { showAuthorId } from "./identity.js";
 
 /** The little that is needed of a SQLite connection. */
 export interface Rows {
@@ -601,15 +602,22 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
   for (const table of local) db.run(`DELETE FROM "${table}"`);
 
   /*
-   * The signed batch headers travel, but only those a kept row names
+   * The signed batch headers travel, but only those whose rows all travel
    * (docs/identity.md). A batch is sealed per session, so an invite for one game
-   * carries that game's signatures and nothing about any other.
+   * carries that game's signatures and nothing about any other. By what a header
+   * lists, not by what the rows name: a row's `_r_batch` is a cache a lost save
+   * can leave unset, and the header is what says it was signed (ruling #3).
    */
   const hasBatches =
     db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").length > 0;
   if (hasBatches) {
-    const named = replicated.map((table) => `SELECT _r_batch FROM "${table}" WHERE _r_batch IS NOT NULL`).join(" UNION ");
-    db.run(named ? `DELETE FROM _dai_batch WHERE id NOT IN (${named})` : "DELETE FROM _dai_batch");
+    const kept = replicated.map((table) => `SELECT _r_replica AS r, _r_seq AS s FROM "${table}"`).join(" UNION ALL ");
+    db.run(
+      kept
+        ? `DELETE FROM _dai_batch WHERE EXISTS (SELECT 1 FROM json_each(_dai_batch.seqs) AS listed
+             WHERE NOT EXISTS (SELECT 1 FROM (${kept}) AS k WHERE k.r = _dai_batch.author AND k.s = listed.value))`
+        : "DELETE FROM _dai_batch",
+    );
   }
 }
 
@@ -691,15 +699,59 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
   if (db.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0) {
     lines.push("# _dai_batch");
     for (const row of db.all(
-      "SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch ORDER BY hex(id) ASC",
+      "SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch ORDER BY hex(id) ASC",
     )) {
-      lines.push(["id", "author", "lc", "sig", "pub", "att", "version", "digest"].map((c) => encodeValue(row[c])).join("\t"));
+      lines.push(["id", "author", "lc", "sig", "pub", "att", "version", "digest", "seqs"].map((c) => encodeValue(row[c])).join("\t"));
     }
   }
   return `${lines.join("\n")}\n`;
 }
 
 /* -------------------------------------------------------------- the merge */
+
+/** Why a merge refused a batch (src/refusals.ts). */
+export type BatchRefusal = "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH" | "BATCH_UNSIGNED";
+
+/**
+ * What verifying one signed header found (`verifyBatches`): the rows it covers,
+ * or why it covers none. Keyed by the header's id in lowercase hex.
+ */
+export type BatchVerdict =
+  | { ok: true; author: Uint8Array; seqs: readonly number[] }
+  | { ok: false; author: Uint8Array; reason: BatchRefusal };
+
+/** A batch the merge refused, by the author it names and the reason's code. */
+export interface RefusedBatch {
+  author: string;
+  reason: BatchRefusal;
+}
+
+/** Code-unit order, the same in every reader; never a locale's. */
+const plainOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** The `seqs` a header stores: its rows' seqs, distinct and ascending, as JSON. */
+export function seqsText(entries: readonly { row: { _r_seq: number } }[]): string {
+  return JSON.stringify([...new Set(entries.map((e) => e.row._r_seq))].sort((a, b) => a - b));
+}
+
+/**
+ * A header's `seqs`, or null when it is not the one spelling `seqsText` writes:
+ * a non-empty JSON array of distinct positive integers, ascending. One spelling,
+ * so two readers never disagree about which rows a header lists.
+ */
+export function coveredSeqsOf(text: unknown): number[] | null {
+  if (typeof text !== "string") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  if (!parsed.every((n, i) => Number.isSafeInteger(n) && n > 0 && (i === 0 || n > parsed[i - 1]))) return null;
+  if (JSON.stringify(parsed) !== text) return null;
+  return parsed as number[];
+}
 
 export interface MergeResult {
   /** Rows this copy did not have. */
@@ -710,6 +762,12 @@ export interface MergeResult {
   rejected: string[];
   /** Replica ids this copy had never seen. */
   newReplicas: number;
+  /**
+   * Batches refused, one entry per batch and reason, ordered by batch id. Always
+   * present, empty when nothing was refused. Not `rejected`, which counts row ids
+   * reused, and not `refused`, which means the merge did not run.
+   */
+  refusedBatches: RefusedBatch[];
 }
 
 /**
@@ -730,8 +788,18 @@ export function mergeFrom(
   tables: readonly string[],
   /** This copy's own author, as the host holds it (binding rule 1); never read from a row. */
   author?: Uint8Array,
+  /**
+   * The sibling's signed headers, verified (`verifyBatches`). Nothing verified
+   * is the default, and then nothing sealed is taken: a seal is adopted only
+   * once it has been checked (identity ruling #3).
+   */
+  verdicts: ReadonlyMap<string, BatchVerdict> = new Map(),
 ): MergeResult {
-  const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0 };
+  const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0, refusedBatches: [] };
+  const refusals = new Map<string, { id: string; author: Uint8Array; reason: BatchRefusal }>();
+  const refuseBatch = (id: string, who: Uint8Array, reason: BatchRefusal): void => {
+    refusals.set(`${id}:${reason}`, { id, author: who, reason });
+  };
 
   /*
    * The clock first, and durably before any local write that follows.
@@ -753,20 +821,45 @@ export function mergeFrom(
   local.run("UPDATE _dai_replica SET lc = ?", [ceiling]);
 
   /*
-   * The signed headers travel with the rows that name them (docs/identity.md).
-   * A header is the same bytes on every copy, so this is a plain union by id.
-   * Verifying them is the merge's next step (step 4); here they are carried, so
-   * a copy that merges a file can pass the file's signatures on. Before the rows:
-   * a row may name only a header this copy holds.
+   * The signed headers travel with the rows they cover (docs/identity.md). A
+   * header is the same bytes on every copy, so this is a union by id, of the
+   * verified ones only; a header that did not verify is refused and reported
+   * with the author it names. Before the rows: a row may name only a header this
+   * copy holds.
+   *
+   * Which rows a header covers is its own list, checked by the verifier against
+   * the digest; a row's `_r_batch` is a cache of one covering header (ruling
+   * #3). A row may be covered by more than one: the same rows sealed again after
+   * a save that held the first seal was lost.
    */
   const hasBatchTable = (rows: Rows): boolean =>
     rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  const held = new Map<string, Uint8Array>(); // every header the sibling holds, by id
+  const covering = new Map<string, string>(); // "author:seq" -> the lowest verified id that covers it
+  const covers = new Set<string>(); // "id|author:seq", every verified cover
   if (hasBatchTable(local) && hasBatchTable(sibling)) {
-    for (const header of sibling.all("SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch")) {
+    const headers = sibling
+      .all("SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch")
+      .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
+    for (const header of headers) {
+      const id = hex(header["id"] as Uint8Array);
+      held.set(id, header["id"] as Uint8Array);
+      const verdict = verdicts.get(id);
+      if (!verdict || !verdict.ok) {
+        // Not checked is not signed: a header nobody verified is refused as one
+        // whose signature does not verify.
+        refuseBatch(id, header["author"] as Uint8Array, verdict && !verdict.ok ? verdict.reason : "BATCH_SIGNATURE_INVALID");
+        continue;
+      }
       local.run(
-        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"]],
+        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], header["seqs"]],
       );
+      for (const seq of verdict.seqs) {
+        const key = `${hex(verdict.author)}:${seq}`;
+        covers.add(`${id}|${key}`);
+        if (!covering.has(key)) covering.set(key, id);
+      }
     }
   }
 
@@ -809,6 +902,28 @@ export function mergeFrom(
     const authored = authorColumnsOf(sibling, table);
     for (const incoming of sibling.all(`SELECT * FROM "${table}"`)) {
       const row = readRow(incoming, authored);
+      /*
+       * Signed means covered by a verified header, whatever the row says. The
+       * row's own pointer is kept when it names a header that covers it, and
+       * otherwise set to the one that does. A row that claims a batch and is
+       * covered by none is refused: it names a signature that does not vouch
+       * for it (BATCH_DIGEST_MISMATCH against the batch it names, unless that
+       * batch was refused already). A row that claims none and is covered by
+       * none is unsigned, and merges under the legacy rule until step 6.
+       */
+      const key = `${hex(row._r_replica)}:${row._r_seq}`;
+      const named = row._r_batch instanceof Uint8Array ? hex(row._r_batch) : null;
+      const cover = covering.get(key);
+      if (cover) {
+        const keep = named && covers.has(`${named}|${key}`) ? named : cover;
+        row._r_batch = held.get(keep)!;
+      } else if (named) {
+        const verdict = verdicts.get(named);
+        if (!held.has(named) || verdict?.ok) {
+          refuseBatch(named, verdict?.author ?? row._r_replica, "BATCH_DIGEST_MISMATCH");
+        }
+        continue;
+      }
       try {
         if (applyRow(local, table, row) === "added") result.applied += 1;
         else result.duplicate += 1;
@@ -841,6 +956,9 @@ export function mergeFrom(
    */
   if (author instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, author));
 
+  result.refusedBatches = [...refusals.values()]
+    .sort((a, b) => plainOrder(a.id, b.id) || plainOrder(a.reason, b.reason))
+    .map(({ author: who, reason }) => ({ author: showAuthorId(who), reason }));
   return result;
 }
 

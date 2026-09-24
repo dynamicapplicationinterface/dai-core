@@ -189,6 +189,28 @@ export const REFUSALS = {
     means: "A batch from the mailbox failed to apply for a reason with no name of its own; the message says what.",
   },
 
+  // ---- signed batches (docs/identity.md). A merge reports these per batch in
+  // `refusedBatches`, with the author the batch names; the merge itself ran.
+  BATCH_SIGNATURE_INVALID: {
+    recoverable: false,
+    means:
+      "A batch whose signature does not verify, or whose public key does not fingerprint to the " +
+      "author it names: not written by who it says. Its rows are refused; the rest of the merge runs.",
+  },
+  BATCH_DIGEST_MISMATCH: {
+    recoverable: false,
+    means:
+      "A batch whose rows are not the rows it signed: a row changed after signing, a row it lists is " +
+      "missing, or a row claims the batch and is not among the rows it lists. Those rows are refused; " +
+      "the rest of the merge runs.",
+  },
+  BATCH_UNSIGNED: {
+    recoverable: false,
+    means:
+      "A row no valid batch covers, in a document whose rows must be signed. Refused; the rest of " +
+      "the merge runs.",
+  },
+
   // ---- the mailbox
   MAILBOX_KEY_INVALID: {
     recoverable: false,

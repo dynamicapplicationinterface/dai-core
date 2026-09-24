@@ -14,15 +14,15 @@ import {
   type SignedBatch,
 } from "../src/replicated-batch.js";
 import { mergeSibling } from "../src/replicated-frame.js";
-import { createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
+import { createEntity, ensureReplica, mergeFrom, type Rows } from "../src/replicated-rows.js";
 
 /**
  * The merge verifies before it applies (docs/identity.md, binding rules 3-6;
  * tests 2, 3 and 4 of the sitting).
  *
  * A batch is one change set from one author with one signature over it. The
- * merge checks that signature under the author id the batch names, and checks
- * that every row claiming the batch is covered by its digest. What does not
+ * merge checks that signature under the author id the batch names, over the
+ * rows the header lists, found and digested (ruling #3). What does not
  * check is refused, not applied, and reported in `refusedBatches` by author and
  * by a code from the refusal family. `refused` keeps its one meaning: the merge
  * did not run.
@@ -175,7 +175,15 @@ test.describe("a tampered batch is refused (test 3)", () => {
     adaCopy.close();
   });
 
-  test("a whole file: a row naming a batch whose digest does not cover it is refused, not applied as an orphan", async () => {
+  /*
+   * Verification is by signed row set (ruling #3): the header lists the rows it
+   * covers, and verifying it finds those rows and digests them. The stowaway is
+   * not among them, so the header still verifies and the row it covers applies;
+   * the stowaway names a batch that does not vouch for it and is refused. This
+   * test used to expect neither row applied: that was verification by pointer,
+   * where the row that claimed the batch spoiled the batch for the honest row.
+   */
+  test("a whole file: a row naming a batch that does not list it is refused; the rows the batch lists still apply", async () => {
     const ada = await person();
     const adaCopy = copyFor(ada);
     createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
@@ -196,7 +204,7 @@ test.describe("a tampered batch is refused (test 3)", () => {
     const report = await mergeSibling(local, file, { document: DOC });
     expect(report.refused).toBeUndefined();
     expect(report.refusedBatches).toEqual([{ author: ada.shown, reason: "BATCH_DIGEST_MISMATCH" }]);
-    expect(count(local, "moves"), "neither the signed row nor the stowaway applied").toBe(0);
+    expect(local.all("SELECT san FROM moves").map((r) => r["san"]), "the signed row applied, the stowaway did not").toEqual(["e4"]);
     local.close();
     file.close();
     adaCopy.close();
@@ -222,13 +230,147 @@ test.describe("a new author is accepted (test 4)", () => {
   });
 });
 
+/**
+ * Verification by signed row set (identity ruling #3).
+ *
+ * A header names the rows it covers by its author and their seqs; verifying it
+ * is finding those rows, digesting them and checking the signature. A row's
+ * `_r_batch` is a cache of one header that covers it, never the truth: a save
+ * can be lost between the rows and their seal, and the same rows can be sealed
+ * twice. So a row may be covered by more than one header, a row with no
+ * pointer may still be covered, and a seal nobody verified is never adopted.
+ */
+test.describe("verification by signed row set (ruling #3)", () => {
+  const moveOf = (db: Rows) => db.all("SELECT san, _r_batch FROM moves").map((r) => ({
+    san: r["san"],
+    batch: r["_r_batch"] instanceof Uint8Array ? Buffer.from(r["_r_batch"] as Uint8Array).toString("hex") : null,
+  }));
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString("hex");
+  const headerIds = (db: Rows) => db.all("SELECT lower(hex(id)) AS id FROM _dai_batch ORDER BY id").map((r) => String(r["id"]));
+  /** A header put into a copy by hand, as a copy that sealed these rows holds it. */
+  const holdHeader = (db: Rows, batch: SignedBatch) =>
+    db.run(
+      "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [batch.id, batch.replica, batch.lc, batch.sig, batch.pub, batch.att, batch.version, batch.digest,
+        JSON.stringify(batch.entries.map((e) => e.row._r_seq).sort((a, b) => a - b))],
+    );
+
+  test("the same rows sealed twice: both headers verify, both are kept, and the row keeps the one it names", async () => {
+    const ada = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    const first = await signed(adaCopy, ada);
+    // Sealed again after the save that held the first seal was lost: the same
+    // rows, a later clock, so another header and another id.
+    const again = await signBatch({ replica: ada.author, lc: first.lc + 1, entries: first.entries }, { document: DOC, keys: ada.keys });
+    expect(hexOf(again.id)).not.toBe(hexOf(first.id));
+
+    const file = open();
+    stageBatch(file, first, TABLES);
+    holdHeader(file, again);
+
+    const local = copyFor(await person());
+    const report = await mergeSibling(local, file, { document: DOC });
+    expect(report.refusedBatches).toEqual([]);
+    expect(moveOf(local)).toEqual([{ san: "e4", batch: hexOf(first.id) }]);
+    expect(headerIds(local), "both headers cover the row, and both verified").toEqual([hexOf(first.id), hexOf(again.id)].sort());
+    local.close();
+    file.close();
+    adaCopy.close();
+  });
+
+  test("a row whose pointer a lost save never wrote is still covered, and signed here", async () => {
+    const ada = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    const batch = await signed(adaCopy, ada);
+    // Ada's copy holds the header and the row, and the row still says pending.
+    holdHeader(adaCopy, batch);
+    expect(moveOf(adaCopy)).toEqual([{ san: "e4", batch: null }]);
+
+    const local = copyFor(await person());
+    const report = await mergeSibling(local, adaCopy, { document: DOC });
+    expect(report.refusedBatches).toEqual([]);
+    expect(moveOf(local), "the header lists the row, so it is signed; the pointer is filled from it").toEqual([
+      { san: "e4", batch: hexOf(batch.id) },
+    ]);
+    local.close();
+    adaCopy.close();
+  });
+
+  test("a row naming a refused header, covered by one that verifies, applies under the one that verifies", async () => {
+    const ada = await person();
+    const bo = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    const honest = await signed(adaCopy, ada);
+    // The same rows under Ada's name, signed with Bo's key: a header that does not verify.
+    const forged = await signBatch({ replica: ada.author, lc: honest.lc + 1, entries: honest.entries }, { document: DOC, keys: bo.keys });
+
+    const file = open();
+    stageBatch(file, forged, TABLES); // the row names the forged header
+    holdHeader(file, honest);
+
+    const local = copyFor(await person());
+    const report = await mergeSibling(local, file, { document: DOC });
+    expect(moveOf(local), "the row applies, under the header that verifies").toEqual([{ san: "e4", batch: hexOf(honest.id) }]);
+    expect(report.refusedBatches).toEqual([{ author: ada.shown, reason: "BATCH_SIGNATURE_INVALID" }]);
+    expect(headerIds(local), "the forged header is not kept").toEqual([hexOf(honest.id)]);
+    local.close();
+    file.close();
+    adaCopy.close();
+  });
+
+  test("a seal that does not verify is never adopted onto a row this copy holds pending", async () => {
+    const ada = await person();
+    const bo = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    // This copy already holds Ada's row, pending (an unsigned merge, the legacy rule).
+    const local = copyFor(await person());
+    await mergeSibling(local, adaCopy, { document: DOC });
+    expect(moveOf(local)).toEqual([{ san: "e4", batch: null }]);
+
+    const entries = authoredSince(adaCopy, ada.author, 0, TABLES);
+    const forged = await signBatch({ replica: ada.author, lc: 1, entries }, { document: DOC, keys: bo.keys });
+    const report = await mergeArrived(local, encodeBatch(forged));
+    expect(moveOf(local), "the pending row does not take a seal nobody could verify").toEqual([{ san: "e4", batch: null }]);
+    expect(report.refusedBatches).toEqual([{ author: ada.shown, reason: "BATCH_SIGNATURE_INVALID" }]);
+    expect(headerIds(local)).toEqual([]);
+
+    // And the real one is taken.
+    const real = await signed(adaCopy, ada);
+    const taken = await mergeArrived(local, encodeBatch(real));
+    expect(taken.refusedBatches).toEqual([]);
+    expect(moveOf(local)).toEqual([{ san: "e4", batch: hexOf(real.id) }]);
+    local.close();
+    adaCopy.close();
+  });
+
+  test("a merge given no verdicts takes nothing sealed: unchecked is not signed", async () => {
+    const ada = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    const file = open();
+    stageBatch(file, await signed(adaCopy, ada), TABLES);
+    const local = copyFor(await person());
+    const result = mergeFrom(local, file, TABLES);
+    expect(result.refusedBatches).toEqual([{ author: ada.shown, reason: "BATCH_SIGNATURE_INVALID" }]);
+    expect(count(local, "moves")).toBe(0);
+    local.close();
+    file.close();
+    adaCopy.close();
+  });
+});
+
 test.describe("the stored form (ruling B)", () => {
   test("a replicated table carries _r_batch and no _r_sig; the signed headers live in _dai_batch", () => {
     const db = open();
     const columns = (table: string) => db.all("SELECT name FROM pragma_table_info(?)", [table]).map((r) => String(r["name"]));
     expect(columns("moves")).toContain("_r_batch");
     expect(columns("moves"), "one place a signature lives, not two").not.toContain("_r_sig");
-    expect(columns("_dai_batch").sort()).toEqual(["att", "author", "digest", "id", "lc", "pub", "sig", "version"]);
+    // seqs: the rows each header covers, which is what a merge verifies (ruling #3).
+    expect(columns("_dai_batch").sort()).toEqual(["att", "author", "digest", "id", "lc", "pub", "seqs", "sig", "version"]);
     db.close();
   });
 });

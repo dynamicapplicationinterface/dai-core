@@ -112,7 +112,7 @@ async function pull(
     const staged = open();
     try {
       stageBatch(staged, batch, tables);
-      mergeSibling(db, staged, 1);
+      await mergeSibling(db, staged, 1);
     } finally {
       staged.close();
     }
@@ -279,7 +279,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
     },
   };
   stageBatch(staged, batch, tables);
-  mergeSibling(b, staged, 1);
+  await mergeSibling(b, staged, 1);
   stagedDb.close();
 
   expect(b.all("SELECT san FROM moves_current WHERE ply = 1")[0]?.["san"]).toBe("d4");

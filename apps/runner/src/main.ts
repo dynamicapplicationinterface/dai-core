@@ -3507,6 +3507,8 @@ export interface MergeReport {
   duplicate: number;
   rejected: string[];
   newReplicas: number;
+  /** Batches refused by author and code (identity step 4); always present. */
+  refusedBatches: { author: string; reason: string }[];
   conflicts: number;
   refused?: string;
 }
@@ -3739,6 +3741,7 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
     duplicate: 0,
     rejected: [],
     newReplicas: 0,
+    refusedBatches: [],
     conflicts: 0,
     refused: why,
   });
@@ -3775,7 +3778,8 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
       window.clearTimeout(timer);
       window.removeEventListener("message", onResult);
       const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;
-      resolve({ applied, duplicate, rejected, newReplicas, conflicts, ...(why ? { refused: why } : {}) });
+      const refusedBatches = Array.isArray(data.refusedBatches) ? data.refusedBatches : [];
+      resolve({ applied, duplicate, rejected, newReplicas, refusedBatches, conflicts, ...(why ? { refused: why } : {}) });
     };
     window.addEventListener("message", onResult);
     target.postMessage(

@@ -14,11 +14,14 @@
  * in a test and under the frame's sqlite-wasm in the opener.
  */
 import { decode as cborDecode, encode as cborEncode, type CborValue } from "./cbor.js";
-import { rawPublicKey, signBytes, type SubtleKey } from "./identity.js";
+import { authorIdOf, rawPublicKey, signBytes, verifySignature, type SubtleKey } from "./identity.js";
 import {
   authorColumnsOf,
   CARRIED_R_FIELDS,
+  coveredSeqsOf,
   readRow,
+  seqsText,
+  type BatchVerdict,
   type ReplicatedRow,
   type Rows,
 } from "./replicated-rows.js";
@@ -237,8 +240,8 @@ export function recordSeal(db: Rows, sealed: SignedBatch): void {
   db.run("SAVEPOINT dai_seal");
   try {
     db.run(
-      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest],
+      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, seqsText(sealed.entries)],
     );
     for (const { table, row } of sealed.entries) {
       db.run(`UPDATE "${table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL`, [
@@ -253,6 +256,94 @@ export function recordSeal(db: Rows, sealed: SignedBatch): void {
     db.run("RELEASE dai_seal");
     throw error;
   }
+}
+
+/**
+ * Verifies every signed header a copy holds, against that copy's own rows
+ * (identity ruling #3: verification by signed row set).
+ *
+ * A header names the rows it covers, by its author and the seqs it lists.
+ * Verifying one is: find those rows, digest them, and check the signature over
+ * the header that digest makes, under a key that fingerprints to the author.
+ * What a row says about its batch (`_r_batch`) plays no part: the row set is
+ * found from the header, and a row's pointer is a cache the merge fills from
+ * the verdicts. So a row claiming a batch that does not list it proves nothing,
+ * and a row a save lost the pointer for is still covered.
+ *
+ * Every header gets a verdict, keyed by its id in lowercase hex. The checks, in
+ * order:
+ *  - the listed seqs are a list of distinct positive integers, each found in
+ *    exactly one row of this author, and the digest over those rows is the
+ *    header's (else BATCH_DIGEST_MISMATCH);
+ *  - `pub` fingerprints to the author, and the signature verifies over the
+ *    canonical header for `document` (else BATCH_SIGNATURE_INVALID). A batch
+ *    signed for another document fails here;
+ *  - the id is the canonical header's (else BATCH_DIGEST_MISMATCH): an id is a
+ *    hash, and one that is not its header's names something else.
+ *
+ * A format version this copy does not know cannot be checked, so it does not
+ * verify (BATCH_SIGNATURE_INVALID); a reader for it is step 6's (D108).
+ */
+export async function verifyBatches(
+  db: Rows,
+  tables: readonly string[],
+  document: string,
+): Promise<Map<string, BatchVerdict>> {
+  const verdicts = new Map<string, BatchVerdict>();
+  const present = db.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  if (!present) return verdicts;
+  for (const header of db.all("SELECT * FROM _dai_batch")) {
+    const id = header["id"] as Uint8Array;
+    const author = header["author"] as Uint8Array;
+    const refuse = (reason: "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH"): void => {
+      verdicts.set(hex(id), { ok: false, author, reason });
+    };
+
+    const seqs = coveredSeqsOf(header["seqs"]);
+    if (!seqs) {
+      refuse("BATCH_DIGEST_MISMATCH");
+      continue;
+    }
+    const entries: BatchEntry[] = [];
+    const wanted = seqs.join(",");
+    for (const table of tables) {
+      const authored = authorColumnsOf(db, table);
+      for (const record of db.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq IN (${wanted})`, [author])) {
+        entries.push({ table, row: readRow(record, authored) });
+      }
+    }
+    // Each listed row found once: a missing one, or two rows under one seq,
+    // is not the set that was signed.
+    const found = new Set(entries.map((e) => e.row._r_seq));
+    if (entries.length !== seqs.length || found.size !== seqs.length) {
+      refuse("BATCH_DIGEST_MISMATCH");
+      continue;
+    }
+    const digest = await rowsDigest(entries);
+    if (hex(digest) !== hex(header["digest"] as Uint8Array)) {
+      refuse("BATCH_DIGEST_MISMATCH");
+      continue;
+    }
+
+    const version = Number(header["version"]);
+    const pub = header["pub"] as Uint8Array;
+    const canonical = canonicalHeader({ version, document, author, lc: Number(header["lc"]), digest });
+    const signedBy =
+      version === BATCH_FORMAT_VERSION &&
+      pub instanceof Uint8Array &&
+      hex(await authorIdOf(pub)) === hex(author) &&
+      (await verifySignature(pub, canonical, header["sig"] as Uint8Array));
+    if (!signedBy) {
+      refuse("BATCH_SIGNATURE_INVALID");
+      continue;
+    }
+    if (hex(await batchIdOf(canonical)) !== hex(id)) {
+      refuse("BATCH_DIGEST_MISMATCH");
+      continue;
+    }
+    verdicts.set(hex(id), { ok: true, author, seqs });
+  }
+  return verdicts;
 }
 
 /**
@@ -531,8 +622,8 @@ export function stageBatch(staged: Rows, batch: Batch | SignedBatch, tables: rea
   const sealed = isSigned(batch) ? batch : null;
   if (sealed) {
     staged.run(
-      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest],
+      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, seqsText(sealed.entries)],
     );
   }
   staged.run("INSERT OR REPLACE INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [

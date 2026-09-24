@@ -20,6 +20,7 @@ Level 1: no signatures, no keys. A replica id is a claim.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import sqlite3
@@ -107,7 +108,7 @@ def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
     if db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").fetchone():
         lines.append("# _dai_batch")
         for header in db.execute(
-            "SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch ORDER BY hex(id) ASC"
+            "SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch ORDER BY hex(id) ASC"
         ):
             lines.append("\t".join(encode(value) for value in header))
     return "\n".join(lines) + "\n"
@@ -230,9 +231,21 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
     return "added"
 
 
-def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
+def shown(author: bytes) -> str:
+    """An author id as a person is shown it: base64url, no padding."""
+    return base64.urlsafe_b64encode(bytes(author)).rstrip(b"=").decode("ascii")
+
+
+def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict[str, str]) -> dict:
+    """Union merge, taking only what a verified header lists (docs/format.md).
+
+    `verdicts` is the signature check's answer for each of the sibling's
+    headers, by id in lowercase hex: "ok" or a BATCH_ code. A header missing
+    from it was not checked, and a header not checked is not signed.
+    """
     tables = replicated_tables(local)
-    result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0}
+    result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
+    refusals: dict[tuple[str, str], bytes] = {}
 
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
@@ -268,19 +281,35 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
             (rid, before),
         )
 
-    # The signed headers travel with the rows that name them: a union by id.
+    # The signed headers: a union by id of the verified ones, before any row.
+    # A header lists the rows it covers (its author, its seqs); a row's own
+    # _r_batch is a cache of one header that lists it, never the truth.
     has_batches = lambda db: db.execute(
         "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'"
     ).fetchone()
+    held: dict[str, bytes] = {}
+    covering: dict[str, str] = {}  # "author:seq" -> the lowest ok id listing it
+    covers: set[str] = set()  # "id|author:seq"
     if has_batches(local) and has_batches(sibling):
-        for header in sibling.execute(
-            "SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch"
-        ).fetchall():
+        headers = sibling.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM _dai_batch"
+        ).fetchall()
+        for header in sorted(headers, key=lambda h: bytes(h[0]).hex()):
+            hid = bytes(header[0]).hex()
+            held[hid] = header[0]
+            verdict = verdicts.get(hid, "BATCH_SIGNATURE_INVALID")
+            if verdict != "ok":
+                refusals[(hid, verdict)] = header[1]
+                continue
             local.execute(
-                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 header,
             )
+            for seq in json.loads(header[8]):
+                key = f"{bytes(header[1]).hex()}:{seq}"
+                covers.add(f"{hid}|{key}")
+                covering.setdefault(key, hid)
 
     for table in tables:
         names = columns_of(sibling, table)
@@ -297,6 +326,18 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
                 "_r_batch": incoming.get("_r_batch"),
                 "columns": {name: incoming[name] for name in authored},
             }
+            # Signed means listed by an ok header, whatever the row says.
+            key = f"{bytes(row['_r_replica']).hex()}:{row['_r_seq']}"
+            named = bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else None
+            cover = covering.get(key)
+            if cover is not None:
+                keep = named if named is not None and f"{named}|{key}" in covers else cover
+                row["_r_batch"] = held[keep]
+            elif named is not None:
+                # It names a header that does not vouch for it.
+                if named not in held or verdicts.get(named) == "ok":
+                    refusals[(named, "BATCH_DIGEST_MISMATCH")] = row["_r_replica"]
+                continue
             try:
                 outcome = apply_row(local, table, row)
                 result["applied" if outcome == "added" else "duplicate"] += 1
@@ -304,6 +345,9 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
                 # One refused row does not deny the rest (T1-D13): a refusal
                 # must never be cheaper than the thing it refuses.
                 result["rejected"].append(row_id(row["_r_replica"], row["_r_seq"]))
+    result["refusedBatches"] = [
+        {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)
+    ]
     return result
 
 
@@ -365,16 +409,23 @@ def check(name: str) -> list[str]:
     # ran and passed; it is one nothing checked.
     failures.extend(validate_shape(name, expected))
 
+    # The signature check's answer for every header, made once by the verifier
+    # (README, Verdicts). Required: a vector without it is one nothing checked.
+    verdicts_path = directory / "verdicts.json"
+    if not verdicts_path.exists():
+        return failures + [f"{name}: verdicts.json is missing"]
+    verdicts = json.loads(verdicts_path.read_text(encoding="utf-8"))
+
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
-        result = merge(local, sibling)
+        result = merge(local, sibling, verdicts)
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 
         if dump != wanted:
             failures.append(f"{name} [{direction}]: the tables differ from the expected dump")
-        for field in ("applied", "duplicate", "rejected"):
+        for field in ("applied", "duplicate", "rejected", "refusedBatches"):
             if result[field] != expected[direction][field]:
                 failures.append(
                     f"{name} [{direction}]: {field} was {result[field]!r},"

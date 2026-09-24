@@ -37,7 +37,7 @@ import {
   mergeFrom,
 } from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
-import { adoptReplica, pendingBatches, recordSeal, signBatch } from "../dist/dai-merge.js";
+import { adoptReplica, pendingBatches, recordSeal, signBatch, stageBatch, verifyBatches } from "../dist/dai-merge.js";
 import { authorIdOf, signBytes } from "../dist/identity.js";
 import { createECDH, webcrypto } from "node:crypto";
 
@@ -328,6 +328,62 @@ const VECTORS = [
     },
   },
   {
+    name: "merge-seal-stowaway",
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds a row claiming B's batch that the batch does not list. Merging B into A refuses that row (BATCH_DIGEST_MISMATCH) and takes the row the batch lists; B keeps its own.",
+    authors: true,
+    converges: false,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+      await sealAll(a, ADA);
+      createEntity(b, "cases", E2, { title: "listed", status: "open", weight: null });
+      await sealAll(b, BO);
+      const named = b.all("SELECT _r_batch FROM cases WHERE _r_entity = ?", [E2])[0]["_r_batch"];
+      b.run(
+        "INSERT INTO cases (title, status, weight, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES ('stowaway', 'open', NULL, ?, 50, 50, ?, '[]', 0, ?)",
+        [BO.author, id(0x55), named],
+      );
+    },
+  },
+  {
+    name: "merge-seal-tampered",
+    cites: ["6", "T1-D13"],
+    what:
+      "B's row was changed after it was signed, so B's header does not verify (BATCH_DIGEST_MISMATCH). Merging B into A takes neither the row nor the header; B keeps its own.",
+    authors: true,
+    converges: false,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+      await sealAll(a, ADA);
+      // Signed in a scratch copy, then changed, then staged into B as a file arrives.
+      const scratch = open(":memory:");
+      asReplica(scratch, BO.author);
+      createEntity(scratch, "cases", E2, { title: "as signed", status: "open", weight: null });
+      const [batch] = pendingBatches(scratch, BO.author, TABLES);
+      const sealed = await signBatch(batch, { document: DOC, sign: keptSigner(BO) });
+      scratch.close();
+      sealed.entries[0].row.columns.title = "changed after signing";
+      stageBatch(b, sealed, TABLES);
+    },
+  },
+  {
+    name: "merge-seal-lost-pointer",
+    cites: ["6", "T1-D7"],
+    what:
+      "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers.",
+    authors: true,
+    converges: false,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "one", status: "open", weight: null });
+      createEntity(a, "cases", E2, { title: "two", status: "open", weight: null });
+      const [batch] = pendingBatches(a, ADA.author, TABLES);
+      holdHeader(a, await signBatch(batch, { document: DOC, sign: keptSigner(ADA) }));
+      holdHeader(a, await signBatch({ ...batch, lc: batch.lc + 1 }, { document: DOC, sign: keptSigner(ADA) }));
+      createEntity(b, "cases", id(0x33), { title: "yours", status: "open", weight: null });
+    },
+  },
+  {
     name: "heads-via-superseded-flag",
     cites: ["4", "T1-D2", "T1-D10"],
     what: "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
@@ -345,7 +401,10 @@ async function run(vector, direction) {
   const b = open(join(out, vector.name, "scratch-b.db"));
   await populate(vector, a, b);
   const [left, right] = direction === "ab" ? [a, b] : [b, a];
-  const result = mergeFrom(left, right, TABLES);
+  // Verified first, as every merge is (identity ruling #3). The verdicts are
+  // written beside the vector: a reader merges by them and does its own coverage.
+  const verdicts = await verifyBatches(right, TABLES, DOC);
+  const result = mergeFrom(left, right, TABLES, undefined, verdicts);
   const dump = canonicalDump(left, TABLES);
 
   /*
@@ -357,7 +416,7 @@ async function run(vector, direction) {
    * a dispute that grew on every exchange would be a copy that never settles,
    * which is worse than one that settles differently from its sibling.
    */
-  const again = mergeFrom(left, right, TABLES);
+  const again = mergeFrom(left, right, TABLES, undefined, verdicts);
   const settled = canonicalDump(left, TABLES);
   if (settled !== dump) {
     console.error(`${vector.name} [${direction}]: merging twice changed the table`);
@@ -374,15 +433,30 @@ async function run(vector, direction) {
   return { dump, result };
 }
 
-/** The inputs, written as they stand before any merge. */
+/** The inputs, written as they stand before any merge, and the verdict on every header in them. */
 async function writeInputs(vector) {
   const dir = join(out, vector.name);
   mkdirSync(dir, { recursive: true });
   const a = open(join(dir, "a.db"), vector.localOnA);
   const b = open(join(dir, "b.db"));
   await populate(vector, a, b);
+  const verdicts = {};
+  for (const copy of [a, b]) {
+    for (const [id, verdict] of await verifyBatches(copy, TABLES, DOC)) verdicts[id] = verdict.ok ? "ok" : verdict.reason;
+  }
+  const ordered = Object.fromEntries(Object.entries(verdicts).sort(([x], [y]) => (x < y ? -1 : 1)));
+  compare(join(dir, "verdicts.json"), `${JSON.stringify(ordered, null, 2)}\n`);
   a.close();
   b.close();
+}
+
+/** A header put into a copy by hand, as a copy holds one whose rows' pointers a lost save never wrote. */
+function holdHeader(db, sealed) {
+  db.run(
+    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest,
+      JSON.stringify(sealed.entries.map((e) => e.row._r_seq).sort((x, y) => x - y))],
+  );
 }
 
 /** Both copies as the vector says: its authors, its rows, and a received file when it has one. */
@@ -412,7 +486,8 @@ Per vector:
 | \`a.db\`, \`b.db\` | the two copies, before any merge |
 | \`expected-ab.txt\` | the canonical dump of A after merging B into it |
 | \`expected-ba.txt\` | the canonical dump of B after merging A into it |
-| \`result.json\` | the counts and refused ids the merge reports |
+| \`result.json\` | the counts, refused ids and refused batches the merge reports |
+| \`verdicts.json\` | the verdict on every signed header in either copy: \`ok\` or a \`BATCH_\` code |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -425,8 +500,11 @@ correct implementation.
 merge is commutative, so they must be; a fixture asserting it is worth more than
 a sentence claiming it.
 
-One vector says \`converges: false\`, and that is the answer rather than a
-failure. When two copies hold different content under one row id, each refuses
+Some vectors say \`converges: false\`, and that is the answer rather than a
+failure. A copy keeps what it holds and a merge refuses what it cannot take, so
+the two directions differ wherever one copy holds something the other refuses
+or lacks: a disputed row id, a row no valid header lists, a pointer left unset
+that the other side fills. When two copies hold different content under one row id, each refuses
 the other's and each keeps its own: union merge converges over rows nobody
 disputes, and a disputed id is where the guarantee stops. The alternative would
 be one side silently adopting the other's version of a row, which is what
@@ -446,6 +524,27 @@ ever meeting one. Their two authors sign with fixed keys, so the author ids are
 real key fingerprints; the signatures themselves are not deterministic, so each
 is kept in \`signatures.json\` by the header it covers, signed once when the
 fixtures are written and reused after.
+
+**Verdicts.** A merge verifies every header the other copy holds before it takes
+anything (docs/format.md): it finds the rows the header lists, digests them, and
+checks the signature. \`verdicts.json\` is that check's answer for every header in
+\`a.db\` and \`b.db\`, made by the TypeScript verifier; the canonical bytes and the
+signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
+the verdicts and does the rest itself, which is the part these vectors test:
+
+- a header that is not \`ok\` is not kept and lists nothing;
+- a row is taken when an \`ok\` header lists it (its author, one of its seqs),
+  whatever the row says, and names the header it names if that one lists it,
+  else the lowest listed id;
+- a row that names a header and is listed by none is refused, as
+  \`BATCH_DIGEST_MISMATCH\` against the header it names unless that header was
+  refused already;
+- a row that names none and is listed by none is unsigned, and merges as before.
+
+\`merge-seal-stowaway\`, \`merge-seal-tampered\` and \`merge-seal-lost-pointer\` each
+disagree with a reader that has one of those wrong. \`refusedBatches\` in
+\`result.json\` is one entry per batch and reason, ordered by batch id, with the
+author id shown as base64url.
 `;
 
 let differences = 0;

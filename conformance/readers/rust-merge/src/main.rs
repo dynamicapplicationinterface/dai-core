@@ -64,6 +64,21 @@ fn hexlc(b: &[u8]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }
 
+// An author id as a person is shown it: base64url, no padding.
+fn shown(b: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in b.chunks(3) {
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | *chunk.get(2).unwrap_or(&0) as u32;
+        for i in 0..=chunk.len() {
+            out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
 struct Row {
     vals: Vec<V>,
 }
@@ -170,9 +185,15 @@ struct Counts {
     duplicate: i64,
     rejected: Vec<String>,
     new_replicas: i64,
+    // (author shown, reason), one per batch and reason, ordered by batch id.
+    refused: Vec<(String, String)>,
 }
 
-fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
+// Union merge, taking only what a verified header lists (docs/format.md).
+// `verdicts` is the signature check's answer for each of the sibling's headers,
+// by id in lowercase hex: "ok" or a BATCH_ code. A header missing from it was
+// not checked, and a header not checked is not signed.
+fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (Counts, String) {
     let c = Connection::open(work).unwrap();
     c.execute_batch(&format!(
         "ATTACH DATABASE 'file:{}?mode=ro' AS S;",
@@ -185,7 +206,9 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         duplicate: 0,
         rejected: vec![],
         new_replicas: 0,
+        refused: vec![],
     };
+    let mut refusals: BTreeMap<(String, String), Vec<u8>> = BTreeMap::new();
 
     let local_lc: i64 = c
         .query_row("SELECT lc FROM main._dai_replica", [], |r| r.get(0))
@@ -200,8 +223,10 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
 
     c.execute_batch("BEGIN").unwrap();
 
-    // The signed headers travel with the rows that name them: a union by id, before
-    // any row, since a row may name only a header this copy holds.
+    // The signed headers: a union by id of the verified ones, before any row,
+    // since a row may name only a header this copy holds. A header lists the rows
+    // it covers (its author, its seqs); a row's _r_batch is a cache of one header
+    // that lists it, never the truth.
     let has = |schema: &str| -> bool {
         c.query_row(
             &format!("SELECT count(*) FROM {}.sqlite_master WHERE type='table' AND name='_dai_batch'", schema),
@@ -211,12 +236,43 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         .unwrap_or(0)
             > 0
     };
+    let mut held: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut covering: BTreeMap<String, String> = BTreeMap::new(); // "author:seq" -> lowest ok id
+    let mut covers: BTreeSet<String> = BTreeSet::new(); // "id|author:seq"
     if has("main") && has("S") {
-        c.execute_batch(
-            "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest) \
-             SELECT id, author, lc, sig, pub, att, version, digest FROM S._dai_batch",
-        )
-        .unwrap();
+        let headers: Vec<(Vec<u8>, Vec<u8>, String)> = {
+            let mut st = c.prepare("SELECT id, author, seqs FROM S._dai_batch").unwrap();
+            let v = st
+                .query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, String>(2)?)))
+                .unwrap()
+                .map(|x| x.unwrap())
+                .collect();
+            v
+        };
+        let mut headers = headers;
+        headers.sort_by(|a, b| hexlc(&a.0).cmp(&hexlc(&b.0)));
+        for (id, author, seqs) in headers {
+            let hid = hexlc(&id);
+            held.insert(hid.clone(), id.clone());
+            let verdict = verdicts.get(&hid).cloned().unwrap_or_else(|| "BATCH_SIGNATURE_INVALID".to_string());
+            if verdict != "ok" {
+                refusals.insert((hid, verdict), author);
+                continue;
+            }
+            c.execute(
+                "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, seqs) \
+                 SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM S._dai_batch WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+            if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&seqs) {
+                for seq in list {
+                    let key = format!("{}:{}", hexlc(&author), seq);
+                    covers.insert(format!("{}|{}", hid, key));
+                    covering.entry(key).or_insert_with(|| hid.clone());
+                }
+            }
+        }
     }
 
 
@@ -241,8 +297,32 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         let incoming = load(&c, "S", t);
         let mut to_insert: Vec<Row> = vec![];
         let mut to_seal: Vec<(Vec<u8>, V, V)> = vec![];
-        for r in incoming {
+        for mut r in incoming {
             let id = rowid(t, &r);
+            // Signed means listed by an ok header, whatever the row says.
+            if let Some(b) = t.i_batch {
+                let named = match &r.vals[b] {
+                    V::Blob(x) => Some(hexlc(x)),
+                    _ => None,
+                };
+                if let Some(cover) = covering.get(&id) {
+                    let keep = match &named {
+                        Some(n) if covers.contains(&format!("{}|{}", n, id)) => n.clone(),
+                        _ => cover.clone(),
+                    };
+                    r.vals[b] = V::Blob(held[&keep].clone());
+                } else if let Some(n) = named {
+                    // It names a header that does not vouch for it.
+                    if !held.contains_key(&n) || verdicts.get(&n).map(|v| v == "ok").unwrap_or(false) {
+                        let author = match &r.vals[t.i_replica] {
+                            V::Blob(x) => x.clone(),
+                            _ => vec![],
+                        };
+                        refusals.insert((n, "BATCH_DIGEST_MISMATCH".to_string()), author);
+                    }
+                    continue;
+                }
+            }
             match by_id.get(&id) {
                 None => {
                     counts.applied += 1;
@@ -376,6 +456,10 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
     c.execute("UPDATE main._dai_replica SET lc = ?1", [lc_max])
         .unwrap();
     c.execute_batch("COMMIT").unwrap();
+    counts.refused = refusals
+        .into_iter()
+        .map(|((_, reason), author)| (shown(&author), reason))
+        .collect();
 
     let mut out = String::new();
     for t in &tables {
@@ -431,11 +515,11 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
     if has_batch > 0 {
         out.push_str("# _dai_batch\n");
         let mut st = c
-            .prepare("SELECT id, author, lc, sig, pub, att, version, digest FROM main._dai_batch ORDER BY hex(id) ASC")
+            .prepare("SELECT id, author, lc, sig, pub, att, version, digest, seqs FROM main._dai_batch ORDER BY hex(id) ASC")
             .unwrap();
         let rows: Vec<String> = st
             .query_map([], |r| {
-                Ok((0..8)
+                Ok((0..9)
                     .map(|i| V::from(r.get_ref(i).unwrap()).enc())
                     .collect::<Vec<_>>()
                     .join("\t"))
@@ -449,6 +533,14 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
         }
     }
     (counts, out)
+}
+
+// The expected refusedBatches as (author, reason) pairs; None when misshapen, which fails.
+fn refused_of(v: &serde_json::Value) -> Option<Vec<(String, String)>> {
+    v.as_array()?
+        .iter()
+        .map(|x| Some((x["author"].as_str()?.to_string(), x["reason"].as_str()?.to_string())))
+        .collect()
 }
 
 fn main() {
@@ -524,13 +616,22 @@ fn main() {
                 }
             }
         }
+        // The signature check's answer for every header (README, Verdicts).
+        // Required: a vector without it is one nothing checked.
+        let verdicts: BTreeMap<String, String> = match std::fs::read_to_string(f.join("verdicts.json")) {
+            Err(_) => {
+                problems.push("verdicts.json is missing".to_string());
+                BTreeMap::new()
+            }
+            Ok(text) => serde_json::from_str::<BTreeMap<String, String>>(&text).unwrap(),
+        };
         for (dirn, base, sib, exp) in [
             ("ab", "a.db", "b.db", "expected-ab.txt"),
             ("ba", "b.db", "a.db", "expected-ba.txt"),
         ] {
             let work = tmp.join(format!("{}-{}.db", name, dirn));
             std::fs::copy(f.join(base), &work).unwrap();
-            let (c, dump) = merge(&work, &f.join(sib));
+            let (c, dump) = merge(&work, &f.join(sib), &verdicts);
             let want = std::fs::read_to_string(f.join(exp))
                 .unwrap()
                 .replace("\r\n", "\n");
@@ -551,10 +652,11 @@ fn main() {
                 || e["duplicate"].as_i64() != Some(c.duplicate)
                 || e["newReplicas"].as_i64() != Some(c.new_replicas)
                 || er != c.rejected
+                || refused_of(&e["refusedBatches"]) != Some(c.refused.clone())
             {
                 problems.push(format!(
-                    "{}: counts got applied={} duplicate={} newReplicas={} rejected={:?}, want {}",
-                    dirn, c.applied, c.duplicate, c.new_replicas, c.rejected, e
+                    "{}: counts got applied={} duplicate={} newReplicas={} rejected={:?} refusedBatches={:?}, want {}",
+                    dirn, c.applied, c.duplicate, c.new_replicas, c.rejected, c.refused, e
                 ));
             }
         }

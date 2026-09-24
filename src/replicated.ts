@@ -617,6 +617,9 @@ CREATE TABLE IF NOT EXISTS _dai_replica (
 -- covers the rows. pub is the author's raw public key, which the author id
 -- must fingerprint to; att is reserved for an authority's attestation and is
 -- outside the signature, so vouching can arrive later without re-signing.
+-- seqs lists the rows the batch covers, as the JSON array of the author's
+-- seqs, ascending: a merge verifies a batch by finding those rows, never by
+-- trusting a row's _r_batch, which a lost save can leave unset (docs/format.md).
 CREATE TABLE IF NOT EXISTS _dai_batch (
   id      BLOB PRIMARY KEY CHECK (length(id) = 16),
   author  BLOB NOT NULL CHECK (length(author) = 16),
@@ -625,7 +628,8 @@ CREATE TABLE IF NOT EXISTS _dai_batch (
   pub     BLOB NOT NULL,
   att     BLOB,
   version INTEGER NOT NULL,
-  digest  BLOB NOT NULL CHECK (length(digest) = 32)
+  digest  BLOB NOT NULL CHECK (length(digest) = 32),
+  seqs    TEXT NOT NULL
 );
 
 -- Every column but the id is LOCAL: true of this copy, not of the document.

@@ -413,7 +413,9 @@ is what `current-conflict-deterministic-pick` demands.
 **T1-D7 — superseded by signed authorship (docs/identity.md, step 3).** A row
 no longer carries a signature of its own: it names the signed batch it left its
 author's device in (`_r_batch`, NULL while pending, set once), and the headers
-live in `_dai_batch`. One place a signature lives, not two. The original
+live in `_dai_batch`. One place a signature lives, not two. Which rows a batch
+covers is the header's own list, not the rows' pointers: `_r_batch` is a cache,
+and a merge verifies by the signed row set (docs/format.md). The original
 decision, kept for the record: **`_r_sig` exists at Level 1 and is always
 NULL.** Keeping the column
 means Level 2 is a behaviour change rather than a migration over every existing

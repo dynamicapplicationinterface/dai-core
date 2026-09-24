@@ -1323,13 +1323,17 @@ function bridgeMain(names: FrameNames): void {
         },
       });
 
+      const merge = mergeModule as Any;
+      // Verified first, and outside the transaction: the checks are async, and
+      // nothing may await while the live database holds one open (ruling #3).
+      const verdicts = await merge.verifyBatches(rows(sibling), merge.mergeTablesOf(rows(sibling)), mountDocument);
       liveDb.exec("BEGIN");
       try {
-        const merge = mergeModule as Any;
-        const report = merge.mergeSibling(rows(liveDb), rows(sibling), {
+        const report = merge.mergeVerified(rows(liveDb), rows(sibling), {
           level: request.level || 1,
           document: mountDocument,
           author: mountReplica ?? undefined,
+          verdicts,
         });
         if (report.refused) {
           // Nothing was written. Rolled back rather than assumed: a refusal
@@ -1338,6 +1342,7 @@ function bridgeMain(names: FrameNames): void {
           return report;
         }
         liveDb.exec("COMMIT");
+        noteRefusedBatches(report);
         // Rows changed under whatever is on screen. Scheduling a save also
         // makes the merge durable rather than living until the next write.
         scheduleAutosave(liveDb);
@@ -1366,6 +1371,19 @@ function bridgeMain(names: FrameNames): void {
         void error;
       }
     }
+  };
+
+  /*
+   * Batches a merge refused, said once, here: both merge paths (a file and the
+   * mailbox) run in this frame, so this is the one owner of the line (ruling C).
+   * The author id and the code, per batch; the rest of the merge ran.
+   */
+  const noteRefusedBatches = (report: Any): void => {
+    const refused = Array.isArray(report?.refusedBatches) ? report.refusedBatches : [];
+    if (refused.length === 0) return;
+    console.info(
+      `dai: merge refused ${refused.length} batch(es): ${refused.map((r: Any) => `${r.author} ${r.reason}`).join(", ")}`,
+    );
   };
 
   /** The Rows view of a database handle, the shape the merge module reads. */
@@ -1459,7 +1477,7 @@ function bridgeMain(names: FrameNames): void {
    * `dai:merged` the application already listens for.
    */
   const applyBatch = async (batchBytes: Uint8Array): Promise<Any> => {
-    if (!liveDb || !mergeModule) return { applied: 0, duplicate: 0, refused: "NO_DOCUMENT_OPEN" };
+    if (!liveDb || !mergeModule) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
     const merge = mergeModule as Any;
     // Take this copy's own identity before merging anyone else's rows, so a
     // file-arrived copy is never still wearing the sender's id when their rows
@@ -1481,18 +1499,22 @@ function bridgeMain(names: FrameNames): void {
       // mailbox is staged and merged like any other replicated row.
       const tables = merge.mergeTablesOf(local);
       merge.stageBatch(frameRows(staged), batch, tables);
+      // Verified before the transaction opens, as a file merge is.
+      const verdicts = await merge.verifyBatches(frameRows(staged), tables, mountDocument);
       liveDb.exec("BEGIN");
       try {
-        const report = merge.mergeSibling(local, frameRows(staged), {
+        const report = merge.mergeVerified(local, frameRows(staged), {
           level: 1,
           document: mountDocument,
           author: mountReplica ?? undefined,
+          verdicts,
         });
         if (report.refused) {
           liveDb.exec("ROLLBACK");
           return report;
         }
         liveDb.exec("COMMIT");
+        noteRefusedBatches(report);
         scheduleAutosave(liveDb);
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
         return report;
@@ -2398,6 +2420,7 @@ function bridgeMain(names: FrameNames): void {
               duplicate: 0,
               rejected: [],
               newReplicas: 0,
+              refusedBatches: [],
               conflicts: 0,
               refused: (error && error.message) || "MERGE_FAILED",
             },
