@@ -11,7 +11,8 @@ Per vector:
 | `a.db`, `b.db` | the two copies, before any merge |
 | `expected-ab.txt` | the canonical dump of A after merging B into it |
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
-| `result.json` | the counts and refused ids the merge reports |
+| `result.json` | the counts, refused ids and refused batches the merge reports |
+| `verdicts.json` | the verdict on every signed header in either copy: `ok` or a `BATCH_` code |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -24,8 +25,11 @@ correct implementation.
 merge is commutative, so they must be; a fixture asserting it is worth more than
 a sentence claiming it.
 
-One vector says `converges: false`, and that is the answer rather than a
-failure. When two copies hold different content under one row id, each refuses
+Some vectors say `converges: false`, and that is the answer rather than a
+failure. A copy keeps what it holds and a merge refuses what it cannot take, so
+the two directions differ wherever one copy holds something the other refuses
+or lacks: a disputed row id, a row no valid header lists, a pointer left unset
+that the other side fills. When two copies hold different content under one row id, each refuses
 the other's and each keeps its own: union merge converges over rows nobody
 disputes, and a disputed id is where the guarantee stops. The alternative would
 be one side silently adopting the other's version of a row, which is what
@@ -45,3 +49,24 @@ ever meeting one. Their two authors sign with fixed keys, so the author ids are
 real key fingerprints; the signatures themselves are not deterministic, so each
 is kept in `signatures.json` by the header it covers, signed once when the
 fixtures are written and reused after.
+
+**Verdicts.** A merge verifies every header the other copy holds before it takes
+anything (docs/format.md): it finds the rows the header lists, digests them, and
+checks the signature. `verdicts.json` is that check's answer for every header in
+`a.db` and `b.db`, made by the TypeScript verifier; the canonical bytes and the
+signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
+the verdicts and does the rest itself, which is the part these vectors test:
+
+- a header that is not `ok` is not kept and lists nothing;
+- a row is taken when an `ok` header lists it (its author, one of its seqs),
+  whatever the row says, and names the header it names if that one lists it,
+  else the lowest listed id;
+- a row that names a header and is listed by none is refused, as
+  `BATCH_DIGEST_MISMATCH` against the header it names unless that header was
+  refused already;
+- a row that names none and is listed by none is unsigned, and merges as before.
+
+`merge-seal-stowaway`, `merge-seal-tampered` and `merge-seal-lost-pointer` each
+disagree with a reader that has one of those wrong. `refusedBatches` in
+`result.json` is one entry per batch and reason, ordered by batch id, with the
+author id shown as base64url.

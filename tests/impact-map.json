@@ -2183,6 +2183,17 @@
       "tests/open.ts",
       "tests/probe.spec.ts"
     ],
+    "tests/publish-after-landed.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/chess-play.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/publish-after-landed.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/published-recipe.spec.ts": [
       "examples/chore-chart/app.css",
       "examples/chore-chart/icon.svg",
@@ -2209,6 +2220,7 @@
       "src/generated/examples.ts",
       "src/handoff-tab.ts",
       "src/handoff.ts",
+      "src/identity.ts",
       "src/inline.ts",
       "src/kit.ts",
       "src/link.ts",
@@ -2216,6 +2228,7 @@
       "src/p256.ts",
       "src/recipe.ts",
       "src/refusals.ts",
+      "src/replicated-batch.ts",
       "src/replicated-frame.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
@@ -2582,6 +2595,9 @@
       "tests/replicated-batch-roundtrip.spec.ts"
     ],
     "tests/replicated-converge.spec.ts": [
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
       "src/replicated-frame.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
@@ -2699,6 +2715,7 @@
       "tests/returning-document.spec.ts"
     ],
     "tests/roster.spec.ts": [
+      "src/identity.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "tests/roster.spec.ts"
@@ -2966,6 +2983,7 @@
       "tsup.config.ts"
     ],
     "tests/session-export-meta.spec.ts": [
+      "src/identity.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "tests/session-export-meta.spec.ts"
@@ -2977,6 +2995,7 @@
       "src/core.ts",
       "src/cose.ts",
       "src/format.ts",
+      "src/identity.ts",
       "src/kit.ts",
       "src/refusals.ts",
       "src/replicated-export.ts",
@@ -3079,6 +3098,9 @@
       "tests/session-profile.spec.ts"
     ],
     "tests/session-roles.spec.ts": [
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
       "src/replicated-frame.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",

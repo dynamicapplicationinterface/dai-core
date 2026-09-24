@@ -10,12 +10,14 @@
     "applied": 0,
     "duplicate": 2,
     "rejected": [],
-    "newReplicas": 0
+    "newReplicas": 0,
+    "refusedBatches": []
   },
   "ba": {
     "applied": 2,
     "duplicate": 2,
     "rejected": [],
-    "newReplicas": 0
+    "newReplicas": 0,
+    "refusedBatches": []
   }
 }
