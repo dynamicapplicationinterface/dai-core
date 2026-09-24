@@ -82,7 +82,7 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
-import { authorId, person } from "./person.js";
+import { authorId, person, type Person } from "./person.js";
 import { showAuthorId } from "../../../src/identity.js";
 import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
@@ -2793,6 +2793,36 @@ window.addEventListener("message", (event) => {
      */
     void (async () => {
       if (!loaded || !declaresReplication(loaded.manifest)) return;
+      const writingUuid = loaded.manifest.documentUuid;
+      /*
+       * Whether this device may write this document at all, decided before any
+       * write rule or save goes through (cold review of identity step 2, #5).
+       * The first use of the person key is here, on the first mount that can
+       * write: made now if the store says none is kept. A key that cannot be
+       * read is not replaced by a new one, and a floor that cannot be read is
+       * not read as 0; either way every write is refused, saves included, and
+       * the page says so. The save handler waits on this same answer.
+       */
+      const decided = (async (): Promise<{ me: Person; seqFloor: number } | { refused: string }> => {
+        const me = await person().catch(() => null);
+        if (!me) {
+          return {
+            refused:
+              "This document can be read here but not changed: this device's key could not be read. " +
+              "Reload the page to try again.",
+          };
+        }
+        const seqFloor = await seqFloorOf(writingUuid).catch(() => null);
+        if (seqFloor === null) {
+          return {
+            refused:
+              "This document can be read here but not changed: this device could not read how far it " +
+              "has written it. Reload the page to try again.",
+          };
+        }
+        return { me, seqFloor };
+      })();
+      mountWrites = { documentUuid: writingUuid, decided };
       /*
        * A failure here is said out loud, because the alternative already
        * happened.
@@ -2817,24 +2847,13 @@ window.addEventListener("message", (event) => {
         );
         return;
       }
-      // The first use of the person key is here, on the first mount that can
-      // write: made now if this device has none (docs/identity.md).
-      const replica = await person().then((me) => me.id).catch(() => null);
-      /*
-       * How far this device has written this document: the floor the frame's
-       * counter is held at (cold review of identity step 2, #1). A floor that
-       * cannot be read is not read as 0, which would let this copy reissue what
-       * it already sent; the document opens read-only instead, and says so.
-       */
-      const seqFloor = await seqFloorOf(loaded.manifest.documentUuid).catch(() => null);
-      if (seqFloor === null) {
-        say(
-          "This document can be read here but not changed: this device could not read how far it " +
-            "has written it. Reload the page to try again.",
-          true,
-        );
+      const decision = await decided;
+      if ("refused" in decision) {
+        say(decision.refused, true);
         return;
       }
+      const replica = decision.me.id;
+      const seqFloor = decision.seqFloor;
       (event.source as Window | null)?.postMessage(
         {
           type: TO_DOCUMENT.WRITE_RULES,
@@ -3065,6 +3084,10 @@ window.addEventListener("message", (event) => {
        * says so in the header, and Save a copy is in the menu.
        */
       locked(async () => {
+        // A document this device may not write is not saved: the same answer
+        // the mount gave, waited on here so no save goes through before it.
+        const writes = mountWrites?.documentUuid === documentUuid ? await mountWrites.decided : null;
+        if (writes && "refused" in writes) throw new Error(writes.refused);
         const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
         const current = held?.revision ?? 0;
         if (knownRevision.has(documentUuid) && knownRevision.get(documentUuid) !== current) {
@@ -4937,6 +4960,16 @@ void confusables();
  * kept it across a reopen (D22), and that an own copy's id does not change —
  * rather than inferring it from whether a later exchange collided.
  */
+/**
+ * Whether this device may write the mounted replicated document: decided once
+ * per mount from the person key and the sequence floor, and waited on by every
+ * save of that document. Null before a replicated document mounts.
+ */
+let mountWrites: {
+  documentUuid: string;
+  decided: Promise<{ me: Person; seqFloor: number } | { refused: string }>;
+} | null = null;
+
 function requestReplicaId(): Promise<string | null> {
   return new Promise((resolve) => {
     const target = cartridgeFrame.contentWindow;

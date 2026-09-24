@@ -90,6 +90,18 @@ export async function verifySignature(rawPublic: Uint8Array, bytes: Uint8Array, 
 }
 
 /**
+ * What a device's key store said when asked for the person key: three answers,
+ * never two. "None kept" is the only one that may make a key. "Unreadable" is a
+ * store that did not answer, and a device that has a key and could not read it
+ * for a moment is not a new author: reading it as "none" is how a throwaway key
+ * would write in the person's seat.
+ */
+export type KeptPersonKey =
+  | { kept: "key"; keys: SubtleKeyPair }
+  | { kept: "none" }
+  | { kept: "unreadable"; why: string };
+
+/**
  * An authority's signed statement that a public key belongs to a named
  * principal. Reserved on the wire (`att` in a batch header); nothing produces
  * or checks one in V1.

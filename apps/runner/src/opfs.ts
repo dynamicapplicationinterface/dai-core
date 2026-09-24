@@ -19,6 +19,7 @@ const KEY_STORE = "keys";
 import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/publisher-identity.js";
+import type { KeptPersonKey } from "../../../src/identity.js";
 import { KEYS, seqFloorKey } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
@@ -605,22 +606,28 @@ export async function deleteCartridgeFromLibrary(
  * turned into bytes to be kept. One per device, under the name `src/keys.ts`
  * owns, in a store of its own.
  *
- * Null when nothing is kept or storage cannot be read. The caller decides what
- * that means; this does not mint.
+ * Three answers (KeptPersonKey, src/identity.ts): the key, nothing kept, or
+ * nothing readable. A store that throws or errors is unreadable, never "none":
+ * that is the difference between a device with no key and a device that could
+ * not read its key for a moment. This does not mint.
  */
-export async function keptPersonKey(): Promise<CryptoKeyPair | null> {
+export async function keptPersonKey(): Promise<KeptPersonKey> {
   try {
     const db = await openIdb();
     return await new Promise((resolve) => {
-      const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(KEYS.PERSON_KEY);
-      req.onsuccess = () => {
-        const held = req.result as Partial<CryptoKeyPair> | undefined;
-        resolve(held?.publicKey && held.privateKey ? (held as CryptoKeyPair) : null);
-      };
-      req.onerror = () => resolve(null);
+      try {
+        const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(KEYS.PERSON_KEY);
+        req.onsuccess = () => {
+          const held = req.result as Partial<CryptoKeyPair> | undefined;
+          resolve(held?.publicKey && held.privateKey ? { kept: "key", keys: held as CryptoKeyPair } : { kept: "none" });
+        };
+        req.onerror = () => resolve({ kept: "unreadable", why: String(req.error?.message ?? "the read failed") });
+      } catch (error) {
+        resolve({ kept: "unreadable", why: String((error as Error)?.message ?? error) });
+      }
     });
-  } catch {
-    return null;
+  } catch (error) {
+    return { kept: "unreadable", why: String((error as Error)?.message ?? error) };
   }
 }
 
