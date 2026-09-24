@@ -1583,6 +1583,7 @@
       "src/rules.ts",
       "src/runtime/bootloader.ts",
       "src/schema.ts",
+      "src/seat-check.ts",
       "src/sender.ts",
       "src/sibling.ts",
       "src/store-presigned.ts",
@@ -1707,6 +1708,16 @@
       "website/components/MakerWalkthrough.vue",
       "website/components/PhoneFlow.vue",
       "website/open.md"
+    ],
+    "tests/new-player.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/new-player.spec.ts",
+      "tsup.config.ts"
     ],
     "tests/no-beacon.spec.ts": [
       "apps/runner/",
@@ -1956,6 +1967,7 @@
       "src/rules.ts",
       "src/runtime/bootloader.ts",
       "src/schema.ts",
+      "src/seat-check.ts",
       "src/sender.ts",
       "src/sibling.ts",
       "src/store-presigned.ts",
@@ -2235,6 +2247,7 @@
       "src/rules.ts",
       "src/runtime/bootloader.ts",
       "src/schema.ts",
+      "src/seat-check.ts",
       "src/sender.ts",
       "src/store.ts",
       "src/template.html",
@@ -2896,6 +2909,23 @@
       "tests/fixtures.ts",
       "tests/sealed-leave.spec.ts",
       "tsup.config.ts"
+    ],
+    "tests/seat-admission.spec.ts": [
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "tests/seat-admission.spec.ts"
+    ],
+    "tests/seat-writes.spec.ts": [
+      "scripts/check-seats.mjs",
+      "src/frame.ts",
+      "src/lint.ts",
+      "src/replicated.ts",
+      "src/seat-check.ts",
+      "tests/seat-writes.spec.ts"
     ],
     "tests/second-use.spec.ts": [
       "apps/runner/",
