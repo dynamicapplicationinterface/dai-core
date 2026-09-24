@@ -1123,7 +1123,7 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("contested-seat-drops-earlier-rows: a later contesting binding retroactively drops a member's rows", () => {
+  test("a contested seat keeps its first verified signer: a later binding neither drops the holder's rows nor admits its own", () => {
     const db = open3();
     e = 0;
     // The opener binds its seat and plays. It is a member; its move shows.
@@ -1133,16 +1133,16 @@ CREATE TABLE moves (
     expect(currentMoves(db)).toEqual(["e5"]);
 
     // A forwarded copy opens the same invite and binds the same seat. The seat
-    // is now contested — no clock picks a winner — so the opener stops being a
-    // member and its earlier move drops, recomputed from the rows, not the
-    // order they arrived in. This is the merge order-independence the whole
-    // correction rests on.
+    // is contested, and since identity step 5 it is held by the first verified
+    // signer (IDENTITY-FIRST-SIGNER; it used to admit neither): the opener,
+    // whose binding comes first, stays a member and keeps its move. Recomputed
+    // from the rows, not the order they arrived in.
     put(db, "_dai_binding", F, 1, 4, { seat: SEATO });
-    expect(currentMoves(db)).toEqual([]);
+    expect(currentMoves(db)).toEqual(["e5"]);
 
-    // And it is symmetric: the forwarded copy cannot enter either.
+    // And the forwarded copy does not enter.
     put(db, "moves", F, 2, 5, { ply: 1, san: "e6" });
-    expect(currentMoves(db)).toEqual([]);
+    expect(currentMoves(db)).toEqual(["e5"]);
     db.close();
   });
 

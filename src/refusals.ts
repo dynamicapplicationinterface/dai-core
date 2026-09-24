@@ -60,8 +60,9 @@ export const REFUSALS = {
     recoverable: false,
     means:
       "A session seat carries bindings from two or more replicas — two parties opened the same " +
-      "invite. The seat is contested and admits neither, order-free and without a clock deciding " +
-      "it. The creator can revoke the seat and issue a new invite (T1-D29).",
+      "invite. The first verified signer holds it (signed before unsigned, then the lowest clock, " +
+      "then the lowest author id; the same on every copy), and the other binder is not a member. " +
+      "The creator can revoke the seat and issue a new invite (T1-D29; identity step 5).",
   },
   SEATS_EXCEED_CAP: {
     recoverable: false,
@@ -203,6 +204,13 @@ export const REFUSALS = {
       "A batch whose rows are not the rows it signed: a row changed after signing, a row it lists is " +
       "missing, or a row claims the batch and is not among the rows it lists. Those rows are refused; " +
       "the rest of the merge runs.",
+  },
+  SEAT_NOT_HELD: {
+    recoverable: false,
+    means:
+      "A row that names a seat its author did not hold when the row was written, or names no seat, in " +
+      "a table whose rows act for a seat: signed by who it says, and not theirs to write. Stored and " +
+      "never admitted; reported with its author. The rest of the merge runs.",
   },
   BATCH_UNSIGNED: {
     recoverable: false,

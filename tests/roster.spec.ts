@@ -112,13 +112,16 @@ test.describe("the stated roster, through _dai_member (T1-D29)", () => {
     expect(members(db)).toEqual([hx(CREATOR), hx(OPENER)].sort());
   });
 
-  test("forwarded-copy-cannot-enter: a second binding contests the seat, admitting neither", () => {
+  test("a contested seat is held by the first verified signer, and the other binder is not a member", () => {
     // The opener bound seat 2; a forwarded copy opened the same invite and bound
-    // it too. The seat is contested — no clock picks a winner — so neither is a
-    // member, and the forwarded copy cannot enter.
+    // it too. The seat is contested. It used to admit neither (T1-D29); since
+    // identity step 5 the first verified signer holds it (rules.ts
+    // IDENTITY-FIRST-SIGNER): signed before unsigned, then the lowest clock, then
+    // the lowest author id. Both bound at the same clock here, unsigned, so the
+    // lower author id (the opener's) holds it, on every copy, in any merge order.
     const db = merged([creatorsCopy(), binderOf(OPENER, SEAT2), binderOf(FORWARDED, SEAT2)]);
-    expect(members(db)).toEqual([hx(CREATOR)]);
-    expect(binders(db, SEAT2)).toBe(2);
+    expect(members(db)).toEqual([hx(CREATOR), hx(OPENER)].sort());
+    expect(binders(db, SEAT2), "the contest is still visible, for the creator to repair").toBe(2);
   });
 
   test("a binding to a seat the session never minted is not membership", () => {

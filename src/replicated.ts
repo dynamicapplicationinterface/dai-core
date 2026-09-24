@@ -155,6 +155,12 @@ export interface RewrittenSchema {
   session?: SessionProfile;
   /** Tables whose rows only one role may author, when any are declared (D15). */
   authors?: Record<string, AuthorRole>;
+  /**
+   * Tables whose rows each name the seat they act for, by column, when any are
+   * declared (docs/identity.md, step 5): a row is admitted only when its author
+   * held that seat when the row was written.
+   */
+  seats?: Record<string, string>;
 }
 
 /**
@@ -279,14 +285,30 @@ function markerLineAbove(sql: string, start: number): string | null {
   return lastLine.slice(2).trim();
 }
 
-const AUTHOR_CLAUSE = /^dai:replicated\s+author\s*=\s*([A-Za-z]+)$/i;
+/*
+ * A marker's clauses: `author=creator|joiner` (D15) and `seat=<column>`
+ * (identity step 5), each at most once, in any order, after
+ * `dai:replicated`. Null when the line is not that shape.
+ */
+function markerClauses(marker: string): Record<string, string> | null {
+  const match = /^dai:replicated((?:\s+[A-Za-z]+\s*=\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*$/i.exec(marker);
+  if (!match) return null;
+  const clauses: Record<string, string> = {};
+  for (const clause of match[1]!.matchAll(/([A-Za-z]+)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    const key = clause[1]!.toLowerCase();
+    if (key !== "author" && key !== "seat") return null;
+    if (key in clauses) return null;
+    clauses[key] = clause[2]!;
+  }
+  return clauses;
+}
 
 function declaredAbove(sql: string, start: number): boolean {
   const marker = markerLineAbove(sql, start);
   if (marker === null) return false;
   if (marker.toLowerCase() === REPLICATED_MARKER) return true;
   if (!marker.toLowerCase().startsWith(REPLICATED_MARKER)) return false;
-  if (AUTHOR_CLAUSE.test(marker)) return true;
+  if (markerClauses(marker)) return true;
   /*
    * A marker that begins as one and does not parse is a build failure (D15).
    *
@@ -297,20 +319,20 @@ function declaredAbove(sql: string, start: number): boolean {
    */
   throw new ReplicationError(
     `The marker "-- ${marker}" is not one this build understands. A replicated table is marked ` +
-      '"-- dai:replicated", or "-- dai:replicated author=creator" / "author=joiner" to say which ' +
-      "party in a session may write it.",
+      '"-- dai:replicated", with "author=creator" / "author=joiner" to say which party in a session ' +
+      'may write it, and "seat=<column>" to name the column holding the seat each row acts for.',
   );
 }
 
 /** The role a table's marker names, if it names one (D15). */
 function authorAbove(sql: string, start: number): AuthorRole | undefined {
   const marker = markerLineAbove(sql, start);
-  const match = marker === null ? null : AUTHOR_CLAUSE.exec(marker);
-  if (!match) return undefined;
-  const role = match[1]!.toLowerCase();
+  const declared = marker === null ? undefined : markerClauses(marker)?.["author"];
+  if (!declared) return undefined;
+  const role = declared.toLowerCase();
   if (role !== "creator" && role !== "joiner") {
     throw new ReplicationError(
-      `A table's marker declares author=${match[1]}. The author of a table's rows is the session's ` +
+      `A table's marker declares author=${declared}. The author of a table's rows is the session's ` +
         "'creator' (the party that started it) or its 'joiner' (the party that took the invite).",
     );
   }
@@ -432,6 +454,19 @@ function replicationColumns(session: boolean): string {
  * clearing it is refused, because two hosts with the same rows and different
  * flags never reconcile.
  */
+/** Signed, or this copy's own (sealed when it leaves): 0; unsigned from anyone else: 1. */
+const verifiedRank = (x: string): string =>
+  `(CASE WHEN ${x}._r_batch IS NOT NULL OR ${x}._r_replica = (SELECT id FROM _dai_replica LIMIT 1) THEN 0 ELSE 1 END)`;
+
+/** Whether roster row `a` comes before `b`: verified first, then clock, author id, seq. */
+function verifiedBefore(a: string, b: string): string {
+  return (
+    `(${verifiedRank(a)} < ${verifiedRank(b)} OR (${verifiedRank(a)} = ${verifiedRank(b)} AND (${a}._r_lc < ${b}._r_lc OR ` +
+    `(${a}._r_lc = ${b}._r_lc AND (hex(${a}._r_replica) < hex(${b}._r_replica) OR ` +
+    `(${a}._r_replica = ${b}._r_replica AND ${a}._r_seq < ${b}._r_seq))))))`
+  );
+}
+
 /**
  * The `_heads` view — heads are where admission is enforced (T1-D29).
  *
@@ -457,7 +492,13 @@ function replicationColumns(session: boolean): string {
  * slow the answer is a materialized membership set recomputed on merge — not a
  * return to the stored flag, which cannot express a membership that changes.
  */
-function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean, author?: AuthorRole): string {
+function headsView(
+  q: string,
+  admissionFiltered: boolean,
+  closeCreator: boolean,
+  author?: AuthorRole,
+  seatColumn?: string,
+): string {
   if (!admissionFiltered) {
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT * FROM ${q} WHERE _r_superseded = 0;`;
@@ -473,8 +514,7 @@ function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean,
   // close=any the clause is empty and every member's close counts.
   const authored = (close: string, row: string): string =>
     closeCreator
-      ? ` AND ${close}._r_replica IN (SELECT s._r_replica FROM _dai_seat_current s` +
-        ` WHERE s._r_session = ${row}._r_session)`
+      ? ` AND ${close}._r_replica IN (SELECT c.replica FROM _dai_creator c WHERE c.session = ${row}._r_session)`
       : "";
   // Not late: the session is not closed (by a permitted close), or some permitted
   // close row for it recorded this row's replica with a seq at least this high —
@@ -496,10 +536,38 @@ function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean,
    * one either, because `admitted` gates the superseding row too.
    */
   const seatAuthor = (row: string): string =>
-    `${row}._r_replica IN (SELECT s._r_replica FROM _dai_seat_current s WHERE s._r_session = ${row}._r_session)`;
+    `${row}._r_replica IN (SELECT c.replica FROM _dai_creator c WHERE c.session = ${row}._r_session)`;
   const byRole = (row: string): string =>
     author === "creator" ? ` AND ${seatAuthor(row)}` : author === "joiner" ? ` AND NOT ${seatAuthor(row)}` : "";
-  const admitted = (row: string): string => `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
+  /*
+   * A seated table (identity step 5): the row names the seat it acts for, and
+   * is admitted only when its author held that seat when the row was written,
+   * not merely now. Held then means both of:
+   *  - the author's binding to that seat is the one that holds it (the first
+   *    verified signer, as `_dai_holder`), written at or before the row's clock;
+   *  - the seat had that value at the row's clock: a version minted by the
+   *    creator at or before it, with no reseat of that seat between.
+   * A row naming no seat, or a seat outside its session, matches neither and is
+   * never admitted. Membership now is not the question for such a row: a move
+   * made while holding a seat stays a move, and one made before holding it
+   * never becomes one.
+   */
+  const heldThen = (row: string): string => {
+    const col = `${row}."${seatColumn}"`;
+    return (
+      `EXISTS (SELECT 1 FROM _dai_binding b WHERE b._r_session = ${row}._r_session AND b.seat = ${col}` +
+      ` AND b._r_replica = ${row}._r_replica AND b._r_deleted = 0 AND b._r_lc <= ${row}._r_lc` +
+      ` AND NOT EXISTS (SELECT 1 FROM _dai_binding o WHERE o._r_session = b._r_session AND o.seat = b.seat` +
+      ` AND o._r_deleted = 0 AND ${verifiedBefore("o", "b")}))` +
+      ` AND EXISTS (SELECT 1 FROM _dai_seat s JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica` +
+      ` WHERE s._r_session = ${row}._r_session AND s.seat = ${col} AND s._r_deleted = 0 AND s._r_lc <= ${row}._r_lc` +
+      ` AND NOT EXISTS (SELECT 1 FROM _dai_seat n WHERE n._r_entity = s._r_entity AND n._r_lc > s._r_lc AND n._r_lc <= ${row}._r_lc))`
+    );
+  };
+  const admitted = (row: string): string =>
+    seatColumn
+      ? `(${heldThen(row)}) AND ${notLate(row)}${byRole(row)}`
+      : `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
@@ -507,7 +575,14 @@ function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean,
        SELECT 1 FROM ${q} c, json_each(c._r_parents) p
         WHERE ${admitted("c")}
           AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
-     );`;
+     );` +
+    (seatColumn
+      ? `
+-- Rows whose author did not hold the seat they name when they were written: what a
+-- merge reports as SEAT_NOT_HELD (identity step 5).
+CREATE VIEW IF NOT EXISTS ${q}_unseated AS
+  SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r WHERE NOT (${heldThen("r")});`
+      : "");
 }
 
 function tableObjects(
@@ -517,6 +592,7 @@ function tableObjects(
   admissionFiltered: boolean,
   closeCreator = false,
   author?: AuthorRole,
+  seatColumn?: string,
 ): string {
   const q = name;
   /*
@@ -582,7 +658,7 @@ CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_supe
      WHERE p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-${headsView(q, admissionFiltered, closeCreator, author)}
+${headsView(q, admissionFiltered, closeCreator, author, seatColumn)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
@@ -681,15 +757,37 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
     `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
     tableObjects(name, ["seat"], true, false);
 
+  /*
+   * Who holds a seat (identity step 5; rules.ts IDENTITY-FIRST-SIGNER).
+   *
+   * The first verified signer: among the rows that name it, a signed one (or
+   * this copy's own, which is sealed when it leaves) before an unsigned one,
+   * then the lowest clock, then the lowest author id, then the lowest seq. The
+   * same answer on every copy. It replaces "a contested seat admits neither"
+   * (T1-D29): two bindings to one seat now leave the first one holding it.
+   *
+   * The creator is decided the same way, as the author of the session's first
+   * seat row: a seat another author minted is not a seat, so a joiner cannot
+   * seat itself by writing `_dai_seat` around the kit.
+   */
+  const before = verifiedBefore;
   const member = `
+CREATE VIEW IF NOT EXISTS _dai_creator AS
+  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica
+    FROM _dai_seat s
+   WHERE NOT EXISTS (SELECT 1 FROM _dai_seat o WHERE o._r_session = s._r_session AND ${before("o", "s")});
+
+CREATE VIEW IF NOT EXISTS _dai_holder AS
+  SELECT b._r_session AS session, b.seat AS seat, b._r_replica AS replica, b._r_lc AS since
+    FROM _dai_binding b
+    JOIN _dai_seat_current s ON s._r_session = b._r_session AND s.seat = b.seat
+    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
+   WHERE b._r_deleted = 0
+     AND NOT EXISTS (SELECT 1 FROM _dai_binding o
+                      WHERE o._r_session = b._r_session AND o.seat = b.seat AND o._r_deleted = 0 AND ${before("o", "b")});
+
 CREATE VIEW IF NOT EXISTS _dai_member AS
-  SELECT b._r_session AS session, b._r_replica AS replica
-    FROM _dai_binding_current b
-    JOIN _dai_seat_current s
-      ON s._r_session = b._r_session AND s.seat = b.seat
-   WHERE (SELECT count(DISTINCT hex(b2._r_replica))
-            FROM _dai_binding_current b2
-           WHERE b2._r_session = b._r_session AND b2.seat = b.seat) = 1;
+  SELECT DISTINCT session, replica FROM _dai_holder;
 `;
 
   /*
@@ -725,6 +823,22 @@ function authorRulesView(authors: Record<string, AuthorRole>): string {
   const rows = entries.map(([table, role]) => `SELECT '${table}' AS tbl, '${role}' AS author`).join("\n  UNION ALL ");
   return `
 CREATE VIEW IF NOT EXISTS _dai_author_rules AS
+  ${rows};
+`;
+}
+
+/**
+ * The seated tables and their seat columns, as a view the merge and the write
+ * surface can read (identity step 5). Schema, so signed with the rest; emitted
+ * only when a table names a seat column.
+ */
+function seatRulesView(seats: Record<string, string>): string {
+  const entries = Object.entries(seats);
+  if (entries.length === 0) return "";
+  // Table and column names matched an identifier pattern when parsed.
+  const rows = entries.map(([table, column]) => `SELECT '${table}' AS tbl, '${column}' AS col`).join("\n  UNION ALL ");
+  return `
+CREATE VIEW IF NOT EXISTS _dai_seat_rules AS
   ${rows};
 `;
 }
@@ -826,6 +940,30 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     );
   }
 
+  // Which column names the seat each row acts for, from the same marker (step 5).
+  const seats: Record<string, string> = {};
+  for (const span of declared) {
+    const marker = markerLineAbove(sql, span.start);
+    const column = marker === null ? undefined : markerClauses(marker)?.["seat"];
+    if (!column) continue;
+    if (!authorColumns(sql.slice(span.open + 1, span.close)).includes(column)) {
+      throw new ReplicationError(
+        `${span.name} names seat=${column}, and has no column ${column}. The seat column holds the seat ` +
+          "each row acts for; declare it in the table.",
+      );
+    }
+    seats[span.name] = column;
+  }
+  if (Object.keys(seats).length > 0 && !session) {
+    // A seat belongs to a session: with no session there are no seats, and a
+    // seated table would admit nothing.
+    throw new ReplicationError(
+      `${Object.keys(seats).join(", ")} name${Object.keys(seats).length === 1 ? "s" : ""} a seat column, but the ` +
+        "document has no session profile. Seats belong to a session; add -- dai:profile session " +
+        "max_parties=N, or drop the seat clause.",
+    );
+  }
+
   let out = "";
   let cursor = 0;
   for (const span of declared) {
@@ -881,13 +1019,14 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
       session !== null,
       session?.close === "creator",
       authors[span.name],
+      seats[span.name],
     );
     cursor = span.end;
   }
   out += sql.slice(cursor);
 
   return {
-    sql: documentTables(session !== null) + out + authorRulesView(authors),
+    sql: documentTables(session !== null) + out + authorRulesView(authors) + seatRulesView(seats),
     // Author tables only — the manifest's `replication.tables` surface, and what
     // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
     // the schema and the digest but not this list; they are implicit in a session
@@ -896,5 +1035,6 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     tables: declared.map((span) => span.name),
     ...(session ? { session } : {}),
     ...(Object.keys(authors).length > 0 ? { authors } : {}),
+    ...(Object.keys(seats).length > 0 ? { seats } : {}),
   };
 }

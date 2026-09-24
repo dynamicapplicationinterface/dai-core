@@ -714,7 +714,7 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
 /* -------------------------------------------------------------- the merge */
 
 /** Why a merge refused a batch (src/refusals.ts). */
-export type BatchRefusal = "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH" | "BATCH_UNSIGNED";
+export type BatchRefusal = "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH" | "BATCH_UNSIGNED" | "SEAT_NOT_HELD";
 
 /**
  * What verifying one signed header found (`verifyBatches`): the rows it covers,
@@ -984,6 +984,7 @@ export function mergeFrom(
     }
     reject(rowId(row._r_replica, row._r_seq));
   };
+  const added: { table: string; row: ReplicatedRow }[] = [];
   const place = (table: string, row: ReplicatedRow, signed: boolean): void => {
     for (const other of tables) {
       if (other === table) continue;
@@ -998,14 +999,17 @@ export function mergeFrom(
       );
     }
     try {
-      if (applyRow(local, table, row) === "added") result.applied += 1;
-      else result.duplicate += 1;
+      if (applyRow(local, table, row) === "added") {
+        result.applied += 1;
+        added.push({ table, row });
+      } else result.duplicate += 1;
     } catch (error) {
       const there = local.all(`SELECT _r_batch FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
       if (!(error instanceof RowRejected) || !signed || !there || there["_r_batch"] != null) throw error;
       displace(table, row);
       applyRow(local, table, row);
       result.applied += 1;
+      added.push({ table, row });
     }
   };
   for (const [rows, signed] of [
@@ -1033,6 +1037,25 @@ export function mergeFrom(
          */
         reject(rowId(row._r_replica, row._r_seq));
       }
+    }
+  }
+
+  /*
+   * Rows taken and not admitted because their author did not hold the seat they
+   * name when they wrote them (identity step 5). Stored, since they are signed
+   * and attributable, and reported by author, as every refusal is. Read after
+   * every row is in, so a binding that arrived in the same exchange counts.
+   */
+  const seated = new Set(
+    local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_seat_rules'").length > 0
+      ? local.all("SELECT tbl FROM _dai_seat_rules").map((r) => String(r["tbl"]))
+      : [],
+  );
+  for (const { table, row } of added) {
+    if (!seated.has(table)) continue;
+    const unseated = local.all(`SELECT 1 FROM "${table}_unseated" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
+    if (unseated.length > 0) {
+      refuseBatch(row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "", row._r_replica, "SEAT_NOT_HELD");
     }
   }
 
