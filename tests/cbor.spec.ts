@@ -124,9 +124,47 @@ test.describe("deterministic encoding", () => {
   });
 });
 
+test.describe("a number with a fraction", () => {
+  /*
+   * A replicated row's REAL column can hold one, and a row that cannot be
+   * encoded cannot be sealed, so a document with a decimal in a shared table
+   * could never be saved (identity step 3). Always float64, never shorter: one
+   * width is what keeps it deterministic.
+   */
+  test("is a float64, byte for byte what a reference writes for one", () => {
+    // 0.1 needs all 64 bits, so the reference writes a float64 too.
+    expect(hex(encode(0.1))).toBe(hex(new Uint8Array(reference.encode(0.1))));
+    expect(hex(encode(0.1))).toBe("fb3fb999999999999a");
+  });
+
+  test("reads back through a reference implementation, and through this one", () => {
+    for (const value of [1.5, -2.25, 0.1, 1e300, -Infinity]) {
+      expect(new Encoder({ tagUint8Array: false, useRecords: false }).decode(encode(value))).toBe(value);
+      expect(decode(encode(value))).toBe(value);
+    }
+  });
+
+  test("a whole number stays an integer", () => {
+    expect(hex(encode(2))).toBe("02");
+  });
+});
+
+test("an integer past four bytes, like a millisecond timestamp, is eight bytes, and reads back exactly", () => {
+  // A shared row with a time in it could not be encoded, so could not travel
+  // by mailbox, and under seal-on-leave could not be saved (identity step 3).
+  const at = 1_727_150_400_123;
+  expect(hex(encode(at))).toBe("1b00000192222fa27b");
+  // The reference reads any eight-byte integer as a BigInt; the value is the same.
+  expect(Number(new Encoder({ tagUint8Array: false, useRecords: false }).decode(encode(at)))).toBe(at);
+  expect(decode(encode(at))).toBe(at);
+  expect(decode(encode(-at))).toBe(-at);
+  expect(decode(encode(Number.MAX_SAFE_INTEGER))).toBe(Number.MAX_SAFE_INTEGER);
+});
+
 test.describe("what it refuses", () => {
-  test("a non-integer number", () => {
-    expect(() => encode(1.5)).toThrow(/integers/i);
+  test("NaN, which has no place in a row", () => {
+    expect(() => encode(Number.NaN)).toThrow(/NaN/);
+    expect(() => decode(new Uint8Array([0xfb, 0x7f, 0xf8, 0, 0, 0, 0, 0, 0]))).toThrow(/NaN/);
   });
 
   test("bytes after the end of a value", () => {

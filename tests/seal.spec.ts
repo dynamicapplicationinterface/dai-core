@@ -1,0 +1,152 @@
+import { DatabaseSync } from "node:sqlite";
+import { expect, test } from "@playwright/test";
+import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
+import { rewriteReplicated } from "../src/replicated.js";
+import { headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
+import { applyRow, createEntity, ensureReplica, type Rows } from "../src/replicated-rows.js";
+
+/**
+ * Sealing on leave (docs/identity.md, step 3, ruled 24 September).
+ *
+ * A row is written pending, `_r_batch` NULL, and sealed when it first leaves
+ * the device: its author's pending rows become one signed batch, the header is
+ * kept in `_dai_batch`, and every row covered names it. These hold the parts of
+ * that which live in the rows themselves; when a seal happens is the runtime's.
+ */
+
+const DOC = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const PLAIN = `-- dai:replicated
+CREATE TABLE moves (ply INTEGER NOT NULL, san TEXT NOT NULL);
+-- dai:replicated
+CREATE TABLE notes (body TEXT NOT NULL);
+`;
+const SESSIONS = `-- dai:profile session max_parties=2 close=any
+-- dai:replicated
+CREATE TABLE moves (ply INTEGER NOT NULL, san TEXT NOT NULL);
+`;
+
+function open(schema: string): Rows & { close(): void; bytes(): Uint8Array } {
+  const db = new DatabaseSync(":memory:");
+  db.exec(rewriteReplicated(schema).sql);
+  return wrap(db);
+}
+
+function wrap(db: DatabaseSync): Rows & { close(): void; bytes(): Uint8Array } {
+  return {
+    all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
+    run: (sql, params = []) => {
+      db.prepare(sql).run(...(params as never[]));
+    },
+    close: () => db.close(),
+    bytes: () => new Uint8Array((db as unknown as { serialize(): Uint8Array }).serialize()),
+  };
+}
+
+async function person() {
+  const keys = await mintPersonKey();
+  return { keys, author: await authorIdOf(await rawPublicKey(keys.publicKey)) };
+}
+
+const pendingCount = (db: Rows): number =>
+  ["moves", "notes"].reduce(
+    (n, t) =>
+      n +
+      (db.all("SELECT 1 FROM sqlite_schema WHERE name = ?", [t]).length
+        ? Number(db.all(`SELECT count(*) AS n FROM "${t}" WHERE _r_batch IS NULL`)[0]!["n"])
+        : 0),
+    0,
+  );
+
+test("one leave seals every pending row of the author into one batch, across tables, and the header verifies", async () => {
+  const ada = await person();
+  const db = open(PLAIN);
+  ensureReplica(db, ada.author);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+  createEntity(db, "notes", crypto.getRandomValues(new Uint8Array(16)), { body: "opening" });
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "e5" });
+
+  const batches = pendingBatches(db, ada.author, ["moves", "notes"]);
+  expect(batches, "one batch per leave, not one per table").toHaveLength(1);
+  expect(batches[0]!.entries).toHaveLength(3);
+
+  const sealed = await signBatch(batches[0]!, { document: DOC, keys: ada.keys });
+  recordSeal(db, sealed);
+  expect(pendingCount(db), "nothing is pending after the seal").toBe(0);
+  const header = db.all("SELECT * FROM _dai_batch")[0]!;
+  expect(header["id"]).toEqual(sealed.id);
+  expect(await verifySignature(header["pub"] as Uint8Array, headerOf(sealed), header["sig"] as Uint8Array)).toBe(true);
+  db.close();
+});
+
+test("a batch holds one author's rows only: rows another author wrote are never sealed here", async () => {
+  const ada = await person();
+  const bo = await person();
+  const db = open(PLAIN);
+  ensureReplica(db, ada.author);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+  // Bo's row, arrived unsealed (a pre-signing copy's), sits in the same table.
+  applyRow(db, "moves", {
+    _r_replica: bo.author,
+    _r_seq: 1,
+    _r_lc: 1,
+    _r_entity: crypto.getRandomValues(new Uint8Array(16)),
+    _r_parents: "[]",
+    _r_deleted: 0,
+    columns: { ply: 2, san: "e5" },
+  });
+  const batches = pendingBatches(db, ada.author, ["moves", "notes"]);
+  expect(batches.flatMap((b) => b.entries.map((e) => e.row._r_replica))).toEqual([ada.author]);
+  db.close();
+});
+
+test("pending rows stored on disk are not orphans: after a reopen they seal at the next leave", async () => {
+  const ada = await person();
+  const first = open(PLAIN);
+  ensureReplica(first, ada.author);
+  createEntity(first, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+  createEntity(first, "notes", crypto.getRandomValues(new Uint8Array(16)), { body: "unsent" });
+  // The tab is closed before anything left: the stored database holds them pending.
+  const stored = first.bytes();
+  first.close();
+
+  const reopened = new DatabaseSync(":memory:");
+  (reopened as unknown as { deserialize(bytes: Uint8Array): void }).deserialize(stored);
+  const db = wrap(reopened);
+  expect(pendingCount(db), "the stored rows came back pending").toBe(2);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "Nf3" });
+
+  const batches = pendingBatches(db, ada.author, ["moves", "notes"]);
+  expect(batches).toHaveLength(1);
+  expect(batches[0]!.entries, "the earlier session's rows and this one's, in one batch").toHaveLength(3);
+  recordSeal(db, await signBatch(batches[0]!, { document: DOC, keys: ada.keys }));
+  expect(pendingCount(db)).toBe(0);
+  db.close();
+});
+
+test("in a session document, one batch per session: a lane never carries another game's rows", async () => {
+  const ada = await person();
+  const db = open(SESSIONS);
+  ensureReplica(db, ada.author);
+  const one = new Uint8Array(16).fill(1);
+  const two = new Uint8Array(16).fill(2);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" }, one);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "d4" }, two);
+  const batches = pendingBatches(db, ada.author, ["moves"]);
+  expect(batches).toHaveLength(2);
+  for (const batch of batches) {
+    const sessions = new Set(batch.entries.map((e) => [...(e.row._r_session as Uint8Array)].join(",")));
+    expect(sessions.size, "each batch is one session's rows").toBe(1);
+  }
+  db.close();
+});
+
+test("a row is sealed once: _r_batch goes from NULL to an id, and the engine refuses any change after", async () => {
+  const ada = await person();
+  const db = open(PLAIN);
+  ensureReplica(db, ada.author);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+  recordSeal(db, await signBatch(pendingBatches(db, ada.author, ["moves", "notes"])[0]!, { document: DOC, keys: ada.keys }));
+  expect(() => db.run("UPDATE moves SET _r_batch = ?", [new Uint8Array(16).fill(9)])).toThrow(/REPLICATED_TABLE_IMMUTABLE/);
+  expect(() => db.run("UPDATE moves SET _r_batch = NULL")).toThrow(/REPLICATED_TABLE_IMMUTABLE/);
+  db.close();
+});

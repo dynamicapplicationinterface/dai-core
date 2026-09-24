@@ -193,11 +193,11 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
 
     names = authored + [
         "_r_replica", "_r_seq", "_r_lc", "_r_entity",
-        "_r_parents", "_r_deleted", "_r_superseded", "_r_sig",
+        "_r_parents", "_r_deleted", "_r_superseded", "_r_batch",
     ]
     values = [row["columns"].get(name) for name in authored] + [
         row["_r_replica"], row["_r_seq"], row["_r_lc"], row["_r_entity"],
-        row["_r_parents"], row["_r_deleted"], 1 if named else 0, row.get("_r_sig"),
+        row["_r_parents"], row["_r_deleted"], 1 if named else 0, row.get("_r_batch"),
     ]
     placeholders = ", ".join("?" for _ in names)
     quoted = ", ".join(f'"{name}"' for name in names)
@@ -265,7 +265,7 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
                 "_r_entity": incoming["_r_entity"],
                 "_r_parents": incoming["_r_parents"],
                 "_r_deleted": incoming["_r_deleted"],
-                "_r_sig": incoming.get("_r_sig"),
+                "_r_batch": incoming.get("_r_batch"),
                 "columns": {name: incoming[name] for name in authored},
             }
             try:

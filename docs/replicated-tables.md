@@ -112,7 +112,7 @@ CREATE TABLE T (
   _r_parents    TEXT    NOT NULL DEFAULT '[]',   -- JSON array of row ids, sorted
   _r_deleted    INTEGER NOT NULL DEFAULT 0 CHECK (_r_deleted IN (0,1)),
   _r_superseded INTEGER NOT NULL DEFAULT 0 CHECK (_r_superseded IN (0,1)),
-  _r_sig        BLOB,                            -- always NULL at Level 1 (T1-D7)
+  _r_batch      BLOB,                            -- the signed batch it left in; NULL while pending (docs/identity.md)
   PRIMARY KEY (_r_replica, _r_seq)
 ) WITHOUT ROWID;
 
@@ -120,7 +120,11 @@ CREATE INDEX T__r_entity ON T(_r_entity, _r_lc);
 CREATE INDEX T__r_heads  ON T(_r_entity) WHERE _r_superseded = 0;
 
 CREATE TRIGGER T__no_update BEFORE UPDATE OF
-    _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig ON T
+    _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted ON T
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
+
+CREATE TRIGGER T__sealed_once BEFORE UPDATE OF _r_batch ON T
+  WHEN OLD._r_batch IS NOT NULL
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 CREATE TRIGGER T__no_delete BEFORE DELETE ON T
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
@@ -406,7 +410,12 @@ not the version number moves; T1-D24 records why it did not need to.
 `_r_seq` makes the pick total, and it is deterministic across readers, which
 is what `current-conflict-deterministic-pick` demands.
 
-**T1-D7 — `_r_sig` exists at Level 1 and is always NULL.** Keeping the column
+**T1-D7 — superseded by signed authorship (docs/identity.md, step 3).** A row
+no longer carries a signature of its own: it names the signed batch it left its
+author's device in (`_r_batch`, NULL while pending, set once), and the headers
+live in `_dai_batch`. One place a signature lives, not two. The original
+decision, kept for the record: **`_r_sig` exists at Level 1 and is always
+NULL.** Keeping the column
 means Level 2 is a behaviour change rather than a migration over every existing
 replicated row, and §9's migration rules forbid rewriting `_r_*` columns
 anyway. The cost is one always-null column.

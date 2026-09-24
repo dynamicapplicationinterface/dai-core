@@ -178,7 +178,18 @@ export function replicatedSchemaOf(rows: Rows, tables?: readonly string[]): stri
  * because the migration chain later turns refusals into merges and never the
  * other way.
  */
-export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport {
+export function mergeSibling(
+  local: Rows,
+  sibling: Rows,
+  options: number | { level?: number; document?: string } = 1,
+): MergeReport {
+  /*
+   * A level, as every caller has passed it, or the options the identity sitting
+   * adds: the document the merge is for, which the batch signatures name
+   * (docs/identity.md). The merge verifies them from step 4; until then the
+   * document is accepted and not yet used.
+   */
+  const level = typeof options === "number" ? options : (options.level ?? 1);
   const empty: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0 };
 
   if (level !== 1) {
@@ -271,7 +282,14 @@ export {
   encodeBatch,
   decodeBatch,
   stageBatch,
+  // Sealing on leave (docs/identity.md, step 3): what the frame calls before a
+  // save or a publish, and what a merge reads a header back with.
+  headerOf,
+  pendingBatches,
+  recordSeal,
+  signBatch,
   type Batch,
   type BatchEntry,
+  type SignedBatch,
   type Watermark,
 } from "./replicated-batch.js";

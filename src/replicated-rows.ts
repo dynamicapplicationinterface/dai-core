@@ -43,7 +43,12 @@ export interface ReplicatedRow {
   _r_entity: Uint8Array;
   _r_parents: string;
   _r_deleted: number;
-  _r_sig?: Uint8Array | null;
+  /**
+   * The signed batch this row left its author's device in, or null while it is
+   * pending: written and not yet sealed (docs/identity.md, step 3). Not part of
+   * the row's identity or its canonical bytes: the batch is named after them.
+   */
+  _r_batch?: Uint8Array | null;
   /**
    * The session this row belongs to (T1-D26). Present only in a document that
    * declares the session profile — where the table carries `_r_session` — and
@@ -90,7 +95,7 @@ export const CARRIED_R_FIELDS: readonly CarriedRField[] = [
   { col: "_r_entity", key: "e", kind: "bytes" },
   { col: "_r_parents", key: "p", kind: "string" },
   { col: "_r_deleted", key: "d", kind: "number" },
-  { col: "_r_sig", key: "sig", kind: "bytesOrNull" },
+  { col: "_r_batch", key: "b", kind: "bytesOrNull" },
   { col: "_r_session", key: "ss", kind: "bytes", optional: true },
 ];
 
@@ -229,7 +234,22 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
       Number(existing["_r_deleted"]) === row._r_deleted &&
       (!session || sameValue(existing["_r_session"], row._r_session)) &&
       authored.every((name) => sameValue(existing[name], row.columns[name]));
-    if (same) return "duplicate";
+    if (same) {
+      /*
+       * The same row, sealed where this copy still holds it pending: a save
+       * that never landed, and the row coming back from the mailbox in the
+       * batch it was published in. The copy takes the seal. The trigger allows
+       * _r_batch to change exactly once, from NULL.
+       */
+      if (existing["_r_batch"] == null && row._r_batch instanceof Uint8Array) {
+        db.run(`UPDATE "${table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?`, [
+          row._r_batch,
+          row._r_replica,
+          row._r_seq,
+        ]);
+      }
+      return "duplicate";
+    }
     throw new RowRejected(
       `A different row already exists as ${id}. A replica issues each sequence number once, ` +
         "so two contents under one id cannot both be honest.",
@@ -246,7 +266,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
 
   const names = [
     ...authored,
-    "_r_replica", "_r_seq", "_r_lc", "_r_entity", "_r_parents", "_r_deleted", "_r_superseded", "_r_sig",
+    "_r_replica", "_r_seq", "_r_lc", "_r_entity", "_r_parents", "_r_deleted", "_r_superseded", "_r_batch",
     ...(session ? ["_r_session"] : []),
   ];
   const values = [
@@ -258,7 +278,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     row._r_parents,
     row._r_deleted,
     namedAlready ? 1 : 0,
-    row._r_sig ?? null,
+    row._r_batch ?? null,
     ...(session ? [row._r_session as Uint8Array] : []),
   ];
   db.run(
@@ -523,6 +543,7 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
     .all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
     .map((r) => String(r["name"]))) {
     if (DOCUMENT_TABLES.has(table)) continue; // this copy's identity — travels whole
+    if (table === "_dai_batch") continue; // signed headers: filtered to the kept rows' below
     const columns = db.all(`SELECT name FROM pragma_table_info(?)`, [table]).map((c) => String(c["name"]));
     const isReplicated = columns.includes("_r_replica") && columns.includes("_r_seq");
     if (isReplicated) {
@@ -578,6 +599,18 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
 
   // Local (non-replicated) author tables travel as schema, emptied of rows.
   for (const table of local) db.run(`DELETE FROM "${table}"`);
+
+  /*
+   * The signed batch headers travel, but only those a kept row names
+   * (docs/identity.md). A batch is sealed per session, so an invite for one game
+   * carries that game's signatures and nothing about any other.
+   */
+  const hasBatches =
+    db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  if (hasBatches) {
+    const named = replicated.map((table) => `SELECT _r_batch FROM "${table}" WHERE _r_batch IS NOT NULL`).join(" UNION ");
+    db.run(named ? `DELETE FROM _dai_batch WHERE id NOT IN (${named})` : "DELETE FROM _dai_batch");
+  }
 }
 
 /* -------------------------------------------------------------- the dump */
@@ -763,6 +796,23 @@ export function mergeFrom(
          */
         result.rejected.push(rowId(row._r_replica, row._r_seq));
       }
+    }
+  }
+
+  /*
+   * The signed headers travel with the rows that name them (docs/identity.md).
+   * A header is the same bytes on every copy, so this is a plain union by id.
+   * Verifying them is the merge's next step (step 4); here they are carried, so
+   * a copy that merges a file can pass the file's signatures on.
+   */
+  const hasBatchTable = (rows: Rows): boolean =>
+    rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  if (hasBatchTable(local) && hasBatchTable(sibling)) {
+    for (const header of sibling.all("SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch")) {
+      local.run(
+        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"]],
+      );
     }
   }
 

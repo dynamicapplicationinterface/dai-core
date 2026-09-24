@@ -12,8 +12,11 @@
  * covers the replication columns, which is what makes "the schema digests
  * match" mean "these two copies can merge" in the sibling test.
  *
- * Level 1. `_r_sig` is emitted and always NULL (T1-D7), so Level 2 is a change
- * of behaviour rather than a migration over every row ever written.
+ * Signed authorship (docs/identity.md): every row names the signed batch it
+ * left the device in, `_r_batch`, and the headers live in `_dai_batch`. A row
+ * is written with `_r_batch` NULL, pending, and sealed once when it first
+ * leaves (a save or a publish): NULL to a batch id, and never again. One place
+ * a signature lives: the per-row `_r_sig` T1-D7 reserved is gone.
  */
 
 /** The marker an author writes above a table they want replicated. */
@@ -414,7 +417,7 @@ function replicationColumns(session: boolean): string {
     "  _r_parents    TEXT    NOT NULL DEFAULT '[]',",
     "  _r_deleted    INTEGER NOT NULL DEFAULT 0 CHECK (_r_deleted IN (0,1)),",
     "  _r_superseded INTEGER NOT NULL DEFAULT 0 CHECK (_r_superseded IN (0,1)),",
-    "  _r_sig        BLOB,",
+    "  _r_batch      BLOB    CHECK (_r_batch IS NULL OR length(_r_batch) = 16),",
     ...(session ? ["  _r_session    BLOB    NOT NULL CHECK (length(_r_session) = 16),"] : []),
     "  PRIMARY KEY (_r_replica, _r_seq)",
   ].join("\n");
@@ -531,7 +534,6 @@ function tableObjects(
     "_r_entity",
     "_r_parents",
     "_r_deleted",
-    "_r_sig",
     // A row's session is fixed at write and never edited, like every other _r_
     // column, so the append-only trigger names it too (T1-D26).
     ...(session ? ["_r_session"] : []),
@@ -542,6 +544,12 @@ CREATE INDEX IF NOT EXISTS ${q}__r_heads ON ${q}(_r_entity) WHERE _r_superseded 
 
 CREATE TRIGGER IF NOT EXISTS ${q}__no_update BEFORE UPDATE OF
     ${immutable} ON ${q}
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
+
+-- A row is sealed once: _r_batch goes from NULL (pending) to the id of the
+-- signed batch it left in, and is never changed after that.
+CREATE TRIGGER IF NOT EXISTS ${q}__sealed_once BEFORE UPDATE OF _r_batch ON ${q}
+  WHEN OLD._r_batch IS NOT NULL
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
 CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
@@ -590,6 +598,23 @@ CREATE TABLE IF NOT EXISTS _dai_replica (
   seq   INTEGER NOT NULL DEFAULT 0,
   lc    INTEGER NOT NULL DEFAULT 0,
   label TEXT
+);
+
+-- The signed batch headers (docs/identity.md): one row per batch any copy of
+-- this document sealed. A row in a replicated table names its batch by id; the
+-- signature covers [version, document, author, lc, digest] and the digest
+-- covers the rows. pub is the author's raw public key, which the author id
+-- must fingerprint to; att is reserved for an authority's attestation and is
+-- outside the signature, so vouching can arrive later without re-signing.
+CREATE TABLE IF NOT EXISTS _dai_batch (
+  id      BLOB PRIMARY KEY CHECK (length(id) = 16),
+  author  BLOB NOT NULL CHECK (length(author) = 16),
+  lc      INTEGER NOT NULL,
+  sig     BLOB NOT NULL,
+  pub     BLOB NOT NULL,
+  att     BLOB,
+  version INTEGER NOT NULL,
+  digest  BLOB NOT NULL CHECK (length(digest) = 32)
 );
 
 -- Every column but the id is LOCAL: true of this copy, not of the document.
@@ -724,7 +749,14 @@ export function triggerColumns(sql: string, table: string): string[] {
     `CREATE TRIGGER (?:IF NOT EXISTS )?${table}__no_update BEFORE UPDATE OF\\s+([\\s\\S]*?)\\s+ON ${table}\\b`,
   ).exec(sql);
   if (!found) return [];
-  return found[1]!.split(",").map((name) => name.trim()).filter(Boolean);
+  const named = found[1]!.split(",").map((name) => name.trim()).filter(Boolean);
+  // _r_batch is guarded by a trigger of its own, which lets it change once,
+  // from NULL (identity step 3). It counts as covered only when that trigger
+  // is actually in the SQL, so a build without the guard is still refused.
+  const sealedOnce = new RegExp(
+    `CREATE TRIGGER (?:IF NOT EXISTS )?${table}__sealed_once BEFORE UPDATE OF _r_batch ON ${table}\\b[\\s\\S]*?WHEN OLD\\._r_batch IS NOT NULL`,
+  ).test(sql);
+  return sealedOnce ? [...named, "_r_batch"] : named;
 }
 
 /**

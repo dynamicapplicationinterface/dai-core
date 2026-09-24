@@ -25,8 +25,9 @@ const ES256 = { name: "ECDSA", hash: "SHA-256" } as const;
 /** Bytes of an author id: the first 16 of SHA-256 over the raw public key. */
 export const AUTHOR_ID_BYTES = 16;
 
-type SubtleKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
-type SubtleKeyPair = Awaited<ReturnType<typeof crypto.subtle.generateKey>> & {
+/** A WebCrypto key, named without the DOM library. */
+export type SubtleKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
+export type SubtleKeyPair = Awaited<ReturnType<typeof crypto.subtle.generateKey>> & {
   publicKey: SubtleKey;
   privateKey: SubtleKey;
 };

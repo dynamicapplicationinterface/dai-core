@@ -14,6 +14,7 @@
  * in a test and under the frame's sqlite-wasm in the opener.
  */
 import { decode as cborDecode, encode as cborEncode, type CborValue } from "./cbor.js";
+import { rawPublicKey, signBytes, type SubtleKey } from "./identity.js";
 import {
   authorColumnsOf,
   CARRIED_R_FIELDS,
@@ -44,6 +45,215 @@ export interface Batch {
 }
 
 const hex = (bytes: Uint8Array): string => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+/* ------------------------------------------------ signed batches (identity) */
+
+/**
+ * The canonical form's version: signed into every header, bumped only by a
+ * format change, never by a refactor (docs/identity.md, binding rule 10).
+ */
+export const BATCH_FORMAT_VERSION = 1;
+
+/** What a batch's signature covers: `[version, document, author, lc, digest]`. */
+export interface BatchHeader {
+  version: number;
+  /** The document's uuid, so a batch signed for one document means nothing in another. */
+  document: string;
+  author: Uint8Array;
+  lc: number;
+  /** SHA-256 of the canonical rows. */
+  digest: Uint8Array;
+}
+
+/**
+ * The seal on a batch: its header fields, its id, and the signature.
+ *
+ * `pub` is the author's raw public key, which the author id must fingerprint to;
+ * `att` is an authority's attestation, reserved and empty in V1. Neither is in
+ * the signed bytes: `pub` is bound by the id it must hash to, and `att` is
+ * outside the signature so vouching can arrive later without touching one.
+ * `id` is SHA-256 of the canonical header, first 16 bytes: carried so a batch can
+ * be staged without hashing, and recomputed by the merge that verifies it.
+ */
+export interface BatchSeal {
+  document: string;
+  version: number;
+  digest: Uint8Array;
+  id: Uint8Array;
+  sig: Uint8Array;
+  pub: Uint8Array;
+  att: Uint8Array | null;
+}
+
+/** A batch with its seal: one author's rows, one signature over all of them. */
+export type SignedBatch = Batch & BatchSeal;
+
+/** Whether a batch carries a seal. */
+export const isSigned = (batch: Batch): batch is SignedBatch =>
+  (batch as Partial<SignedBatch>).sig instanceof Uint8Array && (batch as Partial<SignedBatch>).id instanceof Uint8Array;
+
+/** Bytewise order of two strings' UTF-8, the order every canonical list here is sorted by. */
+function utf8Order(a: string, b: string): number {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
+  return x.length - y.length;
+}
+
+/**
+ * The canonical bytes of a batch's rows (format version 1; the layout is held
+ * by tests/identity-vectors.spec.ts): a CBOR array of rows ordered by table,
+ * then `_r_seq`, each `[table, [replica, seq, lc, entity, parents, deleted,
+ * session|null], [[column, value]...]]`, the columns ordered by name.
+ * `_r_batch` is not in it: the batch is named after the rows, not before.
+ */
+export function canonicalRows(entries: readonly BatchEntry[]): Uint8Array {
+  const ordered = [...entries].sort((a, b) => utf8Order(a.table, b.table) || a.row._r_seq - b.row._r_seq);
+  return cborEncode(
+    ordered.map(({ table, row }) => [
+      table,
+      [
+        row._r_replica,
+        row._r_seq,
+        row._r_lc,
+        row._r_entity,
+        row._r_parents,
+        row._r_deleted,
+        row._r_session instanceof Uint8Array ? row._r_session : null,
+      ],
+      Object.keys(row.columns)
+        .sort(utf8Order)
+        .map((name) => [name, (row.columns[name] ?? null) as CborValue]),
+    ]),
+  );
+}
+
+async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error("UNSUPPORTED_CRYPTO");
+  return new Uint8Array(await subtle.digest("SHA-256", new Uint8Array(bytes)));
+}
+
+/** SHA-256 of the canonical rows: what the header's `digest` holds. */
+export async function rowsDigest(entries: readonly BatchEntry[]): Promise<Uint8Array> {
+  return sha256(canonicalRows(entries));
+}
+
+/** The canonical header, `[version, document, author, lc, digest]`: the bytes a batch's signature covers. */
+export function canonicalHeader(header: BatchHeader): Uint8Array {
+  return cborEncode([header.version, header.document, header.author, header.lc, header.digest]);
+}
+
+/** A batch's id: SHA-256 of its canonical header, first 16 bytes. */
+export async function batchIdOf(header: Uint8Array): Promise<Uint8Array> {
+  return (await sha256(header)).slice(0, 16);
+}
+
+/** The header a signed batch claims. */
+export const headerOf = (batch: SignedBatch): Uint8Array =>
+  canonicalHeader({ version: batch.version, document: batch.document, author: batch.replica, lc: batch.lc, digest: batch.digest });
+
+/**
+ * Signs a canonical header and says with which key. The host's own, over the
+ * bridge, in a running document (the private key never leaves the host); a
+ * key in hand, in a test.
+ */
+export type BatchSigner = (header: Uint8Array) => Promise<{ sig: Uint8Array; pub: Uint8Array }>;
+
+/** A signer over a key pair held in hand. */
+export const signerOf =
+  (keys: { privateKey: SubtleKey; publicKey: SubtleKey }): BatchSigner =>
+  async (header) => ({ sig: await signBytes(keys.privateKey, header), pub: await rawPublicKey(keys.publicKey) });
+
+/**
+ * Seals a batch: its rows digested, its header built and signed, its id named.
+ * One signature for the whole batch, however many rows (binding rule 9).
+ */
+export async function signBatch(
+  batch: Batch,
+  options: { document: string; sign: BatchSigner } | { document: string; keys: { privateKey: SubtleKey; publicKey: SubtleKey } },
+): Promise<SignedBatch> {
+  const sign = "sign" in options ? options.sign : signerOf(options.keys);
+  const digest = await rowsDigest(batch.entries);
+  const header = canonicalHeader({
+    version: BATCH_FORMAT_VERSION,
+    document: options.document,
+    author: batch.replica,
+    lc: batch.lc,
+    digest,
+  });
+  const { sig, pub } = await sign(header);
+  return {
+    ...batch,
+    document: options.document,
+    version: BATCH_FORMAT_VERSION,
+    digest,
+    id: await batchIdOf(header),
+    sig,
+    pub,
+    att: null,
+  };
+}
+
+/**
+ * This author's rows that have not left the device yet: written, not sealed
+ * (`_r_batch` NULL). Rows written in an earlier session and stored before
+ * they were sealed are pending too, not orphans: they seal at the next leave.
+ *
+ * One batch per leave, of one author's rows only: here, one per session in a
+ * session document, because each session travels in a mailbox of its own under
+ * its own key (T1-D30, D37), and a batch carrying another game's rows into a
+ * lane would hand them to whoever holds that lane's key. A plain document is
+ * one batch.
+ */
+export function pendingBatches(db: Rows, author: Uint8Array, tables: readonly string[]): Batch[] {
+  const bySession = new Map<string, BatchEntry[]>();
+  for (const table of tables) {
+    const authored = authorColumnsOf(db, table);
+    const rows = db.all(
+      `SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_batch IS NULL ORDER BY _r_seq ASC`,
+      [author],
+    );
+    for (const record of rows) {
+      const row = readRow(record, authored);
+      const key = row._r_session instanceof Uint8Array ? hex(row._r_session) : "";
+      bySession.set(key, [...(bySession.get(key) ?? []), { table, row }]);
+    }
+  }
+  const lc = Number(db.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
+  return [...bySession.keys()].sort().map((key) => {
+    const entries = bySession.get(key)!;
+    return { replica: author, lc: Math.max(lc, ...entries.map((e) => e.row._r_lc)), entries };
+  });
+}
+
+/**
+ * Records a seal: the header into `_dai_batch`, and every row it covers
+ * names it. In one transaction, so a copy never holds a header without its
+ * rows' names or rows named for a header it does not hold. The trigger lets
+ * `_r_batch` change once, from NULL.
+ */
+export function recordSeal(db: Rows, sealed: SignedBatch): void {
+  db.run("SAVEPOINT dai_seal");
+  try {
+    db.run(
+      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest],
+    );
+    for (const { table, row } of sealed.entries) {
+      db.run(`UPDATE "${table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL`, [
+        sealed.id,
+        row._r_replica,
+        row._r_seq,
+      ]);
+    }
+    db.run("RELEASE dai_seal");
+  } catch (error) {
+    db.run("ROLLBACK TO dai_seal");
+    db.run("RELEASE dai_seal");
+    throw error;
+  }
+}
 
 /**
  * The rows a replica authored past a watermark, across the replicated tables.
@@ -157,14 +367,23 @@ function rowToMap(entry: BatchEntry): Map<CborValue, CborValue> {
   return map;
 }
 
-export function encodeBatch(batch: Batch): Uint8Array {
-  return cborEncode(
-    new Map<CborValue, CborValue>([
-      ["replica", batch.replica],
-      ["lc", batch.lc],
-      ["rows", batch.entries.map(rowToMap)],
-    ]),
-  );
+export function encodeBatch(batch: Batch | SignedBatch): Uint8Array {
+  const map = new Map<CborValue, CborValue>([
+    ["replica", batch.replica],
+    ["lc", batch.lc],
+    ["rows", batch.entries.map(rowToMap)],
+  ]);
+  // The seal rides beside the rows it covers: one header, one signature.
+  if (isSigned(batch)) {
+    map.set("doc", batch.document);
+    map.set("v", batch.version);
+    map.set("dig", batch.digest);
+    map.set("id", batch.id);
+    map.set("sig", batch.sig);
+    map.set("pub", batch.pub);
+    map.set("att", batch.att);
+  }
+  return cborEncode(map);
 }
 
 const asBytes = (value: CborValue | undefined): Uint8Array => {
@@ -180,7 +399,7 @@ const asNumber = (value: CborValue | undefined): number => {
   throw new Error("MAILBOX_BATCH_MALFORMED");
 };
 
-export function decodeBatch(bytes: Uint8Array): Batch {
+export function decodeBatch(bytes: Uint8Array): Batch | SignedBatch {
   const root = cborDecode(bytes);
   if (!(root instanceof Map)) throw new Error("MAILBOX_BATCH_MALFORMED");
   const rows = root.get("rows");
@@ -216,7 +435,21 @@ export function decodeBatch(bytes: Uint8Array): Batch {
     }
     return { table: asString(raw.get("t")), row: row as unknown as ReplicatedRow };
   });
-  return { replica: asBytes(root.get("replica")), lc: asNumber(root.get("lc")), entries };
+  const batch: Batch = { replica: asBytes(root.get("replica")), lc: asNumber(root.get("lc")), entries };
+  // A batch with no seal decodes as unsigned: what refuses it is the merge, by
+  // name (BATCH_UNSIGNED, step 6), not a decode error.
+  if (!root.has("sig")) return batch;
+  const att = root.get("att");
+  return {
+    ...batch,
+    document: asString(root.get("doc")),
+    version: asNumber(root.get("v")),
+    digest: asBytes(root.get("dig")),
+    id: asBytes(root.get("id")),
+    sig: asBytes(root.get("sig")),
+    pub: asBytes(root.get("pub")),
+    att: att instanceof Uint8Array ? att : null,
+  } satisfies SignedBatch;
 }
 
 /**
@@ -229,7 +462,14 @@ export function decodeBatch(bytes: Uint8Array): Batch {
  * ones already authored elsewhere, exactly as deserializing a sibling file does.
  * `_r_superseded` is left at its default; merge recomputes it.
  */
-export function stageBatch(staged: Rows, batch: Batch, tables: readonly string[]): void {
+export function stageBatch(staged: Rows, batch: Batch | SignedBatch, tables: readonly string[]): void {
+  const sealed = isSigned(batch) ? batch : null;
+  if (sealed) {
+    staged.run(
+      "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest],
+    );
+  }
   staged.run("INSERT OR REPLACE INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
     batch.replica,
     authoredHeadOf(batch),
@@ -262,7 +502,8 @@ export function stageBatch(staged: Rows, batch: Batch, tables: readonly string[]
     const placeholders = cols.map(() => "?").join(", ");
     const values = [
       ...names.map((name) => row.columns[name]),
-      ...carried.map((f) => (f.col === "_r_sig" ? (row._r_sig ?? null) : row[f.col])),
+      // Every row of a sealed batch names it, whatever the wire said.
+      ...carried.map((f) => (f.col === "_r_batch" ? (sealed ? sealed.id : (row._r_batch ?? null)) : row[f.col])),
     ];
     staged.run(
       `INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`,

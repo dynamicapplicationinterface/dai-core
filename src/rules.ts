@@ -403,7 +403,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "shared",
     rule: "Name no column of your own with the prefix _r_.",
-    why: "That prefix is replication's; the rewrite adds _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_superseded, _r_sig and, in a session document, _r_session.",
+    why: "That prefix is replication's; the rewrite adds _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_superseded, _r_batch and, in a session document, _r_session.",
     enforced: ["compiler"],
     anchors: [{ file: "src/replicated.ts", contains: "uses the reserved prefix _r_" }],
   },

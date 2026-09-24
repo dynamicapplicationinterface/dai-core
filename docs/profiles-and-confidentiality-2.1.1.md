@@ -30,8 +30,9 @@
 >   (T1-D29).
 > - **§3.3, the `_current` tiebreak.** Shipped adds `_r_seq` as the final
 >   tiebreak (T1-D6).
-> - **§3.1, signatures.** `_r_sig` exists and is always NULL at Level 1
->   (T1-D7).
+> - **§3.1, signatures.** `_r_sig` existed and was always NULL at Level 1
+>   (T1-D7); since signed authorship a row names its signed batch instead
+>   (`_r_batch`, `_dai_batch`; docs/identity.md).
 > - **Not implemented at all:** the `data-validate` hook (§5.2 rule 6), the
 >   bridge messages of §5.4, `shared-dataset` (§5.3), every confidentiality
 >   level (§6), and mailbox-key rotation (§8.3). What a reader implements is

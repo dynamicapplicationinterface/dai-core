@@ -4,6 +4,7 @@ import { authorIdOf, mintPersonKey, rawPublicKey, showAuthorId, signBytes } from
 import { rewriteReplicated } from "../src/replicated.js";
 import {
   authoredSince,
+  batchIdOf,
   canonicalHeader,
   decodeBatch,
   encodeBatch,
@@ -114,6 +115,7 @@ test.describe("a forged seat is refused (test 2)", () => {
         document: DOC,
         version: 1,
         digest,
+        id: await batchIdOf(header),
         sig: await signBytes(bo.keys.privateKey, header),
         pub,
         att: null,
@@ -186,7 +188,7 @@ test.describe("a tampered batch is refused (test 3)", () => {
     const named = file.all("SELECT _r_batch FROM moves LIMIT 1")[0]!["_r_batch"] as Uint8Array;
     expect(named, "a staged row names its batch").toBeInstanceOf(Uint8Array);
     file.run(
-      "INSERT INTO moves (ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES (2, 'Qh5', ?, 99, 99, ?, '', 0, ?)",
+      "INSERT INTO moves (ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES (2, 'Qh5', ?, 99, 99, ?, '[]', 0, ?)",
       [ada.author, crypto.getRandomValues(new Uint8Array(16)), named],
     );
 
