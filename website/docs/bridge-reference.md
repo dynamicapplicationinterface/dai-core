@@ -6,7 +6,7 @@ here fails `build-docs --check`.
 
 A document speaks to exactly one party: the window that framed it, over
 `postMessage`. Every message flows one way, so the names are split by
-direction — 18 from the document to its host, 11 back.
+direction — 19 from the document to its host, 11 back.
 
 Everything in these messages is a **claim by the document**. A host that
 records `verified: true` because a document said so has recorded nothing: the
@@ -27,6 +27,7 @@ only because it can be compared with the host's own.
 | `dai:isolation-report` | `TO_HOST.ISOLATION_REPORT` | The isolation probe's report, relayed to the host. |
 | `DAI_HOST_MERGE_RESULT` | `TO_HOST.MERGE_RESULT` | — |
 | `DAI_HOST_REFUSED` | `TO_HOST.REFUSED` | — |
+| `DAI_HOST_REPLICA_ID_ANSWER` | `TO_HOST.REPLICA_ID_ANSWER` | The mounted copy's replica id, answering TO_DOCUMENT.REPLICA_ID. |
 | `DAI_HOST_REQUEST_SHARE` | `TO_HOST.REQUEST_SHARE` | — |
 | `DAI_HOST_SAVE` | `TO_HOST.SAVE` | — |
 | `DAI_HOST_SAVE_STATE` | `TO_HOST.SAVE_STATE` | — |

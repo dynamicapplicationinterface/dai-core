@@ -27,8 +27,9 @@ import {
   type RuntimeAssets,
 } from "../../../src/browser.js";
 import { lintFiles } from "../../../src/lint.js";
+import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { checkTrust, publisherStoreFor, sigstoreRootsFor, type TrustVerdict } from "./trust.js";
-import { verifyIdentity } from "../../../src/identity.js";
+import { verifyIdentity } from "../../../src/publisher-identity.js";
 import { publisherState, recordPublisher } from "../../../src/publisher.js";
 import { CONFUSABLES_FILE } from "../../../src/confusables-id.js";
 import { ISOLATION_CLAUSES } from "../../../src/host-profile.js";
@@ -497,7 +498,7 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
 
-  if (data.type === "DAI_HOST_REFUSED") {
+  if (data.type === TO_HOST.REFUSED) {
     // The cartridge stopped and said why. Without this the host sees only
     // silence and its watchdog guesses — and a refusal is the entry an audit
     // trail most wants, so guessing is the worst outcome available.
@@ -528,14 +529,14 @@ ${refusal.detail}` : ""),
     return;
   }
 
-  if (data.type === "DAI_HOST_CLOSING") {
+  if (data.type === TO_HOST.CLOSING) {
     // Best-effort by nature: a process killed outright sends nothing, so a
     // missing close is normal rather than an error.
     console.info("DAI: cartridge closing", data.payload);
     return;
   }
 
-  if (data.type === "DAI_HOST_HANDSHAKE") {
+  if (data.type === TO_HOST.HANDSHAKE) {
     // The frame this host mounted, and no other window. Everything below acts
     // on what the message says — including writing over a file on disk.
     if (event.source !== cartridgeFrame.contentWindow) return;
@@ -602,7 +603,7 @@ ${refusal.detail}` : ""),
 
     (event.source as Window | null)?.postMessage(
       {
-        type: "DAI_HOST_HANDSHAKE_ACK",
+        type: TO_DOCUMENT.HANDSHAKE_ACK,
         // An editor: saves go back into the file on disk, under a lock.
         payload: {
           bridgeVersion: HOST_BRIDGE_VERSION,
@@ -617,7 +618,7 @@ ${refusal.detail}` : ""),
       },
       "*",
     );
-  } else if (data.type === "DAI_HOST_SAVE") {
+  } else if (data.type === TO_HOST.SAVE) {
     // This writes over a file on disk. It is answered only for the container
     // this host mounted, carrying the value that container invented.
     if (event.source !== cartridgeFrame.contentWindow) return;
@@ -629,7 +630,7 @@ ${refusal.detail}` : ""),
       // tell a lost race from a broken disk without parsing a sentence.
       const code = /^(GENERATION_CONFLICT|LOCK_UNAVAILABLE):/.exec(error ?? "")?.[1];
       (event.source as Window | null)?.postMessage(
-        { type: "DAI_HOST_SAVE_ACK", status, error, code, requestId },
+        { type: TO_DOCUMENT.SAVE_ACK, status, error, code, requestId },
         "*",
       );
       statusEl.textContent =

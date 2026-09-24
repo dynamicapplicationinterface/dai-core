@@ -4364,6 +4364,44 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D104 — Row identity by content hash, the successor to `(author, seq)`
+
+*Status: open, V1.1. Ruled 24 September: noted as the successor, not built.*
+
+A shared row's version is named by `(_r_replica, _r_seq)`: an author and a
+counter. Since the identity sitting, the author is the device's person key,
+the same for every copy that device holds. A counter is only safe when one
+writer holds it, so V1 keeps one live copy per document per device
+(`IDENTITY-ONE-LIVE-COPY` in `src/rules.ts`, rule 7 of `docs/identity.md`).
+The hazard it guards against is two live copies on one device issuing the same
+pair for different rows, and the exchange refusing one as tampering.
+
+The successor removes the hazard rather than guarding it: a row version named
+by the hash of its content, the way a commit id is. Two copies cannot issue the
+same name for different rows, because the name is the row. What it touches:
+the merge key, `_r_parents`, the batch digest (which already hashes canonical
+rows), the conformance readers, and every stored document, so it is a format
+version.
+
+#### D103 — The desktop host has no person key
+
+*Status: open. Ruled 24 September: desktop gets the person key the day it
+sends write rules, and not before.*
+
+`apps/desktop` sends no write rules today, so its documents never write shared
+rows and never need an author id. The day it does, it takes the same path as
+the runner: the key made on first use and kept in the host's own store, the
+author id handed to the frame on every mount, and one live copy per document
+(`docs/identity.md` rule 7; `IDENTITY-ONE-LIVE-COPY`). A loose file opened
+twice is merged into the held copy, not opened beside it.
+
+#### D102 — `launch-address.spec.ts:123` passes on retry on WebKit
+
+*Status: open. First seen 23 September, run 35935079996 (WebKit shard 1/2,
+job 107430182690, commit a7ab452): "after a store arrival, keeps the path and
+the key that fetch it again" failed, then passed on retry. The commit touched
+nothing it exercises.*
+
 #### D101 — `MergeReport.refused` is a name a quieter one would serve
 
 *Status: open. A naming nit, filed 23 September during the identity sitting; no
@@ -4378,8 +4416,9 @@ as though it might be the list. What closes it: rename it to what it means
 
 #### D100 — A frame message name written as a literal outside its owner
 
-*Status: open. Filed 23 September; fixed in step 2 of the identity sitting,
-under the naming family (binding rule 8 of `docs/identity.md`).*
+*Status: **fixed in step 2 of the identity sitting**, under the naming family
+(binding rule 8 of `docs/identity.md`): the name is `TO_HOST.REPLICA_ID_ANSWER`,
+and `check-names` now refuses a message name spelled outside its owner.*
 
 `"DAI_FRAME_REPLICA_ID"` is spelled out at `src/runtime/bootloader.ts:3546`
 (the frame's answer to a replica id request) and at

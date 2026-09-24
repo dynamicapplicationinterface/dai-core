@@ -59,7 +59,7 @@ Never read it for display or logic. Never write to it.
 
 ### `_dai_replica`
 
-**Applies to** passable, session. This copy's own identity: id (16 bytes), seq, lc, label. One row once this copy has written anything or arrived from somebody else; empty in a brand-new document before its first write, so read it as possibly absent.
+**Applies to** passable, session. The author this copy writes under: id (16 bytes, the fingerprint of this device's person key, handed over by the host on every open), seq, lc, label. One row once this copy has written anything or arrived from somebody else; empty in a brand-new document before its first write, so read it as possibly absent. The same id on every copy this device holds.
 
 SELECT lower(hex(id)) AS id FROM \_dai\_replica — this copy's replica id.
 

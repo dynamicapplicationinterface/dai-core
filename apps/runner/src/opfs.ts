@@ -13,10 +13,13 @@ const PIN_STORE = "pins";
 const PUB_STORE = "publishers";
 /** A document's mailbox state — its key, and where publish and pull have reached (Track 5). */
 const MAILBOX_STORE = "mailboxes";
+/** This device's keys, by the names src/keys.ts owns: the person key (docs/identity.md). */
+const KEY_STORE = "keys";
 
 import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
-import type { SigstoreRoot } from "../../../src/identity.js";
+import type { SigstoreRoot } from "../../../src/publisher-identity.js";
+import { KEYS } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
 
@@ -298,7 +301,7 @@ function noteIdbFailure(what: string): void {
 function openIdb(): Promise<IDBDatabase> {
   if (idbConnection) return idbConnection;
   idbConnection = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 6);
+    const request = indexedDB.open(IDB_NAME, 7);
     /*
      * A bound on the open itself. iOS Safari can leave `indexedDB.open`
      * pending with no event ever firing; without this the whole launch waits
@@ -350,6 +353,11 @@ function openIdb(): Promise<IDBDatabase> {
       // lifetime as the library entry it sits beside (Track 5).
       if (!db.objectStoreNames.contains(MAILBOX_STORE)) {
         db.createObjectStore(MAILBOX_STORE, { keyPath: "documentUuid" });
+      }
+      // Version 7: this device's person key (docs/identity.md), out-of-line keys
+      // named by src/keys.ts. Added empty; the key is made on first use.
+      if (!db.objectStoreNames.contains(KEY_STORE)) {
+        db.createObjectStore(KEY_STORE);
       }
     };
     request.onsuccess = () => {
@@ -589,30 +597,26 @@ export async function deleteCartridgeFromLibrary(
   }
   // The mailbox state shares the document's lifetime and goes with it.
   await deleteMailbox(documentUuid);
-  await forgetOwnReplica(documentUuid);
 }
 
 /**
- * The replica id this device writes a document under (d22).
+ * This device's person key (docs/identity.md), kept as the CryptoKey pair
+ * itself: IndexedDB stores a CryptoKey by structured clone, so the key is never
+ * turned into bytes to be kept. One per device, under the name `src/keys.ts`
+ * owns, in a store of its own.
  *
- * Recorded before a copy is first mounted and handed to the frame on every
- * mount after, so the id a copy writes under is this device's, never whatever
- * the mounted file carries. A reopen that fell back to the arrived file used to
- * keep the sender's id, because "own copy" was decided by where the file came
- * from rather than whose id was in it.
- *
- * Kept beside the document's database, under a key of its own, because the
- * database's own key is deleted whenever the database moves to OPFS. A string,
- * so the database reader, which takes only bytes, never mistakes it for one.
+ * Null when nothing is kept or storage cannot be read. The caller decides what
+ * that means; this does not mint.
  */
-const replicaKey = (documentUuid: string): string => `replica:${documentUuid}`;
-
-export async function ownReplicaOf(documentUuid: string): Promise<string | null> {
+export async function keptPersonKey(): Promise<CryptoKeyPair | null> {
   try {
     const db = await openIdb();
     return await new Promise((resolve) => {
-      const req = db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(replicaKey(documentUuid));
-      req.onsuccess = () => resolve(typeof req.result === "string" && /^[0-9a-f]{32}$/.test(req.result) ? req.result : null);
+      const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(KEYS.PERSON_KEY);
+      req.onsuccess = () => {
+        const held = req.result as Partial<CryptoKeyPair> | undefined;
+        resolve(held?.publicKey && held.privateKey ? (held as CryptoKeyPair) : null);
+      };
       req.onerror = () => resolve(null);
     });
   } catch {
@@ -620,18 +624,16 @@ export async function ownReplicaOf(documentUuid: string): Promise<string | null>
   }
 }
 
-export async function recordOwnReplica(documentUuid: string, replica: string): Promise<void> {
+/**
+ * Keeps the person key, only if none is kept yet.
+ *
+ * `add`, not `put`: two tabs minting at once must not leave each writing under
+ * a key the other then overwrote. The loser's add fails, and it reads back the
+ * winner's key, so both tabs end on one key.
+ */
+export async function keepPersonKey(pair: CryptoKeyPair): Promise<void> {
   const db = await openIdb();
-  await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.put(replica, replicaKey(documentUuid)));
-}
-
-async function forgetOwnReplica(documentUuid: string): Promise<void> {
-  try {
-    const db = await openIdb();
-    await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.delete(replicaKey(documentUuid)));
-  } catch {
-    /* Nothing recorded, or no storage: nothing to forget. */
-  }
+  await committed(db.transaction(KEY_STORE, "readwrite"), (store) => store.add(pair, KEYS.PERSON_KEY));
 }
 
 /**

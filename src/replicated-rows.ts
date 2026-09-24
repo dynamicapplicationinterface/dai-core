@@ -323,8 +323,13 @@ export function ensureReplica(db: Rows, id: Uint8Array): void {
  * sender's id moves into `_dai_replicas` — their rows stay theirs, and their
  * authorship of everything already in the file is untouched.
  *
- * `seq` restarts at zero because sequence numbers are per replica and this
- * replica has issued none. The clock does **not** restart: this copy has seen
+ * `seq` resumes from the highest this id has already issued in the file, 0 if
+ * none. The id is this device's author id (docs/identity.md), the same for
+ * every copy the device holds, so a file can come back carrying rows this
+ * device wrote before: a copy sent out and returned, or a document forgotten
+ * and received again. Restarting at zero there would issue a `(replica, seq)`
+ * this device already issued, and the next exchange refuses one of them as
+ * `ROW_REJECTED`. The clock does **not** restart: this copy has seen
  * everything in the file, so its clock must be at least as high as anything
  * it holds, or the first row it writes would sort below rows it was written
  * after.
@@ -344,8 +349,9 @@ export function adoptReplica(db: Rows, id: Uint8Array): boolean {
     Number(current["lc"] ?? 0),
   ]);
   db.run("DELETE FROM _dai_replica");
-  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, ?)", [
+  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
     id,
+    highestSeqOf(db, id),
     Number(current["lc"] ?? 0),
   ]);
   db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [
@@ -353,6 +359,18 @@ export function adoptReplica(db: Rows, id: Uint8Array): boolean {
     Number(current["lc"] ?? 0),
   ]);
   return true;
+}
+
+/** The highest `_r_seq` any replicated table holds under `id`, or 0. */
+function highestSeqOf(db: Rows, id: Uint8Array): number {
+  let highest = 0;
+  for (const { name } of db.all("SELECT name FROM sqlite_schema WHERE type = 'table'") as { name: string }[]) {
+    const columns = db.all("SELECT name FROM pragma_table_info(?)", [name]).map((c) => String(c["name"]));
+    if (!columns.includes("_r_replica") || !columns.includes("_r_seq")) continue;
+    const found = db.all(`SELECT max(_r_seq) AS m FROM "${name}" WHERE _r_replica = ?`, [id])[0]?.["m"];
+    if (typeof found === "number" && found > highest) highest = found;
+  }
+  return highest;
 }
 
 /** The ids of an entity's current heads, sorted, for a row that supersedes them. */

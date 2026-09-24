@@ -50,6 +50,8 @@ export const TO_HOST = {
   ISOLATION_REPORT: "dai:isolation-report",
   MERGE_RESULT: "DAI_HOST_MERGE_RESULT",
   REFUSED: "DAI_HOST_REFUSED",
+  /** The mounted copy's replica id, answering TO_DOCUMENT.REPLICA_ID. Once spelled by hand on both sides (D100). */
+  REPLICA_ID_ANSWER: "DAI_HOST_REPLICA_ID_ANSWER",
   REQUEST_SHARE: "DAI_HOST_REQUEST_SHARE",
   SAVE: "DAI_HOST_SAVE",
   SAVE_STATE: "DAI_HOST_SAVE_STATE",

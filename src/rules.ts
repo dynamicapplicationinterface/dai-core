@@ -55,7 +55,8 @@ export type Topic =
   | "session"
   | "kit"
   | "presentation"
-  | "handover";
+  | "handover"
+  | "identity";
 
 export const TOPICS: readonly { id: Topic; title: string }[] = [
   { id: "shape", title: "The shape, decided first" },
@@ -66,6 +67,7 @@ export const TOPICS: readonly { id: Topic; title: string }[] = [
   { id: "kit", title: "The kit" },
   { id: "presentation", title: "The screen and the card" },
   { id: "handover", title: "Handing it over" },
+  { id: "identity", title: "Who wrote it" },
 ];
 
 const ALL: readonly Shape[] = SHAPE_ORDER;
@@ -517,6 +519,17 @@ export const CONSTRAINTS: readonly Constraint[] = [
     why: "The entity is the same on every copy, where an id of your own would be allocated separately on each.",
     enforced: ["prose"],
     anchors: [{ file: "tests/fixture/chess/schema.sql", contains: "hex entity of the games row" }],
+  },
+  {
+    id: "IDENTITY-ONE-LIVE-COPY",
+    title: "One document, one live copy per device",
+    shapes: SHARED,
+    topic: "identity",
+    rule:
+      "A device holds one live copy of a document. A copy of a document this device already holds is merged into the held copy when it arrives; it is never opened as a second live copy beside it. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host does this before the application runs.",
+    why: "Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two live copies on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. The successor that removes the hazard is row identity by content hash (backlog D104).",
+    enforced: ["runtime"],
+    anchors: [{ file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" }],
   },
   {
     id: "SHARED-SEED-THROUGH-SURFACE",
@@ -999,7 +1012,7 @@ export const VIEWS: readonly ViewEntry[] = [
   {
     name: "_dai_replica",
     shapes: SHARED,
-    holds: "This copy's own identity: id (16 bytes), seq, lc, label. One row once this copy has written anything or arrived from somebody else; empty in a brand-new document before its first write, so read it as possibly absent.",
+    holds: "The author this copy writes under: id (16 bytes, the fingerprint of this device's person key, handed over by the host on every open), seq, lc, label. One row once this copy has written anything or arrived from somebody else; empty in a brand-new document before its first write, so read it as possibly absent. The same id on every copy this device holds.",
     read: "SELECT lower(hex(id)) AS id FROM _dai_replica — this copy's replica id.",
     anchor: { file: "src/replicated.ts", contains: "CREATE TABLE IF NOT EXISTS _dai_replica" },
   },

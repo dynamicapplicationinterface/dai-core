@@ -739,6 +739,43 @@ test.describe("a copy that arrived from somebody else", () => {
     alice.close();
   });
 
+  test("a file that comes back carrying this id's rows resumes its seq above them", () => {
+    /*
+     * An author id is a device's key, the same for every copy the device holds
+     * (docs/identity.md). So a file can come back to the device that wrote
+     * some of it: sent out, answered, and received again as a fresh copy.
+     * Adopting there must not restart at seq 0, or the next row reissues a
+     * (replica, seq) this device already issued, and the exchange with the
+     * device's other copy refuses one as ROW_REJECTED.
+     */
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+    createEntity(alice, "cases", E2, { title: "d4", status: "open", weight: null });
+
+    const bob = received(alice);
+    adoptReplica(bob, B);
+    createEntity(bob, "cases", bytes(0x61), { title: "e5", status: "open", weight: null });
+
+    // Alice's device forgot its copy; Bob's comes back and is opened there as a new one.
+    const back = received(bob);
+    adoptReplica(back, A);
+    expect(Number(back.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "resumes at Alice's highest").toBe(2);
+    createEntity(back, "cases", bytes(0x62), { title: "Nf3", status: "open", weight: null });
+    const issued = back.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [A]).map((r) => Number(r["s"]));
+    expect(issued, "Alice's new row takes the next seq, not one she already issued").toEqual([1, 2, 3]);
+
+    // And Bob, who holds Alice's first two rows, takes the new one without a refusal.
+    const report = mergeSibling(bob, back);
+    expect(report.rejected, "no (replica, seq) was issued twice").toEqual([]);
+    expect(report.applied).toBe(1);
+
+    alice.close();
+    bob.close();
+    back.close();
+  });
+
   test("the clock does not restart, or the first row written sorts below what it followed", () => {
     /*
      * `seq` restarts because sequence numbers are per replica. The clock must

@@ -195,10 +195,10 @@ test.describe("an invite that carries the game", () => {
     test(`the recipient is not the sender, on ${iphone ? "an iPhone" : "a desktop"}`, async ({ browser }) => {
       const { creator, guest } = await inviteWithData(browser, iphone);
       const sender = await replicaOf(creator);
-      expect(sender, "the sender writes under an id of its own").toMatch(/^[0-9a-f]{32}$/);
+      expect(sender, "the sender writes under an id of its own").toMatch(AUTHOR_ID);
       await expect
         .poll(() => replicaOf(guest), { timeout: 30_000 })
-        .toMatch(/^[0-9a-f]{32}$/);
+        .toMatch(AUTHOR_ID);
 
       expect(await replicaOf(guest), "a copy of somebody else's game is not that person").not.toBe(sender);
       await expect(

@@ -1143,18 +1143,15 @@ function bridgeMain(names: FrameNames): void {
   let liveDb: Any | null = null;
   let mergeModule: Any | null = null;
   /*
-   * Whether this copy is one this device wrote, as the host reported it, and
-   * whether its replica identity has been settled yet.
-   *
-   * The frame cannot answer the first question. It sees one database and has
-   * no way to tell a copy this device has been writing for a month from a copy
-   * that arrived by mail five seconds ago — the two are the same bytes in the
-   * same place. The host knows, because it is the thing that either loaded the
-   * document from its own library or took delivery of a file.
+   * The author id this device writes under, as the host handed it with the
+   * write rules: the fingerprint of the host's person key (docs/identity.md,
+   * binding rule 1). The frame never works out who it is from the database;
+   * whether a copy was written here or arrived five seconds ago does not
+   * change whose key this device holds. Null only from a host that sent none.
+   * Bytes, as the host posted them: this function is serialized into the frame
+   * and imports nothing, so the shown form is the host's to make.
    */
-  let mountIsOwnCopy = false;
-  /** The id the host has recorded for this device and document, when it has one (d22). */
-  let mountReplica: string | null = null;
+  let mountReplica: Uint8Array | null = null;
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
   // `"any"` lets any member close; undefined for a document with no session. The
@@ -1565,7 +1562,7 @@ function bridgeMain(names: FrameNames): void {
    * database whenever it is ready. First write is the first moment both are
    * certainly present, and it is early enough — nothing has been stamped yet.
    */
-  /** This copy's replica id as hex — the same read `dai:replica-id` answers with. */
+  /** This copy's replica id as hex, for the console line below. */
   const replicaHex = (): string | null => {
     try {
       const row = liveDb?.selectObjects("SELECT lower(hex(id)) AS h FROM _dai_replica LIMIT 1")[0];
@@ -1576,25 +1573,34 @@ function bridgeMain(names: FrameNames): void {
   };
 
   const settleReplica = (rows: Any): void => {
-    if (replicaSettled || !mergeModule) return;
+    if (!mergeModule) return;
+    if (replicaSettled) {
+      /*
+       * Every write, not only the first (binding rule 2; D80). The application
+       * holds the database and can rewrite `_dai_replica` between writes; the
+       * id a row is stamped with is the host's, never the row's. One read when
+       * nothing changed. A rewritten id is put back, the forged one moves to
+       * `_dai_replicas` like any other, and the console says so.
+       */
+      if (mountReplica) {
+        const before = replicaHex();
+        if ((mergeModule as Any).adoptReplica(rows, mountReplica)) {
+          console.info(`dai: replica put back to this device's key: ${before ?? "none"} -> ${replicaHex() ?? "none"}`);
+        }
+      }
+      return;
+    }
     replicaSettled = true;
-    const fresh = crypto.getRandomValues(new Uint8Array(16));
     const before = replicaHex();
-    // Reopening this device's own copy keeps the id it has been writing under;
-    // anything that arrived from elsewhere takes a new one, and the sender's
-    // moves into `_dai_replicas` with their rows still theirs.
     /*
-     * The host's record wins over the file (d22). A reopen can mount a file
-     * this device did not write, the arrived file, when its first save had
-     * been asked and not yet written, and "own copy" then kept the sender's
-     * id. With an id recorded for this device, that id is written under
-     * whatever the file holds; the file's own moves to `_dai_replicas`.
+     * The host's key wins over the file, always (docs/identity.md, binding
+     * rules 1 and 2). Whatever `_dai_replica` the file holds, this copy writes
+     * under the id the host handed it, and any other id the file carried moves
+     * to `_dai_replicas` with its rows still its own. A host that sent no id
+     * gets a fresh one: never the file's, because a row is not a source of
+     * identity.
      */
-    if (mountReplica) {
-      const recorded = new Uint8Array(mountReplica.match(/../g)!.map((pair) => parseInt(pair, 16)));
-      (mergeModule as Any).adoptReplica(rows, recorded);
-    } else if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
-    else (mergeModule as Any).adoptReplica(rows, fresh);
+    (mergeModule as Any).adoptReplica(rows, mountReplica ?? crypto.getRandomValues(new Uint8Array(16)));
     /*
      * Permanent, on purpose (D22). A copy has come back from a reopen writing
      * under the sender's id, only in CI and only rarely, and a kept trace
@@ -1603,7 +1609,7 @@ function bridgeMain(names: FrameNames): void {
      * kept trace records, and a person using the app never sees it.
      */
     console.info(
-      `dai: replica ${mountReplica ? (before === mountReplica ? "kept (this device's, recorded)" : "set to this device's (recorded)") : mountIsOwnCopy ? "kept (own copy)" : "adopted (arrived copy)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
+      `dai: replica ${mountReplica ? (before === replicaHex() ? "kept (this device's key)" : "set to this device's key") : "fresh (the host sent no key)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
     );
   };
 
@@ -2106,8 +2112,7 @@ function bridgeMain(names: FrameNames): void {
      * agreed on.
      */
     if (data.type === names.WRITE_RULES) {
-      mountIsOwnCopy = data.ownCopy === true;
-      mountReplica = typeof data.replica === "string" && /^[0-9a-f]{32}$/.test(data.replica) ? data.replica : null;
+      mountReplica = data.replica instanceof Uint8Array && data.replica.length === 16 ? data.replica : null;
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
@@ -2141,13 +2146,14 @@ function bridgeMain(names: FrameNames): void {
       return;
     }
     if (data.type === names.REPLICA_ID) {
-      // This copy's replica id, hex, from `_dai_replica`. Read only, answered
-      // never volunteered. `null` when the table is not there yet — an own copy
-      // whose schema is unwritten, which settles on its first write.
-      let replica: string | null = null;
+      // This copy's replica id, the bytes of `_dai_replica`; the host shows
+      // them. Read only, answered never volunteered. `null` when the table is
+      // not there yet — a copy whose schema is unwritten, which settles on its
+      // first write.
+      let replica: Uint8Array | null = null;
       try {
-        const row = liveDb?.selectObjects("SELECT lower(hex(id)) AS h FROM _dai_replica LIMIT 1")[0];
-        replica = row ? String((row as { h: unknown }).h) : null;
+        const row = liveDb?.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0] as { id?: unknown } | undefined;
+        replica = row?.id instanceof Uint8Array ? row.id : null;
       } catch {
         replica = null;
       }
@@ -2818,7 +2824,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; ownCopy: unknown; replica: unknown; closePolicy: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; closePolicy: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -2827,7 +2833,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, ownCopy: rules.ownCopy, replica: rules.replica, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, closePolicy: rules.closePolicy },
     "*",
   );
 }
@@ -3273,10 +3279,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; ownCopy?: unknown; replica?: unknown; closePolicy?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; closePolicy?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy, replica: pushed.replica, closePolicy: pushed.closePolicy };
+      pendingRules = { source: pushed.source, replica: pushed.replica, closePolicy: pushed.closePolicy };
       if (listeningWindow) deliverRules();
       return;
     }
@@ -3541,9 +3547,9 @@ async function boot(): Promise<void> {
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.REPLICA_ID_ANSWER) {
-      const answer = event.data as { nonce?: string; replica?: string | null };
+      const answer = event.data as { nonce?: string; replica?: Uint8Array | null };
       window.parent.postMessage(
-        { type: "DAI_FRAME_REPLICA_ID", nonce: answer.nonce, replica: answer.replica ?? null },
+        { type: TO_HOST.REPLICA_ID_ANSWER, nonce: answer.nonce, replica: answer.replica ?? null },
         "*",
       );
       return;

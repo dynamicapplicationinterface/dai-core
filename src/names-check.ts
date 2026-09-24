@@ -52,3 +52,50 @@ export const bridgeValue = (key: string): string => `DAI_HOST_${key}`;
 
 /** A frame name's value: `dai:` and its key in lower case, words joined by hyphens. */
 export const frameValue = (key: string): string => `dai:${key.toLowerCase().replace(/_/g, "-")}`;
+
+/**
+ * Message names written as literals outside their owners (docs/identity.md,
+ * binding rule 8; D100).
+ *
+ * The consistency check above holds the owners to their own rules; this holds
+ * everyone else to the owners. Two shapes count as a message name: any quoted
+ * `DAI_HOST_…` or `DAI_FRAME_…` string, wherever it appears, and a quoted
+ * `dai:…` string used as a message `type` (`type: "dai:x"`, `.type === "dai:x"`).
+ * A `dai:` string anywhere else is left alone: storage keys, event names and
+ * schema markers share the prefix and have owners of their own.
+ *
+ * Comment lines are skipped: a name mentioned in prose is not a second copy.
+ * `exceptions` maps `file: literal` to why it must stay; an exception that
+ * excuses nothing is itself a problem, as above.
+ */
+export function literalProblems(
+  files: readonly { path: string; text: string }[],
+  exceptions: Readonly<Record<string, string>> = {},
+): string[] {
+  const anywhere = /["'](DAI_(?:HOST|FRAME)_[A-Z0-9_]+)["']/g;
+  const asType =
+    /type\s*(?::|===|!==|==|!=)\s*["'](dai:[a-z0-9-]+)["']|["'](dai:[a-z0-9-]+)["']\s*(?:===|!==|==|!=)\s*[\w.?]*type\b/g;
+  const problems: string[] = [];
+  const used = new Set<string>();
+  for (const { path, text } of files) {
+    text.split(/\r?\n/).forEach((line, index) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+      const found = [
+        ...[...line.matchAll(anywhere)].map((m) => m[1]!),
+        ...[...line.matchAll(asType)].map((m) => (m[1] ?? m[2])!),
+      ];
+      for (const literal of found) {
+        const key = `${path}: ${literal}`;
+        if (key in exceptions) {
+          used.add(key);
+          continue;
+        }
+        problems.push(`${path}:${index + 1} spells "${literal}" by hand; import it from its owner`);
+      }
+    });
+  }
+  for (const key of Object.keys(exceptions)) {
+    if (!used.has(key)) problems.push(`the exception for ${key} excuses nothing: the literal is gone`);
+  }
+  return problems;
+}

@@ -1467,15 +1467,15 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * the writer and trusted by the merge, and the per-game key (D37) is one both
    * copies hold, so nothing tells Ada's copy which of the two wrote a row.
    *
-   * Fails today, on purpose, until a seat is bound to something a copy cannot
-   * copy (D80's own sitting). Correct is either outcome: the move refused, or
-   * admitted as Bo's; and in both, two players still seated.
+   * Closed at step 2 of the identity sitting (docs/identity.md, binding rules 1
+   * and 2): the id a row is stamped with is the host's key, re-asserted on
+   * every write, never the row in `_dai_replica`. So the forged id lasts until
+   * Bo's copy next writes, which here is applying Ada's next move; from then on
+   * Bo's copy is Bo, and what it writes reaches Ada as Bo's, with both players
+   * still seated. A copy that forges rows outside the runtime is the merge's to
+   * refuse, by signature (tests/signed-batch.spec.ts, test 2).
    */
   test("D80: a copy running under the creator's id is not believed to be the creator", async ({ browser }) => {
-    // Held as an expected failure: D80 is open, and its fix is its own sitting.
-    // When a seat is bound to something a copy cannot copy, this passes, the
-    // mark fails the run, and the mark comes off in the same change.
-    test.fail(true, "D80 open: _r_replica is writer-set and merge-trusted");
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1504,11 +1504,20 @@ test.describe("a game continues over a shared link (the key path)", () => {
     }, beforeA.me);
     await pageB.evaluate(() => (window as any).__runner.pullMailbox());
 
-    // Bo moves. It is White's turn, and this copy now believes it holds White.
-    await play(appB, "d2", "d4");
+    // Ada moves. Applying it is Bo's copy's next write, and the forged id does
+    // not survive it: the copy is put back to the key its host holds.
+    await play(appA, "d2", "d4");
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB.locator("#move-history")).toContainText("d4", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    expect((await seatRows(pageB)).me, "Bo's copy writes as Bo again").toBe(beforeB.me);
+
+    // Bo answers, as Black, and it reaches Ada as Bo's.
+    await play(appB, "d7", "d5");
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
-      await expect(appA.locator("#move-history")).toContainText("d4", { timeout: 2_000 });
+      await expect(appA.locator("#move-history")).toContainText("d5", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
     const afterA = await seatRows(pageA);
     const afterB = await seatRows(pageB);
@@ -1516,7 +1525,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     console.log(`D80 after, B: ${JSON.stringify(afterB)}`);
 
     const last = afterA.moves[afterA.moves.length - 1] as { r: string };
-    expect(last.r, "Bo's move is not admitted as Ada's").not.toBe(beforeA.me);
+    expect(last.r, "Bo's move is admitted as Bo's, not Ada's").toBe(beforeB.me);
     for (const [who, rows] of [["A", afterA], ["B", afterB]] as const) {
       expect(rows.members, `${who} still holds two members`).toHaveLength(2);
       expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(beforeB.me);

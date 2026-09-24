@@ -18,7 +18,7 @@ import { labelPublisher, publisherState, recordPublisher } from "../../../src/pu
 import { declaresReplication, siblingTest, whyNotSibling } from "../../../src/sibling.js";
 import { afterSave, BLANK_DIGEST, buildOf, chooseCopy, databaseDigest, remember } from "../../../src/copy-choice.js";
 import { confusables } from "./confusables.js";
-import { verifyIdentity } from "../../../src/identity.js";
+import { verifyIdentity } from "../../../src/publisher-identity.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -67,8 +67,6 @@ import {
   getCartridgeFromLibrary,
   listCartridgesFromLibrary,
   loadDatabaseFromOpfs,
-  ownReplicaOf,
-  recordOwnReplica,
   saveCartridgeToLibrary,
   trustStore,
   publisherStore,
@@ -82,6 +80,8 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
+import { authorId, person } from "./person.js";
+import { showAuthorId } from "../../../src/identity.js";
 import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
 import { loadAt, ownWrite } from "./navigate.js";
@@ -1121,18 +1121,6 @@ async function refreshLibrary(): Promise<void> {
 
 async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void> {
   markStep("opening this device's own copy");
-  /*
-   * Out of this device's own library — which is not the same as a copy this
-   * device has written, and identity turns on the difference.
-   *
-   * An arrival is in the library within a moment of arriving, and on iOS the
-   * relaunch that follows opens it from there. Calling that "my own copy" told
-   * the frame to keep whatever `_dai_replica` the file carried, and for an
-   * invite sent with data that is the sender's: the recipient came up as the
-   * creator, in the creator's seat, asked for no name (the phone sitting on
-   * 7653c44). Set below, from whether this device has ever written this copy.
-   */
-  mountIsOwnCopy = false;
   slot.classList.add("busy");
   say(`Loading ${item.appName}…`);
 
@@ -1154,8 +1142,6 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
-    // Written here, so the id it has been writing under is this device's.
-    mountIsOwnCopy = Boolean(opfsDb && opfsDb.byteLength > 0);
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
@@ -1684,21 +1670,6 @@ async function collectSharedContainer(): Promise<{ file: File; from: string } | 
  * Screen" working and the new icon having nothing to open.
  */
 let arrivedAsFile = true;
-/*
- * Whether the copy now mounting is one this device has been writing (T1-D22).
- *
- * The frame cannot work this out. It sees one database, and a copy this device
- * has held for a month and a copy that arrived by mail five seconds ago are the
- * same bytes in the same place. This host knows, because it is the thing that
- * either loaded the document out of its own library or took delivery of a file,
- * and it tells the frame once, with the write rules.
- *
- * Wrong in the safe direction if it is ever wrong: a copy treated as somebody
- * else's takes a fresh replica id, which costs an id and nothing else. A copy
- * wrongly treated as this device's writes under an id another person is also
- * writing under, and the next exchange refuses honest rows as tampering.
- */
-let mountIsOwnCopy = false;
 
 /**
  * The link this document arrived by, when it arrived by one (backlog 3.5).
@@ -1835,8 +1806,6 @@ type Carrier = {
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   markStep("reading the document");
-  // Arriving from outside, whatever the carrier: not this device's copy.
-  mountIsOwnCopy = false;
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
 
@@ -2371,12 +2340,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
 
     if (opfsDb && opfsDb.byteLength > 0 && !brought) {
       // Resuming this device's own held copy — a stored database for a UUID this
-      // device holds, with nothing newer arriving. It keeps the replica id it has
-      // been writing under (T1-D33): mounting the stored bytes is not enough,
-      // because the write surface adopts a *fresh* replica unless it is told this
-      // is a resume, and a fresh replica rebinds a session's open seat and
-      // contests it — the game-killer this bounds. A resume, not an arrival.
-      mountIsOwnCopy = true;
+      // device holds, with nothing newer arriving. It writes under the same
+      // author id it always has (T1-D33), because that id is this device's key,
+      // not a property of the copy: a resume cannot rebind a session's seat.
       markStep("preparing the document");
       loaded = await resealCartridge(cartridge, opfsDb);
       console.info(`dai: resumed this device's own copy from the stored database (${opfsDb.byteLength} bytes)`);
@@ -2849,17 +2815,17 @@ window.addEventListener("message", (event) => {
         );
         return;
       }
-      const replica = await replicaForMount(loaded.manifest.documentUuid, mountIsOwnCopy);
+      // The first use of the person key is here, on the first mount that can
+      // write: made now if this device has none (docs/identity.md).
+      const replica = await person().then((me) => me.id).catch(() => null);
       (event.source as Window | null)?.postMessage(
         {
           type: TO_DOCUMENT.WRITE_RULES,
           sessionNonce: mountedNonce,
           source,
-          // T1-D22: whether this copy keeps the replica id it holds or takes a
-          // new one. See mountIsOwnCopy.
-          ownCopy: mountIsOwnCopy,
-          // d22: the id this device writes this document under, when it has one
-          // recorded. The frame writes under it whatever the mounted file holds.
+          // The author id this device writes under: the fingerprint of the
+          // host's person key. The frame writes under it whatever the mounted
+          // file holds, on every mount (docs/identity.md, binding rule 1).
           replica,
           // T1-D32: who may close this session, from the signed manifest. The
           // frame refuses a close the policy forbids at write time; the views are
@@ -3148,12 +3114,6 @@ window.addEventListener("message", (event) => {
            * reason. Off the save's path, like the replica record below.
            */
           if (data.payload?.setup !== true) askForPersistence("after the first save");
-          // Off the save's path: the acknowledgment below must not wait on it.
-          void (async () => {
-            if ((await ownReplicaOf(documentUuid)) !== null) return;
-            const held = await requestReplicaId();
-            if (held && /^[0-9a-f]{32}$/.test(held)) await recordOwnReplica(documentUuid, held).catch(() => undefined);
-          })();
           (event.source as Window | null)?.postMessage(
             { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId },
             "*",
@@ -4946,37 +4906,13 @@ void start();
 void confusables();
 
 /**
- * The mounted copy's replica id, hex, or null when it has none yet.
+ * The mounted copy's replica id, in the shown author-id form, or null when it has none yet.
  *
  * Asks the frame, which reads it from `_dai_replica`. For tests that need to
  * assert identity directly — that an arrived copy took its own id at mount and
  * kept it across a reopen (D22), and that an own copy's id does not change —
  * rather than inferring it from whether a later exchange collided.
  */
-/**
- * The replica id this copy is to write under, decided before the frame writes (d22).
- *
- * Recorded: that id, always. The frame takes it over whatever the mounted file
- * carries, so a reopen that falls back to an arrived file is still this device.
- * Not recorded and arriving: a new id, recorded before the frame is told, so
- * a reload at any moment after this finds it. Not recorded and this device's
- * own (a copy from before the record existed): nothing, and the frame keeps
- * what it holds; the first written save records it (see the save path).
- */
-async function replicaForMount(documentUuid: string, ownCopy: boolean): Promise<string | null> {
-  const recorded = await ownReplicaOf(documentUuid);
-  if (recorded) return recorded;
-  if (ownCopy) return null;
-  const fresh = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  try {
-    await recordOwnReplica(documentUuid, fresh);
-    return fresh;
-  } catch {
-    // No storage to record it in: the frame mints its own, as before.
-    return null;
-  }
-}
-
 function requestReplicaId(): Promise<string | null> {
   return new Promise((resolve) => {
     const target = cartridgeFrame.contentWindow;
@@ -4990,11 +4926,11 @@ function requestReplicaId(): Promise<string | null> {
       resolve(null);
     }, 5_000);
     const onReply = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; nonce?: string; replica?: string | null };
-      if (data?.type === "DAI_FRAME_REPLICA_ID" && data.nonce === nonce) {
+      const data = event.data as { type?: string; nonce?: string; replica?: Uint8Array | null };
+      if (data?.type === TO_HOST.REPLICA_ID_ANSWER && data.nonce === nonce) {
         window.clearTimeout(timer);
         window.removeEventListener("message", onReply);
-        resolve(data.replica ?? null);
+        resolve(data.replica instanceof Uint8Array ? showAuthorId(data.replica) : null);
       }
     };
     window.addEventListener("message", onReply);
@@ -5089,6 +5025,10 @@ Object.defineProperty(window, "__runner", {
     // The mounted copy's replica id, for a test that asserts D22 as a fact
     // about identity rather than the absence of a collision.
     replicaId: requestReplicaId,
+    // This device's author id, asked of the host and never of the frame, so a
+    // test can hold the frame's id against it (docs/identity.md). Asking is a
+    // use: it makes the key if there is none.
+    authorId,
   },
 });
 

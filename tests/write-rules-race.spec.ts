@@ -81,7 +81,6 @@ test.describe("write rules that arrive before the frame is listening", () => {
             type: writeRules,
             sessionNonce: data.payload?.sessionNonce ?? null,
             source,
-            ownCopy: true,
           },
           "*",
         );

@@ -24,6 +24,12 @@ export const KEYS = {
   MANIFEST_FALLBACK: "dai:manifest-fallback",
   /** Local storage: the document this device was last showing, for a resume. */
   RESUME: "dai:resume",
+  /**
+   * IndexedDB, the opener's key store: this device's person key (docs/identity.md).
+   * One per device, not per document. Made on first use, never at boot; losing
+   * it makes this device a new author, and nothing re-creates the old one.
+   */
+  PERSON_KEY: "dai:person-key",
 } as const;
 
 /** Local storage: the colour under the clock this document last declared, per colour scheme. */

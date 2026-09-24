@@ -47,6 +47,11 @@ const ALLOWED = [
     name: "verifyClaim",
     why: "the judge of the isolation conformance run: host-profile.spec mounts the probe in the real runner and holds the runner's own handshake claim against what the probe found; its caller is that run, by design",
   },
+  {
+    file: "src/identity.ts",
+    name: "signBytes",
+    why: "the person key's signer, landed with the key in step 2 of the identity sitting (docs/identity.md); step 3 wires it to the host's sign message for every batch, and removes this entry in the same change",
+  },
 ];
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "hosts", "test-results", "target", ".git", "generated"]);
