@@ -2069,6 +2069,16 @@
       "tests/packaging.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/person-key-read.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/person-key-read.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/presign.spec.ts": [
       "apps/runner/api/",
       "src/cbor.ts",
@@ -2896,6 +2906,17 @@
       "tests/sender.spec.ts",
       "tsup.config.ts",
       "website/"
+    ],
+    "tests/seq-floor.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/chess-play.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/seq-floor.spec.ts",
+      "tsup.config.ts"
     ],
     "tests/session-export-meta.spec.ts": [
       "src/replicated-rows.ts",
