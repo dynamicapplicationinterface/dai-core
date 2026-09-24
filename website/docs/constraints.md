@@ -540,8 +540,8 @@ When a tool is available, call it with the files as its arguments. Otherwise wri
 
 **Applies to** passable, session. **Enforcement:** refused at run time.
 
-A device holds one live copy of a document. A copy of a document this device already holds is merged into the held copy when it arrives; it is never opened as a second live copy beside it. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host does this before the application runs.
+A device holds one copy of a document. A copy of a document this device already holds never becomes a second copy beside it: when it arrives, the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host decides before the application runs. Two tabs showing the same held copy are not yet covered (backlog D105).
 
-**Why.** Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two live copies on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. The successor that removes the hazard is row identity by content hash (backlog D104).
+**Why.** Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two copies writing on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. The successor that removes the hazard is row identity by content hash (backlog D104).
 
 <small>Depends on [`apps/runner/src/main.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/apps/runner/src/main.ts).</small>

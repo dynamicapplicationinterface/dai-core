@@ -35,6 +35,10 @@ test("check-names fails on a bridge message literal outside its owner, and names
     [
       'window.parent.postMessage({ type: "DAI_HOST_SIGN", bytes }, "*");',
       'frame.postMessage({ type: "dai:sign" }, "*");',
+      "switch (event.data.type) {",
+      '  case "dai:signed":',
+      "    break;",
+      "}",
       "",
     ].join("\n"),
     "utf8",
@@ -45,6 +49,8 @@ test("check-names fails on a bridge message literal outside its owner, and names
   expect(output).toContain("DAI_HOST_SIGN");
   expect(output).toContain("stray.ts:2");
   expect(output).toContain("dai:sign");
+  expect(output, "a case label in a switch on the type counts too").toContain("stray.ts:4");
+  expect(output).toContain("dai:signed");
 });
 
 test("check-names passes a folder that takes its names from the owner", () => {

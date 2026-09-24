@@ -526,8 +526,8 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "identity",
     rule:
-      "A device holds one live copy of a document. A copy of a document this device already holds is merged into the held copy when it arrives; it is never opened as a second live copy beside it. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host does this before the application runs.",
-    why: "Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two live copies on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. The successor that removes the hazard is row identity by content hash (backlog D104).",
+      "A device holds one copy of a document. A copy of a document this device already holds never becomes a second copy beside it: when it arrives, the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host decides before the application runs. Two tabs showing the same held copy are not yet covered (backlog D105).",
+    why: "Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two copies writing on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. The successor that removes the hazard is row identity by content hash (backlog D104).",
     enforced: ["runtime"],
     anchors: [{ file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" }],
   },

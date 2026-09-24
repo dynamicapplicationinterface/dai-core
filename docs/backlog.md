@@ -4364,6 +4364,34 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D106 — The message-name scan cannot see a template literal or a split `type:`
+
+*Status: open, minor. Filed 24 September from the identity sitting's cold
+review.*
+
+`literalProblems` (`src/names-check.ts`) reads line by line: any quoted
+`DAI_HOST_…`/`DAI_FRAME_…` string, and a quoted `dai:…` string in a `type:`,
+a `.type ===` comparison, or a `case` label. It does not see a name assembled in
+a template literal (`` `dai:${x}` ``) or a `{ type:` whose value is on the next
+line. Nothing in the tree does either today. What would close it: scan the
+TypeScript AST for string and template literals in those positions instead of
+lines.
+
+#### D105 — Two tabs on one held copy can both write under one author
+
+*Status: open. Filed 24 September from the identity sitting's cold review.*
+
+`IDENTITY-ONE-LIVE-COPY` keeps one copy of a document per device, but two tabs
+can show that one copy at once. D41's lock refuses the stale tab's *save*; it
+does not stop the stale tab stamping rows or publishing them to the mailbox. So
+two tabs can issue the same `(author, seq)` for different rows, and the
+exchange refuses one as tampering.
+
+**Likely closer, not built:** the per-document sequence high-water mark the
+sitting keeps in IndexedDB beside the person key. If each tab reserves its seq
+through one IndexedDB transaction before it stamps, two tabs cannot reserve the
+same number. The row-identity successor (D104) removes the hazard outright.
+
 #### D104 — Row identity by content hash, the successor to `(author, seq)`
 
 *Status: open, V1.1. Ruled 24 September: noted as the successor, not built.*
