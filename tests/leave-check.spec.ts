@@ -49,9 +49,12 @@ test("a download of bytes holding an unsealed row of this device's is refused, a
     .evaluate(async () => {
       const db = (window as any).daiKit.db;
       const game = db.selectObjects("SELECT lower(hex(_r_entity)) id, lower(hex(_r_session)) s FROM games_current LIMIT 1")[0];
+      // A move names the seat it acts for (identity step 5); this copy holds the
+      // practice board's seats.
+      const kit = (window as any).daiKit;
       (window as any).dai.replicated.insert(
         "moves",
-        { game_id: game.id, ply: 99, color: "w", from_sq: "a2", to_sq: "a3", promotion: null, san: "a3", draw_offer: 0 },
+        { seat: kit.seatBytes(kit.mySeat(game.s)), game_id: game.id, ply: 99, color: "w", from_sq: "a2", to_sq: "a3", promotion: null, san: "a3", draw_offer: 0 },
         game.s,
       );
       const bytes = (window as any).dai.exportDatabase(db);

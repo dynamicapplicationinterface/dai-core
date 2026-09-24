@@ -107,7 +107,7 @@ function renderContested(st){
  if(s.amCreator&&s.contested){
   banner.hidden=false;invite.hidden=false;
   $('contested-title').textContent='Two people opened this invite.';
-  $('contested-detail').textContent='The invite reached more than one device, so its seat is contested and neither can play it. Send a fresh invite to the one person you meant to play, then share the game again.';
+  $('contested-detail').textContent='The invite reached more than one device. Whoever took the seat first holds it. If that is not the person you meant to play, send them a fresh invite and share the game again.';
   return false; // the creator's own seat is fine
  }
  if(!s.amCreator&&s.mineOut){
