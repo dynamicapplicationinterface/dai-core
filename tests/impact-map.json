@@ -1869,6 +1869,7 @@
       "src/inline.ts",
       "src/kit.ts",
       "src/mcp.ts",
+      "src/publisher-identity.ts",
       "src/recipe.ts",
       "src/refusals.ts",
       "src/replicated.ts",
