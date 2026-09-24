@@ -12,7 +12,7 @@ Per vector:
 | `expected-ab.txt` | the canonical dump of A after merging B into it |
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
 | `result.json` | the counts, refused ids and refused batches the merge reports |
-| `verdicts.json` | the verdict on every signed header in either copy: `ok` or a `BATCH_` code |
+| `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok` or a `BATCH_` code |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -53,20 +53,31 @@ fixtures are written and reused after.
 **Verdicts.** A merge verifies every header the other copy holds before it takes
 anything (docs/format.md): it finds the rows the header lists, digests them, and
 checks the signature. `verdicts.json` is that check's answer for every header in
-`a.db` and `b.db`, made by the TypeScript verifier; the canonical bytes and the
+`a.db` and in `b.db`, each against its own copy's rows (so a header can verify in
+one and not the other), made by the TypeScript verifier; a merge of B into A
+reads `b`'s, and of A into B, `a`'s; the canonical bytes and the
 signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
 the verdicts and does the rest itself, which is the part these vectors test:
 
 - a header that is not `ok` is not kept and lists nothing;
-- a row is taken when an `ok` header lists it (its author, one of its seqs),
-  whatever the row says, and names the header it names if that one lists it,
-  else the lowest listed id;
+- a header lists its rows in `covers` as `[table, seq]`, the author being its own;
+- a row is taken when an `ok` header lists it (its table, its author, its
+  seq), whatever the row says, and names the header it names if that one lists
+  it, else the lowest listed id;
 - a row that names a header and is listed by none is refused, as
-  `BATCH_DIGEST_MISMATCH` against the header it names unless that header was
-  refused already;
-- a row that names none and is listed by none is unsigned, and merges as before.
+  `BATCH_DIGEST_MISMATCH` in the name of the row's own author, unless the
+  header it names was refused already;
+- a row that names none and is listed by none is unsigned, and merges as before;
+- one author's seq names one row whatever table it is in: a row whose
+  (author, seq) the copy holds in another table is refused (`rejected`);
+- a signed row outranks an unsigned row at the same id: the unsigned one is
+  removed, the signed one takes its place, and the removed id is reported in
+  `rejected`; whatever the removed row superseded is a head again unless
+  something else names it. Signed rows are placed before unsigned ones, so the
+  answer never depends on table order.
 
-`merge-seal-stowaway`, `merge-seal-tampered` and `merge-seal-lost-pointer` each
-disagree with a reader that has one of those wrong. `refusedBatches` in
-`result.json` is one entry per batch and reason, ordered by batch id, with the
-author id shown as base64url.
+`merge-seal-stowaway`, `merge-seal-stowaway-other`, `merge-seal-tampered`,
+`merge-seal-lost-pointer`, `merge-seal-cross-table` and `merge-seal-outranks`
+each disagree with a reader that has one of those wrong. `refusedBatches` in
+`result.json` is one entry per batch, reason and author, ordered by batch id,
+then reason, then author id in hex, with the author id shown as base64url.
