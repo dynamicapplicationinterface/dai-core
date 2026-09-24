@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
@@ -25,20 +28,19 @@ const SESSIONS = `-- dai:profile session max_parties=2 close=any
 CREATE TABLE moves (ply INTEGER NOT NULL, san TEXT NOT NULL);
 `;
 
-function open(schema: string): Rows & { close(): void; bytes(): Uint8Array } {
+function open(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
   db.exec(rewriteReplicated(schema).sql);
   return wrap(db);
 }
 
-function wrap(db: DatabaseSync): Rows & { close(): void; bytes(): Uint8Array } {
+function wrap(db: DatabaseSync): Rows & { close(): void } {
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
     run: (sql, params = []) => {
       db.prepare(sql).run(...(params as never[]));
     },
     close: () => db.close(),
-    bytes: () => new Uint8Array((db as unknown as { serialize(): Uint8Array }).serialize()),
   };
 }
 
@@ -101,17 +103,18 @@ test("a batch holds one author's rows only: rows another author wrote are never 
 
 test("pending rows stored on disk are not orphans: after a reopen they seal at the next leave", async () => {
   const ada = await person();
-  const first = open(PLAIN);
+  // A database on disk, as a stored copy is.
+  const path = join(mkdtempSync(join(tmpdir(), "dai-seal-")), "stored.sqlite");
+  const firstDb = new DatabaseSync(path);
+  firstDb.exec(rewriteReplicated(PLAIN).sql);
+  const first = wrap(firstDb);
   ensureReplica(first, ada.author);
   createEntity(first, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
   createEntity(first, "notes", crypto.getRandomValues(new Uint8Array(16)), { body: "unsent" });
   // The tab is closed before anything left: the stored database holds them pending.
-  const stored = first.bytes();
   first.close();
 
-  const reopened = new DatabaseSync(":memory:");
-  (reopened as unknown as { deserialize(bytes: Uint8Array): void }).deserialize(stored);
-  const db = wrap(reopened);
+  const db = wrap(new DatabaseSync(path));
   expect(pendingCount(db), "the stored rows came back pending").toBe(2);
   createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "Nf3" });
 

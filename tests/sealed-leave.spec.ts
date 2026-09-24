@@ -51,6 +51,24 @@ test("a saved document's rows are sealed, and every batch verifies under this de
   const author = (await page.evaluate(() => (window as any).__runner.authorId())) as string;
   const document = (await page.evaluate(() => (window as any).__runner.loaded?.manifest?.documentUuid ?? null)) as string | null;
 
+  // Every row written is sealed by the saves that follow it. A row written just
+  // after a save is pending until the next one, so wait for what the claim is
+  // about: nothing of this device's left pending.
+  const pendingOwn = () =>
+    ui.locator("#app").evaluate(() => {
+      const db = (window as any).daiKit.db;
+      const me = db.selectObjects("SELECT id FROM _dai_replica")[0].id;
+      let n = 0;
+      for (const { name } of db.selectObjects("SELECT name FROM sqlite_schema WHERE type = 'table'")) {
+        const cols = db.selectObjects(`SELECT name FROM pragma_table_info('${name}')`).map((c: any) => c.name);
+        if (cols.includes("_r_batch") && cols.includes("_r_replica")) {
+          n += Number(db.selectObjects(`SELECT count(*) AS n FROM "${name}" WHERE _r_replica = ? AND _r_batch IS NULL`, [me])[0].n);
+        }
+      }
+      return n;
+    });
+  await expect.poll(pendingOwn, { timeout: 30_000, message: "every row this device wrote is sealed by the saves after it" }).toBe(0);
+
   // Everything the checks need, out of the page as plain arrays.
   const held = await ui.locator("#app").evaluate(() => {
     const db = (window as any).daiKit.db;
