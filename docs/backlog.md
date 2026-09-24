@@ -552,6 +552,9 @@ agreeing by accident.
   signed batches, and the headers in the canonical dump), watching both readers
   fail, and then bringing them level. The reusable lesson: agreement between
   implementations is evidence only for what the vectors exercise.
+  A second case, same day: the Rust reader looked a row up in another table by
+  the arriving row's column positions, and agreed everywhere until the vectors
+  first used two shared tables (identity step 4 review; fixed in aaed42c).
 - **A tool that reports success for work it did not do (21 September).**
   `context.setOffline(true)` stops a loopback request on Chromium and does not
   on Firefox: the call returns, the flag reads as set, and the publish goes
@@ -4380,6 +4383,20 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
    that "update" has exactly one spelling (succession);
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
+
+#### D113 — A publish in flight overwrote a write's "not up to date"
+
+*Status: closed 24 September (740b2cb). Kept for the cross-reference below.*
+
+A publish already in flight had answered before a write; the write's AUTHORED
+marked the lane not up to date, and the publish then finished and set it up to
+date again from its stale answer. A closed game's lane could retire with its
+close unsent. Now a write (or a landed seal's nudge) during an in-flight
+publish asks for another. Found by the no-retire test in
+`tests/mailbox-link-e2e.spec.ts`, red 3 of 6 on the code before the fix.
+
+**The fix likely also cleared returning-document:511 and two Firefox retries in
+run 36033989571; not isolated.** If any of those recurs, start here.
 
 #### D112 — A move held for a save that never lands is honest but silent
 
