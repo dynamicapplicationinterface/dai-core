@@ -38,7 +38,7 @@ const read = (path: string): string => readFileSync(resolve(repo, path), "utf8")
  * that line, and a line that moves fails a test.
  */
 
-const ID_SHAPED = /\b(?:SHAPE|SHARED|SESSION|NO|KIT|STORE|MODULE|ONE|SHARE|SCHEMA|SEED|WRITE|MIGRATE|TIMES|ICON|DESCRIBE|EDGE|TOP|LOOK|HANDOVER)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
+const ID_SHAPED = /\b(?:IDENTITY|SHAPE|SHARED|SESSION|NO|KIT|STORE|MODULE|ONE|SHARE|SCHEMA|SEED|WRITE|MIGRATE|TIMES|ICON|DESCRIBE|EDGE|TOP|LOOK|HANDOVER)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
 
 function everyAnchor(): { owner: string; anchor: Anchor }[] {
   return [
