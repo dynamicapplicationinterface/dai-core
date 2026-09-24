@@ -1328,6 +1328,16 @@
       "src/x509.ts",
       "tests/launch-failsafe.spec.ts"
     ],
+    "tests/leave-check.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/leave-check.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/library-record.spec.ts": [
       "apps/runner/src/main.ts",
       "apps/runner/src/opfs.ts",

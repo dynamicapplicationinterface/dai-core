@@ -552,6 +552,17 @@ CREATE TRIGGER IF NOT EXISTS ${q}__sealed_once BEFORE UPDATE OF _r_batch ON ${q}
   WHEN OLD._r_batch IS NOT NULL
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
+-- And only to a batch whose signed header this copy holds, however the row got
+-- here: a seal, a merge, or application SQL. A header is written before any row
+-- names it (the seal, staging and the merge all do that), so a row naming one
+-- that is absent is a row claiming a signature nobody gave.
+CREATE TRIGGER IF NOT EXISTS ${q}__batch_known_insert BEFORE INSERT ON ${q}
+  WHEN NEW._r_batch IS NOT NULL AND NOT EXISTS (SELECT 1 FROM _dai_batch WHERE id = NEW._r_batch)
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE: _r_batch names no header in _dai_batch'); END;
+CREATE TRIGGER IF NOT EXISTS ${q}__batch_known_update BEFORE UPDATE OF _r_batch ON ${q}
+  WHEN NEW._r_batch IS NOT NULL AND NOT EXISTS (SELECT 1 FROM _dai_batch WHERE id = NEW._r_batch)
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE: _r_batch names no header in _dai_batch'); END;
+
 CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 

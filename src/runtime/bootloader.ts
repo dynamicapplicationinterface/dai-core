@@ -3880,9 +3880,40 @@ async function boot(): Promise<void> {
       return;
     }
 
-    writeContainer(files, request.sqlite ?? documentBytes, request.method ?? "auto")
+    /*
+     * A file written here leaves the device without passing the host. For a
+     * replicated document the host is asked first, with the very bytes, and
+     * opens them itself: a row of this device's that nobody signed does not
+     * leave (cold review of identity step 3, #2). No host, no key, and nothing
+     * of this device's could have been signed, so there is nothing to ask.
+     */
+    const outgoing = request.sqlite ?? documentBytes;
+    const replicated = Array.isArray(manifest?.replication?.tables) && manifest.replication.tables.length > 0;
+    const checked: Promise<void> =
+      hostAvailable && replicated && outgoing
+        ? new Promise((resolve, reject) => {
+            const id = randomHex(16);
+            const timer = window.setTimeout(() => {
+              window.removeEventListener("message", onChecked);
+              reject(new Error("The host did not check this file in time, so it was not written."));
+            }, 15000);
+            const onChecked = (evt: MessageEvent): void => {
+              if (evt.source !== window.parent) return;
+              const data = evt.data as { type?: string; id?: string; ok?: boolean; error?: string };
+              if (data?.type !== TO_DOCUMENT.LEAVE_CHECKED || data.id !== id) return;
+              window.clearTimeout(timer);
+              window.removeEventListener("message", onChecked);
+              if (data.ok) resolve();
+              else reject(new Error(data.error || "The host would not let this file leave the device."));
+            };
+            window.addEventListener("message", onChecked);
+            window.parent.postMessage({ type: TO_HOST.LEAVE_CHECK, sessionNonce, id, sqlite: outgoing }, "*");
+          })
+        : Promise.resolve();
+    checked
+      .then(() => writeContainer(files, outgoing, request.method ?? "auto"))
       .then((result) => reply({ ok: true, result }))
-      .catch((error: unknown) => reply({ ok: false, error: String(error) }));
+      .catch((error: unknown) => reply({ ok: false, error: error instanceof Error ? error.message : String(error) }));
   });
 
   if (window.parent !== window) {

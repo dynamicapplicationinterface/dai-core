@@ -752,6 +752,24 @@ export function mergeFrom(
   }
   local.run("UPDATE _dai_replica SET lc = ?", [ceiling]);
 
+  /*
+   * The signed headers travel with the rows that name them (docs/identity.md).
+   * A header is the same bytes on every copy, so this is a plain union by id.
+   * Verifying them is the merge's next step (step 4); here they are carried, so
+   * a copy that merges a file can pass the file's signatures on. Before the rows:
+   * a row may name only a header this copy holds.
+   */
+  const hasBatchTable = (rows: Rows): boolean =>
+    rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  if (hasBatchTable(local) && hasBatchTable(sibling)) {
+    for (const header of sibling.all("SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch")) {
+      local.run(
+        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"]],
+      );
+    }
+  }
+
   // Union, and nothing else. A replica id seen is a replica id known.
   const known = new Set(
     local.all("SELECT hex(id) AS h FROM _dai_replicas").map((row) => String(row["h"])),
@@ -812,23 +830,6 @@ export function mergeFrom(
          */
         result.rejected.push(rowId(row._r_replica, row._r_seq));
       }
-    }
-  }
-
-  /*
-   * The signed headers travel with the rows that name them (docs/identity.md).
-   * A header is the same bytes on every copy, so this is a plain union by id.
-   * Verifying them is the merge's next step (step 4); here they are carried, so
-   * a copy that merges a file can pass the file's signatures on.
-   */
-  const hasBatchTable = (rows: Rows): boolean =>
-    rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
-  if (hasBatchTable(local) && hasBatchTable(sibling)) {
-    for (const header of sibling.all("SELECT id, author, lc, sig, pub, att, version, digest FROM _dai_batch")) {
-      local.run(
-        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"]],
-      );
     }
   }
 

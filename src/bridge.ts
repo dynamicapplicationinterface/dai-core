@@ -50,6 +50,12 @@ export const TO_HOST = {
   ISOLATION_REPORT: "dai:isolation-report",
   MERGE_RESULT: "DAI_HOST_MERGE_RESULT",
   REFUSED: "DAI_HOST_REFUSED",
+  /**
+   * The shell asking the host to check database bytes before it writes them
+   * to a file itself (a download or a picker save): the host opens them and
+   * refuses any row of this author's left unsigned (identity step 3, #2).
+   */
+  LEAVE_CHECK: "DAI_HOST_LEAVE_CHECK",
   /** The mounted copy's replica id, answering TO_DOCUMENT.REPLICA_ID. Once spelled by hand on both sides (D100). */
   REPLICA_ID_ANSWER: "DAI_HOST_REPLICA_ID_ANSWER",
   REQUEST_SHARE: "DAI_HOST_REQUEST_SHARE",
@@ -76,6 +82,8 @@ export const TO_DOCUMENT = {
   FLUSH: "DAI_HOST_FLUSH",
   HANDSHAKE_ACK: "DAI_HOST_HANDSHAKE_ACK",
   INSETS: "DAI_HOST_INSETS",
+  /** The host's answer to a leave check: the bytes may go, or why not. */
+  LEAVE_CHECKED: "DAI_HOST_LEAVE_CHECKED",
   MERGE: "DAI_HOST_MERGE",
   REPLICA_ID: "DAI_HOST_REPLICA_ID",
   SAVE_ACK: "DAI_HOST_SAVE_ACK",

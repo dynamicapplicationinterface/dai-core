@@ -29,6 +29,7 @@ const TO_HOST_ON_THE_WIRE = [
   "DAI_HOST_HANDSHAKE",
   // The one bridge name with the frame prefix; the probe document posts it (D69).
   "dai:isolation-report",
+  "DAI_HOST_LEAVE_CHECK",
   "DAI_HOST_MERGE_RESULT",
   "DAI_HOST_REFUSED",
   "DAI_HOST_REPLICA_ID_ANSWER",
@@ -50,6 +51,7 @@ const TO_DOCUMENT_ON_THE_WIRE = [
   "DAI_HOST_FLUSH",
   "DAI_HOST_HANDSHAKE_ACK",
   "DAI_HOST_INSETS",
+  "DAI_HOST_LEAVE_CHECKED",
   "DAI_HOST_MERGE",
   "DAI_HOST_REPLICA_ID",
   "DAI_HOST_SAVE_ACK",

@@ -59,7 +59,7 @@ import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
 import { listMailboxes } from "./opfs.js";
-import { inviteFor } from "./invite.js";
+import { inviteFor, unsealedOwnRows } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -2511,13 +2511,15 @@ async function exportContainer(): Promise<void> {
    * `currentHtml` has always flushed first. This path did not, which is the
    * cost of two functions packaging the same document.
    */
+  let opfsDb: Uint8Array | null;
   try {
     await flushBeforeLeaving();
+    opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+    await mayLeave(opfsDb);
   } catch (error) {
     say((error as Error).message, true);
     return;
   }
-  const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   const activeCartridge = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   loaded = activeCartridge;
   if (opfsDb) await noteSentOut(activeCartridge, opfsDb);
@@ -3055,6 +3057,21 @@ window.addEventListener("message", (event) => {
     // Not during a rehearsal: that use is the kit's own, on a page nobody
     // has touched, and the offer is once per document.
     if (fromMountedContainer(event, data) && !installSuppressed && !rehearsing) keeper?.offer();
+  } else if (data.type === TO_HOST.LEAVE_CHECK) {
+    // The shell is about to write a file itself (a download or a picker save)
+    // and asks first; the answer comes from the bytes, opened here (#2).
+    if (!fromMountedContainer(event, data)) return;
+    const answer = (ok: boolean, error?: string): void => {
+      (event.source as Window | null)?.postMessage(
+        { type: TO_DOCUMENT.LEAVE_CHECKED, id: data.id, ok, ...(error ? { error } : {}) },
+        "*",
+      );
+    };
+    const bytes = data.sqlite instanceof Uint8Array ? data.sqlite : null;
+    void mayLeave(bytes).then(
+      () => answer(true),
+      (error: unknown) => answer(false, error instanceof Error ? error.message : String(error)),
+    );
   } else if (data.type === TO_HOST.SIGN) {
     /*
      * Signing a batch header with this device's person key (docs/identity.md,
@@ -3358,6 +3375,27 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * been acknowledged. A shell that does not answer — an older one — is given
  * a moment and then not waited for.
  */
+/** Said when outgoing bytes would carry a row of this device's that nobody signed. */
+const UNSIGNED_LEAVE =
+  "This has changes of yours that were never signed, so it was not sent or saved to a file. " +
+  "Let the app save once more, then try again.";
+
+/**
+ * Whether these database bytes may leave this device: for a replicated
+ * document, none of this author's rows in them is pending or names a batch the
+ * bytes hold no header for. The host opens the bytes itself (cold review of
+ * identity step 3, #2); the frame belongs to the document. Throws the sentence
+ * when they may not.
+ */
+async function mayLeave(bytes: Uint8Array | null | undefined): Promise<void> {
+  if (!bytes || !loaded || !declaresReplication(loaded.manifest)) return;
+  const mount = mountWrites && mountWrites.nonce === mountedNonce ? mountWrites : null;
+  const writes = mount ? await mount.decided : null;
+  // No key this mount may write under: nothing of this device's could be signed.
+  if (!writes || "refused" in writes) return;
+  if ((await unsealedOwnRows(bytes, writes.me.id)) > 0) throw new Error(UNSIGNED_LEAVE);
+}
+
 /**
  * Flushes before the document leaves this device (an export, a share, an
  * invite). For a replicated document a flush that did not land refuses the
@@ -3761,6 +3799,7 @@ async function currentHtml(withData = true): Promise<string> {
   }
   await flushBeforeLeaving();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+  await mayLeave(opfsDb);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   if (opfsDb) await noteSentOut(current, opfsDb);
   return current.supplied.length > 0 ? refatten(current) : current.html;
@@ -3794,6 +3833,7 @@ async function inviteHtml(session: string): Promise<string> {
   await flushBeforeLeaving();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
+  await mayLeave(opfsDb);
   // Made by the one invite function every host shares (exportSession), then
   // re-verified before it leaves, as any resealed document is.
   const invite = await reverify(await inviteFor(loaded, opfsDb, session));

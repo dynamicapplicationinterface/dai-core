@@ -200,6 +200,26 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
 
     c.execute_batch("BEGIN").unwrap();
 
+    // The signed headers travel with the rows that name them: a union by id, before
+    // any row, since a row may name only a header this copy holds.
+    let has = |schema: &str| -> bool {
+        c.query_row(
+            &format!("SELECT count(*) FROM {}.sqlite_master WHERE type='table' AND name='_dai_batch'", schema),
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+            > 0
+    };
+    if has("main") && has("S") {
+        c.execute_batch(
+            "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest) \
+             SELECT id, author, lc, sig, pub, att, version, digest FROM S._dai_batch",
+        )
+        .unwrap();
+    }
+
+
     for t in &tables {
         if !s_tables.iter().any(|x| x.name == t.name) {
             continue;
@@ -351,24 +371,6 @@ fn merge(work: &Path, sibling: &Path) -> (Counts, String) {
             )
             .unwrap();
         counts.new_replicas += n as i64;
-    }
-
-    // The signed headers travel with the rows that name them: a union by id.
-    let has = |schema: &str| -> bool {
-        c.query_row(
-            &format!("SELECT count(*) FROM {}.sqlite_master WHERE type='table' AND name='_dai_batch'", schema),
-            [],
-            |r| r.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-            > 0
-    };
-    if has("main") && has("S") {
-        c.execute_batch(
-            "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest) \
-             SELECT id, author, lc, sig, pub, att, version, digest FROM S._dai_batch",
-        )
-        .unwrap();
     }
 
     c.execute("UPDATE main._dai_replica SET lc = ?1", [lc_max])

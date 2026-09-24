@@ -206,6 +206,34 @@ test("a merge raises the counter for the author it is told, not for whatever _da
   source.close();
 });
 
+test("a row can name only a batch whose header this copy holds: the engine refuses any other", async () => {
+  /*
+   * Cold review of identity step 3, #2(c): application SQL could set _r_batch on
+   * its own pending rows to any 16 bytes, so they counted as sealed and were
+   * never signed, and the mailbox stalled on a batch with no header. The seal
+   * is a courtesy to the honest path; the verifier is the enforcement, and this
+   * keeps the honest path from being walked off by accident or on purpose.
+   */
+  const ada = await person();
+  const db = open(PLAIN);
+  ensureReplica(db, ada.author);
+  createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+  const bogus = new Uint8Array(16).fill(0x42);
+  expect(() => db.run("UPDATE moves SET _r_batch = ?", [bogus]), "named by an update").toThrow(/REPLICATED_TABLE_IMMUTABLE|_dai_batch/);
+  expect(
+    () =>
+      db.run(
+        "INSERT INTO moves (ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES (2, 'd4', ?, 9, 9, ?, '[]', 0, ?)",
+        [ada.author, crypto.getRandomValues(new Uint8Array(16)), bogus],
+      ),
+    "named by an insert",
+  ).toThrow(/REPLICATED_TABLE_IMMUTABLE|_dai_batch/);
+  // A real seal still goes through: its header is written first.
+  recordSeal(db, await signBatch(pendingBatches(db, ada.author, ["moves", "notes"])[0]!, { document: DOC, keys: ada.keys }));
+  expect(pendingCount(db)).toBe(0);
+  db.close();
+});
+
 test("a row is sealed once: _r_batch goes from NULL to an id, and the engine refuses any change after", async () => {
   const ada = await person();
   const db = open(PLAIN);
