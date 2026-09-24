@@ -971,6 +971,14 @@
       "src/x509.ts",
       "tests/idb-timeout.spec.ts"
     ],
+    "tests/identity-vectors.spec.ts": [
+      "conformance/signing-key.pem",
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-rows.ts",
+      "tests/identity-vectors.spec.ts"
+    ],
     "tests/inline-carrier.spec.ts": [
       "conformance/inline-dictionary.bin",
       "conformance/signing-key.pem",
@@ -3058,6 +3066,15 @@
       "tests/fixture/",
       "tests/sibling.spec.ts",
       "tsup.config.ts"
+    ],
+    "tests/signed-batch.spec.ts": [
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "tests/signed-batch.spec.ts"
     ],
     "tests/site-claims.spec.ts": [
       "src/refusals.ts",
