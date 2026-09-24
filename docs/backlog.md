@@ -4381,6 +4381,21 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D112 — A move held for a save that never lands is honest but silent
+
+*Status: open. Ruled 24 September (identity step 4 review): filed, not this
+sitting.*
+
+A sealed batch is published only once a save holding its seal has landed. When
+the store keeps refusing (a full quota, a save refused as from another tab) the
+move stays on this device, the lane stays open, and nothing is lost; that fails
+closed. But the only thing the person sees is the save failing. Nothing says
+that the move was not sent, so the other player waits and this one believes
+they have played. What closes it: a kit sentence, owned by the kit like the
+loss sentence, shown while a batch of this person's is held ("Your last move is
+saved here but hasn't been sent."), and cleared when it leaves. The frame
+already knows (the \`held\` answer); the host would carry it to the kit.
+
 #### D111 — The reference readers take the verifier's word for every signature
 
 *Status: open. Ruled 24 September (identity step 4): accepted for the sitting,
