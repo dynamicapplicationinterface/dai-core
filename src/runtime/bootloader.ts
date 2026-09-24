@@ -1501,9 +1501,14 @@ function bridgeMain(names: FrameNames): void {
       merge.stageBatch(frameRows(staged), batch, tables);
       // Verified before the transaction opens, as a file merge is.
       const verdicts = await merge.verifyBatches(frameRows(staged), tables, mountDocument);
+      // The live database as it is after the wait, not as it was before it: the
+      // one the transaction opens on is the one the merge writes to (cold review
+      // of step 4). A document closed meanwhile takes nothing.
+      if (!liveDb) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
+      const into = frameRows(liveDb);
       liveDb.exec("BEGIN");
       try {
-        const report = merge.mergeVerified(local, frameRows(staged), {
+        const report = merge.mergeVerified(into, frameRows(staged), {
           level: 1,
           document: mountDocument,
           author: mountReplica ?? undefined,

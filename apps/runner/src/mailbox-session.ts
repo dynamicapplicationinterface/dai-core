@@ -286,7 +286,17 @@ export function startMailboxSession(config: {
     if (!data || data["sessionNonce"] !== sessionNonce) return;
     const type = data["type"];
     if (type === TO_HOST.AUTHORED) {
-      for (const lane of lanes.values()) lane.upToDate = false;
+      /*
+       * A write, or a save that landed a seal. A publish already in flight
+       * answered before it, so its answer cannot say this copy is up to date:
+       * it goes round again. Without that, the in-flight publish set the lane up
+       * to date on its stale answer and a closed game's lane retired with its
+       * close unsent (found by the no-retire test, identity step 4 review).
+       */
+      for (const lane of lanes.values()) {
+        lane.upToDate = false;
+        if (lane.publishing) lane.publishAgain = true;
+      }
       schedulePublish();
       pollNow(); // a local move; the reply is likely soon, so poll fast again.
       return;

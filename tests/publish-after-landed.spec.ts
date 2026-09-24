@@ -114,14 +114,15 @@ test("a sealed batch is not published until the save that holds it has landed", 
   expect(unlanded.length, "the move made a sealed batch the store never took").toBeGreaterThan(0);
 
   /** Everything the frame would publish from the start, as the mailbox walks it. */
-  const published = async (): Promise<{ ids: string[]; errors: string[] }> => {
+  const published = async (): Promise<{ ids: string[]; errors: string[]; held: boolean }> => {
     const ids: string[] = [];
     const errors: string[] = [];
+    let held = false;
     let seq = 0;
     for (let step = 0; step < 64; step++) {
       const answer = (await page.evaluate(
         ([seq, replica]) =>
-          new Promise<{ head: number; batch: number[] | null; error?: string }>((resolveAnswer) => {
+          new Promise<{ head: number; batch: number[] | null; held: boolean; error?: string }>((resolveAnswer) => {
             const id = `landed-${Math.random().toString(36).slice(2)}`;
             const onMessage = (event: MessageEvent): void => {
               const data = event.data as any;
@@ -129,6 +130,7 @@ test("a sealed batch is not published until the save that holds it has landed", 
               window.removeEventListener("message", onMessage);
               resolveAnswer({
                 head: Number(data.head),
+                held: data.held === true,
                 batch: data.batch instanceof Uint8Array ? Array.from(data.batch) : null,
                 ...(typeof data.error === "string" ? { error: data.error } : {}),
               });
@@ -137,18 +139,25 @@ test("a sealed batch is not published until the save that holds it has landed", 
             document.querySelector("iframe")!.contentWindow!.postMessage({ type: "DAI_HOST_AUTHORED_SINCE", id, seq, replica }, "*");
           }),
         [seq, replica] as const,
-      )) as { head: number; batch: number[] | null; error?: string };
+      )) as { head: number; batch: number[] | null; held: boolean; error?: string };
       if (answer.error) errors.push(answer.error);
+      if (answer.held) held = true;
       if (!answer.batch) break;
       const batch = decodeBatch(Uint8Array.from(answer.batch)) as { id?: Uint8Array };
       if (batch.id) ids.push(hex(batch.id));
       if (answer.head <= seq) break;
       seq = answer.head;
     }
-    return { ids, errors };
+    return { ids, errors, held };
   };
 
   const whileRefused = await published();
+  // An answer, not a silence: no error, the landed batches offered, and the
+  // move said to be held back, which is what keeps the lane from calling
+  // itself up to date.
+  expect(whileRefused.errors, "the seal and the answer went through").toEqual([]);
+  expect(whileRefused.ids.length, "what has landed is offered").toBeGreaterThan(0);
+  expect(whileRefused.held, "the answer says a batch is held back").toBe(true);
   for (const id of unlanded) {
     expect(whileRefused.ids, `batch ${id.slice(0, 12)} is published only after a save of it has landed`).not.toContain(id);
   }
@@ -167,7 +176,12 @@ test("a sealed batch is not published until the save that holds it has landed", 
     if (w.__keptCreateWritable) (FileSystemFileHandle.prototype as any).createWritable = w.__keptCreateWritable;
     IDBObjectStore.prototype.put = w.__keptPut;
   });
+  const heldRows = await headerIds();
   await expect.poll(() => nudges, { timeout: 90_000, message: "a landed save that carries a seal nudges a publish" }).toBeGreaterThan(0);
+  // Nothing was written in between (no new row, no new seal), so the nudge is
+  // the landed save's and not a write's.
+  expect(await pendingOwn()).toBe(0);
+  expect(await headerIds()).toEqual(heldRows);
   const afterLanding = await published();
   expect(afterLanding.errors).toEqual([]);
   for (const id of unlanded) {

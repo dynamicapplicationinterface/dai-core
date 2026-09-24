@@ -739,6 +739,81 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   /**
+   * A closed game's lane does not retire while its last move waits on a save
+   * (identity step 4, ordering; cold review).
+   *
+   * A sealed batch is published only once a save holding its seal has landed,
+   * and until then the frame answers the publish with the batch held back. A
+   * lane that took that answer for "nothing left to send" would retire, release
+   * its push, and never send the close. Here A's store refuses every write, A
+   * closes the match, and the lane must say it is held back rather than retire;
+   * then the store takes writes again, the save lands, the close is sent, and
+   * only then does the lane retire.
+   */
+  test("a closed game's lane does not retire while its close waits on a save that has not landed", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "Bo", "e2", "e4");
+    const appB = await openLink(pageB, link);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+    await appA.locator("#game-actions-button").click();
+    await appA.locator("#resign").click();
+    await appA.locator("#confirm-yes").click();
+    await expect(appA.locator("#close-match")).toBeVisible({ timeout: 30_000 });
+
+    const retired: string[] = [];
+    const heldBack: string[] = [];
+    pageA.on("console", (message) => {
+      const text = message.text();
+      if (/^dai: lane [0-9a-f]{12} retired: /.test(text)) retired.push(text);
+      if (/^dai: lane [0-9a-f]{12} not retired: .*nothing left to send/.test(text)) heldBack.push(text);
+    });
+
+    // A's store refuses: the file system, and the fallback the host falls to.
+    await pageA.evaluate(() => {
+      const w = window as any;
+      if (typeof FileSystemFileHandle !== "undefined" && "createWritable" in FileSystemFileHandle.prototype) {
+        w.__keptCreateWritable = (FileSystemFileHandle.prototype as any).createWritable;
+        (FileSystemFileHandle.prototype as any).createWritable = () => Promise.reject(new Error("test: the disk refused"));
+      }
+      w.__keptPut = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: any[]) {
+        if (this.name === "sqlite_databases") throw new DOMException("test: the disk refused", "QuotaExceededError");
+        return w.__keptPut.apply(this, args);
+      } as any;
+    });
+
+    await appA.locator("#close-match").click();
+    await appA.locator("#confirm-yes").click();
+    await expect(appA.locator("#move-step")).toContainText("MATCH CLOSED", { timeout: 30_000 });
+    // The publish ran and the lane decided: held back, or (wrongly) retired.
+    await expect.poll(() => heldBack.length + retired.length, { timeout: 60_000 }).toBeGreaterThan(0);
+    expect(retired, "no retirement while the close has not been sent").toEqual([]);
+    expect(heldBack.length, "the lane says what holds it").toBeGreaterThan(0);
+
+    // The store takes writes again: the retry lands, the close is sent, B sees it,
+    // and then the lane retires.
+    await pageA.evaluate(() => {
+      const w = window as any;
+      if (w.__keptCreateWritable) (FileSystemFileHandle.prototype as any).createWritable = w.__keptCreateWritable;
+      IDBObjectStore.prototype.put = w.__keptPut;
+    });
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB.locator("#move-step")).toContainText("MATCH CLOSED", { timeout: 2_000 });
+    }).toPass({ timeout: 120_000 });
+    await expect.poll(() => retired.length, { timeout: 60_000 }).toBeGreaterThan(0);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
    * Under close=creator, only the creator may close — refused by name otherwise.
    *
    * Chess ships close=any; this uses a close=creator build of the same app so the
