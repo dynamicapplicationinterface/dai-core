@@ -45,8 +45,7 @@ travels in the header and is bound by the author id it must fingerprint to.
 `att`, an authority's attestation, is reserved and empty in version 1, and it
 sits outside the signed bytes so that vouching for a key can arrive later
 without touching any signature. It must never be "tidied" into the signed
-part: doing so would make every past batch unvouchable without re-signing,
-which is the enterprise story's failure mode.
+part: doing so would make every past batch unvouchable without re-signing.
 
 ## The rows a header covers
 
@@ -106,6 +105,6 @@ Deterministic CBOR (RFC 8949 §4.2.1), in the project's own encoder
 
 **Changed while unfrozen.** The integer rules above (eight-byte integers,
 BigInt, and refusing a whole number past 2^53 rather than floating it) were set
-by the identity sitting's step 3 review, before version 1 was frozen for
-release. No document signed under an earlier rule exists outside the sitting's
+by the identity sitting's step 3 review, before version 1 was
+frozen. No document signed under an earlier rule exists outside the sitting's
 own tests.

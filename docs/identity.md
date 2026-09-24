@@ -2,7 +2,7 @@
 
 ## The ruling
 
-A person is a keypair made once on their device and held there. Everything they write into a document is signed by that key. Whether that key belongs to a real, named person is a separate layer that is empty for consumers and filled by the firm's identity provider for enterprise.
+A person is a keypair made once on their device and held there. Everything they write into a document is signed by that key. Whether that key belongs to a real, named person is a separate layer: empty unless an authority, such as a firm's identity provider, attests the key.
 
 This replaces the current design, in which identity is a value in a row (`_dai_replica`) and a value can be copied, carried in arriving data, and adopted by the wrong load. From this sitting on, no part of the runtime derives who it is from anything found in a database. Identity comes from the key the host holds; authorship comes from signatures; the merge verifies and refuses what does not check.
 
@@ -28,11 +28,11 @@ The pattern is already in `docs/backlog.md` as "one name, two meanings". Here th
 
 **Authorship** is always on and needs no account. The key is made silently on first use, stored on the device, and signs every change the person makes. It vouches for nothing about who the person is. It only makes each row provably from one key and no other. This is the layer this sitting builds.
 
-**Verification** is optional and starts empty. It answers "whose key is this?" with a signed statement from an authority: "key K belongs to Jane in Legal." For consumers there is no authority and the layer stays empty. For enterprise the authority is the firm's existing identity provider (Okta, Entra, whatever they run). This sitting reserves the space for it and builds none of it.
+**Verification** is optional and starts empty. It answers "whose key is this?" with a signed statement from an authority: "key K belongs to Jane in Legal." Where no authority vouches, the layer stays empty. The authority can be any issuer a verifier trusts, such as a firm's existing identity provider. This sitting reserves the space for it and builds none of it.
 
 The two are separable because the bottom one works with the top one absent. Git is the proof: a commit is signed on the machine whether or not GitHub ever sees it; GitHub's "Verified" badge is a later, separate vouching for the key.
 
-**Vouching reaches backward.** An authority vouches for the key, not for documents. Every document the key ever signed becomes attributable the day the key is vouched for, with no re-signing and no format change. This only holds if the person has used one durable key from their first document on. That is why the key primitive is built now, years before anyone verifies a key.
+**Vouching reaches backward.** An authority vouches for the key, not for documents. Every document the key ever signed becomes attributable the day the key is vouched for, with no re-signing and no format change. This only holds if the person has used one durable key from their first document on. That is why the key primitive comes first: vouching reaches back only as far as the key does.
 
 ## Definitions
 
@@ -46,26 +46,26 @@ One owner per name. Each of these is defined once, in the file named, and import
 | Signature | ES256 over the canonical bytes of a batch. Produced by the host on the frame's request; the frame never holds the private key. | `src/identity.ts` |
 | Seat | A row in the app's own seat table whose batch is signed by the person holding the seat. The seat table is owned by the kit; `daiKit.claimSeat` is its only writer and `amCreator` / `mySeat` are kit reads. An app that writes the table directly fails a check. "Am I the creator" means "the creator seat's batch verifies under my key." | app kit, `daiKit` |
 | Attestation | A signed statement by an authority that a public key belongs to a named principal. Reserved on the wire; nothing produces or checks one in V1. | `src/identity.ts` (type only) |
-| Publisher key | The key that signs a container for the store and the version relay. One key per person, two roles: for a solo author the publisher role is filled by their person key. `publish()` takes a key rather than assuming the person's, so a firm's key can later publish a container whose rows employees sign. | existing, `src/publish.ts` |
+| Publisher key | The key that signs a container for the store and the version relay. One key per person, two roles: for a solo author the publisher role is filled by their person key. `publish()` takes a key rather than assuming the person's, so a key other than the person's (a firm's, say) can publish a container whose rows other people sign. | existing, `src/publish.ts` |
 
 ## Binding rules
 
 1. **The host owns identity.** The person key lives in the host, non-exportable from the frame. The frame learns its author id from the host on every mount and never from a row. `mountIsOwnCopy` no longer decides identity anywhere.
 2. **The `_dai_replica` row is not a source of identity.** It may remain as a display cache. `ensureReplica` writes the host's id over whatever is there. It never keeps a row that differs from what the host handed it. This is the 23 Sept ruling; the key primitive subsumes it.
 3. **Every write is a signed batch.** The frame assembles the batch, sends it to the host over the bridge, the host signs, the batch is stored and replicated with its signature. No unsigned batch is written by a runtime at this version or later. *The seal is a courtesy to the honest path; the verifier is the enforcement.* The frame belongs to the document, so nothing it does can be relied on: the host checks the bytes that leave (a row of this author's that is pending, or names a header the bytes do not hold, refuses the leave), and what stops a hostile copy is the merge that verifies (rule 4).
-4. **The merge verifies before it applies.** A batch whose signature does not verify under the author id it names is refused, not applied, and reported (this is D82's other half: the merge can now say whose row it refused). A batch from an author id never seen before is accepted as a new author. Restricting new authors is enterprise policy, not V1.
+4. **The merge verifies before it applies.** A batch whose signature does not verify under the author id it names is refused, not applied, and reported (this is D82's other half: the merge can now say whose row it refused). A batch from an author id never seen before is accepted as a new author. Restricting new authors would be a per-document policy the merge checks; none exists at this version.
 5. **A seat is a signed claim.** `amCreator` and its kin ask "does the creator seat's batch verify under my key", never "does the author column equal my id". A copy holding a different key cannot forge a seat. **A signature answers who wrote a row; a seat answers whether they may.** The signature alone does not close D80: a copy that honestly signs as Bo can still play White's move, and only the seat can refuse it. The kit admits a row only from the author holding the seat that row's action belongs to, inside its merge path, and reports the refusal as `SEAT_NOT_HELD` (step 5; `IDENTITY-SEAT-ADMITS` in `src/rules.ts`).
 6. **Arriving rows belong to their signers.** A copy that arrives with data keeps every row as the rows of whoever signed them. It adopts none. Its own author id is whatever key this device holds, minted fresh if there is none.
-7. **Different place, different key.** A copy landing on a device with no person key mints one. A second copy on the same device shares the device's key. The runtime never asks "is this my copy"; it asks "what key does this device hold". **One document, one copy per device:** a copy of a document this device already holds never becomes a second copy beside it. On arrival the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside, because two copies writing under one key would issue the same `(author, seq)` for different rows. A loose file opened twice gets the same treatment. Two tabs on one held copy are not yet covered (backlog D105). Ruled 24 Sept; `IDENTITY-ONE-LIVE-COPY` in `src/rules.ts`. The successor that removes the hazard, row identity by content hash, is V1.1 (backlog D104).
+7. **Different place, different key.** A copy landing on a device with no person key mints one. A second copy on the same device shares the device's key. The runtime never asks "is this my copy"; it asks "what key does this device hold". **One document, one copy per device:** a copy of a document this device already holds never becomes a second copy beside it. On arrival the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside, because two copies writing under one key would issue the same `(author, seq)` for different rows. A loose file opened twice gets the same treatment. Two tabs on one held copy are not yet covered (backlog D105). Ruled 24 Sept; `IDENTITY-ONE-LIVE-COPY` in `src/rules.ts`. Row identity by content hash would remove the hazard (backlog D104).
 8. **Bridge names go through the naming family.** New host-bridge messages for sign and author id are added to `src/bridge.ts` with their load-time checks and wire tests, per the closed naming/ownership work. No literal message strings.
 9. **Signing cost is paid per batch, not per row.** One ES256 signature per change set. A batch of 200 rows signs once.
 10. **Canonical bytes are frozen.** The bytes a signature covers are defined once, versioned, and held by a frozen byte-vector test. A change to canonical form is a format version, never a refactor.
 
 ## On the wire: built now, reserved for later
 
-The point of reserving is that a document signed today stays readable and verifiable when the enterprise layer arrives. Nothing here breaks a V1 document; everything here is what V1.1 and enterprise will need to find already in place.
+The fields are reserved so that adding an attestation changes no signed byte: a document signed at this version reads and verifies the same whether or not its batches ever carry one.
 
-| Field | Where | V1 | Later |
+| Field | Where | V1 | When used |
 | --- | --- | --- | --- |
 | `author` (author id) | batch header | required, filled | unchanged |
 | `sig` (ES256 over canonical batch) | batch header | required, filled | unchanged |
@@ -81,21 +81,21 @@ The fingerprint rule (SHA-256, 16 bytes, base64url) and the canonical byte layou
 
 ## Consumer story, enterprise story
 
-**Consumer.** Grace opens a `.dai`. Her phone makes a key; she sees nothing. She writes; every batch is signed. She shares a copy with Dan; Dan's phone makes its own key and Dan's moves are Dan's. Nobody logged in, nothing was uploaded, no server knows either of them. Two years later Grace signs up for a paid account that vouches for her key: every app she ever made becomes provably hers, because they were signed all along.
+**Consumer.** Grace opens a `.dai`. Her phone makes a key; she sees nothing. She writes; every batch is signed. She shares a copy with Dan; Dan's phone makes its own key and Dan's moves are Dan's. Nobody logged in, nothing was uploaded, no server knows either of them. If an authority ever vouches for her key, every app she made becomes attributable to her, because they were signed all along.
 
-**Enterprise.** Jane opens the same format at work. Her key is made the same way. The firm's identity provider signs an attestation binding Jane's key to her directory identity, and that attestation rides in `att` on her batches. An auditor verifies the chain: batch → key → attestation → the firm's issuer. Same documents, same signatures, now with a name a regulator accepts. The format did not change; a link was added at the top.
+**Enterprise.** Jane opens the same format at work. Her key is made the same way. The firm's identity provider signs an attestation binding Jane's key to her directory identity, and that attestation rides in `att` on her batches. An auditor verifies the chain: batch → key → attestation → the firm's issuer. Same documents, same signatures, now with a name bound to the key by an issuer the auditor trusts. The format did not change; a link was added at the top.
 
-**Policy is the only thing enterprise adds to the runtime.** A firm can say "this document accepts batches only from attested keys under our issuer". That is a rule the merge checks, and it is the one place rule 4's "accept any new author" is overridden. Everything else is the consumer runtime.
+**A policy is the only runtime addition attestation needs.** A document could accept batches only from keys attested under a given issuer. That would be a rule the merge checks, and the one place rule 4's "accept any new author" is overridden. Everything else is the same runtime.
 
-The consumer version is the enterprise version with the top link left off. That is the whole reason to build one system, not two.
+An unattested document is an attested one with the top link absent: the chain ends at the key. So one format and one verifier serve both.
 
 ## Key durability, loss, second device
 
-The key is stored in the host's IndexedDB under a key name owned by `src/keys.ts`, as a WebCrypto key marked extractable. Extractable is required: a non-extractable key can never become a recovery phrase, and a person locked out of their own back catalogue is the enterprise story's failure mode. Persistence is asked under D55's rule, after the first real write, never at boot.
+The key is stored in the host's IndexedDB under a key name owned by `src/keys.ts`, as a WebCrypto key marked extractable. Extractable is required: a key that cannot be exported cannot become a recovery phrase, so it cannot be recovered on another device or vouched for there later. Persistence is asked under D55's rule, after the first real write, never at boot.
 
-**Loss.** If storage is wiped, the device mints a new key and becomes a new author. Old documents stay readable and mergeable; the person can no longer write as their old author id. This is the accepted V1 behaviour, stated on screen through a one-line kit hook whose default is "This device is a new player here. Your earlier moves are still on the board." Apps may override the wording; none says identity, key or storage. Nothing pretends continuity that does not exist.
+**Loss.** If storage is wiped, the device mints a new key and becomes a new author. Old documents stay readable and mergeable; the person can no longer write as their old author id. This is the accepted V1 behavior, stated on screen through a one-line kit hook whose default is "This device is a new player here. Your earlier moves are still on the board." Apps may override the wording; none says identity, key or storage. Nothing pretends continuity that does not exist.
 
-**Second device.** Two roads, both later:
+**Second device.** Two ways one author can write from two devices; neither is built:
 
 - Consumer: the person carries the key. A recovery phrase (the wallet and password-manager pattern) shown from a "Your key" screen, or the key wrapped under a passphrase and moved through the store. Until they do it, phone and laptop are two authors, correctly.
 - Enterprise: each device mints its own key; the identity provider attests both to the same principal. No phrase to carry; the firm is the linking authority, exactly as GitHub links two machines' keys to one account.
@@ -120,7 +120,7 @@ A document written before this version has unsigned batches. The runtime reads t
 
 **Both directions.** The rule above is a new host meeting an old document. The other skew is an old host meeting a new document: an installed copy runs whatever host its service worker cached, and a host from before this version would write unsigned rows into a signed document. So a document declares its format version, and a host below it mounts the document read-only with the update sentence ("This app needs an update before it can be written to; what's here is kept"). Step 6 builds both directions (backlog D108).
 
-The example apps (chess, tic-tac-toe, receipts, request, Moon Garden, the coming workout app) are rebuilt on the new runtime rather than migrated. Their pre-identity documents on any test phone are discarded. The walk's V1 control (the workout app) starts life signed, so nothing on the V1 walk ever carries a legacy batch.
+The example apps (chess, tic-tac-toe, receipts, request, Moon Garden) are rebuilt on the new runtime rather than migrated. Their pre-identity documents on any test phone are discarded. An app first built at this version starts signed, so it never carries a legacy batch.
 
 ## Tests that go red first
 

@@ -4381,6 +4381,23 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D111 — The reference readers take the verifier's word for every signature
+
+*Status: open. Ruled 24 September (identity step 4): accepted for the sitting,
+filed as the successor; not this sitting.*
+
+The merge vectors carry `verdicts.json`, the TypeScript verifier's answer for
+every header, and the Python and Rust readers merge by it. They do the coverage
+rules themselves, and three vectors (a stowaway row, a tampered batch, a lost
+pointer) fail a reader that has one rule wrong, so they are tested on what they
+claim. But a reader that consumes the verifier's verdict cannot catch the
+verifier being wrong, and the reference readers exist to show the format can be
+read without trusting the TypeScript. What closes it: each reader does its own
+canonical rows, digest and ES256 check (`cryptography` in Python, `p256` in
+Rust) against the `pub` the vectors already carry, and `verdicts.json` becomes
+a file it checks its own answer against rather than one it takes. No fixture
+change is needed.
+
 #### D110 — Which Playwright project a spec runs in is decided by its prose
 
 *Status: open. Filed 24 September; an instance of "a check that passes for a
@@ -4413,7 +4430,7 @@ reopens, and asserts the next row is above what was published.
 
 *Status: open. Ruled 24 September: filed, nothing built until step 6.*
 
-The skew that matters is not an old document on a new host: the runner mounts
+The skew that can happen is not an old document on a new host: the runner mounts
 every document with its own runtime (`hostShell(..., { runtime: HOST_RUNTIME })`),
 so a document never runs its old code here. It is the other way round. An
 installed copy on a phone runs whatever host its service worker cached, and a
@@ -4462,21 +4479,21 @@ exchange refuses one as tampering.
 **Likely closer, not built:** the per-document sequence high-water mark the
 sitting keeps in IndexedDB beside the person key. If each tab reserves its seq
 through one IndexedDB transaction before it stamps, two tabs cannot reserve the
-same number. The row-identity successor (D104) removes the hazard outright.
+same number. Row identity by content hash (D104) removes the hazard outright.
 
-#### D104 — Row identity by content hash, the successor to `(author, seq)`
+#### D104 — Row identity by content hash, in place of `(author, seq)`
 
-*Status: open, V1.1. Ruled 24 September: noted as the successor, not built.*
+*Status: open. Ruled 24 September: noted, not built.*
 
 A shared row's version is named by `(_r_replica, _r_seq)`: an author and a
 counter. Since the identity sitting, the author is the device's person key,
 the same for every copy that device holds. A counter is only safe when one
-writer holds it, so V1 keeps one live copy per document per device
+writer holds it, so this version keeps one live copy per document per device
 (`IDENTITY-ONE-LIVE-COPY` in `src/rules.ts`, rule 7 of `docs/identity.md`).
 The hazard it guards against is two live copies on one device issuing the same
 pair for different rows, and the exchange refusing one as tampering.
 
-The successor removes the hazard rather than guarding it: a row version named
+Content hashes remove the hazard rather than guarding it: a row version named
 by the hash of its content, the way a commit id is. Two copies cannot issue the
 same name for different rows, because the name is the row. What it touches:
 the merge key, `_r_parents`, the batch digest (which already hashes canonical

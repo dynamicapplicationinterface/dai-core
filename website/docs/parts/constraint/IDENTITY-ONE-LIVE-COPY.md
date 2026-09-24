@@ -5,7 +5,7 @@
 
 A device holds one copy of a document. A copy of a document this device already holds never becomes a second copy beside it: when it arrives, the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host decides before the application runs. Two tabs showing the same held copy are not yet covered (backlog D105).
 
-**Why.** Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two copies writing on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. The successor that removes the hazard is row identity by content hash (backlog D104).
+**Why.** Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two copies writing on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. Row identity by content hash would remove the hazard (backlog D104).
 
 <small>Applies to passable, session · refused at run time · [IDENTITY-ONE-LIVE-COPY in Constraints](/docs/constraints#IDENTITY-ONE-LIVE-COPY)</small>
 :::

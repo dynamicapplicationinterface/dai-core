@@ -184,6 +184,7 @@ export async function mergeSibling(
   sibling: Rows,
   options: number | { level?: number; document?: string; author?: Uint8Array } = 1,
 ): Promise<MergeReport> {
+  // Two functions on purpose, not to be folded: verify outside, merge inside, so nothing awaits while a transaction is open.
   const document = typeof options === "number" ? "" : (options.document ?? "");
   const verdicts = await verifyBatches(sibling, mergeTablesOf(sibling), document);
   return mergeVerified(local, sibling, typeof options === "number" ? { level: options, verdicts } : { ...options, verdicts });
