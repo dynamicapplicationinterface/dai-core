@@ -77,7 +77,7 @@ The point of reserving is that a document signed today stays readable and verifi
 
 The batch encoding already has the slot D80 asked to reserve. This sitting fills it with `author` and `sig` and adds `pub` and the empty `att`. The D80 wire reservation decision is therefore made: yes to the proof field, no to the seat-secret fragment key.
 
-The fingerprint rule (SHA-256, 16 bytes, base64url) and the canonical byte layout are published in `docs/format.md` alongside the existing batch encoding and are held by frozen byte vectors in `format-vectors.spec`.
+The fingerprint rule (SHA-256, 16 bytes, base64url) and the canonical byte layout are published in `docs/format.md` alongside the existing batch encoding and are held by frozen byte vectors in `tests/identity-vectors.spec.ts`.
 
 ## Consumer story, enterprise story
 

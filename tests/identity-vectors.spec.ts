@@ -66,6 +66,27 @@ const ENTRY: BatchEntry = {
 };
 
 test.describe("the frozen identity vectors", () => {
+  test("a shared row holding 2^63 is canonical as an eight-byte CBOR integer, never a float", () => {
+    // sqlite-wasm hands such a value back as a BigInt (identity step 3 review,
+    // #5). Derived by hand: the row [table, [replica, 2, 8, entity, "", 0, null],
+    // [["nonce", 2^63]]], the integer as 1b 8000000000000000.
+    const entry: BatchEntry = {
+      table: "moves",
+      row: {
+        _r_replica: unhex(KNOWN.authorHex),
+        _r_seq: 2,
+        _r_lc: 8,
+        _r_entity: new Uint8Array(16).fill(0x11),
+        _r_parents: "",
+        _r_deleted: 0,
+        columns: { nonce: 2n ** 63n },
+      },
+    };
+    expect(hex(canonicalRows([entry]))).toBe(
+      "8183656d6f7665738750a3a8b56f9591737fca3854a36eb4583f020850111111111111111111111111111111116000f68182656e6f6e63651b8000000000000000",
+    );
+  });
+
   test("the known public key is the one the vectors were made from", () => {
     // Guards the fixture, not the code: if the published test key changes,
     // every vector below is about a different key and this says so first.

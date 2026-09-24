@@ -138,7 +138,7 @@ test.describe("a number with a fraction", () => {
   });
 
   test("reads back through a reference implementation, and through this one", () => {
-    for (const value of [1.5, -2.25, 0.1, 1e300, -Infinity]) {
+    for (const value of [1.5, -2.25, 0.1, 1.5e-300, -Infinity]) {
       expect(new Encoder({ tagUint8Array: false, useRecords: false }).decode(encode(value))).toBe(value);
       expect(decode(encode(value))).toBe(value);
     }
@@ -159,6 +159,44 @@ test("an integer past four bytes, like a millisecond timestamp, is eight bytes, 
   expect(decode(encode(at))).toBe(at);
   expect(decode(encode(-at))).toBe(-at);
   expect(decode(encode(Number.MAX_SAFE_INTEGER))).toBe(Number.MAX_SAFE_INTEGER);
+});
+
+test.describe("integers to 64 bits (identity step 3 review, #5)", () => {
+  /*
+   * sqlite-wasm hands back a BigInt for an integer past 2^53, and a row that
+   * cannot be encoded cannot be sealed, so every save of that document would
+   * fail. A BigInt is a CBOR integer to ±2^64. A JS number that is whole and past
+   * 2^53 has already lost its low bits: signing it would sign a value nobody
+   * wrote, so it is refused, never turned into a float.
+   */
+  test("a BigInt is a CBOR integer, byte for byte what a reference writes", () => {
+    for (const value of [2n ** 63n, 2n ** 64n - 1n, -(2n ** 63n)]) {
+      expect(hex(encode(value)), String(value)).toBe(hex(new Uint8Array(reference.encode(value))));
+      expect(decode(encode(value)), String(value)).toBe(value);
+    }
+    expect(hex(encode(2n ** 63n))).toBe("1b8000000000000000");
+    // -2^64 is the last value a CBOR integer holds (major type 1, 2^64 - 1). The
+    // reference writes it as a tagged bignum instead; the plain integer is the
+    // deterministic form, and the reference reads it back to the same value.
+    expect(hex(encode(-(2n ** 64n)))).toBe("3bffffffffffffffff");
+    expect(BigInt(referenceDecode(encode(-(2n ** 64n))) as bigint)).toBe(-(2n ** 64n));
+    expect(decode(encode(-(2n ** 64n)))).toBe(-(2n ** 64n));
+  });
+
+  test("a BigInt that fits a safe integer is written the shortest way, like the number it equals", () => {
+    expect(hex(encode(7n))).toBe(hex(encode(7)));
+    expect(hex(encode(1_727_150_400_123n))).toBe(hex(encode(1_727_150_400_123)));
+  });
+
+  test("past ±2^64 is refused", () => {
+    expect(() => encode(2n ** 64n)).toThrow(CborError);
+    expect(() => encode(-(2n ** 64n) - 1n)).toThrow(CborError);
+  });
+
+  test("a whole JS number past 2^53 is refused, not floated", () => {
+    expect(() => encode(2 ** 53 + 2)).toThrow(/2\^53|precision/);
+    expect(() => encode(1e300)).toThrow(/2\^53|precision/);
+  });
 });
 
 test.describe("what it refuses", () => {
