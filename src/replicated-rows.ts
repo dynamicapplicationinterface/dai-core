@@ -361,8 +361,8 @@ export function adoptReplica(db: Rows, id: Uint8Array): boolean {
   return true;
 }
 
-/** The highest `_r_seq` any replicated table holds under `id`, or 0. */
-function highestSeqOf(db: Rows, id: Uint8Array): number {
+/** The highest `_r_seq` any replicated table holds under `id`, or 0. An index seek per table: the key is (_r_replica, _r_seq). */
+export function highestSeqOf(db: Rows, id: Uint8Array): number {
   let highest = 0;
   for (const { name } of db.all("SELECT name FROM sqlite_schema WHERE type = 'table'") as { name: string }[]) {
     const columns = db.all("SELECT name FROM pragma_table_info(?)", [name]).map((c) => String(c["name"]));
@@ -766,5 +766,28 @@ export function mergeFrom(
     }
   }
 
+  /*
+   * This copy's own rows can come back to it: a save that never landed, and
+   * the same rows returning from the mailbox. The counter is raised past the
+   * highest of them, or this copy's next row reissues a seq it already issued
+   * (cold review of identity step 2, #3).
+   */
+  const mine = local.all("SELECT id FROM _dai_replica LIMIT 1")[0]?.["id"];
+  if (mine instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, mine));
+
   return result;
+}
+
+/**
+ * Holds this copy's counter at or above `floor`, never lowering it.
+ *
+ * The floor is the highest seq this device has let leave it for this document,
+ * or the highest this copy holds under its own id: either way, a seq at or
+ * below it has been issued already. Returns whether the counter moved.
+ */
+export function raiseSeq(db: Rows, floor: number): boolean {
+  const held = Number(db.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.["seq"] ?? 0);
+  if (!(floor > held)) return false;
+  db.run("UPDATE _dai_replica SET seq = ?", [floor]);
+  return true;
 }

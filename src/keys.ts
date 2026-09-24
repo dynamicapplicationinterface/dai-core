@@ -50,5 +50,13 @@ export const opensKey = (documentUuid: string): string => `dai:opens:${documentU
  */
 export const libraryLock = (documentUuid: string): string => `dai:${documentUuid}`;
 
+/**
+ * IndexedDB, the opener's key store, beside the person key: the highest seq
+ * this device has let leave it for a document, by save or by publish. Kept by
+ * document, not by device, and kept when the document is removed: it dies only
+ * with the key, because the rows it counts are still out there under that key.
+ */
+export const seqFloorKey = (documentUuid: string): string => `dai:seq-floor:${documentUuid}`;
+
 /** Every key-making function here, for a check that wants to see them all. */
-export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock } as const;
+export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey } as const;

@@ -63,6 +63,8 @@ import { inviteFor } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
+  raiseSeqFloor,
+  seqFloorOf,
   deleteDatabaseFromOpfs,
   getCartridgeFromLibrary,
   listCartridgesFromLibrary,
@@ -2818,6 +2820,21 @@ window.addEventListener("message", (event) => {
       // The first use of the person key is here, on the first mount that can
       // write: made now if this device has none (docs/identity.md).
       const replica = await person().then((me) => me.id).catch(() => null);
+      /*
+       * How far this device has written this document: the floor the frame's
+       * counter is held at (cold review of identity step 2, #1). A floor that
+       * cannot be read is not read as 0, which would let this copy reissue what
+       * it already sent; the document opens read-only instead, and says so.
+       */
+      const seqFloor = await seqFloorOf(loaded.manifest.documentUuid).catch(() => null);
+      if (seqFloor === null) {
+        say(
+          "This document can be read here but not changed: this device could not read how far it " +
+            "has written it. Reload the page to try again.",
+          true,
+        );
+        return;
+      }
       (event.source as Window | null)?.postMessage(
         {
           type: TO_DOCUMENT.WRITE_RULES,
@@ -2827,6 +2844,7 @@ window.addEventListener("message", (event) => {
           // host's person key. The frame writes under it whatever the mounted
           // file holds, on every mount (docs/identity.md, binding rule 1).
           replica,
+          seqFloor,
           // T1-D32: who may close this session, from the signed manifest. The
           // frame refuses a close the policy forbids at write time; the views are
           // the convergent net. Undefined for a document with no session.
@@ -3055,6 +3073,9 @@ window.addEventListener("message", (event) => {
               "To keep these changes, use Save a copy; to see the other tab's, reopen it.",
           );
         }
+        // The floor first, then the save: a save that fails after this has
+        // still counted its seqs, and one that fails before it wrote nothing.
+        await raiseSeqFloor(documentUuid, Number(data.payload?.seq ?? 0));
         await saveDatabaseToOpfs(documentUuid, bytes);
         const next = current + 1;
         if (loaded && loaded.manifest.documentUuid === documentUuid) {
@@ -4531,6 +4552,9 @@ async function startMailboxIfPossible(): Promise<void> {
       relay,
       onLane: (address) => wantPush(address, relay),
       onLaneClosed: (address) => void releasePush(address, relay),
+      // Before a batch leaves: the floor counts its seqs first (identity step 2
+      // review, #1), so a save lost after this publish cannot reissue them.
+      beforePublish: (head) => raiseSeqFloor(uuid, head),
       // This person's own move reached the relay: whatever the icon said is
       // answered (D34). After the confirmation, never before it, so a move
       // that never left clears nothing. Applies whether or not the app reports

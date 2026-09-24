@@ -1152,6 +1152,16 @@ function bridgeMain(names: FrameNames): void {
    * and imports nothing, so the shown form is the host's to make.
    */
   let mountReplica: Uint8Array | null = null;
+  /*
+   * The highest seq this device has let leave it for this document, as the host
+   * keeps it (by save or by publish). The counter is held at or above it, and
+   * above every seq the copy holds under its own id, on every write, so
+   * no copy of this document on this device reissues a seq already issued:
+   * not a copy removed and received again, not one reopened from a save older
+   * than what was sent, not one whose application rewound the counter.
+   */
+  let mountFloor = 0;
+  const heldSeq = (rows: Any): number => Number(rows.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
   // `"any"` lets any member close; undefined for a document with no session. The
@@ -1588,6 +1598,17 @@ function bridgeMain(names: FrameNames): void {
           console.info(`dai: replica put back to this device's key: ${before ?? "none"} -> ${replicaHex() ?? "none"}`);
         }
       }
+      // And the counter: never below the host's floor, nor below any seq this
+      // copy already holds under its own id (an index seek per table). Read
+      // from the rows, not remembered, because a rewind can land between a
+      // write and the next one.
+      if (mountReplica) {
+        const held = heldSeq(rows);
+        const floor = Math.max(mountFloor, (mergeModule as Any).highestSeqOf(rows, mountReplica));
+        if ((mergeModule as Any).raiseSeq(rows, floor)) {
+          console.info(`dai: seq put back from ${held} to ${floor}`);
+        }
+      }
       return;
     }
     replicaSettled = true;
@@ -1601,6 +1622,11 @@ function bridgeMain(names: FrameNames): void {
      * identity.
      */
     (mergeModule as Any).adoptReplica(rows, mountReplica ?? crypto.getRandomValues(new Uint8Array(16)));
+    // The host's floor: seqs this device already let leave it, whatever this
+    // copy holds (a removed copy received again; a save that never landed).
+    if (mountReplica && (mergeModule as Any).raiseSeq(rows, mountFloor)) {
+      console.info(`dai: seq raised to this device's floor for the document: ${mountFloor}`);
+    }
     /*
      * Permanent, on purpose (D22). A copy has come back from a reopen writing
      * under the sender's id, only in CI and only rarely, and a kept trace
@@ -2061,6 +2087,15 @@ function bridgeMain(names: FrameNames): void {
           // it opened (D36). Said by the runtime, which ran that SQL and watches
           // every write; a host cannot tell it from the bytes.
           setup: Boolean(options && options.setup),
+          // How far this copy's counter has reached: the host raises its floor
+          // for the document to this before it writes the save.
+          seq: (() => {
+            try {
+              return Number(liveDb?.selectObjects("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
+            } catch {
+              return 0;
+            }
+          })(),
         },
         "*",
       );
@@ -2113,6 +2148,7 @@ function bridgeMain(names: FrameNames): void {
      */
     if (data.type === names.WRITE_RULES) {
       mountReplica = data.replica instanceof Uint8Array && data.replica.length === 16 ? data.replica : null;
+      mountFloor = Number.isSafeInteger(data.seqFloor) && data.seqFloor > 0 ? data.seqFloor : 0;
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
@@ -2824,7 +2860,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; replica: unknown; closePolicy: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; closePolicy: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -2833,7 +2869,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, closePolicy: rules.closePolicy },
     "*",
   );
 }
@@ -3279,10 +3315,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; replica?: unknown; closePolicy?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; closePolicy?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, replica: pushed.replica, closePolicy: pushed.closePolicy };
+      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, closePolicy: pushed.closePolicy };
       if (listeningWindow) deliverRules();
       return;
     }
@@ -3619,6 +3655,7 @@ async function boot(): Promise<void> {
       sqlite?: Uint8Array;
       method?: SaveMethod;
       setup?: boolean;
+      seq?: number;
     };
     if (request?.type !== SAVE_REQUEST) return;
 
@@ -3689,6 +3726,7 @@ async function boot(): Promise<void> {
                 databaseBytes,
                 documentUuid: manifest?.documentUuid ?? "",
                 setup: request.setup === true,
+                seq: Number.isSafeInteger(request.seq) ? request.seq : 0,
               },
             },
             "*",

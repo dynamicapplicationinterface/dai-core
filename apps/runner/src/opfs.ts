@@ -19,7 +19,7 @@ const KEY_STORE = "keys";
 import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/publisher-identity.js";
-import { KEYS } from "../../../src/keys.js";
+import { KEYS, seqFloorKey } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
 
@@ -634,6 +634,47 @@ export async function keptPersonKey(): Promise<CryptoKeyPair | null> {
 export async function keepPersonKey(pair: CryptoKeyPair): Promise<void> {
   const db = await openIdb();
   await committed(db.transaction(KEY_STORE, "readwrite"), (store) => store.add(pair, KEYS.PERSON_KEY));
+}
+
+/**
+ * The highest seq this device has let leave it for a document (cold review of
+ * identity step 2, #1): the floor the frame's counter is held at. 0 when none
+ * is kept. A read that fails is thrown, not read as 0: a floor of 0 on a
+ * device that has written would reissue what it already sent.
+ */
+export async function seqFloorOf(documentUuid: string): Promise<number> {
+  const db = await openIdb();
+  return await new Promise((resolve, reject) => {
+    const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(seqFloorKey(documentUuid));
+    req.onsuccess = () => resolve(typeof req.result === "number" ? req.result : 0);
+    req.onerror = () => reject(req.error ?? new Error("The sequence floor could not be read."));
+  });
+}
+
+/**
+ * Raises the floor to `seq`, never lowers it, in one transaction.
+ *
+ * Called before a save is written and before a batch is published, never
+ * after: the floor must already count a seq by the time anything carrying it
+ * can leave, or the one case it exists for, the save that fails, is the one it
+ * misses.
+ */
+export async function raiseSeqFloor(documentUuid: string, seq: number): Promise<void> {
+  if (!Number.isSafeInteger(seq) || seq <= 0) return;
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  const store = tx.objectStore(KEY_STORE);
+  const key = seqFloorKey(documentUuid);
+  await new Promise<void>((resolve, reject) => {
+    const read = store.get(key);
+    read.onsuccess = () => {
+      const held = typeof read.result === "number" ? read.result : 0;
+      if (seq > held) store.put(seq, key);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
+    tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
+  });
 }
 
 /**

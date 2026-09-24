@@ -776,6 +776,34 @@ test.describe("a copy that arrived from somebody else", () => {
     back.close();
   });
 
+  test("a merge that brings back this author's own rows raises its seq above them", () => {
+    /*
+     * The lost save (cold review of step 2, #3): this copy wrote rows 1..4 and
+     * they reached the mailbox, but its save of rows 3 and 4 never landed, so
+     * the copy reopens holding only 1 and 2 with its counter at 2. Pulling its
+     * own rows 3 and 4 back from the mailbox must raise the counter past them,
+     * or its next row is a second, different (A, 3).
+     */
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+    createEntity(alice, "cases", E2, { title: "d4", status: "open", weight: null });
+    const reopened = received(alice); // the copy as its last landed save left it
+    createEntity(alice, "cases", bytes(0x71), { title: "c4", status: "open", weight: null });
+    createEntity(alice, "cases", bytes(0x72), { title: "Nf3", status: "open", weight: null });
+
+    const report = mergeSibling(reopened, alice); // its own rows, back from the mailbox
+    expect(report.rejected).toEqual([]);
+    expect(Number(reopened.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to the highest it brought in").toBe(4);
+    createEntity(reopened, "cases", bytes(0x73), { title: "g3", status: "open", weight: null });
+    const issued = reopened.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [A]).map((r) => Number(r["s"]));
+    expect(issued, "the next row takes 5, not a second 3").toEqual([1, 2, 3, 4, 5]);
+
+    alice.close();
+    reopened.close();
+  });
+
   test("the clock does not restart, or the first row written sorts below what it followed", () => {
     /*
      * `seq` restarts because sequence numbers are per replica. The clock must

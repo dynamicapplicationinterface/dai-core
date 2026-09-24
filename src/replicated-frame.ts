@@ -256,8 +256,10 @@ export {
   encodeValue,
   ensureReplica,
   headsOf,
+  highestSeqOf,
   mergeFrom,
   parentsOf,
+  raiseSeq,
   rowId,
   RowRejected,
 } from "./replicated-rows.js";
