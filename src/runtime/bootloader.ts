@@ -1038,7 +1038,7 @@ function bridgeMain(names: FrameNames): void {
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
           autosaveTimer = undefined;
         }
-        return saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) });
+        return saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined);
       })
       .then(
       (result: Any) => {
@@ -1387,8 +1387,8 @@ function bridgeMain(names: FrameNames): void {
   const authoredBatch = (
     watermark: { replica: string; seq: number },
     session?: Uint8Array,
-  ): { batch: Uint8Array | null; head: number; replica: string; more: boolean } => {
-    if (!liveDb || !mergeModule || !mountReplica) return { batch: null, head: watermark.seq, replica: watermark.replica, more: false };
+  ): { batch: Uint8Array | null; head: number; replica: string; more: boolean; held: boolean } => {
+    if (!liveDb || !mergeModule || !mountReplica) return { batch: null, head: watermark.seq, replica: watermark.replica, more: false, held: false };
     const merge = mergeModule as Any;
     // Settle this copy's identity before reasoning about what it authored. A
     // copy that arrived by file still holds the sender's id until it takes its
@@ -1407,8 +1407,9 @@ function bridgeMain(names: FrameNames): void {
     // back with the head, so the host rebinds its watermark to what it advanced.
     // Scoped to one session when the host asks for one (T1-D30): each session's
     // mailbox carries only that session's rows.
-    // Sealed batches only, one at a time, lowest first (identity step 3).
-    return merge.authoredBatchAbove(r, mountReplica, watermark, tables, session, mountDocument);
+    // Sealed batches only, one at a time, lowest first (identity step 3), and
+    // only those a landed save holds (ruling #3).
+    return merge.authoredBatchAbove(r, mountReplica, watermark, tables, session, mountDocument, { held: new Set(unlanded.keys()) });
   };
 
   /** The sessions this copy holds seats for, as hex — each has a mailbox of its own. */
@@ -1663,6 +1664,30 @@ function bridgeMain(names: FrameNames): void {
    * while a signature is on its way stay pending for the next one.
    */
   let sealing: Promise<void> = Promise.resolve();
+  /*
+   * Seals no landed save holds yet (identity ruling #3): seal, save landed,
+   * publish. Each seal is numbered as it is recorded; a save carries the number
+   * reached when its bytes were taken, and when the host says that save is
+   * written, every seal at or below it has landed. "Landed" is the host's ack of
+   * the write to this device's store, not the frame's post of the save: a batch
+   * published on a save the host then refused is on the relay and gone from this
+   * device after a reload. Kept in memory on purpose: a seal from an earlier page
+   * is either in the stored bytes, and so landed, or was lost with that page.
+   */
+  const unlanded = new Map<string, number>();
+  let sealsRecorded = 0;
+  const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const markLanded = (reached: number): void => {
+    let any = false;
+    for (const [id, number] of unlanded) {
+      if (number > reached) continue;
+      unlanded.delete(id);
+      any = true;
+    }
+    // Something can be sent now that could not before: said, as a write is, so
+    // the host publishes without waiting for the next move.
+    if (any) window.parent.postMessage({ type: names.AUTHORED }, "*");
+  };
   const sealPending = (): Promise<void> => {
     const run = async (): Promise<void> => {
       if (!mergeModule || !liveDb || !mountReplica) return;
@@ -1676,6 +1701,8 @@ function bridgeMain(names: FrameNames): void {
           sign: (header: Uint8Array) => requestSignature(header, top),
         });
         merge.recordSeal(frameRows(liveDb), signed);
+        sealsRecorded += 1;
+        unlanded.set(hexOf(signed.id), sealsRecorded);
       }
     };
     sealing = sealing.then(run, run);
@@ -2163,6 +2190,9 @@ function bridgeMain(names: FrameNames): void {
   const saveState = (
     bytes?: Uint8Array | null,
     options?: { method?: "auto" | "picker" | "download"; setup?: boolean },
+    // How many seals the bytes hold (the count when they were taken from the
+    // live database), for a save the runtime made itself; never the caller's.
+    landing?: number,
   ): Promise<Any> =>
     new Promise((resolve, reject) => {
       const id = Math.random().toString(36).slice(2);
@@ -2173,6 +2203,11 @@ function bridgeMain(names: FrameNames): void {
         const data = event.data as Any;
         if (!data || data.id !== id) return;
         window.removeEventListener("message", done);
+        // Landed: the host wrote it to this device's store and said so. A
+        // download or a picker file is not this device's store.
+        if (data.ok && data.result?.method === "host" && data.result?.saved !== false && landing !== undefined) {
+          markLanded(landing);
+        }
         if (data.ok) resolve(data.result);
         else reject(new Error(String(data.error)));
       };
@@ -2230,7 +2265,7 @@ function bridgeMain(names: FrameNames): void {
       // unsigned (docs/identity.md, step 3). A write can land while a seal is
       // being signed (an invite writes its game and asks to share at once), so
       // the flush goes round again for it, a few times, before it says no.
-      const landed = (): boolean => autosaveDb === null && saveStatus !== "failed" && !hasPendingOwn();
+      const landed = (): boolean => autosaveDb === null && saveStatus !== "failed" && !hasPendingOwn() && unlanded.size === 0;
       void (async () => {
         for (let pass = 0; pass < 3; pass++) {
           await Promise.resolve(flushAutosave());
@@ -2282,9 +2317,13 @@ function bridgeMain(names: FrameNames): void {
         ? new Uint8Array(sessionHex.match(/../g)!.map((pair: string) => parseInt(pair, 16)))
         : undefined;
       const watermark = { replica: String(data.replica ?? ""), seq: Number(data.seq) || 0 };
-      // The leave point for a publish: seal, then answer. A seal that fails
-      // sends nothing and says why; the watermark does not move.
+      // The leave point for a publish: seal, save, and answer with what a
+      // landed save holds (ruling #3). A seal that fails sends nothing and says
+      // why; the watermark does not move. A save that fails sends nothing of
+      // what it held and says it is held: the landed save that follows it
+      // nudges the publish again.
       void sealPending()
+        .then(() => flushAutosave())
         .then(
           () => ({ ...authoredBatch(watermark, session), error: undefined as string | undefined }),
           (error: unknown) => ({
@@ -2292,14 +2331,15 @@ function bridgeMain(names: FrameNames): void {
             head: watermark.seq,
             replica: watermark.replica,
             more: false,
+            held: false,
             error: error instanceof Error ? error.message : String(error),
           }),
         )
-        .then(({ batch, head, replica, more, error }) => {
+        .then(({ batch, head, replica, more, held, error }) => {
           // Cloned, not transferred: a batch is a few rows, and a transfer list of
           // one detached buffer is a footgun for the saving it does not make.
           window.parent.postMessage(
-            { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch, more, ...(error ? { error } : {}) },
+            { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch, more, held, ...(error ? { error } : {}) },
             "*",
           );
         });
@@ -2570,9 +2610,12 @@ function bridgeMain(names: FrameNames): void {
       autosaveTimer = undefined;
       autosaveDb = null;
       // Sealed first, as an automatic save is (identity step 3).
-      return sealPending().then(() => saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) }));
+      return sealPending().then(() =>
+        saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined),
+      );
     },
-    saveState: saveState,
+    // Two arguments only: which seals a save carries is the runtime's to say.
+    saveState: (bytes?: Uint8Array | null, options?: Any) => saveState(bytes, options),
     /*
      * Opens the host's own share sheet — the same one behind its menu.
      *
@@ -3694,6 +3737,7 @@ async function boot(): Promise<void> {
         replica?: string;
         batch?: Uint8Array | null;
         more?: boolean;
+        held?: boolean;
         error?: string;
       };
       window.parent.postMessage(
@@ -3706,6 +3750,7 @@ async function boot(): Promise<void> {
           replica: answer.replica ?? "",
           batch: answer.batch ?? null,
           more: answer.more === true,
+          held: answer.held === true,
           ...(typeof answer.error === "string" ? { error: answer.error } : {}),
         },
         "*",

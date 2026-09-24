@@ -526,7 +526,7 @@ export function startMailboxSession(config: {
           config.onPublished?.(lane.address);
           // One sealed batch per publish; the frame says when more are waiting.
           if (answer["more"] === true) lane.publishAgain = true;
-          lane.upToDate = !lane.publishAgain;
+          lane.upToDate = !lane.publishAgain && answer["held"] !== true;
         } catch {
           // Said on screen, and left in the trace: a kept failure is how the
           // retry below can be shown to be the thing that sent it (D46).
@@ -542,8 +542,10 @@ export function startMailboxSession(config: {
           save(lane);
           noteWatermark(lane, "advanced with nothing to send");
         }
-        // Answered, and nothing to send.
-        if ("head" in answer) lane.upToDate = !lane.publishAgain;
+        // Answered, and nothing to send yet. A batch held back until its save
+        // lands (identity ruling #3) is still to send, so the lane is not up to
+        // date and does not retire; the landed save says so, and this runs again.
+        if ("head" in answer) lane.upToDate = !lane.publishAgain && answer["held"] !== true;
       }
     } finally {
       lane.publishing = false;

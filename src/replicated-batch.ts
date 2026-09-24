@@ -340,7 +340,8 @@ export function authoredBatchAbove(
   tables: readonly string[],
   session?: Uint8Array,
   document = "",
-): { batch: Uint8Array | null; head: number; replica: string; more: boolean } {
+  options: { held?: ReadonlySet<string> } = {},
+): { batch: Uint8Array | null; head: number; replica: string; more: boolean; held: boolean } {
   // Whose rows these are is the caller's to say (the host's key, binding rule
   // 1), never _dai_replica's: a row is not a source of identity.
   const replica = author;
@@ -360,15 +361,26 @@ export function authoredBatchAbove(
    * leave that row unsent for good. A batch sent twice is a duplicate; a row
    * never sent is lost.
    */
-  const pendingSeqs = entries.filter((e) => !(e.row._r_batch instanceof Uint8Array)).map((e) => e.row._r_seq);
+  /*
+   * And a sealed batch the caller holds back waits the same way (identity
+   * ruling #3): the frame names the batches whose seal no landed save holds
+   * yet. Published before the save lands, a batch can be on the relay and gone
+   * from this device after a reload; so it is treated as pending, and `held`
+   * tells the caller there is more to send once it lands.
+   */
+  const heldBack = options.held ?? new Set<string>();
+  const waits = (e: BatchEntry): boolean =>
+    !(e.row._r_batch instanceof Uint8Array) || heldBack.has(hex(e.row._r_batch));
+  const pendingSeqs = entries.filter(waits).map((e) => e.row._r_seq);
   const ceiling = pendingSeqs.length > 0 ? Math.min(...pendingSeqs) - 1 : Number.POSITIVE_INFINITY;
+  const held = entries.some((e) => e.row._r_batch instanceof Uint8Array && heldBack.has(hex(e.row._r_batch)));
   const byBatch = new Map<string, number>();
   for (const e of entries) {
-    if (!(e.row._r_batch instanceof Uint8Array)) continue;
-    const key = hex(e.row._r_batch);
+    if (waits(e)) continue;
+    const key = hex(e.row._r_batch as Uint8Array);
     byBatch.set(key, Math.min(byBatch.get(key) ?? Number.POSITIVE_INFINITY, e.row._r_seq));
   }
-  if (byBatch.size === 0) return { batch: null, head: since, replica: replicaHex, more: false };
+  if (byBatch.size === 0) return { batch: null, head: since, replica: replicaHex, more: false, held };
 
   // The lowest batch first, and the whole of it: a batch is signed as one, so
   // it travels as one, whatever part of it the watermark has already passed.
@@ -402,6 +414,7 @@ export function authoredBatchAbove(
     head: Math.max(since, Math.min(top, ceiling)),
     replica: replicaHex,
     more: byBatch.size > 1,
+    held,
   };
 }
 
