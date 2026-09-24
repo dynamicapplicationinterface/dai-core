@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { expect, type Browser, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { firstMailboxMerge } from "./mailbox-wait.js";
 import { compileDirectory } from "../src/compile.js";
@@ -1461,21 +1461,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * creator's phone announced the move as the creator's own and oriented as
    * the creator, and both copies ended holding the creator's game with the
    * joiner gone. The phones' route to it is d22 (a copy coming back under the
-   * sender's id); this test does not take that route. It forces the state the
-   * route produces, Bo's copy running under Ada's replica id, because that is
-   * the whole of what the merge would need to be fooled: `_r_replica` is set by
-   * the writer and trusted by the merge, and the per-game key (D37) is one both
-   * copies hold, so nothing tells Ada's copy which of the two wrote a row.
+   * sender's id); these tests do not take that route. They force the state the
+   * route produces, Bo's copy running under Ada's replica id.
    *
-   * Closed at step 2 of the identity sitting (docs/identity.md, binding rules 1
-   * and 2): the id a row is stamped with is the host's key, re-asserted on
-   * every write, never the row in `_dai_replica`. So the forged id lasts until
-   * Bo's copy next writes, which here is applying Ada's next move; from then on
-   * Bo's copy is Bo, and what it writes reaches Ada as Bo's, with both players
-   * still seated. A copy that forges rows outside the runtime is the merge's to
-   * refuse, by signature (tests/signed-batch.spec.ts, test 2).
+   * The setup both tests share: a game Ada started and Bo joined, one move each,
+   * and then Bo's copy rewrites its own `_dai_replica` to Ada's id.
    */
-  test("D80: a copy running under the creator's id is not believed to be the creator", async ({ browser }) => {
+  async function forgedPair(browser: Browser) {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1502,6 +1494,95 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await appFrame(pageB).evaluate((ada) => {
       (window as any).daiKit.db.exec(`UPDATE _dai_replica SET id = x'${ada}'`);
     }, beforeA.me);
+    return { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB };
+  }
+
+  /** Both players still seated, on the copy given. */
+  function stillSeated(who: string, rows: Awaited<ReturnType<typeof seatRows>>, bo: string): void {
+    expect(rows.members, `${who} still holds two members`).toHaveLength(2);
+    expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(bo);
+    expect(rows.games[0], `${who} still names both players`).toMatchObject({ w: "Ada", b: "Bo" });
+  }
+
+  /**
+   * The attack itself: the forged copy moves as the creator, and the creator's
+   * copy refuses the move.
+   *
+   * Bo's copy, under Ada's id and with nothing pulled since, believes it holds
+   * White and plays d2-d4.
+   *
+   * **Red until step 5 of the identity sitting, on purpose.** Since step 2 the
+   * write is stamped with the host's key, re-asserted on every write
+   * (docs/identity.md, binding rule 2), so the row reaches Ada's copy honestly
+   * as Bo's: the first half of this test passes. What must refuse it is the
+   * seat, not the signature: a signature answers who wrote a row, a seat
+   * answers whether they may, and Bo, holding Black, may not play White's move
+   * (IDENTITY-SEAT-ADMITS in src/rules.ts). The signature never refuses this
+   * path, because the runtime signs as Bo and Bo's batch verifies. At step 5
+   * the kit admits a row only from the author holding its seat, inside its
+   * merge path, and this test then also asserts the refusal is reported as
+   * `SEAT_NOT_HELD` with Bo's id. The forger who stamps Ada's id outside the
+   * runtime is the signature's to refuse, and is held by signed-batch test 2.
+   */
+  test("D80: a forged copy's move as the creator is refused by the seat, and both players stay seated (red until step 5)", async ({ browser }) => {
+    const { deviceA, deviceB, pageA, pageB, appB, beforeA, beforeB } = await forgedPair(browser);
+
+    // The forged copy writes White's move at once, through the application's own
+    // write surface (the runtime's path, stamped by the host). Not through the
+    // board: the copy's next write of any kind puts its key back, and a mailbox
+    // poll landing first would disable the move before the test could play it.
+    // How the forger produces the row is scenery; Ada's copy refusing it is the
+    // fact under test.
+    await appFrame(pageB).evaluate(() => {
+      const db = (window as any).daiKit.db;
+      const game = db.selectObjects(
+        "SELECT lower(hex(_r_entity)) id, lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'",
+      )[0];
+      (window as any).dai.replicated.insert(
+        "moves",
+        { game_id: game.id, ply: 3, color: "w", from_sq: "d2", to_sq: "d4", promotion: null, san: "d4", draw_offer: 0 },
+        game.s,
+      );
+    });
+
+    // Wait for what the refusal is about: the row arriving at Ada's copy.
+    const arrived = () =>
+      appFrame(pageA).evaluate(() =>
+        (window as any).daiKit.db.selectObjects(
+          "SELECT san, lower(hex(_r_replica)) r FROM moves WHERE san = 'd4'",
+        ) as { san: string; r: string }[],
+      );
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      expect(await arrived(), "the forged move reached Ada's copy").toHaveLength(1);
+    }).toPass({ timeout: 30_000 });
+
+    const afterA = await seatRows(pageA);
+    const afterB = await seatRows(pageB);
+    console.log(`D80 after, A: ${JSON.stringify(afterA)}`);
+    console.log(`D80 after, B: ${JSON.stringify(afterB)}`);
+
+    // Who wrote it (step 2, holds now): stamped as Bo, not as Ada.
+    expect((await arrived())[0]!.r, "the move is stamped with Bo's key, not the forged id").toBe(beforeB.me);
+    expect((await arrived())[0]!.r).not.toBe(beforeA.me);
+    // Whether Bo may (step 5): Bo holds Black, and this is White's move.
+    expect(afterA.moves.map((m: { san: string }) => m.san), "the seat refuses it: Ada's game does not admit it").not.toContain("d4");
+    stillSeated("A", afterA, beforeB.me);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * What makes the refusal above possible: a copy whose `_dai_replica` has been
+   * rewritten is back on its host's key from its next write, whatever that
+   * write is. Here the write is applying Ada's next move; after it, Bo's copy
+   * is Bo, and its answer reaches Ada as Bo's.
+   */
+  test("a rewritten _dai_replica lasts until the copy's next write, and then it writes under its host's key", async ({
+    browser,
+  }) => {
+    const { deviceA, deviceB, pageA, pageB, appA, appB, beforeB } = await forgedPair(browser);
     await pageB.evaluate(() => (window as any).__runner.pullMailbox());
 
     // Ada moves. Applying it is Bo's copy's next write, and the forged id does
@@ -1521,16 +1602,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
     }).toPass({ timeout: 30_000 });
     const afterA = await seatRows(pageA);
     const afterB = await seatRows(pageB);
-    console.log(`D80 after, A: ${JSON.stringify(afterA)}`);
-    console.log(`D80 after, B: ${JSON.stringify(afterB)}`);
+    console.log(`D80 heal after, A: ${JSON.stringify(afterA)}`);
+    console.log(`D80 heal after, B: ${JSON.stringify(afterB)}`);
 
     const last = afterA.moves[afterA.moves.length - 1] as { r: string };
     expect(last.r, "Bo's move is admitted as Bo's, not Ada's").toBe(beforeB.me);
-    for (const [who, rows] of [["A", afterA], ["B", afterB]] as const) {
-      expect(rows.members, `${who} still holds two members`).toHaveLength(2);
-      expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(beforeB.me);
-      expect(rows.games[0], `${who} still names both players`).toMatchObject({ w: "Ada", b: "Bo" });
-    }
+    stillSeated("A", afterA, beforeB.me);
+    stillSeated("B", afterB, beforeB.me);
 
     await deviceA.close();
     await deviceB.close();

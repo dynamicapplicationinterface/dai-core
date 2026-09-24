@@ -532,6 +532,17 @@ export const CONSTRAINTS: readonly Constraint[] = [
     anchors: [{ file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" }],
   },
   {
+    id: "IDENTITY-SEAT-ADMITS",
+    title: "A signature says who wrote a row; a seat says whether they may",
+    shapes: ["session"],
+    topic: "identity",
+    rule:
+      "A session app admits a row only from the author holding the seat that row's action belongs to: a move for White only from whoever holds White's seat. That the row is correctly signed is not enough, because a signature answers who wrote it and not whether they may. The kit does the check inside its merge path, so an app cannot skip it, and reports a refused row as SEAT_NOT_HELD with its author. Until the kit provides it (step 5 of docs/identity.md), nothing enforces this.",
+    why: "D80: a copy under the creator's id played the creator's move. Once every row is stamped with its author's own key, the move arrives honestly as the other player's, and it is still the wrong player's move. Only the seat can say so.",
+    enforced: ["prose"],
+    anchors: [{ file: "docs/identity.md", contains: "A signature answers who wrote a row; a seat answers whether they may." }],
+  },
+  {
     id: "SHARED-SEED-THROUGH-SURFACE",
     title: "Shared rows are never seeded with SQL",
     shapes: SHARED,
