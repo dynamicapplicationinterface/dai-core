@@ -118,6 +118,8 @@ The key is stored in the host's IndexedDB under a key name owned by `src/keys.ts
 
 A document written before this version has unsigned batches. The runtime reads them as authored by a fixed `legacy` author id and never applies, merges or writes an unsigned batch at this version or later. Legacy history is visible and read-only. There is no state-dependent rule: whether a batch is verified never depends on what the document already holds.
 
+**Both directions.** The rule above is a new host meeting an old document. The other skew is an old host meeting a new document: an installed copy runs whatever host its service worker cached, and a host from before this version would write unsigned rows into a signed document. So a document declares its format version, and a host below it mounts the document read-only with the update sentence ("This app needs an update before it can be written to; what's here is kept"). Step 6 builds both directions (backlog D108).
+
 The example apps (chess, tic-tac-toe, receipts, request, Moon Garden, the coming workout app) are rebuilt on the new runtime rather than migrated. Their pre-identity documents on any test phone are discarded. The walk's V1 control (the workout app) starts life signed, so nothing on the V1 walk ever carries a legacy batch.
 
 ## Tests that go red first

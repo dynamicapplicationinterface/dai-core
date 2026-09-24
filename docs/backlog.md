@@ -4364,6 +4364,48 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D109 — The sequence floor's publish route has no test of its own
+
+*Status: open. Filed 24 September from the identity sitting's review fixes
+(#1/#3).*
+
+The per-document sequence floor is raised before a save is written and before
+a mailbox batch is sealed (`beforePublish` in
+`apps/runner/src/mailbox-session.ts`). The save route is held end to end by
+`tests/seq-floor.spec.ts` (removed and received again). The publish route is
+not: proving it needs a save lost *after* a publish, deterministically, and no
+harness does that yet. Until one does, a change that dropped `beforePublish`
+would pass every test. What would close it: a way to make the host refuse or
+lose one save on demand (scenery), then a test that publishes, loses the save,
+reopens, and asserts the next row is above what was published.
+
+#### D108 — An old host meets a new document
+
+*Status: open. Ruled 24 September: filed, nothing built until step 6.*
+
+The skew that matters is not an old document on a new host: the runner mounts
+every document with its own runtime (`hostShell(..., { runtime: HOST_RUNTIME })`),
+so a document never runs its old code here. It is the other way round. An
+installed copy on a phone runs whatever host its service worker cached, and a
+cached host from before signed authorship, handed a document that carries
+`_dai_batch`, would write unsigned rows into a signed document, which is
+exactly what step 6's legacy rule forbids.
+
+The guard belongs in the format: a document declares its format version, and a
+host below that version mounts it read-only, with the update sentence ("This
+app needs an update before it can be written to; what's here is kept"). This is
+step 6's legacy rule seen from the other side; step 6's scope is both
+directions (`docs/identity.md`, Migration of existing documents).
+
+#### D107 — The crossed-invite tests pass on retry on Firefox
+
+*Status: open. Two sightings, both on Firefox, both passing on retry: run
+35943543565 (`mailbox-link-e2e.spec.ts:1294`, "the same crossed invites in
+the other opening order reach each other too") and run 35999516080 (`:1242`,
+"both invite before either opens, and each game still reaches the other
+copy", a 60-second visibility timeout). The two tests are one scenario in two
+orders.*
+
 #### D106 — The message-name scan cannot see a template literal or a split `type:`
 
 *Status: open, minor. Filed 24 September from the identity sitting's cold
