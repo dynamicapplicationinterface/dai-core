@@ -1528,6 +1528,114 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceB.close();
   });
 
+  /*
+   * A link naming a game this device holds, under a different key (backlog
+   * D122; IDENTITY-GAME-KEY-HELD).
+   *
+   * The database is outside the signed set, so anybody holding a copy can
+   * re-seal it under a key of their own and send a link naming the game. Made
+   * here the way anybody holding a copy could: A's library is given another key
+   * for the game (the store's own names, since the opener exports none; the
+   * write is checked before anything leans on it), and A shares the game again.
+   * Before the ruling, B filed the new key over the one it held, and its
+   * mailbox for the game moved to an address A's partner lane never reads.
+   */
+  test("a link naming a held game under a different key is refused, and the held key stays", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+    const refusals: string[] = [];
+    pageB.on("console", (m) => {
+      if (m.text().startsWith("dai: refused a link naming game")) refusals.push(m.text());
+    });
+
+    const appA = await openContainer(pageA);
+    await openContainer(pageB);
+    const first = await inviteNewGame(pageA, appA);
+    const session = await activeSession(pageA);
+    const keyIn = (link: string): string | undefined => new URL(link).hash.match(/[#&]k=([^&]+)/)?.[1];
+    const held = keyIn(first);
+    expect(held, "the invite carries the game's key").toBeTruthy();
+
+    await pageB.goto(first);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB);
+    await nameIfAsked(pageB, "Bo", "Ada");
+    await expect.poll(() => keysHeld(pageB), { timeout: 30_000 }).toContain(`${session}:${held}`);
+
+    /*
+     * A copy re-keyed: A's library holds another key for the same game, and A
+     * shares the game again, so the link names it under that key.
+     *
+     * The write goes round the opener's library lock, so a locked write of A's
+     * own, read before it, can put the old record back (seen once in ten on
+     * WebKit: the link came out under the first key). What the next step
+     * depends on is a link under the other key, so that is what is waited for.
+     */
+    let other = "";
+    let second = "";
+    await expect(async () => {
+      other = await pageA.evaluate(
+        ({ game }) =>
+          new Promise<string>((done) => {
+            const bytes = crypto.getRandomValues(new Uint8Array(32));
+            const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            const open = indexedDB.open("dai_runner_storage");
+            open.onerror = () => done("open failed");
+            open.onsuccess = () => {
+              const tx = open.result.transaction("cartridges", "readwrite");
+              const store = tx.objectStore("cartridges");
+              const all = store.getAll();
+              all.onsuccess = () => {
+                for (const item of all.result) {
+                  if (!item.sessionKeys?.[game]) continue;
+                  item.sessionKeys[game] = key;
+                  store.put(item);
+                }
+              };
+              tx.oncomplete = () => done(key);
+              tx.onerror = () => done(`error ${String(tx.error)}`);
+            };
+          }),
+        { game: session },
+      );
+      expect(await keysHeld(pageA), "A's library now holds another key for the game").toContain(`${session}:${other}`);
+      await pageA.evaluate(() => {
+        (window as any).__copied = undefined;
+        navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+      });
+      await appA.locator("#share").click();
+      await pageA.locator("#send-go").click();
+      await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+      second = await pageA.evaluate(() => (window as any).__copied as string);
+      expect(new URL(second).hash, "the second link names the same game").toContain(`s=${session}`);
+      expect(keyIn(second), "under the other key").toBe(other);
+    }).toPass({ timeout: 120_000 });
+
+    // B opens it. A held copy opens without a card, so the decision point is the
+    // load the link brings (a fresh navigation, or the opener's own reload at a
+    // same-document one), then the sentence or the mounted copy: the key is filed
+    // before either, or never.
+    let loads = 0;
+    pageB.on("load", () => void loads++);
+    await pageB.goto(second);
+    await expect.poll(() => loads, { timeout: 60_000 }).toBeGreaterThan(0);
+    const sentence = pageB.locator("#report", { hasText: "This link is for a game already on this device" });
+    await expect(sentence.or(pageB.locator("body.loaded"))).toBeVisible({ timeout: 60_000 });
+    expect(await keysHeld(pageB), "B still holds the key it was invited with").toContain(`${session}:${held}`);
+    expect(await keysHeld(pageB), "and never filed the other").not.toContain(`${session}:${other}`);
+    await expect(sentence, "the person is told why the link did not open").toBeVisible();
+    expect(refusals, "the refusal is reported").toHaveLength(1);
+    expect(refusals[0]).toContain(session.slice(0, 8));
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
   /** Every row the question turns on, as this copy holds it. */
   const seatRows = (page: Page) =>
     appFrame(page).evaluate(() => {

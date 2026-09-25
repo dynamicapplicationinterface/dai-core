@@ -1986,7 +1986,36 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * Here it is known and nothing has ejected yet, so it survives the mount.
      * A device that does not hold the app files it at the iOS relaunch instead,
      * the one place it would otherwise be lost (`relaunchAtOwnAddress`, D117).
+     *
+     * A link naming a game this device already holds under a different key is
+     * refused, before the card, with nothing changed (IDENTITY-GAME-KEY-HELD,
+     * D122). Filing it would move this copy's mailbox for the game to an address
+     * its partner does not read, and anybody holding a copy can make such a
+     * link: the database is outside the signed set. Read fresh, under no
+     * assumption that the list read above is current.
      */
+    if (arrivedKey && arrivedSession && heldHere) {
+      const heldKey = (await getCartridgeFromLibrary(heldHere.documentUuid).catch(() => null))?.sessionKeys?.[
+        arrivedSession
+      ];
+      if (heldKey && heldKey !== arrivedKey) {
+        slot.classList.remove("busy");
+        // The address names a copy held here, so the page was painted as
+        // launching into it; nothing is launching, and the sentence must show.
+        document.body.classList.remove("launching");
+        clearLaunchGuard();
+        console.warn(
+          `dai: refused a link naming game ${arrivedSession.slice(0, 8)} of ${heldHere.documentUuid}: ` +
+            `this device holds that game under a different key, and a held key is never replaced`,
+        );
+        say(
+          `This link is for a game already on this device, but it does not match the link that game was opened with. ` +
+            `It was not opened, and nothing on this device was changed.`,
+          true,
+        );
+        return;
+      }
+    }
     if (arrivedKey && arrivedSession && heldHere) {
       await rememberSessionKey(cartridge.manifest.documentUuid, arrivedSession, arrivedKey);
     }
@@ -4717,8 +4746,11 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
   // measured rewinding `revision` on a copy that had just saved: the receiving
   // copy filed the key at lane construction and every save after it was
   // refused, 37 in a row, with no recovery but a reopen.
+  // A gap is filled; a game's key already held is never replaced
+  // (IDENTITY-GAME-KEY-HELD, D122). A link that would have replaced it is
+  // refused in `ingest` before anything reaches here.
   await amendLibraryRecord(documentUuid, (record) =>
-    record.sessionKeys?.[session] === key
+    record.sessionKeys?.[session]
       ? record
       : { ...record, sessionKeys: { ...(record.sessionKeys ?? {}), [session]: key } },
   );

@@ -532,6 +532,20 @@ export const CONSTRAINTS: readonly Constraint[] = [
     anchors: [{ file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" }],
   },
   {
+    id: "IDENTITY-GAME-KEY-HELD",
+    title: "A game's key, once held, is never replaced",
+    shapes: SESSION,
+    topic: "identity",
+    rule:
+      "A key arriving for a game fills an empty slot: the host files it only when this device holds no key for that game, and the key it files is the one the saved link opened the copy with. It never replaces a key already held. A link naming a game this device holds under a different key is refused before the card, with a sentence saying so, and nothing on this device is changed; the host reports the refusal. An application never files, reads or chooses a game's key: the host does.",
+    why: "A game's mailbox address is derived from its key, so replacing it moves this copy to an address its partner does not read, with both screens looking healthy (D37's failure by another door). The database is outside the signed set, so anybody holding a copy can re-seal it under another key and send a link naming the game; a stale invite does the same without anybody meaning it (backlog D122).",
+    enforced: ["runtime"],
+    anchors: [
+      { file: "apps/runner/src/main.ts", contains: "a game's key already held is never replaced" },
+      { file: "apps/runner/src/main.ts", contains: "dai: refused a link naming game" },
+    ],
+  },
+  {
     id: "IDENTITY-SEAT-ADMITS",
     title: "A signature says who wrote a row; a seat says whether they may",
     shapes: ["session"],

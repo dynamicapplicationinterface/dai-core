@@ -4416,8 +4416,44 @@ D117) and on the D117 tree, local, no retries.*
 
 #### D122 — Any link naming a game this device holds re-keys that game
 
-*Status: open. Filed 25 September from the third cold read of D117; read, not
-run. Latent on main.*
+*Status: fixed on `identity/signed-authorship` (25 September); closed when that
+branch's CI verdict is read green. Filed 25 September from the third cold read
+of D117. Latent on main.*
+
+**Ruled 25 September** (`IDENTITY-GAME-KEY-HELD` in `src/rules.ts`): an
+arriving key fills an empty slot from the saved link; it never replaces a held
+one. A link naming a held game under a different key is refused with a sentence
+and reported.
+
+**Shown red, then fixed.** `tests/mailbox-link-e2e.spec.ts`, "a link naming a
+held game under a different key is refused, and the held key stays": A invites
+B, A's library is given another key for the game (as any copy's holder could),
+A shares the game again, B opens that link. Red with the fix removed on
+Chromium and WebKit, at "B still holds the key it was invited with" (B held
+the forged key). Green with it, 5 of 5 on each engine. The fix: `ingest`
+refuses the link before the card, from a fresh read, with the sentence and a
+`dai: refused a link naming game …` console line; `rememberSessionKey` fills
+gaps only.
+
+**What the run found that reading did not.** The first green attempt refused
+correctly and showed nothing: the address names a copy held here, so the page
+is painted as launching into it, and a refusal that does not take the launch
+screen down leaves the person on "This is taking longer than it should · Tap to
+open", which reopens the held copy with no word about the link. The refusal
+now clears the launch screen. **The sibling refusal above it** ("published by
+somebody else", same `ingest`, same `say(…, true); return`) does not, and
+nothing tests it: likely the same stuck screen. Read, not run.
+
+**The harness met a race of its own.** The forge writes the library around the
+opener's lock, and once in ten on WebKit a locked write of A's, read before it,
+put the old key back. The test waits for what the next step needs (a link under
+the other key), retrying the forge and share until it has one.
+
+**Not covered by the ruling:** a link naming *no* game still replaces the
+document key (`documentRootKey`, `arrivedKey && !arrivedSession`). Those links
+predate per-game keys; whether the same rule reaches them is not ruled.
+
+The original entry, as filed:
 
 `ingest` files an arriving game key on a copy already held with
 `rememberSessionKey`, which replaces a different key for that game without a
