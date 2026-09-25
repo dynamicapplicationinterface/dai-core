@@ -4430,6 +4430,11 @@ D117) and on the D117 tree, local, no retries.*
    `36120722040`. A reading, not run: B closes before the confirmation it pulled
    is saved (a save asked is not a save written), so the reopened copy waits to
    be seated again. Start with what B's stored copy holds at close.
+   **On WebKit it is about half** (measured 25 September, local, no retries,
+   always at `:670`): 11 in 20 on `5d95a81`, 9 in 20 with the runner from
+   `df22709` (before D122). It failed both attempts on CI run `36165131898`
+   and was the only red there; it passed on `36140721169` by luck. Until it is
+   fixed, no WebKit verdict on this branch is green except by chance.
 2. **`launch-address` "after a store arrival, keeps the path and the key that
    fetch it again"**, WebKit: 15 in 30 on the baseline, 12 in 30 with D117,
    "execution context was destroyed". The test waits for `body.loaded`, which on
@@ -4441,7 +4446,7 @@ D117) and on the D117 tree, local, no retries.*
 #### D122 — Any link naming a game this device holds re-keys that game
 
 *Status: fixed on `identity/signed-authorship` (25 September); closed when that
-branch's CI verdict is read green. Filed 25 September from the third cold read
+branch's CI verdict is read green; its test passed on all three engines on CI run `36165131898`, which is red on D123 item 1. Filed 25 September from the third cold read
 of D117. Latent on main.*
 
 **Ruled 25 September** (`IDENTITY-GAME-KEY-HELD` in `src/rules.ts`): an
@@ -4540,7 +4545,7 @@ them from colliding.
 #### D119 — The contested-seat e2e fails its own setup on WebKit
 
 *Status: fixed on `identity/signed-authorship` (25 September): the harness, not
-the product. Closed when that branch's CI verdict is read green on WebKit.
+the product. Closed when that branch's CI verdict is read green on WebKit. Its test passed on all three engines on CI run `36165131898`; that run is red on D123 item 1.
 Named 25 September from CI run `36120722040` (identity step 3, `df75e52`);
 reproduced locally on WebKit, two in two.*
 
