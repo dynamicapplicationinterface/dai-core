@@ -1029,7 +1029,16 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * that case is "reopening the invite" and the seat tests, not this one.
    */
   test("a forwarded invite contests the seat, nobody is seated, both are told, and the creator repairs", async ({ browser }) => {
-    const deviceA: BrowserContext = await browser.newContext();
+    /*
+     * A's worker is blocked, because A's reads are refused by a context route
+     * below and on WebKit a route never sees a request from a page the worker
+     * controls, cross-origin relay included (D119). Measured: A made twelve relay
+     * requests in the window, Playwright's page events and the page's own
+     * Resource Timing both saw them, and the route saw none; with the worker
+     * blocked it saw eleven and refused eight. Until then this test stopped at
+     * its setup check on WebKit and tested nothing there.
+     */
+    const deviceA: BrowserContext = await browser.newContext({ serviceWorkers: "block" });
     const deviceB: BrowserContext = await browser.newContext();
     const deviceC: BrowserContext = await browser.newContext();
     await mountStore(deviceA);

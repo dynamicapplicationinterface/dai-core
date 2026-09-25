@@ -4393,6 +4393,30 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D124 — On WebKit a route does not see a controlled page's requests; the route lint says it does
+
+*Status: open. Filed 25 September from D119, which measured it.*
+
+`scripts/check-routes.mjs` flags only a same-origin `page.route` in a file that
+does not block the worker. It exempts a cross-origin pattern ("outside the
+worker's scope and never intercepted") and every `context.route` ("does see the
+worker's own requests"). D119 measured both false on WebKit: a page the
+runner's worker controls made twelve cross-origin relay requests, and a
+`context.route` on them saw none. A worker's scope is which pages it controls,
+not which URLs; a controlled page's cross-origin fetch reaches its fetch
+handler too.
+
+Routes whose effect a test relies on, that the lint exempts, and that run on
+WebKit unless their file says otherwise (not yet checked one by one):
+`runner.spec.ts:490` (a cross-origin abort), `handoff-tab.spec.ts:151` (a
+cross-origin fulfil), `push-e2e.spec.ts:491`, `version-update.spec.ts:55`,
+`reference-head.spec.ts:42`, `write-rules-race.spec.ts:64,124`,
+`write-rules-refused.spec.ts:68,114` (context routes). For each: does the route
+fire on WebKit (count it), and if not, is the test passing for a reason
+unrelated to its claim? Then correct the lint's premise and its reach. The
+pattern is part 3's second shape: a check that passes for a reason unrelated to
+what it claims.
+
 #### D123 — Two relaunch-path tests flake, measured before D117
 
 *Status: open. Filed 25 September; each rate measured on `df75e52` (before
@@ -4515,9 +4539,36 @@ them from colliding.
 
 #### D119 — The contested-seat e2e fails its own setup on WebKit
 
-*Status: open. Named 25 September from CI run `36120722040` (identity step 3,
-`df75e52`); reproduced locally on WebKit, two in two. The first thing the next
-session opens.*
+*Status: fixed on `identity/signed-authorship` (25 September): the harness, not
+the product. Closed when that branch's CI verdict is read green on WebKit.
+Named 25 September from CI run `36120722040` (identity step 3, `df75e52`);
+reproduced locally on WebKit, two in two.*
+
+**Answered by running it: the refusal never reached WebKit's traffic.** With
+two independent witnesses beside the route, on WebKit A made twelve relay
+requests in the window, GETs among them: Playwright's page `request` events saw
+all twelve, and so did the page's own Resource Timing. The context route saw
+none, not even a pass-through counter registered beside it. On Chromium the same
+route saw five and refused three. A's page is controlled by the runner's
+service worker, and on WebKit a route does not see a controlled page's fetches,
+cross-origin included. With A's worker blocked (`serviceWorkers: "block"` on
+A's context only) the route saw eleven and refused eight, and the test passed
+two in two on WebKit, then 8 of 8 on each engine.
+
+**So the rest of the test never tested anything on WebKit** until now: it
+stopped at the setup check every time. It does now, and passes.
+
+**Chromium's miss had a cause too, and likely the same one.** Measured before
+the fix, the Chromium run failed at "A's copy holds both asks" (1, not 2) in 2
+of 6 on `e2cbd09` and 1 of 6 on `df22709` (so not D122), a check WebKit never
+reached. With A's worker blocked, Chromium passed 8 of 8, then 16 of 16 more:
+24 in 24, against 3 misses in 12 without it. The reading that fits: on Chromium an ask sometimes reached A through
+the worker, past the route, so A seated it before the contest.
+
+**The route lint's premise is false on WebKit** (`scripts/check-routes.mjs`):
+it exempts a cross-origin route as "outside the worker's scope and never
+intercepted", and a `context.route` as seeing the worker's own requests.
+Neither holds on WebKit for a controlled page. Filed as D124.
 
 `tests/mailbox-link-e2e.spec.ts`, "a forwarded invite contests the seat, nobody
 is seated, both are told, and the creator repairs", fails on WebKit at its setup
