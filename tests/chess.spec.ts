@@ -6,6 +6,7 @@ import { expect, type BrowserContext, type FrameLocator, type Page } from "@play
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { play } from "./chess-play.js";
+import { withSessionId } from "./session-db.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -95,7 +96,7 @@ async function movesIn(html: string): Promise<string[]> {
   const data = parseContainer(html).archive["document.sqlite"]!;
   const path = join(mkdtempSync(join(tmpdir(), "dai-chess-read-")), "d.sqlite");
   writeFileSync(path, data);
-  const db = new DatabaseSync(path);
+  const db = withSessionId(new DatabaseSync(path));
   try {
     return (db.prepare("SELECT san FROM moves_current").all() as { san: string }[]).map(
       (row) => row.san,

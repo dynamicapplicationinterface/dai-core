@@ -85,20 +85,24 @@ export class Store {
   */
  seatState(session){
   const mine=this.myReplica();
-  // Any seat two or more replicas bind — the creator's cue that an invite went
-  // to more than one device and needs replacing.
-  const contested=this.rows("SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_seat_current s ON s._r_session = b._r_session AND s.seat = b.seat WHERE lower(hex(b._r_session)) = ? GROUP BY b.seat HAVING count(DISTINCT lower(hex(b._r_replica))) > 1",[session]).length>0;
+  // An open seat nobody has been seated in, asked for by two or more devices —
+  // the creator's cue that an invite went to more than one device and needs
+  // replacing. Once the creator's copy has seated someone, a later ask is not a
+  // contest: that seat is taken for good.
+  const contested=this.rows("SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat WHERE lower(hex(b._r_session)) = ? AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) GROUP BY b.seat HAVING count(DISTINCT lower(hex(b._r_replica))) > 1",[session]).length>0;
   // The kit's reads, on the host's author id: never an author column.
   const amCreator=window.daiKit.amCreator(session);
   const haveBinding=!!mine&&!!this.one('SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ? LIMIT 1',[session,mine]);
   const member=!!window.daiKit.mySeat(session);
-  // Bound once, not admitted now: the seat was contested by another device, or
-  // retired in a reseat. Either way this copy's place is gone until it opens a
-  // fresh invite. One state, one message — a dead-end message is the hang.
+  // Asked for the open seat, and the creator's copy has not seated anyone in it yet.
+  const pending=!member&&!!window.daiKit.pendingSeat(session);
+  // Asked once, not seated: the creator's copy seated another device, or the
+  // seat was retired in a reseat. Either way this copy's place is gone until it
+  // opens a fresh invite. One state, one message — a dead-end message is the hang.
   // notIn: holds the game's rows but never joined it — membership is joined, not
   // inherited (T1-D34), so a forwarded document leaves you holding a game you are
   // not in, and the app must say so rather than show an empty board.
-  return {contested,amCreator,member,mineOut:haveBinding&&!member,notIn:!amCreator&&!haveBinding&&!member};
+  return {contested,amCreator,member,pending,mineOut:haveBinding&&!member&&!pending,notIn:!amCreator&&!haveBinding&&!member};
  }
  /**
   * The color this copy plays in a game, from its seat: the creator plays the
@@ -109,7 +113,10 @@ export class Store {
   if(!g||g.is_demo)return null;
   const s=this.seatState(g.session);
   if(s.amCreator)return g.creator_color;
-  return s.member?opposite(g.creator_color):null;
+  // Waiting to be seated is still playing: the move is written for the seat this
+  // copy asked for, and every other copy admits it once the creator's copy seats
+  // this one (identity step 5). Over files that is the next exchange.
+  return s.member||s.pending?opposite(g.creator_color):null;
  }
  /**
   * The seat a side plays from, as hex: the creator's seat plays the color the
@@ -142,7 +149,8 @@ export class Store {
   throw new Error('It’s '+playerName(st.game,st.turn)+'’s move. The board comes back to you when theirs lands.');
  }
  /** A player who took the open seat before anyone named it is asked their name once. */
- needsName(g=this.game()){const mine=this.myColor(g);return !!mine&&!this.seatState(g.session).amCreator&&!(mine==='w'?g.white_name:g.black_name);}
+ needsName(g=this.game()){const mine=this.myColor(g);if(!mine)return false;const s=this.seatState(g.session);// Asked once seated: a name written while waiting would wait on the same confirmation.
+  return !s.amCreator&&s.member&&!(mine==='w'?g.white_name:g.black_name);}
  /** Write this player's own name onto their seat — the one shared field they own. */
  setMyName(name){
   const g=this.game(),mine=this.myColor(g);name=String(name||'').trim();
@@ -168,8 +176,20 @@ export class Store {
  }
  gameById(id){return this.games().find(g=>g.id===id)||null;}
  game(){const s=this.settings();return s.active_game_id?this.gameById(s.active_game_id):null;}
- moves(gameId){return this.rows(`SELECT lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS replica, lower(hex(seat)) AS seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer FROM moves_current WHERE game_id = ? ${ORDER}`,[gameId]);}
- events(gameId){return this.rows(`SELECT lower(hex(_r_entity)) AS entity, lower(hex(seat)) AS seat, game_id, after_ply, color, kind, detail FROM game_events_current WHERE game_id = ? ORDER BY after_ply, _r_lc, lower(hex(_r_replica)), _r_seq`,[gameId]);}
+ /**
+  * A table's admitted rows for a game, and this copy's own rows still waiting
+  * for the creator's copy to seat it (`_pending`): every copy admits them once
+  * it is seated, and until then only this one shows them.
+  */
+ withPending(table,cols,gameId,order){
+  const me=this.myReplica();
+  const admitted=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_current WHERE game_id = ?`;
+  if(!me)return this.rows(`SELECT * FROM (${admitted}) ${order}`,[gameId]);
+  const own=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_pending WHERE game_id = ? AND lower(hex(_r_replica)) = ?`;
+  return this.rows(`SELECT * FROM (${admitted} UNION ALL ${own}) ${order}`,[gameId,gameId,me]);
+ }
+ moves(gameId){return this.withPending('moves','lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS replica, lower(hex(seat)) AS seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer',gameId,ORDER);}
+ events(gameId){return this.withPending('game_events','lower(hex(_r_entity)) AS entity, lower(hex(seat)) AS seat, game_id, after_ply, color, kind, detail',gameId,'ORDER BY after_ply, _r_lc, lower(hex(_r_replica)), _r_seq');}
  draft(gameId=this.game()?.id){return gameId?this.one('SELECT * FROM drafts WHERE game_id = ?',[gameId]):null;}
  photo(gameId,color){return this.one('SELECT bytes FROM photos WHERE game_id = ? AND color = ?',[gameId,color])?.bytes||null;}
 

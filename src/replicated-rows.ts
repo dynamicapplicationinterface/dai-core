@@ -13,6 +13,7 @@
  * be untestable in the other two.
  */
 import { showAuthorId } from "./identity.js";
+import { sessionIdOf } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
 export interface Rows {
@@ -501,6 +502,40 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array): Repli
   const row = stamp(db, table, entity, heads, columns, 1, session);
   applyRow(db, table, row);
   return row;
+}
+
+/* ------------------------------------------------------- the seat writers */
+
+/** What a new session is made from: all fresh random bytes, 16 each. */
+export interface NewSession {
+  nonce: Uint8Array;
+  creatorSeat: Uint8Array;
+  openSeat: Uint8Array;
+  /** The entities of the creator's seat row and the open seat's row. */
+  entities: readonly [Uint8Array, Uint8Array];
+}
+
+/**
+ * A new session under this copy's author (identity step 5): its id commits to
+ * that author, `SHA-256(author ‖ nonce)` first 16 bytes, and the nonce rides on
+ * the creator's own seat row, which is what makes the creator checkable from
+ * the rows. Then one open seat. Returns the session id.
+ */
+export function startSession(db: Rows, ids: NewSession): Uint8Array {
+  const session = sessionIdOf(replicaState(db).id, ids.nonce);
+  if (!session) throw new RowRejected("A session id needs a 16-byte author id and a 16-byte nonce.");
+  createEntity(db, "_dai_seat", ids.entities[0], { seat: ids.creatorSeat, nonce: ids.nonce }, session);
+  createEntity(db, "_dai_seat", ids.entities[1], { seat: ids.openSeat, nonce: null }, session);
+  return session;
+}
+
+/**
+ * The creator's confirmation that `holder` holds `seat`: the only thing that
+ * seats anyone in an open seat. Only rows by the session's creator count, so a
+ * caller checks that this copy is the creator first.
+ */
+export function confirmSeat(db: Rows, session: Uint8Array, seat: Uint8Array, holder: Uint8Array, entity: Uint8Array): void {
+  createEntity(db, "_dai_confirm", entity, { seat, holder }, session);
 }
 
 /* ---------------------------------------------------- the invite carrier */

@@ -2,8 +2,8 @@
  * The seat tables are the kit's (docs/identity.md, step 5; IDENTITY-KIT-SEATS).
  *
  * An application starts a session, claims a seat and asks who holds one
- * through `window.daiKit`, and never writes `_dai_seat` or `_dai_binding`
- * itself: not with its own SQL, and not through the runtime's session writers,
+ * through `window.daiKit`, and never writes `_dai_seat`, `_dai_binding` or
+ * `_dai_confirm` itself: not with its own SQL, and not through the runtime's session writers,
  * which the kit wraps. What an application writes around the kit is what the
  * kit's reads and the document's admission were built not to trust, so it is
  * refused at build rather than discovered in a merge.
@@ -16,14 +16,14 @@
 
 export interface SeatWrite {
   /** Which kind of write: its own SQL, or a runtime writer the kit wraps. */
-  kind: "sql" | "create" | "join" | "reseat";
+  kind: "sql" | "create" | "join" | "confirm" | "reseat";
   line: number;
   text: string;
 }
 
 const SQL_WRITE =
-  /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+["'`[]?_dai_(?:seat|binding)\b/i;
-const RUNTIME_WRITER = /\.session\s*\.\s*(create|join|reseat)\s*\(/;
+  /\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+["'`[]?_dai_(?:seat|binding|confirm)\b/i;
+const RUNTIME_WRITER = /\.session\s*\.\s*(create|join|confirm|reseat)\s*\(/;
 
 /** Every seat-table write in one source, by line. Comment lines are prose, not code. */
 export function seatWritesIn(source: string): SeatWrite[] {

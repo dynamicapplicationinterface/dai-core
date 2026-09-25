@@ -1061,16 +1061,17 @@ authors (Step 3).** *The model is recorded here to be validated by the
 implementation, not settled ahead of it — the inferred roster this replaced
 looked sound in prose and was a clock race underneath.*
 
-*Amended by signed authorship (docs/identity.md, step 5). A contested seat no
-longer admits neither: it is held by the first verified signer, a signed
-binding before an unsigned one, then the lowest clock, then the lowest author
-id (`IDENTITY-FIRST-SIGNER` in `src/rules.ts`). That brings a clock back into
-the roster, which the paragraph below rejected, but only among bindings to a
-seat the creator minted and signed, from people who each hold the invite: a
-contender who backdates its clock wins the contest, and could have played
-anyway. A seat offer signed by the creator would settle it without trusting a
-clock (backlog D114). The creator is decided the same way, as the author of the
-session's first seat row, so a seat another author mints is not a seat.*
+*Replaced by signed authorship (docs/identity.md, step 5, ruled 24 September).
+A binding no longer seats anyone: it asks. The session id commits to its
+creator (SHA-256 of the creator's author id and a nonce on the creator's own
+seat row, first 16 bytes), so who created a session is checked from the rows;
+the creator's seat is the creator's; the open seat is held by whoever the
+creator's copy confirms in `_dai_confirm`, which only the creator's rows count
+in. A seat two copies asked for before the creator's copy seated anyone admits
+neither, as this paragraph first had it, until the creator repairs it. No clock
+decides a seat. An interim rule held a contested seat by the first verified
+signer, clock then author id, and was withdrawn when a backdated binding took
+the creator's seat (`IDENTITY-SEAT-CONFIRMED` in `src/rules.ts`; backlog D114).*
 
 An earlier design inferred the roster from who wrote first, ordered by Lamport
 clock. It was wrong twice over: a Lamport clock does not order events across

@@ -3,6 +3,8 @@ import { expect, test } from "@playwright/test";
 import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
+import { sessionIdOf } from "../src/session-id.js";
+import { withSessionId } from "./session-db.js";
 
 /**
  * Asymmetric roles inside a session (backlog D15).
@@ -40,7 +42,7 @@ CREATE TABLE notes (
 `;
 
 function openWith(schema: string): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -52,8 +54,9 @@ function openWith(schema: string): Rows & { close(): void } {
 }
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
-const S = bytes(0x5e);
-const C = bytes(0xc0); // the creator: it mints the seats
+const NONCE = bytes(0x07);
+const C = bytes(0xc0); // the creator: the session id commits to it
+const S = sessionIdOf(C, NONCE)!;
 const J = bytes(0x10); // the joiner: it binds the open seat
 const SEATC = bytes(0xa1);
 const SEATJ = bytes(0xa2);
@@ -85,12 +88,16 @@ function put(
   return entity;
 }
 
-/** The roster both copies share: the creator's two seats, and one binding each. */
+/**
+ * The roster both copies share: the creator's own seat, carrying the nonce the
+ * session id commits to, the open seat, the joiner's ask for it, and the
+ * creator's confirmation. The creator's seqs 1–3, the joiner's seq 1.
+ */
 function seat(db: Rows): void {
-  put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ });
-  put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-  put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+  put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ, nonce: null });
+  put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
+  put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
 }
 
 const current = (db: Rows, table: string): string[] =>

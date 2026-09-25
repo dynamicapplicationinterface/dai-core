@@ -370,13 +370,18 @@ test.describe("tic-tac-toe, a session document", () => {
     await expect(appC.locator("#seat-text")).not.toContainText("invited");
     await expect(cell(appC, 8)).toBeDisabled();
 
-    // D opens A's original invite too: two replicas bind one seat, which admits neither.
+    // D opens A's original invite too, after A's copy has seated Bo (it did when
+    // B's file arrived). D asks for a seat that is already held, and a hold never
+    // moves (identity step 5): A's copy is not contested, offers no repair, and
+    // Bo keeps his seat and his mark.
     const appD = await firstOpen(pageD, a1, "#play");
-    await expect(appD.locator("#status")).toContainText(/Your move, Bo|not playing/, { timeout: 30_000 });
+    await expect(appD.locator("#status")).toContainText("Your move, Bo", { timeout: 30_000 });
     const d1 = await saveOut(pageD, join(scratch, "d1.dai.html"));
     await mergeIn(pageA, d1, false);
-    await expect(appA.locator("#seat-text")).toContainText("Two people opened this invite", { timeout: 60_000 });
-    await expect(appA.locator("#reseat")).toBeVisible();
+    await expect(appA.locator("#status")).toContainText("Your move, Ada.", { timeout: 60_000 });
+    await expect(cell(appA, 4)).toHaveText("O");
+    await expect(appA.locator("#seat-text")).not.toContainText("Two people opened this invite");
+    await expect(appA.locator("#reseat")).toBeHidden();
 
     for (const context of contexts) await context.close();
   });

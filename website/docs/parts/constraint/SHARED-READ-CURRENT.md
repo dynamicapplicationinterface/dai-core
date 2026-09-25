@@ -3,7 +3,7 @@
 ::: info SHARED-READ-CURRENT
 **Read shared rows from the \_current view**
 
-Read a replicated table t only through the view t\_current, which holds one row per live entity. Never SELECT from t itself for display or logic. Use t\_conflicts or t\_heads only to show or resolve a conflict (SHARED-SURFACE-CONFLICTS).
+Read a replicated table t only through the view t\_current, which holds one row per live entity. Never SELECT from t itself for display or logic. In a session, a copy waiting to be seated shows its own rows from t\_pending as well, since no copy admits them until it is seated (SESSION-MEMBERSHIP). Use t\_conflicts or t\_heads only to show or resolve a conflict (SHARED-SURFACE-CONFLICTS).
 
 **Why.** The base table holds every version of every row: superseded edits, tombstones of deleted rows, and — in a session — rows from non-members and rows written after the close. Reading it shows all of them at once.
 

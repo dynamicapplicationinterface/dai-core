@@ -35,7 +35,7 @@ way: [Why rows never change](/docs/why-rows-never-change).
 
 **Where:** In place of -- dai:replicated (with or without author=), directly above a CREATE TABLE that has &lt;column&gt;, in a document with a session profile.
 
-**Does:** Makes each row of the table act for the seat named in &lt;column&gt;: it is admitted only when its author held that seat when the row was written, and a row naming no seat, or a seat outside its session, never is. Combines with author=. See IDENTITY-SEAT-ADMITS.
+**Does:** Makes each row of the table act for the seat named in &lt;column&gt;: it is admitted only when its author holds that seat (the creator's own, or the open seat the creator confirmed them in), and a row naming no seat, or a seat outside its session, never is. Combines with author=. See IDENTITY-SEAT-ADMITS.
 
 ## Views and system tables
 
@@ -69,21 +69,39 @@ Never read it for display or logic. Never write to it.
 
 SELECT lower(hex(id)) AS id FROM \_dai\_replica — this copy's replica id.
 
-### `_dai_seat_current`
+### `t_pending`
 
-**Applies to** session. The seats the creator minted: seat, and \_r\_session. \_r\_replica is the creator.
+**Applies to** session. In a session document, the rows waiting on a confirmation: their author asked for an open seat nobody has been seated in yet (and, in a seated table, the row names that seat). Neither admitted nor refused; the same on every copy.
 
-Who created a session, and which seats exist.
+Read this copy's own rows here, beside t\_current, while it waits to be seated: nobody else shows them until it is.
+
+### `_dai_creator`
+
+**Applies to** session. session, replica, seat: who created each session, checked from the rows (the session id commits to the creator), and the creator's own seat.
+
+Who created a session. The kit's amCreator(session) reads it on the host's author id.
+
+### `_dai_open_seat`
+
+**Applies to** session. session, seat, entity: the open seats the creator minted, each at its current value among the creator's own versions.
+
+Which seat an invite offers.
+
+### `_dai_holder`
+
+**Applies to** session. session, seat, replica: who holds each seat. The creator's seat is the creator's; an open seat is held by whoever the creator's copy confirmed in it.
+
+Which side a row acts for, and whose seat is whose.
 
 ### `_dai_binding_current`
 
-**Applies to** session. The seats joiners bound: seat, \_r\_session; \_r\_replica is the joiner.
+**Applies to** session. The asks: seat, \_r\_session; \_r\_replica is the copy that asked for that open seat by opening an invite.
 
-Which seat is open (minted, not bound) and which is contested (bound by more than one replica).
+Which open seat is contested: nobody holds it and more than one copy asked for it.
 
 ### `_dai_member`
 
-**Applies to** session. session, replica: the replicas admitted to each session — each binds a minted seat that exactly one replica binds.
+**Applies to** session. session, replica: the replicas admitted to each session — the creator, and whoever holds a seat.
 
 Whether this copy may write in a session.
 

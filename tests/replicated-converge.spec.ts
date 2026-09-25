@@ -8,6 +8,8 @@ import {
 } from "../src/replicated.js";
 import { mergeCoverageGap, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
 import { adoptReplica, ensureReplica } from "../src/replicated-rows.js";
+import { sessionIdOf } from "../src/session-id.js";
+import { withSessionId } from "./session-db.js";
 import {
   applyRow,
   canonicalDump,
@@ -52,7 +54,7 @@ CREATE TABLE cases (
 
 /** `node:sqlite` behind the small interface the write rules ask for. */
 function openWith(schema: string): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -1060,7 +1062,7 @@ CREATE TABLE prefs (
   });
 });
 
-test.describe("admission is enforced through the views (T1-D29)", () => {
+test.describe("admission is enforced through the views (T1-D29, identity step 5)", () => {
   const SCHEMA = `-- dai:profile session max_parties=2
 -- dai:replicated
 CREATE TABLE moves (
@@ -1069,8 +1071,9 @@ CREATE TABLE moves (
 );
 `;
   const open3 = (): Rows & { close(): void } => openWith(SCHEMA);
-  const S = bytes(0x5e);
   const C = bytes(0xc0); // creator
+  const NONCE = bytes(0x07);
+  const S = sessionIdOf(C, NONCE)!; // the session commits to its creator
   const O = bytes(0x0b); // opener
   const N = bytes(0x0e); // never invited
   const F = bytes(0xff); // forwarded copy
@@ -1104,14 +1107,22 @@ CREATE TABLE moves (
   const currentMoves = (db: Rows): string[] =>
     db.all(`SELECT san FROM moves_current ORDER BY san`).map((r) => String(r["san"]));
 
+  /**
+   * The creator's session with the opener seated: her own seat, carrying the
+   * nonce the session id commits to, the open seat, the opener's ask for it,
+   * and her confirmation. The creator's rows are seqs 1–3, the opener's seq 1.
+   */
+  function seated(db: Rows): void {
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
+    put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
+    put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
+  }
+
   test("a member's rows show; a non-member's do not", () => {
     const db = open3();
     e = 0;
-    // The creator mints two seats and binds one; the opener binds the other.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
-    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    seated(db);
 
     // Two members author a move each; a stranger with no binding authors one too.
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
@@ -1123,21 +1134,18 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("a contested seat keeps its first verified signer: a later binding neither drops the holder's rows nor admits its own", () => {
+  test("a seat the creator confirmed stays its holder's: a later binding neither drops the holder's rows nor admits its own", () => {
     const db = open3();
     e = 0;
-    // The opener binds its seat and plays. It is a member; its move shows.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" });
+    // The opener is seated and plays. It is a member; its move shows.
+    seated(db);
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });
     expect(currentMoves(db)).toEqual(["e5"]);
 
-    // A forwarded copy opens the same invite and binds the same seat. The seat
-    // is contested, and since identity step 5 it is held by the first verified
-    // signer (IDENTITY-FIRST-SIGNER; it used to admit neither): the opener,
-    // whose binding comes first, stays a member and keeps its move. Recomputed
-    // from the rows, not the order they arrived in.
-    put(db, "_dai_binding", F, 1, 4, { seat: SEATO });
+    // A forwarded copy opens the same invite and asks for the same seat, even
+    // at an earlier clock. The creator seated the opener, and a hold never
+    // moves (identity step 5): the opener stays a member and keeps its move.
+    put(db, "_dai_binding", F, 1, 0, { seat: SEATO });
     expect(currentMoves(db)).toEqual(["e5"]);
 
     // And the forwarded copy does not enter.
@@ -1154,9 +1162,8 @@ CREATE TABLE moves (
     const db = open3();
     e = 0;
     const move = bytes(0x30);
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" }, move);
+    seated(db);
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" }, move);
 
     // A stranger (no binding) supersedes the member's move.
     applyRow(db, "moves", {
@@ -1200,9 +1207,8 @@ CREATE TABLE moves (
     // admission view resolves the same members.
     const a = open3();
     e = 0;
-    put(a, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(a, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(a, "moves", O, 2, 3, { ply: 1, san: "e5" });
+    seated(a);
+    put(a, "moves", O, 2, 5, { ply: 1, san: "e5" });
 
     const b = open3();
     const report = await mergeSibling(b, a);
@@ -1212,7 +1218,7 @@ CREATE TABLE moves (
     // move — admission is not something the merge carried, it is recomputed.
     expect(currentMoves(b)).toEqual(["e5"]);
     // And the two copies converged over every replicated table, roster included.
-    const tables = ["moves", "_dai_seat", "_dai_binding"];
+    const tables = ["moves", "_dai_seat", "_dai_binding", "_dai_confirm"];
     expect(canonicalDump(b, tables)).toBe(canonicalDump(a, tables));
     a.close();
     b.close();
@@ -1225,14 +1231,13 @@ CREATE TABLE moves (
     // is the closer's stated seq frontier, not a clock (T1-D31).
     const db = open3();
     e = 0;
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" }); // seq 2
-    put(db, "moves", O, 3, 4, { ply: 2, san: "Nf3" }); // seq 3
+    seated(db);
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" }); // seq 2
+    put(db, "moves", O, 3, 6, { ply: 2, san: "Nf3" }); // seq 3
     expect(currentMoves(db)).toEqual(["Nf3", "e5"]);
 
     // Close: the closer had seen O up to seq 2 — the first move, not the second.
-    put(db, "_dai_close", C, 2, 5, { replica: O, seq: 2 });
+    put(db, "_dai_close", C, 4, 7, { replica: O, seq: 2 });
 
     // The second move is past the frontier (3 > 2): late, dropped. The first
     // (2 >= 2) the close saw: kept. Recomputed on read, so the drop appeared the
@@ -1246,10 +1251,7 @@ CREATE TABLE moves (
     // close does not mention at all is entirely late.
     const db = open3();
     e = 0;
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
-    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    seated(db);
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
     put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
     expect(currentMoves(db)).toEqual(["e4", "e5"]);
@@ -1270,8 +1272,9 @@ CREATE TABLE moves (
 );
 `;
   const open = (): Rows & { close(): void } => openWith(SCHEMA);
-  const S = bytes(0x5e);
-  const C = bytes(0xc0); // creator — authors the seats
+  const C = bytes(0xc0); // creator — the session id commits to her
+  const NONCE = bytes(0x07);
+  const S = sessionIdOf(C, NONCE)!;
   const O = bytes(0x0b); // opener — a member, not the creator
   const SEATC = bytes(0xa1);
   const SEATO = bytes(0xa2);
@@ -1286,11 +1289,11 @@ CREATE TABLE moves (
   test("a non-creator's close is ignored; the creator's closes and drops the late row", () => {
     const db = open();
     e = 0;
-    // C authors the seats — so C is the creator. Both C and O are members.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
-    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    // The session id commits to C, so C is the creator; C seats O. Both are members.
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
+    put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
+    put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
     put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });
     expect(moves(db)).toEqual(["e5"]);
 

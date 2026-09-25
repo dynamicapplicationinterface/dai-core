@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -276,7 +277,7 @@ test.describe("the lint holds applications to the shared-table constraints", () 
  */
 test.describe("what the constraints claim, run against the rewrite", () => {
   const open = (schema: string): DatabaseSync => {
-    const db = new DatabaseSync(":memory:");
+    const db = withSessionId(new DatabaseSync(":memory:"));
     db.exec(rewriteReplicated(schema).sql);
     return db;
   };

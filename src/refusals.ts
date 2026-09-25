@@ -59,10 +59,9 @@ export const REFUSALS = {
   SEAT_ALREADY_BOUND: {
     recoverable: false,
     means:
-      "A session seat carries bindings from two or more replicas — two parties opened the same " +
-      "invite. The first verified signer holds it (signed before unsigned, then the lowest clock, " +
-      "then the lowest author id; the same on every copy), and the other binder is not a member. " +
-      "The creator can revoke the seat and issue a new invite (T1-D29; identity step 5).",
+      "An open seat two or more copies asked for before the creator's copy seated anyone — two " +
+      "parties opened the same invite. Nobody holds it; the creator can replace it and issue a new " +
+      "invite. A seat the creator's copy has seated someone in is theirs for good (identity step 5).",
   },
   SEATS_EXCEED_CAP: {
     recoverable: false,
@@ -97,7 +96,14 @@ export const REFUSALS = {
     means:
       "A reseat was asked for on a session with no contested seat. Reseating replaces a seat's " +
       "value, dropping every binding to the old one — a repair for a seat two parties opened, and " +
-      "damage to a healthy one. Refused unless a seat is actually contested (T1-D29).",
+      "damage to a healthy one. Refused unless an open seat nobody has been confirmed in is " +
+      "asked for by more than one author (identity step 5).",
+  },
+  CANNOT_CONFIRM: {
+    recoverable: false,
+    means:
+      "The creator's copy was asked to seat someone in a seat that is not a current open seat, or " +
+      "that someone already holds. A hold, once confirmed, never moves (identity step 5).",
   },
 
   // ---- shared tables, while a document is open
@@ -208,9 +214,10 @@ export const REFUSALS = {
   SEAT_NOT_HELD: {
     recoverable: false,
     means:
-      "A row that names a seat its author did not hold when the row was written, or names no seat, in " +
-      "a table whose rows act for a seat: signed by who it says, and not theirs to write. Stored and " +
-      "never admitted; reported with its author. The rest of the merge runs.",
+      "A row that names a seat someone else holds, or names no seat, in a table whose rows act for a " +
+      "seat: signed by who it says, and not theirs to write. Stored and never admitted; reported with " +
+      "its author. A row for a seat its author asked for and is waiting to be seated in is not this: " +
+      "it is pending, neither admitted nor reported. The rest of the merge runs.",
   },
   BATCH_UNSIGNED: {
     recoverable: false,

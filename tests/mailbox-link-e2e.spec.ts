@@ -282,6 +282,33 @@ test.describe("a game continues over a shared link (the key path)", () => {
     return { appFrame, link: link! };
   }
 
+  /**
+   * The creator's copy seats the joiner (identity step 5). A joiner's open only
+   * asks for the seat; the creator's copy confirms whoever asked when it sees
+   * the ask, which over the mailbox is its next pull, and the joiner holds the
+   * seat once the confirmation comes back on its own pull. Waits until every
+   * seat the joiner asked for that is still open to it is held by it.
+   */
+  async function letIn(creator: Page, joiner: Page): Promise<void> {
+    await expect(async () => {
+      await creator.evaluate(() => (window as any).__runner.pullMailbox());
+      await joiner.evaluate(() => (window as any).__runner.pullMailbox());
+      const seen = await app(joiner).locator("body").evaluate(() => {
+        const kit = (window as any).daiKit;
+        const me = kit.author();
+        const asked = kit.db.selectObjects(
+          "SELECT DISTINCT lower(hex(_r_session)) s FROM _dai_binding WHERE lower(hex(_r_replica)) = ?",
+          [me],
+        );
+        return { me, asked: asked.length, waiting: asked.filter((r: { s: string }) => kit.pendingSeat(r.s) !== null).length };
+      });
+      // What it looked at, before what it found: an ask to wait on, by a known author.
+      expect(seen.me, "the joiner's author id").toMatch(/^[0-9a-f]{32}$/);
+      expect(seen.asked, "the joiner asked for a seat").toBeGreaterThan(0);
+      expect(seen.waiting, "the joiner is still waiting to be seated").toBe(0);
+    }).toPass({ timeout: 30_000 });
+  }
+
   /** Open a share link on a page, wait for the board, point it at the relay. */
   async function openLink(page: Page, link: string): Promise<FrameLocator> {
     await page.goto(link);
@@ -514,9 +541,12 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.locator("#card-open").click();
     const appB2 = app(pageB);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
+    // Pointed at the relay, as openLink does, so B's ask for the new seat reaches A.
+    await useRelay(pageB);
 
-    // The new game, and its name step: B was never named in it. And game 1 is
-    // still B's.
+    // The new game, and its name step once A's copy seats B: B was never named
+    // in it. And game 1 is still B's.
+    await letIn(pageA, pageB);
     await expect(appB2.locator("#name-dialog")).toBeVisible({ timeout: 30_000 });
     await expect(appB2.locator("#move-history")).toContainText("d4");
     expect(await gamesHeld(pageB)).toContain("Ada vs Bo");
@@ -606,6 +636,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
       await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
+    // And A's copy has seated B, and B holds the confirmation, before B goes away.
+    await letIn(pageA, pageB);
     const before = await bindState(pageB);
     expect(before.myBindings, "B bound exactly one seat on first open").toHaveLength(1);
     const seat = before.myBindings[0]!.seat;
@@ -981,16 +1013,22 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   /**
-   * A forwarded invite contests the seat (T1-D29). Two different devices open one
-   * invite and bind the same seat. Since identity step 5 the seat is held by the
-   * first verified signer (IDENTITY-FIRST-SIGNER): exactly one of them keeps
-   * playing and the other is told its place went to another device, rather than
-   * both silently dropping rows into a dead game. Both bindings here come from
-   * the same link, so they carry the same clock, and the author ids (random keys)
-   * decide which: the test holds the rule whichever it is. Then the creator's
-   * repair, a fresh seat, lets the intended player in, and the other stays out.
+   * A forwarded invite contests the seat (identity step 5). Two different
+   * devices open one invite and both ask for the open seat before the creator's
+   * copy has seen either ask. Nobody is seated by a clock or an author id: the
+   * seat is held by whoever the creator's copy confirms, and it confirms only a
+   * seat exactly one device asked for. So neither is seated, the creator is
+   * shown the contest and the repair, and the repair (a fresh seat) retires the
+   * value both asked for, so both copies are told their place is gone. The
+   * intended player opens the fresh invite and is seated; the move it wrote
+   * while waiting for the old seat never stands. One outcome, whatever the ids.
+   *
+   * The creator's copy is kept from reading its mailbox while the two open, so
+   * both asks are there when it next looks. A creator whose copy sees one ask
+   * first seats that one, and a later ask is not a contest (a hold never moves);
+   * that case is "reopening the invite" and the seat tests, not this one.
    */
-  test("a forwarded invite contests the seat, the first signer keeps it, the other is told, and the creator repairs", async ({ browser }) => {
+  test("a forwarded invite contests the seat, nobody is seated, both are told, and the creator repairs", async ({ browser }) => {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     const deviceC: BrowserContext = await browser.newContext();
@@ -1002,12 +1040,18 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const pageC = await deviceC.newPage();
     const pull = (p: Page) => p.evaluate(() => (window as any).__runner.pullMailbox());
 
-    // A starts a game and shares one invite. B opens it and takes the seat.
+    // A starts a game and shares one invite. From here until both have opened it,
+    // A's copy cannot read its mailbox, so it sees neither ask before the other.
     const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "Bo", "e2", "e4");
+    let blocked = 0;
+    const blockReads = (route: import("@playwright/test").Route) =>
+      route.request().method() === "GET" ? (blocked++, route.abort()) : route.continue();
+    await deviceA.route(`${relayBase}/**`, blockReads);
+
+    // B opens it and asks for the seat, and plays e5 while waiting: its own board
+    // shows the move, and no other copy admits it until B is seated.
     const appB = await openLink(pageB, link);
     await expect(appB.locator("#app")).toBeVisible({ timeout: 60_000 });
-    // B is the sole member so far, and plays e5 — a move admitted while it holds
-    // the seat, which the contest will hide and the repair must bring back.
     await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
     await play(appB, "e7", "e5");
     await expect(appB.locator("#move-history")).toContainText("e5");
@@ -1015,41 +1059,69 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const appC = await openLink(pageC, link);
     await expect(appC.locator("#app")).toBeVisible({ timeout: 60_000 });
 
-    // The two bindings meet through the mailbox: the seat is contested, one
-    // holds it and the other is told its place went to another device.
+    // Over the mailbox the creator's copy merges one batch at a time, so it seats
+    // whichever ask it reads first, and a later one is not a contest. A contest
+    // is two asks reaching the creator's copy in one merge. So: C's copy, whose
+    // reads were never cut, gathers both asks, and C sends its copy to A, who
+    // opens it into her own. A's copy was really kept from reading until then.
+    const askersOn = (page: Page) =>
+      app(page).locator("body").evaluate(
+        () =>
+          (window as any).daiKit.db.selectObjects(
+            "SELECT max(n) n FROM (SELECT count(DISTINCT b._r_replica) n FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat GROUP BY s.session, s.seat)",
+          )[0].n,
+      );
+    await expect(async () => {
+      await pull(pageC);
+      expect(await askersOn(pageC), "C's copy holds both asks for the open seat").toBe(2);
+    }).toPass({ timeout: 30_000 });
+    expect(blocked, "A's copy tried to read and was refused while the two opened").toBeGreaterThan(0);
+    await pageC.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    });
+    await pageC.click("#more");
+    await pageC.click("#send");
+    await pageC.click("#send-go");
+    await expect.poll(() => pageC.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    const fromC = await pageC.evaluate(() => (window as any).__copied as string);
+    await pageA.goto(fromC);
+    await pageA.locator("#card-open").click({ timeout: 60_000 });
+    await expect(appA.locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageA);
+
+    // Both asks reached A's copy together. It seats neither: the creator is
+    // shown the contest and offered the repair.
+    expect(await askersOn(pageA), "A's copy holds both asks").toBe(2);
+    await expect(appA.locator("#new-invite")).toBeVisible({ timeout: 30_000 });
     const member = (page: Page) =>
       appFrame(page).evaluate(() => {
         const kit = (window as any).daiKit;
         const session = kit.db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0]?.s;
         return session ? kit.mySeat(session) !== null : false;
       });
-    let bHolds = false;
-    await expect(async () => {
-      await pull(pageB);
-      await pull(pageC);
-      bHolds = await member(pageB);
-      const cHolds = await member(pageC);
-      expect(bHolds !== cHolds, "exactly one of the two holds the seat").toBe(true);
-      await expect((bHolds ? appC : appB).locator("#contested-banner")).toBeVisible({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
-    const [holder, other] = bHolds ? [appB, appC] : [appC, appB];
-    await expect(other.locator("#contested-banner")).toContainText("used on another device");
-    await expect(other.locator("#play-move")).toBeDisabled();
-    await expect(holder.locator("#contested-banner"), "the holder plays on").toBeHidden();
-    // B's e5 stands exactly when B held the seat when it wrote it.
-    if (bHolds) await expect(appB.locator("#move-history")).toContainText("e5");
-    else await expect(appB.locator("#move-history")).not.toContainText("e5");
-
-    // The creator sees the contest and is offered the repair.
-    await expect(async () => {
-      await pull(pageA);
-      await expect(appA.locator("#new-invite")).toBeVisible({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
+    await pull(pageB);
+    await pull(pageC);
+    expect(await member(pageB), "B is not seated").toBe(false);
+    expect(await member(pageC), "C is not seated").toBe(false);
+    await expect(appA.locator("#move-history"), "B's e5 does not stand on A's copy").not.toContainText("e5");
 
     // A mints a fresh seat, then shares a new invite — a fresh snapshot carrying
     // the new open seat, so the opener does not depend on mailbox timing.
     await appA.locator("#new-invite").click();
     await appA.locator("#confirm-yes").click();
+    await deviceA.unroute(`${relayBase}/**`, blockReads);
+
+    // The seat both asked for is retired, so both are told their place is gone,
+    // that nothing they did lost it, and that the creator can send a new invite.
+    for (const [page, frame] of [[pageB, appB], [pageC, appC]] as const) {
+      await expect(async () => {
+        await pull(page);
+        await expect(frame.locator("#contested-banner")).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 30_000 });
+      await expect(frame.locator("#contested-banner")).toContainText("used on another device");
+      await expect(frame.locator("#play-move")).toBeDisabled();
+    }
 
     // Safe default (T1-D34): an untagged dai:merged must NOT join. C now holds the
     // fresh open seat over the mailbox and is not a member — the exact state where
@@ -1060,8 +1132,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await pull(pageC);
       const openForC = await appFrame(pageC).evaluate(() =>
         (window as any).daiKit.db.selectObjects(
-          "SELECT 1 FROM _dai_seat_current s WHERE lower(hex(s.seat)) NOT IN " +
-            "(SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE b._r_session = s._r_session) LIMIT 1",
+          "SELECT 1 FROM _dai_open_seat s WHERE lower(hex(s.seat)) NOT IN " +
+            "(SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE b._r_session = s.session) LIMIT 1",
         ).length > 0,
       );
       expect(openForC, "the fresh open seat reached C").toBe(true);
@@ -1098,18 +1170,20 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const appB2 = app(pageB2);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB2);
+    // B asked for the fresh seat; A's copy, seeing one ask, seats B.
+    await letIn(pageA, pageB2);
     await expect(appB2.locator("#contested-banner")).toBeHidden({ timeout: 30_000 });
     const bIsMember = await appFrame(pageB2).evaluate(() => {
       const db = (window as any).daiKit.db;
       const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
       return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
     });
-    expect(bIsMember, "B rebinds the fresh seat on opening the new invite").toBe(true);
-    // A move stands by whether its author held the seat when it was written
-    // (IDENTITY-SEAT-ADMITS), so the repair neither hides nor revives one: B's e5
-    // stands after it exactly as it did before.
-    if (bHolds) await expect(appB2.locator("#move-history")).toContainText("e5", { timeout: 30_000 });
-    else await expect(appB2.locator("#move-history")).not.toContainText("e5");
+    expect(bIsMember, "B is seated in the fresh seat on opening the new invite").toBe(true);
+    // B's e5 was written for the seat the repair retired, which nobody was ever
+    // seated in: it never stands, on B's copy or A's.
+    await expect(appB2.locator("#move-history")).toContainText("e4");
+    await expect(appB2.locator("#move-history")).not.toContainText("e5");
+    await expect(appA.locator("#move-history")).not.toContainText("e5");
 
     // C, which only receives the reseat over the mailbox and never opens the new
     // invite, does not silently re-enter: it stays out, and stays told so.

@@ -19,6 +19,8 @@
  * a signature lives: the per-row `_r_sig` T1-D7 reserved is gone.
  */
 
+import { SESSION_ID_FUNCTION } from "./session-id.js";
+
 /** The marker an author writes above a table they want replicated. */
 export const REPLICATED_MARKER = "dai:replicated";
 
@@ -158,7 +160,7 @@ export interface RewrittenSchema {
   /**
    * Tables whose rows each name the seat they act for, by column, when any are
    * declared (docs/identity.md, step 5): a row is admitted only when its author
-   * held that seat when the row was written.
+   * holds that seat.
    */
   seats?: Record<string, string>;
 }
@@ -454,18 +456,6 @@ function replicationColumns(session: boolean): string {
  * clearing it is refused, because two hosts with the same rows and different
  * flags never reconcile.
  */
-/** Signed, or this copy's own (sealed when it leaves): 0; unsigned from anyone else: 1. */
-const verifiedRank = (x: string): string =>
-  `(CASE WHEN ${x}._r_batch IS NOT NULL OR ${x}._r_replica = (SELECT id FROM _dai_replica LIMIT 1) THEN 0 ELSE 1 END)`;
-
-/** Whether roster row `a` comes before `b`: verified first, then clock, author id, seq. */
-function verifiedBefore(a: string, b: string): string {
-  return (
-    `(${verifiedRank(a)} < ${verifiedRank(b)} OR (${verifiedRank(a)} = ${verifiedRank(b)} AND (${a}._r_lc < ${b}._r_lc OR ` +
-    `(${a}._r_lc = ${b}._r_lc AND (hex(${a}._r_replica) < hex(${b}._r_replica) OR ` +
-    `(${a}._r_replica = ${b}._r_replica AND ${a}._r_seq < ${b}._r_seq))))))`
-  );
-}
 
 /**
  * The `_heads` view — heads are where admission is enforced (T1-D29).
@@ -541,33 +531,33 @@ function headsView(
     author === "creator" ? ` AND ${seatAuthor(row)}` : author === "joiner" ? ` AND NOT ${seatAuthor(row)}` : "";
   /*
    * A seated table (identity step 5): the row names the seat it acts for, and
-   * is admitted only when its author held that seat when the row was written,
-   * not merely now. Held then means both of:
-   *  - the author's binding to that seat is the one that holds it (the first
-   *    verified signer, as `_dai_holder`), written at or before the row's clock;
-   *  - the seat had that value at the row's clock: a version minted by the
-   *    creator at or before it, with no reseat of that seat between.
-   * A row naming no seat, or a seat outside its session, matches neither and is
-   * never admitted. Membership now is not the question for such a row: a move
-   * made while holding a seat stays a move, and one made before holding it
-   * never becomes one.
+   * is admitted only when its author holds that seat, as `_dai_holder` says:
+   * the creator's seat is the creator's, and an open seat is held by whoever
+   * the creator confirmed in it. No clock is read. A hold, once made, never
+   * moves (reseat is refused on a confirmed seat), so "holds" and "held when
+   * the row was written" are the same question, and a move written while its
+   * author waited to be confirmed is admitted once they are. A row naming no
+   * seat, or a seat nobody holds, is not admitted.
    */
-  const heldThen = (row: string): string => {
-    const col = `${row}."${seatColumn}"`;
-    return (
-      `EXISTS (SELECT 1 FROM _dai_binding b WHERE b._r_session = ${row}._r_session AND b.seat = ${col}` +
-      ` AND b._r_replica = ${row}._r_replica AND b._r_deleted = 0 AND b._r_lc <= ${row}._r_lc` +
-      ` AND NOT EXISTS (SELECT 1 FROM _dai_binding o WHERE o._r_session = b._r_session AND o.seat = b.seat` +
-      ` AND o._r_deleted = 0 AND ${verifiedBefore("o", "b")}))` +
-      ` AND EXISTS (SELECT 1 FROM _dai_seat s JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica` +
-      ` WHERE s._r_session = ${row}._r_session AND s.seat = ${col} AND s._r_deleted = 0 AND s._r_lc <= ${row}._r_lc` +
-      ` AND NOT EXISTS (SELECT 1 FROM _dai_seat n WHERE n._r_entity = s._r_entity AND n._r_lc > s._r_lc AND n._r_lc <= ${row}._r_lc))`
-    );
-  };
+  const holds = (row: string): string =>
+    `EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = ${row}._r_session` +
+    ` AND h.seat = ${row}."${seatColumn}" AND h.replica = ${row}._r_replica)`;
   const admitted = (row: string): string =>
     seatColumn
-      ? `(${heldThen(row)}) AND ${notLate(row)}${byRole(row)}`
+      ? `(${holds(row)}) AND ${notLate(row)}${byRole(row)}`
       : `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
+  /*
+   * Waiting on a confirmation (identity step 5, finding 6): the author asked for
+   * an open seat nobody holds yet, in the row's session, and (in a seated table)
+   * the row names that seat. Neither admitted nor refused; a fact about the row
+   * set, the same on every copy, so an application shows its own waiting rows
+   * from `_pending` and never from the table itself.
+   */
+  const waiting = (row: string): string =>
+    `EXISTS (SELECT 1 FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat` +
+    ` WHERE b._r_session = ${row}._r_session AND b._r_replica = ${row}._r_replica` +
+    (seatColumn ? ` AND b.seat = ${row}."${seatColumn}"` : "") +
+    ` AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat))`;
   // Only a row of r's own entity can supersede it (T1-D35).
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
@@ -577,13 +567,22 @@ function headsView(
         WHERE c._r_entity = r._r_entity
           AND ${admitted("c")}
           AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
-     );` +
+     );
+
+CREATE VIEW IF NOT EXISTS ${q}_pending AS
+  SELECT r.* FROM ${q} r
+   WHERE r._r_superseded = 0 AND r._r_deleted = 0 AND ${waiting("r")} AND ${notLate("r")}${byRole("r")};` +
     (seatColumn
       ? `
--- Rows whose author did not hold the seat they name when they were written: what a
--- merge reports as SEAT_NOT_HELD (identity step 5).
+-- What a merge reports as SEAT_NOT_HELD (identity step 5): a row that names no
+-- seat, or a seat someone else holds. A row for a seat nobody holds yet is
+-- pending, waiting on the creator's confirmation, and is neither admitted nor
+-- reported.
 CREATE VIEW IF NOT EXISTS ${q}_unseated AS
-  SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r WHERE NOT (${heldThen("r")});`
+  SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r
+   WHERE typeof(r."${seatColumn}") <> 'blob' OR length(r."${seatColumn}") <> 16
+      OR (EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = r._r_session AND h.seat = r."${seatColumn}")
+          AND NOT (${holds("r")}));`
       : "");
 }
 
@@ -757,38 +756,65 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * a member of a session iff it binds a minted seat that exactly one replica
    * binds. A seat two replicas bind is contested and appears for neither.
    */
-  const rosterTable = (name: string): string =>
-    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
-    tableObjects(name, ["seat"], true, false);
+  const rosterTable = (name: string, extra = "", authored = ["seat"]): string =>
+    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${extra}${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
+    tableObjects(name, authored, true, false);
 
   /*
-   * Who holds a seat (identity step 5; rules.ts IDENTITY-FIRST-SIGNER).
+   * The seat model (identity step 5, ruled 24 September). No clock decides
+   * anything in it.
    *
-   * The first verified signer: among the rows that name it, a signed one (or
-   * this copy's own, which is sealed when it leaves) before an unsigned one,
-   * then the lowest clock, then the lowest author id, then the lowest seq. The
-   * same answer on every copy. It replaces "a contested seat admits neither"
-   * (T1-D29): two bindings to one seat now leave the first one holding it.
+   * - The session id commits to its creator: SHA-256(creator ‖ nonce), first
+   *   16 bytes, with the nonce on the creator's own seat row. `_dai_creator` is
+   *   the author of a seat row whose nonce hashes, with that author, to the
+   *   row's session (`dai_session_id`, src/session-id.ts). Only the creator can
+   *   write one; checked here, at read, over every row this copy holds however
+   *   it arrived.
+   * - The creator's seat is the seat on that row, and it is the creator's by
+   *   definition. A binding to it means nothing.
+   * - Every other seat the creator mints is open, and is held by whoever the
+   *   creator confirms, in `_dai_confirm`, which only the creator's rows count
+   *   in. A joiner's binding asks for a seat; it holds nothing until then. If
+   *   the creator's rows confirm one seat twice, the first by her own seq holds.
    *
-   * The creator is decided the same way, as the author of the session's first
-   * seat row: a seat another author minted is not a seat, so a joiner cannot
-   * seat itself by writing `_dai_seat` around the kit.
+   * Nothing here is ordered by a clock, so a backdated row gains nothing, and a
+   * hold, once made, never moves: the repair (reseat) is refused on a seat
+   * anyone has been confirmed in. A row's author is its key once its batch is
+   * verified; an unsigned row under someone else's id is the one hole left,
+   * for this table as for every other, and it is closed where unsigned batches
+   * are refused (BATCH_UNSIGNED, identity step 6).
    */
-  const before = verifiedBefore;
   const member = `
 CREATE VIEW IF NOT EXISTS _dai_creator AS
-  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica
+  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat
     FROM _dai_seat s
-   WHERE NOT EXISTS (SELECT 1 FROM _dai_seat o WHERE o._r_session = s._r_session AND ${before("o", "s")});
+   WHERE s.nonce IS NOT NULL AND s._r_deleted = 0
+     AND ${SESSION_ID_FUNCTION}(s._r_replica, s.nonce) = s._r_session;
+
+-- The open seats the creator minted, each at its current value among her own
+-- versions: a version another author wrote of her seat row is not hers.
+CREATE VIEW IF NOT EXISTS _dai_open_seat AS
+  SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
+    FROM _dai_seat s
+    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
+   WHERE s.nonce IS NULL AND s._r_deleted = 0
+     AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
+     AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(n._r_parents) p
+                      WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica
+                        AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);
 
 CREATE VIEW IF NOT EXISTS _dai_holder AS
-  SELECT b._r_session AS session, b.seat AS seat, b._r_replica AS replica, b._r_lc AS since
-    FROM _dai_binding b
-    JOIN _dai_seat_current s ON s._r_session = b._r_session AND s.seat = b.seat
-    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
-   WHERE b._r_deleted = 0
-     AND NOT EXISTS (SELECT 1 FROM _dai_binding o
-                      WHERE o._r_session = b._r_session AND o.seat = b.seat AND o._r_deleted = 0 AND ${before("o", "b")});
+  SELECT c.session AS session, c.seat AS seat, c.replica AS replica, 0 AS since
+    FROM _dai_creator c
+  UNION
+  SELECT f._r_session, f.seat, f.holder, f._r_seq
+    FROM _dai_confirm f
+    JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
+   WHERE f._r_deleted = 0
+     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session)
+     AND NOT EXISTS (SELECT 1 FROM _dai_confirm o
+                      WHERE o._r_session = f._r_session AND o.seat = f.seat AND o._r_replica = f._r_replica
+                        AND o._r_deleted = 0 AND o._r_seq < f._r_seq);
 
 CREATE VIEW IF NOT EXISTS _dai_member AS
   SELECT DISTINCT session, replica FROM _dai_holder;
@@ -806,7 +832,14 @@ CREATE VIEW IF NOT EXISTS _dai_member AS
     `CREATE TABLE IF NOT EXISTS _dai_close (\n  replica BLOB NOT NULL CHECK (length(replica) = 16),\n  seq INTEGER NOT NULL,\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
     tableObjects("_dai_close", ["replica", "seq"], true, false);
 
-  return base + rosterTable("_dai_seat") + rosterTable("_dai_binding") + close + member;
+  return (
+    base +
+    rosterTable("_dai_seat", "  nonce BLOB CHECK (nonce IS NULL OR length(nonce) = 16),\n", ["seat", "nonce"]) +
+    rosterTable("_dai_binding") +
+    rosterTable("_dai_confirm", "  holder BLOB NOT NULL CHECK (length(holder) = 16),\n", ["seat", "holder"]) +
+    close +
+    member
+  );
 }
 
 /**
@@ -848,7 +881,7 @@ CREATE VIEW IF NOT EXISTS _dai_seat_rules AS
 }
 
 /** The replicated system tables a session document carries beside its author tables (T1-D29). */
-export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding", "_dai_close"] as const;
+export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding", "_dai_confirm", "_dai_close"] as const;
 
 /**
  * What the immutability trigger must name, checked against the table itself.

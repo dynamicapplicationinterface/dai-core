@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
+import { serveRelay, type ServedRelay } from "./relay-memory.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -40,8 +41,12 @@ const webkitOnly = (): void =>
 
 let store: Server;
 let storeBase = "";
+// A copy that opened an invite asks for the open seat and is seated by the
+// creator's copy, over the mailbox; the name is asked once it is seated.
+let relay: ServedRelay;
 
 test.beforeAll(async () => {
+  relay = await serveRelay();
   const bucket = new Map<string, Buffer>();
   store = createServer((request, response) => {
     if (request.method === "OPTIONS") {
@@ -90,7 +95,73 @@ test.beforeAll(async () => {
   storeBase = `http://localhost:${(store.address() as { port: number }).port}`;
 });
 
-test.afterAll(() => store?.close());
+test.afterAll(async () => {
+  store?.close();
+  await relay?.close();
+});
+
+/** That the setup took: this page's copy is running a mailbox session against the relay. */
+const mailboxRuns = (page: Page): Promise<void> =>
+  expect
+    .poll(() => page.evaluate(() => (window as any).__runner.mailboxPolls !== undefined), {
+      timeout: 30_000,
+      message: "the copy runs a mailbox session",
+    })
+    .toBe(true);
+
+/**
+ * What the guest's copy says about itself: its author id as the kit has it,
+ * how many sessions it did not create it asked a seat in (its own practice
+ * board seats itself, and is not an invite), and in how many of those it is
+ * waiting and seated.
+ */
+const seatingOf = (page: Page): Promise<{ me: string; asked: number; waiting: number; seated: number }> =>
+  appIn(page)
+    .locator("body")
+    .evaluate(() => {
+      const kit = (window as any).daiKit;
+      const me = kit.author();
+      const asked = kit.db
+        .selectObjects("SELECT DISTINCT lower(hex(_r_session)) s FROM _dai_binding WHERE lower(hex(_r_replica)) = ?", [me])
+        .map((r: { s: string }) => r.s)
+        .filter((s: string) => !kit.amCreator(s));
+      return {
+        me,
+        asked: asked.length,
+        waiting: asked.filter((s: string) => kit.pendingSeat(s) !== null).length,
+        seated: asked.filter((s: string) => kit.mySeat(s) !== null).length,
+      };
+    });
+
+/**
+ * The guest waits to be let in, then is seated, then is asked its name.
+ *
+ * A joiner is seated by the creator's copy, not by opening the link, and a name
+ * written while waiting would wait on the same confirmation, so the name is
+ * asked only once seated (ruled 24 Sept). Asserted in that order: waiting and
+ * not asked, the creator's copy pulls the ask and confirms it, the guest pulls
+ * the confirmation, and then the name dialog.
+ */
+async function waitsThenIsAsked(creator: Page, guest: Page): Promise<void> {
+  await expect
+    .poll(() => seatingOf(guest), { timeout: 30_000, message: "the guest asked for the open seat and waits on it" })
+    .toMatchObject({ asked: 1, waiting: 1, seated: 0 });
+  expect((await seatingOf(guest)).me, "the kit's author id").toMatch(/^[0-9a-f]{32}$/);
+  await expect(appIn(guest).locator("#name-dialog[open]"), "no name is asked while waiting").toHaveCount(0);
+  await expect(async () => {
+    await creator.evaluate(() => (window as any).__runner.pullMailbox());
+    await guest.evaluate(() => (window as any).__runner.pullMailbox());
+    const seen = await seatingOf(guest);
+    // What it looked at, before what it found: an ask, by a known author.
+    expect(seen.me, "the guest's author id").toMatch(/^[0-9a-f]{32}$/);
+    expect(seen.asked, "the guest asked for a seat").toBe(1);
+    expect(seen.waiting, "the guest is still waiting to be seated").toBe(0);
+    expect(seen.seated, "the guest is seated").toBe(1);
+  }).toPass({ timeout: 30_000 });
+  await expect(appIn(guest).locator("#name-dialog[open]"), "a new author, once seated, is asked who they are").toHaveCount(1, {
+    timeout: 30_000,
+  });
+}
 
 const appIn = (page: Page): FrameLocator => page.frameLocator("#cartridge").frameLocator("#dai-app");
 
@@ -119,6 +190,19 @@ async function device(browser: Browser, options: { iphone?: boolean } = {}): Pro
       Object.defineProperty(navigator, "platform", { get: () => "iPhone", configurable: true });
     });
   }
+  /*
+   * The relay, the way a deploy gives it: the page's `dai-relay` meta, on every
+   * load. Not `__runner.useRelay` after the fact, because on an iPhone the load
+   * that opens the link relaunches before a test can call it, and that load is
+   * where a fresh device files the game's key. Filled in once parsing is done
+   * and before the runner's module reads it.
+   */
+  await page.addInitScript((base) => {
+    document.addEventListener("readystatechange", () => {
+      if (document.readyState !== "interactive") return;
+      document.querySelector('meta[name="dai-relay"]')?.setAttribute("content", base);
+    });
+  }, relay.base);
   return page;
 }
 
@@ -173,6 +257,8 @@ async function inviteWithData(browser: Browser, iphone: boolean) {
     })
     .not.toBeNull();
   const link = (await creator.evaluate(() => (window as unknown as { __copied: string }).__copied)) as string;
+  // Sharing gave the creator's copy a key, and with it a mailbox.
+  await mailboxRuns(creator);
   // The recipient opens it on a device that has never seen the document.
   const guest = await device(browser, { iphone });
   await guest.goto(link);
@@ -184,6 +270,8 @@ async function inviteWithData(browser: Browser, iphone: boolean) {
     });
     await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
   }
+  // On the load a person is looking at, so the guest's ask can reach the creator.
+  await mailboxRuns(guest);
   return { creator, guest };
 }
 
@@ -201,10 +289,9 @@ test.describe("an invite that carries the game", () => {
         .toMatch(AUTHOR_ID);
 
       expect(await replicaOf(guest), "a copy of somebody else's game is not that person").not.toBe(sender);
-      await expect(
-        appIn(guest).locator("#name-dialog[open]"),
-        "so the app asks who this is, rather than seating them as the creator",
-      ).toHaveCount(1, { timeout: 30_000 });
+      // So it waits to be let in, and is then asked who it is, rather than
+      // being seated as the creator.
+      await waitsThenIsAsked(creator, guest);
 
       await creator.context().close();
       await guest.context().close();
@@ -236,9 +323,7 @@ test.describe("an arrived copy writes under this device's key", () => {
     expect(guestKey, "the guest's device made a key of its own").toMatch(AUTHOR_ID);
     expect(guestKey, "a different device holds a different key").not.toBe(creatorKey);
     await expect.poll(() => replicaOf(guest), { timeout: 30_000 }).toBe(guestKey);
-    await expect(appIn(guest).locator("#name-dialog[open]"), "a new author is asked who they are").toHaveCount(1, {
-      timeout: 30_000,
-    });
+    await waitsThenIsAsked(creator, guest);
 
     await creator.context().close();
     await guest.context().close();

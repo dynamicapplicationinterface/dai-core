@@ -30,9 +30,11 @@ const { seatWriteProblems } = await load("src/seat-check.ts");
  * these lines; an entry that no longer excuses anything fails the check.
  */
 const EXCEPTIONS = {
+  "examples/request/app.js: confirm": "seats its one asker until it is rebuilt on the kit at identity step 7",
   "examples/request/app.js: create": "rebuilt on the kit's seats at identity step 7",
   "examples/request/app.js: join": "rebuilt on the kit's seats at identity step 7",
   "examples/request/app.js: reseat": "rebuilt on the kit's seats at identity step 7",
+  "examples/tic-tac-toe/app.js: confirm": "seats its one asker until it is rebuilt on the kit at identity step 7",
   "examples/tic-tac-toe/app.js: create": "rebuilt on the kit's seats at identity step 7",
   "examples/tic-tac-toe/app.js: join": "rebuilt on the kit's seats at identity step 7",
   "examples/tic-tac-toe/app.js: reseat": "rebuilt on the kit's seats at identity step 7",

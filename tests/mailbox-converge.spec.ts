@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
@@ -52,7 +53,7 @@ CREATE TABLE moves (
 `;
 
 function open(): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(SCHEMA).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -260,7 +261,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
   // B pulls, but stages into a sibling built from B's *own* sqlite_schema —
   // the statements the compiler's rewrite left in the database — rather than
   // from the author schema, which is what the frame has to do.
-  const raw = new DatabaseSync(":memory:");
+  const raw = withSessionId(new DatabaseSync(":memory:"));
   raw.exec(rewriteReplicated(SCHEMA).sql);
   const schemaFromDb = raw
     .prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY rowid")
@@ -270,7 +271,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
 
   const { batches } = await mailbox.since(id, "");
   const batch = decodeBatch(await openBatch(batches[0]!, key));
-  const stagedDb = new DatabaseSync(":memory:");
+  const stagedDb = withSessionId(new DatabaseSync(":memory:"));
   for (const sql of schemaFromDb) stagedDb.exec(sql);
   const staged: Rows = {
     all: (sql, params = []) => stagedDb.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],

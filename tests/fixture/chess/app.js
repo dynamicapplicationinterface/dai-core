@@ -107,7 +107,7 @@ function renderContested(st){
  if(s.amCreator&&s.contested){
   banner.hidden=false;invite.hidden=false;
   $('contested-title').textContent='Two people opened this invite.';
-  $('contested-detail').textContent='The invite reached more than one device. Whoever took the seat first holds it. If that is not the person you meant to play, send them a fresh invite and share the game again.';
+  $('contested-detail').textContent='The invite reached more than one device, so neither has the seat yet. Send a fresh invite to the person you meant to play, and share the game again.';
   return false; // the creator's own seat is fine
  }
  if(!s.amCreator&&s.mineOut){
@@ -163,7 +163,7 @@ function renderNames(g){
 function renderGameId(g,seat,joined){
  const line=$('game-id');
  if(!g||g.is_demo){line.hidden=true;return;}
- const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':'waiting for the other player to join';
+ const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':seat&&seat.pending?'waiting for '+(playerName(g,g.creator_color)||'the other player')+' to let you in':'waiting for the other player to join';
  line.textContent='Game '+g.session.slice(0,8)+' · '+who;
  line.hidden=false;
 }

@@ -271,7 +271,7 @@ const SHARED_CHECKS = {
     fix: "Read _r_conflicted from the _current view, show the competing versions from _heads, and let the person choose.",
   },
   "seat-table-write": {
-    what: "It writes a seat table (_dai_seat, _dai_binding) itself, or calls the session writers the kit wraps.",
+    what: "It writes a seat table (_dai_seat, _dai_binding, _dai_confirm) itself, or calls the session writers the kit wraps.",
     why:
       "The seat tables are the kit's: who holds a seat is what the document admits a row by, and the kit's " +
       "reads are built on the host's author id, never on a row. A seat written around the kit is a seat " +

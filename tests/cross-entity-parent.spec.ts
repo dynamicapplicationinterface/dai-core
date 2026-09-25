@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
 import { applyRow, filterToSession, type Rows } from "../src/replicated-rows.js";
+import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
 
 /**
  * A parent outside the row's own entity hides nothing (cold review of identity
@@ -17,6 +18,7 @@ import { applyRow, filterToSession, type Rows } from "../src/replicated-rows.js"
 
 function openWith(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, nonce) => sessionIdOf(author, nonce));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -74,18 +76,20 @@ CREATE TABLE notes (
 });
 
 test("a session table: an admitted row naming another entity's admitted row hides nothing", () => {
-  const S = bytes(0x5e);
+  const nonce = bytes(0x07);
+  const S = sessionIdOf(A, nonce)!;
   const db = openWith(`-- dai:profile session max_parties=2
 -- dai:replicated
 CREATE TABLE moves (
   san TEXT NOT NULL
 );
 `);
-  // Ada's session; Bo holds the open seat.
-  put(db, "_dai_seat", A, 1, 1, bytes(0x11), { seat: bytes(0xa1) }, [], S);
-  put(db, "_dai_seat", A, 2, 2, bytes(0x12), { seat: bytes(0xa2) }, [], S);
-  put(db, "_dai_binding", A, 3, 3, bytes(0x13), { seat: bytes(0xa1) }, [], S);
-  put(db, "_dai_binding", B, 1, 4, bytes(0x14), { seat: bytes(0xa2) }, [], S);
+  // Ada's session, on her copy; Bo asked for the open seat and she confirmed him.
+  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+  put(db, "_dai_seat", A, 1, 1, bytes(0x11), { seat: bytes(0xa1), nonce }, [], S);
+  put(db, "_dai_seat", A, 2, 2, bytes(0x12), { seat: bytes(0xa2), nonce: null }, [], S);
+  put(db, "_dai_binding", B, 1, 3, bytes(0x14), { seat: bytes(0xa2) }, [], S);
+  put(db, "_dai_confirm", A, 3, 4, bytes(0x13), { seat: bytes(0xa2), holder: B }, [], S);
   put(db, "moves", A, 4, 5, bytes(0x21), { san: "e4" }, [], S);
   // Bo's own move lists Ada's e4 as a parent.
   put(db, "moves", B, 2, 6, bytes(0x22), { san: "e5" }, [`${hex(A)}:4`], S);

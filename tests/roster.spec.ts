@@ -1,26 +1,23 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
-import { createEntity, ensureReplica, mergeFrom, type Rows } from "../src/replicated-rows.js";
+import { confirmSeat, createEntity, ensureReplica, mergeFrom, startSession, type Rows } from "../src/replicated-rows.js";
+import { withSessionId } from "./session-db.js";
 
 /**
- * The stated roster, through the view that enforces it (T1-D29).
+ * The roster, through the view that enforces it (identity step 5).
  *
- * Admission is creator-authored seats and joiner-authored bindings, and
- * membership is a pure function of them — which is what lets two copies agree
- * without a clock. These write those rows the way the runtime does, each party
- * in its own copy under its own replica id, merge the copies, and read
- * `_dai_member`: the view every admission decision reads. They used to test a
- * TypeScript statement of the same rule that nothing on the real path called;
- * a second implementation of a rule is the thing that drifts, so the test is
- * on the one that runs.
+ * The session id commits to its creator, the creator's seat is the creator's,
+ * and the open seat is held by whoever the creator confirms. A joiner's binding
+ * asks; it seats nobody. These write those rows the way the runtime does, each
+ * party in its own copy under its own author id, merge the copies, and read
+ * `_dai_member`: the view every admission decision reads.
  *
- * The property the whole correction rests on is here too: the answer does not
- * depend on the order the copies are merged in.
+ * The property the model rests on is here too: the answer does not depend on
+ * the order the copies are merged in, and no clock is read.
  *
- * Not here: more seats than `max_parties`. The TypeScript statement flagged it,
- * and no view or write path does (backlog D6) — so there is nothing real to
- * test until the cap is enforced.
+ * Not here: more seats than `max_parties`. No view or write path checks it
+ * (backlog D6), so there is nothing real to test until the cap is enforced.
  */
 
 const SCHEMA = `-- dai:profile session max_parties=2
@@ -29,10 +26,9 @@ CREATE TABLE moves (
   ply INTEGER NOT NULL
 );
 `;
-const ROSTER = ["_dai_seat", "_dai_binding"];
+const ROSTER = ["_dai_seat", "_dai_binding", "_dai_confirm"];
 
 const bytes = (b: number): Uint8Array => new Uint8Array(16).fill(b);
-const SESSION = bytes(0x5e);
 const CREATOR = bytes(0xc0);
 const OPENER = bytes(0x0b);
 const FORWARDED = bytes(0xff);
@@ -42,9 +38,9 @@ const hx = (u: Uint8Array): string => Buffer.from(u).toString("hex");
 
 type Copy = Rows & { close(): void };
 
-/** One party's copy of the document, writing under its own replica id. */
+/** One party's copy of the document, writing under its own author id. */
 function copy(replica: Uint8Array): Copy {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(SCHEMA).sql);
   const rows: Copy = {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -64,86 +60,92 @@ const entity = (): Uint8Array => {
   id[15] = entities;
   return id;
 };
-const mint = (db: Rows, seat: Uint8Array) => createEntity(db, "_dai_seat", entity(), { seat }, SESSION);
-const bind = (db: Rows, seat: Uint8Array) => createEntity(db, "_dai_binding", entity(), { seat }, SESSION);
 
-const members = (db: Rows): string[] =>
+/** The creator's copy, with a new session: her seat is SEAT1, the open seat SEAT2. */
+function creatorsCopy(): { db: Copy; session: Uint8Array } {
+  const db = copy(CREATOR);
+  const session = startSession(db, { nonce: bytes(0x07), creatorSeat: SEAT1, openSeat: SEAT2, entities: [entity(), entity()] });
+  return { db, session };
+}
+function binderOf(replica: Uint8Array, session: Uint8Array, seat: Uint8Array): Copy {
+  const db = copy(replica);
+  createEntity(db, "_dai_binding", entity(), { seat }, session);
+  return db;
+}
+const members = (db: Rows, session: Uint8Array): string[] =>
   db
-    .all("SELECT lower(hex(replica)) AS r FROM _dai_member WHERE session = ?", [SESSION])
+    .all("SELECT lower(hex(replica)) AS r FROM _dai_member WHERE session = ?", [session])
     .map((row) => String(row["r"]))
     .sort();
-const binders = (db: Rows, seat: Uint8Array): number =>
-  Number(
-    db.all("SELECT count(DISTINCT hex(_r_replica)) AS n FROM _dai_binding_current WHERE _r_session = ? AND seat = ?", [
-      SESSION,
-      seat,
-    ])[0]!["n"],
-  );
 
-/** Every party's rows merged into one fresh copy, in the order given — what each copy converges on. */
+/** Every party's rows merged into one fresh copy, in the order given: what each copy converges on. */
 function merged(order: readonly Copy[]): Copy {
   const into = copy(bytes(0x77));
   for (const from of order) mergeFrom(into, from, ROSTER);
   return into;
 }
 
-/** The creator's copy: two seats minted, the first bound to itself. */
-function creatorsCopy(): Copy {
-  const db = copy(CREATOR);
-  mint(db, SEAT1);
-  mint(db, SEAT2);
-  bind(db, SEAT1);
-  return db;
-}
-function binderOf(replica: Uint8Array, seat: Uint8Array): Copy {
-  const db = copy(replica);
-  bind(db, seat);
-  return db;
-}
-
-test.describe("the stated roster, through _dai_member (T1-D29)", () => {
-  test("a bound seat makes its replica a member; an open seat makes no one one", () => {
-    const db = creatorsCopy();
-    expect(members(db)).toEqual([hx(CREATOR)]);
+test.describe("the roster, through _dai_member (identity step 5)", () => {
+  test("the creator is a member from the start; the open seat makes no one one", () => {
+    const { db, session } = creatorsCopy();
+    expect(members(db, session)).toEqual([hx(CREATOR)]);
   });
 
-  test("both seats bound is a full roster of two", () => {
-    const db = merged([creatorsCopy(), binderOf(OPENER, SEAT2)]);
-    expect(members(db)).toEqual([hx(CREATOR), hx(OPENER)].sort());
+  test("a binding asks for the open seat and seats nobody until the creator confirms it", () => {
+    const creator = creatorsCopy();
+    const opener = binderOf(OPENER, creator.session, SEAT2);
+    mergeFrom(creator.db, opener, ROSTER);
+    expect(members(creator.db, creator.session), "asked, not confirmed").toEqual([hx(CREATOR)]);
+    confirmSeat(creator.db, creator.session, SEAT2, OPENER, entity());
+    expect(members(creator.db, creator.session), "confirmed").toEqual([hx(CREATOR), hx(OPENER)].sort());
+    expect(members(merged([creator.db, opener]), creator.session), "and on a copy that merged both").toEqual(
+      [hx(CREATOR), hx(OPENER)].sort(),
+    );
   });
 
-  test("a contested seat is held by the first verified signer, and the other binder is not a member", () => {
-    // The opener bound seat 2; a forwarded copy opened the same invite and bound
-    // it too. The seat is contested. It used to admit neither (T1-D29); since
-    // identity step 5 the first verified signer holds it (rules.ts
-    // IDENTITY-FIRST-SIGNER): signed before unsigned, then the lowest clock, then
-    // the lowest author id. Both bound at the same clock here, unsigned, so the
-    // lower author id (the opener's) holds it, on every copy, in any merge order.
-    const db = merged([creatorsCopy(), binderOf(OPENER, SEAT2), binderOf(FORWARDED, SEAT2)]);
-    expect(members(db)).toEqual([hx(CREATOR), hx(OPENER)].sort());
-    expect(binders(db, SEAT2), "the contest is still visible, for the creator to repair").toBe(2);
+  test("once confirmed, a second opener of the same invite is not a member", () => {
+    const creator = creatorsCopy();
+    mergeFrom(creator.db, binderOf(OPENER, creator.session, SEAT2), ROSTER);
+    confirmSeat(creator.db, creator.session, SEAT2, OPENER, entity());
+    const db = merged([creator.db, binderOf(FORWARDED, creator.session, SEAT2)]);
+    expect(members(db, creator.session)).toEqual([hx(CREATOR), hx(OPENER)].sort());
   });
 
-  test("a binding to a seat the session never minted is not membership", () => {
-    // The forgery the two-row model refuses: a replica cannot admit itself by
-    // binding a seat the creator never stated.
-    const db = merged([creatorsCopy(), binderOf(FORWARDED, bytes(0x99))]);
-    expect(members(db)).toEqual([hx(CREATOR)]);
+  test("a confirmation by anyone but the creator seats nobody", () => {
+    const creator = creatorsCopy();
+    const forwarded = binderOf(FORWARDED, creator.session, SEAT2);
+    confirmSeat(forwarded, creator.session, SEAT2, FORWARDED, entity());
+    const db = merged([creator.db, forwarded]);
+    expect(members(db, creator.session)).toEqual([hx(CREATOR)]);
+  });
+
+  test("a copy that writes a seat row of its own does not become the creator", () => {
+    const creator = creatorsCopy();
+    const forwarded = copy(FORWARDED);
+    createEntity(forwarded, "_dai_seat", entity(), { seat: bytes(0x99), nonce: bytes(0x07) }, creator.session);
+    const db = merged([forwarded, creator.db]);
+    expect(db.all("SELECT lower(hex(replica)) AS r FROM _dai_creator").map((r) => r["r"])).toEqual([hx(CREATOR)]);
   });
 
   test("the answer does not depend on the order the copies are merged in", () => {
     // Convergence, stated as a property: any order of merging the same copies
-    // yields the identical roster. A clock or a tiebreak would fail this.
-    const parties = (): Copy[] => [creatorsCopy(), binderOf(OPENER, SEAT2), binderOf(FORWARDED, SEAT2)];
-    const answer = (db: Copy): string => JSON.stringify([members(db), binders(db, SEAT2)]);
-    const base = answer(merged(parties()));
+    // yields the identical roster.
+    const parties = (): { all: Copy[]; session: Uint8Array } => {
+      const creator = creatorsCopy();
+      const opener = binderOf(OPENER, creator.session, SEAT2);
+      mergeFrom(creator.db, opener, ROSTER);
+      confirmSeat(creator.db, creator.session, SEAT2, OPENER, entity());
+      return { all: [creator.db, opener, binderOf(FORWARDED, creator.session, SEAT2)], session: creator.session };
+    };
+    const first = parties();
+    const base = JSON.stringify(members(merged(first.all), first.session));
     for (const order of [
       [2, 1, 0],
       [1, 2, 0],
       [0, 2, 1],
     ]) {
       const p = parties();
-      expect(answer(merged(order.map((i) => p[i]!)))).toBe(base);
+      expect(JSON.stringify(members(merged(order.map((i) => p.all[i]!)), p.session))).toBe(base);
     }
   });
 });

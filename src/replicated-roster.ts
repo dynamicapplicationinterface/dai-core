@@ -1,6 +1,12 @@
 /**
  * The stated roster: who is a member of a session (T1-D29).
  *
+ * The rule below is T1-D29 as first stated, and it is no longer the rule: since
+ * identity step 5 a binding only asks for a seat, and the open seat is held by
+ * whoever the creator's copy confirms (`_dai_holder` in src/replicated.ts,
+ * IDENTITY-SEAT-CONFIRMED in src/rules.ts). Kept, unexported, as the record of
+ * what the views replaced; nothing calls it.
+ *
  * Admission is two replicated rows with different authors — a creator-authored
  * **seat** (random bytes, no replica id) and a joiner-authored **binding**
  * (`{ seat, replica }`, under the joiner's own fresh id). Membership is a **pure

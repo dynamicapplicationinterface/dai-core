@@ -55,8 +55,9 @@ function activeGame() {
 /** Everything about the seats of a session, as this copy sees it. */
 function seats(session) {
   const mine = myReplica();
+  // The session id commits to its creator; the runtime checks it from the rows.
   const creator = one(
-    "SELECT lower(hex(_r_replica)) AS r FROM _dai_seat_current WHERE lower(hex(_r_session)) = ? LIMIT 1",
+    "SELECT lower(hex(replica)) AS r FROM _dai_creator WHERE lower(hex(session)) = ? LIMIT 1",
     [session],
   )?.r;
   const isMember = (replica) =>
@@ -67,20 +68,30 @@ function seats(session) {
       "SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ?",
       [session, mine],
     );
+  // An open seat is held by whoever the creator's copy seats in it. Asked for by
+  // two before that, it is contested, for the creator to repair.
+  const unheld = "NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)";
   const contested = rows(
     `SELECT 1 AS x FROM _dai_binding_current b
-       JOIN _dai_seat_current s ON s._r_session = b._r_session AND s.seat = b.seat
-      WHERE lower(hex(b._r_session)) = ?
+       JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
+      WHERE lower(hex(b._r_session)) = ? AND ${unheld}
       GROUP BY b.seat HAVING count(DISTINCT b._r_replica) > 1`,
     [session],
   ).length > 0;
   const openSeat = one(
-    `SELECT lower(hex(s.seat)) AS seat FROM _dai_seat_current s
-      WHERE lower(hex(s._r_session)) = ?
-        AND s.seat NOT IN (SELECT b.seat FROM _dai_binding_current b WHERE b._r_session = s._r_session)
+    `SELECT lower(hex(s.seat)) AS seat FROM _dai_open_seat s
+      WHERE lower(hex(s.session)) = ? AND ${unheld}
+        AND s.seat NOT IN (SELECT b.seat FROM _dai_binding_current b WHERE b._r_session = s.session)
       LIMIT 1`,
     [session],
   )?.seat ?? null;
+  // Asked for the open seat, and the creator's copy has not seated anyone yet.
+  const pending = !!mine &&
+    !!one(
+      `SELECT 1 AS x FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
+        WHERE lower(hex(b._r_session)) = ? AND lower(hex(b._r_replica)) = ? AND ${unheld}`,
+      [session, mine],
+    );
   const opponent = one(
     `SELECT lower(hex(replica)) AS r FROM _dai_member
       WHERE lower(hex(session)) = ? AND lower(hex(replica)) <> ? LIMIT 1`,
@@ -90,9 +101,9 @@ function seats(session) {
   const amCreator = !!mine && mine === creator;
   const member = isMember(mine);
   return {
-    creator, opponent, amCreator, member, closed, contested, openSeat,
-    // Bound once, not admitted now: the seat was contested or replaced.
-    seatLost: bound && !member,
+    creator, opponent, amCreator, member, closed, contested, openSeat, pending,
+    // Asked once, not seated: another device was seated, or the seat was replaced.
+    seatLost: bound && !member && !pending,
     // Holds the rows but was never invited: forwarded, not joined.
     notIn: !amCreator && !bound,
   };
@@ -101,18 +112,25 @@ function seats(session) {
 /** Replays the marks. Nothing here is stored. */
 function state(game) {
   const s = seats(game.session);
+  const mine = myReplica();
+  // While this copy waits to be seated, its own marks count on its own board
+  // (marks_pending): every other copy admits them once the creator's copy seats it.
   const marks = rows(
-    `SELECT lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS by, turn, cell
-       FROM marks_current WHERE game_id = ?
+    `SELECT * FROM (
+       SELECT lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS by, turn, cell, _r_lc, _r_replica, _r_seq
+         FROM marks_current WHERE game_id = ?
+       UNION ALL
+       SELECT lower(hex(_r_entity)), lower(hex(_r_replica)), turn, cell, _r_lc, _r_replica, _r_seq
+         FROM marks_pending WHERE game_id = ? AND lower(hex(_r_replica)) = ?)
       ORDER BY turn, _r_lc, lower(hex(_r_replica)), _r_seq`,
-    [game.id],
+    [game.id, game.id, mine ?? ""],
   );
   const board = Array(9).fill(null);
   let turn = 1;
   let collision = null;
   for (;;) {
     const side = turn % 2 === 1 ? "X" : "O";
-    const author = side === "X" ? s.creator : s.opponent;
+    const author = side === "X" ? s.creator : s.opponent ?? (s.pending ? mine : null);
     const candidates = marks.filter((m) => m.turn === turn && m.by === author && board[m.cell] === null);
     if (candidates.length === 0) break;
     if (candidates.length > 1) {
@@ -126,15 +144,38 @@ function state(game) {
   const winner = line ? board[line[0]] : null;
   const full = board.every(Boolean);
   const toMove = turn % 2 === 1 ? "X" : "O";
-  const mySide = s.amCreator ? "X" : s.member ? "O" : null;
+  const mySide = s.amCreator ? "X" : s.member || s.pending ? "O" : null;
   const over = Boolean(winner) || full;
   // X may move before O has joined: an X mark only needs the creator to be
-  // known. O's marks arrive in the same file as O's binding.
-  const canPlay = s.member && !s.closed && !over && !collision && mySide === toMove;
+  // known. O may mark while waiting to be seated; the marks arrive in the same
+  // file as O's ask, and count once the creator's copy seats O.
+  const canPlay = (s.member || s.pending) && !s.closed && !over && !collision && mySide === toMove;
   return { seats: s, board, turn, toMove, mySide, collision, winner, line, over, canPlay };
 }
 
 // ---- joining ------------------------------------------------------------
+
+/**
+ * On the creator's copy, seat whoever asked: an open seat nobody holds, asked
+ * for by exactly one other copy, is confirmed to them. Asked for by two, it is
+ * left contested for the creator's repair. The runtime refuses this from anyone
+ * but the creator; the view only counts the creator's confirmation.
+ */
+function seatAskers() {
+  const mine = myReplica();
+  if (!mine) return;
+  const asked = rows(
+    `SELECT lower(hex(s.session)) AS session, lower(hex(s.seat)) AS seat,
+            min(lower(hex(b._r_replica))) AS who, count(DISTINCT b._r_replica) AS n
+       FROM _dai_open_seat s
+       JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ?
+       JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat
+      WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)
+      GROUP BY s.session, s.seat`,
+    [mine],
+  );
+  for (const r of asked) if (Number(r.n) === 1) write(() => shared.session.confirm(r.session, r.seat, r.who));
+}
 
 /**
  * Take the open seat of the game showing, if this copy arrived with an invite.
@@ -245,8 +286,8 @@ function drawStatus(game, st) {
   else if (st.collision) status = "Two marks at one turn — settle it below.";
   else if (s.closed) status = "This match is closed.";
   else if (st.canPlay) status = `Your move, ${nameOf(game, st.mySide)}.${s.opponent ? "" : " Then send the invite."}`;
-  else if (!s.member) status = "You are not playing in this game.";
-  else if (!s.opponent) status = "Waiting for your invite to be opened.";
+  else if (!s.member && !s.pending) status = "You are not playing in this game.";
+  else if (!s.opponent && !s.pending) status = "Waiting for your invite to be opened.";
   else status = `${nameOf(game, st.toMove)}'s move. Send them this game.`;
   $("status").textContent = status;
   $("players").textContent = `${game.x_name} (X) v ${game.o_name} (O)`;
@@ -354,7 +395,8 @@ function draw() {
   // Offered for as long as this player is in the game, not only until the seat is
   // taken: the same link sends the game again to someone who lost it (D48).
   $("invite").hidden = !((st.seats.amCreator || st.seats.member) && !st.seats.contested);
-  $("rename").hidden = !st.seats.member || st.seats.closed;
+  // A player waiting to be seated may rename too; it counts once they are.
+  $("rename").hidden = !(st.seats.member || st.seats.pending) || st.seats.closed;
   $("close-match").hidden = !(st.over && st.seats.member && !st.seats.closed);
 }
 
@@ -438,6 +480,7 @@ $("close-match").addEventListener("click", () => {
 // file or link was opened; a background mailbox merge never takes a seat.
 window.addEventListener("dai:merged", (event) => {
   if (event.detail?.via === "carrier") joinIfInvited();
+  seatAskers();
   draw();
 });
 
@@ -446,6 +489,7 @@ window.addEventListener("dai:merged", (event) => {
 try {
   db = await window.dai.openDatabase();
   joinIfInvited();
+  seatAskers();
   draw();
   $("opening").hidden = true;
   $("app").hidden = false;

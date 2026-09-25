@@ -4,24 +4,24 @@ import { showAuthorId } from "../src/identity.js";
 import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
+import { sessionIdOf } from "../src/session-id.js";
+import { withSessionId } from "./session-db.js";
 
 /**
  * A seat says whether an author may (docs/identity.md, binding rule 5; step 5).
  *
  * A signature answers who wrote a row; a seat answers whether they may. A
  * table marked `-- dai:replicated seat=<column>` names, in that column, the
- * seat each row acts for, and a row is admitted only when its author held that
- * seat **when the row was written**: the author's binding to the seat is the
- * one that holds it and was written at or before the row's clock, and the seat
- * had that value at the row's clock (no reseat between). A row that names no
- * seat, or a seat outside its session, is stored and never admitted. The
- * admission is the runtime's compiled view, not the application's, and a merge
- * reports a row it took that is not admitted as SEAT_NOT_HELD with its author.
- *
- * Who holds a seat that two bindings name: the first verified signer, which is
- * the lowest (lc, author id) among signed bindings (a copy's own pending
- * binding counts as signed, since it is sealed when it leaves), and among
- * unsigned ones only when no signed one exists. The same on every copy.
+ * seat each row acts for, and a row is admitted only when its author holds that
+ * seat: the creator's seat is the creator's (the session id commits to her),
+ * and an open seat is held by whoever her rows confirm in it. A joiner's
+ * binding only asks. No clock is read anywhere, and a hold never moves once
+ * made, so a move written while its author waited is admitted once they are
+ * seated. A row that names no seat, or a seat nobody holds, is not admitted.
+ * The admission is the runtime's compiled view, not the application's, and a
+ * merge reports a row it took as SEAT_NOT_HELD, with its author, when it names
+ * no seat or a seat someone else holds; a row still waiting on a confirmation
+ * is neither admitted nor reported.
  *
  * Every row here goes straight through the choke point with an explicit author,
  * which is what a copy whose application enforced nothing would send.
@@ -40,7 +40,7 @@ CREATE TABLE moves (
 `;
 
 function openWith(schema: string): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -52,9 +52,10 @@ function openWith(schema: string): Rows & { close(): void } {
 }
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
-const S = bytes(0x5e); // the session
-const OTHER = bytes(0x5f); // another session
 const C = bytes(0xc0); // Ada, the creator: she mints the seats
+const NONCE = bytes(0x07); // on Ada's own seat row
+const S = sessionIdOf(C, NONCE)!; // the session, which commits to Ada
+const OTHER = bytes(0x5f); // another session
 const J = bytes(0x10); // Bo, the joiner
 const K = bytes(0x20); // Cy, a second opener of the same invite
 const SEATC = bytes(0xa1); // Ada's seat
@@ -106,13 +107,17 @@ function signedBy(db: Rows, author: Uint8Array, id: number): Uint8Array {
   return batch;
 }
 
-/** Ada's session: her seat and the open one, and her own binding. */
+/** Ada's session: her own seat, carrying the nonce its id commits to, and the open one. Returns the open seat's entity. */
 function roster(db: Rows): Uint8Array {
   const openSeat = nextEntity();
-  put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ }, { entity: openSeat });
-  put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
+  put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ, nonce: null }, { entity: openSeat });
   return openSeat;
+}
+/** Bo asks for the open seat (his seq 1) and Ada seats him in it (her seq 3). */
+function seatBo(db: Rows): void {
+  put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
+  put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
 }
 
 const admitted = (db: Rows): string[] => db.all("SELECT san FROM moves_current ORDER BY san").map((r) => String(r["san"]));
@@ -152,11 +157,11 @@ CREATE TABLE moves (
   });
 });
 
-test.describe("a row is admitted only when its author held the seat it names when it was written", () => {
+test.describe("a row is admitted only when its author holds the seat it names", () => {
   test("the holder's own move is admitted; the strongest forgery, the other player naming that seat, is stored and never admitted", () => {
     const db = openWith(SCHEMA);
     roster(db);
-    put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    seatBo(db);
     put(db, "moves", C, 4, 5, { seat: SEATC, san: "e4" });
     put(db, "moves", J, 2, 6, { seat: SEATJ, san: "e5" });
     // Bo, a member, writes a move for Ada's seat.
@@ -169,7 +174,7 @@ test.describe("a row is admitted only when its author held the seat it names whe
   test("a row that names no seat is stored and never admitted, even from a member", () => {
     const db = openWith(SCHEMA);
     roster(db);
-    put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    seatBo(db);
     put(db, "moves", J, 2, 5, { seat: null, san: "d4" });
     put(db, "moves", C, 4, 6, { seat: SEATC, san: "e4" });
     expect(stored(db)).toEqual(["d4", "e4"]);
@@ -180,90 +185,111 @@ test.describe("a row is admitted only when its author held the seat it names whe
   test("a row that names a seat outside its session is never admitted", () => {
     const db = openWith(SCHEMA);
     roster(db);
-    put(db, "_dai_seat", J, 1, 1, { seat: FOREIGN }, { session: OTHER });
-    put(db, "_dai_binding", J, 2, 2, { seat: FOREIGN }, { session: OTHER });
-    put(db, "_dai_binding", J, 3, 4, { seat: SEATJ });
-    put(db, "moves", J, 4, 5, { seat: FOREIGN, san: "d4" });
+    seatBo(db);
+    put(db, "_dai_seat", J, 2, 1, { seat: FOREIGN, nonce: null }, { session: OTHER });
+    put(db, "moves", J, 3, 5, { seat: FOREIGN, san: "d4" });
     expect(admitted(db)).toEqual([]);
     db.close();
   });
 
-  test("a move written before its author took the seat stays refused after they take it; the next one is admitted", () => {
+  test("a move written while its author waited to be seated is admitted once the creator confirms them", () => {
     const db = openWith(SCHEMA);
     roster(db);
-    // Bo writes for the open seat before binding it, then binds it.
-    put(db, "moves", J, 1, 4, { seat: SEATJ, san: "early" });
-    put(db, "_dai_binding", J, 2, 5, { seat: SEATJ });
-    put(db, "moves", J, 3, 6, { seat: SEATJ, san: "after" });
-    expect(members(db)).toContain(hex(J));
-    expect(admitted(db), "held now is not held then").toEqual(["after"]);
-    db.close();
-  });
-
-  test("a binding that arrives late still admits the move its author wrote after binding", () => {
-    const db = openWith(SCHEMA);
-    roster(db);
-    // The move lands first, the binding after it, as a merge can deliver them.
-    put(db, "moves", J, 2, 6, { seat: SEATJ, san: "e5" });
-    expect(admitted(db)).toEqual([]);
-    put(db, "_dai_binding", J, 1, 5, { seat: SEATJ });
+    put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    put(db, "moves", J, 2, 5, { seat: SEATJ, san: "e5" });
+    // A move for a seat he did not ask for is not waiting on anything.
+    put(db, "moves", J, 3, 5, { seat: SEATC, san: "d4" });
+    const waiting = () => db.all("SELECT san FROM moves_pending ORDER BY san").map((r) => String(r["san"]));
+    expect(admitted(db), "pending: not admitted yet").toEqual([]);
+    expect(waiting(), "and waiting in moves_pending").toEqual(["e5"]);
+    put(db, "_dai_confirm", C, 3, 6, { seat: SEATJ, holder: J });
     expect(admitted(db)).toEqual(["e5"]);
+    expect(waiting(), "seated: nothing waits").toEqual([]);
     db.close();
   });
 
-  test("a forged move for a seat, then its author legitimately takes that seat by reseat: the forged move stays refused", () => {
+  test("no clock is read: the confirmed holder's moves are his seat's whenever they were written, in any arrival order", () => {
+    const db = openWith(SCHEMA);
+    roster(db);
+    put(db, "moves", J, 1, -50, { seat: SEATJ, san: "early" });
+    put(db, "_dai_confirm", C, 3, 1, { seat: SEATJ, holder: J });
+    put(db, "_dai_binding", J, 2, 99, { seat: SEATJ });
+    expect(admitted(db)).toEqual(["early"]);
+    db.close();
+  });
+
+  test("a reseated seat: moves for the old value, never confirmed, stay refused; the new value's holder plays", () => {
     const db = openWith(SCHEMA);
     const openSeat = roster(db);
-    // Cy and Bo both open the invite; Cy is first, and holds the open seat.
+    // Cy and Bo both open the invite before Ada's copy confirms anyone: a contest.
     put(db, "_dai_binding", K, 1, 4, { seat: SEATJ });
     put(db, "_dai_binding", J, 1, 5, { seat: SEATJ });
-    // Ada repairs the contested seat: a fresh value.
+    put(db, "moves", J, 2, 6, { seat: SEATJ, san: "old" });
+    // Ada repairs it with a fresh value, and seats Bo in that.
     const SEATJ2 = bytes(0xa3);
-    put(db, "_dai_seat", C, 5, 6, { seat: SEATJ2 }, { entity: openSeat, parents: JSON.stringify([`${hex(C)}:2`]) });
-    // Bo learns the new value and plays for it before binding it...
-    put(db, "moves", J, 2, 7, { seat: SEATJ2, san: "forged" });
-    // ...and then opens the new invite and binds it: now he is its holder.
+    put(db, "_dai_seat", C, 3, 7, { seat: SEATJ2, nonce: null }, { entity: openSeat, parents: JSON.stringify([`${hex(C)}:2`]) });
     put(db, "_dai_binding", J, 3, 8, { seat: SEATJ2 });
-    put(db, "moves", J, 4, 9, { seat: SEATJ2, san: "honest" });
-    expect(members(db)).toContain(hex(J));
-    expect(admitted(db), "the forged move stays refused; the one after the binding is admitted").toEqual(["honest"]);
+    put(db, "_dai_confirm", C, 4, 9, { seat: SEATJ2, holder: J });
+    put(db, "moves", J, 4, 10, { seat: SEATJ2, san: "new" });
+    expect(members(db)).toEqual([hex(J), hex(C)].sort());
+    expect(admitted(db)).toEqual(["new"]);
     db.close();
   });
 
-  test("a move written while the seat had its old value is not admitted under the new one", () => {
+  test("a confirmation written by anyone but the creator seats nobody", () => {
+    const db = openWith(SCHEMA);
+    roster(db);
+    put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    put(db, "_dai_confirm", J, 2, 5, { seat: SEATJ, holder: J });
+    put(db, "moves", J, 3, 6, { seat: SEATJ, san: "e5" });
+    expect(members(db)).toEqual([hex(C)]);
+    expect(admitted(db)).toEqual([]);
+    db.close();
+  });
+
+  test("the creator's seat is hers even when her rows confirm someone else in it", () => {
+    const db = openWith(SCHEMA);
+    roster(db);
+    put(db, "_dai_confirm", C, 3, 4, { seat: SEATC, holder: J });
+    put(db, "moves", J, 1, 5, { seat: SEATC, san: "d4" });
+    put(db, "moves", C, 4, 6, { seat: SEATC, san: "e4" });
+    expect(admitted(db)).toEqual(["e4"]);
+    db.close();
+  });
+
+  test("a member's version of the open seat's row changes nothing: the seat stays the one the creator minted", () => {
     const db = openWith(SCHEMA);
     const openSeat = roster(db);
-    put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
-    // Ada reseats at lc 6; Bo's move at lc 7 still names the old value.
-    put(db, "_dai_seat", C, 5, 6, { seat: bytes(0xa3) }, { entity: openSeat, parents: JSON.stringify([`${hex(C)}:2`]) });
-    put(db, "moves", J, 2, 7, { seat: SEATJ, san: "stale" });
-    expect(admitted(db)).toEqual([]);
+    // Bo writes a new version of the open seat's row, naming Ada's as its parent,
+    // with a value of his own: a reseat only the creator may make.
+    put(db, "_dai_seat", J, 1, 3, { seat: bytes(0xb9), nonce: null }, { entity: openSeat, parents: JSON.stringify([`${hex(C)}:2`]) });
+    const open = db.all("SELECT lower(hex(seat)) AS s FROM _dai_open_seat WHERE session = ?", [S]).map((r) => r["s"]);
+    expect(open, "the open seat is still the one Ada minted").toEqual([hex(SEATJ)]);
+    db.close();
+  });
+
+  test("when the creator's rows confirm one seat twice, the first by her own seq holds", () => {
+    const db = openWith(SCHEMA);
+    roster(db);
+    put(db, "_dai_confirm", C, 5, 4, { seat: SEATJ, holder: K });
+    put(db, "_dai_confirm", C, 3, 9, { seat: SEATJ, holder: J });
+    put(db, "moves", J, 1, 5, { seat: SEATJ, san: "bo" });
+    put(db, "moves", K, 1, 6, { seat: SEATJ, san: "cy" });
+    expect(admitted(db), "seq 3 is first, whatever the clocks say").toEqual(["bo"]);
     db.close();
   });
 });
 
-test.describe("a contested seat: the first verified signer holds it", () => {
-  test("two bindings to the open seat: the lower (lc, author) holds it, the other is not a member", () => {
+test.describe("a contested seat: two asks, nobody seated until the creator acts", () => {
+  test("two bindings to the open seat and no confirmation: neither is a member, and neither's move is admitted", () => {
     const db = openWith(SCHEMA);
     roster(db);
     put(db, "_dai_binding", J, 1, 5, { seat: SEATJ });
     put(db, "_dai_binding", K, 1, 4, { seat: SEATJ });
     put(db, "moves", K, 2, 6, { seat: SEATJ, san: "cy" });
     put(db, "moves", J, 2, 7, { seat: SEATJ, san: "bo" });
-    expect(members(db)).toEqual([hex(J), hex(K), hex(C)].filter((r) => r !== hex(J)).sort());
-    expect(admitted(db)).toEqual(["cy"]);
-    db.close();
-  });
-
-  test("a signed binding outranks an unsigned one, whatever the clocks", () => {
-    const db = openWith(SCHEMA);
-    roster(db);
-    const bosBatch = signedBy(db, J, 0xb1);
-    put(db, "_dai_binding", K, 1, 4, { seat: SEATJ }); // unsigned, earlier
-    put(db, "_dai_binding", J, 1, 5, { seat: SEATJ }, { batch: bosBatch }); // signed, later
-    put(db, "moves", J, 2, 6, { seat: SEATJ, san: "bo" }, { batch: bosBatch });
-    put(db, "moves", K, 2, 7, { seat: SEATJ, san: "cy" });
-    expect(admitted(db)).toEqual(["bo"]);
+    expect(members(db)).toEqual([hex(C)]);
+    expect(admitted(db)).toEqual([]);
     db.close();
   });
 });
@@ -272,10 +298,10 @@ test.describe("the merge says what it took and did not admit", () => {
   test("a forged move for someone else's seat is reported as SEAT_NOT_HELD with its author, and kept", async () => {
     const ada = openWith(SCHEMA);
     roster(ada);
-    put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    seatBo(ada);
     const bo = openWith(SCHEMA);
     roster(bo);
-    put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    seatBo(bo);
     put(bo, "moves", J, 2, 7, { seat: SEATC, san: "d4" });
 
     const report = await mergeSibling(ada, bo);
@@ -296,6 +322,21 @@ test.describe("the merge says what it took and did not admit", () => {
     put(bo, "moves", J, 2, 5, { seat: null, san: "d4" });
     const report = await mergeSibling(ada, bo);
     expect(report.refusedBatches).toEqual([{ author: showAuthorId(J), reason: "SEAT_NOT_HELD" }]);
+    ada.close();
+    bo.close();
+  });
+
+  test("a move waiting on the creator's confirmation is neither admitted nor reported", async () => {
+    const ada = openWith(SCHEMA);
+    roster(ada);
+    const bo = openWith(SCHEMA);
+    roster(bo);
+    put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    put(bo, "moves", J, 2, 5, { seat: SEATJ, san: "e5" });
+    const report = await mergeSibling(ada, bo);
+    expect(stored(ada)).toEqual(["e5"]);
+    expect(admitted(ada)).toEqual([]);
+    expect(report.refusedBatches, "pending, not refused").toEqual([]);
     ada.close();
     bo.close();
   });

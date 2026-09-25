@@ -4384,20 +4384,96 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D118 — The creator ejects a confirmed seat
+
+*Status: open, not built. Filed 24 September from the ruling on the seat
+model's first-ask consequence.*
+
+Over the mailbox the creator's copy seats the first ask it reads, so if a
+forwarded invite reaches the wrong person first, they are seated and the seat
+is theirs for good (IDENTITY-SEAT-CONFIRMED). The answer today is the one a
+person already has: start a new game and do not forward the link. A
+creator-side eject of a confirmed seat was considered and not ruled in: a hold
+that never moves is the property T1-D29 exists for, and the model was just
+rebuilt to stop history being erased. **The open question** that any eject has
+to answer first: what happens to the ejected player's moves that were already
+admitted. Retiring the seat drops them, which is the erasure the rebuild
+removed.
+
+#### D117 — The iOS relaunch loses an invite's key on a device that does not hold the app
+
+*Status: open. Filed 24 September; the next step, before D80's re-earned green.
+Latent on main, exposed by the seat model.*
+
+A stranger on iOS opening an invite, which is the phone walk's core path: the
+link carries the game's key; the load that opens it relaunches at the
+document's address; the load after the relaunch opens the copy from the
+library, and the library holds **no document key and no game key**. So the copy
+runs no mailbox, and the page says "Updates from the other copy arrive when you
+invite someone, or open a shared link", which is what the person just did.
+Seen with the relay set as a deploy sets it (the `dai-relay` meta on every
+load), in `tests/invite-identity.spec.ts`, WebKit, iPhone: "the recipient is not
+the sender, on an iPhone" and "test 1" both fail at "the copy runs a mailbox
+session". The desktop shape of the same tests passes on Chromium and WebKit.
+
+**Why it was not seen before.** The arriving key is filed at arrival only when
+the device already holds the app (`arrivedKey && arrivedSession && heldHere` in
+`apps/runner/src/main.ts`, the same guard on main); otherwise it is filed when
+the mailbox starts, and the relaunch comes first. Under the first seat model a
+recipient bound its own seat, so it looked alive, seated and playing, without
+ever reaching the creator. Under the seat model it waits to be seated by the
+creator's copy, which never hears it ask.
+
+**Same family as the relaunch identity regression** (23 September, in
+`docs/identity.md`): the iOS relaunch dropping something the first load had.
+A launch or relaunch path change gets a cold review of its own before anything
+downstream leans on it. **Order:** a named red for the lost key, then the fix,
+then that review; then D80.
+
+#### D116 — The seat check is superlinear in moves
+
+*Status: open. Filed 24 September from the cold review of identity step 5
+(finding 10).*
+
+Reading a seated table's `_current` view took 5.5 s at 1,000 moves on the
+reviewer's machine, 55% of it the seat check; the heads walk was already
+superlinear before the seat check was added (it recomputes supersession over
+the admitted rows on every read, `headsView` in `src/replicated.ts`). Chess
+games are short enough that nobody notices; a long game or a tracker will. The
+answer the headsView comment already names is a materialized membership set
+recomputed on merge, not a return to a stored flag. Measure again on the seat
+model that replaced the first-signer rule before choosing.
+
+#### D115 — The seat-table scan misses writes it could be shown
+
+*Status: open. Filed 24 September from the cold review of identity step 5
+(finding 8).*
+
+`seatWritesIn` (`src/seat-check.ts`) is a text scan. The reviewer's cases
+(`%TEMP%\review5s\scan.spec.ts`) show what it can miss: a schema-qualified or
+quoted table name, a name split across a string concatenation, an INSERT
+spanning lines, the session writers reached through an alias, a bracket, an
+optional call or a computed property. That is expected of a scan and changes
+nothing that matters, in the spec's words: the scan is a courtesy; admission
+is the enforcement. A seat written around the kit seats nobody, because only
+the creator's confirmation holds an open seat and the creator is checked from
+the rows (IDENTITY-SEAT-CONFIRMED). What is open is whether to widen the scan
+toward what it can be shown, or to say in the lint's text that it is a
+courtesy.
+
 #### D114 — A backdated clock wins a contested seat
 
-*Status: open. Ruled 24 September (identity step 5): accepted at this version,
-filed, not built.*
+*Status: closed 24 September, into the seat model (identity step 5).*
 
-A contested seat is held by the first verified signer: among signed bindings,
-the lowest clock, then the lowest author id (`IDENTITY-FIRST-SIGNER`). The
-rule is the same on every copy, which is the property that matters. But the
-clock is the author's own, so a joiner who backdates it wins the contest. For
-friend to friend that contender already holds the invite and could simply
-play, so it is acceptable here. What closes it: a seat offer signed by the
-creator, carried in the invite ("seat X is open, for the holder of this
-invite"), so a contest is settled by what the creator signed rather than by a
-clock anyone sets.
+The first model held a contested seat by the first verified signer: the lowest
+clock, then the lowest author id. The clock is the author's own, so a joiner
+who backdated it won, and the review showed worse: the same trick took the
+creator's seat, and a backdated seat row made a joiner the creator. The fix
+this entry named, a seat settled by what the creator signs rather than a clock
+anyone sets, is what was built: the session id commits to the creator, the
+creator's seat is the creator's, and the open seat is held by whoever the
+creator's copy confirms (`IDENTITY-SEAT-CONFIRMED` in `src/rules.ts`; the
+attacks are `tests/seat-attacks.spec.ts`).
 
 #### D113 — A publish in flight overwrote a write's "not up to date"
 

@@ -55,8 +55,9 @@ function activeRequest() {
 /** Everything about the seats of a session, as this copy sees it. */
 function seats(session) {
   const mine = myReplica();
+  // The session id commits to its creator; the runtime checks it from the rows.
   const creator = one(
-    "SELECT lower(hex(_r_replica)) AS r FROM _dai_seat_current WHERE lower(hex(_r_session)) = ? LIMIT 1",
+    "SELECT lower(hex(replica)) AS r FROM _dai_creator WHERE lower(hex(session)) = ? LIMIT 1",
     [session],
   )?.r;
   const member = !!mine &&
@@ -66,19 +67,30 @@ function seats(session) {
       "SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ?",
       [session, mine],
     );
+  // An open seat is held by whoever the writer's copy seats in it. Asked for by
+  // two before that, it is contested, for the writer to repair.
+  const unheld = "NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)";
   const contested = rows(
     `SELECT 1 AS x FROM _dai_binding_current b
-      WHERE lower(hex(b._r_session)) = ?
+       JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
+      WHERE lower(hex(b._r_session)) = ? AND ${unheld}
       GROUP BY b.seat HAVING count(DISTINCT b._r_replica) > 1`,
     [session],
   ).length > 0;
   const openSeat = one(
-    `SELECT lower(hex(s.seat)) AS seat FROM _dai_seat_current s
-      WHERE lower(hex(s._r_session)) = ?
-        AND s.seat NOT IN (SELECT b.seat FROM _dai_binding_current b WHERE b._r_session = s._r_session)
+    `SELECT lower(hex(s.seat)) AS seat FROM _dai_open_seat s
+      WHERE lower(hex(s.session)) = ? AND ${unheld}
+        AND s.seat NOT IN (SELECT b.seat FROM _dai_binding_current b WHERE b._r_session = s.session)
       LIMIT 1`,
     [session],
   )?.seat ?? null;
+  // Asked for the open seat, and the writer's copy has not seated anyone yet.
+  const pending = !!mine &&
+    !!one(
+      `SELECT 1 AS x FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
+        WHERE lower(hex(b._r_session)) = ? AND lower(hex(b._r_replica)) = ? AND ${unheld}`,
+      [session, mine],
+    );
   const answererJoined = !!one(
     `SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) <> ? LIMIT 1`,
     [session, creator ?? ""],
@@ -87,9 +99,9 @@ function seats(session) {
   const isWriter = !!mine && mine === creator;
   return {
     isWriter,
-    isAnswerer: member && !isWriter,
-    answererJoined, closed, contested, openSeat,
-    seatLost: bound && !member,
+    isAnswerer: (member || pending) && !isWriter,
+    answererJoined, closed, contested, openSeat, pending,
+    seatLost: bound && !member && !pending,
     notIn: !isWriter && !bound,
   };
 }
@@ -103,6 +115,18 @@ function questionsOf(request) {
 }
 
 /**
+ * A table's admitted rows, and this copy's own rows still waiting for the
+ * writer's copy to seat it (`_pending`): every copy admits them once it is
+ * seated, and until then only this one shows them. Read as a FROM clause.
+ */
+function shown(table) {
+  const mine = myReplica();
+  if (!mine || !/^[0-9a-f]{32}$/.test(mine)) return `${table}_current`;
+  return `(SELECT * FROM ${table}_current UNION ALL
+    SELECT *, 0 AS _r_conflicted FROM ${table}_pending WHERE lower(hex(_r_replica)) = '${mine}')`;
+}
+
+/**
  * The answers to one question. Usually one row. More than one means the answer
  * was started on two devices before they met, and conflicted means one answer
  * was edited on both: either way the answerer settles it, nothing is dropped.
@@ -110,7 +134,7 @@ function questionsOf(request) {
 function answersTo(question) {
   const current = rows(
     `SELECT lower(hex(_r_entity)) AS id, body, _r_conflicted AS conflicted
-       FROM answers_current WHERE question_id = ? ORDER BY _r_lc`,
+       FROM ${shown("answers")} WHERE question_id = ? ORDER BY _r_lc`,
     [question.id],
   );
   const versions = current.flatMap((a) =>
@@ -124,9 +148,31 @@ function answersTo(question) {
   return { current, versions, unsettled: versions.length > 1 };
 }
 
-const submitted = (request) => !!one("SELECT 1 AS x FROM submissions_current WHERE request_id = ? LIMIT 1", [request.id]);
+const submitted = (request) => !!one(`SELECT 1 AS x FROM ${shown("submissions")} WHERE request_id = ? LIMIT 1`, [request.id]);
 
 // ---- joining ------------------------------------------------------------
+
+/**
+ * On the writer's copy, seat whoever asked: an open seat nobody holds, asked
+ * for by exactly one other copy, is confirmed to them. Asked for by two, it is
+ * left contested for the writer's repair. The runtime refuses this from anyone
+ * but the writer; the view only counts the writer's confirmation.
+ */
+function seatAskers() {
+  const mine = myReplica();
+  if (!mine) return;
+  const asked = rows(
+    `SELECT lower(hex(s.session)) AS session, lower(hex(s.seat)) AS seat,
+            min(lower(hex(b._r_replica))) AS who, count(DISTINCT b._r_replica) AS n
+       FROM _dai_open_seat s
+       JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ?
+       JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat
+      WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)
+      GROUP BY s.session, s.seat`,
+    [mine],
+  );
+  for (const r of asked) if (Number(r.n) === 1) write(() => shared.session.confirm(r.session, r.seat, r.who));
+}
 
 /**
  * Take the open seat of a request this copy was sent a link to. Called at
@@ -368,7 +414,7 @@ let composing = false;
 /** The newest sending-back of a request, as its row's entity, or null if nothing was sent. */
 function latestSubmission(request) {
   return one(
-    "SELECT lower(hex(_r_entity)) AS id FROM submissions_current WHERE request_id = ? ORDER BY _r_lc DESC LIMIT 1",
+    `SELECT lower(hex(_r_entity)) AS id FROM ${shown("submissions")} WHERE request_id = ? ORDER BY _r_lc DESC LIMIT 1`,
     [request.id],
   )?.id ?? null;
 }
@@ -593,6 +639,7 @@ const whenPointerLifts = (run) => (pointerDown ? afterPointer.push(run) : run())
 
 window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
   if (event.detail?.via === "carrier") joinIfInvited();
+  seatAskers();
   const typing = document.activeElement?.id?.startsWith("answer-") ? document.activeElement : null;
   const at = typing ? { id: typing.id, start: typing.selectionStart } : null;
   draw();
@@ -607,6 +654,7 @@ window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
 try {
   db = await window.dai.openDatabase();
   joinIfInvited();
+  seatAskers();
   draw();
   $("opening").hidden = true;
   $("app").hidden = false;

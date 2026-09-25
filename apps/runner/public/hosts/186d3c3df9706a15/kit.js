@@ -1,86 +1,4 @@
 /**
- * Five elements, so an application can be HTML and SQL.
- *
- * Most of what a model gets wrong is not the idea, it is the wiring: query the
- * database, build the DOM, attach a handler, mutate, remember to redraw. That
- * loop is written from scratch in every application, it is where the mistakes
- * are, and none of it is the part anybody wanted.
- *
- * So it is written once here:
- *
- *     <dai-rows query="SELECT id, title, done FROM tasks ORDER BY id">
- *       <template>
- *         <li>
- *           <input type="checkbox" data-run="UPDATE tasks SET done = 1 - done WHERE id = :id">
- *           <span data-text="title"></span>
- *         </li>
- *       </template>
- *     </dai-rows>
- *
- *     <dai-value query="SELECT count(*) AS n FROM tasks WHERE done = 0"></dai-value>
- *
- *     <dai-form run="INSERT INTO tasks (title) VALUES (:title)">
- *       <input name="title" required>
- *       <button>Add</button>
- *     </dai-form>
- *
- *     <dai-save>Save</dai-save>
- *
- * And a picture goes in the document itself, not in a folder beside it:
- *
- *     <dai-attach run="UPDATE entries SET photo = :file WHERE id = :id" data-id="1">
- *       Add a photo
- *     </dai-attach>
- *     <img data-blob="photo" alt="">
- *
- * The schema goes in the document too, so an application can have no JavaScript
- * at all:
- *
- *     <script type="application/sql">
- *       CREATE TABLE IF NOT EXISTS tasks (
- *         id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0
- *       );
- *     </script>
- *
- * Two rules are enforced rather than advised, because they are the two that
- * matter and the two nobody remembers under time pressure.
- *
- * Parameters are always bound and never interpolated. There is no way to build
- * a statement out of a value in this kit, which removes the injection that a
- * model writing string concatenation would otherwise reintroduce every time.
- *
- * Values are written with textContent, never as markup. A task titled
- * `<img onerror=…>` is a task with an odd name, not script — and since a
- * container's whole promise is that it is safe to open something a stranger
- * sent, that has to be true of what the application renders as well as of what
- * the format seals.
- *
- * It is not a framework and should not become one. Anything an application
- * needs beyond these four is written in ordinary JavaScript against
- * `window.dai`, which is still there.
- */
-
-/**
- * The kit, as source.
- *
- * Kept as a string rather than a file so there is one copy: the compiler ships
- * it into every container, the tests exercise it, and the recipe describes it.
- * A second copy on disk would be a second version of the answer.
- */
-/*
- * The kit posts FRAME_PUBLIC.USED (src/frame.ts) as a literal, `'dai:used'`,
- * not an interpolation, on purpose (D69). Interpolating it into this template
- * made the bundler keep the whole kit in every runtime that imports core.ts,
- * about 17 KB per document, for code the runtime never runs. Three forms were
- * tried (a property read, a builder marked pure, a plain string constant) and
- * all kept it. The value is frozen by tests/frame-wire.spec.ts, and
- * tests/kit-names.spec.ts holds the literal to it.
- *
- * This note sits here, outside the string, because everything inside
- * KIT_SOURCE ships in every document: as the first version of it did, at
- * 501 bytes per document.
- */
-export const KIT_SOURCE = `/**
  * dai-kit — five elements, so an application can be HTML and SQL.
  *
  * Shipped inside every container. Reference it with:
@@ -437,7 +355,7 @@ class DaiForm extends HTMLElement {
  *
  * A document is a thing people send each other, and a phone camera produces
  * four megabytes without being asked. Every attachment is scaled to fit inside
- * a square of \`max\` pixels and re-encoded as JPEG before it goes anywhere
+ * a square of `max` pixels and re-encoded as JPEG before it goes anywhere
  * near the database, which takes a modern phone photo to something in the tens
  * of kilobytes. Anything still over the cap after that is refused out loud
  * rather than quietly making a document nobody can mail.
@@ -469,7 +387,7 @@ async function downscale(file, maxPixels) {
  *       Add a photo
  *     </dai-attach>
  *
- * \`:file\` is bound to the scaled bytes; every other parameter comes from the
+ * `:file` is bound to the scaled bytes; every other parameter comes from the
  * row it was drawn in and from its own data- attributes, exactly as data-run
  * does. Inside a dai-rows template that means one attribute and nothing else.
  *
@@ -729,7 +647,3 @@ window.daiKit = {
   newSession: newSession, claimSeat: claimSeat, reseat: reseat, mySeat: mySeat, amCreator: amCreator,
   pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer, author: me,
 };
-`;
-
-/** Where the compiler puts it, and what an application references. */
-export const KIT_ENTRY = "dai-kit.js";

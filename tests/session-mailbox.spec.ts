@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { expect, test } from "@playwright/test";
 import { deriveSessionMailbox } from "../src/mailbox.js";
 import { rewriteReplicated } from "../src/replicated.js";
@@ -76,7 +77,7 @@ CREATE TABLE moves (
 );
 `;
   const open = (): Rows & { close(): void } => {
-    const db = new DatabaseSync(":memory:");
+    const db = withSessionId(new DatabaseSync(":memory:"));
     db.exec(rewriteReplicated(SCHEMA).sql);
     return {
       all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],

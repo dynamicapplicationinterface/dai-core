@@ -29,6 +29,7 @@ import { verifySign1 } from "../cose.js";
 import { compatibility, type SchemaDeclaration } from "../schema.js";
 import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
 import { FRAME, FRAME_INTERNAL, FRAME_PUBLIC, type FrameNames } from "../frame.js";
+import { SESSION_ID_FUNCTION, sessionIdTools } from "../session-id.js";
 
 const APP_PREFIX = "app/";
 const SCHEMA_ENTRY = "runtime/schema.json";
@@ -741,7 +742,7 @@ async function writeContainer(
  * would seal into the next copy. The loader hands this object over by
  * `postMessage` and sets it locally instead.
  */
-function bridgeMain(names: FrameNames): void {
+function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, nonce: unknown) => Uint8Array | null }): void {
   /*
    * The SHA-256 of the merge module this runtime was built against.
    *
@@ -821,6 +822,21 @@ function bridgeMain(names: FrameNames): void {
    * hands Emscripten an instance compiled from the embedded bytes, so
    * `locateFile()` is never consulted and no fetch is ever attempted.
    */
+  /*
+   * Every connection this runtime opens on a document, with the one SQL
+   * function the roster views call: who created a session is checked from the
+   * rows, at read (src/session-id.ts). A connection without it fails loudly on
+   * the first roster read rather than guessing.
+   */
+  const newDatabase = (api2: Any): Any => {
+    const db = new api2.oo1.DB() as Any;
+    db.createFunction(sessionId.name, (_ctx: number, author: unknown, nonce: unknown) => sessionId.of(author, nonce), {
+      arity: 2,
+      deterministic: true,
+    });
+    return db;
+  };
+
   const initSqlite = (): Promise<Any> => {
     if (booting) return booting;
     // Timed and reported to the shell, which is the only side keeping the
@@ -1300,7 +1316,7 @@ function bridgeMain(names: FrameNames): void {
     }
 
     const api2 = await initSqlite();
-    const sibling = new api2.oo1.DB() as Any;
+    const sibling = newDatabase(api2);
     try {
       const pointer = api2.wasm.allocFromTypedArray(bytes);
       const rc = api2.capi.sqlite3_deserialize(
@@ -1485,7 +1501,7 @@ function bridgeMain(names: FrameNames): void {
     settleReplica(frameRows(liveDb));
     const batch = merge.decodeBatch(batchBytes);
     const api2 = await initSqlite();
-    const staged = new api2.oo1.DB() as Any;
+    const staged = newDatabase(api2);
     try {
       // This document's replicated schema, rebuilt in the staging sibling, in
       // the order sqlite stored it so a trigger never precedes its table.
@@ -1929,7 +1945,14 @@ function bridgeMain(names: FrameNames): void {
         "SELECT 1 FROM _dai_holder WHERE session = ? AND seat = ? AND lower(hex(replica)) = ? LIMIT 1",
         [session, seat, me],
       );
-      if (held.length === 0) {
+      // Pending: this copy asked for the seat and nobody holds it yet. The row
+      // is written, and admitted once the creator confirms this copy in it.
+      const pending = rows.all(
+        "SELECT 1 FROM _dai_binding b WHERE b._r_session = ? AND b.seat = ? AND lower(hex(b._r_replica)) = ? " +
+          "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = b._r_session AND h.seat = b.seat) LIMIT 1",
+        [session, seat, me],
+      );
+      if (held.length === 0 && pending.length === 0) {
         throw new Error(`SEAT_NOT_HELD (this copy does not hold the seat this ${table} row names)`);
       }
     };
@@ -2011,16 +2034,21 @@ function bridgeMain(names: FrameNames): void {
         // creator's binding to its own seat. Returns the session id and the open
         // seat, which the host carries in the invite (T1-D30). The three rows are
         // one transaction, so a failure leaves no half-formed roster.
+        // The session id commits to this copy's author (identity step 5): the
+        // nonce rides on the creator's own seat row, and the creator's seat is
+        // hers by definition, so she binds nothing.
         create: (): { session: string; seat: string } => {
           settleReplica(rows);
-          const sid = entity();
-          const creatorSeat = entity();
           const openSeat = entity();
           rows.run("SAVEPOINT dai_session_create");
+          let sid: Uint8Array;
           try {
-            rules().createEntity(rows, "_dai_seat", entity(), { seat: creatorSeat }, sid);
-            rules().createEntity(rows, "_dai_seat", entity(), { seat: openSeat }, sid);
-            rules().createEntity(rows, "_dai_binding", entity(), { seat: creatorSeat }, sid);
+            sid = rules().startSession(rows, {
+              nonce: entity(),
+              creatorSeat: entity(),
+              openSeat,
+              entities: [entity(), entity()],
+            });
             rows.run("RELEASE dai_session_create");
           } catch (error) {
             rows.run("ROLLBACK TO dai_session_create");
@@ -2028,6 +2056,21 @@ function bridgeMain(names: FrameNames): void {
           }
           nudgeAuthored();
           return { session: hex(sid), seat: hex(openSeat) };
+        },
+        // The creator seats whoever asked for an open seat (identity step 5):
+        // the only thing that seats anyone there. Refused for anyone but the
+        // creator, and for a seat that is not a current open seat or is held.
+        confirm: (sessionHex: string, seatHex: string, holderHex: string): void => {
+          settleReplica(rows);
+          const sid = fromHex(sessionHex);
+          const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+          if (!creatorIs(sid, me)) throw new Error("NOT_SEAT_CREATOR");
+          const seat = fromHex(seatHex);
+          const open = rows.all("SELECT 1 FROM _dai_open_seat WHERE session = ? AND seat = ?", [sid, seat]).length > 0;
+          const held = rows.all("SELECT 1 FROM _dai_holder WHERE session = ? AND seat = ?", [sid, seat]).length > 0;
+          if (!open || held || holderHex.length !== 32) throw new Error("CANNOT_CONFIRM");
+          rules().confirmSeat(rows, sid, seat, fromHex(holderHex), entity());
+          nudgeAuthored();
         },
         // Bind the invite's open seat under this copy's own (freshly adopted,
         // T1-D22) identity. A second opener of the same invite contests the seat
@@ -2109,14 +2152,18 @@ function bridgeMain(names: FrameNames): void {
           // moves; picking "a seat the creator didn't bind" also depended on
           // SQLite's row order with more than two seats. So it is refused unless a
           // seat is actually contested (T1-D29) — a repair, never a boot.
+          // Contested: a current open seat nobody has been confirmed in, asked
+          // for by more than one author. A confirmed seat is never reseated, so
+          // a hold, once made, never moves (identity step 5).
           const contested = rows.all(
-            "SELECT s._r_entity AS ent FROM _dai_seat_current s WHERE s._r_session = ? AND " +
-              "(SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
-              "WHERE b._r_session = s._r_session AND b.seat = s.seat) > 1 LIMIT 1",
+            "SELECT s.entity AS ent FROM _dai_open_seat s WHERE s.session = ? " +
+              "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
+              "AND (SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
+              "WHERE b._r_session = s.session AND b.seat = s.seat) > 1 LIMIT 1",
             [sid],
           );
           if (contested.length === 0) throw new Error("CANNOT_RESEAT");
-          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() });
+          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity(), nonce: null });
           nudgeAuthored();
         },
       },
@@ -2137,7 +2184,7 @@ function bridgeMain(names: FrameNames): void {
 
   const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
     initSqlite().then((api2) => {
-      const db = new api2.oo1.DB() as Any;
+      const db = newDatabase(api2);
       if (seed.byteLength === 0) {
         const pageSize = (options && options.pageSize) || DEFAULT_PAGE_SIZE;
         db.exec("PRAGMA page_size=" + pageSize);
@@ -3066,7 +3113,10 @@ function loaderScript(): string {
 
 /** Serializes bridgeMain() into the frame. See the note on that function. */
 function bridgeScript(): string {
-  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")(" + JSON.stringify(FRAME) + ")<" + "/script>";
+  // The session-id hash travels as source beside the names (src/session-id.ts):
+  // bridgeMain cannot import it, and one implementation runs on both sides.
+  const sessionId = "{ name: " + JSON.stringify(SESSION_ID_FUNCTION) + ", of: (" + sessionIdTools.toString() + ")().sessionIdOf }";
+  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")(" + JSON.stringify(FRAME) + ", " + sessionId + ")<" + "/script>";
 }
 
 /** Injected into the iframe so the host can tell mounting actually succeeded. */

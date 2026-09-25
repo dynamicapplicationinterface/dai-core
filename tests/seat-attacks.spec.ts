@@ -4,6 +4,7 @@ import { showAuthorId } from "../src/identity.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
+import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
 
 /**
  * The attacks that broke the first seat model (cold review of identity step 5).
@@ -31,6 +32,7 @@ CREATE TABLE moves (
 
 function openWith(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, nonce) => sessionIdOf(author, nonce));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -43,9 +45,10 @@ function openWith(schema: string): Rows & { close(): void } {
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
-const S = bytes(0x5e); // the session
 const ADA = bytes(0xc0); // the creator
 const BO = bytes(0x10); // the joiner; his id sorts below Ada's
+const NONCE = bytes(0x07); // on Ada's own seat row
+const S = sessionIdOf(ADA, NONCE)!; // the session, which commits to Ada
 const ADA_SEAT = bytes(0xa1);
 const OPEN_SEAT = bytes(0xa2);
 
@@ -93,14 +96,20 @@ function signedBy(db: Rows, author: Uint8Array, id: number): Uint8Array {
 }
 
 /**
- * Ada's session with Bo in the open seat, as the kit leaves it. Returns the
- * entity of Ada's own seat row. Ada's rows use seqs 1–3 and Bo's seq 1.
+ * Ada's session with Bo in the open seat, as the kit leaves it: her own seat
+ * carrying the nonce the session id commits to, the open seat, Bo's ask for it,
+ * and Ada's confirmation. Returns the entity of Ada's own seat row. Ada's rows
+ * use seqs 1–3 and Bo's seq 1. `own` is the copy's own author; the rows are
+ * signed only when `sign` says.
  */
-function honestRoster(db: Rows, sign?: { ada: Uint8Array; bo: Uint8Array }): Uint8Array {
-  const adaSeat = put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT }, { batch: sign?.ada });
-  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT }, { batch: sign?.ada });
-  put(db, "_dai_binding", ADA, 3, 3, { seat: ADA_SEAT }, { batch: sign?.ada });
-  put(db, "_dai_binding", BO, 1, 4, { seat: OPEN_SEAT }, { batch: sign?.bo });
+function honestRoster(db: Rows, own: Uint8Array | null, sign?: { ada: Uint8Array; bo: Uint8Array }): Uint8Array {
+  if (own) {
+    db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [own]);
+  }
+  const adaSeat = put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT, nonce: NONCE }, { batch: sign?.ada });
+  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT, nonce: null }, { batch: sign?.ada });
+  put(db, "_dai_binding", BO, 1, 3, { seat: OPEN_SEAT }, { batch: sign?.bo });
+  put(db, "_dai_confirm", ADA, 3, 4, { seat: OPEN_SEAT, holder: BO }, { batch: sign?.ada });
   return adaSeat;
 }
 
@@ -110,11 +119,11 @@ const creators = (db: Rows): string[] => db.all("SELECT lower(hex(replica)) AS r
 test.describe("a joiner's binding to the creator's seat takes nothing", () => {
   test("backdated, and merged into the creator's copy: her move stands, his is not admitted, and the merge says so", async () => {
     const ada = openWith(SCHEMA);
-    honestRoster(ada);
+    honestRoster(ada, ADA);
     put(ada, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
 
     const bo = openWith(SCHEMA);
-    honestRoster(bo);
+    honestRoster(bo, BO);
     // Bo binds Ada's seat at a clock before any of hers, then plays White.
     put(bo, "_dai_binding", BO, 2, 0, { seat: ADA_SEAT });
     put(bo, "moves", BO, 3, 7, { seat: ADA_SEAT, san: "Qh5" });
@@ -131,7 +140,7 @@ test.describe("a joiner's binding to the creator's seat takes nothing", () => {
 
   test("at the creator's own clock, with an author id that sorts first: her move stands", () => {
     const db = openWith(SCHEMA);
-    honestRoster(db);
+    honestRoster(db, ADA);
     put(db, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
     put(db, "_dai_binding", BO, 2, 3, { seat: ADA_SEAT });
     put(db, "moves", BO, 3, 6, { seat: ADA_SEAT, san: "Qh5" });
@@ -143,7 +152,7 @@ test.describe("a joiner's binding to the creator's seat takes nothing", () => {
 test.describe("a joiner's seat row does not make the joiner the creator", () => {
   test("backdated and unsigned: Ada is still the creator, and a move for Bo's own seat is not admitted", () => {
     const db = openWith(SCHEMA);
-    honestRoster(db);
+    honestRoster(db, ADA);
     put(db, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
     const MINE = bytes(0xb7);
     put(db, "_dai_seat", BO, 2, -5, { seat: MINE });
@@ -157,7 +166,7 @@ test.describe("a joiner's seat row does not make the joiner the creator", () => 
   test("backdated with every row signed: Ada is still the creator", () => {
     const db = openWith(SCHEMA);
     const sign = { ada: signedBy(db, ADA, 0xe1), bo: signedBy(db, BO, 0xe2) };
-    honestRoster(db, sign);
+    honestRoster(db, null, sign);
     put(db, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" }, { batch: sign.ada });
     put(db, "_dai_seat", BO, 2, 0, { seat: bytes(0xb7) }, { batch: sign.bo });
     expect(creators(db)).toEqual([hex(ADA)]);
@@ -168,7 +177,7 @@ test.describe("a joiner's seat row does not make the joiner the creator", () => 
 
 test("a member's version of the creator's seat entity voids none of her moves", () => {
   const db = openWith(SCHEMA);
-  const adaSeat = honestRoster(db);
+  const adaSeat = honestRoster(db, ADA);
   put(db, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
   put(db, "moves", ADA, 5, 8, { seat: ADA_SEAT, san: "Nf3" });
   expect(admitted(db)).toEqual(["Nf3", "e4"]);

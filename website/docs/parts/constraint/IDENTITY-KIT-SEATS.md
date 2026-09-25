@@ -3,7 +3,7 @@
 ::: info IDENTITY-KIT-SEATS
 **The seat tables are the kit's**
 
-Start a session with `window.daiKit.newSession()` (`{ solo: true }` for a board one copy plays alone), take the open seat with `claimSeat(session)`, repair a contested one with `reseat(session)`, and read with `mySeat(session)`, `amCreator(session)` and `seats(session)`. Never write `_dai_seat` or `_dai_binding` with SQL, and never call `window.dai.replicated.session` yourself: the kit is their only writer. Never decide who this copy is from `_dai_replica` or an author column: `daiKit.author()` is the host's id.
+Start a session with `window.daiKit.newSession()` (`{ solo: true }` for a board one copy plays alone), ask for the open seat with `claimSeat(session)`, repair a contested one with `reseat(session)`, and read with `mySeat(session)`, `pendingSeat(session)` (asked for, not yet seated), `amCreator(session)` and `seats(session)`. The kit seats whoever asked on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED). Never write `_dai_seat`, `_dai_binding` or `_dai_confirm` with SQL, and never call `window.dai.replicated.session` yourself: the kit is their only writer. Never decide who this copy is from `_dai_replica` or an author column: `daiKit.author()` is the host's id.
 
 **Why.** Who holds a seat is what the document admits a row by. The kit's reads are built on the host's author id, never on a row a copy can rewrite, and a seat written around the kit is a seat nothing vouches for.
 
