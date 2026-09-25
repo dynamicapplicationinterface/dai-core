@@ -4417,24 +4417,52 @@ unrelated to its claim? Then correct the lint's premise and its reach. The
 pattern is part 3's second shape: a check that passes for a reason unrelated to
 what it claims.
 
-#### D123 — Two relaunch-path tests flake, measured before D117
+#### D125 — The reopen test closed B before its seat was saved
+
+*Status: fixed on `identity/signed-authorship` (25 September); closed when that
+branch's CI verdict is read green on WebKit and Firefox. Was D123 item 1.*
+
+`mailbox-link-e2e` "reopening the invite on the same copy binds no second
+seat": B not an admitted member after the reopen (`:670` at `689a440`). About
+half on WebKit (11 in 20 on `5d95a81`, 9 in 20 before D122), 5 in 16 on
+Firefox with D117, and the only red on CI run `36165131898`.
+
+**Measured, not read.** A probe on B's copy, 12 runs on WebKit: before the
+close B held two confirmations in memory, the creator's and its own; in 3 of
+the 12 the reopened copy held only the creator's, and waited to be seated
+again. One pull put it back each time. So the stored copy lacked a
+confirmation B had pulled and applied, and the mailbox cursor had not moved
+past it, since a pull moves the cursor only after the flush lands. Nothing
+was lost. `letIn` waits for the copy in memory, and the test closed B straight
+after it: a save asked is not a save written.
+
+**Red on the cause.** The test now holds B's save messages four seconds
+(`holdSaves`, an init script ahead of the opener's listener) from just before
+`letIn`. The unchanged test then failed every time, at the member assertion:
+8 in 8 on WebKit, 4 in 4 on Chromium. **The fix** waits for what the close
+needs, the confirmation in B's stored copy, read through `__runner.loadStored`
+and opened in the app frame's SQLite (`confirmedInStore`); the hold stays, so
+removing the wait fails every time instead of half of the time. With it: 8 in
+8 on WebKit with the witness read false first each time and true after 5.6 to
+7.5 s; then 19 in 20 on WebKit and 16 in 16 on Firefox, the one WebKit
+failure at an earlier step (below).
+
+**A person is not affected**, measured: with the save held and no pull from
+the test, the reopened copy seated itself from its own mount poll in 0.45 to
+1.3 s, 8 in 8. A tab closed within a second of being seated reopens "waiting"
+for about a second.
+
+**Seen once, not this cause:** in 1 of 20 on WebKit, B's own reply `e5`
+(before the hold is set) never enabled Play: the piece was picked up, the
+destination tapped, and `#play-move` stayed disabled for 15 s. `play()` in
+`tests/chess-play.ts` retries the pick-up and not the destination tap. Rate
+not measured.
+
+#### D123 — A relaunch-path test flakes, measured before D117
 
 *Status: open. Filed 25 September; each rate measured on `df75e52` (before
-D117) and on the D117 tree, local, no retries.*
+D117) and on the D117 tree, local, no retries. Item 1 is now D125.*
 
-1. **`mailbox-link-e2e` "reopening the invite on the same copy binds no second
-   seat"**, Firefox: 6 in 24 on the baseline, 5 in 16 with D117; one flake with
-   two faces. B's reopened copy never shows its app (`#app` not visible after
-   the card's Open, `:658`), or shows it and B is not an admitted member
-   (`:670`). It failed both attempts on CI run `36134903888` and one on
-   `36120722040`. A reading, not run: B closes before the confirmation it pulled
-   is saved (a save asked is not a save written), so the reopened copy waits to
-   be seated again. Start with what B's stored copy holds at close.
-   **On WebKit it is about half** (measured 25 September, local, no retries,
-   always at `:670`): 11 in 20 on `5d95a81`, 9 in 20 with the runner from
-   `df22709` (before D122). It failed both attempts on CI run `36165131898`
-   and was the only red there; it passed on `36140721169` by luck. Until it is
-   fixed, no WebKit verdict on this branch is green except by chance.
 2. **`launch-address` "after a store arrival, keeps the path and the key that
    fetch it again"**, WebKit: 15 in 30 on the baseline, 12 in 30 with D117,
    "execution context was destroyed". The test waits for `body.loaded`, which on
@@ -4446,7 +4474,7 @@ D117) and on the D117 tree, local, no retries.*
 #### D122 — Any link naming a game this device holds re-keys that game
 
 *Status: fixed on `identity/signed-authorship` (25 September); closed when that
-branch's CI verdict is read green; its test passed on all three engines on CI run `36165131898`, which is red on D123 item 1. Filed 25 September from the third cold read
+branch's CI verdict is read green; its test passed on all three engines on CI run `36165131898`, which is red on D125. Filed 25 September from the third cold read
 of D117. Latent on main.*
 
 **Ruled 25 September** (`IDENTITY-GAME-KEY-HELD` in `src/rules.ts`): an
@@ -4545,7 +4573,7 @@ them from colliding.
 #### D119 — The contested-seat e2e fails its own setup on WebKit
 
 *Status: fixed on `identity/signed-authorship` (25 September): the harness, not
-the product. Closed when that branch's CI verdict is read green on WebKit. Its test passed on all three engines on CI run `36165131898`; that run is red on D123 item 1.
+the product. Closed when that branch's CI verdict is read green on WebKit. Its test passed on all three engines on CI run `36165131898`; that run is red on D125.
 Named 25 September from CI run `36120722040` (identity step 3, `df75e52`);
 reproduced locally on WebKit, two in two.*
 
@@ -4569,6 +4597,9 @@ of 6 on `e2cbd09` and 1 of 6 on `df22709` (so not D122), a check WebKit never
 reached. With A's worker blocked, Chromium passed 8 of 8, then 16 of 16 more:
 24 in 24, against 3 misses in 12 without it. The reading that fits: on Chromium an ask sometimes reached A through
 the worker, past the route, so A seated it before the contest.
+**It is not gone** (25 September, D125's session): the same miss, 1 not 2,
+once in the commit tier on Chromium, beside 19 other tests; 24 in 24 when run
+alone straight after. A rate under load, not measured.
 
 **The route lint's premise is false on WebKit** (`scripts/check-routes.mjs`):
 it exempts a cross-origin route as "outside the worker's scope and never

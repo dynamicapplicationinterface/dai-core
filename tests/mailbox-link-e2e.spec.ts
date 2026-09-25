@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type Browser, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { firstMailboxMerge } from "./mailbox-wait.js";
+import { TO_HOST } from "../src/bridge.js";
 import { compileDirectory } from "../src/compile.js";
 import { FRAME_PUBLIC } from "../src/frame.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
@@ -218,6 +219,37 @@ test.describe("a game continues over a shared link (the key path)", () => {
   const useRelay = (page: Page): Promise<void> =>
     page.evaluate((b) => (window as any).__runner.useRelay(b), relayBase);
 
+  /**
+   * Lets a test hold this context's saves back: the losing order, forced.
+   *
+   * A save the frame asks for reaches the host as a message, and the host
+   * writes it to storage in several steps under a lock. A page closed in
+   * between keeps none of it, and on WebKit that is about half of the time
+   * when a test closes a tab straight after a pull (D125). Setting
+   * `__holdSavesMs` on a page delays each save message by that long before the
+   * host sees it, so a test that closes too early fails every time instead of
+   * half of the time. A listener registered before the opener's own, which
+   * stops the message and sends the same one again later.
+   */
+  async function holdSaves(context: BrowserContext): Promise<void> {
+    await context.addInitScript((saveType) => {
+      window.addEventListener(
+        "message",
+        (event) => {
+          const ms = Number((window as any).__holdSavesMs ?? 0);
+          if (!ms || (event.data as { type?: string } | null)?.type !== saveType || (event as any).__held) return;
+          event.stopImmediatePropagation();
+          window.setTimeout(() => {
+            const again = new MessageEvent("message", { data: event.data, origin: event.origin, source: event.source });
+            (again as any).__held = true;
+            window.dispatchEvent(again);
+          }, ms);
+        },
+        true,
+      );
+    }, TO_HOST.SAVE);
+  }
+
 
   /** The roster as this copy holds it: its own id, its bindings, and how many
    *  distinct binders each seat has — the number that reads 2 for a contested seat. */
@@ -307,6 +339,48 @@ test.describe("a game continues over a shared link (the key path)", () => {
       expect(seen.asked, "the joiner asked for a seat").toBeGreaterThan(0);
       expect(seen.waiting, "the joiner is still waiting to be seated").toBe(0);
     }).toPass({ timeout: 30_000 });
+  }
+
+  /**
+   * Whether this device's stored copy, the one a reopen reads, holds the
+   * creator's confirmation seating the joiner. `letIn` waits for the copy in
+   * memory; a test that closes the tab next needs the stored one, because a pulled confirmation is
+   * applied at once and saved a moment later (D125: closed in between,
+   * the reopened copy waits to be seated again). Read through the opener's own
+   * load and opened in the app frame's SQLite, so it is the bytes a reopen gets.
+   * The confirmation row itself, not `_dai_member`: the view needs a function
+   * only the live database registers, and this row is the one found missing.
+   */
+  async function confirmedInStore(page: Page): Promise<boolean> {
+    const bytes = await page.evaluate(async () => {
+      const runner = (window as any).__runner;
+      const stored: Uint8Array | null = await runner.loadStored(runner.loaded.manifest.documentUuid);
+      return stored ? Array.from(stored) : [];
+    });
+    if (bytes.length === 0) return false;
+    return appFrame(page).evaluate(async (raw) => {
+      const kit = (window as any).daiKit;
+      const api = await (window as any).dai.initSqlite();
+      const data = new Uint8Array(raw);
+      const db = new api.oo1.DB();
+      try {
+        const pointer = api.wasm.allocFromTypedArray(data);
+        api.capi.sqlite3_deserialize(
+          db.pointer,
+          "main",
+          pointer,
+          data.length,
+          data.length,
+          api.capi.SQLITE_DESERIALIZE_FREEONCLOSE | api.capi.SQLITE_DESERIALIZE_RESIZEABLE,
+        );
+        return (
+          db.selectObjects("SELECT 1 FROM _dai_confirm WHERE _r_deleted = 0 AND lower(hex(holder)) = ?", [kit.author()])
+            .length > 0
+        );
+      } finally {
+        db.close();
+      }
+    }, bytes);
   }
 
   /** Open a share link on a page, wait for the board, point it at the relay. */
@@ -621,6 +695,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
     await mountStore(deviceB);
+    await holdSaves(deviceB);
     const pageA = await deviceA.newPage();
     const pageB = await deviceB.newPage();
 
@@ -637,7 +712,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
     // And A's copy has seated B, and B holds the confirmation, before B goes away.
+    // B's saves are slow from here, so a close before the one holding the
+    // confirmation lands fails every time rather than half of the time.
+    await pageB.evaluate(() => void ((window as any).__holdSavesMs = 4_000));
     await letIn(pageA, pageB);
+    // Held in memory is not held: the reopen reads the stored copy, so wait
+    // until the confirmation is written there, not until it is applied.
+    await expect.poll(() => confirmedInStore(pageB), { timeout: 30_000 }).toBe(true);
     const before = await bindState(pageB);
     expect(before.myBindings, "B bound exactly one seat on first open").toHaveLength(1);
     const seat = before.myBindings[0]!.seat;
