@@ -4425,8 +4425,8 @@ guard.
 
 #### D125 — The reopen test closed B before its seat was saved
 
-*Status: fixed on `identity/signed-authorship` (25 September); closed when that
-branch's CI verdict is read green on WebKit and Firefox. Was D123 item 1.*
+*Status: closed 25 September (`1dfea17`): CI run `36175966725` on `acd5753`
+read green, the test passing on all three engines. Was D123 item 1.*
 
 `mailbox-link-e2e` "reopening the invite on the same copy binds no second
 seat": B not an admitted member after the reopen (`:670` at `689a440`). About
@@ -4491,7 +4491,8 @@ what it claims.
 #### D123 — A relaunch-path test flakes, measured before D117
 
 *Status: open. Filed 25 September; each rate measured on `df75e52` (before
-D117) and on the D117 tree, local, no retries. Item 1 is now D125.*
+D117) and on the D117 tree, local, no retries. Item 1 is now D125; item 3
+added 25 September.*
 
 2. **`launch-address` "after a store arrival, keeps the path and the key that
    fetch it again"**, WebKit: 15 in 30 on the baseline, 12 in 30 with D117,
@@ -4500,13 +4501,22 @@ D117) and on the D117 tree, local, no retries. Item 1 is now D125.*
    page the relaunch is about to replace. Wait for the load after the relaunch
    ("iOS reload: taken on the load before this one"), as the second open in the
    same test already does.
+3. **A held copy's card Open never shows the app, Firefox.** The face D125's
+   Firefox runs had at `:658`, now met in D122's game test at its setup
+   (`mailbox-link-e2e:1655`, B opening the first invite on a copy it holds):
+   `#app` not visible 60 s after the card's Open. Flaky once on CI run
+   `36175966725`. Measured 25 September, local, no retries, same statement
+   every time: 2 in 48 on `acd5753`, 1 in 48 with the opener and spec from
+   `689a440` (before D125 and D122's second half), so it predates both. Not
+   read yet: what the page holds when the app never comes (the report line,
+   `body` classes, the frame's handshake).
 
 #### D122 — Any link naming a game this device holds re-keys that game
 
-*Status: fixed on `identity/signed-authorship` (25 September), both halves;
-closed when that branch's CI verdict is read green. The game half's test
-passed on all three engines on CI run `36165131898`, which is red on D125.
-Filed 25 September from the third cold read of D117. Latent on main.*
+*Status: closed 25 September, both halves (`e2cbd09`, `acd5753`): CI run
+`36175966725` read green, every D122 test passing on all three engines (the
+game test flaky once on Firefox, at its setup, before any refusal: D123 item
+3). Filed 25 September from the third cold read of D117. Latent on main.*
 
 **Ruled 25 September** (`IDENTITY-KEY-HELD` in `src/rules.ts`, renamed from
 `IDENTITY-GAME-KEY-HELD` before it reached main, when the second ruling
@@ -4625,8 +4635,8 @@ them from colliding.
 
 #### D119 — The contested-seat e2e fails its own setup on WebKit
 
-*Status: fixed on `identity/signed-authorship` (25 September): the harness, not
-the product. Closed when that branch's CI verdict is read green on WebKit. Its test passed on all three engines on CI run `36165131898`; that run is red on D125.
+*Status: closed 25 September (`5d95a81`): the harness, not the product. CI run
+`36175966725` read green on WebKit, the test passing on all three engines.
 Named 25 September from CI run `36120722040` (identity step 3, `df75e52`);
 reproduced locally on WebKit, two in two.*
 
@@ -4691,9 +4701,9 @@ removed.
 
 #### D117 — The iOS relaunch loses an invite's key on a device that does not hold the app
 
-*Status: fixed on `identity/signed-authorship` (identity step 5, 25 September);
-closed when that branch's CI verdict is read green on WebKit. Filed 24
-September. Latent on main, exposed by the seat model.*
+*Status: closed 25 September (identity step 5): CI run `36175966725` on `acd5753`
+read green on WebKit. Filed 24 September. Latent on main, exposed by the seat
+model.*
 
 A stranger on iOS opening an invite, which is the phone walk's core path: the
 link carries the game's key; the load that opens it relaunches at the
