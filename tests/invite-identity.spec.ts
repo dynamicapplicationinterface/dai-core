@@ -7,6 +7,7 @@ import { expect, type Browser, type FrameLocator, type Page } from "@playwright/
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { KEYS } from "../src/keys.js";
+import { HINT_KEY } from "../src/link.js";
 import { serveRelay, type ServedRelay } from "./relay-memory.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -287,7 +288,7 @@ async function inviteWithData(browser: Browser, iphone: boolean, guestOptions: {
     });
     await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
   }
-  return { creator, guest };
+  return { creator, guest, file };
 }
 
 /** The keys a copy's library holds per game, as `<session>:<key>`. Two copies of one game must agree. */
@@ -344,14 +345,75 @@ test.describe("D117: an invite's key survives the iOS relaunch", () => {
   }
 
   /*
+   * The repair above must not be a way in (second cold review of D117).
+   *
+   * An address that names a document this device holds, with a key in its
+   * fragment, is anybody's to write: the uuid rides on every icon and link. A
+   * copy that came by file and was never shared holds no key at all, so a gap
+   * filled from the address would seal its mailbox under a key the sender of
+   * that address holds. Here the guest holds the document by file, keyless, and
+   * opens a real invite's address with its own document named beside it: the
+   * key is not what opened this copy, and nothing of it may be filed.
+   */
+  test("an address's key is never filed on a held copy it did not open", async ({ browser, browserName }) => {
+    test.skip(browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
+    const { creator, guest: invited, file } = await inviteWithData(browser, true);
+    const link = await creator.evaluate(() => (window as unknown as { __copied: string }).__copied);
+    const sent = (await keysHeld(creator))[0];
+    await invited.context().close();
+
+    // A device holding the same document by file: never shared, so no key.
+    const holder = await device(browser, { iphone: true });
+    await holder.goto(RUNNER_URL);
+    await holder.setInputFiles("#file", file);
+    await openHere(holder);
+    const uuid = await holder.evaluate(() => (window as any).__runner.loaded.manifest.documentUuid as string);
+    const record = () =>
+      holder.evaluate(async (id) => {
+        const item = ((await (window as any).__runner.listLibrary()) as any[]).find((i) => i.documentUuid === id);
+        return { held: Boolean(item), documentKey: item?.documentKey ?? null, games: Object.keys(item?.sessionKeys ?? {}).length };
+      }, uuid);
+    // What it looked at: the copy is held, and holds no key yet.
+    expect(await record()).toEqual({ held: true, documentKey: null, games: 0 });
+
+    // The invite's address, with this device's copy named beside it.
+    const forged = new URL(link);
+    forged.hash = `${forged.hash}&${HINT_KEY}=${uuid}`;
+    await holder.goto(forged.href);
+    await expect(holder.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    // Held, so it opened its own copy rather than the invite's.
+    expect(await holder.evaluate(() => (window as any).__runner.loaded.manifest.documentUuid)).toBe(uuid);
+    // The decision point: a key filed starts a mailbox; none, and the opener says so.
+    await expect
+      .poll(
+        () =>
+          holder.evaluate(() =>
+            (window as any).__runner.mailboxPolls !== undefined
+              ? "mailbox"
+              : (document.getElementById("report")?.textContent ?? "").includes("arrive when you invite someone")
+                ? "no key"
+                : "undecided",
+          ),
+        { timeout: 30_000, message: "the copy decided whether it has a key" },
+      )
+      .not.toBe("undecided");
+    expect(await record(), "no key from the address was filed").toEqual({ held: true, documentKey: null, games: 0 });
+    expect(await keysHeld(holder)).not.toContain(sent);
+
+    await creator.context().close();
+    await holder.context().close();
+  });
+
+  /*
    * A copy the relaunch already stranded, opened again from where it landed.
    *
    * The phones D117 reached before the fix hold the copy and no key, and the
-   * address they reopen at carries the key in its fragment. Stranded here by
+   * library record kept the link that opened it, which carries the key. The
+   * address is not where it comes from: see the test above. Stranded here by
    * taking the keys out of the library record (the store's own names, since the
    * opener exports none; the strip is checked before anything leans on it).
    */
-  test("a copy stranded without its key takes it from its own address, on an iPhone", async ({ browser, browserName }) => {
+  test("a copy stranded without its key takes it from the link it was opened by, on an iPhone", async ({ browser, browserName }) => {
     test.skip(browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
     const { creator, guest } = await inviteWithData(browser, true);
     const sent = (await keysHeld(creator))[0];
@@ -383,9 +445,11 @@ test.describe("D117: an invite's key survives the iOS relaunch", () => {
     await guest.reload();
     await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
     await expect
-      .poll(() => keysHeld(guest), { timeout: 30_000, message: "the key came back from the address" })
+      .poll(() => keysHeld(guest), { timeout: 30_000, message: "the key came back from the link it was opened by" })
       .toContain(sent);
-    await expect(guest.locator("#sheet-arrival")).toContainText("the library had no key, so it was taken from this address");
+    await expect(guest.locator("#sheet-arrival")).toContainText(
+      "the library had no key for the game, so it was filed from the link this copy was opened by · the address's key held here: yes",
+    );
     await mailboxRuns(guest);
 
     await creator.context().close();

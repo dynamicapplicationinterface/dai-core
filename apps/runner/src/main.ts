@@ -1120,7 +1120,7 @@ function eject(): void {
   arrivedKey = undefined;
   // With it: a game named by the last link must not file the next document's key.
   arrivedSession = undefined;
-  keyFromAddress = false;
+  keyFromRecord = false;
   document.body.classList.remove("loaded", "launching", "booting");
   clearLaunchGuard();
   document.documentElement.style.removeProperty("--app-ground");
@@ -4558,8 +4558,19 @@ let arrivedKey: string | undefined;
  */
 let arrivedSession: string | undefined;
 
-/** The key was taken from this load's own address because the library had none (D117). */
-let keyFromAddress = false;
+/** The game's key was filed from the record's own link because the library had none for it (D117). */
+let keyFromRecord = false;
+
+/** The store reference in a link this device kept, if it is one. */
+function keptReference(link: string | undefined): ReturnType<typeof referenceFrom> | undefined {
+  if (!link) return undefined;
+  try {
+    const url = new URL(link);
+    return referenceFrom(url.pathname, url.search, url.hash) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The running mailbox loop for the mounted document, or none. */
 let mailboxSession: MailboxSession | null = null;
@@ -4737,12 +4748,12 @@ async function fileArrivedKey(documentUuid: string): Promise<string> {
  * Two witnesses, asked separately, so neither vouches for the other.
  */
 async function carriedReading(): Promise<string | undefined> {
-  // Only for a load that followed a reload, or one that had to take the key
-  // from its own address: anywhere else nothing crossed, and a line saying so
+  // Only for a load that followed a reload, or one that had to file the key
+  // from its record's link: anywhere else nothing crossed, and a line saying so
   // reads like a carrier that failed.
-  if (!reloadedThisLoad && carriedIn === undefined && !keyFromAddress) return undefined;
+  if (!reloadedThisLoad && carriedIn === undefined && !keyFromRecord) return undefined;
   const said = carriedIn ?? "nothing said";
-  const repaired = keyFromAddress ? " · the library had no key, so it was taken from this address" : "";
+  const repaired = keyFromRecord ? " · the library had no key for the game, so it was filed from the link this copy was opened by" : "";
   const named = referenceFrom(location.pathname, location.search, location.hash);
   if (!named?.key || !mountedUuid) return `carried across: ${said}${repaired}`;
   const held = await getCartridgeFromLibrary(mountedUuid).catch(() => null);
@@ -5043,19 +5054,27 @@ async function start(): Promise<void> {
         arrivedByLink = location.href;
       }
       /*
-       * The key this address carries, when the library has none for its game (D117).
+       * The game's key, from the link this copy was opened by, when the library
+       * holds none for that game (D117).
        *
        * The load that relaunched here files it before it goes; this is for the
        * copy whose filing never landed — a phone already stranded by D117, a
        * write the library did not take — which otherwise never recovers,
-       * however often it is opened from here. A gap is filled and nothing is
-       * replaced: these bytes were not what opened the copy, and a key this
-       * device holds for a game is never displaced by one arriving (D37).
+       * however often it is opened.
+       *
+       * From the record's link, never from this address. The address is
+       * anybody's to write, and the document's id rides on every icon and link:
+       * a key taken from it was taken on nobody's word, and on a copy with no
+       * key yet it became the key its mailbox sealed under (second cold review
+       * of D117). The record's link is the one whose key opened this copy — it
+       * is written only by `ingest`, after the key decrypted what the link
+       * fetched. Game keys only: a link naming no game predates per-game keys,
+       * and those games restart. A gap is filled and nothing replaced (D37).
        */
-      if (named?.key && !(named.session ? held.sessionKeys?.[named.session] : held.documentKey)) {
-        arrivedKey = named.key;
-        arrivedSession = named.session;
-        keyFromAddress = true;
+      const kept = keptReference(held.link);
+      if (kept?.key && kept.session && !held.sessionKeys?.[kept.session]) {
+        await rememberSessionKey(held.documentUuid, kept.session, kept.key);
+        keyFromRecord = true;
       }
       await launchFromLibrary(held, "an icon, or an address naming a copy already here");
       return;

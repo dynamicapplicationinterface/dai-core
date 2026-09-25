@@ -4523,12 +4523,21 @@ three times in three with the fix's two filing lines taken out, green with them.
   (`fileArrivedKey`, read back from the library, bounded at 3 s so a library that
   never answers cannot hold the launch screen), and leaves its own account in
   session storage (`KEYS.IOS_RELOAD_CARRIED`, named for its document).
-- The relaunched load reads a key from its own address when the library holds
-  none for that game (the `hintOnly` branch). It fills a gap and never replaces a
-  key held (D37). This is what repairs a phone D117 already stranded: from the
-  cold review, which reproduced one and showed it never recovering on reopen.
-- The arrival line says what crossed, on a load that followed a reload or had to
-  take the key from its address, and nowhere else: what the load before said it
+- A load that opens a held copy (the `hintOnly` branch) files the game's key
+  from **the link the record kept**, when the library holds none for that game.
+  It fills a gap and never replaces a key held (D37); game keys only, since a
+  link naming no game predates per-game keys. This is what repairs a phone D117
+  already stranded: from the first cold review, which reproduced one and showed
+  it never recovering on reopen. **The first version took the key from the
+  address instead, and that was a way in**: the address is anybody's to write,
+  the document's id rides on every icon and link, and on a copy with no key yet
+  (came by file, never shared) an address's key became the key its mailbox
+  sealed under. Found by the second cold review; shown red on `a20cb76` ("an
+  address's key is never filed on a held copy it did not open": the keyless copy
+  ended holding the address's game key and a minted document key). The record's
+  link is written only by `ingest`, after its key decrypted what it fetched.
+- The arrival line says what crossed, on a load that followed a reload or filed
+  the key from its record's link, and nowhere else: what the load before said it
   filed, and whether the library holds the key this address names, asked
   separately ("carried across: the game's key, filed · the address's key held
   here: yes"). With the filing removed it read "NOT filed · … no".
