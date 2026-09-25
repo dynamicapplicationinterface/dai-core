@@ -1017,22 +1017,22 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   // The worker describes the next load with this document's manifest.
   await describeDocument(identity);
   /*
-   * What this load holds only in memory is written down before it goes (D117).
+   * What this load held only in memory, as the library now has it (D117).
    *
    * The next load opens the copy out of the library, and the library is all it
    * has of this one. The key a link carried was filed when the mailbox started,
-   * and on a device that did not hold the app this reload comes first: the
-   * copy after it had no key, ran no mailbox, and waited to be seated by a
-   * creator who never heard it ask.
+   * and on a device that did not hold the app this reload came first: the copy
+   * after it had no key, ran no mailbox, and waited to be seated by a creator
+   * who never heard it ask. It is filed now by the write that kept the copy
+   * (`arrivedKeyFields`); this reads what landed, for the next load to say.
+   *
+   * Bounded: a read with no timer, behind the launch screen, where a rehearsal
+   * mount has already cleared the guard. A library that never answered would
+   * leave the person on the splash with no way off.
    */
-  //
-  // Bounded: this runs behind the launch screen, where a rehearsal mount has
-  // already cleared the guard, so a library that never answers would leave the
-  // person on the splash with no way off. The address carries the key as well,
-  // and the next load files it from there when the library has none.
   const carried = await Promise.race([
-    fileArrivedKey(identity.uuid),
-    new Promise<string>((done) => window.setTimeout(() => done("the key, not confirmed in time"), 3000)),
+    arrivedKeyAccount(identity.uuid),
+    new Promise<string>((done) => window.setTimeout(() => done("the key, not read back in time"), 1000)),
   ]);
   markStep("reloading at the document's address");
   reloadGate = "taken";
@@ -2440,6 +2440,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // Standing consent and issued shares belong to the copy, not to this
         // write. See the note on the save path above.
         ...keepItem,
+        // The key the link carried, in the same write (D117; see arrivedKeyFields).
+        ...arrivedKeyFields(keepItem),
         documentUuid: loaded.manifest.documentUuid,
         appName: loaded.manifest.appName ?? "container",
         lastOpened: new Date().toISOString(),
@@ -4723,19 +4725,38 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
 }
 
 /**
- * Files the key this load's link carried, and says what the library now holds.
+ * The keys this load's link carried, as fields of the record that keeps the copy (D117).
  *
- * For a reload that is about to throw this page away (D117): the key lives in
- * `arrivedKey` until the mailbox files it, and nothing else of this load
- * reaches the next one but the library and the address. The answer is read
- * back from the library rather than assumed from the write, because
- * `rememberSessionKey` does nothing for a document the library does not hold,
- * and the arrival line is where that would otherwise go unsaid.
+ * Filed in the write that keeps the copy, because on iOS a relaunch follows it
+ * and the library is all the next load has of this one: the key lived in
+ * `arrivedKey` until the mailbox filed it, and the relaunch came first. Not in
+ * a write of its own just before the relaunch: that waited on the library lock
+ * behind the rehearsal mount's own save, and held the launch screen up by
+ * seconds on every first open from a link (measured, `launch-address`). The
+ * same fields the mailbox would file: a game's key beside a document key
+ * (minted when there is none, as `rememberSessionKey` does), or, for a link
+ * that names no game, the document's key. A game key already held is kept.
  */
-async function fileArrivedKey(documentUuid: string): Promise<string> {
+function arrivedKeyFields(
+  record: Pick<LibraryItem, "documentKey" | "sessionKeys"> | null | undefined,
+): Pick<LibraryItem, "documentKey" | "sessionKeys"> {
+  if (!arrivedKey) return {};
+  if (!arrivedSession) return { documentKey: arrivedKey };
+  return {
+    documentKey: record?.documentKey ?? mintKeyBase64Url(),
+    sessionKeys: { ...(record?.sessionKeys ?? {}), [arrivedSession]: record?.sessionKeys?.[arrivedSession] ?? arrivedKey },
+  };
+}
+
+/**
+ * What the library holds of the key this load's link carried: read, not written.
+ *
+ * For the account a relaunch leaves the next load (D117). Read back rather than
+ * assumed from the keep, because a keep can fail and the arrival line is where
+ * that would otherwise go unsaid.
+ */
+async function arrivedKeyAccount(documentUuid: string): Promise<string> {
   if (!arrivedKey) return "no key held only on this load";
-  if (arrivedSession) await rememberSessionKey(documentUuid, arrivedSession, arrivedKey);
-  else await documentRootKey(documentUuid);
   const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
   const filed = arrivedSession ? held?.sessionKeys?.[arrivedSession] === arrivedKey : held?.documentKey === arrivedKey;
   const which = arrivedSession ? "the game's key" : "the document's key";

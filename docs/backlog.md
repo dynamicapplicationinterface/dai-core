@@ -4393,6 +4393,45 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D123 — Two relaunch-path tests flake, measured before D117
+
+*Status: open. Filed 25 September; each rate measured on `df75e52` (before
+D117) and on the D117 tree, local, no retries.*
+
+1. **`mailbox-link-e2e` "reopening the invite on the same copy binds no second
+   seat"**, Firefox: 6 in 24 on the baseline, 5 in 16 with D117; one flake with
+   two faces. B's reopened copy never shows its app (`#app` not visible after
+   the card's Open, `:658`), or shows it and B is not an admitted member
+   (`:670`). It failed both attempts on CI run `36134903888` and one on
+   `36120722040`. A reading, not run: B closes before the confirmation it pulled
+   is saved (a save asked is not a save written), so the reopened copy waits to
+   be seated again. Start with what B's stored copy holds at close.
+2. **`launch-address` "after a store arrival, keeps the path and the key that
+   fetch it again"**, WebKit: 15 in 30 on the baseline, 12 in 30 with D117,
+   "execution context was destroyed". The test waits for `body.loaded`, which on
+   iOS the rehearsal mount sets before the relaunch leaves, and then reads the
+   page the relaunch is about to replace. Wait for the load after the relaunch
+   ("iOS reload: taken on the load before this one"), as the second open in the
+   same test already does.
+
+#### D122 — Any link naming a game this device holds re-keys that game
+
+*Status: open. Filed 25 September from the third cold read of D117; read, not
+run. Latent on main.*
+
+`ingest` files an arriving game key on a copy already held with
+`rememberSessionKey`, which replaces a different key for that game without a
+word (`arrivedKey && arrivedSession && heldHere`). So a stale invite, or one
+built by anybody holding a copy (the database is outside the signed set, so a
+copy re-sealed under another key with any `s=` still verifies), moves that
+game's mailbox to a new address: this copy publishes and reads where its
+partner does not, which is D37's failure arriving by a different door, and
+nothing on either screen says so. D37's rule is that a key is never displaced
+by one arriving for a different game; for the *same* game nothing is ruled.
+**Open question:** when may an arriving key for a game this device holds a key
+for replace it, if ever? A deliberate re-invite from the creator is the only
+case that comes to mind; everything else fills gaps only.
+
 #### D121 — The warm merge writes the library record from a read taken before it
 
 *Status: open. Filed 25 September from the cold review of D117 (its finding 8);
@@ -4518,11 +4557,18 @@ the relaunch, so nothing on the first load can file the key but the fix. Red
 three times in three with the fix's two filing lines taken out, green with them.
 
 **What was built.** Two carriers, each shown red without it:
-- `relaunchAtOwnAddress`, the one door all three relaunching paths go through,
-  files what the load holds only in memory before it navigates
-  (`fileArrivedKey`, read back from the library, bounded at 3 s so a library that
-  never answers cannot hold the launch screen), and leaves its own account in
-  session storage (`KEYS.IOS_RELOAD_CARRIED`, named for its document).
+- The key the link carried is filed **in the write that keeps the copy**
+  (`arrivedKeyFields` in `ingest`'s keep), which already holds the library lock
+  and comes before the relaunch. `relaunchAtOwnAddress`, the one door all three
+  relaunching paths go through, only reads back what landed (bounded at 1 s)
+  and leaves that account in session storage (`KEYS.IOS_RELOAD_CARRIED`, named
+  for its document). **The first version wrote the key there, in a write of its
+  own, and CI caught what that cost:** the write queued on the library lock
+  behind the rehearsal mount's own save, so every first open from a link on an
+  iPhone held the launch screen up by up to the 3 s bound, and a page that said
+  "loaded" was replaced under whoever was using it. `launch-address` "after a
+  store arrival, keeps the path and the key" failed at "still the store
+  address" 4 in 10 on it, never on the baseline, 0 in 40 since.
 - A load that opens a held copy (the `hintOnly` branch) files the game's key
   from **the link the record kept**, when the library holds none for that game.
   It fills a gap and never replaces a key held (D37); game keys only, since a
@@ -4543,6 +4589,24 @@ three times in three with the fix's two filing lines taken out, green with them.
   here: yes"). With the filing removed it read "NOT filed · … no".
 
 The rest of what the review found the relaunch leaves behind is D120.
+
+**Left open by the third cold read** (of the repair alone, on `e313d12`; read,
+not run). The claim holds: the address can no longer plant a key. Four small
+things in or beside the repair, none changing what it files:
+- The words. The record's `link` is the *last* store link `ingest` accepted for
+  the document, which can be a link whose copy was older and not taken; the line
+  says "the link this copy was opened by". Say "the last link this copy was
+  opened from", in the comment, the line and the test.
+- The gap is tested on a record read before the lock, and `rememberSessionKey`
+  overwrites; a second tab filing the same game in between is replaced (D105's
+  ground). Test the gap inside `amendLibraryRecord`.
+- `keyFromRecord` is set whether the write landed or not; set it from a read-back,
+  as `fileArrivedKey` does.
+- `arrivedByLink` is set from an unchecked address in the same branch and cleared
+  neither by `eject` nor by the `launchQueue` consumer. It cannot reach the
+  record today (a file launch opens a new window); it would if the manifest ever
+  focused an existing one.
+The larger thing it found is next to the repair, and older: D122.
 
 #### D116 — The seat check is superlinear in moves
 
