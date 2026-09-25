@@ -4393,10 +4393,86 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D130 — sign-scope's second document never shows its frame on WebKit, locally
+
+*Status: open. Filed 25 September; measured, pre-existing.*
+
+`tests/sign-scope.spec.ts` "a document's code cannot get a header for another
+document signed". The test opens chess, then picks the forger's file and
+presses Open. In the failing runs `#out` is never found in the app frame, and
+the page shows only the banner and one iframe. On WebKit, locally, it failed
+3 of 10 on `9560321` and 4 of 10 with `acd5753`'s `main.ts`, so D126 did not
+cause it. CI passed it on `acd5753`. It looks like D32's shape (a mounted
+frame that cannot be entered) or D123 item 3's (a card's Open never shows the
+app); not yet told apart. Neither document is replicated or signed.
+
+#### D129 — Refusal sentences: "This link" for a file, and the trust wording lost before the pin
+
+*Status: open. Filed 25 September from the cold read of the arrival refusals
+(findings 4 and 5); read, not run.*
+
+Two small things about wording. First, `strangersCopy` and the diverged-copies
+refusal say "This link" when the arrival was a picked file. Second, D126's
+check runs before the pin, so it replaces the pin's sharper sentences for a held
+replicated copy. An unsigned arrival for a signed held copy is told "published
+by somebody else", not that a signature was stripped. A re-signed one loses
+"Treat it as an impersonation". The second is a choice to make on purpose, not
+a fix.
+
+The same read found reporting uneven. `console.warn` for D126 and the two
+key-held refusals; `console.error` for the mount guard and D85's two; nothing
+for a trust mismatch (at arrival or at reopen), the D126 backstop, the pin race
+or an unreadable file.
+
+#### D128 — "Nothing on this device was changed" is said after writes
+
+*Status: open. Filed 25 September from the cold read of the arrival refusals
+(finding 2); read, not run.*
+
+Four later refusals in `ingest` say the device was not changed, but writes can
+come before them:
+
+- The backstop sibling refusal and the never-mount-over guard: `rememberSessionKey`
+  (gap fill, and `ensureDocumentKey`).
+- The never-mount-over guard and D85's build and diverged refusals: `pinTrust`
+  (when no pin), `recordPublisher`, and succession's `saveDatabaseToOpfs`.
+- `recordPublisher` always saves, and it overwrites the recorded publisher name
+  with the arriving one (`src/publisher.ts:320`).
+
+The never-mount-over guard can be reached when a held replicated sibling's
+archive has no `document.sqlite`: the card then resolves on Open with no merge
+offered (`card.ts:552`). Either move the refusals ahead of the writes or stop
+saying nothing changed; first make one red by running it.
+
+#### D127 — The arriving link's key outlives the arrival
+
+*Status: open. Filed 25 September from the cold read of the arrival refusals
+(finding 1, rated high); read, not run. Run first.*
+
+`arrivedKey` and `arrivedSession` are set from a link (and `arrivedKey` from a
+share-target key). They are cleared only in `eject`, which only `deleteApp`
+calls. The file picker, the launch queue, the URL fetch, the share target and
+the handoff do not reset them. The file picker clears `arrivedByLink` and
+`arrivedInClear`, but not these two.
+
+So, on the reading, the following could happen after a link to document A has
+opened, if a held replicated file B is then picked on the same page:
+
+- It is refused by the key-held check against A's key, a false refusal.
+- If B holds no document key, the keep files A's key into B, which moves B's
+  mailbox.
+- With a session, the game-key refusal fires, or `rememberSessionKey` files
+  A's game under B.
+
+Not established: whether a person can pick a file on the page after a link has
+opened a document. That is the first thing to run. If they can, the red is:
+open a link to A, pick B's file, and expect B to open under its own key.
+
 #### D126 — "Published by somebody else" cannot fire: the sibling test compares the arriving key with itself
 
-*Status: built, CI not yet read. Filed 25 September from D122's second ruling,
-which tried to make it red and could not; ruled and built the same day.*
+*Status: closed 25 September (`f1f76e4`, `9560321`): CI run `36200300398` read
+green, both tests passing on all three engines. Filed the same day from D122's
+second ruling, which tried to make it red and could not.*
 
 **Ruled:** a held copy is never offered a merge from a different publisher,
 pinned or not; a different publisher is a different document
@@ -4434,6 +4510,15 @@ and expect the "published by somebody else" sentence in sight and no card. The
 likely fix puts the held record's own fingerprint on the held side of the test.
 Ask first what the merge path does with a stranger's rows once there is a second
 guard.
+
+**Solo documents, from the cold read (finding 3; read, not run).**
+The ruling was about merge offers, which are only made for replicated documents,
+so the check is limited to them. For a solo document, the pin is still the only
+guard. If a held solo record has lost its pin, a stranger's copy reaches the
+card. Open pins the stranger's key and records it as the publisher, and
+`chooseCopy` can then replace the held copy. The D85 build refusal catches this
+only when `wrote` is set and both builds are known. **Ruling wanted:** does "a
+different publisher is a different document" reach solo documents?
 
 #### D125 — The reopen test closed B before its seat was saved
 
