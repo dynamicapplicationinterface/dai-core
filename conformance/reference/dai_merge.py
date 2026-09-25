@@ -199,12 +199,13 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             return "duplicate"
         raise ValueError(f"ROW_REJECTED: a different row already exists as {rid}")
 
-    # Superseded on arrival when something present already names this row. A
-    # merge delivers children before parents, so this is not a rare case.
+    # Superseded on arrival when something of its own entity present already
+    # names this row. A merge delivers children before parents, so this is not a
+    # rare case. Another entity's row naming it hides nothing (T1-D35).
     named = db.execute(
         f'SELECT 1 FROM "{table}", json_each("{table}"._r_parents)'
-        " WHERE json_each.value = ? LIMIT 1",
-        (rid,),
+        f' WHERE json_each.value = ? AND "{table}"._r_entity = ? LIMIT 1',
+        (rid, row["_r_entity"]),
     ).fetchone()
 
     names = authored + [
@@ -225,8 +226,8 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             continue
         db.execute(
             f'UPDATE "{table}" SET _r_superseded = 1'
-            " WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_superseded = 0",
-            (replica_hex.upper(), int(seq)),
+            " WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ? AND _r_superseded = 0",
+            (replica_hex.upper(), int(seq), row["_r_entity"]),
         )
     return "added"
 
@@ -360,7 +361,8 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
 
     def displace(table: str, row: dict) -> None:
         # A signed row outranks an unsigned one at its id: the unsigned one goes,
-        # and what it superseded is a head again unless something else names it.
+        # and what it superseded is a head again unless something else of its
+        # entity names it (T1-D35).
         (parents,) = local.execute(
             f'SELECT _r_parents FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
             (row["_r_replica"], row["_r_seq"]),
@@ -373,7 +375,8 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
             local.execute(
                 f'UPDATE "{table}" SET _r_superseded = 0'
                 " WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1"
-                f' AND NOT EXISTS (SELECT 1 FROM "{table}" n, json_each(n._r_parents) p WHERE p.value = ?)',
+                f' AND NOT EXISTS (SELECT 1 FROM "{table}" n, json_each(n._r_parents) p'
+                f' WHERE p.value = ? AND n._r_entity = "{table}"._r_entity)',
                 (parent, parent),
             )
         reject(row_id(row["_r_replica"], row["_r_seq"]))

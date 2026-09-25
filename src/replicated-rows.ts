@@ -257,12 +257,14 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     );
   }
 
-  // Superseded on arrival if anything already present names this row as a
-  // parent. The DAG is not ordered by arrival, so this is not a rare case.
+  // Superseded on arrival if anything of its own entity already present names
+  // this row as a parent. The DAG is not ordered by arrival, so this is not a
+  // rare case. A row of another entity naming it says nothing about this
+  // entity's history, and hides nothing (T1-D35).
   const namedAlready = db.all(
     `SELECT 1 FROM "${table}", json_each("${table}"._r_parents)
-      WHERE json_each.value = ? LIMIT 1`,
-    [id],
+      WHERE json_each.value = ? AND "${table}"._r_entity = ? LIMIT 1`,
+    [id, row._r_entity],
   ).length > 0;
 
   const names = [
@@ -287,15 +289,15 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     values,
   );
 
-  // And every parent this row names is now superseded. Rows that have not
-  // arrived yet are covered by the check above when they do.
+  // And every parent this row names in its own entity is now superseded. Rows
+  // that have not arrived yet are covered by the check above when they do.
   for (const parent of parentsOf(row)) {
     const [replicaHex, seq] = parent.split(":");
     if (!replicaHex || seq === undefined) continue;
     db.run(
       `UPDATE "${table}" SET _r_superseded = 1
-        WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_superseded = 0`,
-      [replicaHex.toUpperCase(), Number(seq)],
+        WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ? AND _r_superseded = 0`,
+      [replicaHex.toUpperCase(), Number(seq), row._r_entity],
     );
   }
 
@@ -571,7 +573,9 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
     }
   }
 
-  // D4 over every replicated table — author and roster alike, not a subset.
+  // D4 over every replicated table — author and roster alike, not a subset. A
+  // parent of another entity is not the row's history (T1-D35), so only a
+  // parent of the row's own entity can cross.
   for (const table of replicated) {
     const crossing = db.all(
       `SELECT count(*) AS n
@@ -579,6 +583,7 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
          JOIN json_each(k._r_parents) p
          JOIN "${table}" parent
            ON lower(hex(parent._r_replica)) || ':' || parent._r_seq = p.value
+          AND parent._r_entity = k._r_entity
         WHERE k._r_session = ? AND parent._r_session != ?`,
       [session, session],
     );
@@ -973,12 +978,14 @@ export function mergeFrom(
   const displace = (table: string, row: ReplicatedRow): void => {
     const gone = local.all(`SELECT _r_parents FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
     local.run(`DELETE FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
-    // What the removed row superseded is a head again unless something else names it (T1-D2).
+    // What the removed row superseded is a head again unless something else of
+    // its entity names it (T1-D2, T1-D35).
     for (const parent of parentsOf({ _r_parents: String(gone?.["_r_parents"] ?? "[]") })) {
       local.run(
         `UPDATE "${table}" SET _r_superseded = 0
           WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1
-            AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(n._r_parents) p WHERE p.value = ?)`,
+            AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(n._r_parents) p
+                             WHERE p.value = ? AND n._r_entity = "${table}"._r_entity)`,
         [parent, parent],
       );
     }

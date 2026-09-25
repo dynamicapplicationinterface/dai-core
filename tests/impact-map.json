@@ -428,6 +428,12 @@
       "src/unzip.ts",
       "tests/credentials.spec.ts"
     ],
+    "tests/cross-entity-parent.spec.ts": [
+      "src/identity.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "tests/cross-entity-parent.spec.ts"
+    ],
     "tests/d22-reopen.spec.ts": [
       "apps/runner/",
       "scripts/generate-key.mjs",

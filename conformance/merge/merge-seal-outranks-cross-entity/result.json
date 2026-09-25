@@ -1,0 +1,27 @@
+{
+  "what": "B holds an unsigned edit of Bo's case under Ada's id and seq, and a case of another entity that also names Bo's case. When the unsigned edit gives way to Ada's signed row, Bo's case is a head again: the other entity's row does not hold it down.",
+  "cites": [
+    "T1-D13",
+    "T1-D35"
+  ],
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

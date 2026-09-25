@@ -88,6 +88,7 @@ struct Table {
     cols: Vec<String>,
     i_replica: usize,
     i_seq: usize,
+    i_entity: usize,
     i_parents: usize,
     i_superseded: usize,
     // The signed batch a row left in (docs/identity.md), when the table has one.
@@ -124,9 +125,10 @@ fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
     for n in names {
         let cols = table_cols(c, schema, &n);
         let idx = |k: &str| cols.iter().position(|x| x == k);
-        if let (Some(a), Some(b), Some(p), Some(s)) = (
+        if let (Some(a), Some(b), Some(e), Some(p), Some(s)) = (
             idx("_r_replica"),
             idx("_r_seq"),
+            idx("_r_entity"),
             idx("_r_parents"),
             idx("_r_superseded"),
         ) {
@@ -136,6 +138,7 @@ fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
                 cols,
                 i_replica: a,
                 i_seq: b,
+                i_entity: e,
                 i_parents: p,
                 i_superseded: s,
                 i_batch,
@@ -438,16 +441,18 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     }
 
     // T1-D2: supersession is a pure function of the row set, recomputed over all
-    // rows: superseded exactly while some row names it.
+    // rows: superseded exactly while some row of its own entity names it. A row
+    // of another entity naming it hides nothing (T1-D35).
     for t in &tables {
         let all = load(&c, "main", t);
-        let mut parented: BTreeSet<String> = BTreeSet::new();
+        let mut parented: BTreeSet<(String, String)> = BTreeSet::new();
         for r in &all {
+            let entity = r.vals[t.i_entity].enc();
             if let V::Text(p) = &r.vals[t.i_parents] {
                 if let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(p) {
                     for e in a {
                         if let serde_json::Value::String(s) = e {
-                            parented.insert(s.to_lowercase());
+                            parented.insert((entity.clone(), s.to_lowercase()));
                         }
                     }
                 }
@@ -455,7 +460,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         }
         for r in &all {
             let id = rowid(t, r);
-            let want = if parented.contains(&id) { 1 } else { 0 };
+            let want = if parented.contains(&(r.vals[t.i_entity].enc(), id.clone())) { 1 } else { 0 };
             if r.vals[t.i_superseded] != V::Int(want) {
                 c.execute(
                     &format!(

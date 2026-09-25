@@ -66,6 +66,8 @@ const A = id(0xaa);
 const B = id(0xbb);
 const E1 = id(0x11);
 const E2 = id(0x22);
+/** A row id's author part as `_r_parents` spells it: lowercase hex. */
+const hexOf = (bytes) => Buffer.from(bytes).toString("hex");
 
 /*
  * The two authors of the sealed vectors: fixed private scalars, so the keys,
@@ -434,6 +436,55 @@ const VECTORS = [
         "INSERT INTO cases (title, status, weight, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES ('stowaway', 'open', NULL, ?, 5, 5, ?, '[]', 0, ?)",
         [BO.author, id(0x55), named],
       );
+    },
+  },
+  {
+    name: "merge-cross-entity-parent",
+    cites: ["T1-D2", "T1-D35"],
+    what:
+      "B's note names A's note, another entity, as its parent. A holds the parent before the row naming it arrives and B the other way round; on both, A's note stays a head.",
+    fill: (a, b) => {
+      createEntity(a, "notes", E1, { body: "Ada's note" });
+      applyRow(b, "notes", {
+        _r_replica: B,
+        _r_seq: 1,
+        _r_lc: 1,
+        _r_entity: E2,
+        _r_parents: JSON.stringify([`${hexOf(A)}:1`]),
+        _r_deleted: 0,
+        columns: { body: "Bo's note" },
+      });
+    },
+  },
+  {
+    name: "merge-seal-outranks-cross-entity",
+    cites: ["T1-D13", "T1-D35"],
+    what:
+      "B holds an unsigned edit of Bo's case under Ada's id and seq, and a case of another entity that also names Bo's case. When the unsigned edit gives way to Ada's signed row, Bo's case is a head again: the other entity's row does not hold it down.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      const bos = createEntity(b, "cases", id(0x66), { title: "Bo's case", status: "open", weight: null });
+      const named = JSON.stringify([`${hexOf(BO.author)}:${bos._r_seq}`]);
+      applyRow(b, "cases", {
+        _r_replica: ADA.author,
+        _r_seq: 1,
+        _r_lc: 2,
+        _r_entity: id(0x66),
+        _r_parents: named,
+        _r_deleted: 0,
+        columns: { title: "forged edit", status: "open", weight: null },
+      });
+      applyRow(b, "cases", {
+        _r_replica: BO.author,
+        _r_seq: 2,
+        _r_lc: 3,
+        _r_entity: id(0x77),
+        _r_parents: named,
+        _r_deleted: 0,
+        columns: { title: "names Bo's case", status: "open", weight: null },
+      });
     },
   },
   {

@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
-import { applyRow, type Rows } from "../src/replicated-rows.js";
+import { applyRow, filterToSession, type Rows } from "../src/replicated-rows.js";
 
 /**
  * A parent outside the row's own entity hides nothing (cold review of identity
@@ -91,6 +91,23 @@ CREATE TABLE moves (
   put(db, "moves", B, 2, 6, bytes(0x22), { san: "e5" }, [`${hex(A)}:4`], S);
   const current = db.all("SELECT san FROM moves_current ORDER BY san").map((r) => r["san"]);
   expect(current, "Ada's e4 is not buried by Bo's move").toEqual(["e4", "e5"]);
+  db.close();
+});
+
+test("an invite: a parent in another session's entity is not history, so the export is not refused", () => {
+  const S1 = bytes(0x51);
+  const S2 = bytes(0x52);
+  const db = openWith(`-- dai:profile session max_parties=2
+-- dai:replicated
+CREATE TABLE moves (
+  san TEXT NOT NULL
+);
+`);
+  put(db, "moves", A, 1, 1, bytes(0x21), { san: "e4" }, [], S1);
+  // A row in the other game names the first game's move as its parent.
+  put(db, "moves", B, 1, 2, bytes(0x22), { san: "d4" }, [`${hex(A)}:1`], S2);
+  expect(() => filterToSession(db, S2), "the invite for the second game still exports").not.toThrow();
+  expect(db.all("SELECT san FROM moves").map((r) => r["san"])).toEqual(["d4"]);
   db.close();
 });
 

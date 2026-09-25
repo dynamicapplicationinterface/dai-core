@@ -1,0 +1,23 @@
+{
+  "what": "B's note names A's note, another entity, as its parent. A holds the parent before the row naming it arrives and B the other way round; on both, A's note stays a head.",
+  "cites": [
+    "T1-D2",
+    "T1-D35"
+  ],
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

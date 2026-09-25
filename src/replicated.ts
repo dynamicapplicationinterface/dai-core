@@ -568,12 +568,14 @@ function headsView(
     seatColumn
       ? `(${heldThen(row)}) AND ${notLate(row)}${byRole(row)}`
       : `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
+  // Only a row of r's own entity can supersede it (T1-D35).
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
      AND NOT EXISTS (
        SELECT 1 FROM ${q} c, json_each(c._r_parents) p
-        WHERE ${admitted("c")}
+        WHERE c._r_entity = r._r_entity
+          AND ${admitted("c")}
           AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
      );` +
     (seatColumn
@@ -649,13 +651,15 @@ CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
      WHERE b.author = OLD._r_replica AND json_extract(c.value, '$[1]') = OLD._r_seq))
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
--- Superseded exactly while some row names it (T1-D2): a flag that is a function
--- of the row set. It goes back to 0 only when nothing names the row any more,
--- which happens only when an unsigned row that named it gave way to a signed one.
+-- Superseded exactly while some row of its own entity names it (T1-D2, T1-D35):
+-- a flag that is a function of the row set. It goes back to 0 only when nothing
+-- names the row any more, which happens only when an unsigned row that named it
+-- gave way to a signed one.
 CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_superseded ON ${q}
   WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0 AND EXISTS (
     SELECT 1 FROM ${q} n, json_each(n._r_parents) p
-     WHERE p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
+     WHERE n._r_entity = OLD._r_entity
+       AND p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
 ${headsView(q, admissionFiltered, closeCreator, author, seatColumn)}

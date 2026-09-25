@@ -1502,6 +1502,26 @@ out. Vector: the e2e (`a forwarded invite contests the seat, both copies show it
 and the creator repairs`); like D33 it is a carrier event no local-only vector
 models.
 
+**T1-D35 — a parent outside the row's own entity supersedes nothing.** T1-D2
+says a row supersedes the rows it names as parents, and that is how an edit
+replaces what it edits. A row may only replace its own entity's history. A row
+that names a row of another entity as its parent says nothing about that
+entity, so the named row stays a head. Every place that decides supersession
+applies the same condition: marking parents at insert, superseded-on-arrival,
+the admission-filtered heads view, the monotonic trigger's naming check, and
+the resettle when an unsigned row gives way to a signed one (T1-D13). D4's
+export closure applies it too: a parent of another entity is not history, so it
+cannot make an entity's history cross sessions.
+
+Without it any author could hide any other entity's current row by listing it
+as a parent: in a plain table any row at all, and in a seated session table one
+player's move burying the other's, with the admitted row doing the burying. An
+honest writer never produces such a row (`changeEntity` names its own entity's
+heads), so the rule changes nothing for honest copies. Found by the cold review
+of identity step 5 (finding 5); it predates that step. Tests:
+`tests/cross-entity-parent.spec.ts`. Vectors: `merge-cross-entity-parent` and
+`merge-seal-outranks-cross-entity`.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -1522,6 +1542,7 @@ reverses.
 | `merge-schema-ahead` | Sibling one migration ahead. `SCHEMA_AHEAD`. |
 | `canonical-dump-real-edge-cases` | The REAL encoder over `-0.0`, `nan`, `inf`, `-inf` and a value needing 17 digits. **Runs before `merge-commutative`.** Note that SQLite cannot *store* NaN — it becomes NULL on insert — so that case is reachable only by calling the encoder directly, and the vector tests the encoder rather than a round trip. Positive zero prints `0.0`. |
 | `heads-via-superseded-flag` | `T_heads` equals the set a full parents scan would produce, including for rows merged in child-before-parent order (T1-D2). |
+| `merge-cross-entity-parent` | A row naming another entity's row as its parent, in both arrival orders. The named row stays a head (T1-D35). |
 | `current-conflict-deterministic-pick` | Identical `T_current` across both readers for a conflicted entity, including the same-replica tiebreak of T1-D6. |
 
 The Python reader gains a `merge` subcommand implementing §6 from this text
