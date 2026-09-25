@@ -532,17 +532,19 @@ export const CONSTRAINTS: readonly Constraint[] = [
     anchors: [{ file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" }],
   },
   {
-    id: "IDENTITY-GAME-KEY-HELD",
-    title: "A game's key, once held, is never replaced",
-    shapes: SESSION,
+    id: "IDENTITY-KEY-HELD",
+    title: "A key, once held, is never replaced",
+    shapes: SHARED,
     topic: "identity",
     rule:
-      "A key arriving for a game fills an empty slot: the host files it only when this device holds no key for that game, and the key it files is the one the saved link opened the copy with. It never replaces a key already held. A link naming a game this device holds under a different key is refused before the card, with a sentence saying so, and nothing on this device is changed; the host reports the refusal. An application never files, reads or chooses a game's key: the host does.",
-    why: "A game's mailbox address is derived from its key, so replacing it moves this copy to an address its partner does not read, with both screens looking healthy (D37's failure by another door). The database is outside the signed set, so anybody holding a copy can re-seal it under another key and send a link naming the game; a stale invite does the same without anybody meaning it (backlog D122).",
+      "A key arriving in a link fills an empty slot and never replaces a key already held, the document's no more than a game's. The host files a game's key only when this device holds no key for that game, and the key it files is the one the saved link opened the copy with; it files a document's key only when this device holds none for the document. A link naming a game, or a replicated document, that this device holds under a different key is refused before the card, with a sentence saying so, and nothing on this device is changed; the host reports the refusal. An application never files, reads or chooses a key: the host does.",
+    why: "A mailbox address is derived from its key: a game's from the game's, and everything else in a shared document from the document's. Replacing one moves this copy to an address its partner does not read, with both screens looking healthy (D37's failure by another door). The database is outside the signed set, so anybody holding a copy can re-seal it under another key and send a link; a stale invite does the same without anybody meaning it (backlog D122, both halves ruled 25 September).",
     enforced: ["runtime"],
     anchors: [
       { file: "apps/runner/src/main.ts", contains: "a game's key already held is never replaced" },
       { file: "apps/runner/src/main.ts", contains: "dai: refused a link naming game" },
+      { file: "apps/runner/src/main.ts", contains: "dai: refused a link naming document" },
+      { file: "apps/runner/src/main.ts", contains: "record.documentKey ? record : { ...record, documentKey: arrivedKey }" },
     ],
   },
   {

@@ -1620,7 +1620,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
   /*
    * A link naming a game this device holds, under a different key (backlog
-   * D122; IDENTITY-GAME-KEY-HELD).
+   * D122; IDENTITY-KEY-HELD).
    *
    * The database is outside the signed set, so anybody holding a copy can
    * re-seal it under a key of their own and send a link naming the game. Made
@@ -1722,6 +1722,206 @@ test.describe("a game continues over a shared link (the key path)", () => {
     expect(refusals, "the refusal is reported").toHaveLength(1);
     expect(refusals[0]).toContain(session.slice(0, 8));
 
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /** The document keys this device holds, one per document. */
+  const documentKeysHeld = (page: Page): Promise<string[]> =>
+    page.evaluate(async () => {
+      const items = (await (window as any).__runner.listLibrary()) as { documentKey?: string }[];
+      return items.flatMap((item) => (item.documentKey ? [item.documentKey] : []));
+    });
+
+  /** The host's own Send, from the menu: a link that names no game. */
+  async function sendFromMenu(page: Page): Promise<string> {
+    await page.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    });
+    await page.click("#more");
+    await page.click("#send");
+    await page.click("#send-go");
+    await expect.poll(() => page.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    return page.evaluate(() => (window as any).__copied as string);
+  }
+
+  /**
+   * The screen a refused link leaves: the sentence, and nothing over it.
+   *
+   * The address names a copy held here, so the page is painted as launching
+   * into it, and the launch screen hides the report beneath it. A refusal that
+   * leaves it up leaves the person on "This is taking longer than it should ·
+   * Tap to open", which reopens the held copy without a word about the link.
+   */
+  async function refusedInSight(page: Page, sentence: RegExp): Promise<void> {
+    await expect(page.locator("#report", { hasText: sentence }), "the person is told why the link did not open").toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.locator("#launch"), "and the launch screen is down").toBeHidden();
+  }
+
+  /*
+   * A link naming no game, for a document this device holds under a different
+   * key (backlog D122, ruled 25 September: a held key, document or game, is
+   * never replaced by an arriving one; IDENTITY-KEY-HELD).
+   *
+   * The document's key is its mailbox for everything that is not a game with a
+   * key of its own. Made the way anybody holding a copy could, as for a game:
+   * A's library is given another document key, and A sends the document again
+   * from the menu, which names no game.
+   */
+  test("a link naming a held document under a different key is refused, and the held key stays", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+    const refusals: string[] = [];
+    pageB.on("console", (m) => {
+      if (m.text().startsWith("dai: refused a link naming document")) refusals.push(m.text());
+    });
+    const keyIn = (link: string): string | undefined => new URL(link).hash.match(/[#&]k=([^&]+)/)?.[1];
+
+    await openContainer(pageA);
+    const first = await sendFromMenu(pageA);
+    expect(new URL(first).hash, "a send from the menu names no game").not.toMatch(/[#&]s=/);
+    const held = keyIn(first);
+    expect(held, "the link carries the document's key").toBeTruthy();
+    await openLink(pageB, first);
+    await expect.poll(() => documentKeysHeld(pageB), { timeout: 30_000 }).toContain(held);
+
+    // Re-keyed round the opener's lock; waited on as the game test waits (above).
+    let other = "";
+    let second = "";
+    await expect(async () => {
+      other = await pageA.evaluate(
+        () =>
+          new Promise<string>((done) => {
+            const bytes = crypto.getRandomValues(new Uint8Array(32));
+            const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            const open = indexedDB.open("dai_runner_storage");
+            open.onerror = () => done("open failed");
+            open.onsuccess = () => {
+              const tx = open.result.transaction("cartridges", "readwrite");
+              const store = tx.objectStore("cartridges");
+              const all = store.getAll();
+              all.onsuccess = () => {
+                for (const item of all.result) {
+                  if (!item.documentKey) continue;
+                  item.documentKey = key;
+                  store.put(item);
+                }
+              };
+              tx.oncomplete = () => done(key);
+              tx.onerror = () => done(`error ${String(tx.error)}`);
+            };
+          }),
+      );
+      expect(await documentKeysHeld(pageA), "A's library now holds another document key").toContain(other);
+      second = await sendFromMenu(pageA);
+      expect(new URL(second).hash, "the second link names no game either").not.toMatch(/[#&]s=/);
+      expect(keyIn(second), "under the other key").toBe(other);
+    }).toPass({ timeout: 120_000 });
+
+    let loads = 0;
+    pageB.on("load", () => void loads++);
+    await pageB.goto(second);
+    await expect.poll(() => loads, { timeout: 60_000 }).toBeGreaterThan(0);
+    // The decision point: the sentence, or the card for the copy it carries.
+    // A person offered the card presses Open, and the key is read when the
+    // copy's mailbox starts, so that is what is waited for before the keys.
+    const sentence = /already on this device, but it does not match/;
+    const card = pageB.locator("#card-open");
+    await expect
+      .poll(async () => ((await card.isVisible()) ? "card" : (await pageB.locator("#report", { hasText: sentence }).count()) ? "refused" : ""), {
+        timeout: 60_000,
+      })
+      .not.toBe("");
+    if (await card.isVisible()) {
+      await card.click();
+      await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+      await useRelay(pageB);
+      await expect.poll(() => pageB.evaluate(() => (window as any).__runner.mailboxPolls !== undefined), { timeout: 30_000 }).toBe(true);
+    }
+    expect(await documentKeysHeld(pageB), "B still holds the key it was sent").toContain(held);
+    expect(await documentKeysHeld(pageB), "and never filed the other").not.toContain(other);
+    await refusedInSight(pageB, sentence);
+    expect(refusals, "the refusal is reported").toHaveLength(1);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /*
+   * A link to a document this device holds, published by somebody else
+   * (backlog D122, ruled 25 September: every refusal on the arrival path takes
+   * the launch screen down). The same id under another publisher's key, as a
+   * stranger can make: the id is in every copy. A sends somebody else's copy;
+   * B holds the genuine one, opened and so kept.
+   */
+  async function heldAndAStrangersLink(
+    browser: Browser,
+  ): Promise<{ deviceA: BrowserContext; deviceB: BrowserContext; link: string }> {
+    const uuid = crypto.randomUUID();
+    const dir = mkdtempSync(join(tmpdir(), "dai-two-publishers-"));
+    const build = async (key: string, name: string): Promise<string> => {
+      const built = await compileDirectory({
+        sourceDir: join(repo, "tests", "fixture", "chess"),
+        root: repo,
+        appName: "Velvet Chess",
+        documentUuid: uuid,
+        signingKey: resolve(repo, key),
+        // As trust-consent.spec.ts builds its two publishers: a signing key
+        // alone makes version 4, which this opener does not read.
+        manifestVersion: 3,
+      });
+      const path = join(dir, name);
+      writeFileSync(path, built.html, "utf8");
+      return path;
+    };
+    const ours = await build("conformance/trust-publisher-a-key.pem", "ours.dai.html");
+    const theirs = await build("conformance/trust-publisher-b-key.pem", "theirs.dai.html");
+
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    await pageA.goto(RUNNER_URL);
+    await pageA.setInputFiles("#file", theirs);
+    await pageA.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
+    const link = await sendFromMenu(pageA);
+
+    await pageB.goto(RUNNER_URL);
+    await pageB.setInputFiles("#file", ours);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    return { deviceA, deviceB, link };
+  }
+
+  /** Opens a link on a fresh page of the context and waits for the load it brings. */
+  async function arriveAt(context: BrowserContext, link: string): Promise<Page> {
+    const page = await context.newPage();
+    let loads = 0;
+    page.on("load", () => void loads++);
+    await page.goto(link);
+    await expect.poll(() => loads, { timeout: 60_000 }).toBeGreaterThan(0);
+    return page;
+  }
+
+  test("a link to a held document from another publisher is refused in sight", async ({ browser }) => {
+    const { deviceA, deviceB, link } = await heldAndAStrangersLink(browser);
+    // A kept copy is pinned when it is opened, so the pin answers first. The
+    // refusal named in the ruling, "published by somebody else", sits behind
+    // it and is not reached even with the pin gone: backlog D126.
+    const page = await arriveAt(deviceB, link);
+    await refusedInSight(page, /different publisher/);
+    await expect(page.locator("#card-open")).toBeHidden();
     await deviceA.close();
     await deviceB.close();
   });

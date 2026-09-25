@@ -4393,29 +4393,35 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
-#### D124 — On WebKit a route does not see a controlled page's requests; the route lint says it does
+#### D126 — "Published by somebody else" cannot fire: the sibling test compares the arriving key with itself
 
-*Status: open. Filed 25 September from D119, which measured it.*
+*Status: open. Filed 25 September from D122's second ruling, which tried to make
+it red and could not.*
 
-`scripts/check-routes.mjs` flags only a same-origin `page.route` in a file that
-does not block the worker. It exempts a cross-origin pattern ("outside the
-worker's scope and never intercepted") and every `context.route` ("does see the
-worker's own requests"). D119 measured both false on WebKit: a page the
-runner's worker controls made twelve cross-origin relay requests, and a
-`context.route` on them saw none. A worker's scope is which pages it controls,
-not which URLs; a controlled page's cross-origin fetch reaches its fetch
-handler too.
+`ingest` refuses a replicated document held here that arrives under another
+publisher's key ("This link carries a copy of … published by somebody else")
+when `siblingTest` says `sibling === false`. It never does: both sides of the
+test are handed `cartridge.publicKeyFingerprint`, the arriving copy's, on the
+reading that "the same document by the same publisher is the same
+application". The held record keeps its own `publicKeyFingerprint` (written by
+the keep and by every save), and nothing here reads it.
 
-Routes whose effect a test relies on, that the lint exempts, and that run on
-WebKit unless their file says otherwise (not yet checked one by one):
-`runner.spec.ts:490` (a cross-origin abort), `handoff-tab.spec.ts:151` (a
-cross-origin fulfil), `push-e2e.spec.ts:491`, `version-update.spec.ts:55`,
-`reference-head.spec.ts:42`, `write-rules-race.spec.ts:64,124`,
-`write-rules-refused.spec.ts:68,114` (context routes). For each: does the route
-fire on WebKit (count it), and if not, is the test passing for a reason
-unrelated to its claim? Then correct the lint's premise and its reach. The
-pattern is part 3's second shape: a check that passes for a reason unrelated to
-what it claims.
+**Measured:** B holds the genuine copy, opened and so pinned; A sends a copy
+under the same id signed by another key (`conformance/trust-publisher-b-key.pem`).
+With the pin, the pin refuses first. With B's pin removed (a copy kept and its
+pin gone), B was offered the stranger's copy **as a merge into its own**: the
+card read "You already have this app. What this link carries is added to your
+copy", made by "Anonymous". So the pin is the only guard against a stranger's
+rows being offered into a person's copy. How a copy comes to be held without a
+pin (an install from before pins, a partial clear) is not established.
+
+The red test was taken out of D122's commit so the branch stays green: build
+with `heldAndAStrangersLink` in `tests/mailbox-link-e2e.spec.ts`, delete B's
+record for the document from the `pins` store, open the link on a fresh page,
+and expect the "published by somebody else" sentence in sight and no card. The
+likely fix puts the held record's own fingerprint on the held side of the test.
+Ask first what the merge path does with a stranger's rows once there is a second
+guard.
 
 #### D125 — The reopen test closed B before its seat was saved
 
@@ -4458,6 +4464,30 @@ destination tapped, and `#play-move` stayed disabled for 15 s. `play()` in
 `tests/chess-play.ts` retries the pick-up and not the destination tap. Rate
 not measured.
 
+#### D124 — On WebKit a route does not see a controlled page's requests; the route lint says it does
+
+*Status: open. Filed 25 September from D119, which measured it.*
+
+`scripts/check-routes.mjs` flags only a same-origin `page.route` in a file that
+does not block the worker. It exempts a cross-origin pattern ("outside the
+worker's scope and never intercepted") and every `context.route` ("does see the
+worker's own requests"). D119 measured both false on WebKit: a page the
+runner's worker controls made twelve cross-origin relay requests, and a
+`context.route` on them saw none. A worker's scope is which pages it controls,
+not which URLs; a controlled page's cross-origin fetch reaches its fetch
+handler too.
+
+Routes whose effect a test relies on, that the lint exempts, and that run on
+WebKit unless their file says otherwise (not yet checked one by one):
+`runner.spec.ts:490` (a cross-origin abort), `handoff-tab.spec.ts:151` (a
+cross-origin fulfil), `push-e2e.spec.ts:491`, `version-update.spec.ts:55`,
+`reference-head.spec.ts:42`, `write-rules-race.spec.ts:64,124`,
+`write-rules-refused.spec.ts:68,114` (context routes). For each: does the route
+fire on WebKit (count it), and if not, is the test passing for a reason
+unrelated to its claim? Then correct the lint's premise and its reach. The
+pattern is part 3's second shape: a check that passes for a reason unrelated to
+what it claims.
+
 #### D123 — A relaunch-path test flakes, measured before D117
 
 *Status: open. Filed 25 September; each rate measured on `df75e52` (before
@@ -4473,14 +4503,18 @@ D117) and on the D117 tree, local, no retries. Item 1 is now D125.*
 
 #### D122 — Any link naming a game this device holds re-keys that game
 
-*Status: fixed on `identity/signed-authorship` (25 September); closed when that
-branch's CI verdict is read green; its test passed on all three engines on CI run `36165131898`, which is red on D125. Filed 25 September from the third cold read
-of D117. Latent on main.*
+*Status: fixed on `identity/signed-authorship` (25 September), both halves;
+closed when that branch's CI verdict is read green. The game half's test
+passed on all three engines on CI run `36165131898`, which is red on D125.
+Filed 25 September from the third cold read of D117. Latent on main.*
 
-**Ruled 25 September** (`IDENTITY-GAME-KEY-HELD` in `src/rules.ts`): an
-arriving key fills an empty slot from the saved link; it never replaces a held
-one. A link naming a held game under a different key is refused with a sentence
-and reported.
+**Ruled 25 September** (`IDENTITY-KEY-HELD` in `src/rules.ts`, renamed from
+`IDENTITY-GAME-KEY-HELD` before it reached main, when the second ruling
+widened it): **a held key, document or game, is never replaced by an arriving
+one.** An arriving key fills an empty slot; a link naming a held game, or a
+held replicated document, under a different key is refused with a sentence and
+reported. And, the second ruling: **every refusal on the arrival path takes the
+launch screen down,** "published by somebody else" included.
 
 **Shown red, then fixed.** `tests/mailbox-link-e2e.spec.ts`, "a link naming a
 held game under a different key is refused, and the held key stays": A invites
@@ -4497,18 +4531,37 @@ correctly and showed nothing: the address names a copy held here, so the page
 is painted as launching into it, and a refusal that does not take the launch
 screen down leaves the person on "This is taking longer than it should · Tap to
 open", which reopens the held copy with no word about the link. The refusal
-now clears the launch screen. **The sibling refusal above it** ("published by
-somebody else", same `ingest`, same `say(…, true); return`) does not, and
-nothing tests it: likely the same stuck screen. Read, not run.
+now clears the launch screen. The refusals beside it did not (below).
 
 **The harness met a race of its own.** The forge writes the library around the
 opener's lock, and once in ten on WebKit a locked write of A's, read before it,
 put the old key back. The test waits for what the next step needs (a link under
 the other key), retrying the forge and share until it has one.
 
-**Not covered by the ruling:** a link naming *no* game still replaces the
-document key (`documentRootKey`, `arrivedKey && !arrivedSession`). Those links
-predate per-game keys; whether the same rule reaches them is not ruled.
+**The document half, red then fixed** (the ruling above). "a link naming a held
+document under a different key is refused, and the held key stays": A sends the
+document from the menu (a link naming no game, under the document key), B opens
+it, A's library is given another document key, A sends again, B opens that.
+Before the fix B reached the merge card, and a person who pressed Open had the
+held key replaced when the mailbox started: red at "B still holds the key it was
+sent" on Chromium and WebKit. The fix: `ingest` refuses before the card, for a
+replicated document only, with the sentence and a `dai: refused a link naming
+document …` line; `documentRootKey` and the keep write's `arrivedKeyFields`
+fill an empty slot only. Not for a solo document: its link seals under a key
+minted for that share, so every second link to one carries a different key and
+no mailbox reads it; it keeps the held key and opens.
+
+**The launch screen, red then fixed.** "a link to a held document from another
+publisher is refused in sight": B holds the genuine copy, A sends a copy under
+the same id signed by another key. The pin answers first ("signed by a different
+publisher"), and before the fix its sentence was in the report and hidden under
+the launch screen: red on Chromium and WebKit. Every refusal in `ingest` and
+`launchFromLibrary` now goes through one `refuseArrival`, which takes the
+launch screen and its guard down before it speaks; `tests/arrival-refusals.spec.ts`
+holds it from the source, and was shown to list all ten flagged `say` calls on
+the opener before the fix. **"Published by somebody else" itself could not be
+made red:** with B's pin removed, the stranger's copy was offered as a merge
+into B's copy. That refusal is unreachable; filed as D126.
 
 The original entry, as filed:
 

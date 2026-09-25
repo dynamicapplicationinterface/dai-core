@@ -90,6 +90,10 @@
       "tests/arrival-line.spec.ts",
       "tests/fixtures.ts"
     ],
+    "tests/arrival-refusals.spec.ts": [
+      "apps/runner/src/main.ts",
+      "tests/arrival-refusals.spec.ts"
+    ],
     "tests/attachments.spec.ts": [
       "apps/runner/",
       "src/bridge.ts",
@@ -1513,6 +1517,8 @@
     ],
     "tests/mailbox-link-e2e.spec.ts": [
       "apps/runner/",
+      "conformance/trust-publisher-a-key.pem",
+      "conformance/trust-publisher-b-key.pem",
       "scripts/generate-key.mjs",
       "scripts/retain-host.mjs",
       "src/",

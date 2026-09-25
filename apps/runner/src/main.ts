@@ -386,6 +386,23 @@ function say(message: string, isError = false): void {
 }
 
 /**
+ * An arrival refused: its sentence, with nothing over it.
+ *
+ * An address naming a copy held here is painted as launching into it, and the
+ * launch screen hides the report beneath it. A refusal that leaves it up
+ * leaves the person on "This is taking longer than it should · Tap to open",
+ * which reopens the held copy without a word about what arrived (D122's
+ * first green). Ruled 25 September: every refusal on the arrival path takes
+ * the launch screen down, so every one in `ingest` says its sentence here.
+ */
+function refuseArrival(message: string): void {
+  slot.classList.remove("busy");
+  document.body.classList.remove("launching");
+  clearLaunchGuard();
+  say(message, true);
+}
+
+/**
  * Whether the page is still on its way to a document the address names.
  *
  * The head script hides the chooser before the first paint when the address
@@ -1184,8 +1201,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     // a container once and not to the way they open it every day.
     const verdict = await checkTrust(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
-      say(verdict.message, true);
-      slot.classList.remove("busy");
+      refuseArrival(verdict.message);
       return;
     }
 
@@ -1319,7 +1335,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     // Off the open's path: the app is on screen before anything is asked.
     void offerNewVersion(loaded);
   } catch (error) {
-    say(`Failed to load ${item.appName} (${(error as Error).message})`, true);
+    refuseArrival(`Failed to load ${item.appName} (${(error as Error).message})`);
   } finally {
     slot.classList.remove("busy");
   }
@@ -1892,8 +1908,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     markStep("checking trust");
     const verdict = await trustVerdict(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
-      say(verdict.message, true);
-      slot.classList.remove("busy");
+      refuseArrival(verdict.message);
       return;
     }
 
@@ -1988,7 +2003,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * the one place it would otherwise be lost (`relaunchAtOwnAddress`, D117).
      *
      * A link naming a game this device already holds under a different key is
-     * refused, before the card, with nothing changed (IDENTITY-GAME-KEY-HELD,
+     * refused, before the card, with nothing changed (IDENTITY-KEY-HELD,
      * D122). Filing it would move this copy's mailbox for the game to an address
      * its partner does not read, and anybody holding a copy can make such a
      * link: the database is outside the signed set. Read fresh, under no
@@ -1999,19 +2014,35 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         arrivedSession
       ];
       if (heldKey && heldKey !== arrivedKey) {
-        slot.classList.remove("busy");
-        // The address names a copy held here, so the page was painted as
-        // launching into it; nothing is launching, and the sentence must show.
-        document.body.classList.remove("launching");
-        clearLaunchGuard();
         console.warn(
           `dai: refused a link naming game ${arrivedSession.slice(0, 8)} of ${heldHere.documentUuid}: ` +
             `this device holds that game under a different key, and a held key is never replaced`,
         );
-        say(
+        refuseArrival(
           `This link is for a game already on this device, but it does not match the link that game was opened with. ` +
             `It was not opened, and nothing on this device was changed.`,
-          true,
+        );
+        return;
+      }
+    }
+    /*
+     * The same for a link naming no game: its key is the document's, the
+     * mailbox for everything without a game key of its own (IDENTITY-KEY-HELD,
+     * ruled 25 September: a held key, document or game, is never replaced by an
+     * arriving one). Only for a replicated document, the kind with a mailbox:
+     * a solo document's link seals under a key minted for that share, so a
+     * second link to one always carries a different key, and nothing reads it.
+     */
+    if (arrivedKey && !arrivedSession && heldHere && declaresReplication(cartridge.manifest)) {
+      const heldKey = (await getCartridgeFromLibrary(heldHere.documentUuid).catch(() => null))?.documentKey;
+      if (heldKey && heldKey !== arrivedKey) {
+        console.warn(
+          `dai: refused a link naming document ${heldHere.documentUuid}: ` +
+            `this device holds it under a different key, and a held key is never replaced`,
+        );
+        refuseArrival(
+          `This link is for ${cartridge.manifest.appName ?? "a document"}, which is already on this device, but it does not match ` +
+            `the copy here. It was not opened, and nothing on this device was changed.`,
         );
         return;
       }
@@ -2048,12 +2079,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * a separate copy*, which is exactly the replacement it named as avoided.)
      */
     if (heldHere && declaresReplication(cartridge.manifest) && kin?.sibling === false) {
-      slot.classList.remove("busy");
-      say(
+      refuseArrival(
         `This link carries a copy of ${cartridge.manifest.appName ?? "a document"} published by somebody else, ` +
           `under the same id as the one on this device. It cannot be opened here without replacing yours, ` +
           `so it was not opened, and nothing on this device was changed.`,
-        true,
       );
       return;
     }
@@ -2244,8 +2273,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       // Another open of this document got its pin in first, with a different
       // key. What is remembered is what counts; this copy is the stranger.
       if (pinned.status === "mismatch") {
-        say(pinned.message, true);
-        slot.classList.remove("busy");
+        refuseArrival(pinned.message);
         return;
       }
     }
@@ -2298,11 +2326,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       console.error(
         `dai: refused to mount an arriving copy of ${cartridge.manifest.documentUuid} over this device's copy without merging it`,
       );
-      slot.classList.remove("busy");
-      say(
+      refuseArrival(
         `This could not be added to your copy of ${cartridge.manifest.appName ?? "this document"}, so it was not opened, ` +
           `and nothing on this device was changed. Try the link again.`,
-        true,
       );
       return;
     }
@@ -2348,13 +2374,11 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         `dai: refused a different build of ${cartridge.manifest.documentUuid}: ` +
           `this device holds one somebody has written to, and succession is the only update`,
       );
-      slot.classList.remove("busy");
       const appName = cartridge.manifest.appName ?? "this document";
-      say(
+      refuseArrival(
         `This copy of ${appName} did not come from the one on this device, so opening it would have put what you have ` +
           `written aside; nothing was opened and nothing here was changed. A new version from the same author keeps your ` +
           `entries and says so before it opens.`,
-        true,
       );
       return;
     }
@@ -2406,13 +2430,11 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       console.error(
         `dai: refused to choose between diverged copies of ${cartridge.manifest.documentUuid}: both changed since they last matched`,
       );
-      slot.classList.remove("busy");
       const appName = cartridge.manifest.appName ?? "this document";
-      say(
+      refuseArrival(
         `This link and the copy of ${appName} on this device were both changed since they last matched, so neither was opened over the other. ` +
           `Nothing on this device was changed. To see what the link holds without replacing your copy, open it in a private window; ` +
           `to keep one, agree with whoever sent it which copy goes on.`,
-        true,
       );
       return;
     }
@@ -2567,7 +2589,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       error instanceof ContainerError
         ? error.message
         : `This file could not be opened (${(error as Error).message}).`;
-    say(message, true);
+    refuseArrival(message);
   } finally {
     slot.classList.remove("busy");
     void refreshLibrary();
@@ -4643,11 +4665,20 @@ async function documentRootKey(documentUuid: string): Promise<string | null> {
    * `rememberSessionKey` and changes nothing else.
    */
   if (arrivedKey && !arrivedSession) {
-    if (held && held.documentKey !== arrivedKey) {
-      // Under the lock, from a fresh read: see `withLibraryLock` (D41).
-      await amendLibraryRecord(documentUuid, (record) => ({ ...record, documentKey: arrivedKey }));
+    if (!held) return arrivedKey;
+    /*
+     * And a held one is never replaced by an arriving one (IDENTITY-KEY-HELD,
+     * ruled 25 September). An arriving key fills a copy that has none; a link
+     * that would replace one is refused in `ingest`, before anything here.
+     * Under the lock, from a fresh read, and filled only if still empty: see
+     * `withLibraryLock` (D41).
+     */
+    if (!held.documentKey) {
+      await amendLibraryRecord(documentUuid, (record) =>
+        record.documentKey ? record : { ...record, documentKey: arrivedKey },
+      );
+      return (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.documentKey ?? arrivedKey;
     }
-    return arrivedKey;
   }
   return held?.documentKey ?? null;
 }
@@ -4747,7 +4778,7 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
   // copy filed the key at lane construction and every save after it was
   // refused, 37 in a row, with no recovery but a reopen.
   // A gap is filled; a game's key already held is never replaced
-  // (IDENTITY-GAME-KEY-HELD, D122). A link that would have replaced it is
+  // (IDENTITY-KEY-HELD, D122). A link that would have replaced it is
   // refused in `ingest` before anything reaches here.
   await amendLibraryRecord(documentUuid, (record) =>
     record.sessionKeys?.[session]
@@ -4767,13 +4798,15 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
  * seconds on every first open from a link (measured, `launch-address`). The
  * same fields the mailbox would file: a game's key beside a document key
  * (minted when there is none, as `rememberSessionKey` does), or, for a link
- * that names no game, the document's key. A game key already held is kept.
+ * that names no game, the document's key. A key already held, the document's or a
+ * game's, is kept (IDENTITY-KEY-HELD).
  */
 function arrivedKeyFields(
   record: Pick<LibraryItem, "documentKey" | "sessionKeys"> | null | undefined,
 ): Pick<LibraryItem, "documentKey" | "sessionKeys"> {
   if (!arrivedKey) return {};
-  if (!arrivedSession) return { documentKey: arrivedKey };
+  // A held key is never replaced, the document's no more than a game's (IDENTITY-KEY-HELD).
+  if (!arrivedSession) return { documentKey: record?.documentKey ?? arrivedKey };
   return {
     documentKey: record?.documentKey ?? mintKeyBase64Url(),
     sessionKeys: { ...(record?.sessionKeys ?? {}), [arrivedSession]: record?.sessionKeys?.[arrivedSession] ?? arrivedKey },
