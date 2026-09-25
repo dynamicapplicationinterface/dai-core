@@ -526,10 +526,13 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "identity",
     rule:
-      "A device holds one copy of a document. A copy of a document this device already holds never becomes a second copy beside it: when it arrives, the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside. A loose file opened twice is the same document arriving twice. An application never keeps two copies of itself apart, and never needs to: the host decides before the application runs. Two tabs showing the same held copy are not yet covered (backlog D105).",
+      "A device holds one copy of a document. A copy of a document this device already holds never becomes a second copy beside it: when it arrives, the host merges it into the held copy, takes it in place of the held one, or keeps the held one and sets the arrival aside. A loose file opened twice is the same document arriving twice. A copy under the same id from a different publisher is a different document: it is never offered as a merge into the held copy, pinned or not, and is refused before the card with a sentence saying so. An application never keeps two copies of itself apart, and never needs to: the host decides before the application runs. Two tabs showing the same held copy are not yet covered (backlog D105).",
     why: "Every copy on a device writes under that device's one author id, the fingerprint of its person key (docs/identity.md), and a shared row's version is named by `(_r_replica, _r_seq)`. Two copies writing on one device would issue the same pair for different rows, and the next exchange would refuse one of them as tampering. Row identity by content hash would remove the hazard (backlog D104).",
     enforced: ["runtime"],
-    anchors: [{ file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" }],
+    anchors: [
+      { file: "apps/runner/src/main.ts", contains: "this host keeps one copy per document" },
+      { file: "apps/runner/src/main.ts", contains: "a different publisher is a different document" },
+    ],
   },
   {
     id: "IDENTITY-KEY-HELD",

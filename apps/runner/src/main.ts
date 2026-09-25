@@ -402,6 +402,15 @@ function refuseArrival(message: string): void {
   say(message, true);
 }
 
+/** The refusal for a held document's id arriving under another publisher (D126). */
+function strangersCopy(appName: string | undefined): string {
+  return (
+    `This link carries a copy of ${appName ?? "a document"} published by somebody else, ` +
+    `under the same id as the one on this device. It cannot be opened here without replacing yours, ` +
+    `so it was not opened, and nothing on this device was changed.`
+  );
+}
+
 /**
  * Whether the page is still on its way to a document the address names.
  *
@@ -1905,6 +1914,37 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * link carried, and the genuine document then read as an impersonation,
      * with nothing in the library to delete and so no way to undo it.
      */
+    /*
+     * The same id, from somebody else, for a replicated document held here.
+     *
+     * A different publisher is a different document (D126, ruled 25
+     * September), so it is never offered as a merge into the copy here, pinned
+     * or not. The arriving publisher is compared with the held record's own,
+     * written by the keep and by every save; it used to be compared with
+     * itself, and the pin was the only guard, so a copy kept with its pin gone
+     * was offered a stranger's rows. Asked before the pin, so a held copy is
+     * refused in the words for what happened, whether or not it is pinned. It
+     * cannot be opened beside the copy here either: this host keeps one copy
+     * per document, so opening it would mean replacing the person's own.
+     */
+    if (declaresReplication(cartridge.manifest)) {
+      const held = await getCartridgeFromLibrary(cartridge.manifest.documentUuid).catch(() => null);
+      const kin = held
+        ? siblingTest(
+            { documentUuid: cartridge.manifest.documentUuid, publicKeyFingerprint: cartridge.publicKeyFingerprint, replicated: true },
+            { documentUuid: held.documentUuid, publicKeyFingerprint: held.publicKeyFingerprint, replicated: true },
+          )
+        : undefined;
+      if (kin?.sibling === false && kin.because === "different-publisher") {
+        console.warn(
+          `dai: refused a link to ${cartridge.manifest.documentUuid}: this device holds it from another publisher, ` +
+            `and a different publisher is a different document`,
+        );
+        refuseArrival(strangersCopy(cartridge.manifest.appName));
+        return;
+      }
+    }
+
     markStep("checking trust");
     const verdict = await trustVerdict(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
@@ -2060,30 +2100,18 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
             },
             {
               documentUuid: heldHere.documentUuid,
-              // The same document by the same publisher is the same
-              // application, so a replicated incoming copy means a replicated
-              // local one; there is nothing further to read.
-              publicKeyFingerprint: cartridge.publicKeyFingerprint,
+              // The held record's own publisher (D126). A replicated incoming
+              // copy by the same publisher means a replicated local one.
+              publicKeyFingerprint: heldHere.publicKeyFingerprint,
               replicated: true,
             },
           )
         : undefined;
 
-    /*
-     * The same id, from somebody else, for a replicated document held here.
-     *
-     * It cannot be merged — the publishers differ — and it cannot be opened
-     * beside the copy here either: this host keeps one copy per document, so
-     * opening it would mean replacing the person's own. Refused before the
-     * card, in words, with nothing changed. (It used to be offered as *Open as
-     * a separate copy*, which is exactly the replacement it named as avoided.)
-     */
+    // Refused above, before the pin, from a fresh read of the held record; this
+    // is the same answer from the list, should the two differ.
     if (heldHere && declaresReplication(cartridge.manifest) && kin?.sibling === false) {
-      refuseArrival(
-        `This link carries a copy of ${cartridge.manifest.appName ?? "a document"} published by somebody else, ` +
-          `under the same id as the one on this device. It cannot be opened here without replacing yours, ` +
-          `so it was not opened, and nothing on this device was changed.`,
-      );
+      refuseArrival(strangersCopy(cartridge.manifest.appName));
       return;
     }
 

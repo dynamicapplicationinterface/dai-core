@@ -4395,8 +4395,20 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 
 #### D126 — "Published by somebody else" cannot fire: the sibling test compares the arriving key with itself
 
-*Status: open. Filed 25 September from D122's second ruling, which tried to make
-it red and could not.*
+*Status: built, CI not yet read. Filed 25 September from D122's second ruling,
+which tried to make it red and could not; ruled and built the same day.*
+
+**Ruled:** a held copy is never offered a merge from a different publisher,
+pinned or not; a different publisher is a different document
+(`IDENTITY-ONE-LIVE-COPY`). **Built:** `ingest` compares the arriving
+publisher with the held record's own `publicKeyFingerprint`, read fresh, for a
+replicated document, before the pin, so a pinned copy and an unpinned one are
+refused in the same sentence through `refuseArrival`. The later sibling test
+now takes the held record's key too, and keeps its refusal as a backstop. Red
+first on Chromium: pinned, the pin's impersonation sentence; unpinned, the
+merge card ("Open in my copy"). No copy signed by another key, or signed where
+the held one is not, reaches the merge now. Two unsigned copies still count as
+one publisher (`siblingTest`, T1-D4), so the question below stands for them.
 
 `ingest` refuses a replicated document held here that arrives under another
 publisher's key ("This link carries a copy of … published by somebody else")

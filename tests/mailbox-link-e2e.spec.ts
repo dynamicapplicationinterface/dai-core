@@ -1863,7 +1863,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
    */
   async function heldAndAStrangersLink(
     browser: Browser,
-  ): Promise<{ deviceA: BrowserContext; deviceB: BrowserContext; link: string }> {
+  ): Promise<{ deviceA: BrowserContext; deviceB: BrowserContext; link: string; uuid: string; pageB: Page }> {
     const uuid = crypto.randomUUID();
     const dir = mkdtempSync(join(tmpdir(), "dai-two-publishers-"));
     const build = async (key: string, name: string): Promise<string> => {
@@ -1901,8 +1901,44 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.setInputFiles("#file", ours);
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
-    return { deviceA, deviceB, link };
+    return { deviceA, deviceB, link, uuid, pageB };
   }
+
+  /** Whether this device holds a pin for the document: which key it was first opened with. */
+  const pinned = (page: Page, uuid: string) =>
+    page.evaluate(
+      (id) =>
+        new Promise<boolean>((done) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const get = open.result.transaction("pins", "readonly").objectStore("pins").get(id);
+            get.onsuccess = () => done(get.result !== undefined);
+            get.onerror = () => done(false);
+          };
+          open.onerror = () => done(false);
+        }),
+      uuid,
+    );
+
+  /** Forgets the pin, as a copy kept with its pin gone would be (D126). */
+  const unpin = (page: Page, uuid: string) =>
+    page.evaluate(
+      (id) =>
+        new Promise<void>((done, fail) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const tx = open.result.transaction("pins", "readwrite");
+            tx.objectStore("pins").delete(id);
+            tx.oncomplete = () => done();
+            tx.onerror = () => fail(tx.error);
+          };
+          open.onerror = () => fail(open.error);
+        }),
+      uuid,
+    );
+
+  /** The sentence for a held copy's id under another publisher (D126, ruled 25 September). */
+  const STRANGERS_COPY = /published by somebody else/;
 
   /** Opens a link on a fresh page of the context and waits for the load it brings. */
   async function arriveAt(context: BrowserContext, link: string): Promise<Page> {
@@ -1914,14 +1950,30 @@ test.describe("a game continues over a shared link (the key path)", () => {
     return page;
   }
 
+  /*
+   * D126, ruled 25 September: a held copy is never offered a merge from a
+   * different publisher, pinned or not; a different publisher is a different
+   * document. The held record's own publisher answers, so a copy kept with its
+   * pin gone is refused in the same words as one still pinned.
+   */
   test("a link to a held document from another publisher is refused in sight", async ({ browser }) => {
-    const { deviceA, deviceB, link } = await heldAndAStrangersLink(browser);
-    // A kept copy is pinned when it is opened, so the pin answers first. The
-    // refusal named in the ruling, "published by somebody else", sits behind
-    // it and is not reached even with the pin gone: backlog D126.
+    const { deviceA, deviceB, link, uuid, pageB } = await heldAndAStrangersLink(browser);
+    expect(await pinned(pageB, uuid), "B's copy is pinned by opening it").toBe(true);
     const page = await arriveAt(deviceB, link);
-    await refusedInSight(page, /different publisher/);
-    await expect(page.locator("#card-open")).toBeHidden();
+    await refusedInSight(page, STRANGERS_COPY);
+    await expect(page.locator("#card-open"), "and no card offers it").toBeHidden();
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  test("a link to a held document from another publisher is refused with the pin gone", async ({ browser }) => {
+    const { deviceA, deviceB, link, uuid, pageB } = await heldAndAStrangersLink(browser);
+    await unpin(pageB, uuid);
+    expect(await pinned(pageB, uuid), "the pin is gone before the link arrives").toBe(false);
+    const page = await arriveAt(deviceB, link);
+    await refusedInSight(page, STRANGERS_COPY);
+    await expect(page.locator("#card-open"), "and no card offers it as a merge").toBeHidden();
+    expect(await pinned(page, uuid), "and the stranger's key is not pinned").toBe(false);
     await deviceA.close();
     await deviceB.close();
   });
