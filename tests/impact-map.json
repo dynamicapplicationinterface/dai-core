@@ -2925,6 +2925,15 @@
       "src/replicated.ts",
       "tests/seat-admission.spec.ts"
     ],
+    "tests/seat-attacks.spec.ts": [
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "tests/seat-attacks.spec.ts"
+    ],
     "tests/seat-writes.spec.ts": [
       "scripts/check-seats.mjs",
       "src/frame.ts",
