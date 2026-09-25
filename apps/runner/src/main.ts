@@ -1924,8 +1924,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * itself, and the pin was the only guard, so a copy kept with its pin gone
      * was offered a stranger's rows. Asked before the pin, so a held copy is
      * refused in the words for what happened, whether or not it is pinned. It
-     * cannot be opened beside the copy here either: this host keeps one copy
-     * per document, so opening it would mean replacing the person's own.
+     * cannot be opened beside the copy here either:
+     * this host keeps one copy per document, so opening it would mean
+     * replacing the person's own.
      */
     if (declaresReplication(cartridge.manifest)) {
       const held = await getCartridgeFromLibrary(cartridge.manifest.documentUuid).catch(() => null);
