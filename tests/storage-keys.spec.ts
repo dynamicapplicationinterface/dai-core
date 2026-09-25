@@ -30,6 +30,7 @@ test.describe("the opener's storage and lock keys", () => {
   test("the owner makes the keys the opener actually uses", () => {
     expect(KEYS.KEEP_AFTER_RELOAD).toBe("dai:keep-after-reload");
     expect(KEYS.IOS_RELOAD_TAKEN).toBe("dai:ios-reload-taken");
+    expect(KEYS.IOS_RELOAD_CARRIED).toBe("dai:ios-reload-carried");
     expect(KEYS.MANIFEST_FALLBACK).toBe("dai:manifest-fallback");
     expect(KEYS.RESUME).toBe("dai:resume");
     expect(KEYS.PERSON_KEY).toBe("dai:person-key");
@@ -44,6 +45,7 @@ test.describe("the opener's storage and lock keys", () => {
     const owned = [
       "dai:keep-after-reload",
       "dai:ios-reload-taken",
+      "dai:ios-reload-carried",
       "dai:manifest-fallback",
       "dai:resume",
       "dai:ground:",
@@ -68,6 +70,7 @@ test.describe("the opener's storage and lock keys", () => {
     const made = [
       KEYS.KEEP_AFTER_RELOAD,
       KEYS.IOS_RELOAD_TAKEN,
+      KEYS.IOS_RELOAD_CARRIED,
       KEYS.MANIFEST_FALLBACK,
       KEYS.RESUME,
       groundKey(uuid, "light"),

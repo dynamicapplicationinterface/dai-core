@@ -149,6 +149,29 @@ function relaunchedAlready(uuid: string): boolean {
 }
 /** Set by the load that took the iOS reload, read by the load it caused. */
 const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
+/** Beside it: what that load filed for this one to find (D117). */
+const RELOAD_CARRIED = KEYS.IOS_RELOAD_CARRIED;
+/**
+ * What the load before this one said it carried across the reload.
+ *
+ * Its own account, read here and checked against the library beside it on the
+ * arrival line (`carriedReading`), so a reload that loses something says so on
+ * the phone instead of opening a copy that quietly cannot reach anyone.
+ */
+let carriedIn: string | undefined;
+try {
+  const record = sessionStorage.getItem(RELOAD_CARRIED);
+  sessionStorage.removeItem(RELOAD_CARRIED);
+  // `<uuid> <what>`: read only by a load for that document. A reload that
+  // stalled, followed by the person going somewhere else in the tab, must not
+  // lend the next document another one's account.
+  const at = record?.indexOf(" ") ?? -1;
+  if (record && at > 0 && record.slice(0, at) === hintedUuid(location.hash, location.search)) {
+    carriedIn = record.slice(at + 1);
+  }
+} catch {
+  /* No session storage: the library check below still runs. */
+}
 try {
   // The second witness. The address is the first, and the only one a device
   // that refuses storage still has.
@@ -264,14 +287,15 @@ async function arrivedManifestReading(): Promise<string> {
 }
 
 async function showArrival(): Promise<void> {
-  const [build, manifest] = await Promise.all([workerBuild(), arrivedManifestReading()]);
+  const [build, manifest, carried] = await Promise.all([workerBuild(), arrivedManifestReading(), carriedReading()]);
   const entry = entryPoint ? ` · opened from ${entryPoint}` : "";
   // Said here too, not only on the launch panel: this line is the reading a
   // phone takes, and a data: manifest with no account of it is what sent the
   // last sitting looking (cold review of 8f0dd9f, Q5).
   const fallback = manifestFallback();
   const wrote = fallback ? ` · manifest as data: ${fallback}` : "";
-  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}${wrote}`;
+  const across = carried ? ` · ${carried}` : "";
+  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}${across}${wrote}`;
   for (const id of ["sheet-arrival", "chooser-arrival"]) {
     const slot = document.getElementById(id);
     if (slot) slot.textContent = text;
@@ -869,6 +893,7 @@ async function launchDetails(): Promise<string> {
   lines.push(`arrived with: ${arrivedWith}`);
   lines.push(`opened from: ${entryPoint || "(nothing opened yet)"}`);
   lines.push(`iOS reload: ${reloadGate}`);
+  lines.push((await carriedReading()) ?? "carried across: nothing (no reload, and no key in the address)");
   lines.push(`manifest written as data: ${manifestFallback() ?? "never, in this tab"}`);
   lines.push(`worker build that served this page: ${workerStamp} (page build ${build.slice(0, 7)})`);
 
@@ -991,10 +1016,30 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   const address = marked.href;
   // The worker describes the next load with this document's manifest.
   await describeDocument(identity);
+  /*
+   * What this load holds only in memory is written down before it goes (D117).
+   *
+   * The next load opens the copy out of the library, and the library is all it
+   * has of this one. The key a link carried was filed when the mailbox started,
+   * and on a device that did not hold the app this reload comes first: the
+   * copy after it had no key, ran no mailbox, and waited to be seated by a
+   * creator who never heard it ask.
+   */
+  //
+  // Bounded: this runs behind the launch screen, where a rehearsal mount has
+  // already cleared the guard, so a library that never answers would leave the
+  // person on the splash with no way off. The address carries the key as well,
+  // and the next load files it from there when the library has none.
+  const carried = await Promise.race([
+    fileArrivedKey(identity.uuid),
+    new Promise<string>((done) => window.setTimeout(() => done("the key, not confirmed in time"), 3000)),
+  ]);
   markStep("reloading at the document's address");
   reloadGate = "taken";
   try {
     sessionStorage.setItem(RELOAD_TAKEN, entryPoint);
+    // Named for its document, so a load for another one never reads it as its own.
+    sessionStorage.setItem(RELOAD_CARRIED, `${identity.uuid} ${carried}`);
   } catch {
     /* The reloaded page cannot say it was reloaded; still true of this load. */
   }
@@ -1075,6 +1120,7 @@ function eject(): void {
   arrivedKey = undefined;
   // With it: a game named by the last link must not file the next document's key.
   arrivedSession = undefined;
+  keyFromAddress = false;
   document.body.classList.remove("loaded", "launching", "booting");
   clearLaunchGuard();
   document.documentElement.style.removeProperty("--app-ground");
@@ -1931,13 +1977,15 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      *
      * It used to be filed when the mailbox started, which is too late and was
      * the whole of why this fix did not work: a copy that already holds the app
-     * takes the merge path, and that runs through `launchFromLibrary` — which
-     * ejects first, and `eject` clears the arriving key. The key was gone before
-     * anything wrote it down, so the invited copy kept reading the address
-     * derived from the document key while the inviter published to the game's
-     * own. The same two-addresses failure as D37, one layer along.
+     * takes the merge path, and that ran through `launchFromLibrary` — which
+     * then ejected first, and `eject` clears the arriving key. The key was gone
+     * before anything wrote it down, so the invited copy kept reading the
+     * address derived from the document key while the inviter published to the
+     * game's own. The same two-addresses failure as D37, one layer along.
      *
      * Here it is known and nothing has ejected yet, so it survives the mount.
+     * A device that does not hold the app files it at the iOS relaunch instead,
+     * the one place it would otherwise be lost (`relaunchAtOwnAddress`, D117).
      */
     if (arrivedKey && arrivedSession && heldHere) {
       await rememberSessionKey(cartridge.manifest.documentUuid, arrivedSession, arrivedKey);
@@ -4510,6 +4558,9 @@ let arrivedKey: string | undefined;
  */
 let arrivedSession: string | undefined;
 
+/** The key was taken from this load's own address because the library had none (D117). */
+let keyFromAddress = false;
+
 /** The running mailbox loop for the mounted document, or none. */
 let mailboxSession: MailboxSession | null = null;
 
@@ -4658,6 +4709,45 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
       ? record
       : { ...record, sessionKeys: { ...(record.sessionKeys ?? {}), [session]: key } },
   );
+}
+
+/**
+ * Files the key this load's link carried, and says what the library now holds.
+ *
+ * For a reload that is about to throw this page away (D117): the key lives in
+ * `arrivedKey` until the mailbox files it, and nothing else of this load
+ * reaches the next one but the library and the address. The answer is read
+ * back from the library rather than assumed from the write, because
+ * `rememberSessionKey` does nothing for a document the library does not hold,
+ * and the arrival line is where that would otherwise go unsaid.
+ */
+async function fileArrivedKey(documentUuid: string): Promise<string> {
+  if (!arrivedKey) return "no key held only on this load";
+  if (arrivedSession) await rememberSessionKey(documentUuid, arrivedSession, arrivedKey);
+  else await documentRootKey(documentUuid);
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  const filed = arrivedSession ? held?.sessionKeys?.[arrivedSession] === arrivedKey : held?.documentKey === arrivedKey;
+  const which = arrivedSession ? "the game's key" : "the document's key";
+  return filed ? `${which}, filed` : `${which}, NOT filed`;
+}
+
+/**
+ * What crossed the iOS reload, for the arrival line: what the load before said
+ * it filed, and whether the library holds the key this load's address names.
+ * Two witnesses, asked separately, so neither vouches for the other.
+ */
+async function carriedReading(): Promise<string | undefined> {
+  // Only for a load that followed a reload, or one that had to take the key
+  // from its own address: anywhere else nothing crossed, and a line saying so
+  // reads like a carrier that failed.
+  if (!reloadedThisLoad && carriedIn === undefined && !keyFromAddress) return undefined;
+  const said = carriedIn ?? "nothing said";
+  const repaired = keyFromAddress ? " · the library had no key, so it was taken from this address" : "";
+  const named = referenceFrom(location.pathname, location.search, location.hash);
+  if (!named?.key || !mountedUuid) return `carried across: ${said}${repaired}`;
+  const held = await getCartridgeFromLibrary(mountedUuid).catch(() => null);
+  const holds = named.session ? held?.sessionKeys?.[named.session] === named.key : held?.documentKey === named.key;
+  return `carried across: ${said}${repaired} · the address's key held here: ${holds ? "yes" : "no"}`;
 }
 
 /**
@@ -4948,8 +5038,24 @@ async function start(): Promise<void> {
       // The address an icon launched with carries the link the document came
       // by, when it did; keep it, so the manifest written from here carries it
       // on rather than falling back to an address only this device can open.
-      if (inlineFrom(location.hash) || referenceFrom(location.pathname, location.search, location.hash)) {
+      const named = referenceFrom(location.pathname, location.search, location.hash);
+      if (inlineFrom(location.hash) || named) {
         arrivedByLink = location.href;
+      }
+      /*
+       * The key this address carries, when the library has none for its game (D117).
+       *
+       * The load that relaunched here files it before it goes; this is for the
+       * copy whose filing never landed — a phone already stranded by D117, a
+       * write the library did not take — which otherwise never recovers,
+       * however often it is opened from here. A gap is filled and nothing is
+       * replaced: these bytes were not what opened the copy, and a key this
+       * device holds for a game is never displaced by one arriving (D37).
+       */
+      if (named?.key && !(named.session ? held.sessionKeys?.[named.session] : held.documentKey)) {
+        arrivedKey = named.key;
+        arrivedSession = named.session;
+        keyFromAddress = true;
       }
       await launchFromLibrary(held, "an icon, or an address naming a copy already here");
       return;

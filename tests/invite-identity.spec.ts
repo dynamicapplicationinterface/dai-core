@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type Browser, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
+import { KEYS } from "../src/keys.js";
 import { serveRelay, type ServedRelay } from "./relay-memory.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -170,8 +171,19 @@ const replicaOf = (page: Page): Promise<string | null> =>
     (window as unknown as { __runner: { replicaId(): Promise<string | null> } }).__runner.replicaId(),
   );
 
-/** A device, pointed at the test store, with the clipboard captured. */
-async function device(browser: Browser, options: { iphone?: boolean } = {}): Promise<Page> {
+/**
+ * A device, pointed at the test store, with the clipboard captured.
+ *
+ * `relayAfterRelaunch` gives the relay only to the load after the iOS relaunch,
+ * which forces the order D117 lost in: a mailbox started on the load that opened
+ * the link files the game's key as it starts, and whether it starts before the
+ * relaunch goes is a race (this machine lost it every time, CI won it). With no
+ * relay there, nothing on that load can file the key except the relaunch itself.
+ */
+async function device(
+  browser: Browser,
+  options: { iphone?: boolean; relayAfterRelaunch?: boolean } = {},
+): Promise<Page> {
   const context = await browser.newContext(
     options.iphone ? { userAgent: IPHONE, viewport: { width: 390, height: 844 } } : {},
   );
@@ -197,12 +209,17 @@ async function device(browser: Browser, options: { iphone?: boolean } = {}): Pro
    * where a fresh device files the game's key. Filled in once parsing is done
    * and before the runner's module reads it.
    */
-  await page.addInitScript((base) => {
-    document.addEventListener("readystatechange", () => {
-      if (document.readyState !== "interactive") return;
-      document.querySelector('meta[name="dai-relay"]')?.setAttribute("content", base);
-    });
-  }, relay.base);
+  await page.addInitScript(
+    ({ base, onlyAfter, taken }) => {
+      document.addEventListener("readystatechange", () => {
+        if (document.readyState !== "interactive") return;
+        // The load the relaunch caused finds the witness the load before it left.
+        if (onlyAfter && sessionStorage.getItem(taken) === null) return;
+        document.querySelector('meta[name="dai-relay"]')?.setAttribute("content", base);
+      });
+    },
+    { base: relay.base, onlyAfter: options.relayAfterRelaunch === true, taken: KEYS.IOS_RELOAD_TAKEN },
+  );
   return page;
 }
 
@@ -226,7 +243,7 @@ const hostAuthorOf = (page: Page): Promise<string | null> =>
 const AUTHOR_ID = /^[A-Za-z0-9_-]{22}$/;
 
 /** A creator starts a game and shares it with the data in it; a guest opens the link. */
-async function inviteWithData(browser: Browser, iphone: boolean) {
+async function inviteWithData(browser: Browser, iphone: boolean, guestOptions: { relayAfterRelaunch?: boolean } = {}) {
   const built = await compileDirectory({
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
@@ -260,7 +277,7 @@ async function inviteWithData(browser: Browser, iphone: boolean) {
   // Sharing gave the creator's copy a key, and with it a mailbox.
   await mailboxRuns(creator);
   // The recipient opens it on a device that has never seen the document.
-  const guest = await device(browser, { iphone });
+  const guest = await device(browser, { iphone, ...guestOptions });
   await guest.goto(link);
   await openHere(guest);
   if (iphone) {
@@ -270,10 +287,111 @@ async function inviteWithData(browser: Browser, iphone: boolean) {
     });
     await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
   }
-  // On the load a person is looking at, so the guest's ask can reach the creator.
-  await mailboxRuns(guest);
   return { creator, guest };
 }
+
+/** The keys a copy's library holds per game, as `<session>:<key>`. Two copies of one game must agree. */
+const keysHeld = (page: Page): Promise<string[]> =>
+  page.evaluate(async () => {
+    const items = (await (window as any).__runner.listLibrary()) as { sessionKeys?: Record<string, string> }[];
+    return items.flatMap((item) => Object.entries(item.sessionKeys ?? {}).map(([s, k]) => `${s}:${k}`));
+  });
+
+/**
+ * D117: a device that does not hold the app keeps the invite's key.
+ *
+ * On an iPhone the load that opens the link relaunches at the document's
+ * address, and the load after it opens the copy out of the library. The game's
+ * key came in the link, so the library is the only way it reaches that load: a
+ * key that was never filed means no mailbox, and a copy that waits to be seated
+ * by a creator who never hears it ask. Asserted on the load a person is looking
+ * at, before anything else, so the red names the key and not what it costs.
+ * The desktop takes no relaunch and is here to hold that it did not move.
+ */
+test.describe("D117: an invite's key survives the iOS relaunch", () => {
+  test.slow();
+
+  for (const iphone of [true, false]) {
+    test(`a fresh device holds the game's key after opening the invite, on ${iphone ? "an iPhone" : "a desktop"}`, async ({
+      browser,
+      browserName,
+    }) => {
+      test.skip(iphone && browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
+      // On the iPhone, in the order that lost: see `relayAfterRelaunch`.
+      const { creator, guest } = await inviteWithData(browser, iphone, { relayAfterRelaunch: iphone });
+      const sent = await keysHeld(creator);
+      // What it looked at: the creator filed exactly one game's key by sharing it.
+      expect(sent, "the creator holds the key it sent, for one game").toHaveLength(1);
+      await expect
+        .poll(() => keysHeld(guest), { timeout: 30_000, message: "the guest's library holds the game's key" })
+        .toContain(sent[0]);
+      if (iphone) {
+        // And the phone's own reading says so: what the load before the
+        // relaunch filed, and what this one found, each asked on its own.
+        await expect(guest.locator("#sheet-arrival")).toContainText(
+          "carried across: the game's key, filed · the address's key held here: yes",
+        );
+      } else {
+        // Nothing crossed a reload here, and the line does not say anything did.
+        await expect(guest.locator("#sheet-arrival")).toContainText("iOS reload: not taken");
+        await expect(guest.locator("#sheet-arrival")).not.toContainText("carried across");
+      }
+      await mailboxRuns(guest);
+
+      await creator.context().close();
+      await guest.context().close();
+    });
+  }
+
+  /*
+   * A copy the relaunch already stranded, opened again from where it landed.
+   *
+   * The phones D117 reached before the fix hold the copy and no key, and the
+   * address they reopen at carries the key in its fragment. Stranded here by
+   * taking the keys out of the library record (the store's own names, since the
+   * opener exports none; the strip is checked before anything leans on it).
+   */
+  test("a copy stranded without its key takes it from its own address, on an iPhone", async ({ browser, browserName }) => {
+    test.skip(browserName !== "webkit", "the iOS relaunch is an iPhone's: WebKit only");
+    const { creator, guest } = await inviteWithData(browser, true);
+    const sent = (await keysHeld(creator))[0];
+    await expect.poll(() => keysHeld(guest), { timeout: 30_000 }).toContain(sent);
+    const stripped = await guest.evaluate(
+      () =>
+        new Promise<string>((done) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onerror = () => done("open failed");
+          open.onsuccess = () => {
+            const tx = open.result.transaction("cartridges", "readwrite");
+            const store = tx.objectStore("cartridges");
+            const all = store.getAll();
+            all.onsuccess = () => {
+              for (const item of all.result) {
+                delete item.sessionKeys;
+                delete item.documentKey;
+                store.put(item);
+              }
+            };
+            tx.oncomplete = () => done("stripped");
+            tx.onerror = () => done(`error ${String(tx.error)}`);
+          };
+        }),
+    );
+    expect(stripped).toBe("stripped");
+    expect(await keysHeld(guest), "the copy is stranded: its library holds no key").toEqual([]);
+
+    await guest.reload();
+    await expect(guest.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await expect
+      .poll(() => keysHeld(guest), { timeout: 30_000, message: "the key came back from the address" })
+      .toContain(sent);
+    await expect(guest.locator("#sheet-arrival")).toContainText("the library had no key, so it was taken from this address");
+    await mailboxRuns(guest);
+
+    await creator.context().close();
+    await guest.context().close();
+  });
+});
 
 test.describe("an invite that carries the game", () => {
   webkitOnly();
@@ -282,6 +400,8 @@ test.describe("an invite that carries the game", () => {
   for (const iphone of [true, false]) {
     test(`the recipient is not the sender, on ${iphone ? "an iPhone" : "a desktop"}`, async ({ browser }) => {
       const { creator, guest } = await inviteWithData(browser, iphone);
+      // On the load a person is looking at, so the guest's ask can reach the creator.
+      await mailboxRuns(guest);
       const sender = await replicaOf(creator);
       expect(sender, "the sender writes under an id of its own").toMatch(AUTHOR_ID);
       await expect
@@ -315,6 +435,7 @@ test.describe("an arrived copy writes under this device's key", () => {
 
   async function holds(browser: Browser, iphone: boolean): Promise<void> {
     const { creator, guest } = await inviteWithData(browser, iphone);
+    await mailboxRuns(guest);
     const creatorKey = await hostAuthorOf(creator);
     expect(creatorKey, "the creator's host holds a person key").toMatch(AUTHOR_ID);
     expect(await replicaOf(creator), "and the creator's copy writes under it").toBe(creatorKey);

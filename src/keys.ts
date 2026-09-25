@@ -20,6 +20,8 @@ export const KEYS = {
   KEEP_AFTER_RELOAD: "dai:keep-after-reload",
   /** Session storage: the iOS reload was taken, read by the load it caused (d22/D79 arrival line). */
   IOS_RELOAD_TAKEN: "dai:ios-reload-taken",
+  /** Session storage: what the load that took the iOS reload filed for the next one to find (D117). */
+  IOS_RELOAD_CARRIED: "dai:ios-reload-carried",
   /** Session storage: why a document's manifest was last written as a data: URL, for the launch panel. */
   MANIFEST_FALLBACK: "dai:manifest-fallback",
   /** Local storage: the document this device was last showing, for a resume. */

@@ -568,6 +568,15 @@ agreeing by accident.
   network to test serving from cache. **The general form:** when a test's setup
   is an instruction to the browser rather than something the test can observe,
   assert the setup took effect before trusting what follows.
+- **A red that was red because a race was lost (D117, 25 September).** Two
+  WebKit iPhone tests were filed as the known reds of a lost key, and failed on
+  every local run; on CI they passed, because CI's machine won the race between
+  a mailbox starting and the relaunch that throws the page away. The red was
+  true of this machine's timing, not of the defect, and the green on CI would
+  have been read as the bug not existing. The fix to the test was the one from
+  the phone race of 9 September: force the losing order (the relay reaches only
+  the load after the relaunch) instead of hoping for it. A red is proven the
+  same way a green is: on the reason it names, whatever wins the race.
 
 ### A third shape — a breadcrumb written before the thing it describes
 
@@ -4384,6 +4393,71 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D121 — The warm merge writes the library record from a read taken before it
+
+*Status: open. Filed 25 September from the cold review of D117 (its finding 8);
+read, not run.*
+
+`saveCartridgeToLibrary({ ...heldHere, mergeStanding: true })` in `ingest`'s
+warm merge path spreads a record read before the arriving key was filed and
+before the merge's own save, and writes it outside `withLibraryLock`. That is
+the D41 shape: a write built from a stale read can put `revision` back and
+refuse every later save, and can drop the key just filed. The shape lint passes
+it because it spreads. Take it under the lock from a fresh read, as
+`amendLibraryRecord` does.
+
+#### D120 — What else the iOS relaunch leaves behind
+
+*Status: open. Filed 25 September from the cold review of D117, which asked what
+the first load holds that the relaunched load does not. Each read, not run.*
+
+The review enumerated the state of all three relaunching paths (ingest's keep
+path, `launchFromLibrary`, `finishMerge`); the key was D117. Three more cross
+nothing, or cross wrongly:
+
+1. **The card's publisher warning does not survive.** `installSuppressed` is set
+   in `ingest` when the card calls the publisher a conflict (a stranger wearing
+   a known name) and read before offering to keep the app. The relaunched load
+   starts it false and `launchFromLibrary` never sets it, so on an iPhone the
+   open the card warned about can be offered the keep-this-app prompt at the
+   first use. Desktop takes no relaunch and keeps the suppression. Carry it
+   across named for its document, or have `launchFromLibrary` ask
+   `publisherState` again.
+2. **`IOS_RELOAD_TAKEN` names no document.** A reload that stalls (the iOS bug
+   the launch guard exists for), followed by the person going somewhere other
+   than Tap to open, leaves it for the next load in the tab, which then believes
+   it was a relaunch and skips its own. The new `IOS_RELOAD_CARRIED` is stored
+   as `<uuid> <what>` and read only by a load for that document; this one wants
+   the same.
+3. **`finishMerge` relaunches when the flush failed.** The result of
+   `flushDocument()` is ignored, so a flush that times out relaunches into a
+   stored copy without the merged move, and "the move could not be added" is
+   never said. Treat a failed flush as not applied.
+
+Also seen, low: the ingest rehearsal relaunches with no flush of the frame's own
+boot writes; they are written again after the relaunch and the seq floor keeps
+them from colliding.
+
+#### D119 — The contested-seat e2e fails its own setup on WebKit
+
+*Status: open. Named 25 September from CI run `36120722040` (identity step 3,
+`df75e52`); reproduced locally on WebKit, two in two. The first thing the next
+session opens.*
+
+`tests/mailbox-link-e2e.spec.ts`, "a forwarded invite contests the seat, nobody
+is seated, both are told, and the creator repairs", fails on WebKit at its setup
+check "A's copy tried to read and was refused while the two opened": 0 reads
+refused. Chromium and Firefox pass it.
+
+**A setup check failing means the precondition did not hold, not that the
+product did the wrong thing.** Start at the precondition: *is the refusal
+actually reaching WebKit's traffic?* The test blocks A's relay reads with a
+context route and counts the aborts. Two readings fit 0: the route never sees A's
+reads on WebKit (harness; the same family as the clipboard stub earlier), or A
+made no read in that window (the product: its poll did not run while B and C
+opened). Which one it is decides whether the rest of the test ever tested
+anything on WebKit. It is not the seat model until that is known.
+
 #### D118 — The creator ejects a confirmed seat
 
 *Status: open, not built. Filed 24 September from the ruling on the seat
@@ -4402,8 +4476,9 @@ removed.
 
 #### D117 — The iOS relaunch loses an invite's key on a device that does not hold the app
 
-*Status: open. Filed 24 September; the next step, before D80's re-earned green.
-Latent on main, exposed by the seat model.*
+*Status: fixed on `identity/signed-authorship` (identity step 5, 25 September);
+closed when that branch's CI verdict is read green on WebKit. Filed 24
+September. Latent on main, exposed by the seat model.*
 
 A stranger on iOS opening an invite, which is the phone walk's core path: the
 link carries the game's key; the load that opens it relaunches at the
@@ -4429,6 +4504,36 @@ creator's copy, which never hears it ask.
 A launch or relaunch path change gets a cold review of its own before anything
 downstream leans on it. **Order:** a named red for the lost key, then the fix,
 then that review; then D80.
+
+**The two "known reds" were red for a race.** On CI (run `36120722040`, before
+the fix) both iPhone tests *passed*; on this machine they failed every time. The
+load that opens the link mounts once behind the launch screen before it
+relaunches, and a mailbox started in that mount files the key; whether it
+starts before the relaunch goes is a race, which CI's machine won. A red that
+depends on a race is red for a reason unrelated to its claim (part 3, "a check
+that passes for a reason unrelated to what it claims"), and so is its green. The
+named red (`tests/invite-identity.spec.ts`, "D117: an invite's key survives the
+iOS relaunch") forces the losing order: the relay reaches only the load after
+the relaunch, so nothing on the first load can file the key but the fix. Red
+three times in three with the fix's two filing lines taken out, green with them.
+
+**What was built.** Two carriers, each shown red without it:
+- `relaunchAtOwnAddress`, the one door all three relaunching paths go through,
+  files what the load holds only in memory before it navigates
+  (`fileArrivedKey`, read back from the library, bounded at 3 s so a library that
+  never answers cannot hold the launch screen), and leaves its own account in
+  session storage (`KEYS.IOS_RELOAD_CARRIED`, named for its document).
+- The relaunched load reads a key from its own address when the library holds
+  none for that game (the `hintOnly` branch). It fills a gap and never replaces a
+  key held (D37). This is what repairs a phone D117 already stranded: from the
+  cold review, which reproduced one and showed it never recovering on reopen.
+- The arrival line says what crossed, on a load that followed a reload or had to
+  take the key from its address, and nowhere else: what the load before said it
+  filed, and whether the library holds the key this address names, asked
+  separately ("carried across: the game's key, filed · the address's key held
+  here: yes"). With the filing removed it read "NOT filed · … no".
+
+The rest of what the review found the relaunch leaves behind is D120.
 
 #### D116 — The seat check is superlinear in moves
 
