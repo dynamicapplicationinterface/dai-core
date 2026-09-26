@@ -570,13 +570,14 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ["session"],
     topic: "identity",
     rule:
-      "A session id commits to its creator: SHA-256 of the creator's author id and a nonce, first 16 bytes, with the nonce on the creator's own seat row, so who created a session is checked from the rows and no other author can claim it. The creator's seat is the creator's by definition. The open seat is held by whoever the creator's copy confirms, in a row only the creator's copy writes; the kit writes it on the creator's copy when it sees exactly one copy asking for the seat, and leaves a seat two copies asked for contested (SESSION-CONTESTED-SEAT). A copy that opened an invite has asked for the seat and holds nothing until it is confirmed. Over the mailbox the creator's copy reads one batch at a time, so the first ask it reads is the one it seats. No clock decides anything, and once confirmed a seat is never reseated.",
-    why: "Every rule that ordered seats by clock or author id could be won by a joiner writing rows: a backdated binding took the creator's seat, a backdated seat row made a joiner the creator, and an honest forwarded invite erased an honest player's moves about half the time (cold review of identity step 5). The creator's copy is the one party that may decide, and a key is the one thing a joiner cannot write.",
+      "A session id commits to its creator: SHA-256 of the creator's author id and a nonce, first 16 bytes, with the nonce on the creator's own seat row, so who created a session is checked from the rows and no other author can claim it. The creator's seat is the creator's by definition. The open seat is held by whoever the creator's copy confirms, in a row only the creator's copy writes; the kit writes it on the creator's copy when it sees exactly one copy asking for the seat, and leaves a seat two copies asked for contested (SESSION-CONTESTED-SEAT). A copy that opened an invite has asked for the seat and holds nothing until it is confirmed. Over the mailbox the creator's copy reads one batch at a time, so the first ask it reads is the one it seats. No clock decides anything, and once confirmed a seat is never reseated. A seat row crosses a merge only signed: an unsigned row in _dai_seat, _dai_binding or _dai_confirm is refused as BATCH_UNSIGNED, with the author it names.",
+    why: "Every rule that ordered seats by clock or author id could be won by a joiner writing rows: a backdated binding took the creator's seat, a backdated seat row made a joiner the creator, and an honest forwarded invite erased an honest player's moves about half the time (cold review of identity step 5). The creator's copy is the one party that may decide, and a key is the one thing a joiner cannot write. The key only answers if the row is signed: an unsigned confirm under the creator's id seated its writer before she confirmed anyone (D133).",
     enforced: ["compiler", "runtime"],
     anchors: [
       { file: "src/session-id.ts", contains: 'export const SESSION_ID_FUNCTION = "dai_session_id";' },
       { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_holder AS" },
       { file: "src/kit.ts", contains: "function confirmSeats()" },
+      { file: "src/replicated-rows.ts", contains: "else refuseBatch(\"\", row._r_replica, \"BATCH_UNSIGNED\");" },
     ],
   },
   {

@@ -13,6 +13,7 @@
  * be untestable in the other two.
  */
 import { showAuthorId } from "./identity.js";
+import { SEAT_TABLES } from "./replicated.js";
 import { sessionIdOf } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
@@ -973,8 +974,17 @@ export function mergeFrom(
    * refused: it names a signature that does not vouch for it
    * (BATCH_DIGEST_MISMATCH, in the name of whoever wrote the row, unless the
    * batch it names was refused already). A row that claims none and is listed by
-   * none is unsigned, and merges under the legacy rule until step 6.
+   * none is unsigned, and merges under the legacy rule until step 6, except in
+   * the seat tables, where it is refused now (BATCH_UNSIGNED, D133): an unsigned
+   * confirm under the creator's id would otherwise seat whoever wrote it. The
+   * exception is keyed by nothing but the table: a row naming this copy's own
+   * id is refused too, since the forgery is a row under the creator's id
+   * arriving at the creator's copy. A row this copy already holds at the same
+   * id in the same table is not new, so it is not refused: the same row is a
+   * duplicate, as ever, and a different one is rejected as a second row under
+   * one id (a save of this copy's own pending rows, merged back, is the first).
    */
+  const seatTables = new Set<string>(SEAT_TABLES);
   const signedRows: { table: string; row: ReplicatedRow }[] = [];
   const unsignedRows: { table: string; row: ReplicatedRow }[] = [];
   for (const table of tables) {
@@ -991,6 +1001,12 @@ export function mergeFrom(
       } else if (named) {
         const verdict = verdicts.get(named);
         if (!held.has(named) || verdict?.ok) refuseBatch(named, row._r_replica, "BATCH_DIGEST_MISMATCH");
+      } else if (seatTables.has(table)) {
+        // Held already: the ordinary path, which cannot insert (the id is taken)
+        // and counts the same row a duplicate and a different one a rejection.
+        const already = local.all(`SELECT 1 FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
+        if (already.length > 0) unsignedRows.push({ table, row });
+        else refuseBatch("", row._r_replica, "BATCH_UNSIGNED");
       } else {
         unsignedRows.push({ table, row });
       }

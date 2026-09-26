@@ -96,9 +96,11 @@ this itself: a replicated row can be deleted only when it is unsigned and a
 header the copy holds lists its id. A merge places signed rows before unsigned
 ones, so the answer never depends on table order. The principle outlives the
 legacy rule: once unsigned rows are refused outright, it is still true.
-A row that names no header and that no header lists is unsigned; until the
-legacy rule changes (`BATCH_UNSIGNED`, step 6 of the sitting), it merges as
-rows did before signing. The merge reports refused batches as `refusedBatches`,
+A row that names no header and that no header lists is unsigned. In the seat
+tables (`_dai_seat`, `_dai_binding`, `_dai_confirm`) a merge refuses it,
+`BATCH_UNSIGNED`, unless the copy already holds a row at that id in that table;
+anywhere else, until the legacy rule changes (step 6 of the sitting), it merges
+as rows did before signing. The merge reports refused batches as `refusedBatches`,
 one `{author, reason}` per batch and reason, ordered by batch id.
 
 **Published after the save lands.** A batch leaves by the mailbox only once a

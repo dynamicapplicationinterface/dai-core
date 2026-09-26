@@ -7,9 +7,10 @@ import {
   triggerColumns,
 } from "../src/replicated.js";
 import { mergeCoverageGap, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
-import { adoptReplica, ensureReplica } from "../src/replicated-rows.js";
+import { adoptReplica, confirmSeat, ensureReplica, startSession } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
 import { withSessionId } from "./session-db.js";
+import { mergeSigned, person, sealAs } from "./signed-people.js";
 import {
   applyRow,
   canonicalDump,
@@ -1204,15 +1205,30 @@ CREATE TABLE moves (
   test("the frame merge unions the roster tables, and admission holds after it", async () => {
     // The wiring: mergeSibling includes _dai_seat and _dai_binding in the union,
     // so a fresh copy that merges the game gets the seats and bindings, and its
-    // admission view resolves the same members.
-    const a = open3();
+    // admission view resolves the same members. A merge refuses an unsigned
+    // seat row (BATCH_UNSIGNED, D133), so every row here is sealed under its
+    // author's own key, as a copy seals it.
+    const [ada, bo] = await Promise.all([person(), person()]);
     e = 0;
-    seated(a);
-    put(a, "moves", O, 2, 5, { ply: 1, san: "e5" });
+    const a = open3();
+    ensureReplica(a, ada.author);
+    const session = startSession(a, { nonce: NONCE, creatorSeat: SEATC, openSeat: SEATO, entities: [ent(), ent()] });
+    await sealAs(a, ada);
+    const boCopy = open3();
+    ensureReplica(boCopy, bo.author);
+    await mergeSigned(boCopy, a, bo);
+    createEntity(boCopy, "_dai_binding", ent(), { seat: SEATO }, session);
+    createEntity(boCopy, "moves", ent(), { ply: 1, san: "e5" }, session);
+    await sealAs(boCopy, bo);
+    await mergeSigned(a, boCopy, ada);
+    confirmSeat(a, session, SEATO, bo.author, ent());
+    await sealAs(a, ada);
+    boCopy.close();
 
     const b = open3();
-    const report = await mergeSibling(b, a);
+    const report = await mergeSigned(b, a);
     expect(report.refused).toBeUndefined();
+    expect(report.refusedBatches).toEqual([]);
 
     // The seats and bindings crossed, so b resolves O as a member and shows its
     // move — admission is not something the merge carried, it is recomputed.

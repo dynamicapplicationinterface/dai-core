@@ -401,9 +401,8 @@ test.describe("cold review 2: a seated joiner and the creator's rows", () => {
   });
 });
 
-test.describe("cold review 2: the acknowledged unsigned hole (step 6), reproduced", () => {
-  test("an unsigned confirm under Ada's id, merged before she confirms, seats the forger", async () => {
-    test.fail(true, "D133 flips this: unsigned rows in the seat tables are refused, BATCH_UNSIGNED");
+test.describe("cold review 2: an unsigned row in the seat tables (D133)", () => {
+  test("an unsigned confirm under Ada's id, merged before she confirms, seats nobody and is refused", async () => {
     const ada = await person();
     const adaCopy = openGame();
     ensureReplica(adaCopy, ada.author);
@@ -435,6 +434,7 @@ test.describe("cold review 2: the acknowledged unsigned hole (step 6), reproduce
     console.log("before:", JSON.stringify(before), "after:", JSON.stringify(gameMoves(adaCopy, "g1")));
     console.log("open seat holder now:", JSON.stringify(holder), "bo:", hex(bo.author), "mal:", hex(mal.author));
     expect(holder.map((h) => h["r"]), "nobody holds the open seat but by Ada's signed confirm").toEqual([]);
+    expect(report.refusedBatches, "the merge names the unsigned row by the id it claims").toContainEqual({ author: ada.shown, reason: "BATCH_UNSIGNED" });
     adaCopy.close();
     boCopy.close();
     malCopy.close();
@@ -482,6 +482,11 @@ test.describe("cold review 2: Q2, a confirm replayed from session A into session
       const report = await merge(carol, sib, bo);
       const heldInB = carol.all("SELECT lower(hex(seat)) AS s, lower(hex(replica)) AS r FROM _dai_holder WHERE session = ? AND replica = ?", [b, bo.author]);
       console.log(`replay keepBatch=${keepBatch}:`, JSON.stringify(report.refusedBatches), "Bo holds in B:", JSON.stringify(heldInB));
+      expect(heldInB, "a confirm carried into another session seats nobody there").toEqual([]);
+      expect(report.refusedBatches, "and the merge says why").toContainEqual({
+        author: ada.shown,
+        reason: keepBatch ? "BATCH_DIGEST_MISMATCH" : "BATCH_UNSIGNED",
+      });
       sib.close();
       carol.close();
     }

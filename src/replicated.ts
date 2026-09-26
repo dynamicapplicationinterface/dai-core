@@ -780,9 +780,8 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * Nothing here is ordered by a clock, so a backdated row gains nothing, and a
    * hold, once made, never moves: the repair (reseat) is refused on a seat
    * anyone has been confirmed in. A row's author is its key once its batch is
-   * verified; an unsigned row under someone else's id is the one hole left,
-   * for this table as for every other, and it is closed where unsigned batches
-   * are refused (BATCH_UNSIGNED, identity step 6).
+   * verified, and a merge refuses an unsigned row in these three tables
+   * (BATCH_UNSIGNED, D133, `SEAT_TABLES`); step 6 extends that to every table.
    */
   const member = `
 CREATE VIEW IF NOT EXISTS _dai_creator AS
@@ -880,8 +879,16 @@ CREATE VIEW IF NOT EXISTS _dai_seat_rules AS
 `;
 }
 
+/**
+ * The seat tables: who created a session, who asked for its open seat, and whom
+ * the creator confirmed in it. A merge refuses an unsigned row in any of them
+ * (BATCH_UNSIGNED, D133), ahead of step 6's refusal in every table, because an
+ * unsigned row is a row under an id nobody proved, and here it decides a seat.
+ */
+export const SEAT_TABLES = ["_dai_seat", "_dai_binding", "_dai_confirm"] as const;
+
 /** The replicated system tables a session document carries beside its author tables (T1-D29). */
-export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding", "_dai_confirm", "_dai_close"] as const;
+export const SESSION_SYSTEM_TABLES = [...SEAT_TABLES, "_dai_close"] as const;
 
 /**
  * What the immutability trigger must name, checked against the table itself.

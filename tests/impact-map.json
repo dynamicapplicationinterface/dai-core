@@ -1010,6 +1010,7 @@
       "src/identity.ts",
       "src/replicated-batch.ts",
       "src/replicated-rows.ts",
+      "src/replicated.ts",
       "src/session-id.ts",
       "tests/identity-vectors.spec.ts"
     ],
@@ -2687,7 +2688,8 @@
       "src/replicated.ts",
       "src/session-id.ts",
       "tests/replicated-converge.spec.ts",
-      "tests/session-db.ts"
+      "tests/session-db.ts",
+      "tests/signed-people.ts"
     ],
     "tests/replicated-schema.spec.ts": [
       "scripts/generate-key.mjs",
@@ -2803,12 +2805,16 @@
       "tests/returning-document.spec.ts"
     ],
     "tests/roster.spec.ts": [
+      "src/cbor.ts",
       "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
       "tests/roster.spec.ts",
-      "tests/session-db.ts"
+      "tests/session-db.ts",
+      "tests/signed-people.ts"
     ],
     "tests/rules.spec.ts": [
       "examples/chess-foil/",

@@ -4404,9 +4404,15 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 
 #### D133 — An unsigned confirm under the creator's id seats the forger before she confirms
 
-*Status: open, **rated high**. Filed 25 September from the second cold review
-of the seat model (finding 3); reproduced. Known hole, sharpened. Ruling
-wanted: close it now or leave it to step 6.*
+*Status: **fixed** 26 September. Filed 25 September from the second cold
+review of the seat model (finding 3), rated high. Ruled: refuse now. A merge
+refuses an unsigned row in `_dai_seat`, `_dai_binding` and `_dai_confirm`
+(`BATCH_UNSIGNED`, with the author it names), unless the copy already holds a
+row at that id in that table; step 6 extends the refusal to every table. Held
+by `tests/seat-attacks.spec.ts` (the unsigned confirm, and the confirm replayed
+into another session with its batch stripped) and `tests/roster.spec.ts`. Not
+covered: a whole file taken in place is not a merge and verifies nothing, so a
+forged unsigned seat row inside one still counts; that is step 6's load path.*
 
 The code already says unsigned rows stay admissible until `BATCH_UNSIGNED`
 arrives in step 6 (`src/replicated.ts:782-785`, `src/replicated-rows.ts:973-976`).

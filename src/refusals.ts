@@ -222,8 +222,9 @@ export const REFUSALS = {
   BATCH_UNSIGNED: {
     recoverable: false,
     means:
-      "A row no valid batch covers, in a document whose rows must be signed. Refused; the rest of " +
-      "the merge runs.",
+      "A row no valid batch covers, in a table whose rows must be signed: today the seat tables " +
+      "(_dai_seat, _dai_binding, _dai_confirm), where an unsigned row under someone else's id would " +
+      "decide a seat. Refused and reported with the author it names; the rest of the merge runs.",
   },
 
   // ---- the mailbox

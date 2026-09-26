@@ -318,7 +318,8 @@ test.describe("the merge says what it took and did not admit", () => {
     roster(ada);
     const bo = openWith(SCHEMA);
     roster(bo);
-    put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    // Bo's ask reached Ada's copy before (a merge refuses an unsigned one, D133).
+    put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ }, { entity: put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ }) });
     put(bo, "moves", J, 2, 5, { seat: null, san: "d4" });
     const report = await mergeSibling(ada, bo);
     expect(report.refusedBatches).toEqual([{ author: showAuthorId(J), reason: "SEAT_NOT_HELD" }]);
@@ -331,7 +332,8 @@ test.describe("the merge says what it took and did not admit", () => {
     roster(ada);
     const bo = openWith(SCHEMA);
     roster(bo);
-    put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    // Bo's ask reached Ada's copy before (a merge refuses an unsigned one, D133).
+    put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ }, { entity: put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ }) });
     put(bo, "moves", J, 2, 5, { seat: SEATJ, san: "e5" });
     const report = await mergeSibling(ada, bo);
     expect(stored(ada)).toEqual(["e5"]);
