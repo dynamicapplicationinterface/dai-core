@@ -174,8 +174,14 @@ const ALLOWED = [
 
 // ------------------------------------------------------------------ files
 
+/**
+ * The tracked files only. The map is committed and CI regenerates it from the
+ * pushed tree, so a file on disk that the push will not carry — a probe spec,
+ * a helper not yet added — must not enter it, or the pushed map is stale.
+ * `impact.mjs` still errs wide for such a file: unclaimed means a full run.
+ */
 function listFiles() {
-  const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+  const out = execFileSync("git", ["ls-files", "-z", "--cached"], {
     cwd: repo,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

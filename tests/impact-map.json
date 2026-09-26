@@ -1014,6 +1014,14 @@
       "src/session-id.ts",
       "tests/identity-vectors.spec.ts"
     ],
+    "tests/impact-map-tracked.spec.ts": [
+      "scripts/impact-map.mjs",
+      "src/replicated-frame.ts",
+      "src/runtime/bootloader.ts",
+      "tests/global-setup.ts",
+      "tests/impact-map-tracked.spec.ts",
+      "tests/impact-map.json"
+    ],
     "tests/inline-carrier.spec.ts": [
       "conformance/inline-dictionary.bin",
       "conformance/signing-key.pem",
