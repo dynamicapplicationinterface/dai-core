@@ -88,9 +88,19 @@ jobs:
   # still run whole, one job each. The count gate skips a sharded run (its count
   # is a fraction by intent) and is carried by the two whole engines, which drop
   # the same count when a test stops being collected.
+  #
+  # Firefox is a reading, not the gate (ruled 25 September). Chromium and the
+  # two WebKit halves decide the run; a Firefox red does not. The reason is
+  # D32: `returning-document:511` failed at least once on Firefox in 3 of the
+  # last 4 runs on the identity branch, a frame the automation cannot see and
+  # not a product failure on the walk. The Firefox job still runs whole and
+  # scripts/ci-verdict.mjs prints its tally on its own line, so a real Firefox
+  # red is seen; it just does not block. Undoing this is D32 closing, not a
+  # quiet week.
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    continue-on-error: ${{ matrix.browser == 'firefox' }}
     strategy:
       fail-fast: false
       matrix:

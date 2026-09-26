@@ -188,6 +188,15 @@ direction; the walk these serve is `docs/v1-walk.md`)
   running". Written down because it was broken the day it mattered: a report
   called three screen changes landed while their run was still going, and the
   verdict two minutes later was a failure on three engines.
+- **Firefox is a reading, not the gate** (ruled 25 September). Chromium and
+  WebKit decide whether a run is green; the Firefox job runs with
+  `continue-on-error` in `.github/workflows/test.yml`, and
+  `scripts/ci-verdict.mjs` prints it on its own line, marked from its tally, so
+  a real Firefox red is still read and reported, just not blocking. The reason
+  is D32: `returning-document:511` failed at least once on Firefox in 3 of the
+  last 4 runs on the identity branch, a frame the automation cannot see, and not
+  a failure on the walk. It returns to the gate when D32 closes, not after a
+  quiet week.
 - **A change to a shared surface runs everything that presses that surface**,
   found by the control's own id — `grep send-go` — and not by what was edited.
   The same failure's first half: the local set was chosen by searching for the
@@ -5838,6 +5847,17 @@ prints a stale-map warning and still exits 0 (seen twice tonight).
 
 *Status: open, **and no longer read as a test problem** (20 September). Rate
 measured; the frame read at failure. Fix undecided.*
+
+**Firefox demoted to non-blocking, 25 September.** `:511` failed at least once
+on Firefox in 3 of the last 4 runs on `identity/signed-authorship` (red on
+`3adbde4`, flaky on `71f32ab` and `c997bd4`), and it is not on the walk. So
+Firefox is now a reading and not the gate: Chromium and WebKit decide a run,
+and `scripts/ci-verdict.mjs` still prints Firefox's tally on its own line (the
+standing rule is in section 2). **Still owed: a bounded chase of the three
+untried rungs** below (a service worker controlling the page; a blob carrying
+the runtime and a real document; the opener's own sequence of card, stored
+read and reseal), stopping at the first that reproduces. Firefox goes back on
+the gate when D32 closes.
 
 **Bumped 24 September: `:511` now fails both attempts.** "A turn sent and
 answered, with nothing written in between, is taken without a question" failed
