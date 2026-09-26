@@ -4402,9 +4402,110 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D139 — sealed-leave's first test retries on WebKit in CI
+
+*Status: open, not chased. Filed 25 September: WebKit half 2 retried
+`tests/sealed-leave.spec.ts:25` ("a saved document's rows are sealed, and
+every batch verifies under this device's key") on two runs in a row, runs
+36213297105 (`734a4c3`, 39.7s) and 36214061757 (`0114b53`, 40.5s), passing
+on retry both times; not on the next run (36214659478). The first attempt
+takes about forty seconds, so it is a timeout, not a wrong answer. Neither
+commit touched the save or the seal.*
+
+- **Next, if it recurs:** read the first attempt's trace from the run's kept
+  retry artifact for what it waited on, before any rerun.
+
+#### D135 — The honest writers version an entity across partitions, so a stranger's row freezes an honest change
+
+*Status: open, rated medium. Filed 25 September from the third cold review
+(the seams between D131, D132 and D133, finding 1); reproduced. Ruling wanted.*
+
+`headsOf`, `changeEntity` and `deleteEntity` (`src/replicated-rows.ts`) still
+treat an entity as `_r_entity` alone: every row of it with a stored
+`_r_superseded` of 0, from any session or seat, becomes a parent, and the
+session comes from the head with the highest clock. D131 and D132 made the
+admission views partition by (session, entity) and (session, seat, entity). So
+a parentless row that reuses an entity id in another partition, which is legal
+(D134), poisons the honest writer's next version: it names a row of another
+partition, is stored, never admitted, and reported under the honest author.
+
+- **Reproduction:** `tests/cold-review-3-probe.spec.ts` (untracked), "games:
+  Mallory's row in his own session at lc 1 / lc 1000000 freezes Ada's rename of
+  her game". Chess's `rename`, `setMyName` and `keepNames` go through
+  `writer.change` on `games`.
+- **Seen:** at lc 1000000, Ada's rename row lands in Mallory's session, naming
+  both heads; `games_current` stays "Ada v Bo" on both copies, and the merge
+  into Bo reports `ENTITY_OTHER_SESSION` against Ada. Every later change
+  inherits the stranger's session. At lc 1 the row stays in her session, names
+  his row, and is refused the same way.
+- **Held:** the admission is order-free. Three copies merged in different
+  orders agree ("convergence: the D131 freeze ...", passes).
+- **One-sentence fix, not ruled:** the honest writers version within the
+  row's own partition: the session from the row being versioned (or the
+  caller), parents only from that session and, in a seated table, that seat,
+  and a delete's columns from a head of that partition.
+
+#### D136 — A reseat can carry the creator's fresh seat out of her session
+
+*Status: open, rated medium. Filed 25 September from the third cold review
+(finding 2); reproduced. Ruling wanted.*
+
+The repair for a contested seat is the creator's `reseat`, which versions the
+open seat's `_dai_seat` row through `changeEntity`, so it has D135's fault in a
+roster table, where there is no `_foreign` check. A contester, signing with
+their own key (D133 passes it), writes a `_dai_seat` row in a session of
+their own with the open seat row's entity id (it is in the invite) and a high
+clock. Ada's reseat row then lands in that session, and `_dai_open_seat`'s
+retire check (`n._r_entity = s._r_entity AND n._r_replica = s._r_replica`)
+ignores the session, so her own row there retires her open seat.
+
+- **Reproduction:** `tests/cold-review-3-probe.spec.ts`, "reseat: a row in
+  another session reusing the open seat's entity id carries Ada's fresh seat
+  out of her session".
+- **Seen:** `merge of Cy into Ada: []`; the reseat row in the other session;
+  `Ada's open seats after reseat: []`; and no contested seat left, so a second
+  reseat is refused `CANNOT_RESEAT`. The game has no open seat and no repair.
+- **One-sentence fix, not ruled:** D135's fix for `reseat`, and
+  `_dai_open_seat`'s retire check also requires `n._r_session = s._r_session`.
+
+#### D137 — The other seat's parentless row blocks a player's delete of her own row
+
+*Status: open, rated medium for an app that versions seated rows, low for
+chess today (it never changes or deletes a move). Filed 25 September from the
+third cold review (finding 3); reproduced.*
+
+D132's seat form of D135. Bo, seated honestly, writes a parentless move for
+his own seat reusing the id of Ada's e4: admitted, as a separate entity in his
+partition. Ada's `deleteEntity` of her e4 then names both rows as parents (and
+at a high clock copies Bo's seat into her tombstone), so her tombstone crosses
+seats: stored, never admitted, reported `SEAT_NOT_HELD` against her, and her e4
+stands. This defeats D132's own counter-case with one legitimate row.
+
+- **Reproduction:** `tests/cold-review-3-probe.spec.ts`, "moves: Bo's row in
+  his own seat at lc 1 / lc 1000000, then Ada takes back her e4".
+- **One-sentence fix, not ruled:** D135's.
+
+#### D138 — A row of the other seat hides a waiting move from its author's screen
+
+*Status: open, rated low. Filed 25 September from the third cold review
+(finding 4); reproduced. The seat form of D134's note on the stored flag.*
+
+`applyRow` sets a parent's stored `_r_superseded` from any child of its
+entity, and `_pending` reads the stored flag. The creator writes a row in her
+seat naming the waiting joiner's pending move as its parent: `_heads` ignores
+it (it crosses seats, `SEAT_NOT_HELD`), but the joiner's own move drops out of
+his `_pending`, so his screen loses a move he made. Transient: once he is
+confirmed, `_heads` admits it.
+
+- **Reproduction:** `tests/cold-review-3-probe.spec.ts`, "_pending: the
+  creator's row in her seat naming a waiting joiner's move hides it from his own
+  screen". Seen: pending `["e5"]` before the merge, `[]` after.
+- **One-sentence fix, not ruled:** `_pending` computes supersession as
+  `_heads` does, within the partition, instead of reading the stored flag.
+
 #### D134 — An entity id reused in another session is a second entity, and an app reading by id alone sees two
 
-*Status: open. Filed 26 September with the D131 fix; not reproduced in an app.
+*Status: open. Filed 25 September with the D131 fix; not reproduced in an app.
 Ruling wanted: whether an entity id commits to its session.*
 
 D131 makes an entity's identity (session, entity) in the runtime: a row in
@@ -4433,7 +4534,7 @@ moves.
 
 #### D133 — An unsigned confirm under the creator's id seats the forger before she confirms
 
-*Status: **fixed** 26 September. Filed 25 September from the second cold
+*Status: **fixed** 25 September. Filed 25 September from the second cold
 review of the seat model (finding 3), rated high. Ruled: refuse now. A merge
 refuses an unsigned row in `_dai_seat`, `_dai_binding` and `_dai_confirm`
 (`BATCH_UNSIGNED`, with the author it names), unless the copy already holds a
@@ -4470,7 +4571,7 @@ value. A signed confirm copied from one session into another is refused
 
 #### D132 — Any admitted row supersedes or deletes another author's row of the same entity
 
-*Status: **fixed** 26 September. Filed 25 September from the second cold
+*Status: **fixed** 25 September. Filed 25 September from the second cold
 review of the seat model (finding 2), rated high. Ruled: a replacement is
 admitted under the same check as a new row, and in a seated table a row
 supersedes only rows of its own seat and session. A row naming as its earlier
@@ -4509,7 +4610,7 @@ voids none of her moves" covers `_dai_seat` entities only.
 
 #### D131 — A seat is its bytes, not its session: a stranger plays White from a session of his own
 
-*Status: **fixed** 26 September. Filed 25 September from the second cold
+*Status: **fixed** 25 September. Filed 25 September from the second cold
 review of the seat model (finding 1), rated high. Ruled: a seat is (session,
 seat) everywhere, and an entity belongs to one session. In an
 admission-filtered session table a row supersedes only rows of its own
