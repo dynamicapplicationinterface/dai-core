@@ -4417,7 +4417,9 @@ check runs before the pin, so it replaces the pin's sharper sentences for a held
 replicated copy. An unsigned arrival for a signed held copy is told "published
 by somebody else", not that a signature was stripped. A re-signed one loses
 "Treat it as an impersonation". The second is a choice to make on purpose, not
-a fix.
+a fix. Since D126 reached solo documents (`7a38b47`), the two paths ask in
+different orders: replicated before the pin, solo after it. Unifying the
+wording can revisit the order, with both sets of tests in hand.
 
 The same read found reporting uneven. `console.warn` for D126 and the two
 key-held refusals; `console.error` for the mount guard and D85's two; nothing
@@ -4470,7 +4472,7 @@ open a link to A, pick B's file, and expect B to open under its own key.
 
 #### D126 — "Published by somebody else" cannot fire: the sibling test compares the arriving key with itself
 
-*Status: closed 25 September (`f1f76e4`, `9560321`): CI run `36200300398` read
+*Status: closed 25 September (`f1f76e4`, `9560321`; solo `7a38b47`, CI run `36207287432` green): CI run `36200300398` read
 green, both tests passing on all three engines. Filed the same day from D122's
 second ruling, which tried to make it red and could not.*
 
@@ -4519,6 +4521,21 @@ card. Open pins the stranger's key and records it as the publisher, and
 `chooseCopy` can then replace the held copy. The D85 build refusal catches this
 only when `wrote` is set and both builds are known. **Ruling wanted:** does "a
 different publisher is a different document" reach solo documents?
+
+**Ruled 25 September: yes, every held document, solo included** (D85 from the
+arrival side). **Built in `7a38b47`, red first on Chromium:** a kept solo
+document with its pin gone let a stranger's copy reach the card ("Get"). Now
+the held record's publisher refuses it with `strangersCopy`. The two paths ask
+in a different order, on purpose, and `IDENTITY-ONE-LIVE-COPY` says why. A
+replicated copy asks the held record before the pin, because a merge card must
+never appear for a stranger's copy. A solo copy lets the pin speak first,
+because its sentences are sharper ("not signed at all" for a stripped
+signature) and there is no merge card to reach, then asks the held record, for
+a pin that is gone. Placing it before the pin for solo was run: it replaced the
+pin's sentence in four tests (`opener-trust:54`, `:91`, `trust-consent:68`,
+`:98`), so it was not taken. D129 settles one wording for both and can revisit
+the order then. Held by `trust-consent` "a kept document with its pin gone
+still refuses a stranger's copy".
 
 #### D125 — The reopen test closed B before its seat was saved
 
@@ -5612,8 +5629,18 @@ omission, there by dropping a tap), D80.
 
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
 
-*Status: **open, V1 blocker.** Proven 19 September; not fixed. The fix is what a
-seat is bound to, and that is its own sitting.*
+*Status: **closed 25 September, green re-earned on the seat model**
+(`c997bd4`): CI run `36207287432` read green, both D80 tests passing on all
+three engines. The e2e now makes the strongest forgery a joiner has with rows
+alone, the one that broke the first seat model: Bo binds Ada's own seat at
+clock 0, before any row of hers, then plays White's move for it. Ada's copy
+stores both rows, does not admit the move, and reports `SEAT_NOT_HELD` with
+Bo's id; the test also asserts the backdated binding arrived. Run red with the
+seated admission falling back to membership (Ada's copy admitted `d4`). The
+account below is the history.*
+
+*Earlier status: open, V1 blocker. Proven 19 September. The fix was what a
+seat is bound to, and that was its own sitting (docs/identity.md).*
 
 **One way in closed, 23 September, and it was not this one.** A phone found a
 recipient opening an invite that carried the game and coming up as the creator:
