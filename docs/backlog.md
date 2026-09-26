@@ -4402,6 +4402,108 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D133 — An unsigned confirm under the creator's id seats the forger before she confirms
+
+*Status: open, **rated high**. Filed 25 September from the second cold review
+of the seat model (finding 3); reproduced. Known hole, sharpened. Ruling
+wanted: close it now or leave it to step 6.*
+
+The code already says unsigned rows stay admissible until `BATCH_UNSIGNED`
+arrives in step 6 (`src/replicated.ts:782-785`, `src/replicated-rows.ts:973-976`).
+The review shows what that costs in the seat tables. A `_dai_confirm` row
+stamped with Ada's author id, carrying no batch, merged into her copy before
+she confirms anyone, is admitted, and `_dai_holder` seats the forger in the
+open seat. `confirmSeats` then skips a seat that already has a holder
+(`src/kit.ts:645`), so the real joiner is never seated. A confirm needs no
+binding, and `_dai_holder` does not require the confirmed seat to be an open
+seat the creator minted, so the same unsigned row can seat anyone in any seat
+value. A signed confirm copied from one session into another is refused
+(`BATCH_DIGEST_MISMATCH`); stripped of its batch, it is accepted.
+
+- **Reproduction:** `tests/cold-review-2-seats.spec.ts`, "an unsigned confirm
+  under Ada's id, merged before she confirms, seats the forger" (the file is
+  untracked; see the handoff).
+- **Seen:** `unsigned-confirm report: {"applied":1,...,"refusedBatches":[]}`,
+  then `open seat holder now: [{"r":"98dc…","since":100}]` with `mal: 98dc…`.
+- **Breaks:** `IDENTITY-SEAT-CONFIRMED`, "a row only the creator writes".
+- **One-sentence fix, not ruled:** refuse unsigned rows in the seat tables
+  now, ahead of step 6's general refusal.
+- **Suspected, not run:** a forged unsigned confirm at the creator's id and a
+  future seq is displaced when her real row at that seq arrives
+  (`src/replicated-rows.ts:1009-1030`), so the hold moves, against "a hold never
+  moves".
+
+#### D132 — Any admitted row supersedes or deletes another author's row of the same entity
+
+*Status: open, **rated high**. Filed 25 September from the second cold review
+of the seat model (finding 2); reproduced. Ruling wanted before a fix.*
+
+`_heads` hides a row when some admitted row of the same entity names it as a
+parent (`src/replicated.ts:566-573`). The superseding row is admitted on its
+own seat and session only, so what it supersedes is never asked. Two
+reproductions, every attacker row signed with the attacker's own key and
+merged through `mergeSibling`:
+
+- Bo, seated honestly in the open seat, writes a deleted version of Ada's `e4`
+  naming **his own** seat and her row as its parent. The merge applies it, and
+  Ada's game shows no moves: `joiner-delete report: {"applied":1,...}`, then
+  `Ada's game g1 after the merge: []`.
+- A stranger with no seat in Ada's session does the same from a session of his
+  own: `supersede report: {"applied":2,...}`, then `[]`.
+
+Filtering by `_r_session` in the app would not help; the hiding is in `_heads`.
+The repository's attack test "a member's version of the creator's seat entity
+voids none of her moves" covers `_dai_seat` entities only.
+
+- **Reproduction:** `tests/cold-review-2-seats.spec.ts`, "Bo, seated in the
+  open seat, deletes Ada's e4 with a version naming his own seat" and "a
+  stranger with no seat anywhere in Ada's session supersedes her move from a
+  session of his own".
+- **Breaks:** rule 5 in `docs/identity.md`: a row for a seat its author never
+  held is never admitted. His row is admitted, and hers is gone.
+- **One-sentence fix, not ruled:** a row in a seated table supersedes only rows
+  of its own session that act for the same seat.
+
+#### D131 — A seat is its bytes, not its session: a stranger plays White from a session of his own
+
+*Status: open, **rated high**. Filed 25 September from the second cold review
+of the seat model (finding 1); reproduced. Ruling wanted before a fix.*
+
+Anyone can create a session: pick a nonce, and the session id is the hash of
+their own author id and it, so the rows show them to be its creator. The
+creator's seat row carries whatever 16 bytes they choose, including the bytes
+of Ada's seat. Admission asks whether `_dai_holder` has
+`(r._r_session, r.seat, r._r_replica)` (`src/replicated.ts:542-544`), which is
+true in the attacker's own session. Nothing ties a row's `_r_session` to the
+game it acts in. Chess reads a game's moves by `game_id` with no session
+(`tests/fixture/chess/store.js:186`) and takes the side from the seat bytes
+(`store.js:209-211`, "the side is the seat's"). `IDENTITY-SEAT-ADMITS` tells
+apps to do exactly that: "Read which side a row acts for from its seat."
+
+- **Reproduction:** `tests/cold-review-2-seats.spec.ts`, "a stranger mints a
+  session of his own whose creator seat has the value of Ada's seat, and plays
+  White in her game" (whole-file merge), and "Bo's signed batch of rows in his
+  own session … arrives by mailbox and is admitted" (encode, decode,
+  `stageBatch`, merge, as `applyBatch` does).
+- **Seen:** `cross-session report: {"applied":2,...,"rejected":[],"refusedBatches":[]}`,
+  then `Ada's game g1 after the merge: ["e4@7d2bbyda9f","Qh5@7d2bbyf74c"]`:
+  both name Ada's seat, and the second is the stranger's. No `SEAT_NOT_HELD`,
+  because `_unseated` looks only in the row's own session
+  (`src/replicated.ts:581-585`). The mailbox form gives the same result.
+- **Breaks:** rule 5 and `IDENTITY-SEAT-ADMITS` ("a move for White names
+  White's seat"). This is D80's outcome, a non-creator playing White, without
+  forging any id.
+- **Not run:** in chess in a browser, and over a live mailbox lane. Receiving
+  code does not check a batch's `_r_session` against its lane
+  (`stageBatch`, `src/replicated-batch.ts:625`; `applyBatch`,
+  `src/runtime/bootloader.ts:1495`). An honest runtime publishes the attacker's
+  session on its own lane, so the live routes are a file or a hostile frame
+  publishing on Ada's lane.
+- **One-sentence fix, not ruled:** a side is `(session, seat)` everywhere it is
+  read, and a row's session is tied to the entity or game it acts in.
+- **Same class, not checked:** `_dai_close` under `close=any` from another
+  session.
+
 #### D130 — sign-scope's second document never shows its frame on WebKit, locally
 
 *Status: open. Filed 25 September; measured, pre-existing.*
