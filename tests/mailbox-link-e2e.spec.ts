@@ -2077,8 +2077,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * sender's id); these tests do not take that route. They force the state the
    * route produces, Bo's copy running under Ada's replica id.
    *
-   * The setup both tests share: a game Ada started and Bo joined, one move each,
-   * and then Bo's copy rewrites its own `_dai_replica` to Ada's id.
+   * The setup both tests share: a game Ada started and Bo joined, Ada's copy
+   * seating him in the open seat, one move each, and then Bo's copy rewrites
+   * its own `_dai_replica` to Ada's id.
    */
   async function forgedPair(browser: Browser) {
     const deviceA: BrowserContext = await browser.newContext();
@@ -2090,8 +2091,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "", "e2", "e4");
     const appB = await openLink(pageB, link);
+    // Seated by Ada's copy before anything else: the name is asked once seated.
+    await letIn(pageA, pageB);
     await nameIfAsked(pageB, "Bo", "Ada");
-    await firstMailboxMerge(pageB);
     await play(appB, "e7", "e5");
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
@@ -2131,14 +2133,19 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * Bo, holding Black, may not play from White's seat (IDENTITY-SEAT-ADMITS in
    * src/rules.ts). The signature never refuses this path, because Bo's copy
    * signs as Bo and Bo's batch verifies. Since step 5 a move names the seat it
-   * acts for, and the document admits it only from whoever held that seat when
-   * it was written; Ada's copy stores the row and reports it as
-   * `SEAT_NOT_HELD` with Bo's id. The forger who stamps Ada's id outside the
-   * runtime is the signature's to refuse, and is held by signed-batch test 2.
+   * acts for, and the document admits it only when its author holds that seat:
+   * the creator's seat is the creator's, and the open seat is held by whoever
+   * the creator's copy confirmed. No clock is read. Ada's copy stores the row
+   * and reports it as `SEAT_NOT_HELD` with Bo's id. The forger who stamps
+   * Ada's id outside the runtime is the signature's to refuse, and is held by
+   * signed-batch test 2.
    *
-   * The strongest form of the forgery: the move names Ada's own seat. (A move
-   * that names no seat is refused the same way; tests/seat-admission.spec.ts
-   * holds that case.)
+   * The strongest forgery a joiner can make with rows alone, the one that broke
+   * the first seat model (tests/seat-attacks.spec.ts, its first attack): Bo
+   * binds Ada's own seat at a clock before any of hers, then plays White's move
+   * for it. Under the first model the earliest binding held a seat, so this
+   * took White. (A move that names no seat is refused the same way;
+   * tests/seat-admission.spec.ts holds that case.)
    */
   test("D80: a forged copy's move as the creator is refused by the seat, and both players stay seated", async ({ browser }) => {
     const { deviceA, deviceB, pageA, pageB, appB, beforeA, beforeB } = await forgedPair(browser);
@@ -2147,13 +2154,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
       if (/^dai: merge refused /.test(message.text())) refusals.push(message.text());
     });
 
-    // The forged copy writes White's move at once, around every gate an honest
-    // copy passes (a hostile copy owns its frame): straight into the table, as
+    // The forged copy writes both rows at once, around every gate an honest
+    // copy passes (a hostile copy owns its frame): straight into the tables, as
     // Bo (the key the host signs with) but for Ada's seat. Bo's copy then seals
-    // and publishes it like any row of its own. Not through the board, and not
-    // through the write surface, which refuses a seat this copy does not hold.
-    // How the forger produces the row is scenery; Ada's copy refusing it is the
-    // fact under test.
+    // and publishes them like any rows of its own. Not through the board, and
+    // not through the kit, which binds only an open seat and refuses a move for
+    // a seat this copy does not hold. How the forger produces the rows is
+    // scenery; Ada's copy refusing the move is the fact under test.
     await appFrame(pageB).evaluate(() => {
       const kit = (window as any).daiKit;
       const db = kit.db;
@@ -2162,18 +2169,37 @@ test.describe("a game continues over a shared link (the key path)", () => {
       )[0];
       const adasSeat = kit.seats(game.s).find((seat: { creator: boolean }) => seat.creator).seat;
       const bo = kit.author();
-      const tables = ["games", "moves", "game_events", "_dai_seat", "_dai_binding", "_dai_close"];
+      // Every table that carries a seq, read from the schema rather than
+      // listed, so a table the kit adds (as `_dai_confirm` was) cannot be missed
+      // and the forged rows cannot reuse a seq of Bo's.
+      const tables = db
+        .selectObjects(
+          "SELECT m.name FROM sqlite_master m WHERE m.type = 'table' AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) c WHERE c.name = '_r_seq')",
+        )
+        .map((row: { name: string }) => row.name);
+      if (!tables.includes("_dai_confirm") || !tables.includes("moves")) throw new Error(`seq scan missed a table: ${tables}`);
       const top = Math.max(
-        ...tables.map((t) => Number(db.selectObjects(`SELECT coalesce(max(_r_seq), 0) AS n FROM "${t}" WHERE lower(hex(_r_replica)) = ?`, [bo])[0].n)),
+        ...tables.map((t: string) =>
+          Number(db.selectObjects(`SELECT coalesce(max(_r_seq), 0) AS n FROM "${t}" WHERE lower(hex(_r_replica)) = ?`, [bo])[0].n),
+        ),
       );
       const lc = Number(db.selectObjects("SELECT lc FROM _dai_replica")[0].lc) + 1;
-      const entity = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+      const entity = () =>
+        kit.seatBytes(Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(""));
+      // Bo binds Ada's seat, backdated to a clock before any row of hers.
+      db.exec({
+        sql:
+          "INSERT INTO _dai_binding (seat, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) " +
+          "VALUES (?, ?, ?, 0, ?, '[]', 0, ?)",
+        bind: [kit.seatBytes(adasSeat), kit.seatBytes(bo), top + 1, entity(), kit.seatBytes(game.s)],
+      });
+      // Then plays White's move for it.
       db.exec({
         sql:
           "INSERT INTO moves (seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer, " +
           "_r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) " +
           "VALUES (?, ?, 3, 'w', 'd2', 'd4', NULL, 'd4', 0, ?, ?, ?, ?, '[]', 0, ?)",
-        bind: [kit.seatBytes(adasSeat), game.id, kit.seatBytes(bo), top + 1, lc, kit.seatBytes(entity), kit.seatBytes(game.s)],
+        bind: [kit.seatBytes(adasSeat), game.id, kit.seatBytes(bo), top + 2, lc, entity(), kit.seatBytes(game.s)],
       });
     });
 
@@ -2184,9 +2210,21 @@ test.describe("a game continues over a shared link (the key path)", () => {
           "SELECT san, lower(hex(_r_replica)) r FROM moves WHERE san = 'd4'",
         ) as { san: string; r: string }[],
       );
+    // And the backdated binding with it, so the refusal is of the whole forgery.
+    const forgedBindings = () =>
+      appFrame(pageA).evaluate((bo) => {
+        const kit = (window as any).daiKit;
+        const session = kit.db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s;
+        const adasSeat = String(kit.seats(session).find((seat: { creator: boolean }) => seat.creator).seat).toLowerCase();
+        return kit.db.selectObjects(
+          "SELECT 1 FROM _dai_binding WHERE lower(hex(_r_replica)) = ? AND lower(hex(seat)) = ? AND _r_lc = 0",
+          [bo, adasSeat],
+        ).length;
+      }, beforeB.me);
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
       expect(await arrived(), "the forged move reached Ada's copy").toHaveLength(1);
+      expect(await forgedBindings(), "Bo's backdated binding to Ada's seat reached Ada's copy").toBe(1);
     }).toPass({ timeout: 30_000 });
 
     const afterA = await seatRows(pageA);
