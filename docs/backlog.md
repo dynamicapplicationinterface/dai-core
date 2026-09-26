@@ -4402,6 +4402,116 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D140 — The stored `_r_superseded` flag is still a source of truth: a rival asker makes a contested seat hers
+
+*Status: **ruled — not built.** Filed 26 September from the fourth cold review
+(of D135's fix, finding 1), rated high. Ruled 26 September, for the class:
+`_r_superseded` is a display cache, demoted the way `_dai_replica` was. No
+view, writer, gate or kit read derives "current" from it; each derives it from
+admission within the row's own partition (session, and seat where the table is
+seated). A check in the names-check family fails any SQL in `src/`, the kit or
+the bootloader that reads the flag, so a fifth instance is impossible, not
+unlikely. This closes D140 and D141 with one change. The suspected bootloader
+case below is run on the page first; if it reproduces, the gate reads the
+admission view and falls under the same check. D134 stays in step 6: this
+stops the exploit whether or not ids can collide. Own commit, before D127,
+with the review's six probes folded into `tests/seat-attacks.spec.ts` as
+`test.fail` and flipped.*
+
+D138 made `_pending` compute supersession within the partition. `_dai_binding_current`
+still reads the stored flag, which `applyRow` sets from any child of the
+entity, whatever its session. The kit's `confirmSeats` and `pendingSeat`, and
+admission's `waiting` predicate (shared by `writeTargetOf`), read that view.
+
+Bo and Cy both ask for Ada's open seat. Cy, signing with her own key, mints a
+session of her own and writes a `_dai_binding` row there that reuses Bo's
+binding's entity id and names Bo's binding as its parent. Once Ada's copy
+merges Bo's and then Cy's, `confirmSeats`' query returns one asker, Cy, where
+two asked: the kit confirms Cy by itself instead of showing the contest
+(SESSION-CONTESTED-SEAT).
+
+- **Reproduction:** the fourth review's probe, "the kit's auto-confirm: a rival
+  asker's row naming Bo's binding makes the contested seat hers"; `confirmSeats`'
+  SQL run verbatim returns `n: 1, who: <Cy>`, expected 2.
+- **Not changed by D135's fix:** the view's definition is the same at `5fc27bc^`.
+- **Suspected, not run:** the bootloader's seat gate reads the raw
+  `_dai_binding` table, not admission's `waiting`. A copy whose ask names a
+  retired seat (after a reseat), or whose binding was superseded as above,
+  would pass the gate and write rows that are neither admitted, nor pending,
+  nor reported. Runs only on the page.
+
+#### D141 — A stranger's row in her own session takes a waiting joiner out of waiting
+
+*Status: **ruled — not built.** Filed 26 September from the fourth cold
+review (finding 2), rated medium. Ruled with D140: same root, one change.*
+
+Anyone who holds a copy can write the D140 row: a `_dai_binding` row in a
+session of their own reusing Bo's binding's entity id, naming it as a parent.
+On Bo's copy his binding drops out of `_dai_binding_current`, so he no longer
+waits: his pending move leaves his screen and his writer refuses to version
+it (`ROW_REJECTED`, "holds no version"). The roster branch of `writeTargetOf`
+still finds his binding as his head, so the writer and admission disagree.
+
+- **Reproduction:** the fourth review's probe, "a stranger's `_dai_binding`
+  row in her own session naming Bo's binding takes Bo out of waiting": pending
+  `["e5"]` expected, `[]` seen; the change throws.
+
+#### D142 — A rival asker's pending row hides a waiting joiner's row, and forks his next change
+
+*Status: **ruled — not built.** Filed 26 September from the fourth cold
+review (question 3), rated medium. Ruled: a pending row is superseded only by
+an admitted row or by a row of its own author. Second commit after D140's,
+before D127.*
+
+D138's rule lets any waiting row supersede a pending row in its partition,
+and another asker's row may never be admitted. Bo and Cy both ask for the open
+seat. Cy writes a row in the open seat naming Bo's pending move (a tombstone)
+or his pending rename as its parent. On Bo's copy, his move leaves his pending
+view and his writer refuses to change it; once he is confirmed, Cy's row is
+refused and the move stands, so while waiting he is refused a write he may make
+once seated. With a rename, Bo's next rename versions the creator's head
+instead of his own first rename, and after he is confirmed the game has two
+heads: his own two renames conflict.
+
+- **Reproduction:** the fourth review's probes, "a rival waiter's row naming
+  Bo's waiting move hides it …" (pending `["e5"]` expected, `[]` seen; the
+  change throws) and "… naming Bo's waiting rename: Bo's next rename does not
+  version his first" (heads 2, expected 1). Control: "the same, after Ada
+  confirms Bo" passes.
+
+#### D143 — A waiting delete then change forks the entity, with no attacker
+
+*Status: **ruled — not built.** Filed 26 September from the fourth cold
+review (question 3), rated medium. Ruled: `writeTargetOf` counts this copy's
+own waiting tombstones. With D142.*
+
+`_pending` holds no deleted row, so `writeTargetOf` never sees a waiting
+copy's own tombstone. Bo, waiting, deletes Ada's game and then renames it: the
+rename names Ada's head, not his tombstone. Seated, the same two writes chain.
+After Ada confirms him, the tombstone and the rename are sibling heads and the
+game shows conflicted.
+
+- **Reproduction:** the fourth review's probe, "an honest waiting delete then
+  rename lands on a different parent than a seated one": the rename's parents
+  are Ada's head, expected the tombstone; heads 2, expected 1.
+
+#### D144 — A change can name a seat other than its head's, and is silently never admitted
+
+*Status: **ruled — not built.** Filed 26 September from the fourth cold
+review (finding 3), rated low. Ruled: `writeTargetOf` returns the seat, and the
+writer refuses a change whose seat differs from its heads', `SEAT_NOT_HELD`.
+With D142.*
+
+`writeTargetOf` returns the session and heads but not the seat, and
+`changeEntity` takes the seat column from its caller. Bo, seated, changes his
+own move naming the creator's seat: the row layer writes it, admission never
+admits it (a row naming another seat's row), and nothing is said. The
+bootloader's seat gate probably refuses the same call from an app, except on a
+copy that holds both seats (a solo board); not run on the page.
+
+- **Reproduction:** the fourth review's probe, "a row layer change of Bo's own
+  move naming the creator's seat": no throw, current `["e4","e5"]`.
+
 #### D139 — sealed-leave's first test retries on WebKit in CI
 
 *Status: open, not chased. Filed 25 September: WebKit half 2 retried
