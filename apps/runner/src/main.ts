@@ -1915,41 +1915,55 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * with nothing in the library to delete and so no way to undo it.
      */
     /*
-     * The same id, from somebody else, for a replicated document held here.
+     * The same id, from somebody else, for a document held here.
      *
      * A different publisher is a different document (D126, ruled 25
-     * September), so it is never offered as a merge into the copy here, pinned
-     * or not. The arriving publisher is compared with the held record's own,
-     * written by the keep and by every save; it used to be compared with
-     * itself, and the pin was the only guard, so a copy kept with its pin gone
-     * was offered a stranger's rows. Asked before the pin, so a held copy is
-     * refused in the words for what happened, whether or not it is pinned. It
-     * cannot be opened beside the copy here either:
+     * September, and extended the same day to every held document, solo
+     * included), so it is never offered as a merge into the copy here, nor
+     * opened in its place, pinned or not. The arriving publisher is compared
+     * with the held record's own, written by the keep and by every save; it
+     * used to be compared with itself, and the pin was the only guard, so a
+     * copy kept with its pin gone was offered a stranger's rows, and a solo
+     * copy reached the card. It cannot be opened beside the copy here either:
      * this host keeps one copy per document, so opening it would mean
      * replacing the person's own.
+     *
+     * The two paths ask in a different order, on purpose. A replicated copy
+     * is asked before the pin, because a merge card must never appear for a
+     * stranger's copy, so it is refused in these words whether or not it is
+     * pinned. A solo copy lets the pin speak first, because its sentences are
+     * sharper ("not signed at all" for a stripped signature) and there is no
+     * merge card to reach; the held record answers after it, for what the pin
+     * cannot see, a pin that is gone. D129 settles one wording for both.
      */
-    if (declaresReplication(cartridge.manifest)) {
-      const held = await getCartridgeFromLibrary(cartridge.manifest.documentUuid).catch(() => null);
-      const kin = held
-        ? siblingTest(
-            { documentUuid: cartridge.manifest.documentUuid, publicKeyFingerprint: cartridge.publicKeyFingerprint, replicated: true },
-            { documentUuid: held.documentUuid, publicKeyFingerprint: held.publicKeyFingerprint, replicated: true },
-          )
-        : undefined;
-      if (kin?.sibling === false && kin.because === "different-publisher") {
-        console.warn(
-          `dai: refused a link to ${cartridge.manifest.documentUuid}: this device holds it from another publisher, ` +
-            `and a different publisher is a different document`,
-        );
-        refuseArrival(strangersCopy(cartridge.manifest.appName));
-        return;
-      }
+    const heldRecord = await getCartridgeFromLibrary(cartridge.manifest.documentUuid).catch(() => null);
+    const publisher = heldRecord
+      ? siblingTest(
+          { documentUuid: cartridge.manifest.documentUuid, publicKeyFingerprint: cartridge.publicKeyFingerprint },
+          { documentUuid: heldRecord.documentUuid, publicKeyFingerprint: heldRecord.publicKeyFingerprint },
+        )
+      : undefined;
+    const refuseStrangersCopy = (): void => {
+      console.warn(
+        `dai: refused a link to ${cartridge.manifest.documentUuid}: this device holds it from another publisher, ` +
+          `and a different publisher is a different document`,
+      );
+      refuseArrival(strangersCopy(cartridge.manifest.appName));
+    };
+    const fromAStranger = publisher?.sibling === false && publisher.because === "different-publisher";
+    if (fromAStranger && declaresReplication(cartridge.manifest)) {
+      refuseStrangersCopy();
+      return;
     }
 
     markStep("checking trust");
     const verdict = await trustVerdict(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
       refuseArrival(verdict.message);
+      return;
+    }
+    if (fromAStranger) {
+      refuseStrangersCopy();
       return;
     }
 
