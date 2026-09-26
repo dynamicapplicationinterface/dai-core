@@ -862,7 +862,10 @@ CREATE TABLE moves (
   test("create, change and delete all carry the session, delete taking it from the head", () => {
     const db = openSession();
     ensureReplica(db, A);
-    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
+    // A session A created, so A writes in it: a writer versions only heads of a
+    // session it is a member of or waits in (D135).
+    const s = startSession(db, { nonce: bytes(0x61), creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, s);
     // Change and delete are not told the session — they inherit it from the
     // entity's head, so an entity keeps one session for its whole history.
     changeEntity(db, "moves", E1, { ply: 1, san: "e4!" });
@@ -870,7 +873,7 @@ CREATE TABLE moves (
 
     const sessions = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
     expect(sessions).toHaveLength(3);
-    expect(new Set(sessions)).toEqual(new Set([hx(S1)]));
+    expect(new Set(sessions)).toEqual(new Set([hx(s)]));
     db.close();
   });
 
@@ -1012,10 +1015,12 @@ CREATE TABLE prefs (
     // copy — the game arrives whole.
     const a = openFilter();
     ensureReplica(a, A);
-    createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
+    // A game A created, so A's change finds its head there (D135).
+    const s1 = startSession(a, { nonce: bytes(0x61), creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    createEntity(a, "moves", E1, { ply: 1, san: "e4" }, s1);
     changeEntity(a, "moves", E1, { ply: 1, san: "e4!" });
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
-    filterToSession(a, S1);
+    filterToSession(a, s1);
 
     const fresh = openFilter();
     ensureReplica(fresh, B);

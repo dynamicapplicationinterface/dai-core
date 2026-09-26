@@ -582,21 +582,29 @@ function headsView(
     ` WHERE b._r_session = ${row}._r_session AND b._r_replica = ${row}._r_replica` +
     (seatColumn ? ` AND b.seat = ${row}."${seatColumn}"` : "") +
     ` AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat))`;
+  const pendingRow = (row: string): string =>
+    `${waiting(row)} AND NOT ${foreign(row)}${seatColumn ? ` AND NOT ${otherSeat(row)}` : ""} AND ${notLate(row)}${byRole(row)}`;
   // Only a row of r's own entity can supersede it (T1-D35), only one of r's
   // own session (D131), and in a seated table only one of r's own seat (D132).
+  const supersededBy = (row: string, gate: string): string =>
+    `EXISTS (
+       SELECT 1 FROM ${q} c, json_each(c._r_parents) p
+        WHERE c._r_entity = ${row}._r_entity AND c._r_session = ${row}._r_session${seatColumn ? ` AND c."${seatColumn}" = ${row}."${seatColumn}"` : ""}
+          AND ${gate}
+          AND p.value = lower(hex(${row}._r_replica)) || ':' || ${row}._r_seq
+     )`;
+  // A waiting row is superseded the same way, by an admitted or waiting row of
+  // its own partition, never by the stored flag, which a row of another seat
+  // or session naming it raises (D138).
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
-     AND NOT EXISTS (
-       SELECT 1 FROM ${q} c, json_each(c._r_parents) p
-        WHERE c._r_entity = r._r_entity AND c._r_session = r._r_session${seatColumn ? ` AND c."${seatColumn}" = r."${seatColumn}"` : ""}
-          AND ${admitted("c")}
-          AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
-     );
+     AND NOT ${supersededBy("r", admitted("c"))};
 
 CREATE VIEW IF NOT EXISTS ${q}_pending AS
   SELECT r.* FROM ${q} r
-   WHERE r._r_superseded = 0 AND r._r_deleted = 0 AND ${waiting("r")} AND NOT ${foreign("r")}${seatColumn ? ` AND NOT ${otherSeat("r")}` : ""} AND ${notLate("r")}${byRole("r")};
+   WHERE r._r_deleted = 0 AND ${pendingRow("r")}
+     AND NOT ${supersededBy("r", `((${admitted("c")}) OR (${pendingRow("c")}))`)};
 
 -- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
 -- earlier version a row of its entity from another session, with that parent.
@@ -844,7 +852,8 @@ CREATE VIEW IF NOT EXISTS _dai_creator AS
      AND ${SESSION_ID_FUNCTION}(s._r_replica, s.nonce) = s._r_session;
 
 -- The open seats the creator minted, each at its current value among her own
--- versions: a version another author wrote of her seat row is not hers.
+-- versions in that session: a version another author wrote of her seat row is
+-- not hers, and neither is one in another session (D136).
 CREATE VIEW IF NOT EXISTS _dai_open_seat AS
   SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
     FROM _dai_seat s
@@ -852,7 +861,7 @@ CREATE VIEW IF NOT EXISTS _dai_open_seat AS
    WHERE s.nonce IS NULL AND s._r_deleted = 0
      AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
      AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(n._r_parents) p
-                      WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica
+                      WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
                         AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);
 
 CREATE VIEW IF NOT EXISTS _dai_holder AS

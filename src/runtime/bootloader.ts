@@ -1911,10 +1911,10 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
      * fixes. The creator test is the one `close` uses: the seat rows name the
      * creator, and the author is this copy's key.
      */
-    const sessionOfEntity = (table: string, id: Uint8Array): Uint8Array | undefined => {
-      const found = rows.all(`SELECT _r_session AS s FROM "${table.replace(/"/g, '""')}" WHERE _r_entity = ? LIMIT 1`, [id])[0]?.["s"];
-      return found instanceof Uint8Array ? found : undefined;
-    };
+    // The session a change or delete writes in: the one its writer versions
+    // (`writeTargetOf`, D135), so a gate checks the session the row will carry.
+    const sessionOfEntity = (table: string, id: Uint8Array): Uint8Array | undefined =>
+      rules().writeTargetOf(rows, table, id).session;
     /*
      * Whether `me` (hex) is the session's creator: the author of its first
      * verified seat row, as `_dai_creator` decides it (identity step 5). Not

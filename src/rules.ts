@@ -686,7 +686,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     anchors: [
       { file: "src/replicated-rows.ts", contains: "carries no session, but" },
       { file: "src/replicated.ts", contains: "_r_session    BLOB    NOT NULL" },
-      { file: "src/replicated-rows.ts", contains: "The session is inherited from the entity's head" },
+      { file: "src/replicated-rows.ts", contains: "The session is inherited from the heads this copy versions" },
     ],
   },
   {

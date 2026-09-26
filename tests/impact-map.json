@@ -306,16 +306,6 @@
       "tests/cold-open.spec.ts",
       "website/public/sample-intact.dai"
     ],
-    "tests/cold-review-3-probe.spec.ts": [
-      "src/cbor.ts",
-      "src/identity.ts",
-      "src/replicated-batch.ts",
-      "src/replicated-frame.ts",
-      "src/replicated-rows.ts",
-      "src/replicated.ts",
-      "src/session-id.ts",
-      "tests/cold-review-3-probe.spec.ts"
-    ],
     "tests/conformance.spec.ts": [
       "src/cbor.ts",
       "src/container.ts",

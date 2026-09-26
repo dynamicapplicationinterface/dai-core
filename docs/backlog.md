@@ -4417,8 +4417,18 @@ commit touched the save or the seal.*
 
 #### D135 — The honest writers version an entity across partitions, so a stranger's row freezes an honest change
 
-*Status: open, rated medium. Filed 25 September from the third cold review
-(the seams between D131, D132 and D133, finding 1); reproduced. Ruling wanted.*
+*Status: **fixed** 26 September, with D136 to D138 as one fix. Filed 25
+September from the third cold review (the seams between D131, D132 and D133,
+finding 1), rated medium. Ruled: a writer decides the head the way admission
+does, through the admitted view for its own session and seat, never the stored
+flag. `writeTargetOf` (`src/replicated-rows.ts`) is that one reading, and
+`headsOf`, `changeEntity`, `deleteEntity`, reseat and the bootloader's write
+gates all take their heads and session from it: `t_heads` in a session this
+copy is a member of or waits in (in a seated table its own rows), its own rows in
+`t_pending`, and in a roster table its own versions. No such partition, or two
+(an id reused across partitions this copy writes in, D134), refuses the write
+`ROW_REJECTED` rather than guess. Held by `tests/seat-attacks.spec.ts`, "cold
+review 3", each shown red on its own `test.fail` first.*
 
 `headsOf`, `changeEntity` and `deleteEntity` (`src/replicated-rows.ts`) still
 treat an entity as `_r_entity` alone: every row of it with a stored
@@ -4429,9 +4439,9 @@ a parentless row that reuses an entity id in another partition, which is legal
 (D134), poisons the honest writer's next version: it names a row of another
 partition, is stored, never admitted, and reported under the honest author.
 
-- **Reproduction:** `tests/cold-review-3-probe.spec.ts` (untracked), "games:
-  Mallory's row in his own session at lc 1 / lc 1000000 freezes Ada's rename of
-  her game". Chess's `rename`, `setMyName` and `keepNames` go through
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: a
+  stranger's row in his own session reusing a game's entity id", at lc 1 and lc
+  1000000. Chess's `rename`, `setMyName` and `keepNames` go through
   `writer.change` on `games`.
 - **Seen:** at lc 1000000, Ada's rename row lands in Mallory's session, naming
   both heads; `games_current` stays "Ada v Bo" on both copies, and the merge
@@ -4447,8 +4457,10 @@ partition, is stored, never admitted, and reported under the honest author.
 
 #### D136 — A reseat can carry the creator's fresh seat out of her session
 
-*Status: open, rated medium. Filed 25 September from the third cold review
-(finding 2); reproduced. Ruling wanted.*
+*Status: **fixed** 26 September, by D135's fix: reseat versions only the
+creator's own seat rows in the session, and `_dai_open_seat`'s retire check
+also requires `n._r_session = s._r_session`. Filed 25 September from the third
+cold review (finding 2), rated medium.*
 
 The repair for a contested seat is the creator's `reseat`, which versions the
 open seat's `_dai_seat` row through `changeEntity`, so it has D135's fault in a
@@ -4459,8 +4471,8 @@ clock. Ada's reseat row then lands in that session, and `_dai_open_seat`'s
 retire check (`n._r_entity = s._r_entity AND n._r_replica = s._r_replica`)
 ignores the session, so her own row there retires her open seat.
 
-- **Reproduction:** `tests/cold-review-3-probe.spec.ts`, "reseat: a row in
-  another session reusing the open seat's entity id carries Ada's fresh seat
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: a row of
+  another session reusing the open seat's entity id does not carry Ada's reseat
   out of her session".
 - **Seen:** `merge of Cy into Ada: []`; the reseat row in the other session;
   `Ada's open seats after reseat: []`; and no contested seat left, so a second
@@ -4470,9 +4482,11 @@ ignores the session, so her own row there retires her open seat.
 
 #### D137 — The other seat's parentless row blocks a player's delete of her own row
 
-*Status: open, rated medium for an app that versions seated rows, low for
-chess today (it never changes or deletes a move). Filed 25 September from the
-third cold review (finding 3); reproduced.*
+*Status: **fixed** 26 September, by D135's fix: a delete's parents and the
+columns its tombstone carries come from this copy's own seat only. Filed 25
+September from the third cold review (finding 3), rated medium for an app that
+versions seated rows, low for chess today (it never changes or deletes a
+move).*
 
 D132's seat form of D135. Bo, seated honestly, writes a parentless move for
 his own seat reusing the id of Ada's e4: admitted, as a separate entity in his
@@ -4481,14 +4495,18 @@ at a high clock copies Bo's seat into her tombstone), so her tombstone crosses
 seats: stored, never admitted, reported `SEAT_NOT_HELD` against her, and her e4
 stands. This defeats D132's own counter-case with one legitimate row.
 
-- **Reproduction:** `tests/cold-review-3-probe.spec.ts`, "moves: Bo's row in
-  his own seat at lc 1 / lc 1000000, then Ada takes back her e4".
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: a seated
+  player's row in his own seat reusing the other seat's entity id", at lc 1 and
+  lc 1000000.
 - **One-sentence fix, not ruled:** D135's.
 
 #### D138 — A row of the other seat hides a waiting move from its author's screen
 
-*Status: open, rated low. Filed 25 September from the third cold review
-(finding 4); reproduced. The seat form of D134's note on the stored flag.*
+*Status: **fixed** 26 September, with D135: `t_pending` computes
+supersession within the row's partition, by an admitted or waiting row, never
+from the stored flag. Filed 25 September from the third cold review (finding
+4), rated low. The seat form of D134's note on the stored flag, which the same
+change closes.*
 
 `applyRow` sets a parent's stored `_r_superseded` from any child of its
 entity, and `_pending` reads the stored flag. The creator writes a row in her
@@ -4497,16 +4515,18 @@ it (it crosses seats, `SEAT_NOT_HELD`), but the joiner's own move drops out of
 his `_pending`, so his screen loses a move he made. Transient: once he is
 confirmed, `_heads` admits it.
 
-- **Reproduction:** `tests/cold-review-3-probe.spec.ts`, "_pending: the
-  creator's row in her seat naming a waiting joiner's move hides it from his own
-  screen". Seen: pending `["e5"]` before the merge, `[]` after.
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: the
+  creator's row in her own seat naming a waiting joiner's move leaves it on his
+  screen". Seen before the fix: pending `["e5"]` before the merge, `[]` after.
 - **One-sentence fix, not ruled:** `_pending` computes supersession as
   `_heads` does, within the partition, instead of reading the stored flag.
 
 #### D134 — An entity id reused in another session is a second entity, and an app reading by id alone sees two
 
-*Status: open. Filed 25 September with the D131 fix; not reproduced in an app.
-Ruling wanted: whether an entity id commits to its session.*
+*Status: open, ruled 26 September: folds into step 6's format bump, where the
+entity key becomes (session, entity); not before. Until then a write to an id
+this copy holds in two of its own partitions is refused, not guessed (D135's
+fix). Filed 25 September with the D131 fix; not reproduced in an app.*
 
 D131 makes an entity's identity (session, entity) in the runtime: a row in
 another session that names one of the entity's rows as its parent is never
@@ -4527,10 +4547,9 @@ moves.
   and a nonce, with the nonce on the root row), so a parentless row whose id
   does not hash from its own session is refused; a format change. (b) The kit
   and apps key every row by (session, entity), and `active_game_id` names both.
-- **Same class, read and not run:** a pending row's stored `_r_superseded` flag is set by any row
-  of its entity naming it, whatever its session, so a version from another
-  session can hide a waiting move from `_pending` on the copy that wrote it.
-  Admission is unaffected, since `_heads` ignores the flag.
+- **Same class, closed by D138's fix:** a pending row's stored `_r_superseded`
+  flag is set by any row of its entity naming it, whatever its session, and
+  `_pending` read it; it now computes supersession within the partition.
 
 #### D133 — An unsigned confirm under the creator's id seats the forger before she confirms
 

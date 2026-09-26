@@ -688,7 +688,6 @@ const contestedSeats = (db: Rows, session: Uint8Array) =>
 test.describe("cold review 3: a stranger's row in his own session reusing a game's entity id", () => {
   for (const lc of [1, 1_000_000]) {
     test(`at lc ${lc}, Ada's honest rename of her game is admitted and nothing of hers is reported`, async () => {
-      test.fail(true, "D135: changeEntity takes its session and parents from every row of the id, across sessions");
       const ada = await person();
       const bo = await person();
       const { adaCopy, boCopy, session, game } = await honestGame(ada, bo);
@@ -751,7 +750,6 @@ test.describe("cold review 3: a stranger's row in his own session reusing a game
 });
 
 test("cold review 3: a row of another session reusing the open seat's entity id does not carry Ada's reseat out of her session", async () => {
-  test.fail(true, "D136: reseat's changeEntity takes the session of whichever row of the seat's id has the highest clock");
   const ada = await person();
   const bo = await person();
   const cy = await person();
@@ -792,7 +790,6 @@ test("cold review 3: a row of another session reusing the open seat's entity id 
 test.describe("cold review 3: a seated player's row in his own seat reusing the other seat's entity id", () => {
   for (const lc of [1, 1_000_000]) {
     test(`at lc ${lc}, Ada's delete of her own e4 takes it back and nothing of hers is reported`, async () => {
-      test.fail(true, "D137: deleteEntity takes its parents and columns from every row of the id, across seats");
       const ada = await person();
       const bo = await person();
       const { adaCopy, boCopy, session, openSeat, e4 } = await honestGame(ada, bo);
@@ -815,7 +812,6 @@ test.describe("cold review 3: a seated player's row in his own seat reusing the 
 });
 
 test("cold review 3: the creator's row in her own seat naming a waiting joiner's move leaves it on his screen", async () => {
-  test.fail(true, "D138: t_pending reads the stored _r_superseded flag, which a row of another seat raises");
   const ada = await person();
   const bo = await person();
   const adaCopy = openGame();
@@ -846,4 +842,69 @@ test("cold review 3: the creator's row in her own seat naming a waiting joiner's
   expect(pending, "Bo's waiting move is still on his own screen").toEqual(["e5"]);
   adaCopy.close();
   boCopy.close();
+});
+
+test("cold review 3: a waiting joiner's change of his own waiting move versions it, and it is admitted once he is confirmed", async () => {
+  const ada = await person();
+  const bo = await person();
+  const adaCopy = openGame();
+  ensureReplica(adaCopy, ada.author);
+  const openSeat = rnd();
+  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat, entities: [rnd(), rnd()] });
+  await seal(adaCopy, ada);
+  const boCopy = openGame();
+  ensureReplica(boCopy, bo.author);
+  await merge(boCopy, adaCopy, bo);
+  createEntity(boCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
+  const m = createEntity(boCopy, "moves", rnd(), { seat: openSeat, game_id: "g1", san: "e5" }, session);
+  // Bo's heads come from moves_pending, his own waiting rows: nothing admits them yet.
+  const changed = changeEntity(boCopy, "moves", m._r_entity, { seat: openSeat, game_id: "g1", san: "e6" });
+  expect(hex(changed._r_session!), "the change stays in the game's session").toBe(hex(session));
+  expect(boCopy.all("SELECT san FROM moves_pending").map((r) => String(r["san"])), "his screen shows the new version only").toEqual(["e6"]);
+  await seal(boCopy, bo);
+  await merge(adaCopy, boCopy, ada);
+  confirmSeat(adaCopy, session, openSeat, bo.author, rnd());
+  expect(adaCopy.all("SELECT san FROM moves_current").map((r) => String(r["san"])), "once confirmed, the new version is the move").toEqual(["e6"]);
+  adaCopy.close();
+  boCopy.close();
+});
+
+test("cold review 3: a waiting joiner's rename of the creator's game waits with him, and stands once he is confirmed", async () => {
+  const ada = await person();
+  const bo = await person();
+  const adaCopy = openGame();
+  ensureReplica(adaCopy, ada.author);
+  const openSeat = rnd();
+  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat, entities: [rnd(), rnd()] });
+  const game = createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
+  await seal(adaCopy, ada);
+  const boCopy = openGame();
+  ensureReplica(boCopy, bo.author);
+  await merge(boCopy, adaCopy, bo);
+  createEntity(boCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
+  // Bo waits in the session, not yet a member: the game's head is Ada's, admitted, in a session he waits in.
+  const renamed = changeEntity(boCopy, "games", game._r_entity, { title: "Ada v Bo, renamed" });
+  expect(hex(renamed._r_session!), "the rename stays in the game's session").toBe(hex(session));
+  expect(boCopy.all("SELECT title FROM games_pending").map((r) => String(r["title"])), "it waits on his screen").toEqual(["Ada v Bo, renamed"]);
+  await seal(boCopy, bo);
+  await merge(adaCopy, boCopy, ada);
+  confirmSeat(adaCopy, session, openSeat, bo.author, rnd());
+  expect(titles(adaCopy, session), "once he is confirmed, the rename is the game's name").toEqual(["Ada v Bo, renamed"]);
+  adaCopy.close();
+  boCopy.close();
+});
+
+test("cold review 3: an entity id in two sessions this copy writes in is refused, not guessed (D134)", async () => {
+  const ada = await person();
+  const adaCopy = openGame();
+  ensureReplica(adaCopy, ada.author);
+  const s1 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const s2 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const game = createEntity(adaCopy, "games", rnd(), { title: "first" }, s1);
+  createEntity(adaCopy, "games", game._r_entity, { title: "second" }, s2);
+  expect(() => changeEntity(adaCopy, "games", game._r_entity, { title: "renamed" }), "a rename cannot tell which game").toThrow(/D134/);
+  expect(() => deleteEntity(adaCopy, "games", game._r_entity), "nor can a delete").toThrow(/D134/);
+  expect(titles(adaCopy, s1)).toEqual(["first"]);
+  expect(titles(adaCopy, s2)).toEqual(["second"]);
+  adaCopy.close();
 });
