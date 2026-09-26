@@ -1945,11 +1945,15 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         "SELECT 1 FROM _dai_holder WHERE session = ? AND seat = ? AND lower(hex(replica)) = ? LIMIT 1",
         [session, seat, me],
       );
-      // Pending: this copy asked for the seat and nobody holds it yet. The row
-      // is written, and admitted once the creator confirms this copy in it.
+      // Pending: this copy waits in the seat, as admission's `waiting` reads
+      // it: its current ask names an open seat the creator still has, and
+      // nobody holds it yet. The row is written, and admitted once the creator
+      // confirms this copy in it. Not the raw ask: an ask for a seat a reseat
+      // retired let a row through that nothing admits or reports (D140).
       const pending = rows.all(
-        "SELECT 1 FROM _dai_binding b WHERE b._r_session = ? AND b.seat = ? AND lower(hex(b._r_replica)) = ? " +
-          "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = b._r_session AND h.seat = b.seat) LIMIT 1",
+        "SELECT 1 FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat " +
+          "WHERE b._r_session = ? AND b.seat = ? AND lower(hex(b._r_replica)) = ? " +
+          "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) LIMIT 1",
         [session, seat, me],
       );
       if (held.length === 0 && pending.length === 0) {

@@ -692,6 +692,12 @@
       "src/handoff.ts",
       "tests/file-handoff.spec.ts"
     ],
+    "tests/flag-check.spec.ts": [
+      "scripts/check-flag.mjs",
+      "src/flag-check.ts",
+      "src/replicated.ts",
+      "tests/flag-check.spec.ts"
+    ],
     "tests/forget.spec.ts": [
       "apps/runner/api/",
       "src/cbor.ts",
@@ -3027,6 +3033,17 @@
       "tests/fixture/chess/engine.js",
       "tests/fixture/chess/store.js",
       "tests/seat-attacks.spec.ts"
+    ],
+    "tests/seat-gate-page.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/seat-attacks.spec.ts",
+      "tests/seat-gate-page.spec.ts",
+      "tsup.config.ts"
     ],
     "tests/seat-writes.spec.ts": [
       "scripts/check-seats.mjs",

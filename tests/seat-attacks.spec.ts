@@ -29,6 +29,10 @@ import { Store } from "./fixture/chess/store.js";
  * `honestRoster` is the one part of this file that follows the seat model: it
  * builds the session every attack starts from, the way the kit would. The
  * attack rows and the assertions do not depend on the model.
+ *
+ * The attacks on the runtime's write gates, which need a document frame, are
+ * in `tests/seat-gate-*.spec.ts`. They are kept apart so this file runs on node
+ * alone: the project a spec runs in is chosen by the words in it (D110).
  */
 
 const SCHEMA = `-- dai:profile session max_parties=2 close=creator
@@ -907,4 +911,168 @@ test("cold review 3: an entity id in two sessions this copy writes in is refused
   expect(titles(adaCopy, s1)).toEqual(["first"]);
   expect(titles(adaCopy, s2)).toEqual(["second"]);
   adaCopy.close();
+});
+
+/*
+ * The fourth cold review, of D135's fix: what a waiting joiner's writes version.
+ * Two faces of one class, the stored _r_superseded flag still read as truth
+ * (D140, D141), and three writer seams (D142 to D144). A test marked test.fail
+ * is a hole still open; its note names the entry whose fix flips it.
+ */
+
+const pendingSans = (db: Rows) => db.all("SELECT san FROM moves_pending ORDER BY san").map((r) => String(r["san"]));
+const currentSans = (db: Rows) => db.all("SELECT san FROM moves_current ORDER BY san").map((r) => String(r["san"]));
+const rowId = (r: ReplicatedRow) => `${hex(r._r_replica)}:${r._r_seq}`;
+const gameHeads = (db: Rows, session: Uint8Array) =>
+  Number(db.all("SELECT count(*) AS n FROM games_heads WHERE _r_session = ?", [session])[0]!["n"]);
+const writeError = (write: () => unknown): string => {
+  try {
+    write();
+    return "";
+  } catch (e) {
+    return String(e);
+  }
+};
+
+/** Ada's session, her game and her e4; Bo (and Cy, when asked) ask for the open seat and wait. */
+async function waitingGame(o: { cy?: boolean } = {}) {
+  const ada = await person();
+  const bo = await person();
+  const cy = await person();
+  const adaCopy = openGame();
+  ensureReplica(adaCopy, ada.author);
+  const creatorSeat = rnd();
+  const openSeat = rnd();
+  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const game = createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
+  createEntity(adaCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", san: "e4" }, session);
+  await seal(adaCopy, ada);
+  const boCopy = openGame();
+  ensureReplica(boCopy, bo.author);
+  await merge(boCopy, adaCopy, bo);
+  const boBinding = createEntity(boCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
+  await seal(boCopy, bo);
+  const cyCopy = openGame();
+  ensureReplica(cyCopy, cy.author);
+  if (o.cy) {
+    await merge(cyCopy, adaCopy, cy);
+    createEntity(cyCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
+    await seal(cyCopy, cy);
+  }
+  const close = () => [adaCopy, boCopy, cyCopy].forEach((c) => c.close());
+  return { ada, bo, cy, adaCopy, boCopy, cyCopy, session, creatorSeat, openSeat, game, boBinding, close };
+}
+
+/** A binding row in a session the writer mints for itself, reusing the id of Bo's binding and naming it as the earlier version. */
+async function bindingInOwnSession(db: Copy, who: Person, boBinding: ReplicatedRow): Promise<void> {
+  const nonce = rnd();
+  const own = sessionIdOf(who.author, nonce)!;
+  createEntity(db, "_dai_seat", rnd(), { seat: rnd(), nonce }, own);
+  raw(db, who, "_dai_binding", { entity: boBinding._r_entity, lc: 5, parents: [rowId(boBinding)], session: own, columns: { seat: rnd() } });
+  await seal(db, who);
+}
+
+test("cold review 4: a rival asker's binding in her own session, naming Bo's, does not make the contested seat hers", async () => {
+  const w = await waitingGame({ cy: true });
+  await merge(w.cyCopy, w.boCopy, w.cy);
+  await bindingInOwnSession(w.cyCopy, w.cy, w.boBinding);
+  await merge(w.adaCopy, w.boCopy, w.ada);
+  await merge(w.adaCopy, w.cyCopy, w.ada);
+  // The kit's confirmSeats query (src/kit.ts): it confirms an open seat exactly one author asked for.
+  const asked = w.adaCopy.all(
+    "SELECT min(lower(hex(b._r_replica))) AS who, count(DISTINCT b._r_replica) AS n FROM _dai_open_seat s " +
+      "JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ? " +
+      "JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat " +
+      "WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
+      "GROUP BY s.session, s.seat",
+    [hex(w.ada.author)],
+  );
+  expect(asked.map((r) => Number(r["n"])), "two asked for the seat: it is contested, and the kit seats nobody").toEqual([2]);
+  expect(contestedSeats(w.adaCopy, w.session), "and Ada can reseat it").toHaveLength(1);
+  w.close();
+});
+
+test("cold review 4: a stranger's binding in her own session, naming Bo's, leaves Bo waiting", async () => {
+  const w = await waitingGame();
+  const m = createEntity(w.boCopy, "moves", rnd(), { seat: w.openSeat, game_id: "g1", san: "e5" }, w.session);
+  await seal(w.boCopy, w.bo);
+  const mal = await person();
+  const malCopy = openGame();
+  ensureReplica(malCopy, mal.author);
+  await merge(malCopy, w.boCopy, mal);
+  await bindingInOwnSession(malCopy, mal, w.boBinding);
+  await merge(w.boCopy, malCopy, w.bo);
+  expect.soft(pendingSans(w.boCopy), "Bo's waiting move is still on his screen").toEqual(["e5"]);
+  const err = writeError(() => changeEntity(w.boCopy, "moves", m._r_entity, { seat: w.openSeat, game_id: "g1", san: "e6" }));
+  expect.soft(err, "and he can still change it").toBe("");
+  malCopy.close();
+  w.close();
+});
+
+test("cold review 4: a rival asker's tombstone of Bo's waiting move leaves it on his screen, and his to change", async () => {
+  test.fail(true, "D142: t_pending lets another waiting author's row supersede a pending row");
+  const w = await waitingGame({ cy: true });
+  const m = createEntity(w.boCopy, "moves", rnd(), { seat: w.openSeat, game_id: "g1", san: "e5" }, w.session);
+  await seal(w.boCopy, w.bo);
+  await merge(w.cyCopy, w.boCopy, w.cy);
+  raw(w.cyCopy, w.cy, "moves", {
+    entity: m._r_entity,
+    lc: 50,
+    parents: [rowId(m)],
+    deleted: 1,
+    session: w.session,
+    columns: { seat: w.openSeat, game_id: "g1", san: "e5" },
+  });
+  await seal(w.cyCopy, w.cy);
+  await merge(w.boCopy, w.cyCopy, w.bo);
+  expect.soft(pendingSans(w.boCopy), "Bo's waiting move is still on his screen").toEqual(["e5"]);
+  const err = writeError(() => changeEntity(w.boCopy, "moves", m._r_entity, { seat: w.openSeat, game_id: "g1", san: "e6" }));
+  expect.soft(err, "and he can change it, as he can once seated").toBe("");
+  w.close();
+});
+
+test("cold review 4: a rival asker's row naming Bo's waiting rename does not fork his next one", async () => {
+  test.fail(true, "D142: t_pending lets another waiting author's row supersede a pending row");
+  const w = await waitingGame({ cy: true });
+  const first = changeEntity(w.boCopy, "games", w.game._r_entity, { title: "Bo one" });
+  await seal(w.boCopy, w.bo);
+  await merge(w.cyCopy, w.boCopy, w.cy);
+  raw(w.cyCopy, w.cy, "games", { entity: w.game._r_entity, lc: 50, parents: [rowId(first)], session: w.session, columns: { title: "Cy" } });
+  await seal(w.cyCopy, w.cy);
+  await merge(w.boCopy, w.cyCopy, w.bo);
+  const second = changeEntity(w.boCopy, "games", w.game._r_entity, { title: "Bo two" });
+  await seal(w.boCopy, w.bo);
+  await merge(w.adaCopy, w.boCopy, w.ada);
+  confirmSeat(w.adaCopy, w.session, w.openSeat, w.bo.author, rnd());
+  expect.soft(JSON.parse(second._r_parents as string), "his second rename versions his first").toEqual([rowId(first)]);
+  expect.soft(gameHeads(w.adaCopy, w.session), "once he is confirmed, the game has one head").toBe(1);
+  expect.soft(titles(w.adaCopy, w.session)).toEqual(["Bo two"]);
+  w.close();
+});
+
+test("cold review 4: a waiting delete then rename chains as it does seated", async () => {
+  test.fail(true, "D143: t_pending holds no tombstone, so the writer never sees its own waiting delete");
+  const w = await waitingGame();
+  const tombstone = deleteEntity(w.boCopy, "games", w.game._r_entity);
+  const renamed = changeEntity(w.boCopy, "games", w.game._r_entity, { title: "back, by Bo" });
+  await seal(w.boCopy, w.bo);
+  await merge(w.adaCopy, w.boCopy, w.ada);
+  confirmSeat(w.adaCopy, w.session, w.openSeat, w.bo.author, rnd());
+  expect.soft(JSON.parse(renamed._r_parents as string), "the rename versions his tombstone").toEqual([rowId(tombstone)]);
+  expect.soft(gameHeads(w.adaCopy, w.session), "once he is confirmed, the game has one head").toBe(1);
+  w.close();
+});
+
+test("cold review 4: a change naming a seat other than its head's is refused, not silently dropped", async () => {
+  test.fail(true, "D144: the writer takes the seat from its caller and never compares it with its heads'");
+  const w = await waitingGame();
+  await merge(w.adaCopy, w.boCopy, w.ada);
+  confirmSeat(w.adaCopy, w.session, w.openSeat, w.bo.author, rnd());
+  await seal(w.adaCopy, w.ada);
+  await merge(w.boCopy, w.adaCopy, w.bo);
+  const m = createEntity(w.boCopy, "moves", rnd(), { seat: w.openSeat, game_id: "g1", san: "e5" }, w.session);
+  const err = writeError(() => changeEntity(w.boCopy, "moves", m._r_entity, { seat: w.creatorSeat, game_id: "g1", san: "e6" }));
+  expect(err, "Bo's change naming Ada's seat is refused by name").toMatch(/SEAT_NOT_HELD/);
+  expect(currentSans(w.boCopy)).toEqual(["e4", "e5"]);
+  w.close();
 });

@@ -4434,11 +4434,15 @@ two asked: the kit confirms Cy by itself instead of showing the contest
   asker's row naming Bo's binding makes the contested seat hers"; `confirmSeats`'
   SQL run verbatim returns `n: 1, who: <Cy>`, expected 2.
 - **Not changed by D135's fix:** the view's definition is the same at `5fc27bc^`.
-- **Suspected, not run:** the bootloader's seat gate reads the raw
+- **The bootloader's seat gate, reproduced on the page:** it reads the raw
   `_dai_binding` table, not admission's `waiting`. A copy whose ask names a
-  retired seat (after a reseat), or whose binding was superseded as above,
-  would pass the gate and write rows that are neither admitted, nor pending,
-  nor reported. Runs only on the page.
+  retired seat (after a reseat) passes the gate: its move is stored, and is
+  neither admitted, nor pending, nor reported. Held by
+  `tests/seat-gate-page.spec.ts` (a page spec, apart from the node-only
+  `seat-attacks.spec.ts`), run red without its `test.fail` first: no error,
+  the row written.
+- **Held:** `tests/seat-attacks.spec.ts`, "cold review 4", six `test.fail`
+  naming D140 to D144, each run red without its mark first.
 
 #### D141 — A stranger's row in her own session takes a waiting joiner out of waiting
 

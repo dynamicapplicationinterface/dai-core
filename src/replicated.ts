@@ -460,10 +460,18 @@ function replicationColumns(session: boolean): string {
 /**
  * The `_heads` view — heads are where admission is enforced (T1-D29).
  *
- * A plain replicated table trusts the stored `_r_superseded` flag: a head is a
- * row nothing supersedes, and the flag is maintained at write (T1-D2).
+ * No view reads the stored `_r_superseded` flag (D140). It is a display cache,
+ * kept at write (T1-D2), and a cache is decided by whichever rows arrived and in
+ * what order: a row of another session naming a binding raised the flag on it
+ * and took an ask out of the roster. So every head is computed from the rows,
+ * within the row's own partition. A plain table's partition is its entity: a
+ * head is a row no row of its entity names. A roster or close table's is its
+ * entity, session and author: a seat, an ask, a confirmation or a close speaks
+ * only for its author, so only its author's later row in the same session
+ * replaces it, never somebody else's. `scripts/check-flag.mjs` fails any read
+ * of the flag.
  *
- * A session author table cannot, because **membership is a function of the
+ * A session author table goes further, because **membership is a function of the
  * current rows, not of when a row arrived.** A member becomes a non-member the
  * moment a second binding contests its seat, and its rows must vanish — and a
  * member's row that a *non-member* had superseded must re-emerge. The stored
@@ -475,8 +483,9 @@ function replicationColumns(session: boolean): string {
  * `json_each` walk again, gated to admitted rows, and it is the price of a
  * roster that changes.
  *
- * **Cost, to measure before it ships at scale.** A plain table reads a flag; a
- * session table walks the parents DAG over the admitted subset on every read of
+ * **Cost, to measure before it ships at scale.** A plain table walks each row's
+ * entity for a row naming it (the entity index bounds that walk); a session
+ * table walks the parents DAG over the admitted subset on every read of
  * `_heads`. Chess is small enough that nobody notices; a tracker with thousands
  * of rows after two years is not. Measure it once at that size, and if it is
  * slow the answer is a materialized membership set recomputed on merge — not a
@@ -484,14 +493,19 @@ function replicationColumns(session: boolean): string {
  */
 function headsView(
   q: string,
+  session: boolean,
   admissionFiltered: boolean,
   closeCreator: boolean,
   author?: AuthorRole,
   seatColumn?: string,
 ): string {
   if (!admissionFiltered) {
+    const ownAuthor = session ? " AND c._r_session = r._r_session AND c._r_replica = r._r_replica" : "";
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
-  SELECT * FROM ${q} WHERE _r_superseded = 0;`;
+  SELECT r.* FROM ${q} r
+   WHERE NOT EXISTS (SELECT 1 FROM ${q} c, json_each(c._r_parents) p
+                      WHERE c._r_entity = r._r_entity${ownAuthor}
+                        AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq);`;
   }
   // A row is admitted when it is a member's row (T1-D29) AND not late relative to
   // its session's close (T1-D31). Both are facts about the current row set, and
@@ -671,14 +685,19 @@ function tableObjects(
    * session table its entity in its session (D131), and in a seated table in
    * its seat too (D132). A row of another session or seat that reuses an
    * entity's id is another entity there, so it neither hides nor displaces this
-   * one's current version. Plain tables keep the entity alone.
+   * one's current version. A roster or close table's rows speak for their
+   * author, so its versions are its entity in its session by its author
+   * (D140). Plain tables keep the entity alone.
    */
-  const keys = admissionFiltered ? ["_r_entity", "_r_session", ...(seatColumn ? [`"${seatColumn}"`] : [])] : ["_r_entity"];
+  const keys = admissionFiltered
+    ? ["_r_entity", "_r_session", ...(seatColumn ? [`"${seatColumn}"`] : [])]
+    : session
+      ? ["_r_entity", "_r_session", "_r_replica"]
+      : ["_r_entity"];
   const partition = (alias: string): string => keys.map((k) => (alias ? `${alias}.${k}` : k)).join(", ");
   const samePart = (a: string, b: string): string => keys.map((k) => `${a}.${k} = ${b}.${k}`).join(" AND ");
   return `
 CREATE INDEX IF NOT EXISTS ${q}__r_entity ON ${q}(_r_entity, _r_lc);
-CREATE INDEX IF NOT EXISTS ${q}__r_heads ON ${q}(_r_entity) WHERE _r_superseded = 0;
 
 CREATE TRIGGER IF NOT EXISTS ${q}__no_update BEFORE UPDATE OF
     ${immutable} ON ${q}
@@ -722,7 +741,7 @@ CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_supe
        AND p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-${headsView(q, admissionFiltered, closeCreator, author, seatColumn)}
+${headsView(q, session, admissionFiltered, closeCreator, author, seatColumn)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,

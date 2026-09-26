@@ -146,13 +146,16 @@ test.describe("a declared table", () => {
     expect(sql).toContain("ROW_REJECTED");
   });
 
-  test("heads come from the flag, not from a scan of every row's parents", () => {
+  test("heads come from the rows of the entity, never from the stored flag (D140)", () => {
     const { sql } = rewriteReplicated(CASES);
-    expect(sql).toContain(
-      "CREATE VIEW IF NOT EXISTS cases_heads AS\n  SELECT * FROM cases WHERE _r_superseded = 0",
-    );
-    // Draft 1 walked json_each over every row on every read; D5 replaced it.
-    expect(sql).not.toMatch(/CREATE VIEW cases_heads[\s\S]*?json_each/);
+    const heads = /CREATE VIEW IF NOT EXISTS cases_heads AS[\s\S]*?;/.exec(sql)?.[0] ?? "";
+    expect(heads, "the view exists").not.toBe("");
+    // A head is a row no row of its own entity names: the walk is bounded by the entity.
+    expect(heads).toContain("c._r_entity = r._r_entity");
+    expect(heads).toContain("json_each(c._r_parents)");
+    // The flag is a display cache: which rows raised it depends on arrival.
+    expect(heads).not.toContain("_r_superseded");
+    expect(sql, "and no index is kept for reading it").not.toMatch(/INDEX[^;]*WHERE _r_superseded/);
   });
 
   test("current counts every head when it reports a conflict, not the live ones", () => {

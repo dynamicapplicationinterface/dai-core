@@ -298,7 +298,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     if (!replicaHex || seq === undefined) continue;
     db.run(
       `UPDATE "${table}" SET _r_superseded = 1
-        WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ? AND _r_superseded = 0`,
+        WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ?`,
       [replicaHex.toUpperCase(), Number(seq), row._r_entity],
     );
   }
@@ -1106,7 +1106,7 @@ export function mergeFrom(
     for (const parent of parentsOf({ _r_parents: String(gone?.["_r_parents"] ?? "[]") })) {
       local.run(
         `UPDATE "${table}" SET _r_superseded = 0
-          WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1
+          WHERE lower(hex(_r_replica)) || ':' || _r_seq = ?
             AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(n._r_parents) p
                              WHERE p.value = ? AND n._r_entity = "${table}"._r_entity)`,
         [parent, parent],

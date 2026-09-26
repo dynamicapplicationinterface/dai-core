@@ -90,7 +90,7 @@ const ROOTS = ["src", "apps", "website", "examples", "scripts", "conformance", "
 const OTHER_CHECKS = [
   {
     run: "npm run typecheck",
-    claims: ["scripts/check-symbols.mjs", "scripts/check-routes.mjs", "scripts/check-callers.mjs"],
+    claims: ["scripts/check-symbols.mjs", "scripts/check-routes.mjs", "scripts/check-callers.mjs", "scripts/check-flag.mjs"],
   },
   {
     run: "python3 conformance/reference/run.py",
