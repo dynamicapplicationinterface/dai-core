@@ -107,7 +107,7 @@ function renderContested(st){
  if(s.amCreator&&s.contested){
   banner.hidden=false;invite.hidden=false;
   $('contested-title').textContent='Two people opened this invite.';
-  $('contested-detail').textContent='The invite reached more than one device, so its seat is contested and neither can play it. Send a fresh invite to the one person you meant to play, then share the game again.';
+  $('contested-detail').textContent='The invite reached more than one device, so neither has the seat yet. Send a fresh invite to the person you meant to play, and share the game again.';
   return false; // the creator's own seat is fine
  }
  if(!s.amCreator&&s.mineOut){
@@ -163,7 +163,7 @@ function renderNames(g){
 function renderGameId(g,seat,joined){
  const line=$('game-id');
  if(!g||g.is_demo){line.hidden=true;return;}
- const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':'waiting for the other player to join';
+ const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':seat&&seat.pending?'waiting for '+(playerName(g,g.creator_color)||'the other player')+' to let you in':'waiting for the other player to join';
  line.textContent='Game '+g.session.slice(0,8)+' · '+who;
  line.hidden=false;
 }
@@ -361,10 +361,12 @@ async function boot(){
  const writer=window.dai.replicated;
  if(!writer)throw new Error('This document needs the replicated-tables runtime. Open it in a newer DAI opener.');
  store=new Store(window.daiKit.db,writer);store.bootstrap();
- // If this copy arrived at a game somebody shared, take the open seat — once,
- // after the mount adopted this copy's own identity (T1-D22/D29). Idempotent, so
- // a reopen or a later merge never binds twice.
- store.joinActive();store.faceMover();wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;maybeAskName();
+ // The shared boot writes (the practice board; the open seat of a game somebody
+ // shared, taken once after the mount adopted this copy's own identity,
+ // T1-D22/D29) go through the kit, which runs them only on a mount that can
+ // write. The page draws first either way.
+ wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;
+ store.bootWrites().then(()=>{store.faceMover();refresh();maybeAskName();}).catch(e=>notify(e.message));
  // After a merge the host tells the frame; redraw so a newly arrived move or conflict shows without a reload.
  // Join ONLY when the merge came from opening a carrier — a file or link (T1-D34).
  // A mailbox merge, or any event without a source tag, must NOT join: the safe

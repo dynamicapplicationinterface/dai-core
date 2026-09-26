@@ -13,10 +13,14 @@ const PIN_STORE = "pins";
 const PUB_STORE = "publishers";
 /** A document's mailbox state — its key, and where publish and pull have reached (Track 5). */
 const MAILBOX_STORE = "mailboxes";
+/** This device's keys, by the names src/keys.ts owns: the person key (docs/identity.md). */
+const KEY_STORE = "keys";
 
 import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
-import type { SigstoreRoot } from "../../../src/identity.js";
+import type { SigstoreRoot } from "../../../src/publisher-identity.js";
+import type { KeptPersonKey } from "../../../src/identity.js";
+import { KEYS, seqFloorKey } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
 
@@ -298,7 +302,7 @@ function noteIdbFailure(what: string): void {
 function openIdb(): Promise<IDBDatabase> {
   if (idbConnection) return idbConnection;
   idbConnection = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 6);
+    const request = indexedDB.open(IDB_NAME, 7);
     /*
      * A bound on the open itself. iOS Safari can leave `indexedDB.open`
      * pending with no event ever firing; without this the whole launch waits
@@ -350,6 +354,11 @@ function openIdb(): Promise<IDBDatabase> {
       // lifetime as the library entry it sits beside (Track 5).
       if (!db.objectStoreNames.contains(MAILBOX_STORE)) {
         db.createObjectStore(MAILBOX_STORE, { keyPath: "documentUuid" });
+      }
+      // Version 7: this device's person key (docs/identity.md), out-of-line keys
+      // named by src/keys.ts. Added empty; the key is made on first use.
+      if (!db.objectStoreNames.contains(KEY_STORE)) {
+        db.createObjectStore(KEY_STORE);
       }
     };
     request.onsuccess = () => {
@@ -589,48 +598,144 @@ export async function deleteCartridgeFromLibrary(
   }
   // The mailbox state shares the document's lifetime and goes with it.
   await deleteMailbox(documentUuid);
-  await forgetOwnReplica(documentUuid);
 }
 
 /**
- * The replica id this device writes a document under (d22).
+ * This device's person key (docs/identity.md), kept as the CryptoKey pair
+ * itself: IndexedDB stores a CryptoKey by structured clone, so the key is never
+ * turned into bytes to be kept. One per device, under the name `src/keys.ts`
+ * owns, in a store of its own.
  *
- * Recorded before a copy is first mounted and handed to the frame on every
- * mount after, so the id a copy writes under is this device's, never whatever
- * the mounted file carries. A reopen that fell back to the arrived file used to
- * keep the sender's id, because "own copy" was decided by where the file came
- * from rather than whose id was in it.
- *
- * Kept beside the document's database, under a key of its own, because the
- * database's own key is deleted whenever the database moves to OPFS. A string,
- * so the database reader, which takes only bytes, never mistakes it for one.
+ * Three answers (KeptPersonKey, src/identity.ts): the key, nothing kept, or
+ * nothing readable. A store that throws or errors is unreadable, never "none":
+ * that is the difference between a device with no key and a device that could
+ * not read its key for a moment. This does not mint.
  */
-const replicaKey = (documentUuid: string): string => `replica:${documentUuid}`;
-
-export async function ownReplicaOf(documentUuid: string): Promise<string | null> {
+export async function keptPersonKey(): Promise<KeptPersonKey> {
   try {
     const db = await openIdb();
     return await new Promise((resolve) => {
-      const req = db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(replicaKey(documentUuid));
-      req.onsuccess = () => resolve(typeof req.result === "string" && /^[0-9a-f]{32}$/.test(req.result) ? req.result : null);
-      req.onerror = () => resolve(null);
+      try {
+        const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(KEYS.PERSON_KEY);
+        req.onsuccess = () => {
+          const held = req.result as Partial<CryptoKeyPair> | undefined;
+          resolve(held?.publicKey && held.privateKey ? { kept: "key", keys: held as CryptoKeyPair } : { kept: "none" });
+        };
+        req.onerror = () => resolve({ kept: "unreadable", why: String(req.error?.message ?? "the read failed") });
+      } catch (error) {
+        resolve({ kept: "unreadable", why: String((error as Error)?.message ?? error) });
+      }
     });
-  } catch {
-    return null;
+  } catch (error) {
+    return { kept: "unreadable", why: String((error as Error)?.message ?? error) };
   }
 }
 
-export async function recordOwnReplica(documentUuid: string, replica: string): Promise<void> {
+/**
+ * Keeps the person key, only if none is kept yet.
+ *
+ * `add`, not `put`: two tabs minting at once must not leave each writing under
+ * a key the other then overwrote. The loser's add fails, and it reads back the
+ * winner's key, so both tabs end on one key.
+ */
+export async function keepPersonKey(pair: CryptoKeyPair): Promise<void> {
   const db = await openIdb();
-  await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.put(replica, replicaKey(documentUuid)));
+  await committed(db.transaction(KEY_STORE, "readwrite"), (store) => store.add(pair, KEYS.PERSON_KEY));
 }
 
-async function forgetOwnReplica(documentUuid: string): Promise<void> {
+/**
+ * The highest seq this device has let leave it for a document (cold review of
+ * identity step 2, #1): the floor the frame's counter is held at. 0 when none
+ * is kept. A read that fails is thrown, not read as 0: a floor of 0 on a
+ * device that has written would reissue what it already sent.
+ */
+export type KeptSeqFloor = { kept: "floor"; seq: number } | { kept: "none" } | { kept: "unreadable"; why: string };
+
+/**
+ * One read of the floor, bounded: the three answers the person key has, for
+ * the same reason (cold review of identity step 3, #4). A store that throws,
+ * errors or does not answer within `withinMs` is unreadable, never "none": a
+ * floor read as 0 on a device that has written would reissue what it sent.
+ */
+export async function keptSeqFloor(documentUuid: string, withinMs = 1_000): Promise<KeptSeqFloor> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<KeptSeqFloor>((resolve) => {
+    timer = setTimeout(() => resolve({ kept: "unreadable", why: `no answer within ${withinMs}ms` }), withinMs);
+  });
+  const read = (async (): Promise<KeptSeqFloor> => {
+    try {
+      const db = await openIdb();
+      return await new Promise<KeptSeqFloor>((resolve) => {
+        try {
+          const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(seqFloorKey(documentUuid));
+          req.onsuccess = () =>
+            resolve(typeof req.result === "number" && req.result > 0 ? { kept: "floor", seq: req.result } : { kept: "none" });
+          req.onerror = () => resolve({ kept: "unreadable", why: String(req.error?.message ?? "the read failed") });
+        } catch (error) {
+          resolve({ kept: "unreadable", why: String((error as Error)?.message ?? error) });
+        }
+      });
+    } catch (error) {
+      return { kept: "unreadable", why: String((error as Error)?.message ?? error) };
+    }
+  })();
   try {
-    const db = await openIdb();
-    await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.delete(replicaKey(documentUuid)));
-  } catch {
-    /* Nothing recorded, or no storage: nothing to forget. */
+    return await Promise.race([read, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The floor, read again while it is unreadable, for up to `deadlineMs`: the
+ * key's deadline. Null when it stays unreadable; the caller refuses writes.
+ */
+export async function seqFloorWithin(documentUuid: string, deadlineMs = 4_000): Promise<number | null> {
+  const until = Date.now() + deadlineMs;
+  for (;;) {
+    const answer = await keptSeqFloor(documentUuid, Math.max(250, Math.min(1_000, until - Date.now())));
+    if (answer.kept === "floor") return answer.seq;
+    if (answer.kept === "none") return 0;
+    if (Date.now() >= until) return null;
+    await new Promise((wait) => setTimeout(wait, 250));
+  }
+}
+
+/**
+ * Raises the floor to `seq`, never lowers it, in one transaction.
+ *
+ * Called before a save is written and before a batch is published, never
+ * after: the floor must already count a seq by the time anything carrying it
+ * can leave, or the one case it exists for, the save that fails, is the one it
+ * misses.
+ */
+export async function raiseSeqFloor(documentUuid: string, seq: number): Promise<void> {
+  if (!Number.isSafeInteger(seq) || seq <= 0) return;
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  const store = tx.objectStore(KEY_STORE);
+  const key = seqFloorKey(documentUuid);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          const held = typeof read.result === "number" ? read.result : 0;
+          if (seq > held) store.put(seq, key);
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
+        tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
+      }),
+      // A write that never answers fails, like one that errors, and the save or
+      // the seal waiting on it fails closed rather than holding the lock (#4).
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("The sequence floor did not answer within 4 seconds.")), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -188,6 +188,15 @@ direction; the walk these serve is `docs/v1-walk.md`)
   running". Written down because it was broken the day it mattered: a report
   called three screen changes landed while their run was still going, and the
   verdict two minutes later was a failure on three engines.
+- **Firefox is a reading, not the gate** (ruled 25 September). Chromium and
+  WebKit decide whether a run is green; the Firefox job runs with
+  `continue-on-error` in `.github/workflows/test.yml`, and
+  `scripts/ci-verdict.mjs` prints it on its own line, marked from its tally, so
+  a real Firefox red is still read and reported, just not blocking. The reason
+  is D32: `returning-document:511` failed at least once on Firefox in 3 of the
+  last 4 runs on the identity branch, a frame the automation cannot see, and not
+  a failure on the walk. It returns to the gate when D32 closes, not after a
+  quiet week.
 - **A change to a shared surface runs everything that presses that surface**,
   found by the control's own id — `grep send-go` — and not by what was edited.
   The same failure's first half: the local set was chosen by searching for the
@@ -535,6 +544,26 @@ the honest answer is "the thing it checks for not having happened *yet*" — a
 relay not delivered, a module not loaded, a spec not selected — the check is
 agreeing by accident.
 
+- **A test project chosen by a word in a comment (24 September).** Playwright's
+  `node` project is every spec whose text never says "page", "browser" or
+  "context"; a spec that does is sent to the browser projects instead, where a
+  test with no `page` fixture runs as a node test would. `tests/seal.spec.ts`
+  said "the page is killed" in a comment, left the node project, and its first
+  "pass" was the file never running under the project it was run with. The fix
+  is not rewording comments: it is making project membership explicit, a list
+  or a path convention, so a file cannot fall out of a project by prose (D110).
+- **Reference readers that agreed on everything while covering nothing (24
+  September).** After the identity sitting's step 3, the Python and Rust merge
+  readers agreed with the TypeScript on every merge vector while neither
+  handled a seal at all: no vector carried one, so agreement said nothing about
+  seals, and Rust would have refused honest sealed rows as tampering. **The fix
+  was adding cases the readers had to disagree on** (two vectors with real
+  signed batches, and the headers in the canonical dump), watching both readers
+  fail, and then bringing them level. The reusable lesson: agreement between
+  implementations is evidence only for what the vectors exercise.
+  A second case, same day: the Rust reader looked a row up in another table by
+  the arriving row's column positions, and agreed everywhere until the vectors
+  first used two shared tables (identity step 4 review; fixed in aaed42c).
 - **A tool that reports success for work it did not do (21 September).**
   `context.setOffline(true)` stops a loopback request on Chromium and does not
   on Firefox: the call returns, the flag reads as set, and the publish goes
@@ -548,6 +577,15 @@ agreeing by accident.
   network to test serving from cache. **The general form:** when a test's setup
   is an instruction to the browser rather than something the test can observe,
   assert the setup took effect before trusting what follows.
+- **A red that was red because a race was lost (D117, 25 September).** Two
+  WebKit iPhone tests were filed as the known reds of a lost key, and failed on
+  every local run; on CI they passed, because CI's machine won the race between
+  a mailbox starting and the relaunch that throws the page away. The red was
+  true of this machine's timing, not of the defect, and the green on CI would
+  have been read as the bug not existing. The fix to the test was the one from
+  the phone race of 9 September: force the losing order (the relay reaches only
+  the load after the relaunch) instead of hoping for it. A red is proven the
+  same way a green is: on the reason it names, whatever wins the race.
 
 ### A third shape — a breadcrumb written before the thing it describes
 
@@ -4364,6 +4402,1040 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D139 — sealed-leave's first test retries on WebKit in CI
+
+*Status: open, not chased. Filed 25 September: WebKit half 2 retried
+`tests/sealed-leave.spec.ts:25` ("a saved document's rows are sealed, and
+every batch verifies under this device's key") on two runs in a row, runs
+36213297105 (`734a4c3`, 39.7s) and 36214061757 (`0114b53`, 40.5s), passing
+on retry both times; not on the next run (36214659478). The first attempt
+takes about forty seconds, so it is a timeout, not a wrong answer. Neither
+commit touched the save or the seal.*
+
+- **Next, if it recurs:** read the first attempt's trace from the run's kept
+  retry artifact for what it waited on, before any rerun.
+
+#### D135 — The honest writers version an entity across partitions, so a stranger's row freezes an honest change
+
+*Status: **fixed** 26 September, with D136 to D138 as one fix. Filed 25
+September from the third cold review (the seams between D131, D132 and D133,
+finding 1), rated medium. Ruled: a writer decides the head the way admission
+does, through the admitted view for its own session and seat, never the stored
+flag. `writeTargetOf` (`src/replicated-rows.ts`) is that one reading, and
+`headsOf`, `changeEntity`, `deleteEntity`, reseat and the bootloader's write
+gates all take their heads and session from it: `t_heads` in a session this
+copy is a member of or waits in (in a seated table its own rows), its own rows in
+`t_pending`, and in a roster table its own versions. No such partition, or two
+(an id reused across partitions this copy writes in, D134), refuses the write
+`ROW_REJECTED` rather than guess. Held by `tests/seat-attacks.spec.ts`, "cold
+review 3", each shown red on its own `test.fail` first.*
+
+`headsOf`, `changeEntity` and `deleteEntity` (`src/replicated-rows.ts`) still
+treat an entity as `_r_entity` alone: every row of it with a stored
+`_r_superseded` of 0, from any session or seat, becomes a parent, and the
+session comes from the head with the highest clock. D131 and D132 made the
+admission views partition by (session, entity) and (session, seat, entity). So
+a parentless row that reuses an entity id in another partition, which is legal
+(D134), poisons the honest writer's next version: it names a row of another
+partition, is stored, never admitted, and reported under the honest author.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: a
+  stranger's row in his own session reusing a game's entity id", at lc 1 and lc
+  1000000. Chess's `rename`, `setMyName` and `keepNames` go through
+  `writer.change` on `games`.
+- **Seen:** at lc 1000000, Ada's rename row lands in Mallory's session, naming
+  both heads; `games_current` stays "Ada v Bo" on both copies, and the merge
+  into Bo reports `ENTITY_OTHER_SESSION` against Ada. Every later change
+  inherits the stranger's session. At lc 1 the row stays in her session, names
+  his row, and is refused the same way.
+- **Held:** the admission is order-free. Three copies merged in different
+  orders agree ("convergence: the D131 freeze ...", passes).
+- **One-sentence fix, not ruled:** the honest writers version within the
+  row's own partition: the session from the row being versioned (or the
+  caller), parents only from that session and, in a seated table, that seat,
+  and a delete's columns from a head of that partition.
+
+#### D136 — A reseat can carry the creator's fresh seat out of her session
+
+*Status: **fixed** 26 September, by D135's fix: reseat versions only the
+creator's own seat rows in the session, and `_dai_open_seat`'s retire check
+also requires `n._r_session = s._r_session`. Filed 25 September from the third
+cold review (finding 2), rated medium.*
+
+The repair for a contested seat is the creator's `reseat`, which versions the
+open seat's `_dai_seat` row through `changeEntity`, so it has D135's fault in a
+roster table, where there is no `_foreign` check. A contester, signing with
+their own key (D133 passes it), writes a `_dai_seat` row in a session of
+their own with the open seat row's entity id (it is in the invite) and a high
+clock. Ada's reseat row then lands in that session, and `_dai_open_seat`'s
+retire check (`n._r_entity = s._r_entity AND n._r_replica = s._r_replica`)
+ignores the session, so her own row there retires her open seat.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: a row of
+  another session reusing the open seat's entity id does not carry Ada's reseat
+  out of her session".
+- **Seen:** `merge of Cy into Ada: []`; the reseat row in the other session;
+  `Ada's open seats after reseat: []`; and no contested seat left, so a second
+  reseat is refused `CANNOT_RESEAT`. The game has no open seat and no repair.
+- **One-sentence fix, not ruled:** D135's fix for `reseat`, and
+  `_dai_open_seat`'s retire check also requires `n._r_session = s._r_session`.
+
+#### D137 — The other seat's parentless row blocks a player's delete of her own row
+
+*Status: **fixed** 26 September, by D135's fix: a delete's parents and the
+columns its tombstone carries come from this copy's own seat only. Filed 25
+September from the third cold review (finding 3), rated medium for an app that
+versions seated rows, low for chess today (it never changes or deletes a
+move).*
+
+D132's seat form of D135. Bo, seated honestly, writes a parentless move for
+his own seat reusing the id of Ada's e4: admitted, as a separate entity in his
+partition. Ada's `deleteEntity` of her e4 then names both rows as parents (and
+at a high clock copies Bo's seat into her tombstone), so her tombstone crosses
+seats: stored, never admitted, reported `SEAT_NOT_HELD` against her, and her e4
+stands. This defeats D132's own counter-case with one legitimate row.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: a seated
+  player's row in his own seat reusing the other seat's entity id", at lc 1 and
+  lc 1000000.
+- **One-sentence fix, not ruled:** D135's.
+
+#### D138 — A row of the other seat hides a waiting move from its author's screen
+
+*Status: **fixed** 26 September, with D135: `t_pending` computes
+supersession within the row's partition, by an admitted or waiting row, never
+from the stored flag. Filed 25 September from the third cold review (finding
+4), rated low. The seat form of D134's note on the stored flag, which the same
+change closes.*
+
+`applyRow` sets a parent's stored `_r_superseded` from any child of its
+entity, and `_pending` reads the stored flag. The creator writes a row in her
+seat naming the waiting joiner's pending move as its parent: `_heads` ignores
+it (it crosses seats, `SEAT_NOT_HELD`), but the joiner's own move drops out of
+his `_pending`, so his screen loses a move he made. Transient: once he is
+confirmed, `_heads` admits it.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 3: the
+  creator's row in her own seat naming a waiting joiner's move leaves it on his
+  screen". Seen before the fix: pending `["e5"]` before the merge, `[]` after.
+- **One-sentence fix, not ruled:** `_pending` computes supersession as
+  `_heads` does, within the partition, instead of reading the stored flag.
+
+#### D134 — An entity id reused in another session is a second entity, and an app reading by id alone sees two
+
+*Status: open, ruled 26 September: folds into step 6's format bump, where the
+entity key becomes (session, entity); not before. Until then a write to an id
+this copy holds in two of its own partitions is refused, not guessed (D135's
+fix). Filed 25 September with the D131 fix; not reproduced in an app.*
+
+D131 makes an entity's identity (session, entity) in the runtime: a row in
+another session that names one of the entity's rows as its parent is never
+admitted, and nothing in one session hides or displaces the current version of
+anything in another. A row with **no** parents is different: a stranger who
+holds a copy can write a parentless row in a session of their own that reuses
+the id of Ada's game, and it is admitted there, because nothing order-free says
+which session an id was minted in. Both sessions then hold a current row with
+that id. The runtime is right about each; an app that looks a row up by id
+alone is not. Chess's `gameById(id)` takes the first of `games()`, so the
+stranger's row could stand in for Ada's game, with his session's seats and
+moves.
+
+- **Seen:** by reading `tests/fixture/chess/store.js` (`games`, `gameById`);
+  not run.
+- **Order-free fixes, not ruled:** (a) the entity id commits to its session, as
+  the session id commits to its creator (for example SHA-256 of session, author
+  and a nonce, with the nonce on the root row), so a parentless row whose id
+  does not hash from its own session is refused; a format change. (b) The kit
+  and apps key every row by (session, entity), and `active_game_id` names both.
+- **Same class, closed by D138's fix:** a pending row's stored `_r_superseded`
+  flag is set by any row of its entity naming it, whatever its session, and
+  `_pending` read it; it now computes supersession within the partition.
+
+#### D133 — An unsigned confirm under the creator's id seats the forger before she confirms
+
+*Status: **fixed** 25 September. Filed 25 September from the second cold
+review of the seat model (finding 3), rated high. Ruled: refuse now. A merge
+refuses an unsigned row in `_dai_seat`, `_dai_binding` and `_dai_confirm`
+(`BATCH_UNSIGNED`, with the author it names), unless the copy already holds a
+row at that id in that table; step 6 extends the refusal to every table. Held
+by `tests/seat-attacks.spec.ts` (the unsigned confirm, and the confirm replayed
+into another session with its batch stripped) and `tests/roster.spec.ts`. Not
+covered: a whole file taken in place is not a merge and verifies nothing, so a
+forged unsigned seat row inside one still counts; that is step 6's load path.*
+
+The code already says unsigned rows stay admissible until `BATCH_UNSIGNED`
+arrives in step 6 (`src/replicated.ts:782-785`, `src/replicated-rows.ts:973-976`).
+The review shows what that costs in the seat tables. A `_dai_confirm` row
+stamped with Ada's author id, carrying no batch, merged into her copy before
+she confirms anyone, is admitted, and `_dai_holder` seats the forger in the
+open seat. `confirmSeats` then skips a seat that already has a holder
+(`src/kit.ts:645`), so the real joiner is never seated. A confirm needs no
+binding, and `_dai_holder` does not require the confirmed seat to be an open
+seat the creator minted, so the same unsigned row can seat anyone in any seat
+value. A signed confirm copied from one session into another is refused
+(`BATCH_DIGEST_MISMATCH`); stripped of its batch, it is accepted.
+
+- **Reproduction:** `tests/cold-review-2-seats.spec.ts`, "an unsigned confirm
+  under Ada's id, merged before she confirms, seats the forger" (the file is
+  untracked; see the handoff).
+- **Seen:** `unsigned-confirm report: {"applied":1,...,"refusedBatches":[]}`,
+  then `open seat holder now: [{"r":"98dc…","since":100}]` with `mal: 98dc…`.
+- **Breaks:** `IDENTITY-SEAT-CONFIRMED`, "a row only the creator writes".
+- **One-sentence fix, not ruled:** refuse unsigned rows in the seat tables
+  now, ahead of step 6's general refusal.
+- **Suspected, not run:** a forged unsigned confirm at the creator's id and a
+  future seq is displaced when her real row at that seq arrives
+  (`src/replicated-rows.ts:1009-1030`), so the hold moves, against "a hold never
+  moves".
+
+#### D132 — Any admitted row supersedes or deletes another author's row of the same entity
+
+*Status: **fixed** 25 September. Filed 25 September from the second cold
+review of the seat model (finding 2), rated high. Ruled: a replacement is
+admitted under the same check as a new row, and in a seated table a row
+supersedes only rows of its own seat and session. A row naming as its earlier
+version a row of its entity acting for another seat of its session is stored,
+never admitted, and reported `SEAT_NOT_HELD` (in `_unseated`, and whichever
+of the two rows arrived); `_current` picks one head per (session, seat,
+entity). The stranger's form, from a session of his own, closed with D131
+(`ENTITY_OTHER_SESSION`). Held by `tests/seat-attacks.spec.ts`, with the
+counter-case that the creator's own version of her move still replaces it.*
+
+`_heads` hides a row when some admitted row of the same entity names it as a
+parent (`src/replicated.ts:566-573`). The superseding row is admitted on its
+own seat and session only, so what it supersedes is never asked. Two
+reproductions, every attacker row signed with the attacker's own key and
+merged through `mergeSibling`:
+
+- Bo, seated honestly in the open seat, writes a deleted version of Ada's `e4`
+  naming **his own** seat and her row as its parent. The merge applies it, and
+  Ada's game shows no moves: `joiner-delete report: {"applied":1,...}`, then
+  `Ada's game g1 after the merge: []`.
+- A stranger with no seat in Ada's session does the same from a session of his
+  own: `supersede report: {"applied":2,...}`, then `[]`.
+
+Filtering by `_r_session` in the app would not help; the hiding is in `_heads`.
+The repository's attack test "a member's version of the creator's seat entity
+voids none of her moves" covers `_dai_seat` entities only.
+
+- **Reproduction:** `tests/cold-review-2-seats.spec.ts`, "Bo, seated in the
+  open seat, deletes Ada's e4 with a version naming his own seat" and "a
+  stranger with no seat anywhere in Ada's session supersedes her move from a
+  session of his own".
+- **Breaks:** rule 5 in `docs/identity.md`: a row for a seat its author never
+  held is never admitted. His row is admitted, and hers is gone.
+- **One-sentence fix, not ruled:** a row in a seated table supersedes only rows
+  of its own session that act for the same seat.
+
+#### D131 — A seat is its bytes, not its session: a stranger plays White from a session of his own
+
+*Status: **fixed** 25 September. Filed 25 September from the second cold
+review of the seat model (finding 1), rated high. Ruled: a seat is (session,
+seat) everywhere, and an entity belongs to one session. In an
+admission-filtered session table a row supersedes only rows of its own
+session, `_current` picks one head per (session, entity), and a row naming
+as its earlier version a row of another session is stored, never admitted, and
+reported `ENTITY_OTHER_SESSION` (a view over the row set, so every copy
+answers the same whatever arrived first). The kit's `seats(session)` reads
+only the creator's own seat rows in that session; chess reads a game's moves
+and events in the game's own session. `IDENTITY-SEAT-ADMITS` says the pair.
+Held by `tests/seat-attacks.spec.ts`, which reads Ada's game through the chess
+fixture's own `Store`. What stays open is D134.*
+
+Anyone can create a session: pick a nonce, and the session id is the hash of
+their own author id and it, so the rows show them to be its creator. The
+creator's seat row carries whatever 16 bytes they choose, including the bytes
+of Ada's seat. Admission asks whether `_dai_holder` has
+`(r._r_session, r.seat, r._r_replica)` (`src/replicated.ts:542-544`), which is
+true in the attacker's own session. Nothing ties a row's `_r_session` to the
+game it acts in. Chess reads a game's moves by `game_id` with no session
+(`tests/fixture/chess/store.js:186`) and takes the side from the seat bytes
+(`store.js:209-211`, "the side is the seat's"). `IDENTITY-SEAT-ADMITS` tells
+apps to do exactly that: "Read which side a row acts for from its seat."
+
+- **Reproduction:** `tests/cold-review-2-seats.spec.ts`, "a stranger mints a
+  session of his own whose creator seat has the value of Ada's seat, and plays
+  White in her game" (whole-file merge), and "Bo's signed batch of rows in his
+  own session … arrives by mailbox and is admitted" (encode, decode,
+  `stageBatch`, merge, as `applyBatch` does).
+- **Seen:** `cross-session report: {"applied":2,...,"rejected":[],"refusedBatches":[]}`,
+  then `Ada's game g1 after the merge: ["e4@7d2bbyda9f","Qh5@7d2bbyf74c"]`:
+  both name Ada's seat, and the second is the stranger's. No `SEAT_NOT_HELD`,
+  because `_unseated` looks only in the row's own session
+  (`src/replicated.ts:581-585`). The mailbox form gives the same result.
+- **Breaks:** rule 5 and `IDENTITY-SEAT-ADMITS` ("a move for White names
+  White's seat"). This is D80's outcome, a non-creator playing White, without
+  forging any id.
+- **Not run:** in chess in a browser, and over a live mailbox lane. Receiving
+  code does not check a batch's `_r_session` against its lane
+  (`stageBatch`, `src/replicated-batch.ts:625`; `applyBatch`,
+  `src/runtime/bootloader.ts:1495`). An honest runtime publishes the attacker's
+  session on its own lane, so the live routes are a file or a hostile frame
+  publishing on Ada's lane.
+- **One-sentence fix, not ruled:** a side is `(session, seat)` everywhere it is
+  read, and a row's session is tied to the entity or game it acts in.
+- **Same class, not checked:** `_dai_close` under `close=any` from another
+  session.
+
+#### D130 — sign-scope's second document never shows its frame on WebKit, locally
+
+*Status: open. Filed 25 September; measured, pre-existing.*
+
+`tests/sign-scope.spec.ts` "a document's code cannot get a header for another
+document signed". The test opens chess, then picks the forger's file and
+presses Open. In the failing runs `#out` is never found in the app frame, and
+the page shows only the banner and one iframe. On WebKit, locally, it failed
+3 of 10 on `9560321` and 4 of 10 with `acd5753`'s `main.ts`, so D126 did not
+cause it. CI passed it on `acd5753`. It looks like D32's shape (a mounted
+frame that cannot be entered) or D123 item 3's (a card's Open never shows the
+app); not yet told apart. Neither document is replicated or signed.
+
+#### D129 — Refusal sentences: "This link" for a file, and the trust wording lost before the pin
+
+*Status: open. Filed 25 September from the cold read of the arrival refusals
+(findings 4 and 5); read, not run.*
+
+Two small things about wording. First, `strangersCopy` and the diverged-copies
+refusal say "This link" when the arrival was a picked file. Second, D126's
+check runs before the pin, so it replaces the pin's sharper sentences for a held
+replicated copy. An unsigned arrival for a signed held copy is told "published
+by somebody else", not that a signature was stripped. A re-signed one loses
+"Treat it as an impersonation". The second is a choice to make on purpose, not
+a fix. Since D126 reached solo documents (`7a38b47`), the two paths ask in
+different orders: replicated before the pin, solo after it. Unifying the
+wording can revisit the order, with both sets of tests in hand.
+
+The same read found reporting uneven. `console.warn` for D126 and the two
+key-held refusals; `console.error` for the mount guard and D85's two; nothing
+for a trust mismatch (at arrival or at reopen), the D126 backstop, the pin race
+or an unreadable file.
+
+#### D128 — "Nothing on this device was changed" is said after writes
+
+*Status: open. Filed 25 September from the cold read of the arrival refusals
+(finding 2); read, not run.*
+
+Four later refusals in `ingest` say the device was not changed, but writes can
+come before them:
+
+- The backstop sibling refusal and the never-mount-over guard: `rememberSessionKey`
+  (gap fill, and `ensureDocumentKey`).
+- The never-mount-over guard and D85's build and diverged refusals: `pinTrust`
+  (when no pin), `recordPublisher`, and succession's `saveDatabaseToOpfs`.
+- `recordPublisher` always saves, and it overwrites the recorded publisher name
+  with the arriving one (`src/publisher.ts:320`).
+
+The never-mount-over guard can be reached when a held replicated sibling's
+archive has no `document.sqlite`: the card then resolves on Open with no merge
+offered (`card.ts:552`). Either move the refusals ahead of the writes or stop
+saying nothing changed; first make one red by running it.
+
+#### D127 — The arriving link's key outlives the arrival
+
+*Status: open. Filed 25 September from the cold read of the arrival refusals
+(finding 1, rated high); read, not run. Run first.*
+
+`arrivedKey` and `arrivedSession` are set from a link (and `arrivedKey` from a
+share-target key). They are cleared only in `eject`, which only `deleteApp`
+calls. The file picker, the launch queue, the URL fetch, the share target and
+the handoff do not reset them. The file picker clears `arrivedByLink` and
+`arrivedInClear`, but not these two.
+
+So, on the reading, the following could happen after a link to document A has
+opened, if a held replicated file B is then picked on the same page:
+
+- It is refused by the key-held check against A's key, a false refusal.
+- If B holds no document key, the keep files A's key into B, which moves B's
+  mailbox.
+- With a session, the game-key refusal fires, or `rememberSessionKey` files
+  A's game under B.
+
+Not established: whether a person can pick a file on the page after a link has
+opened a document. That is the first thing to run. If they can, the red is:
+open a link to A, pick B's file, and expect B to open under its own key.
+
+#### D126 — "Published by somebody else" cannot fire: the sibling test compares the arriving key with itself
+
+*Status: closed 25 September (`f1f76e4`, `9560321`; solo `7a38b47`, CI run `36207287432` green): CI run `36200300398` read
+green, both tests passing on all three engines. Filed the same day from D122's
+second ruling, which tried to make it red and could not.*
+
+**Ruled:** a held copy is never offered a merge from a different publisher,
+pinned or not; a different publisher is a different document
+(`IDENTITY-ONE-LIVE-COPY`). **Built:** `ingest` compares the arriving
+publisher with the held record's own `publicKeyFingerprint`, read fresh, for a
+replicated document, before the pin, so a pinned copy and an unpinned one are
+refused in the same sentence through `refuseArrival`. The later sibling test
+now takes the held record's key too, and keeps its refusal as a backstop. Red
+first on Chromium: pinned, the pin's impersonation sentence; unpinned, the
+merge card ("Open in my copy"). No copy signed by another key, or signed where
+the held one is not, reaches the merge now. Two unsigned copies still count as
+one publisher (`siblingTest`, T1-D4), so the question below stands for them.
+
+`ingest` refuses a replicated document held here that arrives under another
+publisher's key ("This link carries a copy of … published by somebody else")
+when `siblingTest` says `sibling === false`. It never does: both sides of the
+test are handed `cartridge.publicKeyFingerprint`, the arriving copy's, on the
+reading that "the same document by the same publisher is the same
+application". The held record keeps its own `publicKeyFingerprint` (written by
+the keep and by every save), and nothing here reads it.
+
+**Measured:** B holds the genuine copy, opened and so pinned; A sends a copy
+under the same id signed by another key (`conformance/trust-publisher-b-key.pem`).
+With the pin, the pin refuses first. With B's pin removed (a copy kept and its
+pin gone), B was offered the stranger's copy **as a merge into its own**: the
+card read "You already have this app. What this link carries is added to your
+copy", made by "Anonymous". So the pin is the only guard against a stranger's
+rows being offered into a person's copy. How a copy comes to be held without a
+pin (an install from before pins, a partial clear) is not established.
+
+The red test was taken out of D122's commit so the branch stays green: build
+with `heldAndAStrangersLink` in `tests/mailbox-link-e2e.spec.ts`, delete B's
+record for the document from the `pins` store, open the link on a fresh page,
+and expect the "published by somebody else" sentence in sight and no card. The
+likely fix puts the held record's own fingerprint on the held side of the test.
+Ask first what the merge path does with a stranger's rows once there is a second
+guard.
+
+**Solo documents, from the cold read (finding 3; read, not run).**
+The ruling was about merge offers, which are only made for replicated documents,
+so the check is limited to them. For a solo document, the pin is still the only
+guard. If a held solo record has lost its pin, a stranger's copy reaches the
+card. Open pins the stranger's key and records it as the publisher, and
+`chooseCopy` can then replace the held copy. The D85 build refusal catches this
+only when `wrote` is set and both builds are known. **Ruling wanted:** does "a
+different publisher is a different document" reach solo documents?
+
+**Ruled 25 September: yes, every held document, solo included** (D85 from the
+arrival side). **Built in `7a38b47`, red first on Chromium:** a kept solo
+document with its pin gone let a stranger's copy reach the card ("Get"). Now
+the held record's publisher refuses it with `strangersCopy`. The two paths ask
+in a different order, on purpose, and `IDENTITY-ONE-LIVE-COPY` says why. A
+replicated copy asks the held record before the pin, because a merge card must
+never appear for a stranger's copy. A solo copy lets the pin speak first,
+because its sentences are sharper ("not signed at all" for a stripped
+signature) and there is no merge card to reach, then asks the held record, for
+a pin that is gone. Placing it before the pin for solo was run: it replaced the
+pin's sentence in four tests (`opener-trust:54`, `:91`, `trust-consent:68`,
+`:98`), so it was not taken. D129 settles one wording for both and can revisit
+the order then. Held by `trust-consent` "a kept document with its pin gone
+still refuses a stranger's copy".
+
+#### D125 — The reopen test closed B before its seat was saved
+
+*Status: closed 25 September (`1dfea17`): CI run `36175966725` on `acd5753`
+read green, the test passing on all three engines. Was D123 item 1.*
+
+`mailbox-link-e2e` "reopening the invite on the same copy binds no second
+seat": B not an admitted member after the reopen (`:670` at `689a440`). About
+half on WebKit (11 in 20 on `5d95a81`, 9 in 20 before D122), 5 in 16 on
+Firefox with D117, and the only red on CI run `36165131898`.
+
+**Measured, not read.** A probe on B's copy, 12 runs on WebKit: before the
+close B held two confirmations in memory, the creator's and its own; in 3 of
+the 12 the reopened copy held only the creator's, and waited to be seated
+again. One pull put it back each time. So the stored copy lacked a
+confirmation B had pulled and applied, and the mailbox cursor had not moved
+past it, since a pull moves the cursor only after the flush lands. Nothing
+was lost. `letIn` waits for the copy in memory, and the test closed B straight
+after it: a save asked is not a save written.
+
+**Red on the cause.** The test now holds B's save messages four seconds
+(`holdSaves`, an init script ahead of the opener's listener) from just before
+`letIn`. The unchanged test then failed every time, at the member assertion:
+8 in 8 on WebKit, 4 in 4 on Chromium. **The fix** waits for what the close
+needs, the confirmation in B's stored copy, read through `__runner.loadStored`
+and opened in the app frame's SQLite (`confirmedInStore`); the hold stays, so
+removing the wait fails every time instead of half of the time. With it: 8 in
+8 on WebKit with the witness read false first each time and true after 5.6 to
+7.5 s; then 19 in 20 on WebKit and 16 in 16 on Firefox, the one WebKit
+failure at an earlier step (below).
+
+**A person is not affected**, measured: with the save held and no pull from
+the test, the reopened copy seated itself from its own mount poll in 0.45 to
+1.3 s, 8 in 8. A tab closed within a second of being seated reopens "waiting"
+for about a second.
+
+**Seen once, not this cause:** in 1 of 20 on WebKit, B's own reply `e5`
+(before the hold is set) never enabled Play: the piece was picked up, the
+destination tapped, and `#play-move` stayed disabled for 15 s. `play()` in
+`tests/chess-play.ts` retries the pick-up and not the destination tap. Rate
+not measured.
+
+#### D124 — On WebKit a route does not see a controlled page's requests; the route lint says it does
+
+*Status: open. Filed 25 September from D119, which measured it.*
+
+`scripts/check-routes.mjs` flags only a same-origin `page.route` in a file that
+does not block the worker. It exempts a cross-origin pattern ("outside the
+worker's scope and never intercepted") and every `context.route` ("does see the
+worker's own requests"). D119 measured both false on WebKit: a page the
+runner's worker controls made twelve cross-origin relay requests, and a
+`context.route` on them saw none. A worker's scope is which pages it controls,
+not which URLs; a controlled page's cross-origin fetch reaches its fetch
+handler too.
+
+Routes whose effect a test relies on, that the lint exempts, and that run on
+WebKit unless their file says otherwise (not yet checked one by one):
+`runner.spec.ts:490` (a cross-origin abort), `handoff-tab.spec.ts:151` (a
+cross-origin fulfil), `push-e2e.spec.ts:491`, `version-update.spec.ts:55`,
+`reference-head.spec.ts:42`, `write-rules-race.spec.ts:64,124`,
+`write-rules-refused.spec.ts:68,114` (context routes). For each: does the route
+fire on WebKit (count it), and if not, is the test passing for a reason
+unrelated to its claim? Then correct the lint's premise and its reach. The
+pattern is part 3's second shape: a check that passes for a reason unrelated to
+what it claims.
+
+#### D123 — A relaunch-path test flakes, measured before D117
+
+*Status: open. Filed 25 September; each rate measured on `df75e52` (before
+D117) and on the D117 tree, local, no retries. Item 1 is now D125; item 3
+added 25 September.*
+
+2. **`launch-address` "after a store arrival, keeps the path and the key that
+   fetch it again"**, WebKit: 15 in 30 on the baseline, 12 in 30 with D117,
+   "execution context was destroyed". The test waits for `body.loaded`, which on
+   iOS the rehearsal mount sets before the relaunch leaves, and then reads the
+   page the relaunch is about to replace. Wait for the load after the relaunch
+   ("iOS reload: taken on the load before this one"), as the second open in the
+   same test already does.
+3. **A held copy's card Open never shows the app, Firefox.** The face D125's
+   Firefox runs had at `:658`, now met in D122's game test at its setup
+   (`mailbox-link-e2e:1655`, B opening the first invite on a copy it holds):
+   `#app` not visible 60 s after the card's Open. Flaky once on CI run
+   `36175966725`. Measured 25 September, local, no retries, same statement
+   every time: 2 in 48 on `acd5753`, 1 in 48 with the opener and spec from
+   `689a440` (before D125 and D122's second half), so it predates both. Not
+   read yet: what the page holds when the app never comes (the report line,
+   `body` classes, the frame's handshake).
+
+#### D122 — Any link naming a game this device holds re-keys that game
+
+*Status: closed 25 September, both halves (`e2cbd09`, `acd5753`): CI run
+`36175966725` read green, every D122 test passing on all three engines (the
+game test flaky once on Firefox, at its setup, before any refusal: D123 item
+3). Filed 25 September from the third cold read of D117. Latent on main.*
+
+**Ruled 25 September** (`IDENTITY-KEY-HELD` in `src/rules.ts`, renamed from
+`IDENTITY-GAME-KEY-HELD` before it reached main, when the second ruling
+widened it): **a held key, document or game, is never replaced by an arriving
+one.** An arriving key fills an empty slot; a link naming a held game, or a
+held replicated document, under a different key is refused with a sentence and
+reported. And, the second ruling: **every refusal on the arrival path takes the
+launch screen down,** "published by somebody else" included.
+
+**Shown red, then fixed.** `tests/mailbox-link-e2e.spec.ts`, "a link naming a
+held game under a different key is refused, and the held key stays": A invites
+B, A's library is given another key for the game (as any copy's holder could),
+A shares the game again, B opens that link. Red with the fix removed on
+Chromium and WebKit, at "B still holds the key it was invited with" (B held
+the forged key). Green with it, 5 of 5 on each engine. The fix: `ingest`
+refuses the link before the card, from a fresh read, with the sentence and a
+`dai: refused a link naming game …` console line; `rememberSessionKey` fills
+gaps only.
+
+**What the run found that reading did not.** The first green attempt refused
+correctly and showed nothing: the address names a copy held here, so the page
+is painted as launching into it, and a refusal that does not take the launch
+screen down leaves the person on "This is taking longer than it should · Tap to
+open", which reopens the held copy with no word about the link. The refusal
+now clears the launch screen. The refusals beside it did not (below).
+
+**The harness met a race of its own.** The forge writes the library around the
+opener's lock, and once in ten on WebKit a locked write of A's, read before it,
+put the old key back. The test waits for what the next step needs (a link under
+the other key), retrying the forge and share until it has one.
+
+**The document half, red then fixed** (the ruling above). "a link naming a held
+document under a different key is refused, and the held key stays": A sends the
+document from the menu (a link naming no game, under the document key), B opens
+it, A's library is given another document key, A sends again, B opens that.
+Before the fix B reached the merge card, and a person who pressed Open had the
+held key replaced when the mailbox started: red at "B still holds the key it was
+sent" on Chromium and WebKit. The fix: `ingest` refuses before the card, for a
+replicated document only, with the sentence and a `dai: refused a link naming
+document …` line; `documentRootKey` and the keep write's `arrivedKeyFields`
+fill an empty slot only. Not for a solo document: its link seals under a key
+minted for that share, so every second link to one carries a different key and
+no mailbox reads it; it keeps the held key and opens.
+
+**The launch screen, red then fixed.** "a link to a held document from another
+publisher is refused in sight": B holds the genuine copy, A sends a copy under
+the same id signed by another key. The pin answers first ("signed by a different
+publisher"), and before the fix its sentence was in the report and hidden under
+the launch screen: red on Chromium and WebKit. Every refusal in `ingest` and
+`launchFromLibrary` now goes through one `refuseArrival`, which takes the
+launch screen and its guard down before it speaks; `tests/arrival-refusals.spec.ts`
+holds it from the source, and was shown to list all ten flagged `say` calls on
+the opener before the fix. **"Published by somebody else" itself could not be
+made red:** with B's pin removed, the stranger's copy was offered as a merge
+into B's copy. That refusal is unreachable; filed as D126.
+
+The original entry, as filed:
+
+`ingest` files an arriving game key on a copy already held with
+`rememberSessionKey`, which replaces a different key for that game without a
+word (`arrivedKey && arrivedSession && heldHere`). So a stale invite, or one
+built by anybody holding a copy (the database is outside the signed set, so a
+copy re-sealed under another key with any `s=` still verifies), moves that
+game's mailbox to a new address: this copy publishes and reads where its
+partner does not, which is D37's failure arriving by a different door, and
+nothing on either screen says so. D37's rule is that a key is never displaced
+by one arriving for a different game; for the *same* game nothing is ruled.
+**Open question:** when may an arriving key for a game this device holds a key
+for replace it, if ever? A deliberate re-invite from the creator is the only
+case that comes to mind; everything else fills gaps only.
+
+#### D121 — The warm merge writes the library record from a read taken before it
+
+*Status: open. Filed 25 September from the cold review of D117 (its finding 8);
+read, not run.*
+
+`saveCartridgeToLibrary({ ...heldHere, mergeStanding: true })` in `ingest`'s
+warm merge path spreads a record read before the arriving key was filed and
+before the merge's own save, and writes it outside `withLibraryLock`. That is
+the D41 shape: a write built from a stale read can put `revision` back and
+refuse every later save, and can drop the key just filed. The shape lint passes
+it because it spreads. Take it under the lock from a fresh read, as
+`amendLibraryRecord` does.
+
+#### D120 — What else the iOS relaunch leaves behind
+
+*Status: open. Filed 25 September from the cold review of D117, which asked what
+the first load holds that the relaunched load does not. Each read, not run.*
+
+The review enumerated the state of all three relaunching paths (ingest's keep
+path, `launchFromLibrary`, `finishMerge`); the key was D117. Three more cross
+nothing, or cross wrongly:
+
+1. **The card's publisher warning does not survive.** `installSuppressed` is set
+   in `ingest` when the card calls the publisher a conflict (a stranger wearing
+   a known name) and read before offering to keep the app. The relaunched load
+   starts it false and `launchFromLibrary` never sets it, so on an iPhone the
+   open the card warned about can be offered the keep-this-app prompt at the
+   first use. Desktop takes no relaunch and keeps the suppression. Carry it
+   across named for its document, or have `launchFromLibrary` ask
+   `publisherState` again.
+2. **`IOS_RELOAD_TAKEN` names no document.** A reload that stalls (the iOS bug
+   the launch guard exists for), followed by the person going somewhere other
+   than Tap to open, leaves it for the next load in the tab, which then believes
+   it was a relaunch and skips its own. The new `IOS_RELOAD_CARRIED` is stored
+   as `<uuid> <what>` and read only by a load for that document; this one wants
+   the same.
+3. **`finishMerge` relaunches when the flush failed.** The result of
+   `flushDocument()` is ignored, so a flush that times out relaunches into a
+   stored copy without the merged move, and "the move could not be added" is
+   never said. Treat a failed flush as not applied.
+
+Also seen, low: the ingest rehearsal relaunches with no flush of the frame's own
+boot writes; they are written again after the relaunch and the seq floor keeps
+them from colliding.
+
+#### D119 — The contested-seat e2e fails its own setup on WebKit
+
+*Status: closed 25 September (`5d95a81`): the harness, not the product. CI run
+`36175966725` read green on WebKit, the test passing on all three engines.
+Named 25 September from CI run `36120722040` (identity step 3, `df75e52`);
+reproduced locally on WebKit, two in two.*
+
+**Answered by running it: the refusal never reached WebKit's traffic.** With
+two independent witnesses beside the route, on WebKit A made twelve relay
+requests in the window, GETs among them: Playwright's page `request` events saw
+all twelve, and so did the page's own Resource Timing. The context route saw
+none, not even a pass-through counter registered beside it. On Chromium the same
+route saw five and refused three. A's page is controlled by the runner's
+service worker, and on WebKit a route does not see a controlled page's fetches,
+cross-origin included. With A's worker blocked (`serviceWorkers: "block"` on
+A's context only) the route saw eleven and refused eight, and the test passed
+two in two on WebKit, then 8 of 8 on each engine.
+
+**So the rest of the test never tested anything on WebKit** until now: it
+stopped at the setup check every time. It does now, and passes.
+
+**Chromium's miss had a cause too, and likely the same one.** Measured before
+the fix, the Chromium run failed at "A's copy holds both asks" (1, not 2) in 2
+of 6 on `e2cbd09` and 1 of 6 on `df22709` (so not D122), a check WebKit never
+reached. With A's worker blocked, Chromium passed 8 of 8, then 16 of 16 more:
+24 in 24, against 3 misses in 12 without it. The reading that fits: on Chromium an ask sometimes reached A through
+the worker, past the route, so A seated it before the contest.
+**It is not gone** (25 September, D125's session): the same miss, 1 not 2,
+once in the commit tier on Chromium, beside 19 other tests; 24 in 24 when run
+alone straight after. A rate under load, not measured.
+
+**The route lint's premise is false on WebKit** (`scripts/check-routes.mjs`):
+it exempts a cross-origin route as "outside the worker's scope and never
+intercepted", and a `context.route` as seeing the worker's own requests.
+Neither holds on WebKit for a controlled page. Filed as D124.
+
+`tests/mailbox-link-e2e.spec.ts`, "a forwarded invite contests the seat, nobody
+is seated, both are told, and the creator repairs", fails on WebKit at its setup
+check "A's copy tried to read and was refused while the two opened": 0 reads
+refused. Chromium and Firefox pass it.
+
+**A setup check failing means the precondition did not hold, not that the
+product did the wrong thing.** Start at the precondition: *is the refusal
+actually reaching WebKit's traffic?* The test blocks A's relay reads with a
+context route and counts the aborts. Two readings fit 0: the route never sees A's
+reads on WebKit (harness; the same family as the clipboard stub earlier), or A
+made no read in that window (the product: its poll did not run while B and C
+opened). Which one it is decides whether the rest of the test ever tested
+anything on WebKit. It is not the seat model until that is known.
+
+#### D118 — The creator ejects a confirmed seat
+
+*Status: open, not built. Filed 24 September from the ruling on the seat
+model's first-ask consequence.*
+
+Over the mailbox the creator's copy seats the first ask it reads, so if a
+forwarded invite reaches the wrong person first, they are seated and the seat
+is theirs for good (IDENTITY-SEAT-CONFIRMED). The answer today is the one a
+person already has: start a new game and do not forward the link. A
+creator-side eject of a confirmed seat was considered and not ruled in: a hold
+that never moves is the property T1-D29 exists for, and the model was just
+rebuilt to stop history being erased. **The open question** that any eject has
+to answer first: what happens to the ejected player's moves that were already
+admitted. Retiring the seat drops them, which is the erasure the rebuild
+removed.
+
+#### D117 — The iOS relaunch loses an invite's key on a device that does not hold the app
+
+*Status: closed 25 September (identity step 5): CI run `36175966725` on `acd5753`
+read green on WebKit. Filed 24 September. Latent on main, exposed by the seat
+model.*
+
+A stranger on iOS opening an invite, which is the phone walk's core path: the
+link carries the game's key; the load that opens it relaunches at the
+document's address; the load after the relaunch opens the copy from the
+library, and the library holds **no document key and no game key**. So the copy
+runs no mailbox, and the page says "Updates from the other copy arrive when you
+invite someone, or open a shared link", which is what the person just did.
+Seen with the relay set as a deploy sets it (the `dai-relay` meta on every
+load), in `tests/invite-identity.spec.ts`, WebKit, iPhone: "the recipient is not
+the sender, on an iPhone" and "test 1" both fail at "the copy runs a mailbox
+session". The desktop shape of the same tests passes on Chromium and WebKit.
+
+**Why it was not seen before.** The arriving key is filed at arrival only when
+the device already holds the app (`arrivedKey && arrivedSession && heldHere` in
+`apps/runner/src/main.ts`, the same guard on main); otherwise it is filed when
+the mailbox starts, and the relaunch comes first. Under the first seat model a
+recipient bound its own seat, so it looked alive, seated and playing, without
+ever reaching the creator. Under the seat model it waits to be seated by the
+creator's copy, which never hears it ask.
+
+**Same family as the relaunch identity regression** (23 September, in
+`docs/identity.md`): the iOS relaunch dropping something the first load had.
+A launch or relaunch path change gets a cold review of its own before anything
+downstream leans on it. **Order:** a named red for the lost key, then the fix,
+then that review; then D80.
+
+**The two "known reds" were red for a race.** On CI (run `36120722040`, before
+the fix) both iPhone tests *passed*; on this machine they failed every time. The
+load that opens the link mounts once behind the launch screen before it
+relaunches, and a mailbox started in that mount files the key; whether it
+starts before the relaunch goes is a race, which CI's machine won. A red that
+depends on a race is red for a reason unrelated to its claim (part 3, "a check
+that passes for a reason unrelated to what it claims"), and so is its green. The
+named red (`tests/invite-identity.spec.ts`, "D117: an invite's key survives the
+iOS relaunch") forces the losing order: the relay reaches only the load after
+the relaunch, so nothing on the first load can file the key but the fix. Red
+three times in three with the fix's two filing lines taken out, green with them.
+
+**What was built.** Two carriers, each shown red without it:
+- The key the link carried is filed **in the write that keeps the copy**
+  (`arrivedKeyFields` in `ingest`'s keep), which already holds the library lock
+  and comes before the relaunch. `relaunchAtOwnAddress`, the one door all three
+  relaunching paths go through, only reads back what landed (bounded at 1 s)
+  and leaves that account in session storage (`KEYS.IOS_RELOAD_CARRIED`, named
+  for its document). **The first version wrote the key there, in a write of its
+  own, and CI caught what that cost:** the write queued on the library lock
+  behind the rehearsal mount's own save, so every first open from a link on an
+  iPhone held the launch screen up by up to the 3 s bound, and a page that said
+  "loaded" was replaced under whoever was using it. `launch-address` "after a
+  store arrival, keeps the path and the key" failed at "still the store
+  address" 4 in 10 on it, never on the baseline, 0 in 40 since.
+- A load that opens a held copy (the `hintOnly` branch) files the game's key
+  from **the link the record kept**, when the library holds none for that game.
+  It fills a gap and never replaces a key held (D37); game keys only, since a
+  link naming no game predates per-game keys. This is what repairs a phone D117
+  already stranded: from the first cold review, which reproduced one and showed
+  it never recovering on reopen. **The first version took the key from the
+  address instead, and that was a way in**: the address is anybody's to write,
+  the document's id rides on every icon and link, and on a copy with no key yet
+  (came by file, never shared) an address's key became the key its mailbox
+  sealed under. Found by the second cold review; shown red on `a20cb76` ("an
+  address's key is never filed on a held copy it did not open": the keyless copy
+  ended holding the address's game key and a minted document key). The record's
+  link is written only by `ingest`, after its key decrypted what it fetched.
+- The arrival line says what crossed, on a load that followed a reload or filed
+  the key from its record's link, and nowhere else: what the load before said it
+  filed, and whether the library holds the key this address names, asked
+  separately ("carried across: the game's key, filed · the address's key held
+  here: yes"). With the filing removed it read "NOT filed · … no".
+
+The rest of what the review found the relaunch leaves behind is D120.
+
+**Left open by the third cold read** (of the repair alone, on `e313d12`; read,
+not run). The claim holds: the address can no longer plant a key. Four small
+things in or beside the repair, none changing what it files:
+- The words. The record's `link` is the *last* store link `ingest` accepted for
+  the document, which can be a link whose copy was older and not taken; the line
+  says "the link this copy was opened by". Say "the last link this copy was
+  opened from", in the comment, the line and the test.
+- The gap is tested on a record read before the lock, and `rememberSessionKey`
+  overwrites; a second tab filing the same game in between is replaced (D105's
+  ground). Test the gap inside `amendLibraryRecord`.
+- `keyFromRecord` is set whether the write landed or not; set it from a read-back,
+  as `fileArrivedKey` does.
+- `arrivedByLink` is set from an unchecked address in the same branch and cleared
+  neither by `eject` nor by the `launchQueue` consumer. It cannot reach the
+  record today (a file launch opens a new window); it would if the manifest ever
+  focused an existing one.
+The larger thing it found is next to the repair, and older: D122.
+
+#### D116 — The seat check is superlinear in moves
+
+*Status: open. Filed 24 September from the cold review of identity step 5
+(finding 10).*
+
+Reading a seated table's `_current` view took 5.5 s at 1,000 moves on the
+reviewer's machine, 55% of it the seat check; the heads walk was already
+superlinear before the seat check was added (it recomputes supersession over
+the admitted rows on every read, `headsView` in `src/replicated.ts`). Chess
+games are short enough that nobody notices; a long game or a tracker will. The
+answer the headsView comment already names is a materialized membership set
+recomputed on merge, not a return to a stored flag. Measure again on the seat
+model that replaced the first-signer rule before choosing.
+
+#### D115 — The seat-table scan misses writes it could be shown
+
+*Status: open. Filed 24 September from the cold review of identity step 5
+(finding 8).*
+
+`seatWritesIn` (`src/seat-check.ts`) is a text scan. The reviewer's cases
+(`%TEMP%\review5s\scan.spec.ts`) show what it can miss: a schema-qualified or
+quoted table name, a name split across a string concatenation, an INSERT
+spanning lines, the session writers reached through an alias, a bracket, an
+optional call or a computed property. That is expected of a scan and changes
+nothing that matters, in the spec's words: the scan is a courtesy; admission
+is the enforcement. A seat written around the kit seats nobody, because only
+the creator's confirmation holds an open seat and the creator is checked from
+the rows (IDENTITY-SEAT-CONFIRMED). What is open is whether to widen the scan
+toward what it can be shown, or to say in the lint's text that it is a
+courtesy.
+
+#### D114 — A backdated clock wins a contested seat
+
+*Status: closed 24 September, into the seat model (identity step 5).*
+
+The first model held a contested seat by the first verified signer: the lowest
+clock, then the lowest author id. The clock is the author's own, so a joiner
+who backdated it won, and the review showed worse: the same trick took the
+creator's seat, and a backdated seat row made a joiner the creator. The fix
+this entry named, a seat settled by what the creator signs rather than a clock
+anyone sets, is what was built: the session id commits to the creator, the
+creator's seat is the creator's, and the open seat is held by whoever the
+creator's copy confirms (`IDENTITY-SEAT-CONFIRMED` in `src/rules.ts`; the
+attacks are `tests/seat-attacks.spec.ts`).
+
+#### D113 — A publish in flight overwrote a write's "not up to date"
+
+*Status: closed 24 September (740b2cb). Kept for the cross-reference below.*
+
+A publish already in flight had answered before a write; the write's AUTHORED
+marked the lane not up to date, and the publish then finished and set it up to
+date again from its stale answer. A closed game's lane could retire with its
+close unsent. Now a write (or a landed seal's nudge) during an in-flight
+publish asks for another. Found by the no-retire test in
+`tests/mailbox-link-e2e.spec.ts`, red 3 of 6 on the code before the fix.
+
+**Corrected 24 September: it did not clear returning-document:511.** That was
+recorded here as likely, not isolated, and it recurred on Firefox in run
+36059363617 (7d5a3f0), both attempts, carrying D32's full signature: the
+document mounted, its frame cannot be entered, a reload does not recover it, a
+fresh page in the same context can enter it. It is D32 (see there), not this.
+
+#### D112 — A move held for a save that never lands is honest but silent
+
+*Status: open. Ruled 24 September (identity step 4 review): filed, not this
+sitting.*
+
+A sealed batch is published only once a save holding its seal has landed. When
+the store keeps refusing (a full quota, a save refused as from another tab) the
+move stays on this device, the lane stays open, and nothing is lost; that fails
+closed. But the only thing the person sees is the save failing. Nothing says
+that the move was not sent, so the other player waits and this one believes
+they have played. What closes it: a kit sentence, owned by the kit like the
+loss sentence, shown while a batch of this person's is held ("Your last move is
+saved here but hasn't been sent."), and cleared when it leaves. The frame
+already knows (the \`held\` answer); the host would carry it to the kit.
+
+#### D111 — The reference readers take the verifier's word for every signature
+
+*Status: open. Ruled 24 September (identity step 4): accepted for the sitting,
+filed as the successor; not this sitting.*
+
+The merge vectors carry `verdicts.json`, the TypeScript verifier's answer for
+every header, and the Python and Rust readers merge by it. They do the coverage
+rules themselves, and three vectors (a stowaway row, a tampered batch, a lost
+pointer) fail a reader that has one rule wrong, so they are tested on what they
+claim. But a reader that consumes the verifier's verdict cannot catch the
+verifier being wrong, and the reference readers exist to show the format can be
+read without trusting the TypeScript. What closes it: each reader does its own
+canonical rows, digest and ES256 check (`cryptography` in Python, `p256` in
+Rust) against the `pub` the vectors already carry, and `verdicts.json` becomes
+a file it checks its own answer against rather than one it takes. No fixture
+change is needed.
+
+#### D110 — Which Playwright project a spec runs in is decided by its prose
+
+*Status: open. Filed 24 September; an instance of "a check that passes for a
+reason unrelated to what it claims" (part 3).*
+
+`playwright.config.ts` builds the `node` project from every spec whose text
+never matches `\b(page|browser|context|browserName)\b`. A comment or a test
+title with one of those words moves a node-only spec into the browser projects,
+silently: `tests/seal.spec.ts` did, and a run of `--project=node` then ran none
+of it and reported green. What closes it: membership stated, not inferred: a
+path convention (for example `tests/node/`) or an explicit list, with a check
+that every spec is in exactly one.
+
+#### D109 — The sequence floor's publish route has no test of its own
+
+*Status: open. Filed 24 September from the identity sitting's review fixes
+(#1/#3).*
+
+The per-document sequence floor is raised before a save is written and before
+a mailbox batch is sealed (`beforePublish` in
+`apps/runner/src/mailbox-session.ts`). The save route is held end to end by
+`tests/seq-floor.spec.ts` (removed and received again). The publish route is
+not: proving it needs a save lost *after* a publish, deterministically, and no
+harness does that yet. Until one does, a change that dropped `beforePublish`
+would pass every test. What would close it: a way to make the host refuse or
+lose one save on demand (scenery), then a test that publishes, loses the save,
+reopens, and asserts the next row is above what was published.
+
+#### D108 — An old host meets a new document
+
+*Status: open. Ruled 24 September: filed, nothing built until step 6.*
+
+The skew that can happen is not an old document on a new host: the runner mounts
+every document with its own runtime (`hostShell(..., { runtime: HOST_RUNTIME })`),
+so a document never runs its old code here. It is the other way round. An
+installed copy on a phone runs whatever host its service worker cached, and a
+cached host from before signed authorship, handed a document that carries
+`_dai_batch`, would write unsigned rows into a signed document, which is
+exactly what step 6's legacy rule forbids.
+
+The guard belongs in the format: a document declares its format version, and a
+host below that version mounts it read-only, with the update sentence ("This
+app needs an update before it can be written to; what's here is kept"). This is
+step 6's legacy rule seen from the other side; step 6's scope is both
+directions (`docs/identity.md`, Migration of existing documents).
+
+#### D107 — The crossed-invite tests pass on retry on Firefox
+
+*Status: open. Two sightings, both on Firefox, both passing on retry: run
+35943543565 (`mailbox-link-e2e.spec.ts:1294`, "the same crossed invites in
+the other opening order reach each other too") and run 35999516080 (`:1242`,
+"both invite before either opens, and each game still reaches the other
+copy", a 60-second visibility timeout). The two tests are one scenario in two
+orders.*
+
+#### D106 — The message-name scan cannot see a template literal or a split `type:`
+
+*Status: open, minor. Filed 24 September from the identity sitting's cold
+review.*
+
+`literalProblems` (`src/names-check.ts`) reads line by line: any quoted
+`DAI_HOST_…`/`DAI_FRAME_…` string, and a quoted `dai:…` string in a `type:`,
+a `.type ===` comparison, or a `case` label. It does not see a name assembled in
+a template literal (`` `dai:${x}` ``) or a `{ type:` whose value is on the next
+line. Nothing in the tree does either today. What would close it: scan the
+TypeScript AST for string and template literals in those positions instead of
+lines.
+
+#### D105 — Two tabs on one held copy can both write under one author
+
+*Status: open. Filed 24 September from the identity sitting's cold review.*
+
+`IDENTITY-ONE-LIVE-COPY` keeps one copy of a document per device, but two tabs
+can show that one copy at once. D41's lock refuses the stale tab's *save*; it
+does not stop the stale tab stamping rows or publishing them to the mailbox. So
+two tabs can issue the same `(author, seq)` for different rows, and the
+exchange refuses one as tampering.
+
+**Likely closer, not built:** the per-document sequence high-water mark the
+sitting keeps in IndexedDB beside the person key. If each tab reserves its seq
+through one IndexedDB transaction before it stamps, two tabs cannot reserve the
+same number. Row identity by content hash (D104) removes the hazard outright.
+
+#### D104 — Row identity by content hash, in place of `(author, seq)`
+
+*Status: open. Ruled 24 September: noted, not built.*
+
+A shared row's version is named by `(_r_replica, _r_seq)`: an author and a
+counter. Since the identity sitting, the author is the device's person key,
+the same for every copy that device holds. A counter is only safe when one
+writer holds it, so this version keeps one live copy per document per device
+(`IDENTITY-ONE-LIVE-COPY` in `src/rules.ts`, rule 7 of `docs/identity.md`).
+The hazard it guards against is two live copies on one device issuing the same
+pair for different rows, and the exchange refusing one as tampering.
+
+Content hashes remove the hazard rather than guarding it: a row version named
+by the hash of its content, the way a commit id is. Two copies cannot issue the
+same name for different rows, because the name is the row. What it touches:
+the merge key, `_r_parents`, the batch digest (which already hashes canonical
+rows), the conformance readers, and every stored document, so it is a format
+version.
+
+#### D103 — The desktop host has no person key
+
+*Status: open. Ruled 24 September: desktop gets the person key the day it
+sends write rules, and not before.*
+
+`apps/desktop` sends no write rules today, so its documents never write shared
+rows and never need an author id. The day it does, it takes the same path as
+the runner: the key made on first use and kept in the host's own store, the
+author id handed to the frame on every mount, and one live copy per document
+(`docs/identity.md` rule 7; `IDENTITY-ONE-LIVE-COPY`). A loose file opened
+twice is merged into the held copy, not opened beside it.
+
+#### D102 — `launch-address.spec.ts:123` passes on retry on WebKit
+
+*Status: open. First seen 23 September, run 35935079996 (WebKit shard 1/2,
+job 107430182690, commit a7ab452): "after a store arrival, keeps the path and
+the key that fetch it again" failed, then passed on retry. The commit touched
+nothing it exercises.*
+
+#### D101 — `MergeReport.refused` is a name a quieter one would serve
+
+*Status: open. A naming nit, filed 23 September during the identity sitting; no
+behavior changes with it.*
+
+`MergeReport.refused?: string` (`src/replicated-frame.ts`) means "the merge
+did not run", and about a dozen callers test it for truthiness. The identity
+sitting adds `refusedBatches: {author, reason}[]`, meaning "the merge ran and
+refused these", so the two are kept apart by name, as ruled. The old name reads
+as though it might be the list. What closes it: rename it to what it means
+(for example `notRun`) across its callers on a quiet day, as its own change.
+
+#### D100 — A frame message name written as a literal outside its owner
+
+*Status: **fixed in step 2 of the identity sitting**, under the naming family
+(binding rule 8 of `docs/identity.md`): the name is `TO_HOST.REPLICA_ID_ANSWER`,
+and `check-names` now refuses a message name spelled outside its owner.*
+
+`"DAI_FRAME_REPLICA_ID"` is spelled out at `src/runtime/bootloader.ts:3546`
+(the frame's answer to a replica id request) and at
+`apps/runner/src/main.ts:4994` (the host's listener for it). Neither `src/bridge.ts`
+nor `src/frame.ts` owns it, so nothing keeps the two copies in step and
+`check-names` never sees it. It is the replica id request the tests read
+identity through, so it is exactly the name the identity sitting touches.
+
+Held by `tests/bridge-literals.spec.ts`: once `check-names` scans for message
+literals outside their owners, this literal turns the typecheck red, so the
+scan and the fix land in the same change.
+
 #### D99 — After a merge from a link, the sample game is on screen and the invited one is only in the list
 
 *Status: open. Found on a phone 19 September, seen again 23 September; never
@@ -4841,8 +5913,18 @@ omission, there by dropping a tap), D80.
 
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
 
-*Status: **open, V1 blocker.** Proven 19 September; not fixed. The fix is what a
-seat is bound to, and that is its own sitting.*
+*Status: **closed 25 September, green re-earned on the seat model**
+(`c997bd4`): CI run `36207287432` read green, both D80 tests passing on all
+three engines. The e2e now makes the strongest forgery a joiner has with rows
+alone, the one that broke the first seat model: Bo binds Ada's own seat at
+clock 0, before any row of hers, then plays White's move for it. Ada's copy
+stores both rows, does not admit the move, and reports `SEAT_NOT_HELD` with
+Bo's id; the test also asserts the backdated binding arrived. Run red with the
+seated admission falling back to membership (Ada's copy admitted `d4`). The
+account below is the history.*
+
+*Earlier status: open, V1 blocker. Proven 19 September. The fix was what a
+seat is bound to, and that was its own sitting (docs/identity.md).*
 
 **One way in closed, 23 September, and it was not this one.** A phone found a
 recipient opening an invite that carried the game and coming up as the creator:
@@ -5040,6 +6122,24 @@ prints a stale-map warning and still exits 0 (seen twice tonight).
 
 *Status: open, **and no longer read as a test problem** (20 September). Rate
 measured; the frame read at failure. Fix undecided.*
+
+**Firefox demoted to non-blocking, 25 September.** `:511` failed at least once
+on Firefox in 3 of the last 4 runs on `identity/signed-authorship` (red on
+`3adbde4`, flaky on `71f32ab` and `c997bd4`), and it is not on the walk. So
+Firefox is now a reading and not the gate: Chromium and WebKit decide a run,
+and `scripts/ci-verdict.mjs` still prints Firefox's tally on its own line (the
+standing rule is in section 2). **Still owed: a bounded chase of the three
+untried rungs** below (a service worker controlling the page; a blob carrying
+the runtime and a real document; the opener's own sequence of card, stored
+read and reseal), stopping at the first that reproduces. Firefox goes back on
+the gate when D32 closes.
+
+**Bumped 24 September: `:511` now fails both attempts.** "A turn sent and
+answered, with nothing written in between, is taken without a question" failed
+both attempts, with D32's signature, in two of the last three Firefox runs:
+`36033989571` (96e6d11) and `36059363617` (7d5a3f0); it passed in
+`36041107841` (098e187). Not chased in the identity sitting; recorded so the
+rate is known when it is.
 
 **It is getting through the retry now (22–23 September).** Counted over every
 failed run of `test` in that week, the case that fails both attempts and takes

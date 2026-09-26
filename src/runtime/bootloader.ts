@@ -29,6 +29,7 @@ import { verifySign1 } from "../cose.js";
 import { compatibility, type SchemaDeclaration } from "../schema.js";
 import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
 import { FRAME, FRAME_INTERNAL, FRAME_PUBLIC, type FrameNames } from "../frame.js";
+import { SESSION_ID_FUNCTION, sessionIdTools } from "../session-id.js";
 
 const APP_PREFIX = "app/";
 const SCHEMA_ENTRY = "runtime/schema.json";
@@ -741,7 +742,7 @@ async function writeContainer(
  * would seal into the next copy. The loader hands this object over by
  * `postMessage` and sets it locally instead.
  */
-function bridgeMain(names: FrameNames): void {
+function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, nonce: unknown) => Uint8Array | null }): void {
   /*
    * The SHA-256 of the merge module this runtime was built against.
    *
@@ -821,6 +822,21 @@ function bridgeMain(names: FrameNames): void {
    * hands Emscripten an instance compiled from the embedded bytes, so
    * `locateFile()` is never consulted and no fetch is ever attempted.
    */
+  /*
+   * Every connection this runtime opens on a document, with the one SQL
+   * function the roster views call: who created a session is checked from the
+   * rows, at read (src/session-id.ts). A connection without it fails loudly on
+   * the first roster read rather than guessing.
+   */
+  const newDatabase = (api2: Any): Any => {
+    const db = new api2.oo1.DB() as Any;
+    db.createFunction(sessionId.name, (_ctx: number, author: unknown, nonce: unknown) => sessionId.of(author, nonce), {
+      arity: 2,
+      deterministic: true,
+    });
+    return db;
+  };
+
   const initSqlite = (): Promise<Any> => {
     if (booting) return booting;
     // Timed and reported to the shell, which is the only side keeping the
@@ -1012,13 +1028,35 @@ function bridgeMain(names: FrameNames): void {
       clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
     }
+    // Rows left pending by an earlier page (a tab closed before anything left)
+    // go with the next flush too: they are not orphans (identity step 3).
+    if (!autosaveDb && liveDb && hasPendingOwn()) autosaveDb = liveDb;
     if (!autosaveDb) return saving ?? undefined;
     // One save in flight at a time; a write during a save is saved after it.
     if (saving) return saving.then((): Promise<unknown> | undefined => flushAutosave());
     const db = autosaveDb;
     autosaveDb = null;
     tellSaveStatus("saving");
-    saving = saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }).then(
+    /*
+     * The leave point (docs/identity.md, step 3): seal, then save. The host
+     * raises the sequence floor and signs as one step of the seal, so the order
+     * is floor, seal, save, and the bytes are taken after the seal: what is
+     * saved is what was signed. A seal that fails is a save that fails, kept,
+     * retried and said, never a save of rows left unsigned.
+     */
+    saving = sealPending()
+      .then(() => {
+        // The seal is a write, and queues a save of its own; the bytes taken
+        // here already hold it (and anything written while it was signed), so
+        // that save is this one.
+        if (autosaveDb === db) {
+          autosaveDb = null;
+          if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
+          autosaveTimer = undefined;
+        }
+        return saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined);
+      })
+      .then(
       (result: Any) => {
         saving = null;
         if (result && result.saved === false) throw new Error(String(result.method || "the host did not save"));
@@ -1143,18 +1181,27 @@ function bridgeMain(names: FrameNames): void {
   let liveDb: Any | null = null;
   let mergeModule: Any | null = null;
   /*
-   * Whether this copy is one this device wrote, as the host reported it, and
-   * whether its replica identity has been settled yet.
-   *
-   * The frame cannot answer the first question. It sees one database and has
-   * no way to tell a copy this device has been writing for a month from a copy
-   * that arrived by mail five seconds ago — the two are the same bytes in the
-   * same place. The host knows, because it is the thing that either loaded the
-   * document from its own library or took delivery of a file.
+   * The author id this device writes under, as the host handed it with the
+   * write rules: the fingerprint of the host's person key (docs/identity.md,
+   * binding rule 1). The frame never works out who it is from the database;
+   * whether a copy was written here or arrived five seconds ago does not
+   * change whose key this device holds. Null only from a host that sent none.
+   * Bytes, as the host posted them: this function is serialized into the frame
+   * and imports nothing, so the shown form is the host's to make.
    */
-  let mountIsOwnCopy = false;
-  /** The id the host has recorded for this device and document, when it has one (d22). */
-  let mountReplica: string | null = null;
+  let mountReplica: Uint8Array | null = null;
+  /*
+   * The highest seq this device has let leave it for this document, as the host
+   * keeps it (by save or by publish). The counter is held at or above it, and
+   * above every seq the copy holds under its own id, on every write, so
+   * no copy of this document on this device reissues a seq already issued:
+   * not a copy removed and received again, not one reopened from a save older
+   * than what was sent, not one whose application rewound the counter.
+   */
+  let mountFloor = 0;
+  /** The document these rows belong to, as the host handed it with the write rules: signed into every batch header. */
+  let mountDocument = "";
+  const heldSeq = (rows: Any): number => Number(rows.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
   // `"any"` lets any member close; undefined for a document with no session. The
@@ -1269,7 +1316,7 @@ function bridgeMain(names: FrameNames): void {
     }
 
     const api2 = await initSqlite();
-    const sibling = new api2.oo1.DB() as Any;
+    const sibling = newDatabase(api2);
     try {
       const pointer = api2.wasm.allocFromTypedArray(bytes);
       const rc = api2.capi.sqlite3_deserialize(
@@ -1292,10 +1339,18 @@ function bridgeMain(names: FrameNames): void {
         },
       });
 
+      const merge = mergeModule as Any;
+      // Verified first, and outside the transaction: the checks are async, and
+      // nothing may await while the live database holds one open (ruling #3).
+      const verdicts = await merge.verifyBatches(rows(sibling), merge.mergeTablesOf(rows(sibling)), mountDocument);
       liveDb.exec("BEGIN");
       try {
-        const merge = mergeModule as Any;
-        const report = merge.mergeSibling(rows(liveDb), rows(sibling), request.level || 1);
+        const report = merge.mergeVerified(rows(liveDb), rows(sibling), {
+          level: request.level || 1,
+          document: mountDocument,
+          author: mountReplica ?? undefined,
+          verdicts,
+        });
         if (report.refused) {
           // Nothing was written. Rolled back rather than assumed: a refusal
           // that left a transaction open would take the next write with it.
@@ -1303,6 +1358,7 @@ function bridgeMain(names: FrameNames): void {
           return report;
         }
         liveDb.exec("COMMIT");
+        noteRefusedBatches(report);
         // Rows changed under whatever is on screen. Scheduling a save also
         // makes the merge durable rather than living until the next write.
         scheduleAutosave(liveDb);
@@ -1333,6 +1389,19 @@ function bridgeMain(names: FrameNames): void {
     }
   };
 
+  /*
+   * Batches a merge refused, said once, here: both merge paths (a file and the
+   * mailbox) run in this frame, so this is the one owner of the line (ruling C).
+   * The author id and the code, per batch; the rest of the merge ran.
+   */
+  const noteRefusedBatches = (report: Any): void => {
+    const refused = Array.isArray(report?.refusedBatches) ? report.refusedBatches : [];
+    if (refused.length === 0) return;
+    console.info(
+      `dai: merge refused ${refused.length} batch(es): ${refused.map((r: Any) => `${r.author} ${r.reason}`).join(", ")}`,
+    );
+  };
+
   /** The Rows view of a database handle, the shape the merge module reads. */
   const frameRows = (db: Any): Any => ({
     all: (sql: string, params: Any[] = []) => db.selectObjects(sql, params.slice()),
@@ -1352,8 +1421,8 @@ function bridgeMain(names: FrameNames): void {
   const authoredBatch = (
     watermark: { replica: string; seq: number },
     session?: Uint8Array,
-  ): { batch: Uint8Array | null; head: number; replica: string } => {
-    if (!liveDb || !mergeModule) return { batch: null, head: watermark.seq, replica: watermark.replica };
+  ): { batch: Uint8Array | null; head: number; replica: string; more: boolean; held: boolean } => {
+    if (!liveDb || !mergeModule || !mountReplica) return { batch: null, head: watermark.seq, replica: watermark.replica, more: false, held: false };
     const merge = mergeModule as Any;
     // Settle this copy's identity before reasoning about what it authored. A
     // copy that arrived by file still holds the sender's id until it takes its
@@ -1372,7 +1441,9 @@ function bridgeMain(names: FrameNames): void {
     // back with the head, so the host rebinds its watermark to what it advanced.
     // Scoped to one session when the host asks for one (T1-D30): each session's
     // mailbox carries only that session's rows.
-    return merge.authoredBatchAbove(r, watermark, tables, session);
+    // Sealed batches only, one at a time, lowest first (identity step 3), and
+    // only those a landed save holds (ruling #3).
+    return merge.authoredBatchAbove(r, mountReplica, watermark, tables, session, mountDocument, { held: new Set(unlanded.keys()) });
   };
 
   /** The sessions this copy holds seats for, as hex — each has a mailbox of its own. */
@@ -1422,7 +1493,7 @@ function bridgeMain(names: FrameNames): void {
    * `dai:merged` the application already listens for.
    */
   const applyBatch = async (batchBytes: Uint8Array): Promise<Any> => {
-    if (!liveDb || !mergeModule) return { applied: 0, duplicate: 0, refused: "NO_DOCUMENT_OPEN" };
+    if (!liveDb || !mergeModule) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
     const merge = mergeModule as Any;
     // Take this copy's own identity before merging anyone else's rows, so a
     // file-arrived copy is never still wearing the sender's id when their rows
@@ -1430,7 +1501,7 @@ function bridgeMain(names: FrameNames): void {
     settleReplica(frameRows(liveDb));
     const batch = merge.decodeBatch(batchBytes);
     const api2 = await initSqlite();
-    const staged = new api2.oo1.DB() as Any;
+    const staged = newDatabase(api2);
     try {
       // This document's replicated schema, rebuilt in the staging sibling, in
       // the order sqlite stored it so a trigger never precedes its table.
@@ -1444,14 +1515,27 @@ function bridgeMain(names: FrameNames): void {
       // mailbox is staged and merged like any other replicated row.
       const tables = merge.mergeTablesOf(local);
       merge.stageBatch(frameRows(staged), batch, tables);
+      // Verified before the transaction opens, as a file merge is.
+      const verdicts = await merge.verifyBatches(frameRows(staged), tables, mountDocument);
+      // The live database as it is after the wait, not as it was before it: the
+      // one the transaction opens on is the one the merge writes to (cold review
+      // of step 4). A document closed meanwhile takes nothing.
+      if (!liveDb) return { applied: 0, duplicate: 0, refusedBatches: [], refused: "NO_DOCUMENT_OPEN" };
+      const into = frameRows(liveDb);
       liveDb.exec("BEGIN");
       try {
-        const report = merge.mergeSibling(local, frameRows(staged), 1);
+        const report = merge.mergeVerified(into, frameRows(staged), {
+          level: 1,
+          document: mountDocument,
+          author: mountReplica ?? undefined,
+          verdicts,
+        });
         if (report.refused) {
           liveDb.exec("ROLLBACK");
           return report;
         }
         liveDb.exec("COMMIT");
+        noteRefusedBatches(report);
         scheduleAutosave(liveDb);
         window.dispatchEvent(new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } }));
         return report;
@@ -1565,7 +1649,7 @@ function bridgeMain(names: FrameNames): void {
    * database whenever it is ready. First write is the first moment both are
    * certainly present, and it is early enough — nothing has been stamped yet.
    */
-  /** This copy's replica id as hex — the same read `dai:replica-id` answers with. */
+  /** This copy's replica id as hex, for the console line below. */
   const replicaHex = (): string | null => {
     try {
       const row = liveDb?.selectObjects("SELECT lower(hex(id)) AS h FROM _dai_replica LIMIT 1")[0];
@@ -1575,26 +1659,144 @@ function bridgeMain(names: FrameNames): void {
     }
   };
 
+  /*
+   * Asking the host to sign (docs/identity.md, step 3). The private key never
+   * enters the frame: the header goes out, a signature and the public key come
+   * back, or the reason the host would not sign. `seq` is the batch's highest,
+   * so the host raises its floor before it signs.
+   */
+  const signWaiters = new Map<
+    string,
+    { resolve: (value: { sig: Uint8Array; pub: Uint8Array }) => void; reject: (error: Error) => void }
+  >();
+  const requestSignature = (header: Uint8Array, seq: number): Promise<{ sig: Uint8Array; pub: Uint8Array }> =>
+    new Promise((resolve, reject) => {
+      const id = Math.random().toString(36).slice(2);
+      const timer = setTimeout(() => {
+        signWaiters.delete(id);
+        reject(new Error("The host did not sign this change in time, so it was not sent or saved."));
+      }, 15000);
+      signWaiters.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      window.parent.postMessage({ type: names.SIGN, id, header, seq }, "*");
+    });
+
+  /** Whether this copy's own author has rows written and not yet sealed. */
+  const hasPendingOwn = (): boolean => {
+    if (!mergeModule || !liveDb || !mountReplica) return false;
+    try {
+      const rows = frameRows(liveDb);
+      return (mergeModule as Any).pendingBatches(rows, mountReplica, (mergeModule as Any).mergeTablesOf(rows)).length > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  /*
+   * Seals what this author has pending into signed batches: one per leave, one
+   * author's rows only, one per session in a session document. One seal at a
+   * time, so a save and a publish never seal the same rows twice. Rows written
+   * while a signature is on its way stay pending for the next one.
+   */
+  let sealing: Promise<void> = Promise.resolve();
+  /*
+   * Seals no landed save holds yet (identity ruling #3): seal, save landed,
+   * publish. Each seal is numbered as it is recorded; a save carries the number
+   * reached when its bytes were taken, and when the host says that save is
+   * written, every seal at or below it has landed. "Landed" is the host's ack of
+   * the write to this device's store, not the frame's post of the save: a batch
+   * published on a save the host then refused is on the relay and gone from this
+   * device after a reload. Kept in memory on purpose: a seal from an earlier page
+   * is either in the stored bytes, and so landed, or was lost with that page.
+   */
+  const unlanded = new Map<string, number>();
+  let sealsRecorded = 0;
+  const hexOf = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const markLanded = (reached: number): void => {
+    let any = false;
+    for (const [id, number] of unlanded) {
+      if (number > reached) continue;
+      unlanded.delete(id);
+      any = true;
+    }
+    // Something can be sent now that could not before: said, as a write is, so
+    // the host publishes without waiting for the next move.
+    if (any) window.parent.postMessage({ type: names.AUTHORED }, "*");
+  };
+  const sealPending = (): Promise<void> => {
+    const run = async (): Promise<void> => {
+      if (!mergeModule || !liveDb || !mountReplica) return;
+      const merge = mergeModule as Any;
+      const rows = frameRows(liveDb);
+      settleReplica(rows);
+      for (const batch of merge.pendingBatches(rows, mountReplica, merge.mergeTablesOf(rows))) {
+        const top = Math.max(...batch.entries.map((entry: Any) => Number(entry.row._r_seq)));
+        const signed = await merge.signBatch(batch, {
+          document: mountDocument,
+          sign: (header: Uint8Array) => requestSignature(header, top),
+        });
+        merge.recordSeal(frameRows(liveDb), signed);
+        sealsRecorded += 1;
+        unlanded.set(hexOf(signed.id), sealsRecorded);
+      }
+    };
+    sealing = sealing.then(run, run);
+    return sealing;
+  };
+
   const settleReplica = (rows: Any): void => {
-    if (replicaSettled || !mergeModule) return;
+    if (!mergeModule) return;
+    if (replicaSettled) {
+      /*
+       * Every write, not only the first (binding rule 2; D80). The application
+       * holds the database and can rewrite `_dai_replica` between writes; the
+       * id a row is stamped with is the host's, never the row's. One read when
+       * nothing changed. A rewritten id is put back, the forged one moves to
+       * `_dai_replicas` like any other, and the console says so.
+       */
+      if (mountReplica) {
+        const before = replicaHex();
+        if ((mergeModule as Any).adoptReplica(rows, mountReplica)) {
+          console.info(`dai: replica put back to this device's key: ${before ?? "none"} -> ${replicaHex() ?? "none"}`);
+        }
+      }
+      // And the counter: never below the host's floor, nor below any seq this
+      // copy already holds under its own id (an index seek per table). Read
+      // from the rows, not remembered, because a rewind can land between a
+      // write and the next one.
+      if (mountReplica) {
+        const held = heldSeq(rows);
+        const floor = Math.max(mountFloor, (mergeModule as Any).highestSeqOf(rows, mountReplica));
+        if ((mergeModule as Any).raiseSeq(rows, floor)) {
+          console.info(`dai: seq put back from ${held} to ${floor}`);
+        }
+      }
+      return;
+    }
     replicaSettled = true;
-    const fresh = crypto.getRandomValues(new Uint8Array(16));
     const before = replicaHex();
-    // Reopening this device's own copy keeps the id it has been writing under;
-    // anything that arrived from elsewhere takes a new one, and the sender's
-    // moves into `_dai_replicas` with their rows still theirs.
     /*
-     * The host's record wins over the file (d22). A reopen can mount a file
-     * this device did not write, the arrived file, when its first save had
-     * been asked and not yet written, and "own copy" then kept the sender's
-     * id. With an id recorded for this device, that id is written under
-     * whatever the file holds; the file's own moves to `_dai_replicas`.
+     * The host's key wins over the file, always (docs/identity.md, binding
+     * rules 1 and 2). Whatever `_dai_replica` the file holds, this copy writes
+     * under the id the host handed it, and any other id the file carried moves
+     * to `_dai_replicas` with its rows still its own. A host that sent no id
+     * gets a fresh one: never the file's, because a row is not a source of
+     * identity.
      */
-    if (mountReplica) {
-      const recorded = new Uint8Array(mountReplica.match(/../g)!.map((pair) => parseInt(pair, 16)));
-      (mergeModule as Any).adoptReplica(rows, recorded);
-    } else if (mountIsOwnCopy) (mergeModule as Any).ensureReplica(rows, fresh);
-    else (mergeModule as Any).adoptReplica(rows, fresh);
+    (mergeModule as Any).adoptReplica(rows, mountReplica ?? crypto.getRandomValues(new Uint8Array(16)));
+    // The host's floor: seqs this device already let leave it, whatever this
+    // copy holds (a removed copy received again; a save that never landed).
+    if (mountReplica && (mergeModule as Any).raiseSeq(rows, mountFloor)) {
+      console.info(`dai: seq raised to this device's floor for the document: ${mountFloor}`);
+    }
     /*
      * Permanent, on purpose (D22). A copy has come back from a reopen writing
      * under the sender's id, only in CI and only rarely, and a kept trace
@@ -1603,7 +1805,7 @@ function bridgeMain(names: FrameNames): void {
      * kept trace records, and a person using the app never sees it.
      */
     console.info(
-      `dai: replica ${mountReplica ? (before === mountReplica ? "kept (this device's, recorded)" : "set to this device's (recorded)") : mountIsOwnCopy ? "kept (own copy)" : "adopted (arrived copy)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
+      `dai: replica ${mountReplica ? (before === replicaHex() ? "kept (this device's key)" : "set to this device's key") : "fresh (the host sent no key)"}: ${before ?? "none"} -> ${replicaHex() ?? "none"}`,
     );
   };
 
@@ -1709,10 +1911,52 @@ function bridgeMain(names: FrameNames): void {
      * fixes. The creator test is the one `close` uses: the seat rows name the
      * creator, and the author is this copy's key.
      */
-    const sessionOfEntity = (table: string, id: Uint8Array): Uint8Array | undefined => {
-      const found = rows.all(`SELECT _r_session AS s FROM "${table.replace(/"/g, '""')}" WHERE _r_entity = ? LIMIT 1`, [id])[0]?.["s"];
-      return found instanceof Uint8Array ? found : undefined;
+    // The session a change or delete writes in: the one its writer versions
+    // (`writeTargetOf`, D135), so a gate checks the session the row will carry.
+    const sessionOfEntity = (table: string, id: Uint8Array): Uint8Array | undefined =>
+      rules().writeTargetOf(rows, table, id).session;
+    /*
+     * Whether `me` (hex) is the session's creator: the author of its first
+     * verified seat row, as `_dai_creator` decides it (identity step 5). Not
+     * "wrote any seat row": a seat another author minted is not a seat.
+     */
+    const creatorIs = (session: Uint8Array, me: string): boolean =>
+      rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_creator'").length > 0
+        ? rows.all("SELECT 1 FROM _dai_creator WHERE session = ? AND lower(hex(replica)) = ? LIMIT 1", [session, me]).length > 0
+        : rows.all("SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1", [session, me]).length > 0;
+
+    /*
+     * A seated table's row names the seat it acts for (identity step 5), and
+     * this copy may write it only for a seat it holds. The merge's admission is
+     * what holds against a copy that skips this; this tells an honest author at
+     * once, by name, instead of writing a row every copy will refuse.
+     */
+    const seatGate = (table: string, values: Any, sessionOf: () => Uint8Array | undefined): void => {
+      if (rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_seat_rules'").length === 0) return;
+      const column = rows.all("SELECT col FROM _dai_seat_rules WHERE tbl = ?", [table])[0]?.["col"];
+      if (typeof column !== "string") return;
+      const seat = values?.[column];
+      const session = sessionOf();
+      if (!(seat instanceof Uint8Array) || !session) {
+        throw new Error(`SEAT_NOT_HELD (${table} rows act for a seat, and this write names none)`);
+      }
+      const me = mountReplica ? hex(mountReplica) : String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+      const held = rows.all(
+        "SELECT 1 FROM _dai_holder WHERE session = ? AND seat = ? AND lower(hex(replica)) = ? LIMIT 1",
+        [session, seat, me],
+      );
+      // Pending: this copy asked for the seat and nobody holds it yet. The row
+      // is written, and admitted once the creator confirms this copy in it.
+      const pending = rows.all(
+        "SELECT 1 FROM _dai_binding b WHERE b._r_session = ? AND b.seat = ? AND lower(hex(b._r_replica)) = ? " +
+          "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = b._r_session AND h.seat = b.seat) LIMIT 1",
+        [session, seat, me],
+      );
+      if (held.length === 0 && pending.length === 0) {
+        throw new Error(`SEAT_NOT_HELD (this copy does not hold the seat this ${table} row names)`);
+      }
     };
+
     const authorGate = (table: string, sessionOf: () => Uint8Array | undefined): void => {
       if (rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_author_rules'").length === 0) return;
       const required = rows.all("SELECT author FROM _dai_author_rules WHERE tbl = ?", [table])[0]?.["author"];
@@ -1722,8 +1966,7 @@ function bridgeMain(names: FrameNames): void {
         throw new Error(`ROLE_NOT_PERMITTED (${table} may be written only by a session's ${required}, and this write names no session)`);
       }
       const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
-      const isCreator =
-        rows.all("SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1", [session, me]).length > 0;
+      const isCreator = creatorIs(session, me);
       if (required === "creator" && !isCreator) {
         throw new Error(`ROLE_NOT_PERMITTED (the joiner wrote ${table}, which only the session's creator may write)`);
       }
@@ -1734,10 +1977,28 @@ function bridgeMain(names: FrameNames): void {
 
     // Every write settles the identity first; it does the work once.
     return {
+      /*
+       * This copy's author id, hex, as the host handed it on this mount (binding
+       * rule 1): never read from a row. Null until the host has said. The kit's
+       * seat reads are built on it.
+       */
+      author: (): string | null => (mountReplica ? hex(mountReplica) : null),
+      /*
+       * Whether this mount can write shared rows: the rules arrived and were
+       * adopted, and the host gave this copy an author id. Waits for the rules to
+       * settle, as a database open does, so a read-only mount answers false
+       * rather than never. The kit's whenWritable is built on it.
+       */
+      writable: async (): Promise<boolean> => {
+        if (!expectsRules) return false;
+        await awaitRules();
+        return Boolean(mergeModule) && Boolean(mountReplica);
+      },
       insert: (table: string, values: Any, sessionHex?: string): string => {
         const id = entity();
         settleReplica(rows);
         authorGate(table, () => (sessionHex ? fromHex(sessionHex) : undefined));
+        seatGate(table, values, () => (sessionHex ? fromHex(sessionHex) : undefined));
         // A session document threads the session onto every row (T1-D26); the
         // app passes the game's session id. A plain document passes none.
         rules().createEntity(rows, table, id, values, sessionHex ? fromHex(sessionHex) : undefined);
@@ -1748,6 +2009,7 @@ function bridgeMain(names: FrameNames): void {
         const id = fromHex(entityHex);
         settleReplica(rows);
         authorGate(table, () => sessionOfEntity(table, id));
+        seatGate(table, values, () => sessionOfEntity(table, id));
         // The session is inherited from the entity's head (T1-D28) — the app
         // never restates it, so a change cannot move a row to another session.
         rules().changeEntity(rows, table, id, values);
@@ -1772,16 +2034,21 @@ function bridgeMain(names: FrameNames): void {
         // creator's binding to its own seat. Returns the session id and the open
         // seat, which the host carries in the invite (T1-D30). The three rows are
         // one transaction, so a failure leaves no half-formed roster.
+        // The session id commits to this copy's author (identity step 5): the
+        // nonce rides on the creator's own seat row, and the creator's seat is
+        // hers by definition, so she binds nothing.
         create: (): { session: string; seat: string } => {
           settleReplica(rows);
-          const sid = entity();
-          const creatorSeat = entity();
           const openSeat = entity();
           rows.run("SAVEPOINT dai_session_create");
+          let sid: Uint8Array;
           try {
-            rules().createEntity(rows, "_dai_seat", entity(), { seat: creatorSeat }, sid);
-            rules().createEntity(rows, "_dai_seat", entity(), { seat: openSeat }, sid);
-            rules().createEntity(rows, "_dai_binding", entity(), { seat: creatorSeat }, sid);
+            sid = rules().startSession(rows, {
+              nonce: entity(),
+              creatorSeat: entity(),
+              openSeat,
+              entities: [entity(), entity()],
+            });
             rows.run("RELEASE dai_session_create");
           } catch (error) {
             rows.run("ROLLBACK TO dai_session_create");
@@ -1789,6 +2056,21 @@ function bridgeMain(names: FrameNames): void {
           }
           nudgeAuthored();
           return { session: hex(sid), seat: hex(openSeat) };
+        },
+        // The creator seats whoever asked for an open seat (identity step 5):
+        // the only thing that seats anyone there. Refused for anyone but the
+        // creator, and for a seat that is not a current open seat or is held.
+        confirm: (sessionHex: string, seatHex: string, holderHex: string): void => {
+          settleReplica(rows);
+          const sid = fromHex(sessionHex);
+          const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+          if (!creatorIs(sid, me)) throw new Error("NOT_SEAT_CREATOR");
+          const seat = fromHex(seatHex);
+          const open = rows.all("SELECT 1 FROM _dai_open_seat WHERE session = ? AND seat = ?", [sid, seat]).length > 0;
+          const held = rows.all("SELECT 1 FROM _dai_holder WHERE session = ? AND seat = ?", [sid, seat]).length > 0;
+          if (!open || held || holderHex.length !== 32) throw new Error("CANNOT_CONFIRM");
+          rules().confirmSeat(rows, sid, seat, fromHex(holderHex), entity());
+          nudgeAuthored();
         },
         // Bind the invite's open seat under this copy's own (freshly adopted,
         // T1-D22) identity. A second opener of the same invite contests the seat
@@ -1814,11 +2096,7 @@ function bridgeMain(names: FrameNames): void {
           // check is on the author, so it cannot be forged — the seat rows say
           // who the creator is, and the key is the author.
           if (closePolicy === "creator") {
-            const isCreator =
-              rows.all(
-                "SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1",
-                [sid, me],
-              ).length > 0;
+            const isCreator = creatorIs(sid, me);
             if (!isCreator) throw new Error("CLOSE_NOT_PERMITTED");
           }
           // The frontier: per replica, the highest seq it authored in this
@@ -1866,11 +2144,7 @@ function bridgeMain(names: FrameNames): void {
           const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
           // Only the creator — the author of the seats — may reseat; a non-creator
           // authoring a seat change would itself contest the roster.
-          const isCreator =
-            rows.all(
-              "SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1",
-              [sid, me],
-            ).length > 0;
+          const isCreator = creatorIs(sid, me);
           if (!isCreator) throw new Error("NOT_SEAT_CREATOR");
           // The seat to replace is the CONTESTED one — a seat two or more replicas
           // bound. Reseating drops every binding to the old value, so on a healthy
@@ -1878,14 +2152,18 @@ function bridgeMain(names: FrameNames): void {
           // moves; picking "a seat the creator didn't bind" also depended on
           // SQLite's row order with more than two seats. So it is refused unless a
           // seat is actually contested (T1-D29) — a repair, never a boot.
+          // Contested: a current open seat nobody has been confirmed in, asked
+          // for by more than one author. A confirmed seat is never reseated, so
+          // a hold, once made, never moves (identity step 5).
           const contested = rows.all(
-            "SELECT s._r_entity AS ent FROM _dai_seat_current s WHERE s._r_session = ? AND " +
-              "(SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
-              "WHERE b._r_session = s._r_session AND b.seat = s.seat) > 1 LIMIT 1",
+            "SELECT s.entity AS ent FROM _dai_open_seat s WHERE s.session = ? " +
+              "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
+              "AND (SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
+              "WHERE b._r_session = s.session AND b.seat = s.seat) > 1 LIMIT 1",
             [sid],
           );
           if (contested.length === 0) throw new Error("CANNOT_RESEAT");
-          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() });
+          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity(), nonce: null });
           nudgeAuthored();
         },
       },
@@ -1906,7 +2184,7 @@ function bridgeMain(names: FrameNames): void {
 
   const openDatabase = (options?: { pageSize?: number }): Promise<Any> =>
     initSqlite().then((api2) => {
-      const db = new api2.oo1.DB() as Any;
+      const db = newDatabase(api2);
       if (seed.byteLength === 0) {
         const pageSize = (options && options.pageSize) || DEFAULT_PAGE_SIZE;
         db.exec("PRAGMA page_size=" + pageSize);
@@ -2031,6 +2309,9 @@ function bridgeMain(names: FrameNames): void {
   const saveState = (
     bytes?: Uint8Array | null,
     options?: { method?: "auto" | "picker" | "download"; setup?: boolean },
+    // How many seals the bytes hold (the count when they were taken from the
+    // live database), for a save the runtime made itself; never the caller's.
+    landing?: number,
   ): Promise<Any> =>
     new Promise((resolve, reject) => {
       const id = Math.random().toString(36).slice(2);
@@ -2041,6 +2322,11 @@ function bridgeMain(names: FrameNames): void {
         const data = event.data as Any;
         if (!data || data.id !== id) return;
         window.removeEventListener("message", done);
+        // Landed: the host wrote it to this device's store and said so. A
+        // download or a picker file is not this device's store.
+        if (data.ok && data.result?.method === "host" && data.result?.saved !== false && landing !== undefined) {
+          markLanded(landing);
+        }
         if (data.ok) resolve(data.result);
         else reject(new Error(String(data.error)));
       };
@@ -2055,6 +2341,15 @@ function bridgeMain(names: FrameNames): void {
           // it opened (D36). Said by the runtime, which ran that SQL and watches
           // every write; a host cannot tell it from the bytes.
           setup: Boolean(options && options.setup),
+          // How far this copy's counter has reached: the host raises its floor
+          // for the document to this before it writes the save.
+          seq: (() => {
+            try {
+              return Number(liveDb?.selectObjects("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
+            } catch {
+              return 0;
+            }
+          })(),
         },
         "*",
       );
@@ -2070,19 +2365,33 @@ function bridgeMain(names: FrameNames): void {
     if (event.source !== window.parent) return;
     const data = event.data as Any;
     if (!data) return;
+    if (data.type === names.SIGNED) {
+      const waiter = signWaiters.get(String(data.id));
+      if (!waiter) return;
+      signWaiters.delete(String(data.id));
+      if (data.sig instanceof Uint8Array && data.pub instanceof Uint8Array) waiter.resolve({ sig: data.sig, pub: data.pub });
+      else waiter.reject(new Error(String(data.error || "The host would not sign this change.")));
+      return;
+    }
     if (data.type === names.FLUSH) {
       // The host is about to package this document — to share it — and
       // wants what the person sees, not the last autosave. Anything pending
       // is written now, and the answer waits for the host to have it.
-      const pending = flushAutosave();
-      void Promise.resolve(pending).then(() => {
-        // Whether it landed, not just that the attempt is over: a failed save
-        // settles this too (it is retried, not thrown), and a host that moves a
-        // mailbox cursor on this answer must not move it past rows still only
-        // in memory.
-        const saved = autosaveDb === null && saveStatus !== "failed";
-        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved }, "*");
-      });
+      // Whether it landed, not just that the attempt is over: a failed save
+      // settles this too (it is retried, not thrown), and a host that moves a
+      // mailbox cursor on this answer must not move it past rows still only in
+      // memory. And sealed: a row still pending would leave with the package
+      // unsigned (docs/identity.md, step 3). A write can land while a seal is
+      // being signed (an invite writes its game and asks to share at once), so
+      // the flush goes round again for it, a few times, before it says no.
+      const landed = (): boolean => autosaveDb === null && saveStatus !== "failed" && !hasPendingOwn() && unlanded.size === 0;
+      void (async () => {
+        for (let pass = 0; pass < 3; pass++) {
+          await Promise.resolve(flushAutosave());
+          if (landed()) break;
+        }
+        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved: landed() }, "*");
+      })();
       return;
     }
     /*
@@ -2106,9 +2415,17 @@ function bridgeMain(names: FrameNames): void {
      * agreed on.
      */
     if (data.type === names.WRITE_RULES) {
-      mountIsOwnCopy = data.ownCopy === true;
-      mountReplica = typeof data.replica === "string" && /^[0-9a-f]{32}$/.test(data.replica) ? data.replica : null;
+      mountReplica = data.replica instanceof Uint8Array && data.replica.length === 16 ? data.replica : null;
+      mountFloor = Number.isSafeInteger(data.seqFloor) && data.seqFloor > 0 ? data.seqFloor : 0;
+      mountDocument = typeof data.document === "string" ? data.document : "";
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
+      // A new author for a document this device wrote before (docs/identity.md,
+      // "Loss"): held on window.dai for a kit that loads after, and fired for one
+      // already listening. The kit owns the sentence.
+      if (data.newAuthor === true) {
+        (window as unknown as Any).dai.newPlayer = true;
+        window.dispatchEvent(new CustomEvent(names.NEW_PLAYER));
+      }
       // The same pin the merge uses. A module that does not hash to what this
       // runtime was built against is not imported, and the document stays
       // read-only for its replicated tables rather than writing rows under
@@ -2125,29 +2442,44 @@ function bridgeMain(names: FrameNames): void {
       const session = sessionHex
         ? new Uint8Array(sessionHex.match(/../g)!.map((pair: string) => parseInt(pair, 16)))
         : undefined;
-      const { batch, head, replica } = authoredBatch(
-        {
-          replica: String(data.replica ?? ""),
-          seq: Number(data.seq) || 0,
-        },
-        session,
-      );
-      // Cloned, not transferred: a batch is a few rows, and a transfer list of
-      // one detached buffer is a footgun for the saving it does not make.
-      window.parent.postMessage(
-        { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch },
-        "*",
-      );
+      const watermark = { replica: String(data.replica ?? ""), seq: Number(data.seq) || 0 };
+      // The leave point for a publish: seal, save, and answer with what a
+      // landed save holds (ruling #3). A seal that fails sends nothing and says
+      // why; the watermark does not move. A save that fails sends nothing of
+      // what it held and says it is held: the landed save that follows it
+      // nudges the publish again.
+      void sealPending()
+        .then(() => flushAutosave())
+        .then(
+          () => ({ ...authoredBatch(watermark, session), error: undefined as string | undefined }),
+          (error: unknown) => ({
+            batch: null,
+            head: watermark.seq,
+            replica: watermark.replica,
+            more: false,
+            held: false,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        )
+        .then(({ batch, head, replica, more, held, error }) => {
+          // Cloned, not transferred: a batch is a few rows, and a transfer list of
+          // one detached buffer is a footgun for the saving it does not make.
+          window.parent.postMessage(
+            { type: names.AUTHORED_BATCH, id: data.id, seq: data.seq, head, replica, batch, more, held, ...(error ? { error } : {}) },
+            "*",
+          );
+        });
       return;
     }
     if (data.type === names.REPLICA_ID) {
-      // This copy's replica id, hex, from `_dai_replica`. Read only, answered
-      // never volunteered. `null` when the table is not there yet — an own copy
-      // whose schema is unwritten, which settles on its first write.
-      let replica: string | null = null;
+      // This copy's replica id, the bytes of `_dai_replica`; the host shows
+      // them. Read only, answered never volunteered. `null` when the table is
+      // not there yet — a copy whose schema is unwritten, which settles on its
+      // first write.
+      let replica: Uint8Array | null = null;
       try {
-        const row = liveDb?.selectObjects("SELECT lower(hex(id)) AS h FROM _dai_replica LIMIT 1")[0];
-        replica = row ? String((row as { h: unknown }).h) : null;
+        const row = liveDb?.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0] as { id?: unknown } | undefined;
+        replica = row?.id instanceof Uint8Array ? row.id : null;
       } catch {
         replica = null;
       }
@@ -2192,6 +2524,7 @@ function bridgeMain(names: FrameNames): void {
               duplicate: 0,
               rejected: [],
               newReplicas: 0,
+              refusedBatches: [],
               conflicts: 0,
               refused: (error && error.message) || "MERGE_FAILED",
             },
@@ -2403,9 +2736,13 @@ function bridgeMain(names: FrameNames): void {
       if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
       autosaveDb = null;
-      return saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) });
+      // Sealed first, as an automatic save is (identity step 3).
+      return sealPending().then(() =>
+        saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined),
+      );
     },
-    saveState: saveState,
+    // Two arguments only: which seals a save carries is the runtime's to say.
+    saveState: (bytes?: Uint8Array | null, options?: Any) => saveState(bytes, options),
     /*
      * Opens the host's own share sheet — the same one behind its menu.
      *
@@ -2776,7 +3113,10 @@ function loaderScript(): string {
 
 /** Serializes bridgeMain() into the frame. See the note on that function. */
 function bridgeScript(): string {
-  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")(" + JSON.stringify(FRAME) + ")<" + "/script>";
+  // The session-id hash travels as source beside the names (src/session-id.ts):
+  // bridgeMain cannot import it, and one implementation runs on both sides.
+  const sessionId = "{ name: " + JSON.stringify(SESSION_ID_FUNCTION) + ", of: (" + sessionIdTools.toString() + ")().sessionIdOf }";
+  return "<script" + nonceAttr() + ">(" + bridgeMain.toString() + ")(" + JSON.stringify(FRAME) + ", " + sessionId + ")<" + "/script>";
 }
 
 /** Injected into the iframe so the host can tell mounting actually succeeded. */
@@ -2818,7 +3158,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; ownCopy: unknown; replica: unknown; closePolicy: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown; newAuthor: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -2827,7 +3167,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, ownCopy: rules.ownCopy, replica: rules.replica, closePolicy: rules.closePolicy },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true },
     "*",
   );
 }
@@ -3273,10 +3613,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; ownCopy?: unknown; replica?: unknown; closePolicy?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown; newAuthor?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, ownCopy: pushed.ownCopy, replica: pushed.replica, closePolicy: pushed.closePolicy };
+      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor };
       if (listeningWindow) deliverRules();
       return;
     }
@@ -3294,6 +3634,12 @@ async function boot(): Promise<void> {
         level: payload.level,
       };
       toFrame(message);
+      return;
+    }
+    // The host's signature for a batch header, or why it would not sign.
+    if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.SIGNED) {
+      const answer = event.data as { id?: string; sig?: unknown; pub?: unknown; error?: unknown };
+      toFrame({ type: FRAME_INTERNAL.SIGNED, id: answer.id, sig: answer.sig, pub: answer.pub, error: answer.error });
       return;
     }
     // The host asking the frame for what it authored above a watermark (Track 5).
@@ -3520,6 +3866,9 @@ async function boot(): Promise<void> {
         head?: number;
         replica?: string;
         batch?: Uint8Array | null;
+        more?: boolean;
+        held?: boolean;
+        error?: string;
       };
       window.parent.postMessage(
         {
@@ -3530,7 +3879,19 @@ async function boot(): Promise<void> {
           head: answer.head,
           replica: answer.replica ?? "",
           batch: answer.batch ?? null,
+          more: answer.more === true,
+          held: answer.held === true,
+          ...(typeof answer.error === "string" ? { error: answer.error } : {}),
         },
+        "*",
+      );
+      return;
+    }
+    // The frame asking the host to sign a batch header (identity step 3).
+    if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.SIGN) {
+      const ask = event.data as { id?: string; header?: unknown; seq?: unknown };
+      window.parent.postMessage(
+        { type: TO_HOST.SIGN, sessionNonce, id: ask.id, header: ask.header, seq: ask.seq },
         "*",
       );
       return;
@@ -3541,9 +3902,9 @@ async function boot(): Promise<void> {
       return;
     }
     if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.REPLICA_ID_ANSWER) {
-      const answer = event.data as { nonce?: string; replica?: string | null };
+      const answer = event.data as { nonce?: string; replica?: Uint8Array | null };
       window.parent.postMessage(
-        { type: "DAI_FRAME_REPLICA_ID", nonce: answer.nonce, replica: answer.replica ?? null },
+        { type: TO_HOST.REPLICA_ID_ANSWER, nonce: answer.nonce, replica: answer.replica ?? null },
         "*",
       );
       return;
@@ -3613,6 +3974,7 @@ async function boot(): Promise<void> {
       sqlite?: Uint8Array;
       method?: SaveMethod;
       setup?: boolean;
+      seq?: number;
     };
     if (request?.type !== SAVE_REQUEST) return;
 
@@ -3683,6 +4045,7 @@ async function boot(): Promise<void> {
                 databaseBytes,
                 documentUuid: manifest?.documentUuid ?? "",
                 setup: request.setup === true,
+                seq: Number.isSafeInteger(request.seq) ? request.seq : 0,
               },
             },
             "*",
@@ -3692,9 +4055,40 @@ async function boot(): Promise<void> {
       return;
     }
 
-    writeContainer(files, request.sqlite ?? documentBytes, request.method ?? "auto")
+    /*
+     * A file written here leaves the device without passing the host. For a
+     * replicated document the host is asked first, with the very bytes, and
+     * opens them itself: a row of this device's that nobody signed does not
+     * leave (cold review of identity step 3, #2). No host, no key, and nothing
+     * of this device's could have been signed, so there is nothing to ask.
+     */
+    const outgoing = request.sqlite ?? documentBytes;
+    const replicated = Array.isArray(manifest?.replication?.tables) && manifest.replication.tables.length > 0;
+    const checked: Promise<void> =
+      hostAvailable && replicated && outgoing
+        ? new Promise((resolve, reject) => {
+            const id = randomHex(16);
+            const timer = window.setTimeout(() => {
+              window.removeEventListener("message", onChecked);
+              reject(new Error("The host did not check this file in time, so it was not written."));
+            }, 15000);
+            const onChecked = (evt: MessageEvent): void => {
+              if (evt.source !== window.parent) return;
+              const data = evt.data as { type?: string; id?: string; ok?: boolean; error?: string };
+              if (data?.type !== TO_DOCUMENT.LEAVE_CHECKED || data.id !== id) return;
+              window.clearTimeout(timer);
+              window.removeEventListener("message", onChecked);
+              if (data.ok) resolve();
+              else reject(new Error(data.error || "The host would not let this file leave the device."));
+            };
+            window.addEventListener("message", onChecked);
+            window.parent.postMessage({ type: TO_HOST.LEAVE_CHECK, sessionNonce, id, sqlite: outgoing }, "*");
+          })
+        : Promise.resolve();
+    checked
+      .then(() => writeContainer(files, outgoing, request.method ?? "auto"))
       .then((result) => reply({ ok: true, result }))
-      .catch((error: unknown) => reply({ ok: false, error: String(error) }));
+      .catch((error: unknown) => reply({ ok: false, error: error instanceof Error ? error.message : String(error) }));
   });
 
   if (window.parent !== window) {

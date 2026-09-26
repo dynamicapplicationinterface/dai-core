@@ -1,0 +1,27 @@
+{
+  "what": "B holds an unsigned note under Ada's id at the seq of Ada's signed case. One author's seq names one row in any table: A refuses the note as a collision, and B gives it up for the signed case, which outranks it.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { KEYS, groundKey, installAskedKey, libraryLock, opensKey } from "../src/keys.js";
+import { KEYS, groundKey, installAskedKey, libraryLock, opensKey, seqFloorKey } from "../src/keys.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -30,23 +30,29 @@ test.describe("the opener's storage and lock keys", () => {
   test("the owner makes the keys the opener actually uses", () => {
     expect(KEYS.KEEP_AFTER_RELOAD).toBe("dai:keep-after-reload");
     expect(KEYS.IOS_RELOAD_TAKEN).toBe("dai:ios-reload-taken");
+    expect(KEYS.IOS_RELOAD_CARRIED).toBe("dai:ios-reload-carried");
     expect(KEYS.MANIFEST_FALLBACK).toBe("dai:manifest-fallback");
     expect(KEYS.RESUME).toBe("dai:resume");
+    expect(KEYS.PERSON_KEY).toBe("dai:person-key");
     expect(groundKey("u", "light")).toBe("dai:ground:u:light");
     expect(installAskedKey("u")).toBe("dai:install-asked:u");
     expect(opensKey("u")).toBe("dai:opens:u");
     expect(libraryLock("u")).toBe("dai:u");
+    expect(seqFloorKey("u")).toBe("dai:seq-floor:u");
   });
 
   test("no opener file writes one of these names by hand", () => {
     const owned = [
       "dai:keep-after-reload",
       "dai:ios-reload-taken",
+      "dai:ios-reload-carried",
       "dai:manifest-fallback",
       "dai:resume",
       "dai:ground:",
       "dai:install-asked:",
       "dai:opens:",
+      "dai:person-key",
+      "dai:seq-floor:",
     ];
     const offenders: string[] = [];
     for (const { name, text } of openerSources()) {
@@ -64,6 +70,7 @@ test.describe("the opener's storage and lock keys", () => {
     const made = [
       KEYS.KEEP_AFTER_RELOAD,
       KEYS.IOS_RELOAD_TAKEN,
+      KEYS.IOS_RELOAD_CARRIED,
       KEYS.MANIFEST_FALLBACK,
       KEYS.RESUME,
       groundKey(uuid, "light"),
@@ -71,6 +78,8 @@ test.describe("the opener's storage and lock keys", () => {
       installAskedKey(uuid),
       opensKey(uuid),
       libraryLock(uuid),
+      KEYS.PERSON_KEY,
+      seqFloorKey(uuid),
     ];
     expect(new Set(made).size, `two of these are the same string:\n  ${made.join("\n  ")}`).toBe(made.length);
   });

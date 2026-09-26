@@ -16,13 +16,28 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 126,773 bytes: SHARED-POINTER-HOLDS-THE-SCREEN (D79) — never redraw while a
- * pointer is down, draw when it lifts, read the state when you act. It bought
- * 4,402 bytes, and what it buys is every author avoiding a tap that vanishes
- * with no error whenever a merge lands mid-press: the failure is invisible to
- * the person, unreproducible on a desk, and routine with a live opponent.
+ * 141,386 bytes: identity step 5's seat model, ruled 24 September. It bought
+ * 5,936 bytes: IDENTITY-SEAT-CONFIRMED in place of the withdrawn first-signer
+ * rule, the waiting state (pendingSeat, t_pending) through the session rules,
+ * and the roster views an author reads. What it buys is an author who knows a
+ * joiner is seated by the creator's copy and not by opening the link, so their
+ * app says "waiting to be let in" instead of hiding the joiner's moves.
+ *
+ * Before that, 135,450 bytes: identity step 5, seats into the kit. It bought 8,677 bytes:
+ * five constraints (IDENTITY-SEAT-ADMITS as built, IDENTITY-FIRST-SIGNER,
+ * IDENTITY-KIT-SEATS, IDENTITY-LOSS-SENTENCE, IDENTITY-BOOT-WRITES), the
+ * seat= marker and eight kit calls, and the session rules rewritten onto the
+ * kit. What it buys is an author who names the seat a row acts for and reads
+ * who this copy is from the host, which is what closes D80 for their app too.
+ *
+ * Before that, 126,773 bytes: SHARED-POINTER-HOLDS-THE-SCREEN (D79) — never
+ * redraw while a pointer is down, draw when it lifts, read the state when you
+ * act. It bought 4,402 bytes, and what it buys is every author avoiding a tap
+ * that vanishes with no error whenever a merge lands mid-press: the failure is
+ * invisible to the person, unreproducible on a desk, and routine with a live
+ * opponent.
  */
-const BUDGET_BYTES = 126_773;
+const BUDGET_BYTES = 141_386;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;

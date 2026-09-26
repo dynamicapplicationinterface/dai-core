@@ -1,0 +1,23 @@
+{
+  "what": "Two authors, each row sealed in a signed batch. The rows and both headers union; every row keeps the batch it left in.",
+  "cites": [
+    "6",
+    "T1-D7"
+  ],
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

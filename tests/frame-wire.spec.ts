@@ -20,6 +20,7 @@ import { FRAME_PUBLIC } from "../src/frame.js";
 const FRAME_PUBLIC_ON_THE_WIRE = [
   "dai:merged",
   "dai:used",
+  "dai:new-player",
 ];
 
 test("the frame's public names are spelled as they always were", () => {

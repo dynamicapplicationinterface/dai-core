@@ -59,9 +59,9 @@ export const REFUSALS = {
   SEAT_ALREADY_BOUND: {
     recoverable: false,
     means:
-      "A session seat carries bindings from two or more replicas — two parties opened the same " +
-      "invite. The seat is contested and admits neither, order-free and without a clock deciding " +
-      "it. The creator can revoke the seat and issue a new invite (T1-D29).",
+      "An open seat two or more copies asked for before the creator's copy seated anyone — two " +
+      "parties opened the same invite. Nobody holds it; the creator can replace it and issue a new " +
+      "invite. A seat the creator's copy has seated someone in is theirs for good (identity step 5).",
   },
   SEATS_EXCEED_CAP: {
     recoverable: false,
@@ -96,7 +96,14 @@ export const REFUSALS = {
     means:
       "A reseat was asked for on a session with no contested seat. Reseating replaces a seat's " +
       "value, dropping every binding to the old one — a repair for a seat two parties opened, and " +
-      "damage to a healthy one. Refused unless a seat is actually contested (T1-D29).",
+      "damage to a healthy one. Refused unless an open seat nobody has been confirmed in is " +
+      "asked for by more than one author (identity step 5).",
+  },
+  CANNOT_CONFIRM: {
+    recoverable: false,
+    means:
+      "The creator's copy was asked to seat someone in a seat that is not a current open seat, or " +
+      "that someone already holds. A hold, once confirmed, never moves (identity step 5).",
   },
 
   // ---- shared tables, while a document is open
@@ -187,6 +194,45 @@ export const REFUSALS = {
   APPLY_FAILED: {
     recoverable: false,
     means: "A batch from the mailbox failed to apply for a reason with no name of its own; the message says what.",
+  },
+
+  // ---- signed batches (docs/identity.md). A merge reports these per batch in
+  // `refusedBatches`, with the author the batch names; the merge itself ran.
+  BATCH_SIGNATURE_INVALID: {
+    recoverable: false,
+    means:
+      "A batch whose signature does not verify, or whose public key does not fingerprint to the " +
+      "author it names: not written by who it says. Its rows are refused; the rest of the merge runs.",
+  },
+  BATCH_DIGEST_MISMATCH: {
+    recoverable: false,
+    means:
+      "A batch whose rows are not the rows it signed: a row changed after signing, a row it lists is " +
+      "missing, or a row claims the batch and is not among the rows it lists. Those rows are refused; " +
+      "the rest of the merge runs.",
+  },
+  SEAT_NOT_HELD: {
+    recoverable: false,
+    means:
+      "A row that names a seat someone else holds, or names no seat, or names as its earlier version a " +
+      "row acting for another seat, in a table whose rows act for a seat: signed by who it says, and " +
+      "not theirs to write. Stored and never admitted; reported with " +
+      "its author. A row for a seat its author asked for and is waiting to be seated in is not this: " +
+      "it is pending, neither admitted nor reported. The rest of the merge runs.",
+  },
+  ENTITY_OTHER_SESSION: {
+    recoverable: false,
+    means:
+      "A row that names as its earlier version a row of another session: an entity belongs to the " +
+      "session it was written in, so nobody replaces or removes a row of one game from a session of " +
+      "their own. Stored and never admitted; reported with its author. The rest of the merge runs (D131).",
+  },
+  BATCH_UNSIGNED: {
+    recoverable: false,
+    means:
+      "A row no valid batch covers, in a table whose rows must be signed: today the seat tables " +
+      "(_dai_seat, _dai_binding, _dai_confirm), where an unsigned row under someone else's id would " +
+      "decide a seat. Refused and reported with the author it names; the rest of the merge runs.",
   },
 
   // ---- the mailbox

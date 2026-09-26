@@ -3,9 +3,10 @@ import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
+import { expect, type Browser, type BrowserContext, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { firstMailboxMerge } from "./mailbox-wait.js";
+import { TO_HOST } from "../src/bridge.js";
 import { compileDirectory } from "../src/compile.js";
 import { FRAME_PUBLIC } from "../src/frame.js";
 import { fsMailbox } from "../src/mailbox-fs.js";
@@ -218,6 +219,37 @@ test.describe("a game continues over a shared link (the key path)", () => {
   const useRelay = (page: Page): Promise<void> =>
     page.evaluate((b) => (window as any).__runner.useRelay(b), relayBase);
 
+  /**
+   * Lets a test hold this context's saves back: the losing order, forced.
+   *
+   * A save the frame asks for reaches the host as a message, and the host
+   * writes it to storage in several steps under a lock. A page closed in
+   * between keeps none of it, and on WebKit that is about half of the time
+   * when a test closes a tab straight after a pull (D125). Setting
+   * `__holdSavesMs` on a page delays each save message by that long before the
+   * host sees it, so a test that closes too early fails every time instead of
+   * half of the time. A listener registered before the opener's own, which
+   * stops the message and sends the same one again later.
+   */
+  async function holdSaves(context: BrowserContext): Promise<void> {
+    await context.addInitScript((saveType) => {
+      window.addEventListener(
+        "message",
+        (event) => {
+          const ms = Number((window as any).__holdSavesMs ?? 0);
+          if (!ms || (event.data as { type?: string } | null)?.type !== saveType || (event as any).__held) return;
+          event.stopImmediatePropagation();
+          window.setTimeout(() => {
+            const again = new MessageEvent("message", { data: event.data, origin: event.origin, source: event.source });
+            (again as any).__held = true;
+            window.dispatchEvent(again);
+          }, ms);
+        },
+        true,
+      );
+    }, TO_HOST.SAVE);
+  }
+
 
   /** The roster as this copy holds it: its own id, its bindings, and how many
    *  distinct binders each seat has — the number that reads 2 for a contested seat. */
@@ -280,6 +312,75 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const link = await page.evaluate(() => (window as any).__copied as string | undefined);
     expect(link, "the share produced a link, not a file").toBeTruthy();
     return { appFrame, link: link! };
+  }
+
+  /**
+   * The creator's copy seats the joiner (identity step 5). A joiner's open only
+   * asks for the seat; the creator's copy confirms whoever asked when it sees
+   * the ask, which over the mailbox is its next pull, and the joiner holds the
+   * seat once the confirmation comes back on its own pull. Waits until every
+   * seat the joiner asked for that is still open to it is held by it.
+   */
+  async function letIn(creator: Page, joiner: Page): Promise<void> {
+    await expect(async () => {
+      await creator.evaluate(() => (window as any).__runner.pullMailbox());
+      await joiner.evaluate(() => (window as any).__runner.pullMailbox());
+      const seen = await app(joiner).locator("body").evaluate(() => {
+        const kit = (window as any).daiKit;
+        const me = kit.author();
+        const asked = kit.db.selectObjects(
+          "SELECT DISTINCT lower(hex(_r_session)) s FROM _dai_binding WHERE lower(hex(_r_replica)) = ?",
+          [me],
+        );
+        return { me, asked: asked.length, waiting: asked.filter((r: { s: string }) => kit.pendingSeat(r.s) !== null).length };
+      });
+      // What it looked at, before what it found: an ask to wait on, by a known author.
+      expect(seen.me, "the joiner's author id").toMatch(/^[0-9a-f]{32}$/);
+      expect(seen.asked, "the joiner asked for a seat").toBeGreaterThan(0);
+      expect(seen.waiting, "the joiner is still waiting to be seated").toBe(0);
+    }).toPass({ timeout: 30_000 });
+  }
+
+  /**
+   * Whether this device's stored copy, the one a reopen reads, holds the
+   * creator's confirmation seating the joiner. `letIn` waits for the copy in
+   * memory; a test that closes the tab next needs the stored one, because a pulled confirmation is
+   * applied at once and saved a moment later (D125: closed in between,
+   * the reopened copy waits to be seated again). Read through the opener's own
+   * load and opened in the app frame's SQLite, so it is the bytes a reopen gets.
+   * The confirmation row itself, not `_dai_member`: the view needs a function
+   * only the live database registers, and this row is the one found missing.
+   */
+  async function confirmedInStore(page: Page): Promise<boolean> {
+    const bytes = await page.evaluate(async () => {
+      const runner = (window as any).__runner;
+      const stored: Uint8Array | null = await runner.loadStored(runner.loaded.manifest.documentUuid);
+      return stored ? Array.from(stored) : [];
+    });
+    if (bytes.length === 0) return false;
+    return appFrame(page).evaluate(async (raw) => {
+      const kit = (window as any).daiKit;
+      const api = await (window as any).dai.initSqlite();
+      const data = new Uint8Array(raw);
+      const db = new api.oo1.DB();
+      try {
+        const pointer = api.wasm.allocFromTypedArray(data);
+        api.capi.sqlite3_deserialize(
+          db.pointer,
+          "main",
+          pointer,
+          data.length,
+          data.length,
+          api.capi.SQLITE_DESERIALIZE_FREEONCLOSE | api.capi.SQLITE_DESERIALIZE_RESIZEABLE,
+        );
+        return (
+          db.selectObjects("SELECT 1 FROM _dai_confirm WHERE _r_deleted = 0 AND lower(hex(holder)) = ?", [kit.author()])
+            .length > 0
+        );
+      } finally {
+        db.close();
+      }
+    }, bytes);
   }
 
   /** Open a share link on a page, wait for the board, point it at the relay. */
@@ -514,9 +615,12 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.locator("#card-open").click();
     const appB2 = app(pageB);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
+    // Pointed at the relay, as openLink does, so B's ask for the new seat reaches A.
+    await useRelay(pageB);
 
-    // The new game, and its name step: B was never named in it. And game 1 is
-    // still B's.
+    // The new game, and its name step once A's copy seats B: B was never named
+    // in it. And game 1 is still B's.
+    await letIn(pageA, pageB);
     await expect(appB2.locator("#name-dialog")).toBeVisible({ timeout: 30_000 });
     await expect(appB2.locator("#move-history")).toContainText("d4");
     expect(await gamesHeld(pageB)).toContain("Ada vs Bo");
@@ -591,6 +695,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
     await mountStore(deviceB);
+    await holdSaves(deviceB);
     const pageA = await deviceA.newPage();
     const pageB = await deviceB.newPage();
 
@@ -606,6 +711,14 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
       await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
+    // And A's copy has seated B, and B holds the confirmation, before B goes away.
+    // B's saves are slow from here, so a close before the one holding the
+    // confirmation lands fails every time rather than half of the time.
+    await pageB.evaluate(() => void ((window as any).__holdSavesMs = 4_000));
+    await letIn(pageA, pageB);
+    // Held in memory is not held: the reopen reads the stored copy, so wait
+    // until the confirmation is written there, not until it is applied.
+    await expect.poll(() => confirmedInStore(pageB), { timeout: 30_000 }).toBe(true);
     const before = await bindState(pageB);
     expect(before.myBindings, "B bound exactly one seat on first open").toHaveLength(1);
     const seat = before.myBindings[0]!.seat;
@@ -733,6 +846,81 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await pageB.evaluate(() => (window as any).__runner.pullMailbox());
       expect(retiredB.length, "the copy that learned of the close says its lane retired").toBeGreaterThan(0);
     }).toPass({ timeout: 30_000 });
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * A closed game's lane does not retire while its last move waits on a save
+   * (identity step 4, ordering; cold review).
+   *
+   * A sealed batch is published only once a save holding its seal has landed,
+   * and until then the frame answers the publish with the batch held back. A
+   * lane that took that answer for "nothing left to send" would retire, release
+   * its push, and never send the close. Here A's store refuses every write, A
+   * closes the match, and the lane must say it is held back rather than retire;
+   * then the store takes writes again, the save lands, the close is sent, and
+   * only then does the lane retire.
+   */
+  test("a closed game's lane does not retire while its close waits on a save that has not landed", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "Bo", "e2", "e4");
+    const appB = await openLink(pageB, link);
+    await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
+    await appA.locator("#game-actions-button").click();
+    await appA.locator("#resign").click();
+    await appA.locator("#confirm-yes").click();
+    await expect(appA.locator("#close-match")).toBeVisible({ timeout: 30_000 });
+
+    const retired: string[] = [];
+    const heldBack: string[] = [];
+    pageA.on("console", (message) => {
+      const text = message.text();
+      if (/^dai: lane [0-9a-f]{12} retired: /.test(text)) retired.push(text);
+      if (/^dai: lane [0-9a-f]{12} not retired: .*nothing left to send/.test(text)) heldBack.push(text);
+    });
+
+    // A's store refuses: the file system, and the fallback the host falls to.
+    await pageA.evaluate(() => {
+      const w = window as any;
+      if (typeof FileSystemFileHandle !== "undefined" && "createWritable" in FileSystemFileHandle.prototype) {
+        w.__keptCreateWritable = (FileSystemFileHandle.prototype as any).createWritable;
+        (FileSystemFileHandle.prototype as any).createWritable = () => Promise.reject(new Error("test: the disk refused"));
+      }
+      w.__keptPut = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: any[]) {
+        if (this.name === "sqlite_databases") throw new DOMException("test: the disk refused", "QuotaExceededError");
+        return w.__keptPut.apply(this, args);
+      } as any;
+    });
+
+    await appA.locator("#close-match").click();
+    await appA.locator("#confirm-yes").click();
+    await expect(appA.locator("#move-step")).toContainText("MATCH CLOSED", { timeout: 30_000 });
+    // The publish ran and the lane decided: held back, or (wrongly) retired.
+    await expect.poll(() => heldBack.length + retired.length, { timeout: 60_000 }).toBeGreaterThan(0);
+    expect(retired, "no retirement while the close has not been sent").toEqual([]);
+    expect(heldBack.length, "the lane says what holds it").toBeGreaterThan(0);
+
+    // The store takes writes again: the retry lands, the close is sent, B sees it,
+    // and then the lane retires.
+    await pageA.evaluate(() => {
+      const w = window as any;
+      if (w.__keptCreateWritable) (FileSystemFileHandle.prototype as any).createWritable = w.__keptCreateWritable;
+      IDBObjectStore.prototype.put = w.__keptPut;
+    });
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB.locator("#move-step")).toContainText("MATCH CLOSED", { timeout: 2_000 });
+    }).toPass({ timeout: 120_000 });
+    await expect.poll(() => retired.length, { timeout: 60_000 }).toBeGreaterThan(0);
 
     await deviceA.close();
     await deviceB.close();
@@ -906,15 +1094,32 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   /**
-   * A forwarded invite contests the seat, and the state shows on both copies —
-   * the exact shape the reopen bug produced (T1-D29). Two different devices open
-   * one invite and bind the same seat; when the second binding merges in, neither
-   * is a member and both are told so, rather than silently dropping rows into a
-   * dead game. Then the creator's repair — a fresh seat — lets the one intended
-   * player back in, while the other copy stays out.
+   * A forwarded invite contests the seat (identity step 5). Two different
+   * devices open one invite and both ask for the open seat before the creator's
+   * copy has seen either ask. Nobody is seated by a clock or an author id: the
+   * seat is held by whoever the creator's copy confirms, and it confirms only a
+   * seat exactly one device asked for. So neither is seated, the creator is
+   * shown the contest and the repair, and the repair (a fresh seat) retires the
+   * value both asked for, so both copies are told their place is gone. The
+   * intended player opens the fresh invite and is seated; the move it wrote
+   * while waiting for the old seat never stands. One outcome, whatever the ids.
+   *
+   * The creator's copy is kept from reading its mailbox while the two open, so
+   * both asks are there when it next looks. A creator whose copy sees one ask
+   * first seats that one, and a later ask is not a contest (a hold never moves);
+   * that case is "reopening the invite" and the seat tests, not this one.
    */
-  test("a forwarded invite contests the seat, both copies show it, and the creator repairs", async ({ browser }) => {
-    const deviceA: BrowserContext = await browser.newContext();
+  test("a forwarded invite contests the seat, nobody is seated, both are told, and the creator repairs", async ({ browser }) => {
+    /*
+     * A's worker is blocked, because A's reads are refused by a context route
+     * below and on WebKit a route never sees a request from a page the worker
+     * controls, cross-origin relay included (D119). Measured: A made twelve relay
+     * requests in the window, Playwright's page events and the page's own
+     * Resource Timing both saw them, and the route saw none; with the worker
+     * blocked it saw eleven and refused eight. Until then this test stopped at
+     * its setup check on WebKit and tested nothing there.
+     */
+    const deviceA: BrowserContext = await browser.newContext({ serviceWorkers: "block" });
     const deviceB: BrowserContext = await browser.newContext();
     const deviceC: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -925,12 +1130,18 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const pageC = await deviceC.newPage();
     const pull = (p: Page) => p.evaluate(() => (window as any).__runner.pullMailbox());
 
-    // A starts a game and shares one invite. B opens it and takes the seat.
+    // A starts a game and shares one invite. From here until both have opened it,
+    // A's copy cannot read its mailbox, so it sees neither ask before the other.
     const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "Bo", "e2", "e4");
+    let blocked = 0;
+    const blockReads = (route: import("@playwright/test").Route) =>
+      route.request().method() === "GET" ? (blocked++, route.abort()) : route.continue();
+    await deviceA.route(`${relayBase}/**`, blockReads);
+
+    // B opens it and asks for the seat, and plays e5 while waiting: its own board
+    // shows the move, and no other copy admits it until B is seated.
     const appB = await openLink(pageB, link);
     await expect(appB.locator("#app")).toBeVisible({ timeout: 60_000 });
-    // B is the sole member so far, and plays e5 — a move admitted while it holds
-    // the seat, which the contest will hide and the repair must bring back.
     await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
     await play(appB, "e7", "e5");
     await expect(appB.locator("#move-history")).toContainText("e5");
@@ -938,30 +1149,69 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const appC = await openLink(pageC, link);
     await expect(appC.locator("#app")).toBeVisible({ timeout: 60_000 });
 
-    // The two bindings meet through the mailbox: the seat is contested, and both
-    // B and C are told their place is set aside — not left to silently drop moves.
+    // Over the mailbox the creator's copy merges one batch at a time, so it seats
+    // whichever ask it reads first, and a later one is not a contest. A contest
+    // is two asks reaching the creator's copy in one merge. So: C's copy, whose
+    // reads were never cut, gathers both asks, and C sends its copy to A, who
+    // opens it into her own. A's copy was really kept from reading until then.
+    const askersOn = (page: Page) =>
+      app(page).locator("body").evaluate(
+        () =>
+          (window as any).daiKit.db.selectObjects(
+            "SELECT max(n) n FROM (SELECT count(DISTINCT b._r_replica) n FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat GROUP BY s.session, s.seat)",
+          )[0].n,
+      );
     await expect(async () => {
-      await pull(pageB);
       await pull(pageC);
-      await expect(appB.locator("#contested-banner")).toBeVisible({ timeout: 2_000 });
-      await expect(appC.locator("#contested-banner")).toBeVisible({ timeout: 2_000 });
+      expect(await askersOn(pageC), "C's copy holds both asks for the open seat").toBe(2);
     }).toPass({ timeout: 30_000 });
-    await expect(appB.locator("#contested-banner")).toContainText("used on another device");
-    await expect(appB.locator("#play-move")).toBeDisabled();
-    // While contested, B is not a member, so its own e5 is hidden — already gone
-    // before any repair, not lost by it.
-    await expect(appB.locator("#move-history")).not.toContainText("e5");
+    expect(blocked, "A's copy tried to read and was refused while the two opened").toBeGreaterThan(0);
+    await pageC.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    });
+    await pageC.click("#more");
+    await pageC.click("#send");
+    await pageC.click("#send-go");
+    await expect.poll(() => pageC.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    const fromC = await pageC.evaluate(() => (window as any).__copied as string);
+    await pageA.goto(fromC);
+    await pageA.locator("#card-open").click({ timeout: 60_000 });
+    await expect(appA.locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageA);
 
-    // The creator sees the contest and is offered the repair.
-    await expect(async () => {
-      await pull(pageA);
-      await expect(appA.locator("#new-invite")).toBeVisible({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
+    // Both asks reached A's copy together. It seats neither: the creator is
+    // shown the contest and offered the repair.
+    expect(await askersOn(pageA), "A's copy holds both asks").toBe(2);
+    await expect(appA.locator("#new-invite")).toBeVisible({ timeout: 30_000 });
+    const member = (page: Page) =>
+      appFrame(page).evaluate(() => {
+        const kit = (window as any).daiKit;
+        const session = kit.db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0]?.s;
+        return session ? kit.mySeat(session) !== null : false;
+      });
+    await pull(pageB);
+    await pull(pageC);
+    expect(await member(pageB), "B is not seated").toBe(false);
+    expect(await member(pageC), "C is not seated").toBe(false);
+    await expect(appA.locator("#move-history"), "B's e5 does not stand on A's copy").not.toContainText("e5");
 
     // A mints a fresh seat, then shares a new invite — a fresh snapshot carrying
     // the new open seat, so the opener does not depend on mailbox timing.
     await appA.locator("#new-invite").click();
     await appA.locator("#confirm-yes").click();
+    await deviceA.unroute(`${relayBase}/**`, blockReads);
+
+    // The seat both asked for is retired, so both are told their place is gone,
+    // that nothing they did lost it, and that the creator can send a new invite.
+    for (const [page, frame] of [[pageB, appB], [pageC, appC]] as const) {
+      await expect(async () => {
+        await pull(page);
+        await expect(frame.locator("#contested-banner")).toBeVisible({ timeout: 2_000 });
+      }).toPass({ timeout: 30_000 });
+      await expect(frame.locator("#contested-banner")).toContainText("used on another device");
+      await expect(frame.locator("#play-move")).toBeDisabled();
+    }
 
     // Safe default (T1-D34): an untagged dai:merged must NOT join. C now holds the
     // fresh open seat over the mailbox and is not a member — the exact state where
@@ -972,8 +1222,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await pull(pageC);
       const openForC = await appFrame(pageC).evaluate(() =>
         (window as any).daiKit.db.selectObjects(
-          "SELECT 1 FROM _dai_seat_current s WHERE lower(hex(s.seat)) NOT IN " +
-            "(SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE b._r_session = s._r_session) LIMIT 1",
+          "SELECT 1 FROM _dai_open_seat s WHERE lower(hex(s.seat)) NOT IN " +
+            "(SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE b._r_session = s.session) LIMIT 1",
         ).length > 0,
       );
       expect(openForC, "the fresh open seat reached C").toBe(true);
@@ -1010,17 +1260,20 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const appB2 = app(pageB2);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB2);
+    // B asked for the fresh seat; A's copy, seeing one ask, seats B.
+    await letIn(pageA, pageB2);
     await expect(appB2.locator("#contested-banner")).toBeHidden({ timeout: 30_000 });
     const bIsMember = await appFrame(pageB2).evaluate(() => {
       const db = (window as any).daiKit.db;
       const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
       return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
     });
-    expect(bIsMember, "B rebinds the fresh seat on opening the new invite").toBe(true);
-    // The load-bearing claim of T1-D34: B's e5, hidden while contested, re-emerges
-    // when B is a member again — the recompute keys on the replica, so the rows
-    // come back rather than being lost across the repair.
-    await expect(appB2.locator("#move-history")).toContainText("e5", { timeout: 30_000 });
+    expect(bIsMember, "B is seated in the fresh seat on opening the new invite").toBe(true);
+    // B's e5 was written for the seat the repair retired, which nobody was ever
+    // seated in: it never stands, on B's copy or A's.
+    await expect(appB2.locator("#move-history")).toContainText("e4");
+    await expect(appB2.locator("#move-history")).not.toContainText("e5");
+    await expect(appA.locator("#move-history")).not.toContainText("e5");
 
     // C, which only receives the reseat over the mailbox and never opens the new
     // invite, does not silently re-enter: it stays out, and stays told so.
@@ -1365,6 +1618,366 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceB.close();
   });
 
+  /*
+   * A link naming a game this device holds, under a different key (backlog
+   * D122; IDENTITY-KEY-HELD).
+   *
+   * The database is outside the signed set, so anybody holding a copy can
+   * re-seal it under a key of their own and send a link naming the game. Made
+   * here the way anybody holding a copy could: A's library is given another key
+   * for the game (the store's own names, since the opener exports none; the
+   * write is checked before anything leans on it), and A shares the game again.
+   * Before the ruling, B filed the new key over the one it held, and its
+   * mailbox for the game moved to an address A's partner lane never reads.
+   */
+  test("a link naming a held game under a different key is refused, and the held key stays", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+    const refusals: string[] = [];
+    pageB.on("console", (m) => {
+      if (m.text().startsWith("dai: refused a link naming game")) refusals.push(m.text());
+    });
+
+    const appA = await openContainer(pageA);
+    await openContainer(pageB);
+    const first = await inviteNewGame(pageA, appA);
+    const session = await activeSession(pageA);
+    const keyIn = (link: string): string | undefined => new URL(link).hash.match(/[#&]k=([^&]+)/)?.[1];
+    const held = keyIn(first);
+    expect(held, "the invite carries the game's key").toBeTruthy();
+
+    await pageB.goto(first);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await useRelay(pageB);
+    await nameIfAsked(pageB, "Bo", "Ada");
+    await expect.poll(() => keysHeld(pageB), { timeout: 30_000 }).toContain(`${session}:${held}`);
+
+    /*
+     * A copy re-keyed: A's library holds another key for the same game, and A
+     * shares the game again, so the link names it under that key.
+     *
+     * The write goes round the opener's library lock, so a locked write of A's
+     * own, read before it, can put the old record back (seen once in ten on
+     * WebKit: the link came out under the first key). What the next step
+     * depends on is a link under the other key, so that is what is waited for.
+     */
+    let other = "";
+    let second = "";
+    await expect(async () => {
+      other = await pageA.evaluate(
+        ({ game }) =>
+          new Promise<string>((done) => {
+            const bytes = crypto.getRandomValues(new Uint8Array(32));
+            const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            const open = indexedDB.open("dai_runner_storage");
+            open.onerror = () => done("open failed");
+            open.onsuccess = () => {
+              const tx = open.result.transaction("cartridges", "readwrite");
+              const store = tx.objectStore("cartridges");
+              const all = store.getAll();
+              all.onsuccess = () => {
+                for (const item of all.result) {
+                  if (!item.sessionKeys?.[game]) continue;
+                  item.sessionKeys[game] = key;
+                  store.put(item);
+                }
+              };
+              tx.oncomplete = () => done(key);
+              tx.onerror = () => done(`error ${String(tx.error)}`);
+            };
+          }),
+        { game: session },
+      );
+      expect(await keysHeld(pageA), "A's library now holds another key for the game").toContain(`${session}:${other}`);
+      await pageA.evaluate(() => {
+        (window as any).__copied = undefined;
+        navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+      });
+      await appA.locator("#share").click();
+      await pageA.locator("#send-go").click();
+      await expect.poll(() => pageA.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+      second = await pageA.evaluate(() => (window as any).__copied as string);
+      expect(new URL(second).hash, "the second link names the same game").toContain(`s=${session}`);
+      expect(keyIn(second), "under the other key").toBe(other);
+    }).toPass({ timeout: 120_000 });
+
+    // B opens it. A held copy opens without a card, so the decision point is the
+    // load the link brings (a fresh navigation, or the opener's own reload at a
+    // same-document one), then the sentence or the mounted copy: the key is filed
+    // before either, or never.
+    let loads = 0;
+    pageB.on("load", () => void loads++);
+    await pageB.goto(second);
+    await expect.poll(() => loads, { timeout: 60_000 }).toBeGreaterThan(0);
+    const sentence = pageB.locator("#report", { hasText: "This link is for a game already on this device" });
+    await expect(sentence.or(pageB.locator("body.loaded"))).toBeVisible({ timeout: 60_000 });
+    expect(await keysHeld(pageB), "B still holds the key it was invited with").toContain(`${session}:${held}`);
+    expect(await keysHeld(pageB), "and never filed the other").not.toContain(`${session}:${other}`);
+    await expect(sentence, "the person is told why the link did not open").toBeVisible();
+    expect(refusals, "the refusal is reported").toHaveLength(1);
+    expect(refusals[0]).toContain(session.slice(0, 8));
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /** The document keys this device holds, one per document. */
+  const documentKeysHeld = (page: Page): Promise<string[]> =>
+    page.evaluate(async () => {
+      const items = (await (window as any).__runner.listLibrary()) as { documentKey?: string }[];
+      return items.flatMap((item) => (item.documentKey ? [item.documentKey] : []));
+    });
+
+  /** The host's own Send, from the menu: a link that names no game. */
+  async function sendFromMenu(page: Page): Promise<string> {
+    await page.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    });
+    await page.click("#more");
+    await page.click("#send");
+    await page.click("#send-go");
+    await expect.poll(() => page.evaluate(() => (window as any).__copied ?? null), { timeout: 30_000 }).not.toBeNull();
+    return page.evaluate(() => (window as any).__copied as string);
+  }
+
+  /**
+   * The screen a refused link leaves: the sentence, and nothing over it.
+   *
+   * The address names a copy held here, so the page is painted as launching
+   * into it, and the launch screen hides the report beneath it. A refusal that
+   * leaves it up leaves the person on "This is taking longer than it should ·
+   * Tap to open", which reopens the held copy without a word about the link.
+   */
+  async function refusedInSight(page: Page, sentence: RegExp): Promise<void> {
+    await expect(page.locator("#report", { hasText: sentence }), "the person is told why the link did not open").toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.locator("#launch"), "and the launch screen is down").toBeHidden();
+  }
+
+  /*
+   * A link naming no game, for a document this device holds under a different
+   * key (backlog D122, ruled 25 September: a held key, document or game, is
+   * never replaced by an arriving one; IDENTITY-KEY-HELD).
+   *
+   * The document's key is its mailbox for everything that is not a game with a
+   * key of its own. Made the way anybody holding a copy could, as for a game:
+   * A's library is given another document key, and A sends the document again
+   * from the menu, which names no game.
+   */
+  test("a link naming a held document under a different key is refused, and the held key stays", async ({ browser }) => {
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+    const refusals: string[] = [];
+    pageB.on("console", (m) => {
+      if (m.text().startsWith("dai: refused a link naming document")) refusals.push(m.text());
+    });
+    const keyIn = (link: string): string | undefined => new URL(link).hash.match(/[#&]k=([^&]+)/)?.[1];
+
+    await openContainer(pageA);
+    const first = await sendFromMenu(pageA);
+    expect(new URL(first).hash, "a send from the menu names no game").not.toMatch(/[#&]s=/);
+    const held = keyIn(first);
+    expect(held, "the link carries the document's key").toBeTruthy();
+    await openLink(pageB, first);
+    await expect.poll(() => documentKeysHeld(pageB), { timeout: 30_000 }).toContain(held);
+
+    // Re-keyed round the opener's lock; waited on as the game test waits (above).
+    let other = "";
+    let second = "";
+    await expect(async () => {
+      other = await pageA.evaluate(
+        () =>
+          new Promise<string>((done) => {
+            const bytes = crypto.getRandomValues(new Uint8Array(32));
+            const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            const open = indexedDB.open("dai_runner_storage");
+            open.onerror = () => done("open failed");
+            open.onsuccess = () => {
+              const tx = open.result.transaction("cartridges", "readwrite");
+              const store = tx.objectStore("cartridges");
+              const all = store.getAll();
+              all.onsuccess = () => {
+                for (const item of all.result) {
+                  if (!item.documentKey) continue;
+                  item.documentKey = key;
+                  store.put(item);
+                }
+              };
+              tx.oncomplete = () => done(key);
+              tx.onerror = () => done(`error ${String(tx.error)}`);
+            };
+          }),
+      );
+      expect(await documentKeysHeld(pageA), "A's library now holds another document key").toContain(other);
+      second = await sendFromMenu(pageA);
+      expect(new URL(second).hash, "the second link names no game either").not.toMatch(/[#&]s=/);
+      expect(keyIn(second), "under the other key").toBe(other);
+    }).toPass({ timeout: 120_000 });
+
+    let loads = 0;
+    pageB.on("load", () => void loads++);
+    await pageB.goto(second);
+    await expect.poll(() => loads, { timeout: 60_000 }).toBeGreaterThan(0);
+    // The decision point: the sentence, or the card for the copy it carries.
+    // A person offered the card presses Open, and the key is read when the
+    // copy's mailbox starts, so that is what is waited for before the keys.
+    const sentence = /already on this device, but it does not match/;
+    const card = pageB.locator("#card-open");
+    await expect
+      .poll(async () => ((await card.isVisible()) ? "card" : (await pageB.locator("#report", { hasText: sentence }).count()) ? "refused" : ""), {
+        timeout: 60_000,
+      })
+      .not.toBe("");
+    if (await card.isVisible()) {
+      await card.click();
+      await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+      await useRelay(pageB);
+      await expect.poll(() => pageB.evaluate(() => (window as any).__runner.mailboxPolls !== undefined), { timeout: 30_000 }).toBe(true);
+    }
+    expect(await documentKeysHeld(pageB), "B still holds the key it was sent").toContain(held);
+    expect(await documentKeysHeld(pageB), "and never filed the other").not.toContain(other);
+    await refusedInSight(pageB, sentence);
+    expect(refusals, "the refusal is reported").toHaveLength(1);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /*
+   * A link to a document this device holds, published by somebody else
+   * (backlog D122, ruled 25 September: every refusal on the arrival path takes
+   * the launch screen down). The same id under another publisher's key, as a
+   * stranger can make: the id is in every copy. A sends somebody else's copy;
+   * B holds the genuine one, opened and so kept.
+   */
+  async function heldAndAStrangersLink(
+    browser: Browser,
+  ): Promise<{ deviceA: BrowserContext; deviceB: BrowserContext; link: string; uuid: string; pageB: Page }> {
+    const uuid = crypto.randomUUID();
+    const dir = mkdtempSync(join(tmpdir(), "dai-two-publishers-"));
+    const build = async (key: string, name: string): Promise<string> => {
+      const built = await compileDirectory({
+        sourceDir: join(repo, "tests", "fixture", "chess"),
+        root: repo,
+        appName: "Velvet Chess",
+        documentUuid: uuid,
+        signingKey: resolve(repo, key),
+        // As trust-consent.spec.ts builds its two publishers: a signing key
+        // alone makes version 4, which this opener does not read.
+        manifestVersion: 3,
+      });
+      const path = join(dir, name);
+      writeFileSync(path, built.html, "utf8");
+      return path;
+    };
+    const ours = await build("conformance/trust-publisher-a-key.pem", "ours.dai.html");
+    const theirs = await build("conformance/trust-publisher-b-key.pem", "theirs.dai.html");
+
+    const deviceA: BrowserContext = await browser.newContext();
+    const deviceB: BrowserContext = await browser.newContext();
+    await mountStore(deviceA);
+    await mountStore(deviceB);
+    const pageA = await deviceA.newPage();
+    const pageB = await deviceB.newPage();
+
+    await pageA.goto(RUNNER_URL);
+    await pageA.setInputFiles("#file", theirs);
+    await pageA.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
+    const link = await sendFromMenu(pageA);
+
+    await pageB.goto(RUNNER_URL);
+    await pageB.setInputFiles("#file", ours);
+    await pageB.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
+    return { deviceA, deviceB, link, uuid, pageB };
+  }
+
+  /** Whether this device holds a pin for the document: which key it was first opened with. */
+  const pinned = (page: Page, uuid: string) =>
+    page.evaluate(
+      (id) =>
+        new Promise<boolean>((done) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const get = open.result.transaction("pins", "readonly").objectStore("pins").get(id);
+            get.onsuccess = () => done(get.result !== undefined);
+            get.onerror = () => done(false);
+          };
+          open.onerror = () => done(false);
+        }),
+      uuid,
+    );
+
+  /** Forgets the pin, as a copy kept with its pin gone would be (D126). */
+  const unpin = (page: Page, uuid: string) =>
+    page.evaluate(
+      (id) =>
+        new Promise<void>((done, fail) => {
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            const tx = open.result.transaction("pins", "readwrite");
+            tx.objectStore("pins").delete(id);
+            tx.oncomplete = () => done();
+            tx.onerror = () => fail(tx.error);
+          };
+          open.onerror = () => fail(open.error);
+        }),
+      uuid,
+    );
+
+  /** The sentence for a held copy's id under another publisher (D126, ruled 25 September). */
+  const STRANGERS_COPY = /published by somebody else/;
+
+  /** Opens a link on a fresh page of the context and waits for the load it brings. */
+  async function arriveAt(context: BrowserContext, link: string): Promise<Page> {
+    const page = await context.newPage();
+    let loads = 0;
+    page.on("load", () => void loads++);
+    await page.goto(link);
+    await expect.poll(() => loads, { timeout: 60_000 }).toBeGreaterThan(0);
+    return page;
+  }
+
+  /*
+   * D126, ruled 25 September: a held copy is never offered a merge from a
+   * different publisher, pinned or not; a different publisher is a different
+   * document. The held record's own publisher answers, so a copy kept with its
+   * pin gone is refused in the same words as one still pinned.
+   */
+  test("a link to a held document from another publisher is refused in sight", async ({ browser }) => {
+    const { deviceA, deviceB, link, uuid, pageB } = await heldAndAStrangersLink(browser);
+    expect(await pinned(pageB, uuid), "B's copy is pinned by opening it").toBe(true);
+    const page = await arriveAt(deviceB, link);
+    await refusedInSight(page, STRANGERS_COPY);
+    await expect(page.locator("#card-open"), "and no card offers it").toBeHidden();
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  test("a link to a held document from another publisher is refused with the pin gone", async ({ browser }) => {
+    const { deviceA, deviceB, link, uuid, pageB } = await heldAndAStrangersLink(browser);
+    await unpin(pageB, uuid);
+    expect(await pinned(pageB, uuid), "the pin is gone before the link arrives").toBe(false);
+    const page = await arriveAt(deviceB, link);
+    await refusedInSight(page, STRANGERS_COPY);
+    await expect(page.locator("#card-open"), "and no card offers it as a merge").toBeHidden();
+    expect(await pinned(page, uuid), "and the stranger's key is not pinned").toBe(false);
+    await deviceA.close();
+    await deviceB.close();
+  });
+
   /** Every row the question turns on, as this copy holds it. */
   const seatRows = (page: Page) =>
     appFrame(page).evaluate(() => {
@@ -1461,21 +2074,14 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * creator's phone announced the move as the creator's own and oriented as
    * the creator, and both copies ended holding the creator's game with the
    * joiner gone. The phones' route to it is d22 (a copy coming back under the
-   * sender's id); this test does not take that route. It forces the state the
-   * route produces, Bo's copy running under Ada's replica id, because that is
-   * the whole of what the merge would need to be fooled: `_r_replica` is set by
-   * the writer and trusted by the merge, and the per-game key (D37) is one both
-   * copies hold, so nothing tells Ada's copy which of the two wrote a row.
+   * sender's id); these tests do not take that route. They force the state the
+   * route produces, Bo's copy running under Ada's replica id.
    *
-   * Fails today, on purpose, until a seat is bound to something a copy cannot
-   * copy (D80's own sitting). Correct is either outcome: the move refused, or
-   * admitted as Bo's; and in both, two players still seated.
+   * The setup both tests share: a game Ada started and Bo joined, Ada's copy
+   * seating him in the open seat, one move each, and then Bo's copy rewrites
+   * its own `_dai_replica` to Ada's id.
    */
-  test("D80: a copy running under the creator's id is not believed to be the creator", async ({ browser }) => {
-    // Held as an expected failure: D80 is open, and its fix is its own sitting.
-    // When a seat is bound to something a copy cannot copy, this passes, the
-    // mark fails the run, and the mark comes off in the same change.
-    test.fail(true, "D80 open: _r_replica is writer-set and merge-trusted");
+  async function forgedPair(browser: Browser) {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1485,8 +2091,9 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     const { appFrame: appA, link } = await startGameAndShare(pageA, container, "Ada", "", "e2", "e4");
     const appB = await openLink(pageB, link);
+    // Seated by Ada's copy before anything else: the name is asked once seated.
+    await letIn(pageA, pageB);
     await nameIfAsked(pageB, "Bo", "Ada");
-    await firstMailboxMerge(pageB);
     await play(appB, "e7", "e5");
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
@@ -1502,26 +2109,179 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await appFrame(pageB).evaluate((ada) => {
       (window as any).daiKit.db.exec(`UPDATE _dai_replica SET id = x'${ada}'`);
     }, beforeA.me);
-    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+    return { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB };
+  }
 
-    // Bo moves. It is White's turn, and this copy now believes it holds White.
-    await play(appB, "d2", "d4");
+  /** Both players still seated, on the copy given. */
+  function stillSeated(who: string, rows: Awaited<ReturnType<typeof seatRows>>, bo: string): void {
+    expect(rows.members, `${who} still holds two members`).toHaveLength(2);
+    expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(bo);
+    expect(rows.games[0], `${who} still names both players`).toMatchObject({ w: "Ada", b: "Bo" });
+  }
+
+  /**
+   * The attack itself: the forged copy moves as the creator, and the creator's
+   * copy refuses the move.
+   *
+   * Bo's copy, under Ada's id and with nothing pulled since, believes it holds
+   * White and plays d2-d4.
+   *
+   * Since step 2 the write is stamped with the host's key, re-asserted on
+   * every write (docs/identity.md, binding rule 2), so the row reaches Ada's
+   * copy honestly as Bo's. What refuses it is the seat, not the signature: a
+   * signature answers who wrote a row, a seat answers whether they may, and
+   * Bo, holding Black, may not play from White's seat (IDENTITY-SEAT-ADMITS in
+   * src/rules.ts). The signature never refuses this path, because Bo's copy
+   * signs as Bo and Bo's batch verifies. Since step 5 a move names the seat it
+   * acts for, and the document admits it only when its author holds that seat:
+   * the creator's seat is the creator's, and the open seat is held by whoever
+   * the creator's copy confirmed. No clock is read. Ada's copy stores the row
+   * and reports it as `SEAT_NOT_HELD` with Bo's id. The forger who stamps
+   * Ada's id outside the runtime is the signature's to refuse, and is held by
+   * signed-batch test 2.
+   *
+   * The strongest forgery a joiner can make with rows alone, the one that broke
+   * the first seat model (tests/seat-attacks.spec.ts, its first attack): Bo
+   * binds Ada's own seat at a clock before any of hers, then plays White's move
+   * for it. Under the first model the earliest binding held a seat, so this
+   * took White. (A move that names no seat is refused the same way;
+   * tests/seat-admission.spec.ts holds that case.)
+   */
+  test("D80: a forged copy's move as the creator is refused by the seat, and both players stay seated", async ({ browser }) => {
+    const { deviceA, deviceB, pageA, pageB, appB, beforeA, beforeB } = await forgedPair(browser);
+    const refusals: string[] = [];
+    pageA.on("console", (message) => {
+      if (/^dai: merge refused /.test(message.text())) refusals.push(message.text());
+    });
+
+    // The forged copy writes both rows at once, around every gate an honest
+    // copy passes (a hostile copy owns its frame): straight into the tables, as
+    // Bo (the key the host signs with) but for Ada's seat. Bo's copy then seals
+    // and publishes them like any rows of its own. Not through the board, and
+    // not through the kit, which binds only an open seat and refuses a move for
+    // a seat this copy does not hold. How the forger produces the rows is
+    // scenery; Ada's copy refusing the move is the fact under test.
+    await appFrame(pageB).evaluate(() => {
+      const kit = (window as any).daiKit;
+      const db = kit.db;
+      const game = db.selectObjects(
+        "SELECT lower(hex(_r_entity)) id, lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'",
+      )[0];
+      const adasSeat = kit.seats(game.s).find((seat: { creator: boolean }) => seat.creator).seat;
+      const bo = kit.author();
+      // Every table that carries a seq, read from the schema rather than
+      // listed, so a table the kit adds (as `_dai_confirm` was) cannot be missed
+      // and the forged rows cannot reuse a seq of Bo's.
+      const tables = db
+        .selectObjects(
+          "SELECT m.name FROM sqlite_master m WHERE m.type = 'table' AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) c WHERE c.name = '_r_seq')",
+        )
+        .map((row: { name: string }) => row.name);
+      if (!tables.includes("_dai_confirm") || !tables.includes("moves")) throw new Error(`seq scan missed a table: ${tables}`);
+      const top = Math.max(
+        ...tables.map((t: string) =>
+          Number(db.selectObjects(`SELECT coalesce(max(_r_seq), 0) AS n FROM "${t}" WHERE lower(hex(_r_replica)) = ?`, [bo])[0].n),
+        ),
+      );
+      const lc = Number(db.selectObjects("SELECT lc FROM _dai_replica")[0].lc) + 1;
+      const entity = () =>
+        kit.seatBytes(Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(""));
+      // Bo binds Ada's seat, backdated to a clock before any row of hers.
+      db.exec({
+        sql:
+          "INSERT INTO _dai_binding (seat, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) " +
+          "VALUES (?, ?, ?, 0, ?, '[]', 0, ?)",
+        bind: [kit.seatBytes(adasSeat), kit.seatBytes(bo), top + 1, entity(), kit.seatBytes(game.s)],
+      });
+      // Then plays White's move for it.
+      db.exec({
+        sql:
+          "INSERT INTO moves (seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer, " +
+          "_r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) " +
+          "VALUES (?, ?, 3, 'w', 'd2', 'd4', NULL, 'd4', 0, ?, ?, ?, ?, '[]', 0, ?)",
+        bind: [kit.seatBytes(adasSeat), game.id, kit.seatBytes(bo), top + 2, lc, entity(), kit.seatBytes(game.s)],
+      });
+    });
+
+    // Wait for what the refusal is about: the row arriving at Ada's copy.
+    const arrived = () =>
+      appFrame(pageA).evaluate(() =>
+        (window as any).daiKit.db.selectObjects(
+          "SELECT san, lower(hex(_r_replica)) r FROM moves WHERE san = 'd4'",
+        ) as { san: string; r: string }[],
+      );
+    // And the backdated binding with it, so the refusal is of the whole forgery.
+    const forgedBindings = () =>
+      appFrame(pageA).evaluate((bo) => {
+        const kit = (window as any).daiKit;
+        const session = kit.db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s;
+        const adasSeat = String(kit.seats(session).find((seat: { creator: boolean }) => seat.creator).seat).toLowerCase();
+        return kit.db.selectObjects(
+          "SELECT 1 FROM _dai_binding WHERE lower(hex(_r_replica)) = ? AND lower(hex(seat)) = ? AND _r_lc = 0",
+          [bo, adasSeat],
+        ).length;
+      }, beforeB.me);
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
-      await expect(appA.locator("#move-history")).toContainText("d4", { timeout: 2_000 });
+      expect(await arrived(), "the forged move reached Ada's copy").toHaveLength(1);
+      expect(await forgedBindings(), "Bo's backdated binding to Ada's seat reached Ada's copy").toBe(1);
     }).toPass({ timeout: 30_000 });
+
     const afterA = await seatRows(pageA);
     const afterB = await seatRows(pageB);
     console.log(`D80 after, A: ${JSON.stringify(afterA)}`);
     console.log(`D80 after, B: ${JSON.stringify(afterB)}`);
 
+    // Who wrote it (step 2, holds now): stamped as Bo, not as Ada.
+    expect((await arrived())[0]!.r, "the move is stamped with Bo's key, not the forged id").toBe(beforeB.me);
+    expect((await arrived())[0]!.r).not.toBe(beforeA.me);
+    // Whether Bo may (step 5): Bo holds Black, and this move acts for White's seat.
+    expect(afterA.moves.map((m: { san: string }) => m.san), "the seat refuses it: Ada's game does not admit it").not.toContain("d4");
+    // And the refusal is said, with the author it belongs to.
+    const bosShownId = Buffer.from(beforeB.me, "hex").toString("base64url");
+    expect(refusals.join("\n"), "reported as SEAT_NOT_HELD with Bo's id").toContain(`${bosShownId} SEAT_NOT_HELD`);
+    stillSeated("A", afterA, beforeB.me);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * What makes the refusal above possible: a copy whose `_dai_replica` has been
+   * rewritten is back on its host's key from its next write, whatever that
+   * write is. Here the write is applying Ada's next move; after it, Bo's copy
+   * is Bo, and its answer reaches Ada as Bo's.
+   */
+  test("a rewritten _dai_replica lasts until the copy's next write, and then it writes under its host's key", async ({
+    browser,
+  }) => {
+    const { deviceA, deviceB, pageA, pageB, appA, appB, beforeB } = await forgedPair(browser);
+    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+
+    // Ada moves. Applying it is Bo's copy's next write, and the forged id does
+    // not survive it: the copy is put back to the key its host holds.
+    await play(appA, "d2", "d4");
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB.locator("#move-history")).toContainText("d4", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    expect((await seatRows(pageB)).me, "Bo's copy writes as Bo again").toBe(beforeB.me);
+
+    // Bo answers, as Black, and it reaches Ada as Bo's.
+    await play(appB, "d7", "d5");
+    await expect(async () => {
+      await pageA.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appA.locator("#move-history")).toContainText("d5", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    const afterA = await seatRows(pageA);
+    const afterB = await seatRows(pageB);
+    console.log(`D80 heal after, A: ${JSON.stringify(afterA)}`);
+    console.log(`D80 heal after, B: ${JSON.stringify(afterB)}`);
+
     const last = afterA.moves[afterA.moves.length - 1] as { r: string };
-    expect(last.r, "Bo's move is not admitted as Ada's").not.toBe(beforeA.me);
-    for (const [who, rows] of [["A", afterA], ["B", afterB]] as const) {
-      expect(rows.members, `${who} still holds two members`).toHaveLength(2);
-      expect(rows.bindings.map((b: { r: string }) => b.r), `${who} still holds Bo's seat`).toContain(beforeB.me);
-      expect(rows.games[0], `${who} still names both players`).toMatchObject({ w: "Ada", b: "Bo" });
-    }
+    expect(last.r, "Bo's move is admitted as Bo's, not Ada's").toBe(beforeB.me);
+    stillSeated("A", afterA, beforeB.me);
+    stillSeated("B", afterB, beforeB.me);
 
     await deviceA.close();
     await deviceB.close();

@@ -87,8 +87,8 @@ test.describe("a declared table", () => {
     expect(sql).toContain("title  TEXT NOT NULL");
     expect(sql).toContain("status TEXT NOT NULL DEFAULT 'open'");
 
-    // And the ones §4 requires, including the one that is always NULL at
-    // Level 1 so that Level 2 needs no migration (T1-D7).
+    // And the ones §4 requires, including the batch a row was sealed in
+    // (docs/identity.md, step 3), which replaced the per-row _r_sig of T1-D7.
     for (const column of [
       "_r_replica",
       "_r_seq",
@@ -97,10 +97,12 @@ test.describe("a declared table", () => {
       "_r_parents",
       "_r_deleted",
       "_r_superseded",
-      "_r_sig",
+      "_r_batch",
     ]) {
       expect(sql, column).toContain(column);
     }
+    expect(sql, "one place a signature lives").not.toContain("_r_sig");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_batch");
     expect(sql).toContain("PRIMARY KEY (_r_replica, _r_seq)");
     expect(sql).toContain("WITHOUT ROWID");
   });
@@ -131,8 +133,11 @@ test.describe("a declared table", () => {
      * the trigger read correctly; running it against SQLite is what found it.
      */
     expect(sql).toMatch(
-      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig ON cases/,
+      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted ON cases/,
     );
+    // _r_batch has a trigger of its own: it may change once, from NULL, when the
+    // row is sealed, and never after.
+    expect(sql).toMatch(/cases__sealed_once BEFORE UPDATE OF _r_batch ON cases\s+WHEN OLD\._r_batch IS NOT NULL/);
 
     // And the flag only rises. Two hosts with the same rows and different
     // flags never reconcile, so clearing one is refused.
@@ -300,7 +305,7 @@ ${CASES}`;
     // Named in the append-only trigger, so a row's session cannot be edited in
     // place any more than its author columns can.
     expect(sql).toMatch(
-      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig, _r_session ON cases/,
+      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session ON cases/,
     );
   });
 
@@ -316,11 +321,12 @@ CREATE TABLE visits (
     // `tables` is the author tables — the manifest surface (T1-D29 keeps the
     // roster tables out of it, like _dai_replica).
     expect(tables).toEqual(["cases", "visits"]);
-    // But the profile stamps _r_session onto both author tables and the three
-    // roster/close system tables the schema now carries — five in the SQL.
-    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(5);
+    // But the profile stamps _r_session onto both author tables and the four
+    // roster/close system tables the schema now carries — six in the SQL.
+    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(6);
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_seat");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_binding");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_confirm");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_close");
   });
 

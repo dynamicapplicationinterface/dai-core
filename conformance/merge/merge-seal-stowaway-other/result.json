@@ -1,0 +1,28 @@
+{
+  "what": "B received Ada's signed case, then wrote a row of its own naming Ada's batch, which does not list it. The refusal names Bo, who wrote the row, not Ada, whose batch was taken.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_DIGEST_MISMATCH"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

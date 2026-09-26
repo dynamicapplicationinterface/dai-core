@@ -20,6 +20,7 @@ Level 1: no signatures, no keys. A replica id is a claim.
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import sqlite3
@@ -102,6 +103,14 @@ def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
     lines.append("# _dai_replicas")
     for (rid,) in db.execute("SELECT id FROM _dai_replicas ORDER BY hex(id) ASC"):
         lines.append(encode(rid))
+    # The signed batch headers, every column: the same bytes on every copy that
+    # holds one, so two copies that merged agree on the set (docs/identity.md).
+    if db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").fetchone():
+        lines.append("# _dai_batch")
+        for header in db.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch ORDER BY hex(id) ASC"
+        ):
+            lines.append("\t".join(encode(value) for value in header))
     return "\n".join(lines) + "\n"
 
 
@@ -180,24 +189,32 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             and all(existing[name] == row["columns"].get(name) for name in authored)
         )
         if same:
+            # The same row, sealed where this copy still holds it pending: it
+            # takes the seal, once, from NULL (docs/identity.md, step 3).
+            if existing.get("_r_batch") is None and row.get("_r_batch") is not None:
+                db.execute(
+                    f'UPDATE "{table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?',
+                    (row["_r_batch"], row["_r_replica"], row["_r_seq"]),
+                )
             return "duplicate"
         raise ValueError(f"ROW_REJECTED: a different row already exists as {rid}")
 
-    # Superseded on arrival when something present already names this row. A
-    # merge delivers children before parents, so this is not a rare case.
+    # Superseded on arrival when something of its own entity present already
+    # names this row. A merge delivers children before parents, so this is not a
+    # rare case. Another entity's row naming it hides nothing (T1-D35).
     named = db.execute(
         f'SELECT 1 FROM "{table}", json_each("{table}"._r_parents)'
-        " WHERE json_each.value = ? LIMIT 1",
-        (rid,),
+        f' WHERE json_each.value = ? AND "{table}"._r_entity = ? LIMIT 1',
+        (rid, row["_r_entity"]),
     ).fetchone()
 
     names = authored + [
         "_r_replica", "_r_seq", "_r_lc", "_r_entity",
-        "_r_parents", "_r_deleted", "_r_superseded", "_r_sig",
+        "_r_parents", "_r_deleted", "_r_superseded", "_r_batch",
     ]
     values = [row["columns"].get(name) for name in authored] + [
         row["_r_replica"], row["_r_seq"], row["_r_lc"], row["_r_entity"],
-        row["_r_parents"], row["_r_deleted"], 1 if named else 0, row.get("_r_sig"),
+        row["_r_parents"], row["_r_deleted"], 1 if named else 0, row.get("_r_batch"),
     ]
     placeholders = ", ".join("?" for _ in names)
     quoted = ", ".join(f'"{name}"' for name in names)
@@ -209,15 +226,30 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             continue
         db.execute(
             f'UPDATE "{table}" SET _r_superseded = 1'
-            " WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_superseded = 0",
-            (replica_hex.upper(), int(seq)),
+            " WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ? AND _r_superseded = 0",
+            (replica_hex.upper(), int(seq), row["_r_entity"]),
         )
     return "added"
 
 
-def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
+def shown(author: bytes) -> str:
+    """An author id as a person is shown it: base64url, no padding."""
+    return base64.urlsafe_b64encode(bytes(author)).rstrip(b"=").decode("ascii")
+
+
+def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict[str, str]) -> dict:
+    """Union merge, taking only what a verified header lists (docs/format.md).
+
+    `verdicts` is the signature check's answer for each of the sibling's
+    headers, by id in lowercase hex: "ok" or a BATCH_ code. A header missing
+    from it was not checked, and a header not checked is not signed.
+    """
     tables = replicated_tables(local)
-    result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0}
+    result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
+    refusals: dict[tuple[str, str, str], bytes] = {}  # (id, reason, author hex) -> author
+
+    def refuse_batch(hid: str, author: bytes, reason: str) -> None:
+        refusals[(hid, reason, bytes(author).hex())] = author
 
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
@@ -253,6 +285,40 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
             (rid, before),
         )
 
+    # The signed headers: a union by id of the verified ones, before any row.
+    # A header lists the rows it covers as [table, seq], its author being its
+    # own; a row's _r_batch is a cache of one header that lists it, never the truth.
+    has_batches = lambda db: db.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'"
+    ).fetchone()
+    held: dict[str, bytes] = {}
+    covering: dict[str, str] = {}  # "table|author:seq" -> the lowest ok id listing it
+    covers: set[str] = set()  # "id|table|author:seq"
+    if has_batches(local) and has_batches(sibling):
+        headers = sibling.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch"
+        ).fetchall()
+        for header in sorted(headers, key=lambda h: bytes(h[0]).hex()):
+            hid = bytes(header[0]).hex()
+            held[hid] = header[0]
+            verdict = verdicts.get(hid, "BATCH_SIGNATURE_INVALID")
+            if verdict != "ok":
+                refuse_batch(hid, header[1], verdict)
+                continue
+            local.execute(
+                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                header,
+            )
+            for table, seq in json.loads(header[8]):
+                key = f"{table}|{row_id(header[1], seq)}"
+                covers.add(f"{hid}|{key}")
+                covering.setdefault(key, hid)
+
+    # Signed means listed by an ok header, whatever the row says. Signed rows
+    # are placed first, unsigned after, so table order never decides.
+    signed_rows: list[tuple[str, dict]] = []
+    unsigned_rows: list[tuple[str, dict]] = []
     for table in tables:
         names = columns_of(sibling, table)
         authored = [name for name in names if not name.startswith("_r_")]
@@ -265,16 +331,89 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
                 "_r_entity": incoming["_r_entity"],
                 "_r_parents": incoming["_r_parents"],
                 "_r_deleted": incoming["_r_deleted"],
-                "_r_sig": incoming.get("_r_sig"),
+                "_r_batch": incoming.get("_r_batch"),
                 "columns": {name: incoming[name] for name in authored},
             }
+            key = f"{table}|{row_id(row['_r_replica'], row['_r_seq'])}"
+            named = bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else None
+            cover = covering.get(key)
+            if cover is not None:
+                keep = named if named is not None and f"{named}|{key}" in covers else cover
+                row["_r_batch"] = held[keep]
+                signed_rows.append((table, row))
+            elif named is not None:
+                # It names a header that does not vouch for it: refused in the
+                # name of whoever wrote the row.
+                if named not in held or verdicts.get(named) == "ok":
+                    refuse_batch(named, row["_r_replica"], "BATCH_DIGEST_MISMATCH")
+            else:
+                unsigned_rows.append((table, row))
+
+    def reject(rid: str) -> None:
+        if rid not in result["rejected"]:
+            result["rejected"].append(rid)
+
+    def held_batch(table: str, row: dict):
+        return local.execute(
+            f'SELECT _r_batch FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        ).fetchone()
+
+    def displace(table: str, row: dict) -> None:
+        # A signed row outranks an unsigned one at its id: the unsigned one goes,
+        # and what it superseded is a head again unless something else of its
+        # entity names it (T1-D35).
+        (parents,) = local.execute(
+            f'SELECT _r_parents FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        ).fetchone()
+        local.execute(
+            f'DELETE FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        )
+        for parent in parents_of(parents):
+            local.execute(
+                f'UPDATE "{table}" SET _r_superseded = 0'
+                " WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1"
+                f' AND NOT EXISTS (SELECT 1 FROM "{table}" n, json_each(n._r_parents) p'
+                f' WHERE p.value = ? AND n._r_entity = "{table}"._r_entity)',
+                (parent, parent),
+            )
+        reject(row_id(row["_r_replica"], row["_r_seq"]))
+
+    def place(table: str, row: dict, signed: bool) -> None:
+        # One author's seq names one row, whatever table it is in.
+        for other in tables:
+            if other == table:
+                continue
+            there = held_batch(other, row)
+            if there is None:
+                continue
+            if signed and there[0] is None:
+                displace(other, row)
+                continue
+            raise ValueError(f"ROW_REJECTED: {row_id(row['_r_replica'], row['_r_seq'])} is a row of {other}")
+        try:
+            outcome = apply_row(local, table, row)
+        except ValueError:
+            there = held_batch(table, row)
+            if not signed or there is None or there[0] is not None:
+                raise
+            displace(table, row)
+            outcome = apply_row(local, table, row)
+        result["applied" if outcome == "added" else "duplicate"] += 1
+
+    for rows, signed in ((signed_rows, True), (unsigned_rows, False)):
+        for table, row in rows:
             try:
-                outcome = apply_row(local, table, row)
-                result["applied" if outcome == "added" else "duplicate"] += 1
+                place(table, row, signed)
             except ValueError:
                 # One refused row does not deny the rest (T1-D13): a refusal
                 # must never be cheaper than the thing it refuses.
-                result["rejected"].append(row_id(row["_r_replica"], row["_r_seq"]))
+                reject(row_id(row["_r_replica"], row["_r_seq"]))
+    result["refusedBatches"] = [
+        {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)
+    ]
     return result
 
 
@@ -336,16 +475,23 @@ def check(name: str) -> list[str]:
     # ran and passed; it is one nothing checked.
     failures.extend(validate_shape(name, expected))
 
+    # The signature check's answer for every header, made once by the verifier
+    # (README, Verdicts). Required: a vector without it is one nothing checked.
+    verdicts_path = directory / "verdicts.json"
+    if not verdicts_path.exists():
+        return failures + [f"{name}: verdicts.json is missing"]
+    verdicts = json.loads(verdicts_path.read_text(encoding="utf-8"))
+
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
-        result = merge(local, sibling)
+        result = merge(local, sibling, verdicts.get(other.split(".")[0], {}))
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 
         if dump != wanted:
             failures.append(f"{name} [{direction}]: the tables differ from the expected dump")
-        for field in ("applied", "duplicate", "rejected"):
+        for field in ("applied", "duplicate", "rejected", "refusedBatches"):
             if result[field] != expected[direction][field]:
                 failures.append(
                     f"{name} [{direction}]: {field} was {result[field]!r},"

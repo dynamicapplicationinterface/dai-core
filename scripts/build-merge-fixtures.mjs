@@ -16,6 +16,12 @@
  * Everything here is deterministic: replica and entity ids are constants, there
  * is no clock and no randomness. Two runs must produce identical text, or the
  * check flaps and somebody turns it off.
+ *
+ * The sealed vectors (signed authorship, docs/identity.md) sign with two fixed
+ * keys, so their authors are real key fingerprints and a verifying merge can
+ * check them. ECDSA signatures are not deterministic, so each one is kept in
+ * signatures.json by the header it covers: signed once, when written, and
+ * reused after. `--check` never signs; a header with no kept signature fails.
  */
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -31,7 +37,10 @@ import {
   mergeFrom,
 } from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
-import { adoptReplica } from "../dist/dai-merge.js";
+import { adoptReplica, pendingBatches, recordSeal, signBatch, stageBatch, verifyBatches } from "../dist/dai-merge.js";
+import { coversText } from "../dist/replicated-rows.js";
+import { authorIdOf, signBytes } from "../dist/identity.js";
+import { createECDH, webcrypto } from "node:crypto";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(repo, "conformance", "merge");
@@ -43,14 +52,62 @@ CREATE TABLE cases (
   status TEXT NOT NULL DEFAULT 'open',
   weight REAL
 );
+-- dai:replicated
+CREATE TABLE notes (
+  body TEXT NOT NULL
+);
 `;
 
-const TABLES = ["cases"];
+// Two shared tables, because one author's seq names one row across all of them
+// (a collision in another table is a vector of its own).
+const TABLES = ["cases", "notes"];
 const id = (byte) => new Uint8Array(16).fill(byte);
 const A = id(0xaa);
 const B = id(0xbb);
 const E1 = id(0x11);
 const E2 = id(0x22);
+/** A row id's author part as `_r_parents` spells it: lowercase hex. */
+const hexOf = (bytes) => Buffer.from(bytes).toString("hex");
+
+/*
+ * The two authors of the sealed vectors: fixed private scalars, so the keys,
+ * the author ids and every header are the same on every run.
+ */
+const DOC = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+async function fixedPerson(scalarHex) {
+  const ecdh = createECDH("prime256v1");
+  ecdh.setPrivateKey(Buffer.from(scalarHex, "hex"));
+  const pub = new Uint8Array(ecdh.getPublicKey());
+  const b64 = (bytes) => Buffer.from(bytes).toString("base64url");
+  const jwk = { kty: "EC", crv: "P-256", x: b64(pub.subarray(1, 33)), y: b64(pub.subarray(33)), ext: true };
+  const curve = { name: "ECDSA", namedCurve: "P-256" };
+  const privateKey = await webcrypto.subtle.importKey("jwk", { ...jwk, d: b64(Buffer.from(scalarHex, "hex")) }, curve, true, ["sign"]);
+  const publicKey = await webcrypto.subtle.importKey("jwk", jwk, curve, true, ["verify"]);
+  return { keys: { privateKey, publicKey }, pub, author: await authorIdOf(pub) };
+}
+const ADA = await fixedPerson("1111111111111111111111111111111111111111111111111111111111111111");
+const BO = await fixedPerson("2222222222222222222222222222222222222222222222222222222222222222");
+
+const SIGNATURES = join(repo, "conformance", "merge", "signatures.json");
+const signatures = existsSync(SIGNATURES) ? JSON.parse(readFileSync(SIGNATURES, "utf8")) : {};
+let signaturesAdded = 0;
+/** A signer that reuses the kept signature for a header it has seen, and signs (when writing) one it has not. */
+const keptSigner = (person) => async (header) => {
+  const key = Buffer.from(header).toString("hex");
+  if (!signatures[key]) {
+    if (check) throw new Error(`no kept signature for header ${key.slice(0, 16)}...; run the generator to write one`);
+    signatures[key] = Buffer.from(await signBytes(person.keys.privateKey, header)).toString("hex");
+    signaturesAdded += 1;
+  }
+  return { sig: new Uint8Array(Buffer.from(signatures[key], "hex")), pub: person.pub };
+};
+
+/** Seals everything an author has pending, as a leave does (docs/identity.md, step 3). */
+async function sealAll(db, person) {
+  for (const batch of pendingBatches(db, person.author, TABLES)) {
+    recordSeal(db, await signBatch(batch, { document: DOC, sign: keptSigner(person) }));
+  }
+}
 
 /** A database on disk, behind the interface the write rules ask for. */
 function open(path, extra) {
@@ -76,12 +133,21 @@ function open(path, extra) {
  * file does, and then lets the recipient adopt an identity of its own.
  */
 function receiveInto(to, from, id) {
-  for (const row of from.all('SELECT * FROM "cases"')) {
-    const names = Object.keys(row);
+  for (const header of from.all("SELECT * FROM _dai_batch")) {
+    const names = Object.keys(header);
     to.run(
-      `INSERT INTO "cases" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
-      names.map((n) => row[n]),
+      `INSERT INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+      names.map((n) => header[n]),
     );
+  }
+  for (const table of TABLES) {
+    for (const row of from.all(`SELECT * FROM "${table}"`)) {
+      const names = Object.keys(row);
+      to.run(
+        `INSERT INTO "${table}" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`,
+        names.map((n) => row[n]),
+      );
+    }
   }
   const theirs = from.all("SELECT id, seq, lc FROM _dai_replica")[0];
   to.run("DELETE FROM _dai_replica");
@@ -244,6 +310,184 @@ const VECTORS = [
     },
   },
   {
+    name: "merge-sealed",
+    cites: ["6", "T1-D7"],
+    what: "Two authors, each row sealed in a signed batch. The rows and both headers union; every row keeps the batch it left in.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "mine", status: "open", weight: 1.5 });
+      createEntity(a, "cases", E2, { title: "also mine", status: "open", weight: null });
+      await sealAll(a, ADA);
+      createEntity(b, "cases", id(0x33), { title: "yours", status: "open", weight: null });
+      await sealAll(b, BO);
+    },
+  },
+  {
+    name: "merge-seal-adopted",
+    cites: ["6", "T1-D7"],
+    what:
+      "B received A's row before A sealed it, so B holds it pending. A seals; merging A into B gives B the seal and the header, and merging B into A leaves A's seal as it was.",
+    authors: true,
+    receives: true,
+    fill: (a) => {
+      createEntity(a, "cases", E1, { title: "sent before sealing", status: "open", weight: null });
+    },
+    afterReceive: async (a, b) => {
+      await sealAll(a, ADA);
+      createEntity(b, "cases", E2, { title: "the reply", status: "open", weight: null });
+      await sealAll(b, BO);
+    },
+  },
+  {
+    name: "merge-seal-stowaway",
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds a row claiming B's batch that the batch does not list. Merging B into A refuses that row (BATCH_DIGEST_MISMATCH) and takes the row the batch lists; B keeps its own.",
+    authors: true,
+    converges: false,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+      await sealAll(a, ADA);
+      createEntity(b, "cases", E2, { title: "listed", status: "open", weight: null });
+      await sealAll(b, BO);
+      const named = b.all("SELECT _r_batch FROM cases WHERE _r_entity = ?", [E2])[0]["_r_batch"];
+      b.run(
+        "INSERT INTO cases (title, status, weight, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES ('stowaway', 'open', NULL, ?, 50, 50, ?, '[]', 0, ?)",
+        [BO.author, id(0x55), named],
+      );
+    },
+  },
+  {
+    name: "merge-seal-tampered",
+    cites: ["6", "T1-D13"],
+    what:
+      "B's row was changed after it was signed, so B's header does not verify (BATCH_DIGEST_MISMATCH). Merging B into A takes neither the row nor the header; B keeps its own.",
+    authors: true,
+    converges: false,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
+      await sealAll(a, ADA);
+      // Signed in a scratch copy, then changed, then staged into B as a file arrives.
+      const scratch = open(":memory:");
+      asReplica(scratch, BO.author);
+      createEntity(scratch, "cases", E2, { title: "as signed", status: "open", weight: null });
+      const [batch] = pendingBatches(scratch, BO.author, TABLES);
+      const sealed = await signBatch(batch, { document: DOC, sign: keptSigner(BO) });
+      scratch.close();
+      sealed.entries[0].row.columns.title = "changed after signing";
+      stageBatch(b, sealed, TABLES);
+    },
+  },
+  {
+    name: "merge-seal-lost-pointer",
+    cites: ["6", "T1-D7"],
+    what:
+      "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers.",
+    authors: true,
+    converges: false,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "one", status: "open", weight: null });
+      createEntity(a, "cases", E2, { title: "two", status: "open", weight: null });
+      const [batch] = pendingBatches(a, ADA.author, TABLES);
+      holdHeader(a, await signBatch(batch, { document: DOC, sign: keptSigner(ADA) }));
+      holdHeader(a, await signBatch({ ...batch, lc: batch.lc + 1 }, { document: DOC, sign: keptSigner(ADA) }));
+      createEntity(b, "cases", id(0x33), { title: "yours", status: "open", weight: null });
+    },
+  },
+  {
+    name: "merge-seal-cross-table",
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds an unsigned note under Ada's id at the seq of Ada's signed case. One author's seq names one row in any table: A refuses the note as a collision, and B gives it up for the signed case, which outranks it.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      forge(b, "notes", ADA.author, 1, { body: "forged under Ada's id" });
+    },
+  },
+  {
+    name: "merge-seal-outranks",
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds an unsigned case under Ada's id and seq with other content. A signed row outranks an unsigned one at the same id: A keeps its own and refuses B's; B gives its up for A's.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      forge(b, "cases", ADA.author, 1, { title: "forged", status: "open", weight: null });
+    },
+  },
+  {
+    name: "merge-seal-stowaway-other",
+    cites: ["6", "T1-D13"],
+    what:
+      "B received Ada's signed case, then wrote a row of its own naming Ada's batch, which does not list it. The refusal names Bo, who wrote the row, not Ada, whose batch was taken.",
+    authors: true,
+    receives: true,
+    converges: false,
+    fill: async (a) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+    },
+    afterReceive: async (a, b) => {
+      const named = b.all("SELECT _r_batch FROM cases WHERE _r_entity = ?", [E1])[0]["_r_batch"];
+      b.run(
+        "INSERT INTO cases (title, status, weight, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_batch) VALUES ('stowaway', 'open', NULL, ?, 5, 5, ?, '[]', 0, ?)",
+        [BO.author, id(0x55), named],
+      );
+    },
+  },
+  {
+    name: "merge-cross-entity-parent",
+    cites: ["T1-D2", "T1-D35"],
+    what:
+      "B's note names A's note, another entity, as its parent. A holds the parent before the row naming it arrives and B the other way round; on both, A's note stays a head.",
+    fill: (a, b) => {
+      createEntity(a, "notes", E1, { body: "Ada's note" });
+      applyRow(b, "notes", {
+        _r_replica: B,
+        _r_seq: 1,
+        _r_lc: 1,
+        _r_entity: E2,
+        _r_parents: JSON.stringify([`${hexOf(A)}:1`]),
+        _r_deleted: 0,
+        columns: { body: "Bo's note" },
+      });
+    },
+  },
+  {
+    name: "merge-seal-outranks-cross-entity",
+    cites: ["T1-D13", "T1-D35"],
+    what:
+      "B holds an unsigned edit of Bo's case under Ada's id and seq, and a case of another entity that also names Bo's case. When the unsigned edit gives way to Ada's signed row, Bo's case is a head again: the other entity's row does not hold it down.",
+    authors: true,
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      const bos = createEntity(b, "cases", id(0x66), { title: "Bo's case", status: "open", weight: null });
+      const named = JSON.stringify([`${hexOf(BO.author)}:${bos._r_seq}`]);
+      applyRow(b, "cases", {
+        _r_replica: ADA.author,
+        _r_seq: 1,
+        _r_lc: 2,
+        _r_entity: id(0x66),
+        _r_parents: named,
+        _r_deleted: 0,
+        columns: { title: "forged edit", status: "open", weight: null },
+      });
+      applyRow(b, "cases", {
+        _r_replica: BO.author,
+        _r_seq: 2,
+        _r_lc: 3,
+        _r_entity: id(0x77),
+        _r_parents: named,
+        _r_deleted: 0,
+        columns: { title: "names Bo's case", status: "open", weight: null },
+      });
+    },
+  },
+  {
     name: "heads-via-superseded-flag",
     cites: ["4", "T1-D2", "T1-D10"],
     what: "A chain and a fork on one copy. Heads must equal what a full parents scan would say.",
@@ -256,20 +500,15 @@ const VECTORS = [
 ];
 
 /** Merges a fresh copy of `from` into a fresh copy of `into` and reports both. */
-function run(vector, direction) {
+async function run(vector, direction) {
   const a = open(join(out, vector.name, "scratch-a.db"), vector.localOnA);
   const b = open(join(out, vector.name, "scratch-b.db"));
-  asReplica(a, A);
-  if (vector.receives) {
-    vector.fill(a, b);
-    receiveInto(b, a, B);
-    vector.afterReceive(a, b);
-  } else {
-    asReplica(b, B);
-    vector.fill(a, b);
-  }
+  await populate(vector, a, b);
   const [left, right] = direction === "ab" ? [a, b] : [b, a];
-  const result = mergeFrom(left, right, TABLES);
+  // Verified first, as every merge is (identity ruling #3). The verdicts are
+  // written beside the vector: a reader merges by them and does its own coverage.
+  const verdicts = await verifyBatches(right, TABLES, DOC);
+  const result = mergeFrom(left, right, TABLES, undefined, verdicts);
   const dump = canonicalDump(left, TABLES);
 
   /*
@@ -281,7 +520,7 @@ function run(vector, direction) {
    * a dispute that grew on every exchange would be a copy that never settles,
    * which is worse than one that settles differently from its sibling.
    */
-  const again = mergeFrom(left, right, TABLES);
+  const again = mergeFrom(left, right, TABLES, undefined, verdicts);
   const settled = canonicalDump(left, TABLES);
   if (settled !== dump) {
     console.error(`${vector.name} [${direction}]: merging twice changed the table`);
@@ -298,23 +537,55 @@ function run(vector, direction) {
   return { dump, result };
 }
 
-/** The inputs, written as they stand before any merge. */
-function writeInputs(vector) {
+/** The inputs, written as they stand before any merge, and the verdict on every header in them. */
+async function writeInputs(vector) {
   const dir = join(out, vector.name);
   mkdirSync(dir, { recursive: true });
   const a = open(join(dir, "a.db"), vector.localOnA);
   const b = open(join(dir, "b.db"));
-  asReplica(a, A);
-  if (vector.receives) {
-    vector.fill(a, b);
-    receiveInto(b, a, B);
-    vector.afterReceive(a, b);
-  } else {
-    asReplica(b, B);
-    vector.fill(a, b);
+  await populate(vector, a, b);
+  // Per copy: a header is verified against the rows of the copy that holds it,
+  // so the same header can verify in one and not in the other.
+  const verdicts = {};
+  for (const [name, copy] of [["a", a], ["b", b]]) {
+    const found = {};
+    for (const [id, verdict] of await verifyBatches(copy, TABLES, DOC)) found[id] = verdict.ok ? "ok" : verdict.reason;
+    verdicts[name] = Object.fromEntries(Object.entries(found).sort(([x], [y]) => (x < y ? -1 : 1)));
   }
+  compare(join(dir, "verdicts.json"), `${JSON.stringify(verdicts, null, 2)}\n`);
   a.close();
   b.close();
+}
+
+/** A row written into a copy by hand under someone else's author id and seq, with no batch. */
+function forge(db, table, author, seq, columns) {
+  const names = Object.keys(columns);
+  db.run(
+    `INSERT INTO "${table}" (${names.join(", ")}, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES (${names.map(() => "?").join(", ")}, ?, ?, ?, ?, '[]', 0)`,
+    [...names.map((n) => columns[n]), author, seq, seq, id(0x66)],
+  );
+}
+
+/** A header put into a copy by hand, as a copy holds one whose rows' pointers a lost save never wrote. */
+function holdHeader(db, sealed) {
+  db.run(
+    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, coversText(sealed.entries)],
+  );
+}
+
+/** Both copies as the vector says: its authors, its rows, and a received file when it has one. */
+async function populate(vector, a, b) {
+  const [first, second] = vector.authors ? [ADA.author, BO.author] : [A, B];
+  asReplica(a, first);
+  if (vector.receives) {
+    await vector.fill(a, b);
+    receiveInto(b, a, second);
+    await vector.afterReceive(a, b);
+  } else {
+    asReplica(b, second);
+    await vector.fill(a, b);
+  }
 }
 
 const README = `# Level 1 merge fixtures
@@ -330,7 +601,8 @@ Per vector:
 | \`a.db\`, \`b.db\` | the two copies, before any merge |
 | \`expected-ab.txt\` | the canonical dump of A after merging B into it |
 | \`expected-ba.txt\` | the canonical dump of B after merging A into it |
-| \`result.json\` | the counts and refused ids the merge reports |
+| \`result.json\` | the counts, refused ids and refused batches the merge reports |
+| \`verdicts.json\` | per copy (\`a\`, \`b\`), the verdict on every signed header it holds: \`ok\` or a \`BATCH_\` code |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -343,8 +615,11 @@ correct implementation.
 merge is commutative, so they must be; a fixture asserting it is worth more than
 a sentence claiming it.
 
-One vector says \`converges: false\`, and that is the answer rather than a
-failure. When two copies hold different content under one row id, each refuses
+Some vectors say \`converges: false\`, and that is the answer rather than a
+failure. A copy keeps what it holds and a merge refuses what it cannot take, so
+the two directions differ wherever one copy holds something the other refuses
+or lacks: a disputed row id, a row no valid header lists, a pointer left unset
+that the other side fills. When two copies hold different content under one row id, each refuses
 the other's and each keeps its own: union merge converges over rows nobody
 disputes, and a disputed id is where the guarantee stops. The alternative would
 be one side silently adopting the other's version of a row, which is what
@@ -354,6 +629,48 @@ pinned rather than described.
 A second implementation reads \`a.db\` and \`b.db\`, performs its own merge in both
 directions, and diffs its own dump against these files. It never reads the
 generator's output at run time.
+
+**Seals.** Every dump ends with a \`# _dai_batch\` section: the signed batch
+headers the copy holds (docs/identity.md), which are the same bytes on every copy
+that merged. \`merge-sealed\` and \`merge-seal-adopted\` carry real seals, so a
+reader that does not union the headers, or does not let a row it holds pending
+take the seal that arrives for it, disagrees here rather than passing without
+ever meeting one. Their two authors sign with fixed keys, so the author ids are
+real key fingerprints; the signatures themselves are not deterministic, so each
+is kept in \`signatures.json\` by the header it covers, signed once when the
+fixtures are written and reused after.
+
+**Verdicts.** A merge verifies every header the other copy holds before it takes
+anything (docs/format.md): it finds the rows the header lists, digests them, and
+checks the signature. \`verdicts.json\` is that check's answer for every header in
+\`a.db\` and in \`b.db\`, each against its own copy's rows (so a header can verify in
+one and not the other), made by the TypeScript verifier; a merge of B into A
+reads \`b\`'s, and of A into B, \`a\`'s; the canonical bytes and the
+signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
+the verdicts and does the rest itself, which is the part these vectors test:
+
+- a header that is not \`ok\` is not kept and lists nothing;
+- a header lists its rows in \`covers\` as \`[table, seq]\`, the author being its own;
+- a row is taken when an \`ok\` header lists it (its table, its author, its
+  seq), whatever the row says, and names the header it names if that one lists
+  it, else the lowest listed id;
+- a row that names a header and is listed by none is refused, as
+  \`BATCH_DIGEST_MISMATCH\` in the name of the row's own author, unless the
+  header it names was refused already;
+- a row that names none and is listed by none is unsigned, and merges as before;
+- one author's seq names one row whatever table it is in: a row whose
+  (author, seq) the copy holds in another table is refused (\`rejected\`);
+- a signed row outranks an unsigned row at the same id: the unsigned one is
+  removed, the signed one takes its place, and the removed id is reported in
+  \`rejected\`; whatever the removed row superseded is a head again unless
+  something else names it. Signed rows are placed before unsigned ones, so the
+  answer never depends on table order.
+
+\`merge-seal-stowaway\`, \`merge-seal-stowaway-other\`, \`merge-seal-tampered\`,
+\`merge-seal-lost-pointer\`, \`merge-seal-cross-table\` and \`merge-seal-outranks\`
+each disagree with a reader that has one of those wrong. \`refusedBatches\` in
+\`result.json\` is one entry per batch, reason and author, ordered by batch id,
+then reason, then author id in hex, with the author id shown as base64url.
 `;
 
 let differences = 0;
@@ -408,10 +725,10 @@ compare(join(out, "README.md"), README);
 for (const vector of VECTORS) {
   const dir = join(out, vector.name);
   mkdirSync(dir, { recursive: true });
-  writeInputs(vector);
+  await writeInputs(vector);
 
-  const ab = run(vector, "ab");
-  const ba = run(vector, "ba");
+  const ab = await run(vector, "ab");
+  const ba = await run(vector, "ba");
   const shouldConverge = vector.converges !== false;
   if (shouldConverge && ab.dump !== ba.dump) {
     console.error(`${vector.name}: merging A<-B and B<-A disagree, which union merge forbids`);
@@ -458,6 +775,11 @@ for (const vector of VECTORS) {
       2,
     )}\n`,
   );
+}
+
+if (!check && signaturesAdded > 0) {
+  const ordered = Object.fromEntries(Object.entries(signatures).sort(([x], [y]) => (x < y ? -1 : 1)));
+  writeFileSync(SIGNATURES, `${JSON.stringify(ordered, null, 2)}\n`, "utf8");
 }
 
 if (check && differences > 0) {

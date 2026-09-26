@@ -1,0 +1,27 @@
+{
+  "what": "B holds an unsigned case under Ada's id and seq with other content. A signed row outranks an unsigned one at the same id: A keeps its own and refuses B's; B gives its up for A's.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

@@ -81,7 +81,9 @@ test.describe("write rules that arrive before the frame is listening", () => {
             type: writeRules,
             sessionNonce: data.payload?.sessionNonce ?? null,
             source,
-            ownCopy: true,
+            // The author id a host always sends with its rules (docs/identity.md,
+            // binding rule 1): the kit reads who this copy is from it.
+            replica: crypto.getRandomValues(new Uint8Array(16)),
           },
           "*",
         );

@@ -12,8 +12,9 @@
  * part that cannot be shared: turning a SQLite-wasm connection into that
  * interface, and deciding what to refuse before any of it runs.
  */
-import { canonicalDump, mergeFrom, type MergeResult, type Rows } from "./replicated-rows.js";
+import { canonicalDump, mergeFrom, type BatchVerdict, type MergeResult, type Rows } from "./replicated-rows.js";
 import { SESSION_SYSTEM_TABLES } from "./replicated.js";
+import { verifyBatches } from "./replicated-batch.js";
 
 /** What the host sends. */
 export interface MergeRequest {
@@ -178,8 +179,36 @@ export function replicatedSchemaOf(rows: Rows, tables?: readonly string[]): stri
  * because the migration chain later turns refusals into merges and never the
  * other way.
  */
-export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport {
-  const empty: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0 };
+export async function mergeSibling(
+  local: Rows,
+  sibling: Rows,
+  options: number | { level?: number; document?: string; author?: Uint8Array } = 1,
+): Promise<MergeReport> {
+  // Two functions on purpose, not to be folded: verify outside, merge inside, so nothing awaits while a transaction is open.
+  const document = typeof options === "number" ? "" : (options.document ?? "");
+  const verdicts = await verifyBatches(sibling, mergeTablesOf(sibling), document);
+  return mergeVerified(local, sibling, typeof options === "number" ? { level: options, verdicts } : { ...options, verdicts });
+}
+
+/**
+ * The merge, once the sibling's headers are verified: synchronous, so a caller
+ * holding a transaction open on the live database never awaits inside it (an
+ * application write made during the wait would join the transaction, and a
+ * rollback would take it). `mergeSibling` is this with the verification first.
+ */
+export function mergeVerified(
+  local: Rows,
+  sibling: Rows,
+  options: { level?: number; document?: string; author?: Uint8Array; verdicts: ReadonlyMap<string, BatchVerdict> },
+): MergeReport {
+  /*
+   * A level, as every caller has passed it, or the options the identity sitting
+   * adds: the document the merge is for, which the batch signatures name
+   * (docs/identity.md). A caller that names no document verifies nothing
+   * against one, so every sealed batch it is handed is refused.
+   */
+  const level = options.level ?? 1;
+  const empty: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0, refusedBatches: [] };
 
   if (level !== 1) {
     // A sibling asking for a level this frame does not implement is refused
@@ -224,7 +253,12 @@ export function mergeSibling(local: Rows, sibling: Rows, level = 1): MergeReport
     return { ...empty, conflicts: 0, refused: "SCHEMA_MISMATCH" };
   }
 
-  const result = mergeFrom(local, sibling, tables);
+  /*
+   * Verified before anything is written (identity ruling #3): every header the
+   * sibling holds, against the sibling's own rows. The merge takes only what a
+   * verified header covers, and says what it refused.
+   */
+  const result = mergeFrom(local, sibling, tables, options.author, options.verdicts);
   return { ...result, conflicts: conflictsIn(local, replicatedTablesOf(local)) };
 }
 
@@ -251,15 +285,24 @@ export {
   authorColumnsOf,
   canonicalDump,
   changeEntity,
+  confirmSeat,
   createEntity,
   deleteEntity,
   encodeValue,
   ensureReplica,
   headsOf,
+  highestSeqOf,
   mergeFrom,
   parentsOf,
+  raiseSeq,
   rowId,
+  startSession,
+  writeTargetOf,
+  type NewSession,
+  type WriteTarget,
   RowRejected,
+  type BatchVerdict,
+  type RefusedBatch,
 } from "./replicated-rows.js";
 
 export {
@@ -269,7 +312,15 @@ export {
   encodeBatch,
   decodeBatch,
   stageBatch,
+  // Sealing on leave (docs/identity.md, step 3): what the frame calls before a
+  // save or a publish, and what a merge reads a header back with.
+  headerOf,
+  pendingBatches,
+  recordSeal,
+  signBatch,
+  verifyBatches,
   type Batch,
   type BatchEntry,
+  type SignedBatch,
   type Watermark,
 } from "./replicated-batch.js";

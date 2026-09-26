@@ -124,9 +124,85 @@ test.describe("deterministic encoding", () => {
   });
 });
 
+test.describe("a number with a fraction", () => {
+  /*
+   * A replicated row's REAL column can hold one, and a row that cannot be
+   * encoded cannot be sealed, so a document with a decimal in a shared table
+   * could never be saved (identity step 3). Always float64, never shorter: one
+   * width is what keeps it deterministic.
+   */
+  test("is a float64, byte for byte what a reference writes for one", () => {
+    // 0.1 needs all 64 bits, so the reference writes a float64 too.
+    expect(hex(encode(0.1))).toBe(hex(new Uint8Array(reference.encode(0.1))));
+    expect(hex(encode(0.1))).toBe("fb3fb999999999999a");
+  });
+
+  test("reads back through a reference implementation, and through this one", () => {
+    for (const value of [1.5, -2.25, 0.1, 1.5e-300, -Infinity]) {
+      expect(new Encoder({ tagUint8Array: false, useRecords: false }).decode(encode(value))).toBe(value);
+      expect(decode(encode(value))).toBe(value);
+    }
+  });
+
+  test("a whole number stays an integer", () => {
+    expect(hex(encode(2))).toBe("02");
+  });
+});
+
+test("an integer past four bytes, like a millisecond timestamp, is eight bytes, and reads back exactly", () => {
+  // A shared row with a time in it could not be encoded, so could not travel
+  // by mailbox, and under seal-on-leave could not be saved (identity step 3).
+  const at = 1_727_150_400_123;
+  expect(hex(encode(at))).toBe("1b00000192222fa27b");
+  // The reference reads any eight-byte integer as a BigInt; the value is the same.
+  expect(Number(new Encoder({ tagUint8Array: false, useRecords: false }).decode(encode(at)))).toBe(at);
+  expect(decode(encode(at))).toBe(at);
+  expect(decode(encode(-at))).toBe(-at);
+  expect(decode(encode(Number.MAX_SAFE_INTEGER))).toBe(Number.MAX_SAFE_INTEGER);
+});
+
+test.describe("integers to 64 bits (identity step 3 review, #5)", () => {
+  /*
+   * sqlite-wasm hands back a BigInt for an integer past 2^53, and a row that
+   * cannot be encoded cannot be sealed, so every save of that document would
+   * fail. A BigInt is a CBOR integer to ±2^64. A JS number that is whole and past
+   * 2^53 has already lost its low bits: signing it would sign a value nobody
+   * wrote, so it is refused, never turned into a float.
+   */
+  test("a BigInt is a CBOR integer, byte for byte what a reference writes", () => {
+    for (const value of [2n ** 63n, 2n ** 64n - 1n, -(2n ** 63n)]) {
+      expect(hex(encode(value)), String(value)).toBe(hex(new Uint8Array(reference.encode(value))));
+      expect(decode(encode(value)), String(value)).toBe(value);
+    }
+    expect(hex(encode(2n ** 63n))).toBe("1b8000000000000000");
+    // -2^64 is the last value a CBOR integer holds (major type 1, 2^64 - 1). The
+    // reference writes it as a tagged bignum instead; the plain integer is the
+    // deterministic form, and the reference reads it back to the same value.
+    expect(hex(encode(-(2n ** 64n)))).toBe("3bffffffffffffffff");
+    expect(BigInt(referenceDecode(encode(-(2n ** 64n))) as bigint)).toBe(-(2n ** 64n));
+    expect(decode(encode(-(2n ** 64n)))).toBe(-(2n ** 64n));
+  });
+
+  test("a BigInt that fits a safe integer is written the shortest way, like the number it equals", () => {
+    expect(hex(encode(7n))).toBe(hex(encode(7)));
+    expect(hex(encode(1_727_150_400_123n))).toBe(hex(encode(1_727_150_400_123)));
+  });
+
+  test("past ±2^64 is refused", () => {
+    expect(() => encode(2n ** 64n)).toThrow(CborError);
+    expect(() => encode(-(2n ** 64n) - 1n)).toThrow(CborError);
+  });
+
+  test("a whole JS number past 2^53 is refused, not floated", () => {
+    expect(() => encode(2 ** 53 + 2)).toThrow(/2\^53|precision/);
+    expect(() => encode(1e300)).toThrow(/2\^53|precision/);
+  });
+});
+
 test.describe("what it refuses", () => {
-  test("a non-integer number", () => {
-    expect(() => encode(1.5)).toThrow(/integers/i);
+  test("NaN, which has no place in a row", () => {
+    expect(() => encode(Number.NaN)).toThrow(/NaN/);
+    expect(() => decode(new Uint8Array([0xfb, 0x7f, 0xf8, 0, 0, 0, 0, 0, 0]))).toThrow(/NaN/);
   });
 
   test("bytes after the end of a value", () => {

@@ -7,7 +7,10 @@ import {
   triggerColumns,
 } from "../src/replicated.js";
 import { mergeCoverageGap, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
-import { adoptReplica, ensureReplica } from "../src/replicated-rows.js";
+import { adoptReplica, confirmSeat, ensureReplica, startSession } from "../src/replicated-rows.js";
+import { sessionIdOf } from "../src/session-id.js";
+import { withSessionId } from "./session-db.js";
+import { mergeSigned, person, sealAs } from "./signed-people.js";
 import {
   applyRow,
   canonicalDump,
@@ -52,7 +55,7 @@ CREATE TABLE cases (
 
 /** `node:sqlite` behind the small interface the write rules ask for. */
 function openWith(schema: string): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -520,7 +523,7 @@ test.describe("merge", () => {
 test.describe("the frame's side of a merge", () => {
   const rowsFor = (db: ReturnType<typeof open>) => db;
 
-  test("a sibling with the same tables merges and reports the conflict count", () => {
+  test("a sibling with the same tables merges and reports the conflict count", async () => {
     const a = open();
     const b = open();
     a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
@@ -529,11 +532,11 @@ test.describe("the frame's side of a merge", () => {
     b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
 
     createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-    mergeSibling(rowsFor(b), rowsFor(a));
+    await mergeSibling(rowsFor(b), rowsFor(a));
     changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
     changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     // The one number a person is shown, and not derivable from the other four.
@@ -542,7 +545,7 @@ test.describe("the frame's side of a merge", () => {
     b.close();
   });
 
-  test("a sibling whose replicated schema differs is refused, not merged", () => {
+  test("a sibling whose replicated schema differs is refused, not merged", async () => {
     /*
      * T1-D14, at the point it actually bites. Refusing loudly is safe to
      * tighten now and loosen later: the migration chain turns some of these
@@ -563,7 +566,7 @@ CREATE TABLE cases (
     b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null, extra: "x" });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBe("SCHEMA_MISMATCH");
     expect(report.applied).toBe(0);
     // Refused means nothing happened, not that some of it happened.
@@ -572,7 +575,7 @@ CREATE TABLE cases (
     b.close();
   });
 
-  test("a second compiler's rewrite is still a sibling (T1-D21)", () => {
+  test("a second compiler's rewrite is still a sibling (T1-D21)", async () => {
     /*
      * The distinction the schema digest depends on, asserted rather than
      * assumed.
@@ -607,7 +610,7 @@ CREATE TABLE cases (
     ensureReplica(b, B);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: 1.5 });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     expect(a.all("SELECT title FROM cases_current")[0]!["title"]).toBe("theirs");
@@ -623,20 +626,20 @@ CREATE TABLE cases (
     b.close();
   });
 
-  test("a level this frame does not implement is refused rather than treated as Level 1", () => {
+  test("a level this frame does not implement is refused rather than treated as Level 1", async () => {
     // A Level 2 sibling merged as Level 1 would have its signatures unchecked
     // while the person was told the merge succeeded.
     const a = open();
     const b = open();
     a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
     b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
-    const report = mergeSibling(rowsFor(a), rowsFor(b), 2);
+    const report = await mergeSibling(rowsFor(a), rowsFor(b), 2);
     expect(report.refused).toBe("UNSUPPORTED_LEVEL");
     a.close();
     b.close();
   });
 
-  test("a local table on one side only does not stop the merge", () => {
+  test("a local table on one side only does not stop the merge", async () => {
     // Local tables never travel and never merge, so a difference in them says
     // nothing about whether these two copies can exchange rows.
     const a = openWith(`${SCHEMA}\nCREATE TABLE notes_local (body TEXT);\n`);
@@ -647,7 +650,7 @@ CREATE TABLE cases (
     b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null });
 
-    const report = mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSibling(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     a.close();
@@ -677,7 +680,7 @@ test.describe("a copy that arrived from somebody else", () => {
     return to;
   }
 
-  test("writes under its own identity, not the sender's", () => {
+  test("writes under its own identity, not the sender's", async () => {
     /*
      * The bug this exists for, found by an application author writing a
      * fixture for two people playing correspondence chess.
@@ -709,7 +712,7 @@ test.describe("a copy that arrived from somebody else", () => {
 
     // And Alice's next move does not collide with it.
     changeEntity(alice, "cases", E1, { title: "Nf3", status: "open", weight: null });
-    const report = mergeSibling(alice, bob);
+    const report = await mergeSibling(alice, bob);
     expect(report.refused).toBeUndefined();
     expect(report.rejected).toEqual([]);
     expect(report.applied).toBe(1);
@@ -737,6 +740,71 @@ test.describe("a copy that arrived from somebody else", () => {
     expect(known).toContain("bb".repeat(16));
     bob.close();
     alice.close();
+  });
+
+  test("a file that comes back carrying this id's rows resumes its seq above them", async () => {
+    /*
+     * An author id is a device's key, the same for every copy the device holds
+     * (docs/identity.md). So a file can come back to the device that wrote
+     * some of it: sent out, answered, and received again as a fresh copy.
+     * Adopting there must not restart at seq 0, or the next row reissues a
+     * (replica, seq) this device already issued, and the exchange with the
+     * device's other copy refuses one as ROW_REJECTED.
+     */
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+    createEntity(alice, "cases", E2, { title: "d4", status: "open", weight: null });
+
+    const bob = received(alice);
+    adoptReplica(bob, B);
+    createEntity(bob, "cases", bytes(0x61), { title: "e5", status: "open", weight: null });
+
+    // Alice's device forgot its copy; Bob's comes back and is opened there as a new one.
+    const back = received(bob);
+    adoptReplica(back, A);
+    expect(Number(back.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "resumes at Alice's highest").toBe(2);
+    createEntity(back, "cases", bytes(0x62), { title: "Nf3", status: "open", weight: null });
+    const issued = back.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [A]).map((r) => Number(r["s"]));
+    expect(issued, "Alice's new row takes the next seq, not one she already issued").toEqual([1, 2, 3]);
+
+    // And Bob, who holds Alice's first two rows, takes the new one without a refusal.
+    const report = await mergeSibling(bob, back);
+    expect(report.rejected, "no (replica, seq) was issued twice").toEqual([]);
+    expect(report.applied).toBe(1);
+
+    alice.close();
+    bob.close();
+    back.close();
+  });
+
+  test("a merge that brings back this author's own rows raises its seq above them", async () => {
+    /*
+     * The lost save (cold review of step 2, #3): this copy wrote rows 1..4 and
+     * they reached the mailbox, but its save of rows 3 and 4 never landed, so
+     * the copy reopens holding only 1 and 2 with its counter at 2. Pulling its
+     * own rows 3 and 4 back from the mailbox must raise the counter past them,
+     * or its next row is a second, different (A, 3).
+     */
+    const alice = open();
+    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
+    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+    createEntity(alice, "cases", E2, { title: "d4", status: "open", weight: null });
+    const reopened = received(alice); // the copy as its last landed save left it
+    createEntity(alice, "cases", bytes(0x71), { title: "c4", status: "open", weight: null });
+    createEntity(alice, "cases", bytes(0x72), { title: "Nf3", status: "open", weight: null });
+
+    const report = await mergeSibling(reopened, alice, { author: A }); // its own rows, back from the mailbox
+    expect(report.rejected).toEqual([]);
+    expect(Number(reopened.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to the highest it brought in").toBe(4);
+    createEntity(reopened, "cases", bytes(0x73), { title: "g3", status: "open", weight: null });
+    const issued = reopened.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [A]).map((r) => Number(r["s"]));
+    expect(issued, "the next row takes 5, not a second 3").toEqual([1, 2, 3, 4, 5]);
+
+    alice.close();
+    reopened.close();
   });
 
   test("the clock does not restart, or the first row written sorts below what it followed", () => {
@@ -794,7 +862,10 @@ CREATE TABLE moves (
   test("create, change and delete all carry the session, delete taking it from the head", () => {
     const db = openSession();
     ensureReplica(db, A);
-    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, S1);
+    // A session A created, so A writes in it: a writer versions only heads of a
+    // session it is a member of or waits in (D135).
+    const s = startSession(db, { nonce: bytes(0x61), creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    createEntity(db, "moves", E1, { ply: 1, san: "e4" }, s);
     // Change and delete are not told the session — they inherit it from the
     // entity's head, so an entity keeps one session for its whole history.
     changeEntity(db, "moves", E1, { ply: 1, san: "e4!" });
@@ -802,7 +873,7 @@ CREATE TABLE moves (
 
     const sessions = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
     expect(sessions).toHaveLength(3);
-    expect(new Set(sessions)).toEqual(new Set([hx(S1)]));
+    expect(new Set(sessions)).toEqual(new Set([hx(s)]));
     db.close();
   });
 
@@ -944,10 +1015,12 @@ CREATE TABLE prefs (
     // copy — the game arrives whole.
     const a = openFilter();
     ensureReplica(a, A);
-    createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
+    // A game A created, so A's change finds its head there (D135).
+    const s1 = startSession(a, { nonce: bytes(0x61), creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    createEntity(a, "moves", E1, { ply: 1, san: "e4" }, s1);
     changeEntity(a, "moves", E1, { ply: 1, san: "e4!" });
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
-    filterToSession(a, S1);
+    filterToSession(a, s1);
 
     const fresh = openFilter();
     ensureReplica(fresh, B);
@@ -995,7 +1068,7 @@ CREATE TABLE prefs (
   });
 });
 
-test.describe("admission is enforced through the views (T1-D29)", () => {
+test.describe("admission is enforced through the views (T1-D29, identity step 5)", () => {
   const SCHEMA = `-- dai:profile session max_parties=2
 -- dai:replicated
 CREATE TABLE moves (
@@ -1004,8 +1077,9 @@ CREATE TABLE moves (
 );
 `;
   const open3 = (): Rows & { close(): void } => openWith(SCHEMA);
-  const S = bytes(0x5e);
   const C = bytes(0xc0); // creator
+  const NONCE = bytes(0x07);
+  const S = sessionIdOf(C, NONCE)!; // the session commits to its creator
   const O = bytes(0x0b); // opener
   const N = bytes(0x0e); // never invited
   const F = bytes(0xff); // forwarded copy
@@ -1039,14 +1113,22 @@ CREATE TABLE moves (
   const currentMoves = (db: Rows): string[] =>
     db.all(`SELECT san FROM moves_current ORDER BY san`).map((r) => String(r["san"]));
 
+  /**
+   * The creator's session with the opener seated: her own seat, carrying the
+   * nonce the session id commits to, the open seat, the opener's ask for it,
+   * and her confirmation. The creator's rows are seqs 1–3, the opener's seq 1.
+   */
+  function seated(db: Rows): void {
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
+    put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
+    put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
+  }
+
   test("a member's rows show; a non-member's do not", () => {
     const db = open3();
     e = 0;
-    // The creator mints two seats and binds one; the opener binds the other.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
-    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    seated(db);
 
     // Two members author a move each; a stranger with no binding authors one too.
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
@@ -1058,26 +1140,23 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("contested-seat-drops-earlier-rows: a later contesting binding retroactively drops a member's rows", () => {
+  test("a seat the creator confirmed stays its holder's: a later binding neither drops the holder's rows nor admits its own", () => {
     const db = open3();
     e = 0;
-    // The opener binds its seat and plays. It is a member; its move shows.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" });
+    // The opener is seated and plays. It is a member; its move shows.
+    seated(db);
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });
     expect(currentMoves(db)).toEqual(["e5"]);
 
-    // A forwarded copy opens the same invite and binds the same seat. The seat
-    // is now contested — no clock picks a winner — so the opener stops being a
-    // member and its earlier move drops, recomputed from the rows, not the
-    // order they arrived in. This is the merge order-independence the whole
-    // correction rests on.
-    put(db, "_dai_binding", F, 1, 4, { seat: SEATO });
-    expect(currentMoves(db)).toEqual([]);
+    // A forwarded copy opens the same invite and asks for the same seat, even
+    // at an earlier clock. The creator seated the opener, and a hold never
+    // moves (identity step 5): the opener stays a member and keeps its move.
+    put(db, "_dai_binding", F, 1, 0, { seat: SEATO });
+    expect(currentMoves(db)).toEqual(["e5"]);
 
-    // And it is symmetric: the forwarded copy cannot enter either.
+    // And the forwarded copy does not enter.
     put(db, "moves", F, 2, 5, { ply: 1, san: "e6" });
-    expect(currentMoves(db)).toEqual([]);
+    expect(currentMoves(db)).toEqual(["e5"]);
     db.close();
   });
 
@@ -1089,9 +1168,8 @@ CREATE TABLE moves (
     const db = open3();
     e = 0;
     const move = bytes(0x30);
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" }, move);
+    seated(db);
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" }, move);
 
     // A stranger (no binding) supersedes the member's move.
     applyRow(db, "moves", {
@@ -1110,7 +1188,7 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("every replicated table is covered by the merge, and one that is not is a named refusal", () => {
+  test("every replicated table is covered by the merge, and one that is not is a named refusal", async () => {
     // mergeTablesOf decides what converges; a replicated table it omits never
     // merges, silently. The negative case proves the guard has teeth: a rogue
     // replicated system table — a future _dai_* table added without extending
@@ -1124,30 +1202,44 @@ CREATE TABLE moves (
     expect(mergeCoverageGap(ok)).toContain("_dai_future");
 
     const other = open3();
-    expect(mergeSibling(ok, other).refused).toBe("MERGE_COVERAGE");
+    expect((await mergeSibling(ok, other)).refused).toBe("MERGE_COVERAGE");
     ok.close();
     other.close();
   });
 
-  test("the frame merge unions the roster tables, and admission holds after it", () => {
+  test("the frame merge unions the roster tables, and admission holds after it", async () => {
     // The wiring: mergeSibling includes _dai_seat and _dai_binding in the union,
     // so a fresh copy that merges the game gets the seats and bindings, and its
-    // admission view resolves the same members.
-    const a = open3();
+    // admission view resolves the same members. A merge refuses an unsigned
+    // seat row (BATCH_UNSIGNED, D133), so every row here is sealed under its
+    // author's own key, as a copy seals it.
+    const [ada, bo] = await Promise.all([person(), person()]);
     e = 0;
-    put(a, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(a, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(a, "moves", O, 2, 3, { ply: 1, san: "e5" });
+    const a = open3();
+    ensureReplica(a, ada.author);
+    const session = startSession(a, { nonce: NONCE, creatorSeat: SEATC, openSeat: SEATO, entities: [ent(), ent()] });
+    await sealAs(a, ada);
+    const boCopy = open3();
+    ensureReplica(boCopy, bo.author);
+    await mergeSigned(boCopy, a, bo);
+    createEntity(boCopy, "_dai_binding", ent(), { seat: SEATO }, session);
+    createEntity(boCopy, "moves", ent(), { ply: 1, san: "e5" }, session);
+    await sealAs(boCopy, bo);
+    await mergeSigned(a, boCopy, ada);
+    confirmSeat(a, session, SEATO, bo.author, ent());
+    await sealAs(a, ada);
+    boCopy.close();
 
     const b = open3();
-    const report = mergeSibling(b, a);
+    const report = await mergeSigned(b, a);
     expect(report.refused).toBeUndefined();
+    expect(report.refusedBatches).toEqual([]);
 
     // The seats and bindings crossed, so b resolves O as a member and shows its
     // move — admission is not something the merge carried, it is recomputed.
     expect(currentMoves(b)).toEqual(["e5"]);
     // And the two copies converged over every replicated table, roster included.
-    const tables = ["moves", "_dai_seat", "_dai_binding"];
+    const tables = ["moves", "_dai_seat", "_dai_binding", "_dai_confirm"];
     expect(canonicalDump(b, tables)).toBe(canonicalDump(a, tables));
     a.close();
     b.close();
@@ -1160,14 +1252,13 @@ CREATE TABLE moves (
     // is the closer's stated seq frontier, not a clock (T1-D31).
     const db = open3();
     e = 0;
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATO });
-    put(db, "_dai_binding", O, 1, 2, { seat: SEATO });
-    put(db, "moves", O, 2, 3, { ply: 1, san: "e5" }); // seq 2
-    put(db, "moves", O, 3, 4, { ply: 2, san: "Nf3" }); // seq 3
+    seated(db);
+    put(db, "moves", O, 2, 5, { ply: 1, san: "e5" }); // seq 2
+    put(db, "moves", O, 3, 6, { ply: 2, san: "Nf3" }); // seq 3
     expect(currentMoves(db)).toEqual(["Nf3", "e5"]);
 
     // Close: the closer had seen O up to seq 2 — the first move, not the second.
-    put(db, "_dai_close", C, 2, 5, { replica: O, seq: 2 });
+    put(db, "_dai_close", C, 4, 7, { replica: O, seq: 2 });
 
     // The second move is past the frontier (3 > 2): late, dropped. The first
     // (2 >= 2) the close saw: kept. Recomputed on read, so the drop appeared the
@@ -1181,10 +1272,7 @@ CREATE TABLE moves (
     // close does not mention at all is entirely late.
     const db = open3();
     e = 0;
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
-    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    seated(db);
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
     put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
     expect(currentMoves(db)).toEqual(["e4", "e5"]);
@@ -1205,8 +1293,9 @@ CREATE TABLE moves (
 );
 `;
   const open = (): Rows & { close(): void } => openWith(SCHEMA);
-  const S = bytes(0x5e);
-  const C = bytes(0xc0); // creator — authors the seats
+  const C = bytes(0xc0); // creator — the session id commits to her
+  const NONCE = bytes(0x07);
+  const S = sessionIdOf(C, NONCE)!;
   const O = bytes(0x0b); // opener — a member, not the creator
   const SEATC = bytes(0xa1);
   const SEATO = bytes(0xa2);
@@ -1221,11 +1310,11 @@ CREATE TABLE moves (
   test("a non-creator's close is ignored; the creator's closes and drops the late row", () => {
     const db = open();
     e = 0;
-    // C authors the seats — so C is the creator. Both C and O are members.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
-    put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-    put(db, "_dai_binding", O, 1, 4, { seat: SEATO });
+    // The session id commits to C, so C is the creator; C seats O. Both are members.
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
+    put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
+    put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
     put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });
     expect(moves(db)).toEqual(["e5"]);
 

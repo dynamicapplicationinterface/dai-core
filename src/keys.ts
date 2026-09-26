@@ -20,10 +20,18 @@ export const KEYS = {
   KEEP_AFTER_RELOAD: "dai:keep-after-reload",
   /** Session storage: the iOS reload was taken, read by the load it caused (d22/D79 arrival line). */
   IOS_RELOAD_TAKEN: "dai:ios-reload-taken",
+  /** Session storage: what the load that took the iOS reload filed for the next one to find (D117). */
+  IOS_RELOAD_CARRIED: "dai:ios-reload-carried",
   /** Session storage: why a document's manifest was last written as a data: URL, for the launch panel. */
   MANIFEST_FALLBACK: "dai:manifest-fallback",
   /** Local storage: the document this device was last showing, for a resume. */
   RESUME: "dai:resume",
+  /**
+   * IndexedDB, the opener's key store: this device's person key (docs/identity.md).
+   * One per device, not per document. Made on first use, never at boot; losing
+   * it makes this device a new author, and nothing re-creates the old one.
+   */
+  PERSON_KEY: "dai:person-key",
 } as const;
 
 /** Local storage: the colour under the clock this document last declared, per colour scheme. */
@@ -44,5 +52,13 @@ export const opensKey = (documentUuid: string): string => `dai:opens:${documentU
  */
 export const libraryLock = (documentUuid: string): string => `dai:${documentUuid}`;
 
+/**
+ * IndexedDB, the opener's key store, beside the person key: the highest seq
+ * this device has let leave it for a document, by save or by publish. Kept by
+ * document, not by device, and kept when the document is removed: it dies only
+ * with the key, because the rows it counts are still out there under that key.
+ */
+export const seqFloorKey = (documentUuid: string): string => `dai:seq-floor:${documentUuid}`;
+
 /** Every key-making function here, for a check that wants to see them all. */
-export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock } as const;
+export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey } as const;

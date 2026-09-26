@@ -18,7 +18,7 @@ import { labelPublisher, publisherState, recordPublisher } from "../../../src/pu
 import { declaresReplication, siblingTest, whyNotSibling } from "../../../src/sibling.js";
 import { afterSave, BLANK_DIGEST, buildOf, chooseCopy, databaseDigest, remember } from "../../../src/copy-choice.js";
 import { confusables } from "./confusables.js";
-import { verifyIdentity } from "../../../src/identity.js";
+import { verifyIdentity } from "../../../src/publisher-identity.js";
 
 /**
  * The one sentence, in the one place it is written.
@@ -59,16 +59,16 @@ import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
 import { listMailboxes } from "./opfs.js";
-import { inviteFor } from "./invite.js";
+import { inviteFor, unsealedOwnRows } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
+  raiseSeqFloor,
+  seqFloorWithin,
   deleteDatabaseFromOpfs,
   getCartridgeFromLibrary,
   listCartridgesFromLibrary,
   loadDatabaseFromOpfs,
-  ownReplicaOf,
-  recordOwnReplica,
   saveCartridgeToLibrary,
   trustStore,
   publisherStore,
@@ -82,6 +82,10 @@ import {
 } from "./opfs.js";
 import type { Share } from "./opfs.js";
 import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
+import { authorId, mintedThisPage, person, type Person } from "./person.js";
+import { showAuthorId, signBytes } from "../../../src/identity.js";
+import { decode as decodeCbor } from "../../../src/cbor.js";
+import { BATCH_FORMAT_VERSION } from "../../../src/replicated-batch.js";
 import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
 import { loadAt, ownWrite } from "./navigate.js";
@@ -145,6 +149,29 @@ function relaunchedAlready(uuid: string): boolean {
 }
 /** Set by the load that took the iOS reload, read by the load it caused. */
 const RELOAD_TAKEN = KEYS.IOS_RELOAD_TAKEN;
+/** Beside it: what that load filed for this one to find (D117). */
+const RELOAD_CARRIED = KEYS.IOS_RELOAD_CARRIED;
+/**
+ * What the load before this one said it carried across the reload.
+ *
+ * Its own account, read here and checked against the library beside it on the
+ * arrival line (`carriedReading`), so a reload that loses something says so on
+ * the phone instead of opening a copy that quietly cannot reach anyone.
+ */
+let carriedIn: string | undefined;
+try {
+  const record = sessionStorage.getItem(RELOAD_CARRIED);
+  sessionStorage.removeItem(RELOAD_CARRIED);
+  // `<uuid> <what>`: read only by a load for that document. A reload that
+  // stalled, followed by the person going somewhere else in the tab, must not
+  // lend the next document another one's account.
+  const at = record?.indexOf(" ") ?? -1;
+  if (record && at > 0 && record.slice(0, at) === hintedUuid(location.hash, location.search)) {
+    carriedIn = record.slice(at + 1);
+  }
+} catch {
+  /* No session storage: the library check below still runs. */
+}
 try {
   // The second witness. The address is the first, and the only one a device
   // that refuses storage still has.
@@ -260,14 +287,15 @@ async function arrivedManifestReading(): Promise<string> {
 }
 
 async function showArrival(): Promise<void> {
-  const [build, manifest] = await Promise.all([workerBuild(), arrivedManifestReading()]);
+  const [build, manifest, carried] = await Promise.all([workerBuild(), arrivedManifestReading(), carriedReading()]);
   const entry = entryPoint ? ` · opened from ${entryPoint}` : "";
   // Said here too, not only on the launch panel: this line is the reading a
   // phone takes, and a data: manifest with no account of it is what sent the
   // last sitting looking (cold review of 8f0dd9f, Q5).
   const fallback = manifestFallback();
   const wrote = fallback ? ` · manifest as data: ${fallback}` : "";
-  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}${wrote}`;
+  const across = carried ? ` · ${carried}` : "";
+  const text = `worker ${build} · arrived with ${manifest}${entry} · iOS reload: ${reloadGate}${across}${wrote}`;
   for (const id of ["sheet-arrival", "chooser-arrival"]) {
     const slot = document.getElementById(id);
     if (slot) slot.textContent = text;
@@ -355,6 +383,32 @@ function say(message: string, isError = false): void {
   report.classList.toggle("error", isError);
   // Something went wrong on the way in: the chooser is the way out.
   if (isError) arrived(false);
+}
+
+/**
+ * An arrival refused: its sentence, with nothing over it.
+ *
+ * An address naming a copy held here is painted as launching into it, and the
+ * launch screen hides the report beneath it. A refusal that leaves it up
+ * leaves the person on "This is taking longer than it should · Tap to open",
+ * which reopens the held copy without a word about what arrived (D122's
+ * first green). Ruled 25 September: every refusal on the arrival path takes
+ * the launch screen down, so every one in `ingest` says its sentence here.
+ */
+function refuseArrival(message: string): void {
+  slot.classList.remove("busy");
+  document.body.classList.remove("launching");
+  clearLaunchGuard();
+  say(message, true);
+}
+
+/** The refusal for a held document's id arriving under another publisher (D126). */
+function strangersCopy(appName: string | undefined): string {
+  return (
+    `This link carries a copy of ${appName ?? "a document"} published by somebody else, ` +
+    `under the same id as the one on this device. It cannot be opened here without replacing yours, ` +
+    `so it was not opened, and nothing on this device was changed.`
+  );
 }
 
 /**
@@ -865,6 +919,7 @@ async function launchDetails(): Promise<string> {
   lines.push(`arrived with: ${arrivedWith}`);
   lines.push(`opened from: ${entryPoint || "(nothing opened yet)"}`);
   lines.push(`iOS reload: ${reloadGate}`);
+  lines.push((await carriedReading()) ?? "carried across: nothing (no reload, and no key in the address)");
   lines.push(`manifest written as data: ${manifestFallback() ?? "never, in this tab"}`);
   lines.push(`worker build that served this page: ${workerStamp} (page build ${build.slice(0, 7)})`);
 
@@ -987,10 +1042,30 @@ async function relaunchAtOwnAddress(identity: Identity, entry: string): Promise<
   const address = marked.href;
   // The worker describes the next load with this document's manifest.
   await describeDocument(identity);
+  /*
+   * What this load held only in memory, as the library now has it (D117).
+   *
+   * The next load opens the copy out of the library, and the library is all it
+   * has of this one. The key a link carried was filed when the mailbox started,
+   * and on a device that did not hold the app this reload came first: the copy
+   * after it had no key, ran no mailbox, and waited to be seated by a creator
+   * who never heard it ask. It is filed now by the write that kept the copy
+   * (`arrivedKeyFields`); this reads what landed, for the next load to say.
+   *
+   * Bounded: a read with no timer, behind the launch screen, where a rehearsal
+   * mount has already cleared the guard. A library that never answered would
+   * leave the person on the splash with no way off.
+   */
+  const carried = await Promise.race([
+    arrivedKeyAccount(identity.uuid),
+    new Promise<string>((done) => window.setTimeout(() => done("the key, not read back in time"), 1000)),
+  ]);
   markStep("reloading at the document's address");
   reloadGate = "taken";
   try {
     sessionStorage.setItem(RELOAD_TAKEN, entryPoint);
+    // Named for its document, so a load for another one never reads it as its own.
+    sessionStorage.setItem(RELOAD_CARRIED, `${identity.uuid} ${carried}`);
   } catch {
     /* The reloaded page cannot say it was reloaded; still true of this load. */
   }
@@ -1071,6 +1146,7 @@ function eject(): void {
   arrivedKey = undefined;
   // With it: a game named by the last link must not file the next document's key.
   arrivedSession = undefined;
+  keyFromRecord = false;
   document.body.classList.remove("loaded", "launching", "booting");
   clearLaunchGuard();
   document.documentElement.style.removeProperty("--app-ground");
@@ -1121,18 +1197,6 @@ async function refreshLibrary(): Promise<void> {
 
 async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void> {
   markStep("opening this device's own copy");
-  /*
-   * Out of this device's own library — which is not the same as a copy this
-   * device has written, and identity turns on the difference.
-   *
-   * An arrival is in the library within a moment of arriving, and on iOS the
-   * relaunch that follows opens it from there. Calling that "my own copy" told
-   * the frame to keep whatever `_dai_replica` the file carried, and for an
-   * invite sent with data that is the sender's: the recipient came up as the
-   * creator, in the creator's seat, asked for no name (the phone sitting on
-   * 7653c44). Set below, from whether this device has ever written this copy.
-   */
-  mountIsOwnCopy = false;
   slot.classList.add("busy");
   say(`Loading ${item.appName}…`);
 
@@ -1146,16 +1210,13 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     // a container once and not to the way they open it every day.
     const verdict = await checkTrust(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
-      say(verdict.message, true);
-      slot.classList.remove("busy");
+      refuseArrival(verdict.message);
       return;
     }
 
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
     const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
-    // Written here, so the id it has been writing under is this device's.
-    mountIsOwnCopy = Boolean(opfsDb && opfsDb.byteLength > 0);
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
@@ -1283,7 +1344,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
     // Off the open's path: the app is on screen before anything is asked.
     void offerNewVersion(loaded);
   } catch (error) {
-    say(`Failed to load ${item.appName} (${(error as Error).message})`, true);
+    refuseArrival(`Failed to load ${item.appName} (${(error as Error).message})`);
   } finally {
     slot.classList.remove("busy");
   }
@@ -1684,21 +1745,6 @@ async function collectSharedContainer(): Promise<{ file: File; from: string } | 
  * Screen" working and the new icon having nothing to open.
  */
 let arrivedAsFile = true;
-/*
- * Whether the copy now mounting is one this device has been writing (T1-D22).
- *
- * The frame cannot work this out. It sees one database, and a copy this device
- * has held for a month and a copy that arrived by mail five seconds ago are the
- * same bytes in the same place. This host knows, because it is the thing that
- * either loaded the document out of its own library or took delivery of a file,
- * and it tells the frame once, with the write rules.
- *
- * Wrong in the safe direction if it is ever wrong: a copy treated as somebody
- * else's takes a fresh replica id, which costs an id and nothing else. A copy
- * wrongly treated as this device's writes under an id another person is also
- * writing under, and the next exchange refuses honest rows as tampering.
- */
-let mountIsOwnCopy = false;
 
 /**
  * The link this document arrived by, when it arrived by one (backlog 3.5).
@@ -1835,8 +1881,6 @@ type Carrier = {
 
 async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
   markStep("reading the document");
-  // Arriving from outside, whatever the carrier: not this device's copy.
-  mountIsOwnCopy = false;
   slot.classList.add("busy");
   say(`Reading ${file.name}…`);
 
@@ -1870,11 +1914,56 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      * link carried, and the genuine document then read as an impersonation,
      * with nothing in the library to delete and so no way to undo it.
      */
+    /*
+     * The same id, from somebody else, for a document held here.
+     *
+     * A different publisher is a different document (D126, ruled 25
+     * September, and extended the same day to every held document, solo
+     * included), so it is never offered as a merge into the copy here, nor
+     * opened in its place, pinned or not. The arriving publisher is compared
+     * with the held record's own, written by the keep and by every save; it
+     * used to be compared with itself, and the pin was the only guard, so a
+     * copy kept with its pin gone was offered a stranger's rows, and a solo
+     * copy reached the card. It cannot be opened beside the copy here either:
+     * this host keeps one copy per document, so opening it would mean
+     * replacing the person's own.
+     *
+     * The two paths ask in a different order, on purpose. A replicated copy
+     * is asked before the pin, because a merge card must never appear for a
+     * stranger's copy, so it is refused in these words whether or not it is
+     * pinned. A solo copy lets the pin speak first, because its sentences are
+     * sharper ("not signed at all" for a stripped signature) and there is no
+     * merge card to reach; the held record answers after it, for what the pin
+     * cannot see, a pin that is gone. D129 settles one wording for both.
+     */
+    const heldRecord = await getCartridgeFromLibrary(cartridge.manifest.documentUuid).catch(() => null);
+    const publisher = heldRecord
+      ? siblingTest(
+          { documentUuid: cartridge.manifest.documentUuid, publicKeyFingerprint: cartridge.publicKeyFingerprint },
+          { documentUuid: heldRecord.documentUuid, publicKeyFingerprint: heldRecord.publicKeyFingerprint },
+        )
+      : undefined;
+    const refuseStrangersCopy = (): void => {
+      console.warn(
+        `dai: refused a link to ${cartridge.manifest.documentUuid}: this device holds it from another publisher, ` +
+          `and a different publisher is a different document`,
+      );
+      refuseArrival(strangersCopy(cartridge.manifest.appName));
+    };
+    const fromAStranger = publisher?.sibling === false && publisher.because === "different-publisher";
+    if (fromAStranger && declaresReplication(cartridge.manifest)) {
+      refuseStrangersCopy();
+      return;
+    }
+
     markStep("checking trust");
     const verdict = await trustVerdict(trustStore(), cartridge);
     if (verdict.status === "mismatch") {
-      say(verdict.message, true);
-      slot.classList.remove("busy");
+      refuseArrival(verdict.message);
+      return;
+    }
+    if (fromAStranger) {
+      refuseStrangersCopy();
       return;
     }
 
@@ -1958,14 +2047,61 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
      *
      * It used to be filed when the mailbox started, which is too late and was
      * the whole of why this fix did not work: a copy that already holds the app
-     * takes the merge path, and that runs through `launchFromLibrary` — which
-     * ejects first, and `eject` clears the arriving key. The key was gone before
-     * anything wrote it down, so the invited copy kept reading the address
-     * derived from the document key while the inviter published to the game's
-     * own. The same two-addresses failure as D37, one layer along.
+     * takes the merge path, and that ran through `launchFromLibrary` — which
+     * then ejected first, and `eject` clears the arriving key. The key was gone
+     * before anything wrote it down, so the invited copy kept reading the
+     * address derived from the document key while the inviter published to the
+     * game's own. The same two-addresses failure as D37, one layer along.
      *
      * Here it is known and nothing has ejected yet, so it survives the mount.
+     * A device that does not hold the app files it at the iOS relaunch instead,
+     * the one place it would otherwise be lost (`relaunchAtOwnAddress`, D117).
+     *
+     * A link naming a game this device already holds under a different key is
+     * refused, before the card, with nothing changed (IDENTITY-KEY-HELD,
+     * D122). Filing it would move this copy's mailbox for the game to an address
+     * its partner does not read, and anybody holding a copy can make such a
+     * link: the database is outside the signed set. Read fresh, under no
+     * assumption that the list read above is current.
      */
+    if (arrivedKey && arrivedSession && heldHere) {
+      const heldKey = (await getCartridgeFromLibrary(heldHere.documentUuid).catch(() => null))?.sessionKeys?.[
+        arrivedSession
+      ];
+      if (heldKey && heldKey !== arrivedKey) {
+        console.warn(
+          `dai: refused a link naming game ${arrivedSession.slice(0, 8)} of ${heldHere.documentUuid}: ` +
+            `this device holds that game under a different key, and a held key is never replaced`,
+        );
+        refuseArrival(
+          `This link is for a game already on this device, but it does not match the link that game was opened with. ` +
+            `It was not opened, and nothing on this device was changed.`,
+        );
+        return;
+      }
+    }
+    /*
+     * The same for a link naming no game: its key is the document's, the
+     * mailbox for everything without a game key of its own (IDENTITY-KEY-HELD,
+     * ruled 25 September: a held key, document or game, is never replaced by an
+     * arriving one). Only for a replicated document, the kind with a mailbox:
+     * a solo document's link seals under a key minted for that share, so a
+     * second link to one always carries a different key, and nothing reads it.
+     */
+    if (arrivedKey && !arrivedSession && heldHere && declaresReplication(cartridge.manifest)) {
+      const heldKey = (await getCartridgeFromLibrary(heldHere.documentUuid).catch(() => null))?.documentKey;
+      if (heldKey && heldKey !== arrivedKey) {
+        console.warn(
+          `dai: refused a link naming document ${heldHere.documentUuid}: ` +
+            `this device holds it under a different key, and a held key is never replaced`,
+        );
+        refuseArrival(
+          `This link is for ${cartridge.manifest.appName ?? "a document"}, which is already on this device, but it does not match ` +
+            `the copy here. It was not opened, and nothing on this device was changed.`,
+        );
+        return;
+      }
+    }
     if (arrivedKey && arrivedSession && heldHere) {
       await rememberSessionKey(cartridge.manifest.documentUuid, arrivedSession, arrivedKey);
     }
@@ -1979,32 +2115,18 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
             },
             {
               documentUuid: heldHere.documentUuid,
-              // The same document by the same publisher is the same
-              // application, so a replicated incoming copy means a replicated
-              // local one; there is nothing further to read.
-              publicKeyFingerprint: cartridge.publicKeyFingerprint,
+              // The held record's own publisher (D126). A replicated incoming
+              // copy by the same publisher means a replicated local one.
+              publicKeyFingerprint: heldHere.publicKeyFingerprint,
               replicated: true,
             },
           )
         : undefined;
 
-    /*
-     * The same id, from somebody else, for a replicated document held here.
-     *
-     * It cannot be merged — the publishers differ — and it cannot be opened
-     * beside the copy here either: this host keeps one copy per document, so
-     * opening it would mean replacing the person's own. Refused before the
-     * card, in words, with nothing changed. (It used to be offered as *Open as
-     * a separate copy*, which is exactly the replacement it named as avoided.)
-     */
+    // Refused above, before the pin, from a fresh read of the held record; this
+    // is the same answer from the list, should the two differ.
     if (heldHere && declaresReplication(cartridge.manifest) && kin?.sibling === false) {
-      slot.classList.remove("busy");
-      say(
-        `This link carries a copy of ${cartridge.manifest.appName ?? "a document"} published by somebody else, ` +
-          `under the same id as the one on this device. It cannot be opened here without replacing yours, ` +
-          `so it was not opened, and nothing on this device was changed.`,
-        true,
-      );
+      refuseArrival(strangersCopy(cartridge.manifest.appName));
       return;
     }
 
@@ -2194,8 +2316,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       // Another open of this document got its pin in first, with a different
       // key. What is remembered is what counts; this copy is the stranger.
       if (pinned.status === "mismatch") {
-        say(pinned.message, true);
-        slot.classList.remove("busy");
+        refuseArrival(pinned.message);
         return;
       }
     }
@@ -2248,11 +2369,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       console.error(
         `dai: refused to mount an arriving copy of ${cartridge.manifest.documentUuid} over this device's copy without merging it`,
       );
-      slot.classList.remove("busy");
-      say(
+      refuseArrival(
         `This could not be added to your copy of ${cartridge.manifest.appName ?? "this document"}, so it was not opened, ` +
           `and nothing on this device was changed. Try the link again.`,
-        true,
       );
       return;
     }
@@ -2298,13 +2417,11 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         `dai: refused a different build of ${cartridge.manifest.documentUuid}: ` +
           `this device holds one somebody has written to, and succession is the only update`,
       );
-      slot.classList.remove("busy");
       const appName = cartridge.manifest.appName ?? "this document";
-      say(
+      refuseArrival(
         `This copy of ${appName} did not come from the one on this device, so opening it would have put what you have ` +
           `written aside; nothing was opened and nothing here was changed. A new version from the same author keeps your ` +
           `entries and says so before it opens.`,
-        true,
       );
       return;
     }
@@ -2356,13 +2473,11 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       console.error(
         `dai: refused to choose between diverged copies of ${cartridge.manifest.documentUuid}: both changed since they last matched`,
       );
-      slot.classList.remove("busy");
       const appName = cartridge.manifest.appName ?? "this document";
-      say(
+      refuseArrival(
         `This link and the copy of ${appName} on this device were both changed since they last matched, so neither was opened over the other. ` +
           `Nothing on this device was changed. To see what the link holds without replacing your copy, open it in a private window; ` +
           `to keep one, agree with whoever sent it which copy goes on.`,
-        true,
       );
       return;
     }
@@ -2371,12 +2486,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
 
     if (opfsDb && opfsDb.byteLength > 0 && !brought) {
       // Resuming this device's own held copy — a stored database for a UUID this
-      // device holds, with nothing newer arriving. It keeps the replica id it has
-      // been writing under (T1-D33): mounting the stored bytes is not enough,
-      // because the write surface adopts a *fresh* replica unless it is told this
-      // is a resume, and a fresh replica rebinds a session's open seat and
-      // contests it — the game-killer this bounds. A resume, not an arrival.
-      mountIsOwnCopy = true;
+      // device holds, with nothing newer arriving. It writes under the same
+      // author id it always has (T1-D33), because that id is this device's key,
+      // not a property of the copy: a resume cannot rebind a session's seat.
       markStep("preparing the document");
       loaded = await resealCartridge(cartridge, opfsDb);
       console.info(`dai: resumed this device's own copy from the stored database (${opfsDb.byteLength} bytes)`);
@@ -2422,6 +2534,8 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // Standing consent and issued shares belong to the copy, not to this
         // write. See the note on the save path above.
         ...keepItem,
+        // The key the link carried, in the same write (D117; see arrivedKeyFields).
+        ...arrivedKeyFields(keepItem),
         documentUuid: loaded.manifest.documentUuid,
         appName: loaded.manifest.appName ?? "container",
         lastOpened: new Date().toISOString(),
@@ -2518,7 +2632,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       error instanceof ContainerError
         ? error.message
         : `This file could not be opened (${(error as Error).message}).`;
-    say(message, true);
+    refuseArrival(message);
   } finally {
     slot.classList.remove("busy");
     void refreshLibrary();
@@ -2541,8 +2655,15 @@ async function exportContainer(): Promise<void> {
    * `currentHtml` has always flushed first. This path did not, which is the
    * cost of two functions packaging the same document.
    */
-  await flushDocument();
-  const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+  let opfsDb: Uint8Array | null;
+  try {
+    await flushBeforeLeaving();
+    opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+    await mayLeave(opfsDb);
+  } catch (error) {
+    say((error as Error).message, true);
+    return;
+  }
   const activeCartridge = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   loaded = activeCartridge;
   if (opfsDb) await noteSentOut(activeCartridge, opfsDb);
@@ -2779,6 +2900,10 @@ window.addEventListener("message", (event) => {
     if (event.source !== cartridgeFrame.contentWindow) return;
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
+    // A new mount: whatever this host agreed to write for the last one is gone
+    // with it (cold review of identity step 3, finding 1). A document that
+    // follows a shared one must not inherit the right to have its headers signed.
+    mountWrites = null;
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -2825,6 +2950,38 @@ window.addEventListener("message", (event) => {
      */
     void (async () => {
       if (!loaded || !declaresReplication(loaded.manifest)) return;
+      const writingUuid = loaded.manifest.documentUuid;
+      /*
+       * Whether this device may write this document at all, decided before any
+       * write rule or save goes through (cold review of identity step 2, #5).
+       * The first use of the person key is here, on the first mount that can
+       * write: made now if the store says none is kept. A key that cannot be
+       * read is not replaced by a new one, and a floor that cannot be read is
+       * not read as 0; either way every write is refused, saves included, and
+       * the page says so. The save handler waits on this same answer.
+       */
+      const decided = (async (): Promise<{ me: Person; seqFloor: number } | { refused: string }> => {
+        const me = await person().catch(() => null);
+        if (!me) {
+          return {
+            refused:
+              "This document can be read here but not changed: this device's key could not be read. " +
+              "Reload the page to try again.",
+          };
+        }
+        // Read again for up to four seconds, the key's deadline: a store that
+        // never answers is not waited on forever (cold review, step 3, #4).
+        const seqFloor = await seqFloorWithin(writingUuid).catch(() => null);
+        if (seqFloor === null) {
+          return {
+            refused:
+              "This document can be read here but not changed: this device could not read how far it " +
+              "has written it. Reload the page to try again.",
+          };
+        }
+        return { me, seqFloor };
+      })();
+      mountWrites = { nonce: mountedNonce, documentUuid: writingUuid, decided };
       /*
        * A failure here is said out loud, because the alternative already
        * happened.
@@ -2849,22 +3006,39 @@ window.addEventListener("message", (event) => {
         );
         return;
       }
-      const replica = await replicaForMount(loaded.manifest.documentUuid, mountIsOwnCopy);
+      const decision = await decided;
+      if ("refused" in decision) {
+        say(decision.refused, true);
+        return;
+      }
+      const replica = decision.me.id;
+      const seqFloor = decision.seqFloor;
+      // Written on this device before this page, by the library's record; a
+      // save this page made is not "before" (its key is the one it has now).
+      const wroteBefore =
+        !writtenThisPage.has(writingUuid) &&
+        (await getCartridgeFromLibrary(writingUuid).catch(() => null))?.wrote === true;
       (event.source as Window | null)?.postMessage(
         {
           type: TO_DOCUMENT.WRITE_RULES,
           sessionNonce: mountedNonce,
           source,
-          // T1-D22: whether this copy keeps the replica id it holds or takes a
-          // new one. See mountIsOwnCopy.
-          ownCopy: mountIsOwnCopy,
-          // d22: the id this device writes this document under, when it has one
-          // recorded. The frame writes under it whatever the mounted file holds.
+          // The author id this device writes under: the fingerprint of the
+          // host's person key. The frame writes under it whatever the mounted
+          // file holds, on every mount (docs/identity.md, binding rule 1).
           replica,
+          seqFloor,
+          // The document every batch header names (docs/identity.md, step 3).
+          document: loaded.manifest.documentUuid,
           // T1-D32: who may close this session, from the signed manifest. The
           // frame refuses a close the policy forbids at write time; the views are
           // the convergent net. Undefined for a document with no session.
           closePolicy: loaded.manifest.session ? (loaded.manifest.session.close ?? "any") : undefined,
+          // This device made its key on this page, and its library says it wrote
+          // this document before: it is a new author for a document it had
+          // written, which is what losing a key looks like (docs/identity.md,
+          // "Loss"). The kit says so, in its words or the application's.
+          newAuthor: mintedThisPage() && wroteBefore,
         },
         "*",
       );
@@ -3037,6 +3211,66 @@ window.addEventListener("message", (event) => {
     // Not during a rehearsal: that use is the kit's own, on a page nobody
     // has touched, and the offer is once per document.
     if (fromMountedContainer(event, data) && !installSuppressed && !rehearsing) keeper?.offer();
+  } else if (data.type === TO_HOST.LEAVE_CHECK) {
+    // The shell is about to write a file itself (a download or a picker save)
+    // and asks first; the answer comes from the bytes, opened here (#2).
+    if (!fromMountedContainer(event, data)) return;
+    const answer = (ok: boolean, error?: string): void => {
+      (event.source as Window | null)?.postMessage(
+        { type: TO_DOCUMENT.LEAVE_CHECKED, id: data.id, ok, ...(error ? { error } : {}) },
+        "*",
+      );
+    };
+    const bytes = data.sqlite instanceof Uint8Array ? data.sqlite : null;
+    void mayLeave(bytes).then(
+      () => answer(true),
+      (error: unknown) => answer(false, error instanceof Error ? error.message : String(error)),
+    );
+  } else if (data.type === TO_HOST.SIGN) {
+    /*
+     * Signing a batch header with this device's person key (docs/identity.md,
+     * step 3). The private key never leaves here. Signed only when the header
+     * is this device's own author, for the document that is open, in the
+     * format this host speaks; and only after the sequence floor has counted
+     * the batch, so the order at a leave point is floor, seal, send.
+     */
+    if (!fromMountedContainer(event, data)) return;
+    const reply = (answer: { sig?: Uint8Array; pub?: Uint8Array; error?: string }): void => {
+      (event.source as Window | null)?.postMessage({ type: TO_DOCUMENT.SIGNED, id: data.id, ...answer }, "*");
+    };
+    void (async () => {
+      // Only for the document mounted now, under the decision made for this
+      // very mount: never a header for a document opened before this one.
+      const mount = mountWrites && mountWrites.nonce === mountedNonce ? mountWrites : null;
+      const writes = mount ? await mount.decided : null;
+      if (!mount || !writes || !loaded || loaded.manifest.documentUuid !== mount.documentUuid) {
+        return reply({ error: "This document is not open for writing here." });
+      }
+      const seq = Number(data.seq);
+      if (!Number.isSafeInteger(seq) || seq <= 0) return reply({ error: "A batch names no sequence this device can record." });
+      if ("refused" in writes) return reply({ error: writes.refused });
+      const header = data.header instanceof Uint8Array ? data.header : null;
+      let fields: unknown = null;
+      try {
+        fields = header ? decodeCbor(header) : null;
+      } catch {
+        fields = null;
+      }
+      const ours =
+        Array.isArray(fields) &&
+        fields.length === 5 &&
+        fields[0] === BATCH_FORMAT_VERSION &&
+        fields[1] === mount.documentUuid &&
+        fields[2] instanceof Uint8Array &&
+        showAuthorId(fields[2]) === writes.me.author;
+      if (!header || !ours) return reply({ error: "This device signs only its own changes to the document that is open." });
+      try {
+        await raiseSeqFloor(mount.documentUuid, seq);
+      } catch {
+        return reply({ error: "This device could not record how far it has written, so the change was not signed." });
+      }
+      reply({ sig: await signBytes(writes.me.keys.privateKey, header), pub: writes.me.pub });
+    })();
   } else if (data.type === TO_HOST.SAVE) {
     // A save writes to this device's storage under a document's identity, so it
     // is answered only for the container that handshook.
@@ -3081,6 +3315,10 @@ window.addEventListener("message", (event) => {
        * says so in the header, and Save a copy is in the menu.
        */
       locked(async () => {
+        // A document this device may not write is not saved: the same answer
+        // the mount gave, waited on here so no save goes through before it.
+        const writes = mountWrites?.documentUuid === documentUuid ? await mountWrites.decided : null;
+        if (writes && "refused" in writes) throw new Error(writes.refused);
         const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
         const current = held?.revision ?? 0;
         if (knownRevision.has(documentUuid) && knownRevision.get(documentUuid) !== current) {
@@ -3089,6 +3327,9 @@ window.addEventListener("message", (event) => {
               "To keep these changes, use Save a copy; to see the other tab's, reopen it.",
           );
         }
+        // The floor first, then the save: a save that fails after this has
+        // still counted its seqs, and one that fails before it wrote nothing.
+        await raiseSeqFloor(documentUuid, Number(data.payload?.seq ?? 0));
         await saveDatabaseToOpfs(documentUuid, bytes);
         const next = current + 1;
         if (loaded && loaded.manifest.documentUuid === documentUuid) {
@@ -3137,6 +3378,7 @@ window.addEventListener("message", (event) => {
       })
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
+          writtenThisPage.add(documentUuid);
           hostSavesWritten += 1;
           /*
            * The first thing worth keeping is on this device, so now is when the
@@ -3148,12 +3390,6 @@ window.addEventListener("message", (event) => {
            * reason. Off the save's path, like the replica record below.
            */
           if (data.payload?.setup !== true) askForPersistence("after the first save");
-          // Off the save's path: the acknowledgment below must not wait on it.
-          void (async () => {
-            if ((await ownReplicaOf(documentUuid)) !== null) return;
-            const held = await requestReplicaId();
-            if (held && /^[0-9a-f]{32}$/.test(held)) await recordOwnReplica(documentUuid, held).catch(() => undefined);
-          })();
           (event.source as Window | null)?.postMessage(
             { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId },
             "*",
@@ -3294,16 +3530,57 @@ async function launchLinkForDocument(html: string): Promise<string | undefined> 
  * been acknowledged. A shell that does not answer — an older one — is given
  * a moment and then not waited for.
  */
+/** Documents this page has saved: a key made on this page wrote them, so they are not a loss. */
+const writtenThisPage = new Set<string>();
+
+/** Said when outgoing bytes would carry a row of this device's that nobody signed. */
+const UNSIGNED_LEAVE =
+  "This has changes of yours that were never signed, so it was not sent or saved to a file. " +
+  "Let the app save once more, then try again.";
+
+/**
+ * Whether these database bytes may leave this device: for a replicated
+ * document, none of this author's rows in them is pending or names a batch the
+ * bytes hold no header for. The host opens the bytes itself (cold review of
+ * identity step 3, #2); the frame belongs to the document. Throws the sentence
+ * when they may not.
+ */
+async function mayLeave(bytes: Uint8Array | null | undefined): Promise<void> {
+  if (!bytes || !loaded || !declaresReplication(loaded.manifest)) return;
+  const mount = mountWrites && mountWrites.nonce === mountedNonce ? mountWrites : null;
+  const writes = mount ? await mount.decided : null;
+  // No key this mount may write under: nothing of this device's could be signed.
+  if (!writes || "refused" in writes) return;
+  if ((await unsealedOwnRows(bytes, writes.me.id)) > 0) throw new Error(UNSIGNED_LEAVE);
+}
+
+/**
+ * Flushes before the document leaves this device (an export, a share, an
+ * invite). For a replicated document a flush that did not land refuses the
+ * leave: its rows are sealed as part of the flush, and a document whose seal
+ * or save failed would carry rows nobody signed (docs/identity.md, step 3).
+ */
+async function flushBeforeLeaving(): Promise<void> {
+  const landed = await flushDocument();
+  if (!landed && loaded && declaresReplication(loaded.manifest)) {
+    throw new Error(
+      "The latest changes here could not be signed and saved, so this was not sent. Try again in a moment.",
+    );
+  }
+}
+
 /** Resolves true once the frame confirms its pending writes are stored, false if it did not say so in time. */
 function flushDocument(): Promise<boolean> {
   const target = cartridgeFrame.contentWindow;
   if (!target || !mountedNonce) return Promise.resolve(false);
   const id = Math.random().toString(36).slice(2);
   return new Promise((resolve) => {
+    // Long enough for a seal: the frame asks this host to sign before it saves
+    // (identity step 3), and its own wait for a signature is 15 seconds.
     const timer = window.setTimeout(() => {
       window.removeEventListener("message", onFlushed);
       resolve(false);
-    }, 2500);
+    }, 10_000);
     const onFlushed = (event: MessageEvent): void => {
       const data = event.data as { type?: string; id?: string; sessionNonce?: string; saved?: boolean } | null;
       if (!data || data.type !== TO_HOST.FLUSHED || data.id !== id) return;
@@ -3388,6 +3665,8 @@ export interface MergeReport {
   duplicate: number;
   rejected: string[];
   newReplicas: number;
+  /** Batches refused by author and code (identity step 4); always present. */
+  refusedBatches: { author: string; reason: string }[];
   conflicts: number;
   refused?: string;
 }
@@ -3620,6 +3899,7 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
     duplicate: 0,
     rejected: [],
     newReplicas: 0,
+    refusedBatches: [],
     conflicts: 0,
     refused: why,
   });
@@ -3656,7 +3936,8 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
       window.clearTimeout(timer);
       window.removeEventListener("message", onResult);
       const { applied, duplicate, rejected, newReplicas, conflicts, refused: why } = data;
-      resolve({ applied, duplicate, rejected, newReplicas, conflicts, ...(why ? { refused: why } : {}) });
+      const refusedBatches = Array.isArray(data.refusedBatches) ? data.refusedBatches : [];
+      resolve({ applied, duplicate, rejected, newReplicas, refusedBatches, conflicts, ...(why ? { refused: why } : {}) });
     };
     window.addEventListener("message", onResult);
     target.postMessage(
@@ -3678,8 +3959,9 @@ async function currentHtml(withData = true): Promise<string> {
     const blank = await resealCartridge(loaded, new Uint8Array(0));
     return blank.supplied.length > 0 ? refatten(blank) : blank.html;
   }
-  await flushDocument();
+  await flushBeforeLeaving();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+  await mayLeave(opfsDb);
   const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
   if (opfsDb) await noteSentOut(current, opfsDb);
   return current.supplied.length > 0 ? refatten(current) : current.html;
@@ -3710,9 +3992,10 @@ async function noteSentOut(sent: Cartridge, database: Uint8Array): Promise<void>
  */
 async function inviteHtml(session: string): Promise<string> {
   if (!loaded) throw new Error("nothing open");
-  await flushDocument();
+  await flushBeforeLeaving();
   const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
   if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
+  await mayLeave(opfsDb);
   // Made by the one invite function every host shares (exportSession), then
   // re-verified before it leaves, as any resealed document is.
   const invite = await reverify(await inviteFor(loaded, opfsDb, session));
@@ -4371,6 +4654,20 @@ let arrivedKey: string | undefined;
  */
 let arrivedSession: string | undefined;
 
+/** The game's key was filed from the record's own link because the library had none for it (D117). */
+let keyFromRecord = false;
+
+/** The store reference in a link this device kept, if it is one. */
+function keptReference(link: string | undefined): ReturnType<typeof referenceFrom> | undefined {
+  if (!link) return undefined;
+  try {
+    const url = new URL(link);
+    return referenceFrom(url.pathname, url.search, url.hash) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The running mailbox loop for the mounted document, or none. */
 let mailboxSession: MailboxSession | null = null;
 
@@ -4411,11 +4708,20 @@ async function documentRootKey(documentUuid: string): Promise<string | null> {
    * `rememberSessionKey` and changes nothing else.
    */
   if (arrivedKey && !arrivedSession) {
-    if (held && held.documentKey !== arrivedKey) {
-      // Under the lock, from a fresh read: see `withLibraryLock` (D41).
-      await amendLibraryRecord(documentUuid, (record) => ({ ...record, documentKey: arrivedKey }));
+    if (!held) return arrivedKey;
+    /*
+     * And a held one is never replaced by an arriving one (IDENTITY-KEY-HELD,
+     * ruled 25 September). An arriving key fills a copy that has none; a link
+     * that would replace one is refused in `ingest`, before anything here.
+     * Under the lock, from a fresh read, and filled only if still empty: see
+     * `withLibraryLock` (D41).
+     */
+    if (!held.documentKey) {
+      await amendLibraryRecord(documentUuid, (record) =>
+        record.documentKey ? record : { ...record, documentKey: arrivedKey },
+      );
+      return (await getCartridgeFromLibrary(documentUuid).catch(() => null))?.documentKey ?? arrivedKey;
     }
-    return arrivedKey;
   }
   return held?.documentKey ?? null;
 }
@@ -4514,11 +4820,74 @@ async function rememberSessionKey(documentUuid: string, session: string, key: st
   // measured rewinding `revision` on a copy that had just saved: the receiving
   // copy filed the key at lane construction and every save after it was
   // refused, 37 in a row, with no recovery but a reopen.
+  // A gap is filled; a game's key already held is never replaced
+  // (IDENTITY-KEY-HELD, D122). A link that would have replaced it is
+  // refused in `ingest` before anything reaches here.
   await amendLibraryRecord(documentUuid, (record) =>
-    record.sessionKeys?.[session] === key
+    record.sessionKeys?.[session]
       ? record
       : { ...record, sessionKeys: { ...(record.sessionKeys ?? {}), [session]: key } },
   );
+}
+
+/**
+ * The keys this load's link carried, as fields of the record that keeps the copy (D117).
+ *
+ * Filed in the write that keeps the copy, because on iOS a relaunch follows it
+ * and the library is all the next load has of this one: the key lived in
+ * `arrivedKey` until the mailbox filed it, and the relaunch came first. Not in
+ * a write of its own just before the relaunch: that waited on the library lock
+ * behind the rehearsal mount's own save, and held the launch screen up by
+ * seconds on every first open from a link (measured, `launch-address`). The
+ * same fields the mailbox would file: a game's key beside a document key
+ * (minted when there is none, as `rememberSessionKey` does), or, for a link
+ * that names no game, the document's key. A key already held, the document's or a
+ * game's, is kept (IDENTITY-KEY-HELD).
+ */
+function arrivedKeyFields(
+  record: Pick<LibraryItem, "documentKey" | "sessionKeys"> | null | undefined,
+): Pick<LibraryItem, "documentKey" | "sessionKeys"> {
+  if (!arrivedKey) return {};
+  // A held key is never replaced, the document's no more than a game's (IDENTITY-KEY-HELD).
+  if (!arrivedSession) return { documentKey: record?.documentKey ?? arrivedKey };
+  return {
+    documentKey: record?.documentKey ?? mintKeyBase64Url(),
+    sessionKeys: { ...(record?.sessionKeys ?? {}), [arrivedSession]: record?.sessionKeys?.[arrivedSession] ?? arrivedKey },
+  };
+}
+
+/**
+ * What the library holds of the key this load's link carried: read, not written.
+ *
+ * For the account a relaunch leaves the next load (D117). Read back rather than
+ * assumed from the keep, because a keep can fail and the arrival line is where
+ * that would otherwise go unsaid.
+ */
+async function arrivedKeyAccount(documentUuid: string): Promise<string> {
+  if (!arrivedKey) return "no key held only on this load";
+  const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+  const filed = arrivedSession ? held?.sessionKeys?.[arrivedSession] === arrivedKey : held?.documentKey === arrivedKey;
+  const which = arrivedSession ? "the game's key" : "the document's key";
+  return filed ? `${which}, filed` : `${which}, NOT filed`;
+}
+
+/**
+ * What crossed the iOS reload, for the arrival line: what the load before said
+ * it filed, and whether the library holds the key this load's address names.
+ * Two witnesses, asked separately, so neither vouches for the other.
+ */
+async function carriedReading(): Promise<string | undefined> {
+  // Only for a load that followed a reload, or one that had to file the key
+  // from its record's link: anywhere else nothing crossed, and a line saying so
+  // reads like a carrier that failed.
+  if (!reloadedThisLoad && carriedIn === undefined && !keyFromRecord) return undefined;
+  const said = carriedIn ?? "nothing said";
+  const repaired = keyFromRecord ? " · the library had no key for the game, so it was filed from the link this copy was opened by" : "";
+  const named = referenceFrom(location.pathname, location.search, location.hash);
+  if (!named?.key || !mountedUuid) return `carried across: ${said}${repaired}`;
+  const held = await getCartridgeFromLibrary(mountedUuid).catch(() => null);
+  const holds = named.session ? held?.sessionKeys?.[named.session] === named.key : held?.documentKey === named.key;
+  return `carried across: ${said}${repaired} · the address's key held here: ${holds ? "yes" : "no"}`;
 }
 
 /**
@@ -4571,6 +4940,9 @@ async function startMailboxIfPossible(): Promise<void> {
       relay,
       onLane: (address) => wantPush(address, relay),
       onLaneClosed: (address) => void releasePush(address, relay),
+      // Before a batch leaves: the floor counts its seqs first (identity step 2
+      // review, #1), so a save lost after this publish cannot reissue them.
+      beforePublish: (head) => raiseSeqFloor(uuid, head),
       // This person's own move reached the relay: whatever the icon said is
       // answered (D34). After the confirmation, never before it, so a move
       // that never left clears nothing. Applies whether or not the app reports
@@ -4806,8 +5178,32 @@ async function start(): Promise<void> {
       // The address an icon launched with carries the link the document came
       // by, when it did; keep it, so the manifest written from here carries it
       // on rather than falling back to an address only this device can open.
-      if (inlineFrom(location.hash) || referenceFrom(location.pathname, location.search, location.hash)) {
+      const named = referenceFrom(location.pathname, location.search, location.hash);
+      if (inlineFrom(location.hash) || named) {
         arrivedByLink = location.href;
+      }
+      /*
+       * The game's key, from the link this copy was opened by, when the library
+       * holds none for that game (D117).
+       *
+       * The load that relaunched here files it before it goes; this is for the
+       * copy whose filing never landed — a phone already stranded by D117, a
+       * write the library did not take — which otherwise never recovers,
+       * however often it is opened.
+       *
+       * From the record's link, never from this address. The address is
+       * anybody's to write, and the document's id rides on every icon and link:
+       * a key taken from it was taken on nobody's word, and on a copy with no
+       * key yet it became the key its mailbox sealed under (second cold review
+       * of D117). The record's link is the one whose key opened this copy — it
+       * is written only by `ingest`, after the key decrypted what the link
+       * fetched. Game keys only: a link naming no game predates per-game keys,
+       * and those games restart. A gap is filled and nothing replaced (D37).
+       */
+      const kept = keptReference(held.link);
+      if (kept?.key && kept.session && !held.sessionKeys?.[kept.session]) {
+        await rememberSessionKey(held.documentUuid, kept.session, kept.key);
+        keyFromRecord = true;
       }
       await launchFromLibrary(held, "an icon, or an address naming a copy already here");
       return;
@@ -4946,7 +5342,7 @@ void start();
 void confusables();
 
 /**
- * The mounted copy's replica id, hex, or null when it has none yet.
+ * The mounted copy's replica id, in the shown author-id form, or null when it has none yet.
  *
  * Asks the frame, which reads it from `_dai_replica`. For tests that need to
  * assert identity directly — that an arrived copy took its own id at mount and
@@ -4954,28 +5350,16 @@ void confusables();
  * rather than inferring it from whether a later exchange collided.
  */
 /**
- * The replica id this copy is to write under, decided before the frame writes (d22).
- *
- * Recorded: that id, always. The frame takes it over whatever the mounted file
- * carries, so a reopen that falls back to an arrived file is still this device.
- * Not recorded and arriving: a new id, recorded before the frame is told, so
- * a reload at any moment after this finds it. Not recorded and this device's
- * own (a copy from before the record existed): nothing, and the frame keeps
- * what it holds; the first written save records it (see the save path).
+ * Whether this device may write the mounted replicated document: decided once
+ * per mount from the person key and the sequence floor, and waited on by every
+ * save of that document. Null before a replicated document mounts.
  */
-async function replicaForMount(documentUuid: string, ownCopy: boolean): Promise<string | null> {
-  const recorded = await ownReplicaOf(documentUuid);
-  if (recorded) return recorded;
-  if (ownCopy) return null;
-  const fresh = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  try {
-    await recordOwnReplica(documentUuid, fresh);
-    return fresh;
-  } catch {
-    // No storage to record it in: the frame mints its own, as before.
-    return null;
-  }
-}
+let mountWrites: {
+  /** The mount this was decided for: a decision never outlives the frame it was made for. */
+  nonce: string | null;
+  documentUuid: string;
+  decided: Promise<{ me: Person; seqFloor: number } | { refused: string }>;
+} | null = null;
 
 function requestReplicaId(): Promise<string | null> {
   return new Promise((resolve) => {
@@ -4990,11 +5374,11 @@ function requestReplicaId(): Promise<string | null> {
       resolve(null);
     }, 5_000);
     const onReply = (event: MessageEvent): void => {
-      const data = event.data as { type?: string; nonce?: string; replica?: string | null };
-      if (data?.type === "DAI_FRAME_REPLICA_ID" && data.nonce === nonce) {
+      const data = event.data as { type?: string; nonce?: string; replica?: Uint8Array | null };
+      if (data?.type === TO_HOST.REPLICA_ID_ANSWER && data.nonce === nonce) {
         window.clearTimeout(timer);
         window.removeEventListener("message", onReply);
-        resolve(data.replica ?? null);
+        resolve(data.replica instanceof Uint8Array ? showAuthorId(data.replica) : null);
       }
     };
     window.addEventListener("message", onReply);
@@ -5089,6 +5473,10 @@ Object.defineProperty(window, "__runner", {
     // The mounted copy's replica id, for a test that asserts D22 as a fact
     // about identity rather than the absence of a collision.
     replicaId: requestReplicaId,
+    // This device's author id, asked of the host and never of the frame, so a
+    // test can hold the frame's id against it (docs/identity.md). Asking is a
+    // use: it makes the key if there is none.
+    authorId,
   },
 });
 

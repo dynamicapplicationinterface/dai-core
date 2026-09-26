@@ -181,6 +181,12 @@ export function startMailboxSession(config: {
    * there is that this person just took their turn (D34's badge clears here).
    */
   onPublished?: (address: string) => void;
+  /**
+   * About to publish this device's rows up to `head`: awaited before the batch
+   * is sealed, so whatever counts how far this device has written counts them
+   * before they can leave. A throw stops the publish, as a failed send does.
+   */
+  beforePublish?: (head: number) => Promise<void>;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
   let rootKey: Uint8Array;
@@ -280,7 +286,17 @@ export function startMailboxSession(config: {
     if (!data || data["sessionNonce"] !== sessionNonce) return;
     const type = data["type"];
     if (type === TO_HOST.AUTHORED) {
-      for (const lane of lanes.values()) lane.upToDate = false;
+      /*
+       * A write, or a save that landed a seal. A publish already in flight
+       * answered before it, so its answer cannot say this copy is up to date:
+       * it goes round again. Without that, the in-flight publish set the lane up
+       * to date on its stale answer and a closed game's lane retired with its
+       * close unsent (found by the no-retire test, identity step 4 review).
+       */
+      for (const lane of lanes.values()) {
+        lane.upToDate = false;
+        if (lane.publishing) lane.publishAgain = true;
+      }
       schedulePublish();
       pollNow(); // a local move; the reply is likely soon, so poll fast again.
       return;
@@ -497,9 +513,17 @@ export function startMailboxSession(config: {
         TO_HOST.AUTHORED_BATCH,
       );
       const batchBytes = answer["batch"];
+      // A seal that failed sends nothing and moves nothing (identity step 3),
+      // and is said: the rows are still here, unsigned, until it succeeds.
+      if (typeof answer["error"] === "string") {
+        note(`seal failed at ${lane.address.slice(0, 12)}: ${answer["error"]}`);
+        config.onNote?.(`A move could not be signed, so it was not sent: ${answer["error"]}`);
+        return;
+      }
       const head = Number(answer["head"] ?? lane.state.watermark.seq);
       const replica = String(answer["replica"] ?? lane.state.watermark.replica);
       if (batchBytes instanceof Uint8Array && batchBytes.byteLength > 0) {
+        await config.beforePublish?.(head);
         const sealed = await sealBatch(batchBytes, await lane.key());
         // Persisted before the send, so a kill mid-publish resumes it.
         lane.state = { ...lane.state, pending: { sealed, head, replica } };
@@ -510,7 +534,9 @@ export function startMailboxSession(config: {
           save(lane);
           noteWatermark(lane, "published");
           config.onPublished?.(lane.address);
-          lane.upToDate = !lane.publishAgain;
+          // One sealed batch per publish; the frame says when more are waiting.
+          if (answer["more"] === true) lane.publishAgain = true;
+          lane.upToDate = !lane.publishAgain && answer["held"] !== true;
         } catch {
           // Said on screen, and left in the trace: a kept failure is how the
           // retry below can be shown to be the thing that sent it (D46).
@@ -526,8 +552,10 @@ export function startMailboxSession(config: {
           save(lane);
           noteWatermark(lane, "advanced with nothing to send");
         }
-        // Answered, and nothing to send.
-        if ("head" in answer) lane.upToDate = !lane.publishAgain;
+        // Answered, and nothing to send yet. A batch held back until its save
+        // lands (identity ruling #3) is still to send, so the lane is not up to
+        // date and does not retire; the landed save says so, and this runs again.
+        if ("head" in answer) lane.upToDate = !lane.publishAgain && answer["held"] !== true;
       }
     } finally {
       lane.publishing = false;

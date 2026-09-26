@@ -19,6 +19,7 @@
 
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
+import { seatWritesIn } from "./seat-check.js";
 
 export interface Finding {
   /** Stable identifier, for callers that want to filter or count. */
@@ -269,6 +270,20 @@ const SHARED_CHECKS = {
       "two edits. See SHARED-SURFACE-CONFLICTS.",
     fix: "Read _r_conflicted from the _current view, show the competing versions from _heads, and let the person choose.",
   },
+  "seat-table-write": {
+    what: "It writes a seat table (_dai_seat, _dai_binding, _dai_confirm) itself, or calls the session writers the kit wraps.",
+    why:
+      "The seat tables are the kit's: who holds a seat is what the document admits a row by, and the kit's " +
+      "reads are built on the host's author id, never on a row. A seat written around the kit is a seat " +
+      "nothing vouches for. See IDENTITY-KIT-SEATS.",
+    fix:
+      "Use window.daiKit.newSession(), .claimSeat(session), .reseat(session), and read with .mySeat(session), " +
+      ".amCreator(session) and .seats(session).",
+    // A warning until the repository's own session examples are rebuilt on the
+    // kit's seats (identity step 7); breaking after. scripts/check-seats.mjs
+    // fails this repository on it now, with those two named as exceptions.
+    severity: "warning",
+  },
   "shared-table-constraint": {
     what: "A shared table declares UNIQUE or CHECK.",
     why:
@@ -353,6 +368,7 @@ function lintShared(files: Record<string, string>): (Finding & { file: string })
     const source = withoutComments(raw);
     if (rawWrite.test(source)) findings.push(sharedFinding("shared-raw-write", name));
     if (baseRead.test(source)) findings.push(sharedFinding("shared-base-read", name));
+    if (seatWritesIn(source).length > 0) findings.push(sharedFinding("seat-table-write", name));
   }
 
   const everything = code.map(([, source]) => source).join("\n");

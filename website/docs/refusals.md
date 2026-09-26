@@ -55,15 +55,21 @@ bridge](/docs/host-bridge#refusal-reasons-glossary).
 
 ### `NOT_SEAT_CREATOR` {#NOT_SEAT_CREATOR}
 
-**Applies to** session. **When:** Someone other than the session's creator called session.reseat.
+**Applies to** session. **When:** Someone other than the session's creator called session.reseat or session.confirm.
 
 **Do instead:** Offer the fresh-invite repair only to the creator (SESSION-CONTESTED-SEAT).
 
 ### `CANNOT_RESEAT` {#CANNOT_RESEAT}
 
-**Applies to** session. **When:** session.reseat was called on a session with no contested seat.
+**Applies to** session. **When:** session.reseat was called on a session with no contested seat: none that nobody holds and more than one copy asked for.
 
 **Do instead:** Offer the repair only when a seat is contested (SESSION-CONTESTED-SEAT).
+
+### `CANNOT_CONFIRM` {#CANNOT_CONFIRM}
+
+**Applies to** session. **When:** session.confirm named a seat that is not a current open seat, or one someone already holds.
+
+**Do instead:** Leave seating to the kit, which confirms on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED).
 
 ### `REPLICATION_SCHEMA_INVALID` {#REPLICATION_SCHEMA_INVALID}
 

@@ -1,0 +1,23 @@
+{
+  "what": "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers.",
+  "cites": [
+    "6",
+    "T1-D7"
+  ],
+  "converges": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

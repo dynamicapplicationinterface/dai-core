@@ -1,0 +1,23 @@
+{
+  "what": "B received A's row before A sealed it, so B holds it pending. A seals; merging A into B gives B the seal and the header, and merging B into A leaves A's seal as it was.",
+  "cites": [
+    "6",
+    "T1-D7"
+  ],
+  "converges": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

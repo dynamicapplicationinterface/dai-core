@@ -31,7 +31,7 @@ export class Store {
    COALESCE(l.is_demo,0) AS is_demo, COALESCE(l.hidden,0) AS hidden
    FROM games_current g LEFT JOIN local_games l ON l.game_id = lower(hex(g._r_entity)) ORDER BY g._r_lc`);}
  // This copy's own replica id, hex — for deciding roster membership below.
- myReplica(){return this.one('SELECT lower(hex(id)) AS id FROM _dai_replica')?.id||null;}
+ myReplica(){return window.daiKit.author();}
  /**
   * Join a game's session by binding its open seat, exactly once (T1-D29/D32).
   *
@@ -53,12 +53,9 @@ export class Store {
   * gating on the carrier, is the guard.
   */
  joinIfNeeded(session){
-  if(!session)return;
-  const mine=this.myReplica();if(!mine)return;
-  const member=this.one('SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?',[session,mine]);
-  if(member)return; // already admitted; nothing to do
-  const seat=this.one("SELECT lower(hex(s.seat)) AS seat FROM _dai_seat_current s WHERE lower(hex(s._r_session)) = ? AND lower(hex(s.seat)) NOT IN (SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE lower(hex(b._r_session)) = ?) LIMIT 1",[session,session]);
-  if(seat)this.w.session.join(session,seat.seat);
+  if(!session||!this.myReplica())return;
+  // The kit's: it takes the open seat once, or nothing when none is open.
+  window.daiKit.claimSeat(session);
  }
  /** Join the active game's session if this copy has arrived at one it is not in. */
  /**
@@ -88,19 +85,24 @@ export class Store {
   */
  seatState(session){
   const mine=this.myReplica();
-  // Any seat two or more replicas bind — the creator's cue that an invite went
-  // to more than one device and needs replacing.
-  const contested=this.rows("SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_seat_current s ON s._r_session = b._r_session AND s.seat = b.seat WHERE lower(hex(b._r_session)) = ? GROUP BY b.seat HAVING count(DISTINCT lower(hex(b._r_replica))) > 1",[session]).length>0;
-  const amCreator=!!this.one('SELECT 1 AS x FROM _dai_seat_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ? LIMIT 1',[session,mine]);
-  const haveBinding=!!this.one('SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ? LIMIT 1',[session,mine]);
-  const member=!!this.one('SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?',[session,mine]);
-  // Bound once, not admitted now: the seat was contested by another device, or
-  // retired in a reseat. Either way this copy's place is gone until it opens a
-  // fresh invite. One state, one message — a dead-end message is the hang.
+  // An open seat nobody has been seated in, asked for by two or more devices —
+  // the creator's cue that an invite went to more than one device and needs
+  // replacing. Once the creator's copy has seated someone, a later ask is not a
+  // contest: that seat is taken for good.
+  const contested=this.rows("SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat WHERE lower(hex(b._r_session)) = ? AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) GROUP BY b.seat HAVING count(DISTINCT lower(hex(b._r_replica))) > 1",[session]).length>0;
+  // The kit's reads, on the host's author id: never an author column.
+  const amCreator=window.daiKit.amCreator(session);
+  const haveBinding=!!mine&&!!this.one('SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ? LIMIT 1',[session,mine]);
+  const member=!!window.daiKit.mySeat(session);
+  // Asked for the open seat, and the creator's copy has not seated anyone in it yet.
+  const pending=!member&&!!window.daiKit.pendingSeat(session);
+  // Asked once, not seated: the creator's copy seated another device, or the
+  // seat was retired in a reseat. Either way this copy's place is gone until it
+  // opens a fresh invite. One state, one message — a dead-end message is the hang.
   // notIn: holds the game's rows but never joined it — membership is joined, not
   // inherited (T1-D34), so a forwarded document leaves you holding a game you are
   // not in, and the app must say so rather than show an empty board.
-  return {contested,amCreator,member,mineOut:haveBinding&&!member,notIn:!amCreator&&!haveBinding&&!member};
+  return {contested,amCreator,member,pending,mineOut:haveBinding&&!member&&!pending,notIn:!amCreator&&!haveBinding&&!member};
  }
  /**
   * The color this copy plays in a game, from its seat: the creator plays the
@@ -111,7 +113,31 @@ export class Store {
   if(!g||g.is_demo)return null;
   const s=this.seatState(g.session);
   if(s.amCreator)return g.creator_color;
-  return s.member?opposite(g.creator_color):null;
+  // Waiting to be seated is still playing: the move is written for the seat this
+  // copy asked for, and every other copy admits it once the creator's copy seats
+  // this one (identity step 5). Over files that is the next exchange.
+  return s.member||s.pending?opposite(g.creator_color):null;
+ }
+ /**
+  * The seat a side plays from, as hex: the creator's seat plays the color the
+  * creator chose, the other seat the other color. A move names its seat, and
+  * the side that moved is read back from that seat, never from a column a copy
+  * writes (docs/identity.md, step 5).
+  */
+ seatFor(g,color){
+  const all=window.daiKit.seats(g.session);
+  const creatorSeat=all.find(s=>s.creator)?.seat||all[0]?.seat||null;
+  const otherSeat=all.find(s=>s.seat!==creatorSeat)?.seat||null;
+  return color===g.creator_color?creatorSeat:otherSeat;
+ }
+ /** Which side each of a game's seats plays, read once per replay: seat hex -> 'w' | 'b'. */
+ sides(g){
+  // Every value each seat has had: moves made before a reseat act for that seat too.
+  const out=new Map(),all=window.daiKit.seats(g.session);
+  const mine=all.find(s=>s.creator)||all[0],theirs=all.find(s=>s!==mine);
+  for(const v of mine?.values||[])out.set(v,g.creator_color);
+  for(const v of theirs?.values||[])out.set(v,opposite(g.creator_color));
+  return out;
  }
  /** Whether the other player has taken their seat — two members in the session. */
  opponentJoined(session){return Number(this.one('SELECT count(DISTINCT lower(hex(replica))) AS n FROM _dai_member WHERE lower(hex(session)) = ?',[session])?.n||0)>=2;}
@@ -123,7 +149,8 @@ export class Store {
   throw new Error('It’s '+playerName(st.game,st.turn)+'’s move. The board comes back to you when theirs lands.');
  }
  /** A player who took the open seat before anyone named it is asked their name once. */
- needsName(g=this.game()){const mine=this.myColor(g);return !!mine&&!this.seatState(g.session).amCreator&&!(mine==='w'?g.white_name:g.black_name);}
+ needsName(g=this.game()){const mine=this.myColor(g);if(!mine)return false;const s=this.seatState(g.session);// Asked once seated: a name written while waiting would wait on the same confirmation.
+  return !s.amCreator&&s.member&&!(mine==='w'?g.white_name:g.black_name);}
  /** Write this player's own name onto their seat — the one shared field they own. */
  setMyName(name){
   const g=this.game(),mine=this.myColor(g);name=String(name||'').trim();
@@ -145,12 +172,27 @@ export class Store {
   const g=this.game();if(!g)throw new Error('Open a game first.');
   if(g.is_demo)throw new Error('The practice board has no invite to renew.');
   if(!this.seatState(g.session).amCreator)throw new Error('Only the player who started this game can send a new invite for it.');
-  this.w.session.reseat(g.session);
+  window.daiKit.reseat(g.session);
  }
  gameById(id){return this.games().find(g=>g.id===id)||null;}
  game(){const s=this.settings();return s.active_game_id?this.gameById(s.active_game_id):null;}
- moves(gameId){return this.rows(`SELECT lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS replica, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer FROM moves_current WHERE game_id = ? ${ORDER}`,[gameId]);}
- events(gameId){return this.rows(`SELECT lower(hex(_r_entity)) AS entity, game_id, after_ply, color, kind, detail FROM game_events_current WHERE game_id = ? ORDER BY after_ply, _r_lc, lower(hex(_r_replica)), _r_seq`,[gameId]);}
+ /**
+  * A table's admitted rows for a game, and this copy's own rows still waiting
+  * for the creator's copy to seat it (`_pending`): every copy admits them once
+  * it is seated, and until then only this one shows them.
+  */
+ withPending(table,cols,g,order){
+  // A game's rows are the ones in its own session: a seat is (session, seat), so
+  // a row from another session that names this game and a seat of the same
+  // bytes acts for nobody here (D131).
+  const me=this.myReplica(),mine='game_id = ? AND lower(hex(_r_session)) = ?';
+  const admitted=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_current WHERE ${mine}`;
+  if(!me)return this.rows(`SELECT * FROM (${admitted}) ${order}`,[g.id,g.session]);
+  const own=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_pending WHERE ${mine} AND lower(hex(_r_replica)) = ?`;
+  return this.rows(`SELECT * FROM (${admitted} UNION ALL ${own}) ${order}`,[g.id,g.session,g.id,g.session,me]);
+ }
+ moves(g){return this.withPending('moves','lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS replica, lower(hex(seat)) AS seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer',g,ORDER);}
+ events(g){return this.withPending('game_events','lower(hex(_r_entity)) AS entity, lower(hex(seat)) AS seat, game_id, after_ply, color, kind, detail',g,'ORDER BY after_ply, _r_lc, lower(hex(_r_replica)), _r_seq');}
  draft(gameId=this.game()?.id){return gameId?this.one('SELECT * FROM drafts WHERE game_id = ?',[gameId]):null;}
  photo(gameId,color){return this.one('SELECT bytes FROM photos WHERE game_id = ? AND color = ?',[gameId,color])?.bytes||null;}
 
@@ -166,7 +208,10 @@ export class Store {
   */
  state(gameId=this.game()?.id){
   const g=gameId&&this.gameById(gameId);if(!g)return null;
-  const byPly=new Map();for(const m of this.moves(g.id)){if(!byPly.has(m.ply))byPly.set(m.ply,[]);byPly.get(m.ply).push(m);}
+  // The side is the seat's: a move is White's because it was made from White's
+  // seat, which the document admitted only from whoever held it then.
+  const sides=this.sides(g);
+  const byPly=new Map();for(const row of this.moves(g)){const m={...row,color:sides.get(row.seat)||null};if(!byPly.has(m.ply))byPly.set(m.ply,[]);byPly.get(m.ply).push(m);}
   let p=new Position(g.initial_fen);const history=[],ignored=[],keys=new Map([[p.key(),1]]);let conflict=null,drawOfferBy=null;
   for(let ply=1;;ply++){
    const cands=byPly.get(ply)||[];if(!cands.length)break;
@@ -189,7 +234,9 @@ export class Store {
   const ply=history.length,repetitions=keys.get(p.key())||1;
   let result=p.terminal(repetitions),reasonFrom='engine';
   const answered=[];
-  for(const e of this.events(g.id)){
+  for(const row of this.events(g)){
+   const e={...row,color:sides.get(row.seat)||null};
+   if(!e.color)continue;
    if(e.after_ply!==ply)continue;            // an event is only meaningful at the ply count it was made at
    if(result)break;
    if(e.kind==='resign'){const winner=opposite(e.color);result=p.canPossiblyMate(winner)?{result:winner==='w'?'1-0':'0-1',reason:'Resignation'}:{result:'1/2-1/2',reason:'Resignation · no possible mate'};reasonFrom=e.entity;}
@@ -206,22 +253,33 @@ export class Store {
  // ---- setup and navigation -------------------------------------------------
  bootstrap(){
   this.tx(()=>{
-   const s=this.settings();
-   if(!s.seed_completed){this.seedDemo();this.exec('UPDATE settings SET seed_completed = 1 WHERE id = 1');}
    this.faceMover();
    this.exec('UPDATE ui_state SET selected_square = NULL, promotion_from = NULL, promotion_to = NULL WHERE id = 1');
   });
  }
+ /**
+  * The shared rows a first open writes (the practice board), through the kit's
+  * whenWritable: on a read-only mount they wait rather than throw, and the page
+  * still draws what it holds (docs/identity.md, step 5).
+  */
+ bootWrites(){
+  return window.daiKit.whenWritable(()=>this.tx(()=>{
+   const s=this.settings();
+   if(!s.seed_completed){this.seedDemo();this.exec('UPDATE settings SET seed_completed = 1 WHERE id = 1');this.faceMover();}
+   this.joinActive();
+  }));
+ }
  seedDemo(){
-  // The practice board is a session too — this copy is its only member, so its
-  // own moves must be admitted, which means seating itself in a fresh session.
-  const {session}=this.w.session.create();
+  // The practice board is a session too, and this copy plays both sides, so it
+  // holds both seats (the kit's solo session): each move names its side's seat.
+  const session=window.daiKit.newSession({solo:true});
   const id=this.w.insert('games',{white_name:'Alex',black_name:'John',creator_color:'w',initial_fen:START_FEN},session);
   this.exec('INSERT INTO local_games(game_id,is_demo) VALUES (?,1)',[id]);
+  const g={session,creator_color:'w'};
   let p=new Position();
   for(const [ply,[from,to]] of [['e2','e4'],['e7','e5'],['g1','f3'],['b8','c6']].entries()){
    const r=p.play({from,to});
-   this.w.insert('moves',{game_id:id,ply:ply+1,color:r.move.color,from_sq:from,to_sq:to,promotion:null,san:r.move.san,draw_offer:0},session);
+   this.w.insert('moves',{seat:window.daiKit.seatBytes(this.seatFor(g,r.move.color)),game_id:id,ply:ply+1,color:r.move.color,from_sq:from,to_sq:to,promotion:null,san:r.move.san,draw_offer:0},session);
    p=r.position;
   }
   if(!this.settings().active_game_id)this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[id]);
@@ -246,7 +304,7 @@ export class Store {
    // A new game is a new session: mint it, seat the creator, leave an open seat
    // for the invitee — then the games row, all under the one session. All in
    // this transaction, so a failure leaves no half-formed game (T1-D29/D32).
-   const {session}=this.w.session.create();
+   const session=window.daiKit.newSession();
    const id=this.w.insert('games',{white_name:white,black_name:black,creator_color:color,initial_fen:START_FEN},session);
    this.exec('INSERT INTO local_games(game_id) VALUES (?)',[id]);
    this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[id]);
@@ -294,7 +352,7 @@ export class Store {
   const st=this.playable(),d=this.draft(st.game.id);if(!d)throw new Error('Choose a move first.');this.requireMover(st);
   const pv=this.previewDraft(st);
   return this.tx(()=>{
-   const entity=this.w.insert('moves',{game_id:st.game.id,ply:st.ply+1,color:st.turn,from_sq:d.from_sq,to_sq:d.to_sq,promotion:d.promotion||null,san:pv.move.san,draw_offer:d.draw_offer?1:0},st.game.session);
+   const entity=this.w.insert('moves',{seat:window.daiKit.seatBytes(this.seatFor(st.game,st.turn)),game_id:st.game.id,ply:st.ply+1,color:st.turn,from_sq:d.from_sq,to_sq:d.to_sq,promotion:d.promotion||null,san:pv.move.san,draw_offer:d.draw_offer?1:0},st.game.session);
    this.exec('DELETE FROM drafts WHERE game_id = ?',[st.game.id]);
    this.exec('UPDATE ui_state SET selected_square = NULL WHERE id = 1');
    return {entity,move:pv.move,terminal:pv.terminal};
@@ -314,7 +372,7 @@ export class Store {
   return null;
  }
  // The acting side is this copy's seat — a resignation can come on the other player's turn.
- event(kind,detail=''){const st=this.playable();this.w.insert('game_events',{game_id:st.game.id,after_ply:st.ply,color:this.myColor(st.game)||st.turn,kind,detail},st.game.session);this.clearDraft(st.game.id);}
+ event(kind,detail=''){const st=this.playable();const color=this.myColor(st.game)||st.turn;this.w.insert('game_events',{seat:window.daiKit.seatBytes(this.seatFor(st.game,color)),game_id:st.game.id,after_ply:st.ply,color,kind,detail},st.game.session);this.clearDraft(st.game.id);}
  resign(){this.event('resign');}
  /** Whether this game's session has been closed — a `_dai_close` row names it. */
  isClosed(session){return !!this.one('SELECT 1 AS x FROM _dai_close_current WHERE lower(hex(_r_session)) = ? LIMIT 1',[session]);}
@@ -341,7 +399,7 @@ export class Store {
  claimDraw(){const st=this.playable();this.requireMover(st);const e=this.claimEligibility(st);if(!e)throw new Error('A draw cannot be claimed in this position.');
   if(e.where==='current'){this.event('claim',e.reason);return e;}
   // The claim rides on the intended move: play it, then claim at the new ply.
-  this.tx(()=>{this.playDraft();this.w.insert('game_events',{game_id:st.game.id,after_ply:st.ply+1,color:opposite(st.turn),kind:'claim',detail:e.reason},st.game.session);});return e;
+  this.tx(()=>{this.playDraft();this.w.insert('game_events',{seat:window.daiKit.seatBytes(this.seatFor(st.game,st.turn)),game_id:st.game.id,after_ply:st.ply+1,color:st.turn,kind:'claim',detail:e.reason},st.game.session);});return e;
  }
 
  // ---- local housekeeping -------------------------------------------------------

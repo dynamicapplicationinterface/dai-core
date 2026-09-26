@@ -6,9 +6,12 @@
  * claim is self-containment. A test verifies the output against a real CBOR
  * implementation, which is a development dependency and does not travel.
  *
- * Only what a signature envelope needs — unsigned integers, byte strings, text
- * strings, arrays, maps and null. No floats, no tags, no indefinite lengths,
- * no bignums. Anything outside that is rejected rather than guessed at.
+ * What a signature envelope and a replicated row need: integers to ±2^64 (a
+ * BigInt past 2^53, as sqlite-wasm returns one), float64 (for a row's REAL
+ * column), byte strings, text strings, arrays, maps and null. No other floats,
+ * no tags, no indefinite lengths, no bignums. Anything outside that is rejected
+ * rather than guessed at, and so is a whole JS number past 2^53: it has already
+ * lost its low bits, and encoding it would sign a value nobody wrote.
  *
  * The encoding follows the deterministic rules in §4.2.1, because a signature
  * is over bytes: two encoders that agree on the value and disagree on the bytes
@@ -20,6 +23,7 @@
 
 export type CborValue =
   | number
+  | bigint
   | string
   | Uint8Array
   | null
@@ -63,9 +67,34 @@ function head(major: number, value: number): Uint8Array {
       value & 0xff,
     ]);
   }
-  // 64-bit lengths are legal CBOR and are not reachable from anything this
-  // encodes; refusing beats emitting something only half-tested.
+  // Eight bytes, up to 2^53: a millisecond timestamp in a replicated row is
+  // past four bytes, and a row that cannot be encoded cannot be sealed. Past
+  // 2^53 a JS number is not exact, and is encoded as a float64 instead.
+  if (value <= Number.MAX_SAFE_INTEGER) {
+    const high = Math.floor(value / 0x100000000);
+    const low = value % 0x100000000;
+    return new Uint8Array([
+      (major << 5) | 27,
+      0,
+      (high >>> 16) & 0xff,
+      (high >>> 8) & 0xff,
+      high & 0xff,
+      (low >>> 24) & 0xff,
+      (low >>> 16) & 0xff,
+      (low >>> 8) & 0xff,
+      low & 0xff,
+    ]);
+  }
   throw new CborError("Values of this size are not supported.");
+}
+
+/** An eight-byte head for a BigInt past 2^53, up to 2^64 - 1. */
+function head64(major: number, value: bigint): Uint8Array {
+  if (value < 0n || value >= 1n << 64n) throw new CborError("Values of this size are not supported.");
+  const out = new Uint8Array(9);
+  out[0] = (major << 5) | 27;
+  new DataView(out.buffer).setBigUint64(1, value, false);
+  return out;
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
@@ -92,9 +121,31 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 export function encode(value: CborValue): Uint8Array {
   if (value === null) return new Uint8Array([(MAJOR.SIMPLE << 5) | 22]);
 
+  if (typeof value === "bigint") {
+    // The shortest form, as for a number, when it fits one exactly.
+    if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) return encode(Number(value));
+    return value >= 0n ? head64(MAJOR.UNSIGNED, value) : head64(MAJOR.NEGATIVE, -1n - value);
+  }
+
   if (typeof value === "number") {
+    if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new CborError(
+        "A whole number past 2^53 has already lost precision, and is not encoded; pass it as a BigInt.",
+      );
+    }
     if (!Number.isInteger(value)) {
-      throw new CborError("Only integers are encodable; this is not one.");
+      /*
+       * A number with a fraction, which a replicated row's REAL column can hold:
+       * always a float64 (0xfb, eight bytes, big-endian), never a shorter float.
+       * One width is what keeps it deterministic, and a number with no fraction
+       * is an integer above whatever its column's type, which is how SQLite
+       * hands a whole REAL back. NaN has no place in a row and is refused.
+       */
+      if (Number.isNaN(value)) throw new CborError("NaN is not encodable.");
+      const out = new Uint8Array(9);
+      out[0] = (MAJOR.SIMPLE << 5) | 27;
+      new DataView(out.buffer).setFloat64(1, value, false);
+      return out;
     }
     // Negative integers are stored as -1 minus the encoded value, which is why
     // -1 is written as 0 rather than as a sign bit.
@@ -136,7 +187,7 @@ interface Cursor {
   at: number;
 }
 
-function readHead(cursor: Cursor): { major: number; value: number } {
+function readHead(cursor: Cursor): { major: number; value: number | bigint } {
   if (cursor.at >= cursor.bytes.byteLength) throw new CborError("Ended mid-value.");
 
   const initial = cursor.bytes[cursor.at++] as number;
@@ -145,15 +196,21 @@ function readHead(cursor: Cursor): { major: number; value: number } {
 
   if (short < 24) return { major, value: short };
 
-  const width = short === 24 ? 1 : short === 25 ? 2 : short === 26 ? 4 : 0;
+  const width = short === 24 ? 1 : short === 25 ? 2 : short === 26 ? 4 : short === 27 ? 8 : 0;
   if (width === 0) {
-    // 27 is a 64-bit length and 31 is indefinite; neither is produced by the
-    // encoder above, and accepting them would mean decoding shapes no test
-    // covers.
+    // 31 is indefinite: never produced by the encoder above, and accepting it
+    // would mean decoding shapes no test covers.
     throw new CborError(`Unsupported length encoding: ${short}`);
   }
   if (cursor.at + width > cursor.bytes.byteLength) throw new CborError("Ended mid-length.");
 
+  if (width === 8) {
+    // Past 2^53 a JS number is not exact, and a value read wrong is worse than
+    // one refused: it comes back as the BigInt it is.
+    const big = new DataView(cursor.bytes.buffer, cursor.bytes.byteOffset + cursor.at, 8).getBigUint64(0, false);
+    cursor.at += 8;
+    return { major, value: big <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(big) : big };
+  }
   let value = 0;
   for (let i = 0; i < width; i++) value = value * 256 + (cursor.bytes[cursor.at++] as number);
   return { major, value };
@@ -169,13 +226,28 @@ const MAX_DEPTH = 32;
 
 function decodeAt(cursor: Cursor, depth = 0): CborValue {
   if (depth > MAX_DEPTH) throw new CborError(`Nested deeper than ${MAX_DEPTH} levels.`);
-  const { major, value } = readHead(cursor);
+  // A float64, the one float this encoder writes. Read before the head, whose
+  // length forms it would otherwise take it for.
+  if (cursor.bytes[cursor.at] === ((MAJOR.SIMPLE << 5) | 27)) {
+    if (cursor.at + 9 > cursor.bytes.byteLength) throw new CborError("Ended mid-value.");
+    const view = new DataView(cursor.bytes.buffer, cursor.bytes.byteOffset + cursor.at + 1, 8);
+    const float = view.getFloat64(0, false);
+    cursor.at += 9;
+    if (Number.isNaN(float)) throw new CborError("NaN is not a value here.");
+    return float;
+  }
+  const { major, value: raw } = readHead(cursor);
+
+  // An integer may be a BigInt; a length never is.
+  if (major === MAJOR.UNSIGNED) return raw;
+  if (major === MAJOR.NEGATIVE) {
+    if (typeof raw === "bigint" || raw >= Number.MAX_SAFE_INTEGER) return -BigInt(raw) - 1n;
+    return -raw - 1;
+  }
+  if (typeof raw === "bigint") throw new CborError("Values of this size are not supported.");
+  const value = raw;
 
   switch (major) {
-    case MAJOR.UNSIGNED:
-      return value;
-    case MAJOR.NEGATIVE:
-      return -value - 1;
     case MAJOR.BYTES: {
       if (cursor.at + value > cursor.bytes.byteLength) throw new CborError("Ended mid-string.");
       const bytes = cursor.bytes.slice(cursor.at, cursor.at + value);

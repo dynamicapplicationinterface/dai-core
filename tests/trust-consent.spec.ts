@@ -113,4 +113,48 @@ test.describe("trust is pinned by opening, not by looking", () => {
     await page.goto(`${RUNNER_URL}?doc=${uuid}`);
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
   });
+
+  /*
+   * D126 extended to solo documents: a different publisher is a different
+   * document, so the held record's own publisher refuses a stranger's copy of
+   * a kept document, pinned or not. Without it, a copy kept with its pin gone
+   * reached the card, and opening it would replace the person's own.
+   */
+  test("a kept document with its pin gone still refuses a stranger's copy", async ({ page }) => {
+    test.slow();
+    const { theirs, ours, uuid } = await twoCopies();
+
+    await page.goto(RUNNER_URL);
+    await page.setInputFiles("#file", ours);
+    await page.locator("#card-open").click({ timeout: 60_000 });
+    await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    await ejectFrom(page);
+    await unpin(page, uuid);
+    expect(await isPinned(page, uuid), "the pin is gone before the copy arrives").toBe(false);
+
+    await page.setInputFiles("#file", theirs);
+    await expect(page.locator("#report")).toContainText(/published by somebody else/, { timeout: 60_000 });
+    await expect(page.locator("#card-open"), "and no card offers it").toBeHidden();
+    expect(await isPinned(page, uuid), "and the stranger's key is not pinned").toBe(false);
+    await page.goto(`${RUNNER_URL}?doc=${uuid}`);
+    await expect(page.locator("body"), "the kept one still opens").toHaveClass(/loaded/, { timeout: 60_000 });
+  });
 });
+
+/** Forgets the pin, as a copy kept with its pin gone would be (D126). */
+async function unpin(page: import("@playwright/test").Page, uuid: string): Promise<void> {
+  await page.evaluate(
+    (id) =>
+      new Promise<void>((done, fail) => {
+        const open = indexedDB.open("dai_runner_storage");
+        open.onsuccess = () => {
+          const tx = open.result.transaction("pins", "readwrite");
+          tx.objectStore("pins").delete(id);
+          tx.oncomplete = () => done();
+          tx.onerror = () => fail(tx.error);
+        };
+        open.onerror = () => fail(open.error);
+      }),
+    uuid,
+  );
+}

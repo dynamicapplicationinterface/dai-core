@@ -112,7 +112,7 @@ CREATE TABLE T (
   _r_parents    TEXT    NOT NULL DEFAULT '[]',   -- JSON array of row ids, sorted
   _r_deleted    INTEGER NOT NULL DEFAULT 0 CHECK (_r_deleted IN (0,1)),
   _r_superseded INTEGER NOT NULL DEFAULT 0 CHECK (_r_superseded IN (0,1)),
-  _r_sig        BLOB,                            -- always NULL at Level 1 (T1-D7)
+  _r_batch      BLOB,                            -- the signed batch it left in; NULL while pending (docs/identity.md)
   PRIMARY KEY (_r_replica, _r_seq)
 ) WITHOUT ROWID;
 
@@ -120,7 +120,11 @@ CREATE INDEX T__r_entity ON T(_r_entity, _r_lc);
 CREATE INDEX T__r_heads  ON T(_r_entity) WHERE _r_superseded = 0;
 
 CREATE TRIGGER T__no_update BEFORE UPDATE OF
-    _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig ON T
+    _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted ON T
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
+
+CREATE TRIGGER T__sealed_once BEFORE UPDATE OF _r_batch ON T
+  WHEN OLD._r_batch IS NOT NULL
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 CREATE TRIGGER T__no_delete BEFORE DELETE ON T
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
@@ -406,7 +410,14 @@ not the version number moves; T1-D24 records why it did not need to.
 `_r_seq` makes the pick total, and it is deterministic across readers, which
 is what `current-conflict-deterministic-pick` demands.
 
-**T1-D7 — `_r_sig` exists at Level 1 and is always NULL.** Keeping the column
+**T1-D7 — superseded by signed authorship (docs/identity.md, step 3).** A row
+no longer carries a signature of its own: it names the signed batch it left its
+author's device in (`_r_batch`, NULL while pending, set once), and the headers
+live in `_dai_batch`. One place a signature lives, not two. Which rows a batch
+covers is the header's own list, not the rows' pointers: `_r_batch` is a cache,
+and a merge verifies by the signed row set (docs/format.md). The original
+decision, kept for the record: **`_r_sig` exists at Level 1 and is always
+NULL.** Keeping the column
 means Level 2 is a behaviour change rather than a migration over every existing
 replicated row, and §9's migration rules forbid rewriting `_r_*` columns
 anyway. The cost is one always-null column.
@@ -1050,6 +1061,18 @@ authors (Step 3).** *The model is recorded here to be validated by the
 implementation, not settled ahead of it — the inferred roster this replaced
 looked sound in prose and was a clock race underneath.*
 
+*Replaced by signed authorship (docs/identity.md, step 5, ruled 24 September).
+A binding no longer seats anyone: it asks. The session id commits to its
+creator (SHA-256 of the creator's author id and a nonce on the creator's own
+seat row, first 16 bytes), so who created a session is checked from the rows;
+the creator's seat is the creator's; the open seat is held by whoever the
+creator's copy confirms in `_dai_confirm`, which only the creator's rows count
+in. A seat two copies asked for before the creator's copy seated anyone admits
+neither, as this paragraph first had it, until the creator repairs it. No clock
+decides a seat. An interim rule held a contested seat by the first verified
+signer, clock then author id, and was withdrawn when a backdated binding took
+the creator's seat (`IDENTITY-SEAT-CONFIRMED` in `src/rules.ts`; backlog D114).*
+
 An earlier design inferred the roster from who wrote first, ordered by Lamport
 clock. It was wrong twice over: a Lamport clock does not order events across
 replicas, and at Level 1 it is a **claim** — an integer an attacker chooses — so
@@ -1480,6 +1503,26 @@ out. Vector: the e2e (`a forwarded invite contests the seat, both copies show it
 and the creator repairs`); like D33 it is a carrier event no local-only vector
 models.
 
+**T1-D35 — a parent outside the row's own entity supersedes nothing.** T1-D2
+says a row supersedes the rows it names as parents, and that is how an edit
+replaces what it edits. A row may only replace its own entity's history. A row
+that names a row of another entity as its parent says nothing about that
+entity, so the named row stays a head. Every place that decides supersession
+applies the same condition: marking parents at insert, superseded-on-arrival,
+the admission-filtered heads view, the monotonic trigger's naming check, and
+the resettle when an unsigned row gives way to a signed one (T1-D13). D4's
+export closure applies it too: a parent of another entity is not history, so it
+cannot make an entity's history cross sessions.
+
+Without it any author could hide any other entity's current row by listing it
+as a parent: in a plain table any row at all, and in a seated session table one
+player's move burying the other's, with the admitted row doing the burying. An
+honest writer never produces such a row (`changeEntity` names its own entity's
+heads), so the rule changes nothing for honest copies. Found by the cold review
+of identity step 5 (finding 5); it predates that step. Tests:
+`tests/cross-entity-parent.spec.ts`. Vectors: `merge-cross-entity-parent` and
+`merge-seal-outranks-cross-entity`.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -1500,6 +1543,7 @@ reverses.
 | `merge-schema-ahead` | Sibling one migration ahead. `SCHEMA_AHEAD`. |
 | `canonical-dump-real-edge-cases` | The REAL encoder over `-0.0`, `nan`, `inf`, `-inf` and a value needing 17 digits. **Runs before `merge-commutative`.** Note that SQLite cannot *store* NaN — it becomes NULL on insert — so that case is reachable only by calling the encoder directly, and the vector tests the encoder rather than a round trip. Positive zero prints `0.0`. |
 | `heads-via-superseded-flag` | `T_heads` equals the set a full parents scan would produce, including for rows merged in child-before-parent order (T1-D2). |
+| `merge-cross-entity-parent` | A row naming another entity's row as its parent, in both arrival orders. The named row stays a head (T1-D35). |
 | `current-conflict-deterministic-pick` | Identical `T_current` across both readers for a conflicted entity, including the same-replica tiebreak of T1-D6. |
 
 The Python reader gains a `merge` subcommand implementing §6 from this text

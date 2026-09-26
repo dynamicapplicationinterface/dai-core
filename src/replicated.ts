@@ -12,9 +12,14 @@
  * covers the replication columns, which is what makes "the schema digests
  * match" mean "these two copies can merge" in the sibling test.
  *
- * Level 1. `_r_sig` is emitted and always NULL (T1-D7), so Level 2 is a change
- * of behaviour rather than a migration over every row ever written.
+ * Signed authorship (docs/identity.md): every row names the signed batch it
+ * left the device in, `_r_batch`, and the headers live in `_dai_batch`. A row
+ * is written with `_r_batch` NULL, pending, and sealed once when it first
+ * leaves (a save or a publish): NULL to a batch id, and never again. One place
+ * a signature lives: the per-row `_r_sig` T1-D7 reserved is gone.
  */
+
+import { SESSION_ID_FUNCTION } from "./session-id.js";
 
 /** The marker an author writes above a table they want replicated. */
 export const REPLICATED_MARKER = "dai:replicated";
@@ -152,6 +157,12 @@ export interface RewrittenSchema {
   session?: SessionProfile;
   /** Tables whose rows only one role may author, when any are declared (D15). */
   authors?: Record<string, AuthorRole>;
+  /**
+   * Tables whose rows each name the seat they act for, by column, when any are
+   * declared (docs/identity.md, step 5): a row is admitted only when its author
+   * holds that seat.
+   */
+  seats?: Record<string, string>;
 }
 
 /**
@@ -276,14 +287,30 @@ function markerLineAbove(sql: string, start: number): string | null {
   return lastLine.slice(2).trim();
 }
 
-const AUTHOR_CLAUSE = /^dai:replicated\s+author\s*=\s*([A-Za-z]+)$/i;
+/*
+ * A marker's clauses: `author=creator|joiner` (D15) and `seat=<column>`
+ * (identity step 5), each at most once, in any order, after
+ * `dai:replicated`. Null when the line is not that shape.
+ */
+function markerClauses(marker: string): Record<string, string> | null {
+  const match = /^dai:replicated((?:\s+[A-Za-z]+\s*=\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*$/i.exec(marker);
+  if (!match) return null;
+  const clauses: Record<string, string> = {};
+  for (const clause of match[1]!.matchAll(/([A-Za-z]+)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    const key = clause[1]!.toLowerCase();
+    if (key !== "author" && key !== "seat") return null;
+    if (key in clauses) return null;
+    clauses[key] = clause[2]!;
+  }
+  return clauses;
+}
 
 function declaredAbove(sql: string, start: number): boolean {
   const marker = markerLineAbove(sql, start);
   if (marker === null) return false;
   if (marker.toLowerCase() === REPLICATED_MARKER) return true;
   if (!marker.toLowerCase().startsWith(REPLICATED_MARKER)) return false;
-  if (AUTHOR_CLAUSE.test(marker)) return true;
+  if (markerClauses(marker)) return true;
   /*
    * A marker that begins as one and does not parse is a build failure (D15).
    *
@@ -294,20 +321,20 @@ function declaredAbove(sql: string, start: number): boolean {
    */
   throw new ReplicationError(
     `The marker "-- ${marker}" is not one this build understands. A replicated table is marked ` +
-      '"-- dai:replicated", or "-- dai:replicated author=creator" / "author=joiner" to say which ' +
-      "party in a session may write it.",
+      '"-- dai:replicated", with "author=creator" / "author=joiner" to say which party in a session ' +
+      'may write it, and "seat=<column>" to name the column holding the seat each row acts for.',
   );
 }
 
 /** The role a table's marker names, if it names one (D15). */
 function authorAbove(sql: string, start: number): AuthorRole | undefined {
   const marker = markerLineAbove(sql, start);
-  const match = marker === null ? null : AUTHOR_CLAUSE.exec(marker);
-  if (!match) return undefined;
-  const role = match[1]!.toLowerCase();
+  const declared = marker === null ? undefined : markerClauses(marker)?.["author"];
+  if (!declared) return undefined;
+  const role = declared.toLowerCase();
   if (role !== "creator" && role !== "joiner") {
     throw new ReplicationError(
-      `A table's marker declares author=${match[1]}. The author of a table's rows is the session's ` +
+      `A table's marker declares author=${declared}. The author of a table's rows is the session's ` +
         "'creator' (the party that started it) or its 'joiner' (the party that took the invite).",
     );
   }
@@ -414,7 +441,7 @@ function replicationColumns(session: boolean): string {
     "  _r_parents    TEXT    NOT NULL DEFAULT '[]',",
     "  _r_deleted    INTEGER NOT NULL DEFAULT 0 CHECK (_r_deleted IN (0,1)),",
     "  _r_superseded INTEGER NOT NULL DEFAULT 0 CHECK (_r_superseded IN (0,1)),",
-    "  _r_sig        BLOB,",
+    "  _r_batch      BLOB    CHECK (_r_batch IS NULL OR length(_r_batch) = 16),",
     ...(session ? ["  _r_session    BLOB    NOT NULL CHECK (length(_r_session) = 16),"] : []),
     "  PRIMARY KEY (_r_replica, _r_seq)",
   ].join("\n");
@@ -429,6 +456,7 @@ function replicationColumns(session: boolean): string {
  * clearing it is refused, because two hosts with the same rows and different
  * flags never reconcile.
  */
+
 /**
  * The `_heads` view — heads are where admission is enforced (T1-D29).
  *
@@ -454,7 +482,13 @@ function replicationColumns(session: boolean): string {
  * slow the answer is a materialized membership set recomputed on merge — not a
  * return to the stored flag, which cannot express a membership that changes.
  */
-function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean, author?: AuthorRole): string {
+function headsView(
+  q: string,
+  admissionFiltered: boolean,
+  closeCreator: boolean,
+  author?: AuthorRole,
+  seatColumn?: string,
+): string {
   if (!admissionFiltered) {
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT * FROM ${q} WHERE _r_superseded = 0;`;
@@ -470,8 +504,7 @@ function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean,
   // close=any the clause is empty and every member's close counts.
   const authored = (close: string, row: string): string =>
     closeCreator
-      ? ` AND ${close}._r_replica IN (SELECT s._r_replica FROM _dai_seat_current s` +
-        ` WHERE s._r_session = ${row}._r_session)`
+      ? ` AND ${close}._r_replica IN (SELECT c.replica FROM _dai_creator c WHERE c.session = ${row}._r_session)`
       : "";
   // Not late: the session is not closed (by a permitted close), or some permitted
   // close row for it recorded this row's replica with a seq at least this high —
@@ -493,18 +526,115 @@ function headsView(q: string, admissionFiltered: boolean, closeCreator: boolean,
    * one either, because `admitted` gates the superseding row too.
    */
   const seatAuthor = (row: string): string =>
-    `${row}._r_replica IN (SELECT s._r_replica FROM _dai_seat_current s WHERE s._r_session = ${row}._r_session)`;
+    `${row}._r_replica IN (SELECT c.replica FROM _dai_creator c WHERE c.session = ${row}._r_session)`;
   const byRole = (row: string): string =>
     author === "creator" ? ` AND ${seatAuthor(row)}` : author === "joiner" ? ` AND NOT ${seatAuthor(row)}` : "";
-  const admitted = (row: string): string => `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
+  /*
+   * A seated table (identity step 5): the row names the seat it acts for, and
+   * is admitted only when its author holds that seat, as `_dai_holder` says:
+   * the creator's seat is the creator's, and an open seat is held by whoever
+   * the creator confirmed in it. No clock is read. A hold, once made, never
+   * moves (reseat is refused on a confirmed seat), so "holds" and "held when
+   * the row was written" are the same question, and a move written while its
+   * author waited to be confirmed is admitted once they are. A row naming no
+   * seat, or a seat nobody holds, is not admitted.
+   */
+  const holds = (row: string): string =>
+    `EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = ${row}._r_session` +
+    ` AND h.seat = ${row}."${seatColumn}" AND h.replica = ${row}._r_replica)`;
+  /*
+   * An entity belongs to the session it was written in (D131). A row that names
+   * as an earlier version a row of its entity from another session is stored,
+   * never admitted, and reported (ENTITY_OTHER_SESSION): nobody replaces or
+   * removes a row of a game from a session of their own. Decided by the row set,
+   * not by arrival, so every copy answers the same. An author holds a seat of
+   * the same bytes in a session of their own for nothing: the seat is the pair.
+   */
+  const foreign = (row: string): string =>
+    `EXISTS (SELECT 1 FROM ${q} fp, json_each(${row}._r_parents) fj` +
+    ` WHERE fp._r_entity = ${row}._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq` +
+    ` AND fp._r_session <> ${row}._r_session)`;
+  /*
+   * In a seated table a row replaces only rows of its own seat (D132): a version
+   * is admitted under the same check as a new row, and a row that names as an
+   * earlier version a row of its entity acting for another seat of its session
+   * is a row for a seat its author does not hold. Stored, never admitted, and
+   * reported as SEAT_NOT_HELD. Without it the seated joiner, holding his own
+   * seat honestly, deleted the creator's move by naming it as his row's parent.
+   */
+  const otherSeat = (row: string): string =>
+    `EXISTS (SELECT 1 FROM ${q} sp, json_each(${row}._r_parents) sj` +
+    ` WHERE sp._r_entity = ${row}._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq` +
+    ` AND sp._r_session = ${row}._r_session AND sp."${seatColumn}" IS NOT ${row}."${seatColumn}")`;
+  const admitted = (row: string): string =>
+    seatColumn
+      ? `(${holds(row)}) AND NOT ${foreign(row)} AND NOT ${otherSeat(row)} AND ${notLate(row)}${byRole(row)}`
+      : `(${member(row)}) AND NOT ${foreign(row)} AND ${notLate(row)}${byRole(row)}`;
+  /*
+   * Waiting on a confirmation (identity step 5, finding 6): the author asked for
+   * an open seat nobody holds yet, in the row's session, and (in a seated table)
+   * the row names that seat. Neither admitted nor refused; a fact about the row
+   * set, the same on every copy, so an application shows its own waiting rows
+   * from `_pending` and never from the table itself.
+   */
+  const waiting = (row: string): string =>
+    `EXISTS (SELECT 1 FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat` +
+    ` WHERE b._r_session = ${row}._r_session AND b._r_replica = ${row}._r_replica` +
+    (seatColumn ? ` AND b.seat = ${row}."${seatColumn}"` : "") +
+    ` AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat))`;
+  const pendingRow = (row: string): string =>
+    `${waiting(row)} AND NOT ${foreign(row)}${seatColumn ? ` AND NOT ${otherSeat(row)}` : ""} AND ${notLate(row)}${byRole(row)}`;
+  // Only a row of r's own entity can supersede it (T1-D35), only one of r's
+  // own session (D131), and in a seated table only one of r's own seat (D132).
+  const supersededBy = (row: string, gate: string): string =>
+    `EXISTS (
+       SELECT 1 FROM ${q} c, json_each(c._r_parents) p
+        WHERE c._r_entity = ${row}._r_entity AND c._r_session = ${row}._r_session${seatColumn ? ` AND c."${seatColumn}" = ${row}."${seatColumn}"` : ""}
+          AND ${gate}
+          AND p.value = lower(hex(${row}._r_replica)) || ':' || ${row}._r_seq
+     )`;
+  // A waiting row is superseded the same way, by an admitted or waiting row of
+  // its own partition, never by the stored flag, which a row of another seat
+  // or session naming it raises (D138).
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
-     AND NOT EXISTS (
-       SELECT 1 FROM ${q} c, json_each(c._r_parents) p
-        WHERE ${admitted("c")}
-          AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
-     );`;
+     AND NOT ${supersededBy("r", admitted("c"))};
+
+CREATE VIEW IF NOT EXISTS ${q}_pending AS
+  SELECT r.* FROM ${q} r
+   WHERE r._r_deleted = 0 AND ${pendingRow("r")}
+     AND NOT ${supersededBy("r", `((${admitted("c")}) OR (${pendingRow("c")}))`)};
+
+-- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
+-- earlier version a row of its entity from another session, with that parent.
+CREATE VIEW IF NOT EXISTS ${q}_foreign AS
+  SELECT r._r_replica, r._r_seq, r._r_batch, fp._r_replica AS parent_replica, fp._r_seq AS parent_seq
+    FROM ${q} r, ${q} fp, json_each(r._r_parents) fj
+   WHERE fp._r_entity = r._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq
+     AND fp._r_session <> r._r_session;` +
+    (seatColumn
+      ? `
+-- What a merge reports as SEAT_NOT_HELD (identity step 5): a row that names no
+-- seat, or a seat someone else holds, or that names as its earlier version a
+-- row acting for another seat of its session (D132). A row for a seat nobody
+-- holds yet is pending, waiting on the creator's confirmation, and is neither
+-- admitted nor reported.
+CREATE VIEW IF NOT EXISTS ${q}_unseated AS
+  SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r
+   WHERE typeof(r."${seatColumn}") <> 'blob' OR length(r."${seatColumn}") <> 16
+      OR (EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = r._r_session AND h.seat = r."${seatColumn}")
+          AND NOT (${holds("r")}))
+      OR ${otherSeat("r")};
+
+-- The same crossing with the row it names, so a merge reports it whichever of
+-- the two arrived (D132).
+CREATE VIEW IF NOT EXISTS ${q}_other_seat AS
+  SELECT r._r_replica, r._r_seq, r._r_batch, sp._r_replica AS parent_replica, sp._r_seq AS parent_seq
+    FROM ${q} r, ${q} sp, json_each(r._r_parents) sj
+   WHERE sp._r_entity = r._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq
+     AND sp._r_session = r._r_session AND sp."${seatColumn}" IS NOT r."${seatColumn}";`
+      : "");
 }
 
 function tableObjects(
@@ -514,6 +644,7 @@ function tableObjects(
   admissionFiltered: boolean,
   closeCreator = false,
   author?: AuthorRole,
+  seatColumn?: string,
 ): string {
   const q = name;
   /*
@@ -531,11 +662,20 @@ function tableObjects(
     "_r_entity",
     "_r_parents",
     "_r_deleted",
-    "_r_sig",
     // A row's session is fixed at write and never edited, like every other _r_
     // column, so the append-only trigger names it too (T1-D26).
     ...(session ? ["_r_session"] : []),
   ].join(", ");
+  /*
+   * What one row's versions are: its entity, and in an admission-filtered
+   * session table its entity in its session (D131), and in a seated table in
+   * its seat too (D132). A row of another session or seat that reuses an
+   * entity's id is another entity there, so it neither hides nor displaces this
+   * one's current version. Plain tables keep the entity alone.
+   */
+  const keys = admissionFiltered ? ["_r_entity", "_r_session", ...(seatColumn ? [`"${seatColumn}"`] : [])] : ["_r_entity"];
+  const partition = (alias: string): string => keys.map((k) => (alias ? `${alias}.${k}` : k)).join(", ");
+  const samePart = (a: string, b: string): string => keys.map((k) => `${a}.${k} = ${b}.${k}`).join(" AND ");
   return `
 CREATE INDEX IF NOT EXISTS ${q}__r_entity ON ${q}(_r_entity, _r_lc);
 CREATE INDEX IF NOT EXISTS ${q}__r_heads ON ${q}(_r_entity) WHERE _r_superseded = 0;
@@ -544,29 +684,60 @@ CREATE TRIGGER IF NOT EXISTS ${q}__no_update BEFORE UPDATE OF
     ${immutable} ON ${q}
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
-CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
+-- A row is sealed once: _r_batch goes from NULL (pending) to the id of the
+-- signed batch it left in, and is never changed after that.
+CREATE TRIGGER IF NOT EXISTS ${q}__sealed_once BEFORE UPDATE OF _r_batch ON ${q}
+  WHEN OLD._r_batch IS NOT NULL
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 
+-- And only to a batch whose signed header this copy holds, however the row got
+-- here: a seal, a merge, or application SQL. A header is written before any row
+-- names it (the seal, staging and the merge all do that), so a row naming one
+-- that is absent is a row claiming a signature nobody gave.
+CREATE TRIGGER IF NOT EXISTS ${q}__batch_known_insert BEFORE INSERT ON ${q}
+  WHEN NEW._r_batch IS NOT NULL AND NOT EXISTS (SELECT 1 FROM _dai_batch WHERE id = NEW._r_batch)
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE: _r_batch names no header in _dai_batch'); END;
+CREATE TRIGGER IF NOT EXISTS ${q}__batch_known_update BEFORE UPDATE OF _r_batch ON ${q}
+  WHEN NEW._r_batch IS NOT NULL AND NOT EXISTS (SELECT 1 FROM _dai_batch WHERE id = NEW._r_batch)
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE: _r_batch names no header in _dai_batch'); END;
+
+-- Append-only, with one exception: a signed row outranks an unsigned row at
+-- the same id. (author, seq) names one row whatever table it sits in, so an
+-- unsigned row whose id a header this copy holds lists, in any table, is an
+-- impostor at a signed id, and the merge removes it to take the signed one.
+CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
+  WHEN NOT (OLD._r_batch IS NULL AND EXISTS (
+    SELECT 1 FROM _dai_batch b, json_each(b.covers) c
+     WHERE b.author = OLD._r_replica AND json_extract(c.value, '$[1]') = OLD._r_seq))
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
+
+-- Superseded exactly while some row of its own entity names it (T1-D2, T1-D35):
+-- a flag that is a function of the row set. It goes back to 0 only when nothing
+-- names the row any more, which happens only when an unsigned row that named it
+-- gave way to a signed one.
 CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_superseded ON ${q}
-  WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0
+  WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0 AND EXISTS (
+    SELECT 1 FROM ${q} n, json_each(n._r_parents) p
+     WHERE n._r_entity = OLD._r_entity
+       AND p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
-${headsView(q, admissionFiltered, closeCreator, author)}
+${headsView(q, admissionFiltered, closeCreator, author, seatColumn)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
          json_group_array(hex(_r_replica) || ':' || _r_seq) AS head_ids
-  FROM ${q}_heads GROUP BY _r_entity HAVING count(*) > 1;
+  FROM ${q}_heads GROUP BY ${partition("")} HAVING count(*) > 1;
 
 CREATE VIEW IF NOT EXISTS ${q}_current AS
   SELECT h.*,
-         (SELECT count(*) FROM ${q}_heads x WHERE x._r_entity = h._r_entity) > 1
+         (SELECT count(*) FROM ${q}_heads x WHERE ${samePart("x", "h")}) > 1
            AS _r_conflicted
   FROM ${q}_heads h
   WHERE h._r_deleted = 0
     AND h._r_replica || ':' || h._r_seq = (
       SELECT y._r_replica || ':' || y._r_seq FROM ${q}_heads y
-       WHERE y._r_entity = h._r_entity AND y._r_deleted = 0
+       WHERE ${samePart("y", "h")} AND y._r_deleted = 0
        ORDER BY y._r_lc DESC, hex(y._r_replica) ASC, y._r_seq ASC
        LIMIT 1);
 `;
@@ -590,6 +761,28 @@ CREATE TABLE IF NOT EXISTS _dai_replica (
   seq   INTEGER NOT NULL DEFAULT 0,
   lc    INTEGER NOT NULL DEFAULT 0,
   label TEXT
+);
+
+-- The signed batch headers (docs/identity.md): one row per batch any copy of
+-- this document sealed. A row in a replicated table names its batch by id; the
+-- signature covers [version, document, author, lc, digest] and the digest
+-- covers the rows. pub is the author's raw public key, which the author id
+-- must fingerprint to; att is reserved for an authority's attestation and is
+-- outside the signature, so vouching can arrive later without re-signing.
+-- covers lists the rows the batch covers, as a JSON array of [table, seq]
+-- (the author is the header's): a merge verifies a batch by finding those rows,
+-- never by trusting a row's _r_batch, which a lost save can leave unset
+-- (docs/format.md).
+CREATE TABLE IF NOT EXISTS _dai_batch (
+  id      BLOB PRIMARY KEY CHECK (length(id) = 16),
+  author  BLOB NOT NULL CHECK (length(author) = 16),
+  lc      INTEGER NOT NULL,
+  sig     BLOB NOT NULL,
+  pub     BLOB NOT NULL,
+  att     BLOB,
+  version INTEGER NOT NULL,
+  digest  BLOB NOT NULL CHECK (length(digest) = 32),
+  covers  TEXT NOT NULL
 );
 
 -- Every column but the id is LOCAL: true of this copy, not of the document.
@@ -624,19 +817,68 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * a member of a session iff it binds a minted seat that exactly one replica
    * binds. A seat two replicas bind is contested and appears for neither.
    */
-  const rosterTable = (name: string): string =>
-    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
-    tableObjects(name, ["seat"], true, false);
+  const rosterTable = (name: string, extra = "", authored = ["seat"]): string =>
+    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${extra}${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
+    tableObjects(name, authored, true, false);
 
+  /*
+   * The seat model (identity step 5, ruled 24 September). No clock decides
+   * anything in it.
+   *
+   * - The session id commits to its creator: SHA-256(creator ‖ nonce), first
+   *   16 bytes, with the nonce on the creator's own seat row. `_dai_creator` is
+   *   the author of a seat row whose nonce hashes, with that author, to the
+   *   row's session (`dai_session_id`, src/session-id.ts). Only the creator can
+   *   write one; checked here, at read, over every row this copy holds however
+   *   it arrived.
+   * - The creator's seat is the seat on that row, and it is the creator's by
+   *   definition. A binding to it means nothing.
+   * - Every other seat the creator mints is open, and is held by whoever the
+   *   creator confirms, in `_dai_confirm`, which only the creator's rows count
+   *   in. A joiner's binding asks for a seat; it holds nothing until then. If
+   *   the creator's rows confirm one seat twice, the first by her own seq holds.
+   *
+   * Nothing here is ordered by a clock, so a backdated row gains nothing, and a
+   * hold, once made, never moves: the repair (reseat) is refused on a seat
+   * anyone has been confirmed in. A row's author is its key once its batch is
+   * verified, and a merge refuses an unsigned row in these three tables
+   * (BATCH_UNSIGNED, D133, `SEAT_TABLES`); step 6 extends that to every table.
+   */
   const member = `
+CREATE VIEW IF NOT EXISTS _dai_creator AS
+  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat
+    FROM _dai_seat s
+   WHERE s.nonce IS NOT NULL AND s._r_deleted = 0
+     AND ${SESSION_ID_FUNCTION}(s._r_replica, s.nonce) = s._r_session;
+
+-- The open seats the creator minted, each at its current value among her own
+-- versions in that session: a version another author wrote of her seat row is
+-- not hers, and neither is one in another session (D136).
+CREATE VIEW IF NOT EXISTS _dai_open_seat AS
+  SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
+    FROM _dai_seat s
+    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
+   WHERE s.nonce IS NULL AND s._r_deleted = 0
+     AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
+     AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(n._r_parents) p
+                      WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
+                        AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);
+
+CREATE VIEW IF NOT EXISTS _dai_holder AS
+  SELECT c.session AS session, c.seat AS seat, c.replica AS replica, 0 AS since
+    FROM _dai_creator c
+  UNION
+  SELECT f._r_session, f.seat, f.holder, f._r_seq
+    FROM _dai_confirm f
+    JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
+   WHERE f._r_deleted = 0
+     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session)
+     AND NOT EXISTS (SELECT 1 FROM _dai_confirm o
+                      WHERE o._r_session = f._r_session AND o.seat = f.seat AND o._r_replica = f._r_replica
+                        AND o._r_deleted = 0 AND o._r_seq < f._r_seq);
+
 CREATE VIEW IF NOT EXISTS _dai_member AS
-  SELECT b._r_session AS session, b._r_replica AS replica
-    FROM _dai_binding_current b
-    JOIN _dai_seat_current s
-      ON s._r_session = b._r_session AND s.seat = b.seat
-   WHERE (SELECT count(DISTINCT hex(b2._r_replica))
-            FROM _dai_binding_current b2
-           WHERE b2._r_session = b._r_session AND b2.seat = b.seat) = 1;
+  SELECT DISTINCT session, replica FROM _dai_holder;
 `;
 
   /*
@@ -651,7 +893,14 @@ CREATE VIEW IF NOT EXISTS _dai_member AS
     `CREATE TABLE IF NOT EXISTS _dai_close (\n  replica BLOB NOT NULL CHECK (length(replica) = 16),\n  seq INTEGER NOT NULL,\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
     tableObjects("_dai_close", ["replica", "seq"], true, false);
 
-  return base + rosterTable("_dai_seat") + rosterTable("_dai_binding") + close + member;
+  return (
+    base +
+    rosterTable("_dai_seat", "  nonce BLOB CHECK (nonce IS NULL OR length(nonce) = 16),\n", ["seat", "nonce"]) +
+    rosterTable("_dai_binding") +
+    rosterTable("_dai_confirm", "  holder BLOB NOT NULL CHECK (length(holder) = 16),\n", ["seat", "holder"]) +
+    close +
+    member
+  );
 }
 
 /**
@@ -676,8 +925,32 @@ CREATE VIEW IF NOT EXISTS _dai_author_rules AS
 `;
 }
 
+/**
+ * The seated tables and their seat columns, as a view the merge and the write
+ * surface can read (identity step 5). Schema, so signed with the rest; emitted
+ * only when a table names a seat column.
+ */
+function seatRulesView(seats: Record<string, string>): string {
+  const entries = Object.entries(seats);
+  if (entries.length === 0) return "";
+  // Table and column names matched an identifier pattern when parsed.
+  const rows = entries.map(([table, column]) => `SELECT '${table}' AS tbl, '${column}' AS col`).join("\n  UNION ALL ");
+  return `
+CREATE VIEW IF NOT EXISTS _dai_seat_rules AS
+  ${rows};
+`;
+}
+
+/**
+ * The seat tables: who created a session, who asked for its open seat, and whom
+ * the creator confirmed in it. A merge refuses an unsigned row in any of them
+ * (BATCH_UNSIGNED, D133), ahead of step 6's refusal in every table, because an
+ * unsigned row is a row under an id nobody proved, and here it decides a seat.
+ */
+export const SEAT_TABLES = ["_dai_seat", "_dai_binding", "_dai_confirm"] as const;
+
 /** The replicated system tables a session document carries beside its author tables (T1-D29). */
-export const SESSION_SYSTEM_TABLES = ["_dai_seat", "_dai_binding", "_dai_close"] as const;
+export const SESSION_SYSTEM_TABLES = [...SEAT_TABLES, "_dai_close"] as const;
 
 /**
  * What the immutability trigger must name, checked against the table itself.
@@ -724,7 +997,14 @@ export function triggerColumns(sql: string, table: string): string[] {
     `CREATE TRIGGER (?:IF NOT EXISTS )?${table}__no_update BEFORE UPDATE OF\\s+([\\s\\S]*?)\\s+ON ${table}\\b`,
   ).exec(sql);
   if (!found) return [];
-  return found[1]!.split(",").map((name) => name.trim()).filter(Boolean);
+  const named = found[1]!.split(",").map((name) => name.trim()).filter(Boolean);
+  // _r_batch is guarded by a trigger of its own, which lets it change once,
+  // from NULL (identity step 3). It counts as covered only when that trigger
+  // is actually in the SQL, so a build without the guard is still refused.
+  const sealedOnce = new RegExp(
+    `CREATE TRIGGER (?:IF NOT EXISTS )?${table}__sealed_once BEFORE UPDATE OF _r_batch ON ${table}\\b[\\s\\S]*?WHEN OLD\\._r_batch IS NOT NULL`,
+  ).test(sql);
+  return sealedOnce ? [...named, "_r_batch"] : named;
 }
 
 /**
@@ -763,6 +1043,30 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
       `${Object.keys(authors).join(", ")} declare${Object.keys(authors).length === 1 ? "s" : ""} an author ` +
         "role, but the document has no session profile. A role names a party in a session; add " +
         "-- dai:profile session max_parties=N, or drop the role.",
+    );
+  }
+
+  // Which column names the seat each row acts for, from the same marker (step 5).
+  const seats: Record<string, string> = {};
+  for (const span of declared) {
+    const marker = markerLineAbove(sql, span.start);
+    const column = marker === null ? undefined : markerClauses(marker)?.["seat"];
+    if (!column) continue;
+    if (!authorColumns(sql.slice(span.open + 1, span.close)).includes(column)) {
+      throw new ReplicationError(
+        `${span.name} names seat=${column}, and has no column ${column}. The seat column holds the seat ` +
+          "each row acts for; declare it in the table.",
+      );
+    }
+    seats[span.name] = column;
+  }
+  if (Object.keys(seats).length > 0 && !session) {
+    // A seat belongs to a session: with no session there are no seats, and a
+    // seated table would admit nothing.
+    throw new ReplicationError(
+      `${Object.keys(seats).join(", ")} name${Object.keys(seats).length === 1 ? "s" : ""} a seat column, but the ` +
+        "document has no session profile. Seats belong to a session; add -- dai:profile session " +
+        "max_parties=N, or drop the seat clause.",
     );
   }
 
@@ -821,13 +1125,14 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
       session !== null,
       session?.close === "creator",
       authors[span.name],
+      seats[span.name],
     );
     cursor = span.end;
   }
   out += sql.slice(cursor);
 
   return {
-    sql: documentTables(session !== null) + out + authorRulesView(authors),
+    sql: documentTables(session !== null) + out + authorRulesView(authors) + seatRulesView(seats),
     // Author tables only — the manifest's `replication.tables` surface, and what
     // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
     // the schema and the digest but not this list; they are implicit in a session
@@ -836,5 +1141,6 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
     tables: declared.map((span) => span.name),
     ...(session ? { session } : {}),
     ...(Object.keys(authors).length > 0 ? { authors } : {}),
+    ...(Object.keys(seats).length > 0 ? { seats } : {}),
   };
 }

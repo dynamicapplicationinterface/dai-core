@@ -100,23 +100,59 @@ function main(argv) {
   console.log(run.url);
   console.log("");
 
-  let anyMissing = false;
-  for (const job of browserJobs) {
+  /*
+   * Firefox is a reading, not the gate (test.yml, ruled 25 September, D32).
+   * Its job runs with continue-on-error, so the run's own conclusion no longer
+   * says whether Firefox passed. It is printed on its own, marked from its
+   * tally and not from the job's conclusion, so a real Firefox red is still
+   * read; it just does not decide the gate line.
+   */
+  const isReading = (job) => /^browser \(firefox\b/.test(job.name);
+  const row = (job) => {
     const log = (perJob.get(job.name) ?? []).join("\n");
     const t = tallyFrom(log);
     const hasTally = t.passed !== null || t.failed !== null;
-    if (!hasTally) anyMissing = true;
     const cells = hasTally
       ? `${t.passed ?? 0} passed, ${t.failed ?? 0} failed` + (t.flaky ? `, ${t.flaky} flaky` : "")
       : "NO TALLY (cancelled / timed out / crashed before summary)";
-    const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? "?").toUpperCase();
+    const failed = !hasTally || (t.failed ?? 0) > 0 || job.conclusion === "failure";
+    const mark = !job.conclusion
+      ? (job.status ?? "?").toUpperCase()
+      : failed ? (hasTally ? "FAIL" : job.conclusion.toUpperCase()) : "PASS";
     console.log(`  ${mark.padEnd(6)} ${job.name.padEnd(28)} ${cells}`);
+    return { hasTally, failed: Boolean(job.conclusion) && failed };
+  };
+
+  let anyMissing = false;
+  let gateFailed = false;
+  let gateMissing = false;
+  console.log("  gate (chromium, webkit):");
+  for (const job of browserJobs.filter((j) => !isReading(j))) {
+    const r = row(job);
+    if (!r.hasTally) anyMissing = gateMissing = true;
+    if (r.failed) gateFailed = true;
+  }
+  const readings = browserJobs.filter(isReading);
+  if (readings.length) {
+    console.log("  reading, not blocking (firefox, D32):");
+    for (const job of readings) {
+      const r = row(job);
+      if (!r.hasTally) anyMissing = true;
+    }
   }
 
   for (const job of otherJobs) {
     const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? "?").toUpperCase();
+    if (job.conclusion && job.conclusion !== "success") gateFailed = true;
     console.log(`  ${mark.padEnd(6)} ${job.name}`);
   }
+
+  console.log("");
+  console.log(
+    run.status !== "completed"
+      ? `gate: not finished (${run.status})`
+      : `gate: ${gateFailed || gateMissing ? "RED" : "green"} on chromium, webkit and checks; firefox above is a reading`,
+  );
 
   if (anyMissing) {
     console.log("");

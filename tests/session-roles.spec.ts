@@ -3,6 +3,8 @@ import { expect, test } from "@playwright/test";
 import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
+import { sessionIdOf } from "../src/session-id.js";
+import { withSessionId } from "./session-db.js";
 
 /**
  * Asymmetric roles inside a session (backlog D15).
@@ -40,7 +42,7 @@ CREATE TABLE notes (
 `;
 
 function openWith(schema: string): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -52,8 +54,9 @@ function openWith(schema: string): Rows & { close(): void } {
 }
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
-const S = bytes(0x5e);
-const C = bytes(0xc0); // the creator: it mints the seats
+const NONCE = bytes(0x07);
+const C = bytes(0xc0); // the creator: the session id commits to it
+const S = sessionIdOf(C, NONCE)!;
 const J = bytes(0x10); // the joiner: it binds the open seat
 const SEATC = bytes(0xa1);
 const SEATJ = bytes(0xa2);
@@ -85,12 +88,16 @@ function put(
   return entity;
 }
 
-/** The roster both copies share: the creator's two seats, and one binding each. */
+/**
+ * The roster both copies share: the creator's own seat, carrying the nonce the
+ * session id commits to, the open seat, the joiner's ask for it, and the
+ * creator's confirmation. The creator's seqs 1–3, the joiner's seq 1.
+ */
 function seat(db: Rows): void {
-  put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ });
-  put(db, "_dai_binding", C, 3, 3, { seat: SEATC });
-  put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+  put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
+  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ, nonce: null });
+  put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
+  put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
 }
 
 const current = (db: Rows, table: string): string[] =>
@@ -148,7 +155,7 @@ CREATE TABLE advice (
 });
 
 test.describe("the merge: a row from the wrong party is not admitted, whichever copy it came from (D15)", () => {
-  test("the joiner's row in a creator-only table arrives and is dropped; the creator's stands", () => {
+  test("the joiner's row in a creator-only table arrives and is dropped; the creator's stands", async () => {
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
@@ -161,7 +168,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     // enforced nothing, so the row exists and travels.
     put(joinerCopy, "advice", J, 2, 6, { note: "forged by the joiner" });
 
-    expect(mergeSibling(creatorCopy, joinerCopy).refused).toBeUndefined();
+    expect((await mergeSibling(creatorCopy, joinerCopy)).refused).toBeUndefined();
 
     // The forged row reached the creator's copy — the merge carried it — and is
     // not admitted. That it is stored and absent is what shows the admission
@@ -173,7 +180,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     joinerCopy.close();
   });
 
-  test("the creator's row in a joiner-only table arrives and is dropped; the joiner's stands", () => {
+  test("the creator's row in a joiner-only table arrives and is dropped; the joiner's stands", async () => {
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
@@ -183,7 +190,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     put(joinerCopy, "answers", J, 2, 5, { note: "a reply" });
     put(creatorCopy, "answers", C, 4, 6, { note: "forged by the creator" });
 
-    expect(mergeSibling(joinerCopy, creatorCopy).refused).toBeUndefined();
+    expect((await mergeSibling(joinerCopy, creatorCopy)).refused).toBeUndefined();
 
     expect(stored(joinerCopy, "answers")).toContain("forged by the creator");
     expect(current(joinerCopy, "answers")).toEqual(["a reply"]);
@@ -192,7 +199,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     creatorCopy.close();
   });
 
-  test("legitimate rows are admitted on both copies, and an unroled table admits both parties", () => {
+  test("legitimate rows are admitted on both copies, and an unroled table admits both parties", async () => {
     // The guard staying silent: nothing here is refused, and both copies agree.
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
@@ -205,8 +212,8 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     put(joinerCopy, "answers", J, 2, 7, { note: "a reply" });
     put(joinerCopy, "notes", J, 3, 8, { note: "from the joiner" });
 
-    expect(mergeSibling(creatorCopy, joinerCopy).refused).toBeUndefined();
-    expect(mergeSibling(joinerCopy, creatorCopy).refused).toBeUndefined();
+    expect((await mergeSibling(creatorCopy, joinerCopy)).refused).toBeUndefined();
+    expect((await mergeSibling(joinerCopy, creatorCopy)).refused).toBeUndefined();
 
     for (const copy of [creatorCopy, joinerCopy]) {
       expect(current(copy, "advice")).toEqual(["first note"]);
