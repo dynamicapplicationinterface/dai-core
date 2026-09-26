@@ -6,6 +6,8 @@ import { decodeBatch, encodeBatch, pendingBatches, recordSeal, signBatch, stageB
 import { mergeSibling, mergeTablesOf } from "../src/replicated-frame.js";
 import { applyRow, confirmSeat, createEntity, ensureReplica, startSession, type Rows } from "../src/replicated-rows.js";
 import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
+// @ts-ignore the chess fixture is plain JavaScript, with no types
+import { Store } from "./fixture/chess/store.js";
 
 /**
  * The attacks that broke the first seat model (cold review of identity step 5).
@@ -195,8 +197,9 @@ test("a member's version of the creator's seat entity voids none of her moves", 
  * the one test labeled as the unsigned hole. A test marked test.fail is a hole
  * still open; its note names the backlog entry whose fix flips it.
  *
- * The schema is the chess fixture's shape: moves name a seat, and a game's
- * moves are read by game_id (tests/fixture/chess/store.js, withPending).
+ * The schema is the chess fixture's shape, and a game's moves are read by the
+ * chess fixture's own Store (tests/fixture/chess/store.js), not a copy of its
+ * SQL: what an attack does to a game is what chess would show.
  */
 const DOC = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const GAME_SCHEMA = `-- dai:profile session max_parties=2 close=any
@@ -208,7 +211,13 @@ CREATE TABLE games (
 CREATE TABLE moves (
   seat BLOB,
   game_id TEXT NOT NULL,
-  san TEXT NOT NULL
+  ply INTEGER,
+  color TEXT,
+  from_sq TEXT,
+  to_sq TEXT,
+  promotion TEXT,
+  san TEXT NOT NULL,
+  draw_offer INTEGER
 );
 `;
 
@@ -242,11 +251,16 @@ async function seal(db: Rows, who: Person): Promise<void> {
 }
 const merge = (into: Rows, from: Rows, who: Person) => mergeSibling(into, from, { document: DOC, author: who.author });
 
-/** What chess shows for a game: admitted moves by game_id (store.js withPending, admitted half). */
-const gameMoves = (db: Rows, game: string) =>
-  db
-    .all("SELECT lower(hex(seat)) AS seat, san, lower(hex(_r_replica)) AS by FROM moves_current WHERE game_id = ? ORDER BY _r_lc", [game])
-    .map((r) => `${r["san"]}@${String(r["seat"]).slice(0, 4)}by${String(r["by"]).slice(0, 4)}`);
+/**
+ * What chess shows for game g1 of a session: the fixture Store's own moves(g),
+ * admitted rows only (the copy reading is nobody, so none of its pending rows).
+ */
+const gameMoves = (db: Rows, session: Uint8Array): string[] => {
+  (globalThis as { window?: unknown }).window = { daiKit: { author: () => null } };
+  const store = new Store({ selectObjects: (sql: string, bind?: unknown[]) => db.all(sql, bind ?? []) }, null);
+  const rows = store.moves({ id: "g1", session: hex(session) }) as Record<string, unknown>[];
+  return rows.map((r) => `${r["san"]}@${String(r["seat"]).slice(0, 4)}by${String(r["replica"]).slice(0, 4)}`);
+};
 
 /**
  * Ada's game, as the kit leaves it: her session, Bo asked and was confirmed,
@@ -277,10 +291,9 @@ async function honestGame(ada: Person, bo: Person) {
 
 test.describe("cold review 2: a seat value is not scoped to its session", () => {
   test("a stranger mints a session of his own whose creator seat has the value of Ada's seat, and plays White in her game", async () => {
-    test.fail(true, "D131 flips this: a seat is (session, seat), and a game's moves are read in the game's own session");
     const ada = await person();
     const bo = await person();
-    const { adaCopy, boCopy, creatorSeat } = await honestGame(ada, bo);
+    const { adaCopy, boCopy, creatorSeat, session } = await honestGame(ada, bo);
 
     // Mallory never asked for any seat in Ada's session. He holds a copy (a forwarded file).
     const mal = await person();
@@ -296,22 +309,23 @@ test.describe("cold review 2: a seat value is not scoped to its session", () => 
 
     const report = await merge(adaCopy, malCopy, ada);
     console.log("cross-session report:", JSON.stringify(report));
-    console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, "g1")));
+    console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, session)));
     console.log("Ada's creator seat:", hex(creatorSeat).slice(0, 4), "mal:", hex(mal.author).slice(0, 4));
     // What a sound seat model must answer: only Ada's e4 acts for Ada's seat in g1.
-    expect(gameMoves(adaCopy, "g1"), "only Ada's move acts for Ada's seat").toEqual([
+    expect(gameMoves(adaCopy, session), "only Ada's move acts for Ada's seat").toEqual([
       `e4@${hex(creatorSeat).slice(0, 4)}by${hex(ada.author).slice(0, 4)}`,
     ]);
+    // His move is admitted, in his own session: a game of his, which is his to play.
+    expect(gameMoves(adaCopy, s2)).toEqual([`Qh5@${hex(creatorSeat).slice(0, 4)}by${hex(mal.author).slice(0, 4)}`]);
     adaCopy.close();
     boCopy.close();
     malCopy.close();
   });
 
   test("a stranger with no seat anywhere in Ada's session supersedes her move from a session of his own", async () => {
-    test.fail(true, "D131 flips this: an entity belongs to one session, and a version of it from another session is refused");
     const ada = await person();
     const bo = await person();
-    const { adaCopy, boCopy, e4 } = await honestGame(ada, bo);
+    const { adaCopy, boCopy, e4, session } = await honestGame(ada, bo);
     const mal = await person();
     const malCopy = openGame();
     ensureReplica(malCopy, mal.author);
@@ -337,8 +351,12 @@ test.describe("cold review 2: a seat value is not scoped to its session", () => 
 
     const report = await merge(adaCopy, malCopy, ada);
     console.log("supersede report:", JSON.stringify(report));
-    console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, "g1")));
-    expect(gameMoves(adaCopy, "g1"), "Ada's e4 stands").toHaveLength(1);
+    console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, session)));
+    expect(gameMoves(adaCopy, session), "Ada's e4 stands").toHaveLength(1);
+    expect(report.refusedBatches, "the merge names the version from another session").toContainEqual({
+      author: mal.shown,
+      reason: "ENTITY_OTHER_SESSION",
+    });
     adaCopy.close();
     boCopy.close();
     malCopy.close();
@@ -347,10 +365,9 @@ test.describe("cold review 2: a seat value is not scoped to its session", () => 
 
 test.describe("cold review 2: the same attacks as a mailbox batch (encode, decode, stage, merge, as applyBatch does)", () => {
   test("Bo's signed batch of rows in his own session, carrying a White move for Ada's game, arrives by mailbox and is admitted", async () => {
-    test.fail(true, "D131 flips this: the mailbox form of a seat taken from a session of one's own");
     const ada = await person();
     const bo = await person();
-    const { adaCopy, boCopy, creatorSeat } = await honestGame(ada, bo);
+    const { adaCopy, boCopy, creatorSeat, session } = await honestGame(ada, bo);
     const nonce = rnd();
     const s2 = sessionIdOf(bo.author, nonce)!;
     createEntity(boCopy, "_dai_seat", rnd(), { seat: creatorSeat, nonce }, s2);
@@ -366,8 +383,8 @@ test.describe("cold review 2: the same attacks as a mailbox batch (encode, decod
       staged.close();
     }
     console.log("mailbox batches:", batches.length, "report:", JSON.stringify(last));
-    console.log("mailbox: Ada's game g1:", JSON.stringify(gameMoves(adaCopy, "g1")));
-    expect(gameMoves(adaCopy, "g1").filter((m) => m.startsWith("Qh5")), "no White move by Bo").toEqual([]);
+    console.log("mailbox: Ada's game g1:", JSON.stringify(gameMoves(adaCopy, session)));
+    expect(gameMoves(adaCopy, session).filter((m) => m.startsWith("Qh5")), "no White move by Bo").toEqual([]);
     adaCopy.close();
     boCopy.close();
   });
@@ -394,8 +411,8 @@ test.describe("cold review 2: a seated joiner and the creator's rows", () => {
     await seal(boCopy, bo);
     const report = await merge(adaCopy, boCopy, ada);
     console.log("joiner-delete report:", JSON.stringify(report));
-    console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, "g1")));
-    expect(gameMoves(adaCopy, "g1"), "Ada's e4 stands").toHaveLength(1);
+    console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, session)));
+    expect(gameMoves(adaCopy, session), "Ada's e4 stands").toHaveLength(1);
     adaCopy.close();
     boCopy.close();
   });
@@ -431,7 +448,7 @@ test.describe("cold review 2: an unsigned row in the seat tables (D133)", () => 
     const report = await merge(adaCopy, malCopy, ada);
     const holder = adaCopy.all("SELECT lower(hex(replica)) AS r, since FROM _dai_holder WHERE seat = ?", [openSeat]);
     console.log("unsigned-confirm report:", JSON.stringify(report));
-    console.log("before:", JSON.stringify(before), "after:", JSON.stringify(gameMoves(adaCopy, "g1")));
+    console.log("before:", JSON.stringify(before), "after:", JSON.stringify(gameMoves(adaCopy, session)));
     console.log("open seat holder now:", JSON.stringify(holder), "bo:", hex(bo.author), "mal:", hex(mal.author));
     expect(holder.map((h) => h["r"]), "nobody holds the open seat but by Ada's signed confirm").toEqual([]);
     expect(report.refusedBatches, "the merge names the unsigned row by the id it claims").toContainEqual({ author: ada.shown, reason: "BATCH_UNSIGNED" });
@@ -575,7 +592,7 @@ test.describe("cold review 2: Q3, what a waiting joiner and an offline creator r
     const s = hex(session);
     const a = hex(ada.author);
     const b = hex(bo.author);
-    console.log("CREATOR offline:", JSON.stringify({ mySeat: mySeat(adaCopy, s, a), pendingSeat: pendingSeat(adaCopy, s, a), amCreator: amCreator(adaCopy, s, a), seats: seats(adaCopy, s), shown: gameMoves(adaCopy, "g1") }));
+    console.log("CREATOR offline:", JSON.stringify({ mySeat: mySeat(adaCopy, s, a), pendingSeat: pendingSeat(adaCopy, s, a), amCreator: amCreator(adaCopy, s, a), seats: seats(adaCopy, s), shown: gameMoves(adaCopy, session) }));
 
     const boCopy = openGame();
     ensureReplica(boCopy, bo.author);
@@ -587,7 +604,7 @@ test.describe("cold review 2: Q3, what a waiting joiner and an offline creator r
     await seal(boCopy, bo);
     const pending = boCopy.all("SELECT san FROM moves_pending").map((r) => r["san"]);
     const unseated = boCopy.all("SELECT lower(hex(_r_replica)) AS r FROM moves_unseated").length;
-    console.log("JOINER waiting:", JSON.stringify({ mySeat: mySeat(boCopy, s, b), pendingSeat: pendingSeat(boCopy, s, b), amCreator: amCreator(boCopy, s, b), seats: seats(boCopy, s), current: gameMoves(boCopy, "g1"), pending, unseated }));
+    console.log("JOINER waiting:", JSON.stringify({ mySeat: mySeat(boCopy, s, b), pendingSeat: pendingSeat(boCopy, s, b), amCreator: amCreator(boCopy, s, b), seats: seats(boCopy, s), current: gameMoves(boCopy, session), pending, unseated }));
     expect(pendingSeat(boCopy, s, b)).toBe(hex(openSeat));
     adaCopy.close();
     boCopy.close();

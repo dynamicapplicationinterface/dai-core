@@ -4402,6 +4402,35 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D134 — An entity id reused in another session is a second entity, and an app reading by id alone sees two
+
+*Status: open. Filed 26 September with the D131 fix; not reproduced in an app.
+Ruling wanted: whether an entity id commits to its session.*
+
+D131 makes an entity's identity (session, entity) in the runtime: a row in
+another session that names one of the entity's rows as its parent is never
+admitted, and nothing in one session hides or displaces the current version of
+anything in another. A row with **no** parents is different: a stranger who
+holds a copy can write a parentless row in a session of their own that reuses
+the id of Ada's game, and it is admitted there, because nothing order-free says
+which session an id was minted in. Both sessions then hold a current row with
+that id. The runtime is right about each; an app that looks a row up by id
+alone is not. Chess's `gameById(id)` takes the first of `games()`, so the
+stranger's row could stand in for Ada's game, with his session's seats and
+moves.
+
+- **Seen:** by reading `tests/fixture/chess/store.js` (`games`, `gameById`);
+  not run.
+- **Order-free fixes, not ruled:** (a) the entity id commits to its session, as
+  the session id commits to its creator (for example SHA-256 of session, author
+  and a nonce, with the nonce on the root row), so a parentless row whose id
+  does not hash from its own session is refused; a format change. (b) The kit
+  and apps key every row by (session, entity), and `active_game_id` names both.
+- **Same class, read and not run:** a pending row's stored `_r_superseded` flag is set by any row
+  of its entity naming it, whatever its session, so a version from another
+  session can hide a waiting move from `_pending` on the copy that wrote it.
+  Admission is unaffected, since `_heads` ignores the flag.
+
 #### D133 — An unsigned confirm under the creator's id seats the forger before she confirms
 
 *Status: **fixed** 26 September. Filed 25 September from the second cold
@@ -4472,8 +4501,18 @@ voids none of her moves" covers `_dai_seat` entities only.
 
 #### D131 — A seat is its bytes, not its session: a stranger plays White from a session of his own
 
-*Status: open, **rated high**. Filed 25 September from the second cold review
-of the seat model (finding 1); reproduced. Ruling wanted before a fix.*
+*Status: **fixed** 26 September. Filed 25 September from the second cold
+review of the seat model (finding 1), rated high. Ruled: a seat is (session,
+seat) everywhere, and an entity belongs to one session. In an
+admission-filtered session table a row supersedes only rows of its own
+session, `_current` picks one head per (session, entity), and a row naming
+as its earlier version a row of another session is stored, never admitted, and
+reported `ENTITY_OTHER_SESSION` (a view over the row set, so every copy
+answers the same whatever arrived first). The kit's `seats(session)` reads
+only the creator's own seat rows in that session; chess reads a game's moves
+and events in the game's own session. `IDENTITY-SEAT-ADMITS` says the pair.
+Held by `tests/seat-attacks.spec.ts`, which reads Ada's game through the chess
+fixture's own `Store`. What stays open is D134.*
 
 Anyone can create a session: pick a nonce, and the session id is the hash of
 their own author id and it, so the rows show them to be its creator. The

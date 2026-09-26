@@ -3016,6 +3016,8 @@
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
+      "tests/fixture/chess/engine.js",
+      "tests/fixture/chess/store.js",
       "tests/seat-attacks.spec.ts"
     ],
     "tests/seat-writes.spec.ts": [

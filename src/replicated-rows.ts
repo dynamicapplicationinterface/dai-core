@@ -755,7 +755,12 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
 /* -------------------------------------------------------------- the merge */
 
 /** Why a merge refused a batch (src/refusals.ts). */
-export type BatchRefusal = "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH" | "BATCH_UNSIGNED" | "SEAT_NOT_HELD";
+export type BatchRefusal =
+  | "BATCH_SIGNATURE_INVALID"
+  | "BATCH_DIGEST_MISMATCH"
+  | "BATCH_UNSIGNED"
+  | "SEAT_NOT_HELD"
+  | "ENTITY_OTHER_SESSION";
 
 /**
  * What verifying one signed header found (`verifyBatches`): the rows it covers,
@@ -1114,6 +1119,25 @@ export function mergeFrom(
     const unseated = local.all(`SELECT 1 FROM "${table}_unseated" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
     if (unseated.length > 0) {
       refuseBatch(row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "", row._r_replica, "SEAT_NOT_HELD");
+    }
+  }
+
+  /*
+   * Rows taken and not admitted because they name as an earlier version a row
+   * of their entity from another session (D131). Stored, and reported by author,
+   * whichever of the two rows this exchange brought: the admission is a fact of
+   * the row set, and the report says what this merge made true.
+   */
+  const views = new Set(local.all("SELECT name FROM sqlite_schema WHERE type = 'view'").map((r) => String(r["name"])));
+  for (const table of tables) {
+    if (!views.has(`${table}_foreign`)) continue;
+    const arrived = new Set(added.filter((a) => a.table === table).map((a) => rowId(a.row._r_replica, a.row._r_seq)));
+    if (arrived.size === 0) continue;
+    for (const f of local.all(`SELECT _r_replica, _r_seq, _r_batch, parent_replica, parent_seq FROM "${table}_foreign"`)) {
+      const child = rowId(f["_r_replica"] as Uint8Array, Number(f["_r_seq"]));
+      const parent = rowId(f["parent_replica"] as Uint8Array, Number(f["parent_seq"]));
+      if (!arrived.has(child) && !arrived.has(parent)) continue;
+      refuseBatch(f["_r_batch"] instanceof Uint8Array ? hex(f["_r_batch"]) : "", f["_r_replica"] as Uint8Array, "ENTITY_OTHER_SESSION");
     }
   }
 

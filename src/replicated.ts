@@ -542,10 +542,22 @@ function headsView(
   const holds = (row: string): string =>
     `EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = ${row}._r_session` +
     ` AND h.seat = ${row}."${seatColumn}" AND h.replica = ${row}._r_replica)`;
+  /*
+   * An entity belongs to the session it was written in (D131). A row that names
+   * as an earlier version a row of its entity from another session is stored,
+   * never admitted, and reported (ENTITY_OTHER_SESSION): nobody replaces or
+   * removes a row of a game from a session of their own. Decided by the row set,
+   * not by arrival, so every copy answers the same. An author holds a seat of
+   * the same bytes in a session of their own for nothing: the seat is the pair.
+   */
+  const foreign = (row: string): string =>
+    `EXISTS (SELECT 1 FROM ${q} fp, json_each(${row}._r_parents) fj` +
+    ` WHERE fp._r_entity = ${row}._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq` +
+    ` AND fp._r_session <> ${row}._r_session)`;
   const admitted = (row: string): string =>
     seatColumn
-      ? `(${holds(row)}) AND ${notLate(row)}${byRole(row)}`
-      : `(${member(row)}) AND ${notLate(row)}${byRole(row)}`;
+      ? `(${holds(row)}) AND NOT ${foreign(row)} AND ${notLate(row)}${byRole(row)}`
+      : `(${member(row)}) AND NOT ${foreign(row)} AND ${notLate(row)}${byRole(row)}`;
   /*
    * Waiting on a confirmation (identity step 5, finding 6): the author asked for
    * an open seat nobody holds yet, in the row's session, and (in a seated table)
@@ -558,20 +570,29 @@ function headsView(
     ` WHERE b._r_session = ${row}._r_session AND b._r_replica = ${row}._r_replica` +
     (seatColumn ? ` AND b.seat = ${row}."${seatColumn}"` : "") +
     ` AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat))`;
-  // Only a row of r's own entity can supersede it (T1-D35).
+  // Only a row of r's own entity can supersede it (T1-D35), and only one of
+  // r's own session (D131).
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
      AND NOT EXISTS (
        SELECT 1 FROM ${q} c, json_each(c._r_parents) p
-        WHERE c._r_entity = r._r_entity
+        WHERE c._r_entity = r._r_entity AND c._r_session = r._r_session
           AND ${admitted("c")}
           AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
      );
 
 CREATE VIEW IF NOT EXISTS ${q}_pending AS
   SELECT r.* FROM ${q} r
-   WHERE r._r_superseded = 0 AND r._r_deleted = 0 AND ${waiting("r")} AND ${notLate("r")}${byRole("r")};` +
+   WHERE r._r_superseded = 0 AND r._r_deleted = 0 AND ${waiting("r")} AND NOT ${foreign("r")} AND ${notLate("r")}${byRole("r")};
+
+-- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
+-- earlier version a row of its entity from another session, with that parent.
+CREATE VIEW IF NOT EXISTS ${q}_foreign AS
+  SELECT r._r_replica, r._r_seq, r._r_batch, fp._r_replica AS parent_replica, fp._r_seq AS parent_seq
+    FROM ${q} r, ${q} fp, json_each(r._r_parents) fj
+   WHERE fp._r_entity = r._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq
+     AND fp._r_session <> r._r_session;` +
     (seatColumn
       ? `
 -- What a merge reports as SEAT_NOT_HELD (identity step 5): a row that names no
@@ -615,6 +636,15 @@ function tableObjects(
     // column, so the append-only trigger names it too (T1-D26).
     ...(session ? ["_r_session"] : []),
   ].join(", ");
+  /*
+   * What one row's versions are: its entity, and in an admission-filtered
+   * session table its entity in its session (D131). A row of another session
+   * that reuses an entity's id is another entity there, so it neither hides nor
+   * displaces this one's current version. Plain tables keep the entity alone.
+   */
+  const keys = admissionFiltered ? ["_r_entity", "_r_session"] : ["_r_entity"];
+  const partition = (alias: string): string => keys.map((k) => (alias ? `${alias}.${k}` : k)).join(", ");
+  const samePart = (a: string, b: string): string => keys.map((k) => `${a}.${k} = ${b}.${k}`).join(" AND ");
   return `
 CREATE INDEX IF NOT EXISTS ${q}__r_entity ON ${q}(_r_entity, _r_lc);
 CREATE INDEX IF NOT EXISTS ${q}__r_heads ON ${q}(_r_entity) WHERE _r_superseded = 0;
@@ -666,17 +696,17 @@ ${headsView(q, admissionFiltered, closeCreator, author, seatColumn)}
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
   SELECT _r_entity, count(*) AS heads,
          json_group_array(hex(_r_replica) || ':' || _r_seq) AS head_ids
-  FROM ${q}_heads GROUP BY _r_entity HAVING count(*) > 1;
+  FROM ${q}_heads GROUP BY ${partition("")} HAVING count(*) > 1;
 
 CREATE VIEW IF NOT EXISTS ${q}_current AS
   SELECT h.*,
-         (SELECT count(*) FROM ${q}_heads x WHERE x._r_entity = h._r_entity) > 1
+         (SELECT count(*) FROM ${q}_heads x WHERE ${samePart("x", "h")}) > 1
            AS _r_conflicted
   FROM ${q}_heads h
   WHERE h._r_deleted = 0
     AND h._r_replica || ':' || h._r_seq = (
       SELECT y._r_replica || ':' || y._r_seq FROM ${q}_heads y
-       WHERE y._r_entity = h._r_entity AND y._r_deleted = 0
+       WHERE ${samePart("y", "h")} AND y._r_deleted = 0
        ORDER BY y._r_lc DESC, hex(y._r_replica) ASC, y._r_seq ASC
        LIMIT 1);
 `;

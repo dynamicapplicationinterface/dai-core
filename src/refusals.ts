@@ -219,6 +219,13 @@ export const REFUSALS = {
       "its author. A row for a seat its author asked for and is waiting to be seated in is not this: " +
       "it is pending, neither admitted nor reported. The rest of the merge runs.",
   },
+  ENTITY_OTHER_SESSION: {
+    recoverable: false,
+    means:
+      "A row that names as its earlier version a row of another session: an entity belongs to the " +
+      "session it was written in, so nobody replaces or removes a row of one game from a session of " +
+      "their own. Stored and never admitted; reported with its author. The rest of the merge runs (D131).",
+  },
   BATCH_UNSIGNED: {
     recoverable: false,
     means:

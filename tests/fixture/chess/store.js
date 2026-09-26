@@ -181,15 +181,18 @@ export class Store {
   * for the creator's copy to seat it (`_pending`): every copy admits them once
   * it is seated, and until then only this one shows them.
   */
- withPending(table,cols,gameId,order){
-  const me=this.myReplica();
-  const admitted=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_current WHERE game_id = ?`;
-  if(!me)return this.rows(`SELECT * FROM (${admitted}) ${order}`,[gameId]);
-  const own=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_pending WHERE game_id = ? AND lower(hex(_r_replica)) = ?`;
-  return this.rows(`SELECT * FROM (${admitted} UNION ALL ${own}) ${order}`,[gameId,gameId,me]);
+ withPending(table,cols,g,order){
+  // A game's rows are the ones in its own session: a seat is (session, seat), so
+  // a row from another session that names this game and a seat of the same
+  // bytes acts for nobody here (D131).
+  const me=this.myReplica(),mine='game_id = ? AND lower(hex(_r_session)) = ?';
+  const admitted=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_current WHERE ${mine}`;
+  if(!me)return this.rows(`SELECT * FROM (${admitted}) ${order}`,[g.id,g.session]);
+  const own=`SELECT ${cols}, _r_lc, _r_replica, _r_seq FROM ${table}_pending WHERE ${mine} AND lower(hex(_r_replica)) = ?`;
+  return this.rows(`SELECT * FROM (${admitted} UNION ALL ${own}) ${order}`,[g.id,g.session,g.id,g.session,me]);
  }
- moves(gameId){return this.withPending('moves','lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS replica, lower(hex(seat)) AS seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer',gameId,ORDER);}
- events(gameId){return this.withPending('game_events','lower(hex(_r_entity)) AS entity, lower(hex(seat)) AS seat, game_id, after_ply, color, kind, detail',gameId,'ORDER BY after_ply, _r_lc, lower(hex(_r_replica)), _r_seq');}
+ moves(g){return this.withPending('moves','lower(hex(_r_entity)) AS entity, lower(hex(_r_replica)) AS replica, lower(hex(seat)) AS seat, game_id, ply, color, from_sq, to_sq, promotion, san, draw_offer',g,ORDER);}
+ events(g){return this.withPending('game_events','lower(hex(_r_entity)) AS entity, lower(hex(seat)) AS seat, game_id, after_ply, color, kind, detail',g,'ORDER BY after_ply, _r_lc, lower(hex(_r_replica)), _r_seq');}
  draft(gameId=this.game()?.id){return gameId?this.one('SELECT * FROM drafts WHERE game_id = ?',[gameId]):null;}
  photo(gameId,color){return this.one('SELECT bytes FROM photos WHERE game_id = ? AND color = ?',[gameId,color])?.bytes||null;}
 
@@ -208,7 +211,7 @@ export class Store {
   // The side is the seat's: a move is White's because it was made from White's
   // seat, which the document admitted only from whoever held it then.
   const sides=this.sides(g);
-  const byPly=new Map();for(const row of this.moves(g.id)){const m={...row,color:sides.get(row.seat)||null};if(!byPly.has(m.ply))byPly.set(m.ply,[]);byPly.get(m.ply).push(m);}
+  const byPly=new Map();for(const row of this.moves(g)){const m={...row,color:sides.get(row.seat)||null};if(!byPly.has(m.ply))byPly.set(m.ply,[]);byPly.get(m.ply).push(m);}
   let p=new Position(g.initial_fen);const history=[],ignored=[],keys=new Map([[p.key(),1]]);let conflict=null,drawOfferBy=null;
   for(let ply=1;;ply++){
    const cands=byPly.get(ply)||[];if(!cands.length)break;
@@ -231,7 +234,7 @@ export class Store {
   const ply=history.length,repetitions=keys.get(p.key())||1;
   let result=p.terminal(repetitions),reasonFrom='engine';
   const answered=[];
-  for(const row of this.events(g.id)){
+  for(const row of this.events(g)){
    const e={...row,color:sides.get(row.seat)||null};
    if(!e.color)continue;
    if(e.after_ply!==ply)continue;            // an event is only meaningful at the ply count it was made at
