@@ -4470,8 +4470,16 @@ value. A signed confirm copied from one session into another is refused
 
 #### D132 — Any admitted row supersedes or deletes another author's row of the same entity
 
-*Status: open, **rated high**. Filed 25 September from the second cold review
-of the seat model (finding 2); reproduced. Ruling wanted before a fix.*
+*Status: **fixed** 26 September. Filed 25 September from the second cold
+review of the seat model (finding 2), rated high. Ruled: a replacement is
+admitted under the same check as a new row, and in a seated table a row
+supersedes only rows of its own seat and session. A row naming as its earlier
+version a row of its entity acting for another seat of its session is stored,
+never admitted, and reported `SEAT_NOT_HELD` (in `_unseated`, and whichever
+of the two rows arrived); `_current` picks one head per (session, seat,
+entity). The stranger's form, from a session of his own, closed with D131
+(`ENTITY_OTHER_SESSION`). Held by `tests/seat-attacks.spec.ts`, with the
+counter-case that the creator's own version of her move still replaces it.*
 
 `_heads` hides a row when some admitted row of the same entity names it as a
 parent (`src/replicated.ts:566-573`). The superseding row is admitted on its

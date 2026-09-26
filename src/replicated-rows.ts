@@ -1128,16 +1128,24 @@ export function mergeFrom(
    * whichever of the two rows this exchange brought: the admission is a fact of
    * the row set, and the report says what this merge made true.
    */
+  // And, in a seated table, a row naming a row of another seat of its session
+  // (D132), reported as SEAT_NOT_HELD the same way.
   const views = new Set(local.all("SELECT name FROM sqlite_schema WHERE type = 'view'").map((r) => String(r["name"])));
+  const crossings = [
+    ["_foreign", "ENTITY_OTHER_SESSION"],
+    ["_other_seat", "SEAT_NOT_HELD"],
+  ] as const;
   for (const table of tables) {
-    if (!views.has(`${table}_foreign`)) continue;
     const arrived = new Set(added.filter((a) => a.table === table).map((a) => rowId(a.row._r_replica, a.row._r_seq)));
     if (arrived.size === 0) continue;
-    for (const f of local.all(`SELECT _r_replica, _r_seq, _r_batch, parent_replica, parent_seq FROM "${table}_foreign"`)) {
-      const child = rowId(f["_r_replica"] as Uint8Array, Number(f["_r_seq"]));
-      const parent = rowId(f["parent_replica"] as Uint8Array, Number(f["parent_seq"]));
-      if (!arrived.has(child) && !arrived.has(parent)) continue;
-      refuseBatch(f["_r_batch"] instanceof Uint8Array ? hex(f["_r_batch"]) : "", f["_r_replica"] as Uint8Array, "ENTITY_OTHER_SESSION");
+    for (const [suffix, reason] of crossings) {
+      if (!views.has(`${table}${suffix}`)) continue;
+      for (const f of local.all(`SELECT _r_replica, _r_seq, _r_batch, parent_replica, parent_seq FROM "${table}${suffix}"`)) {
+        const child = rowId(f["_r_replica"] as Uint8Array, Number(f["_r_seq"]));
+        const parent = rowId(f["parent_replica"] as Uint8Array, Number(f["parent_seq"]));
+        if (!arrived.has(child) && !arrived.has(parent)) continue;
+        refuseBatch(f["_r_batch"] instanceof Uint8Array ? hex(f["_r_batch"]) : "", f["_r_replica"] as Uint8Array, reason);
+      }
     }
   }
 

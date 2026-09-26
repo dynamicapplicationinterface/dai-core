@@ -4,7 +4,7 @@ import { authorIdOf, mintPersonKey, rawPublicKey, showAuthorId } from "../src/id
 import { rewriteReplicated } from "../src/replicated.js";
 import { decodeBatch, encodeBatch, pendingBatches, recordSeal, signBatch, stageBatch } from "../src/replicated-batch.js";
 import { mergeSibling, mergeTablesOf } from "../src/replicated-frame.js";
-import { applyRow, confirmSeat, createEntity, ensureReplica, startSession, type Rows } from "../src/replicated-rows.js";
+import { applyRow, confirmSeat, createEntity, deleteEntity, ensureReplica, startSession, type Rows } from "../src/replicated-rows.js";
 import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
 // @ts-ignore the chess fixture is plain JavaScript, with no types
 import { Store } from "./fixture/chess/store.js";
@@ -392,7 +392,6 @@ test.describe("cold review 2: the same attacks as a mailbox batch (encode, decod
 
 test.describe("cold review 2: a seated joiner and the creator's rows", () => {
   test("Bo, seated in the open seat, deletes Ada's e4 with a version naming his own seat", async () => {
-    test.fail(true, "D132 flips this: in a seated table a row supersedes only rows of its own seat and session");
     const ada = await person();
     const bo = await person();
     const { adaCopy, boCopy, openSeat, e4, session } = await honestGame(ada, bo);
@@ -413,6 +412,24 @@ test.describe("cold review 2: a seated joiner and the creator's rows", () => {
     console.log("joiner-delete report:", JSON.stringify(report));
     console.log("Ada's game g1 after the merge:", JSON.stringify(gameMoves(adaCopy, session)));
     expect(gameMoves(adaCopy, session), "Ada's e4 stands").toHaveLength(1);
+    expect(report.refusedBatches, "the merge names Bo's version as not his seat's").toContainEqual({
+      author: bo.shown,
+      reason: "SEAT_NOT_HELD",
+    });
+    adaCopy.close();
+    boCopy.close();
+  });
+
+  test("Ada's own version of her move, in her seat and session, still replaces it (D132's other half)", async () => {
+    const ada = await person();
+    const bo = await person();
+    const { adaCopy, boCopy, e4, session } = await honestGame(ada, bo);
+    deleteEntity(adaCopy, "moves", e4._r_entity);
+    await seal(adaCopy, ada);
+    expect(gameMoves(adaCopy, session), "her own delete takes her move back").toEqual([]);
+    const report = await merge(boCopy, adaCopy, bo);
+    expect(report.refusedBatches).toEqual([]);
+    expect(gameMoves(boCopy, session), "and every copy agrees").toEqual([]);
     adaCopy.close();
     boCopy.close();
   });

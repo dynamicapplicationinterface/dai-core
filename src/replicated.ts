@@ -554,9 +554,21 @@ function headsView(
     `EXISTS (SELECT 1 FROM ${q} fp, json_each(${row}._r_parents) fj` +
     ` WHERE fp._r_entity = ${row}._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq` +
     ` AND fp._r_session <> ${row}._r_session)`;
+  /*
+   * In a seated table a row replaces only rows of its own seat (D132): a version
+   * is admitted under the same check as a new row, and a row that names as an
+   * earlier version a row of its entity acting for another seat of its session
+   * is a row for a seat its author does not hold. Stored, never admitted, and
+   * reported as SEAT_NOT_HELD. Without it the seated joiner, holding his own
+   * seat honestly, deleted the creator's move by naming it as his row's parent.
+   */
+  const otherSeat = (row: string): string =>
+    `EXISTS (SELECT 1 FROM ${q} sp, json_each(${row}._r_parents) sj` +
+    ` WHERE sp._r_entity = ${row}._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq` +
+    ` AND sp._r_session = ${row}._r_session AND sp."${seatColumn}" IS NOT ${row}."${seatColumn}")`;
   const admitted = (row: string): string =>
     seatColumn
-      ? `(${holds(row)}) AND NOT ${foreign(row)} AND ${notLate(row)}${byRole(row)}`
+      ? `(${holds(row)}) AND NOT ${foreign(row)} AND NOT ${otherSeat(row)} AND ${notLate(row)}${byRole(row)}`
       : `(${member(row)}) AND NOT ${foreign(row)} AND ${notLate(row)}${byRole(row)}`;
   /*
    * Waiting on a confirmation (identity step 5, finding 6): the author asked for
@@ -570,21 +582,21 @@ function headsView(
     ` WHERE b._r_session = ${row}._r_session AND b._r_replica = ${row}._r_replica` +
     (seatColumn ? ` AND b.seat = ${row}."${seatColumn}"` : "") +
     ` AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat))`;
-  // Only a row of r's own entity can supersede it (T1-D35), and only one of
-  // r's own session (D131).
+  // Only a row of r's own entity can supersede it (T1-D35), only one of r's
+  // own session (D131), and in a seated table only one of r's own seat (D132).
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
      AND NOT EXISTS (
        SELECT 1 FROM ${q} c, json_each(c._r_parents) p
-        WHERE c._r_entity = r._r_entity AND c._r_session = r._r_session
+        WHERE c._r_entity = r._r_entity AND c._r_session = r._r_session${seatColumn ? ` AND c."${seatColumn}" = r."${seatColumn}"` : ""}
           AND ${admitted("c")}
           AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq
      );
 
 CREATE VIEW IF NOT EXISTS ${q}_pending AS
   SELECT r.* FROM ${q} r
-   WHERE r._r_superseded = 0 AND r._r_deleted = 0 AND ${waiting("r")} AND NOT ${foreign("r")} AND ${notLate("r")}${byRole("r")};
+   WHERE r._r_superseded = 0 AND r._r_deleted = 0 AND ${waiting("r")} AND NOT ${foreign("r")}${seatColumn ? ` AND NOT ${otherSeat("r")}` : ""} AND ${notLate("r")}${byRole("r")};
 
 -- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
 -- earlier version a row of its entity from another session, with that parent.
@@ -596,14 +608,24 @@ CREATE VIEW IF NOT EXISTS ${q}_foreign AS
     (seatColumn
       ? `
 -- What a merge reports as SEAT_NOT_HELD (identity step 5): a row that names no
--- seat, or a seat someone else holds. A row for a seat nobody holds yet is
--- pending, waiting on the creator's confirmation, and is neither admitted nor
--- reported.
+-- seat, or a seat someone else holds, or that names as its earlier version a
+-- row acting for another seat of its session (D132). A row for a seat nobody
+-- holds yet is pending, waiting on the creator's confirmation, and is neither
+-- admitted nor reported.
 CREATE VIEW IF NOT EXISTS ${q}_unseated AS
   SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r
    WHERE typeof(r."${seatColumn}") <> 'blob' OR length(r."${seatColumn}") <> 16
       OR (EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = r._r_session AND h.seat = r."${seatColumn}")
-          AND NOT (${holds("r")}));`
+          AND NOT (${holds("r")}))
+      OR ${otherSeat("r")};
+
+-- The same crossing with the row it names, so a merge reports it whichever of
+-- the two arrived (D132).
+CREATE VIEW IF NOT EXISTS ${q}_other_seat AS
+  SELECT r._r_replica, r._r_seq, r._r_batch, sp._r_replica AS parent_replica, sp._r_seq AS parent_seq
+    FROM ${q} r, ${q} sp, json_each(r._r_parents) sj
+   WHERE sp._r_entity = r._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq
+     AND sp._r_session = r._r_session AND sp."${seatColumn}" IS NOT r."${seatColumn}";`
       : "");
 }
 
@@ -638,11 +660,12 @@ function tableObjects(
   ].join(", ");
   /*
    * What one row's versions are: its entity, and in an admission-filtered
-   * session table its entity in its session (D131). A row of another session
-   * that reuses an entity's id is another entity there, so it neither hides nor
-   * displaces this one's current version. Plain tables keep the entity alone.
+   * session table its entity in its session (D131), and in a seated table in
+   * its seat too (D132). A row of another session or seat that reuses an
+   * entity's id is another entity there, so it neither hides nor displaces this
+   * one's current version. Plain tables keep the entity alone.
    */
-  const keys = admissionFiltered ? ["_r_entity", "_r_session"] : ["_r_entity"];
+  const keys = admissionFiltered ? ["_r_entity", "_r_session", ...(seatColumn ? [`"${seatColumn}"`] : [])] : ["_r_entity"];
   const partition = (alias: string): string => keys.map((k) => (alias ? `${alias}.${k}` : k)).join(", ");
   const samePart = (a: string, b: string): string => keys.map((k) => `${a}.${k} = ${b}.${k}`).join(" AND ");
   return `

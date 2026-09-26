@@ -214,8 +214,9 @@ export const REFUSALS = {
   SEAT_NOT_HELD: {
     recoverable: false,
     means:
-      "A row that names a seat someone else holds, or names no seat, in a table whose rows act for a " +
-      "seat: signed by who it says, and not theirs to write. Stored and never admitted; reported with " +
+      "A row that names a seat someone else holds, or names no seat, or names as its earlier version a " +
+      "row acting for another seat, in a table whose rows act for a seat: signed by who it says, and " +
+      "not theirs to write. Stored and never admitted; reported with " +
       "its author. A row for a seat its author asked for and is waiting to be seated in is not this: " +
       "it is pending, neither admitted nor reported. The rest of the merge runs.",
   },
