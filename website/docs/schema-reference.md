@@ -75,6 +75,12 @@ SELECT lower(hex(id)) AS id FROM \_dai\_replica — this copy's replica id.
 
 Read this copy's own rows here, beside t\_current, while it waits to be seated: nobody else shows them until it is.
 
+### `t_waiting`
+
+**Applies to** session. t\_pending with waiting deletes kept, as t\_heads is to t\_current. A waiting row is replaced only by an admitted row or its own author's.
+
+Never for display: show t\_pending. The runtime's writers read it.
+
 ### `_dai_creator`
 
 **Applies to** session. session, replica, seat: who created each session, checked from the rows (the session id commits to the creator), and the creator's own seat.

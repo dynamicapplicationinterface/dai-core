@@ -1187,6 +1187,13 @@ export const VIEWS: readonly ViewEntry[] = [
     anchor: { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS ${q}_pending AS" },
   },
   {
+    name: "t_waiting",
+    shapes: SESSION,
+    holds: "t_pending with waiting deletes kept, as t_heads is to t_current. A waiting row is replaced only by an admitted row or its own author's.",
+    read: "Never for display: show t_pending. The runtime's writers read it.",
+    anchor: { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS ${q}_waiting AS" },
+  },
+  {
     name: "_dai_creator",
     shapes: SESSION,
     holds: "session, replica, seat: who created each session, checked from the rows (the session id commits to the creator), and the creator's own seat.",

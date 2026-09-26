@@ -403,6 +403,8 @@ const rowIdOf = (row: Record<string, unknown>): string => rowId(row["_r_replica"
 /** What a write versions: the session it writes in, and the heads it names, first the one `_current` would show. */
 export interface WriteTarget {
   session?: Uint8Array;
+  /** In a seated table, the seat column and the seat the heads act for (D144). */
+  seat?: { column: string; value: Uint8Array };
   heads: Record<string, unknown>[];
 }
 
@@ -418,11 +420,12 @@ export interface WriteTarget {
  * reads the one view the merge admits by, and only a partition this copy
  * writes in:
  *
- * - a plain table: `t_heads`, which is the flag there, and the entity alone;
+ * - a plain table: `t_heads`, the entity alone;
  * - an admission-filtered session table: `t_heads` in a session this copy is a
  *   member of or waits in (in a seated table, its own rows, since an admitted
  *   row's author holds its seat), and this copy's own rows waiting in
- *   `t_pending`;
+ *   `t_waiting`, tombstones included (D143), less any head one of them
+ *   already versions;
  * - a roster table (`_dai_seat` and its kin): this copy's own versions, as
  *   `_dai_open_seat` and `_dai_holder` count only the creator's.
  *
@@ -459,10 +462,18 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array): Writ
         " OR EXISTS (SELECT 1 FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat" +
         " WHERE b._r_session = h._r_session AND b._r_replica = ?1" +
         " AND NOT EXISTS (SELECT 1 FROM _dai_holder x WHERE x.session = s.session AND x.seat = s.seat)))";
+    // This copy's own waiting versions come from `_waiting`, which keeps its
+    // tombstones (D143); `_pending` is what a screen shows.
+    const waiting = view(`${table}_waiting`) ? `${table}_waiting` : `${table}_pending`;
     rows = [
       ...db.all(`SELECT h.* FROM ${quoted(`${table}_heads`)} h WHERE h._r_entity = ?2 AND ${mine}`, [me, entity]),
-      ...db.all(`SELECT * FROM ${quoted(`${table}_pending`)} WHERE _r_entity = ? AND _r_replica = ?`, [entity, me]),
+      ...db.all(`SELECT * FROM ${quoted(waiting)} WHERE _r_entity = ? AND _r_replica = ?`, [entity, me]),
     ];
+    // An admitted head this copy's own waiting row already versions is not a
+    // head of its next write: seated, the waiting row would be admitted and the
+    // head behind it. So a waiting write names what the same write names seated.
+    const named = new Set(rows.flatMap((r) => parentsOf({ _r_parents: String(r["_r_parents"] ?? "[]") })));
+    rows = rows.filter((r) => !named.has(rowIdOf(r)));
   } else {
     const t = quoted(table);
     rows = db.all(
@@ -486,7 +497,8 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array): Writ
     );
   }
   const heads = order(rows);
-  return { session: heads[0]!["_r_session"] as Uint8Array, heads };
+  const session = heads[0]!["_r_session"] as Uint8Array;
+  return seat ? { session, seat: { column: seat, value: heads[0]![seat] as Uint8Array }, heads } : { session, heads };
 }
 
 /** The ids of the heads a write of this copy versions (`writeTargetOf`), sorted, for a row that supersedes them. */
@@ -551,6 +563,15 @@ export function changeEntity(
   // whole history, so the honest write rules cannot construct a crossing, and
   // the caller passes no session (bootloader `changeEntity`).
   const target = writeTargetOf(db, table, entity);
+  // In a seated table a version acts for its heads' seat, which is the
+  // partition it replaces: naming another would be a row admission never takes
+  // and nothing reports (D144).
+  if (target.seat) {
+    const named = columns[target.seat.column];
+    if (!(named instanceof Uint8Array) || hex(named) !== hex(target.seat.value)) {
+      throw new RowRejected(`SEAT_NOT_HELD: a change of a ${table} row acts for the seat its earlier version acts for, and this one names another.`);
+    }
+  }
   const row = stamp(db, table, entity, target.heads.map(rowIdOf), columns, 0, target.session);
   applyRow(db, table, row);
   return row;

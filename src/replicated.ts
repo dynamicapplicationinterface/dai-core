@@ -607,18 +607,24 @@ function headsView(
           AND ${gate}
           AND p.value = lower(hex(${row}._r_replica)) || ':' || ${row}._r_seq
      )`;
-  // A waiting row is superseded the same way, by an admitted or waiting row of
-  // its own partition, never by the stored flag, which a row of another seat
-  // or session naming it raises (D138).
+  // A waiting row is superseded within its own partition, never by the stored
+  // flag (D138), and only by an admitted row or a waiting row of its own
+  // author (D142): another asker's row may never be admitted, so it neither
+  // hides nor forks this one. `_waiting` keeps tombstones, as `_heads` does, so
+  // a writer versions its own waiting delete (D143); `_pending` is what a screen
+  // shows, as `_current` is.
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
      AND NOT ${supersededBy("r", admitted("c"))};
 
-CREATE VIEW IF NOT EXISTS ${q}_pending AS
+CREATE VIEW IF NOT EXISTS ${q}_waiting AS
   SELECT r.* FROM ${q} r
-   WHERE r._r_deleted = 0 AND ${pendingRow("r")}
-     AND NOT ${supersededBy("r", `((${admitted("c")}) OR (${pendingRow("c")}))`)};
+   WHERE ${pendingRow("r")}
+     AND NOT ${supersededBy("r", `((${admitted("c")}) OR (c._r_replica = r._r_replica AND ${pendingRow("c")}))`)};
+
+CREATE VIEW IF NOT EXISTS ${q}_pending AS
+  SELECT * FROM ${q}_waiting WHERE _r_deleted = 0;
 
 -- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
 -- earlier version a row of its entity from another session, with that parent.

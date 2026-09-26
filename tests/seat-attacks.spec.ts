@@ -1010,7 +1010,6 @@ test("cold review 4: a stranger's binding in her own session, naming Bo's, leave
 });
 
 test("cold review 4: a rival asker's tombstone of Bo's waiting move leaves it on his screen, and his to change", async () => {
-  test.fail(true, "D142: t_pending lets another waiting author's row supersede a pending row");
   const w = await waitingGame({ cy: true });
   const m = createEntity(w.boCopy, "moves", rnd(), { seat: w.openSeat, game_id: "g1", san: "e5" }, w.session);
   await seal(w.boCopy, w.bo);
@@ -1032,7 +1031,6 @@ test("cold review 4: a rival asker's tombstone of Bo's waiting move leaves it on
 });
 
 test("cold review 4: a rival asker's row naming Bo's waiting rename does not fork his next one", async () => {
-  test.fail(true, "D142: t_pending lets another waiting author's row supersede a pending row");
   const w = await waitingGame({ cy: true });
   const first = changeEntity(w.boCopy, "games", w.game._r_entity, { title: "Bo one" });
   await seal(w.boCopy, w.bo);
@@ -1051,7 +1049,6 @@ test("cold review 4: a rival asker's row naming Bo's waiting rename does not for
 });
 
 test("cold review 4: a waiting delete then rename chains as it does seated", async () => {
-  test.fail(true, "D143: t_pending holds no tombstone, so the writer never sees its own waiting delete");
   const w = await waitingGame();
   const tombstone = deleteEntity(w.boCopy, "games", w.game._r_entity);
   const renamed = changeEntity(w.boCopy, "games", w.game._r_entity, { title: "back, by Bo" });
@@ -1064,7 +1061,6 @@ test("cold review 4: a waiting delete then rename chains as it does seated", asy
 });
 
 test("cold review 4: a change naming a seat other than its head's is refused, not silently dropped", async () => {
-  test.fail(true, "D144: the writer takes the seat from its caller and never compares it with its heads'");
   const w = await waitingGame();
   await merge(w.adaCopy, w.boCopy, w.ada);
   confirmSeat(w.adaCopy, w.session, w.openSeat, w.bo.author, rnd());
