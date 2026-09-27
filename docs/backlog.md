@@ -4402,6 +4402,60 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D158 — The creator unseats a confirmed joiner and plays his side
+
+*Status: **open, ruling wanted.** Filed 27 September from the seventh cold
+review (finding F1), rated high: step 5 does not close on this review.
+Reproduced here before filing.*
+
+`_dai_creator` counts every undeleted `_dai_seat` row whose nonce commits to
+the session, not the first, and not only heads. `_dai_holder` drops a confirm
+whose seat is in the creator's seat set. So Ada signs one more `_dai_seat` row
+with the session's nonce and the open seat's value: Bo's confirm stops
+counting, the open seat is hers, Bo's rows in it are unadmitted, and her row
+naming his `e5` as parent replaces it. The merge refuses nothing; no writer is
+involved. Two variants share the root: a version of her creator-seat entity
+with a new seat value (every version counts), and a confirm she signs at a
+lower seq she skipped (the earliest confirm wins, and a skipped seq can be
+filled later). The spec says a hold never moves once made; this moves it.
+
+- **Reproduction:** `tests/seat-attacks-review-7.spec.ts`, "F1: the creator's
+  signed second nonce row ..." (`test.fail`).
+
+#### D159 — A stranger's ask with unparseable parents makes a contest unrepairable
+
+*Status: **open, ruling wanted.** Filed 27 September from the seventh cold
+review (F2), rated medium.*
+
+`_r_parents` is checked only by JavaScript's `JSON.parse` at merge. Parents
+nested 1100 deep pass it; SQLite's `json_each` refuses them (depth limit
+1000). In author tables the merge's own post-merge reads throw and the merge
+rolls back, but a roster row has no such read and commits, travels to every
+copy and cannot be removed. Every query deciding whether that binding is a
+head then throws: the kit's confirm read, `reseat`'s contest read and chess's
+contested read. The creator can never repair the contest, and the real asker
+stays unseated. Admission of author rows is unaffected.
+
+- **Reproduction:** `tests/seat-attacks-review-7.spec.ts`, "F2: a stranger's
+  signed ask ..." (`test.fail`); a companion "holds:" test shows the same row
+  naming an unminted seat breaks nothing.
+
+#### D160 — Two confirms at one row id split the copies on who holds the seat
+
+*Status: **open, ruling wanted.** Filed 27 September from the seventh cold
+review (F3), rated medium.*
+
+The creator signs two different confirm rows at one `(author, seq)`, one
+naming Bo and one Cy, and sends one to each. Each copy keeps the one it saw
+first and rejects the other on every later exchange (the tampering
+signature), so the copies disagree for good about who holds the open seat,
+and on Cy's copy Bo's rows are never admitted. Elsewhere a repeated row id
+harms only its own author's rows; a confirm decides another author's
+admission, which is why it matters here.
+
+- **Reproduction:** `tests/seat-attacks-review-7.spec.ts`, "F3: the creator
+  signs two confirms at one row id ..." (`test.fail`).
+
 #### D151 — A member's close erases the other member's moves
 
 *Status: **fixed** 27 September (the D151 to D154 commit; its run is read
@@ -6262,7 +6316,7 @@ omission, there by dropping a tap), D80.
 
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
 
-*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144), the fifth (D145 to D150, one high) and the sixth (D151 to D157, one high) did not.*
+*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144), the fifth (D145 to D150, one high) and the sixth (D151 to D157, one high) did not. The seventh (27 September, told only the invariant that no row by one author makes another author's row late, hidden, superseded or unadmitted, in any table) found D158 to D160, one high, whose attacker is the creator; a member, a waiting asker or a stranger reached nothing high. It did not.*
 
 *Status: **closed 25 September, green re-earned on the seat model**
 (`c997bd4`): CI run `36207287432` read green, both D80 tests passing on all

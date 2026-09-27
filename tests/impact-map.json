@@ -3022,6 +3022,18 @@
       "tests/seat-admission.spec.ts",
       "tests/session-db.ts"
     ],
+    "tests/seat-attacks-review-7.spec.ts": [
+      "src/cbor.ts",
+      "src/identity.ts",
+      "src/replicated-batch.ts",
+      "src/replicated-frame.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/session-id.ts",
+      "tests/fixture/chess/engine.js",
+      "tests/fixture/chess/store.js",
+      "tests/seat-attacks-review-7.spec.ts"
+    ],
     "tests/seat-attacks.spec.ts": [
       "src/cbor.ts",
       "src/identity.ts",
