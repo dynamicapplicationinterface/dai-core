@@ -752,7 +752,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which rows written later than what the closer had seen are not admitted. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read whether a session is closed from `_dai_close_current` (any row for the session). Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
+      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which rows written later than what the closer had seen are not admitted. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read whether a session is closed in `_dai_closed` (a row for the session), not `_dai_close_current`: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
     why: "A close is final for the group, and it is decided by what the closer had seen rather than by a clock. Folding it into \"resign\" would end a session the other person had not finished with.",
     enforced: ["runtime", "prose"],
     anchors: [
@@ -1229,11 +1229,11 @@ export const VIEWS: readonly ViewEntry[] = [
     anchor: { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_member AS" },
   },
   {
-    name: "_dai_close_current",
+    name: "_dai_closed",
     shapes: SESSION,
-    holds: "The close of each closed session: one row per replica the closer had seen, with its highest seq.",
-    read: "Whether a session is closed: any row for it.",
-    anchor: { file: "src/replicated.ts", contains: "CREATE TABLE IF NOT EXISTS _dai_close" },
+    holds: "session: each session closed by a close its rule permits (under close=any a member's, under close=creator the creator's).",
+    read: "Whether a session is closed: a row for it.",
+    anchor: { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_closed AS" },
   },
 ];
 

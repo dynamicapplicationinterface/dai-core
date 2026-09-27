@@ -296,6 +296,7 @@ export {
   parentsOf,
   raiseSeq,
   rowId,
+  sessionsOf,
   startSession,
   writeTargetOf,
   type NewSession,

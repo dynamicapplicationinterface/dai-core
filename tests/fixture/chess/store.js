@@ -374,8 +374,8 @@ export class Store {
  // The acting side is this copy's seat — a resignation can come on the other player's turn.
  event(kind,detail=''){const st=this.playable();const color=this.myColor(st.game)||st.turn;this.w.insert('game_events',{seat:window.daiKit.seatBytes(this.seatFor(st.game,color)),game_id:st.game.id,after_ply:st.ply,color,kind,detail},st.game.session);this.clearDraft(st.game.id);}
  resign(){this.event('resign');}
- /** Whether this game's session has been closed — a `_dai_close` row names it. */
- isClosed(session){return !!this.one('SELECT 1 AS x FROM _dai_close_current WHERE lower(hex(_r_session)) = ? LIMIT 1',[session]);}
+ /** Whether this game's session has been closed, by a close its rule permits (`_dai_closed`). */
+ isClosed(session){return !!this.one('SELECT 1 AS x FROM _dai_closed WHERE lower(hex(session)) = ? LIMIT 1',[session]);}
  /**
   * Close the match: the heavier, separate act from a resignation (T1-D31/D32).
   *

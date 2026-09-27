@@ -13,7 +13,7 @@
  * be untestable in the other two.
  */
 import { showAuthorId } from "./identity.js";
-import { SEAT_TABLES } from "./replicated.js";
+import { SESSION_SYSTEM_TABLES } from "./replicated.js";
 import { sessionIdOf } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
@@ -627,6 +627,27 @@ export function confirmSeat(db: Rows, session: Uint8Array, seat: Uint8Array, hol
   createEntity(db, "_dai_confirm", entity, { seat, holder }, session);
 }
 
+/**
+ * The sessions `me` takes part in, as lowercase hex: those it holds a seat in,
+ * and those it waits in, having asked for an open seat nobody holds yet
+ * (admission's `waiting`). What the host opens a mailbox for (D149): a session
+ * that merely arrived in a file, in which this copy holds and asks for nothing,
+ * is none of its business.
+ */
+export function sessionsOf(db: Rows, me: Uint8Array): string[] {
+  if (db.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_member'").length === 0) return [];
+  return db
+    .all(
+      "SELECT lower(hex(session)) AS s FROM _dai_member WHERE replica = ?1 " +
+        "UNION SELECT lower(hex(b._r_session)) FROM _dai_binding_current b " +
+        "JOIN _dai_open_seat o ON o.session = b._r_session AND o.seat = b.seat " +
+        "WHERE b._r_replica = ?1 AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = o.session AND h.seat = o.seat) " +
+        "ORDER BY 1",
+      [me],
+    )
+    .map((row) => String(row["s"]));
+}
+
 /* ---------------------------------------------------- the invite carrier */
 
 /**
@@ -1068,8 +1089,9 @@ export function mergeFrom(
    * (BATCH_DIGEST_MISMATCH, in the name of whoever wrote the row, unless the
    * batch it names was refused already). A row that claims none and is listed by
    * none is unsigned, and merges under the legacy rule until step 6, except in
-   * the seat tables, where it is refused now (BATCH_UNSIGNED, D133): an unsigned
-   * confirm under the creator's id would otherwise seat whoever wrote it. The
+   * the seat and close tables, where it is refused now (BATCH_UNSIGNED, D133,
+   * D147): an unsigned confirm under the creator's id would otherwise seat
+   * whoever wrote it, and an unsigned close under it end her session. The
    * exception is keyed by nothing but the table: a row naming this copy's own
    * id is refused too, since the forgery is a row under the creator's id
    * arriving at the creator's copy. A row this copy already holds at the same
@@ -1077,7 +1099,7 @@ export function mergeFrom(
    * duplicate, as ever, and a different one is rejected as a second row under
    * one id (a save of this copy's own pending rows, merged back, is the first).
    */
-  const seatTables = new Set<string>(SEAT_TABLES);
+  const seatTables = new Set<string>(SESSION_SYSTEM_TABLES);
   const signedRows: { table: string; row: ReplicatedRow }[] = [];
   const unsignedRows: { table: string; row: ReplicatedRow }[] = [];
   for (const table of tables) {

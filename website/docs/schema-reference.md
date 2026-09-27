@@ -111,8 +111,8 @@ Which open seat is contested: nobody holds it and more than one copy asked for i
 
 Whether this copy may write in a session.
 
-### `_dai_close_current`
+### `_dai_closed`
 
-**Applies to** session. The close of each closed session: one row per replica the closer had seen, with its highest seq.
+**Applies to** session. session: each session closed by a close its rule permits (under close=any a member's, under close=creator the creator's).
 
-Whether a session is closed: any row for it.
+Whether a session is closed: a row for it.

@@ -30,7 +30,8 @@ const UPKEEP = [
   /\bUPDATE\s+OF\s+_r_superseded\b/gi,
   /\b(?:OLD|NEW)\._r_superseded\b/g,
 ];
-const RAW_SEAT_TABLE = /\b(?:FROM|JOIN)\s+["'`[]?_dai_(?:seat|binding|confirm|close)\b(?!_)/i;
+// _dai_close_current too: whether a session is closed is _dai_closed, which applies its rule (D146).
+const RAW_SEAT_TABLE = /\b(?:FROM|JOIN)\s+["'`[]?_dai_(?:(?:seat|binding|confirm|close)\b(?!_)|close_current\b)/i;
 
 /** Every read of the cache, or of a raw seat or close table, in one source, by line. Comment lines are prose, not code. */
 function flagReadsIn(source: string, options: { rawSeatTables: boolean }): FlagRead[] {

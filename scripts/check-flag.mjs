@@ -38,8 +38,8 @@ const EXCEPTIONS = {
     "a rule's anchor, the text it pins in the column's declaration",
   "src/kit.ts: FROM _dai_seat v JOIN _dai_creator":
     "every value the creator ever gave a seat, in its session: history the seat's rows may act for, not its current value",
-  "src/runtime/bootloader.ts: FROM _dai_seat\")":
-    "which sessions this copy has seat rows in, for their mailboxes: a list of sessions, not a current row",
+  "src/runtime/bootloader.ts: \"SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_close_current\",":
+    "a document built before _dai_closed existed reads its close table as it always did; a current document takes the view",
   "src/runtime/bootloader.ts: FROM _dai_seat WHERE _r_session = ?":
     "the creator test for a document built before _dai_creator existed; a current document takes the view",
 };

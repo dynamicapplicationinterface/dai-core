@@ -1446,16 +1446,18 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     return merge.authoredBatchAbove(r, mountReplica, watermark, tables, session, mountDocument, { held: new Set(unlanded.keys()) });
   };
 
-  /** The sessions this copy holds seats for, as hex — each has a mailbox of its own. */
+  /**
+   * The sessions this copy takes part in, as hex, each with a mailbox of its
+   * own: a seat it holds, or an open seat it waits on (`sessionsOf`, D149). A
+   * session that only arrived in a file, in which this copy has no part, gets
+   * no mailbox.
+   */
   const heldSessions = (): string[] => {
-    if (!liveDb) return [];
+    if (!liveDb || !mergeModule || !mountReplica) return [];
     try {
-      const present = liveDb.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = '_dai_seat'");
-      if (present.length === 0) return [];
-      return liveDb
-        .selectObjects("SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_seat")
-        .map((row: Any) => String(row.s))
-        .filter((s: string) => /^[0-9a-f]{32}$/.test(s));
+      return ((mergeModule as Any).sessionsOf(frameRows(liveDb), mountReplica) as string[]).filter((s: string) =>
+        /^[0-9a-f]{32}$/.test(s),
+      );
     } catch {
       return [];
     }
@@ -1469,12 +1471,19 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const closedSessions = (): string[] => {
     if (!liveDb) return [];
     try {
-      const present = liveDb.selectObjects(
-        "SELECT 1 AS x FROM sqlite_schema WHERE type IN ('view', 'table') AND name = '_dai_close_current'",
-      );
-      if (present.length === 0) return [];
+      // Closed by a close the session's rule permits, as admission judges a row
+      // late (D146). A document built before _dai_closed existed reads its
+      // close table as it always did.
+      const db = liveDb;
+      const has = (name: string): boolean =>
+        db.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE type = 'view' AND name = ?", [name]).length > 0;
+      if (!has("_dai_close_current")) return [];
       return liveDb
-        .selectObjects("SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_close_current")
+        .selectObjects(
+          has("_dai_closed")
+            ? "SELECT lower(hex(session)) AS s FROM _dai_closed"
+            : "SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_close_current",
+        )
         .map((row: Any) => String(row.s))
         .filter((s: string) => /^[0-9a-f]{32}$/.test(s));
     } catch {
@@ -2102,6 +2111,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           if (closePolicy === "creator") {
             const isCreator = creatorIs(sid, me);
             if (!isCreator) throw new Error("CLOSE_NOT_PERMITTED");
+          } else if (
+            // Under close=any, a member: a close from anyone else ends nothing
+            // (D145), so it is refused here rather than written and ignored.
+            rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_member'").length > 0 &&
+            rows.all("SELECT 1 FROM _dai_member WHERE session = ? AND lower(hex(replica)) = ? LIMIT 1", [sid, me]).length === 0
+          ) {
+            throw new Error("CLOSE_NOT_PERMITTED");
           }
           // The frontier: per replica, the highest seq it authored in this
           // session across every replicated table (author rows and roster rows

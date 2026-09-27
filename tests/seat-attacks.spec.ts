@@ -11,6 +11,7 @@ import {
   createEntity,
   deleteEntity,
   ensureReplica,
+  sessionsOf,
   startSession,
   type ReplicatedRow,
   type Rows,
@@ -1071,4 +1072,119 @@ test("cold review 4: a change naming a seat other than its head's is refused, no
   expect(err, "Bo's change naming Ada's seat is refused by name").toMatch(/SEAT_NOT_HELD/);
   expect(currentSans(w.boCopy)).toEqual(["e4", "e5"]);
   w.close();
+});
+
+/*
+ * The fifth cold review, of D140 to D144: the close table is the roster
+ * sibling that never got the seat treatment. Who may end a session is the
+ * same question as who may move (D145 to D147), and two small ones beside it
+ * (D148, D149). A test marked test.fail is a hole still open; its note names
+ * the entry whose fix flips it.
+ */
+
+const closeSchema = (close: "any" | "creator") => SCHEMA.replace("close=creator", `close=${close}`);
+const CY = bytes(0x20); // a stranger: holds a copy, never a seat
+
+/** Ada and Bo seated, one move each, both admitted, under the given close rule. */
+function closeGame(close: "any" | "creator") {
+  const db = openWith(closeSchema(close));
+  honestRoster(db, ADA);
+  put(db, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
+  put(db, "moves", BO, 2, 6, { seat: OPEN_SEAT, san: "e5" });
+  return db;
+}
+
+/** The sessions this copy calls closed, as the host and the apps read it (`_dai_closed`). */
+const closedSessions = (db: Rows): string[] => db.all("SELECT lower(hex(session)) AS s FROM _dai_closed").map((r) => String(r["s"]));
+
+test.describe("cold review 5: a close counts only from an author the session's rule permits", () => {
+  test("close=any: a stranger's close row in the session makes nobody's move late", () => {
+    const db = closeGame("any");
+    put(db, "_dai_close", CY, 1, 9, { replica: CY, seq: 1 });
+    expect(admitted(db), "a non-member's close decides nothing").toEqual(["e4", "e5"]);
+    expect(closedSessions(db), "and the session is not closed").toEqual([]);
+    db.close();
+  });
+
+  test("close=any: the stranger's close, signed with his own key and merged, decides nothing", async () => {
+    const ada = await person();
+    const bo = await person();
+    const cy = await person();
+    const g = await honestGame(ada, bo);
+    const cyCopy = openGame();
+    ensureReplica(cyCopy, cy.author);
+    await merge(cyCopy, g.adaCopy, cy);
+    createEntity(cyCopy, "_dai_close", rnd(), { replica: cy.author, seq: 1 }, g.session);
+    await seal(cyCopy, cy);
+    await merge(g.adaCopy, cyCopy, ada);
+    expect(gameMoves(g.adaCopy, g.session).map((m) => m.split("@")[0]), "a merged non-member close decides nothing").toEqual(["e4"]);
+    g.adaCopy.close();
+    g.boCopy.close();
+    cyCopy.close();
+  });
+
+  test("close=any: a member's close still closes the session", () => {
+    const db = closeGame("any");
+    put(db, "_dai_close", BO, 3, 9, { replica: BO, seq: 3 });
+    put(db, "_dai_close", BO, 4, 9, { replica: ADA, seq: 4 });
+    expect(admitted(db), "what the closer had seen stays").toEqual(["e4", "e5"]);
+    expect(closedSessions(db)).toEqual([hex(S)]);
+    put(db, "moves", ADA, 5, 10, { seat: ADA_SEAT, san: "Nf3" });
+    expect(admitted(db), "a later move is late").toEqual(["e4", "e5"]);
+    db.close();
+  });
+
+  test("close=creator: the joiner's close, which admission ignores, does not close the session for the host or the apps", () => {
+    const db = closeGame("creator");
+    put(db, "_dai_close", BO, 3, 9, { replica: BO, seq: 3 });
+    expect(admitted(db), "admission ignores the joiner's close").toEqual(["e4", "e5"]);
+    expect(closedSessions(db), "the session is not closed").toEqual([]);
+    db.close();
+  });
+
+  test("close=creator: an unsigned close under the creator's id is refused at the merge", async () => {
+    const bo = closeGame("creator");
+    const cy = openWith(closeSchema("creator"));
+    cy.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 1, 9)", [CY]);
+    put(cy, "_dai_close", ADA, 50, 9, { replica: CY, seq: 1 });
+    const report = await mergeSibling(bo, cy);
+    expect(report.refusedBatches, "refused as unsigned, under the id it names").toContainEqual({
+      author: showAuthorId(ADA),
+      reason: "BATCH_UNSIGNED",
+    });
+    expect(admitted(bo), "and it decides nothing").toEqual(["e4", "e5"]);
+    bo.close();
+    cy.close();
+  });
+});
+
+test("cold review 5: a creator who also waits in her own open seat sees each of her rows once", () => {
+  const db = openWith(SCHEMA);
+  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 3, 3)", [ADA]);
+  put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT, nonce: NONCE });
+  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT, nonce: null });
+  // newSession({ solo: true }) asks for its own open seat before the kit confirms it.
+  put(db, "_dai_binding", ADA, 3, 3, { seat: OPEN_SEAT });
+  createEntity(db, "games", nextEntity(), { title: "solo" }, S);
+  expect(db.all("SELECT title FROM games_current").map((r) => String(r["title"])), "admitted as the creator's").toEqual(["solo"]);
+  expect(db.all("SELECT title FROM games_pending").map((r) => String(r["title"])), "and not also waiting").toEqual([]);
+  db.close();
+});
+
+test("cold review 5: the host opens mailboxes only for sessions this copy is a member of or waits in", () => {
+  const db = closeGame("any");
+  // A stranger's own session, arriving in a whole file: his seat rows there.
+  const T = sessionIdOf(CY, bytes(0x09))!;
+  applyRow(db, "_dai_seat", {
+    _r_replica: CY,
+    _r_seq: 5,
+    _r_lc: 20,
+    _r_entity: nextEntity(),
+    _r_parents: "[]",
+    _r_deleted: 0,
+    _r_session: T,
+    columns: { seat: bytes(0xb1), nonce: bytes(0x09) },
+  });
+  expect(sessionsOf(db, ADA), "only the session Ada is in").toEqual([hex(S)]);
+  db.close();
 });

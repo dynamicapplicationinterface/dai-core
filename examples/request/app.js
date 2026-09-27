@@ -95,7 +95,7 @@ function seats(session) {
     `SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) <> ? LIMIT 1`,
     [session, creator ?? ""],
   );
-  const closed = !!one("SELECT 1 AS x FROM _dai_close_current WHERE lower(hex(_r_session)) = ? LIMIT 1", [session]);
+  const closed = !!one("SELECT 1 AS x FROM _dai_closed WHERE lower(hex(session)) = ? LIMIT 1", [session]);
   const isWriter = !!mine && mine === creator;
   return {
     isWriter,

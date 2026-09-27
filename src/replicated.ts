@@ -458,6 +458,22 @@ function replicationColumns(session: boolean): string {
  */
 
 /**
+ * Whether the session's rule permits the author of close row `close` (T1-D32).
+ * A close is a seat action: who may end a session is the same question as who
+ * may move. Under close=creator, only the session's creator; under close=any,
+ * only a member, one holding a seat in the close's own session (D145). A
+ * stranger's close, signed or not, ends nothing. Baked in at compile time, since
+ * the rule is known then. Admission's late-row test and `_dai_closed` both read
+ * it, so the host, the kit and the apps call a session closed exactly when its
+ * rows are judged late.
+ */
+function closePermitted(close: string, closeCreator: boolean): string {
+  return closeCreator
+    ? `${close}._r_replica IN (SELECT c.replica FROM _dai_creator c WHERE c.session = ${close}._r_session)`
+    : `EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = ${close}._r_session AND m.replica = ${close}._r_replica)`;
+}
+
+/**
  * The `_heads` view — heads are where admission is enforced (T1-D29).
  *
  * No view reads the stored `_r_superseded` flag (D140). It is a display cache,
@@ -512,22 +528,17 @@ function headsView(
   // both can flip as rows arrive, so both are recomputed here rather than stored.
   const member = (row: string): string =>
     `EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = ${row}._r_session AND m.replica = ${row}._r_replica)`;
-  // A close counts only if the policy permits its author (T1-D32). Under
-  // close=creator, that is the replica that authored the session's seat rows —
-  // baked in here at compile time, since the policy is known then. Under
-  // close=any the clause is empty and every member's close counts.
-  const authored = (close: string, row: string): string =>
-    closeCreator
-      ? ` AND ${close}._r_replica IN (SELECT c.replica FROM _dai_creator c WHERE c.session = ${row}._r_session)`
-      : "";
+  // A close counts only if the session's rule permits its author (T1-D32,
+  // D145): `closePermitted`, the one reading `_dai_closed` shares.
+  const authored = (close: string): string => ` AND ${closePermitted(close, closeCreator)}`;
   // Not late: the session is not closed (by a permitted close), or some permitted
   // close row for it recorded this row's replica with a seq at least this high —
   // the closer had seen it. seq, not a clock: a row is dropped because the close
   // did not see it (T1-D31).
   const notLate = (row: string): string =>
-    `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session${authored("x", row)})` +
+    `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session${authored("x")})` +
     ` OR EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session` +
-    ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq${authored("x", row)}))`;
+    ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq${authored("x")}))`;
   /*
    * Who may author this table's rows, when its marker says (D15).
    *
@@ -612,7 +623,8 @@ function headsView(
   // author (D142): another asker's row may never be admitted, so it neither
   // hides nor forks this one. `_waiting` keeps tombstones, as `_heads` does, so
   // a writer versions its own waiting delete (D143); `_pending` is what a screen
-  // shows, as `_current` is.
+  // shows, as `_current` is. A row already admitted is not waiting (D148): a
+  // member who also asks for a seat nobody holds sees each row once.
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${admitted("r")}
@@ -620,7 +632,7 @@ function headsView(
 
 CREATE VIEW IF NOT EXISTS ${q}_waiting AS
   SELECT r.* FROM ${q} r
-   WHERE ${pendingRow("r")}
+   WHERE ${pendingRow("r")} AND NOT (${admitted("r")})
      AND NOT ${supersededBy("r", `((${admitted("c")}) OR (c._r_replica = r._r_replica AND ${pendingRow("c")}))`)};
 
 CREATE VIEW IF NOT EXISTS ${q}_pending AS
@@ -779,7 +791,7 @@ CREATE VIEW IF NOT EXISTS ${q}_current AS
  * in-memory database and runs the schema exactly once; the first thing to hit
  * it was a second person opening a document that had been used.
  */
-function documentTables(session: boolean): string {
+function documentTables(session: boolean, closeCreator = false): string {
   const base = `
 CREATE TABLE IF NOT EXISTS _dai_replica (
   id    BLOB PRIMARY KEY CHECK (length(id) = 16),
@@ -866,8 +878,9 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * Nothing here is ordered by a clock, so a backdated row gains nothing, and a
    * hold, once made, never moves: the repair (reseat) is refused on a seat
    * anyone has been confirmed in. A row's author is its key once its batch is
-   * verified, and a merge refuses an unsigned row in these three tables
-   * (BATCH_UNSIGNED, D133, `SEAT_TABLES`); step 6 extends that to every table.
+   * verified, and a merge refuses an unsigned row in these three tables and the
+   * close (BATCH_UNSIGNED, D133, D147, `SESSION_SYSTEM_TABLES`); step 6 extends
+   * that to every table.
    */
   const member = `
 CREATE VIEW IF NOT EXISTS _dai_creator AS
@@ -904,6 +917,14 @@ CREATE VIEW IF NOT EXISTS _dai_holder AS
 
 CREATE VIEW IF NOT EXISTS _dai_member AS
   SELECT DISTINCT session, replica FROM _dai_holder;
+
+-- The closed sessions: a close the session's rule permits names them (D146).
+-- Every reader of "is this session closed" (the host, the kit, the apps)
+-- reads this, never _dai_close_current, so it agrees with admission, which
+-- drops a late row by the same rule.
+CREATE VIEW IF NOT EXISTS _dai_closed AS
+  SELECT DISTINCT x._r_session AS session FROM _dai_close_current x
+   WHERE ${closePermitted("x", closeCreator)};
 `;
 
   /*
@@ -968,13 +989,17 @@ CREATE VIEW IF NOT EXISTS _dai_seat_rules AS
 
 /**
  * The seat tables: who created a session, who asked for its open seat, and whom
- * the creator confirmed in it. A merge refuses an unsigned row in any of them
- * (BATCH_UNSIGNED, D133), ahead of step 6's refusal in every table, because an
- * unsigned row is a row under an id nobody proved, and here it decides a seat.
+ * the creator confirmed in it.
  */
 export const SEAT_TABLES = ["_dai_seat", "_dai_binding", "_dai_confirm"] as const;
 
-/** The replicated system tables a session document carries beside its author tables (T1-D29). */
+/**
+ * The replicated system tables a session document carries beside its author
+ * tables (T1-D29): the seat tables and the close. A merge refuses an unsigned
+ * row in any of them (BATCH_UNSIGNED, D133, D147), ahead of step 6's refusal in
+ * every table, because an unsigned row is a row under an id nobody proved, and
+ * here it decides a seat or ends a session.
+ */
 export const SESSION_SYSTEM_TABLES = [...SEAT_TABLES, "_dai_close"] as const;
 
 /**
@@ -1157,7 +1182,7 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
   out += sql.slice(cursor);
 
   return {
-    sql: documentTables(session !== null) + out + authorRulesView(authors) + seatRulesView(seats),
+    sql: documentTables(session !== null, session?.close === "creator") + out + authorRulesView(authors) + seatRulesView(seats),
     // Author tables only — the manifest's `replication.tables` surface, and what
     // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
     // the schema and the digest but not this list; they are implicit in a session
