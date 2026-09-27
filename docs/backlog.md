@@ -4402,9 +4402,130 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D151 — A member's close erases the other member's moves
+
+*Status: **ruled — not built.** Filed 27 September from the sixth cold
+review (of D145 to D150, finding F1), rated high. Ruled: option (b), a close
+binds only its author. A close makes only the closer's own later rows late,
+and those are ordered by the closer's own seq, so no signed row removes
+another person's move, the property step 5 exists for. A close ends the
+closer's participation, not the other player's; what the session means to an
+app (a resignation ends a chess game) is the app reading `_dai_closed` under
+its rule, as it already does. What changes is authority, not the screen.
+With D152 to D155 in one commit, before D127.*
+
+*Two consequences, ruled with it:*
+- *The frontier loses its authority. With a close binding only its author,
+  the list of seqs the closer had seen has no honest job left: it stays a
+  column in this format version, admission ignores it, and step 6's format
+  bump retires it. T1-D31 in `docs/replicated-tables.md` gets an amendment
+  with the fix: signing proved who wrote a close and could not prove the
+  list, so the fix was to stop the list mattering.*
+- *The residual this accepts: a member who keeps playing after seeing the
+  other's close is held only by the write gate, which is advisory. That is
+  the right residual: their own copy shows the session closed.*
+
+T1-D31 made a close a stated frontier, one row per replica the closer had
+seen with its highest seq, and a row late unless some close covers it; its
+own note called the frontier a claim a member is trusted to state honestly
+until rows are signed. Signing arrived and did not close it. Under
+`close=any`, Bo signs one close row naming only himself, merged into Ada's
+copy with nothing refused: Ada's `e4`, which Bo's copy held and showed, is
+late and leaves her board.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 6: close=any,
+  a member's signed close naming only himself leaves the other member's moves
+  admitted" (`test.fail`, run red without it first).
+
+#### D152 — A second close extends the first
+
+*Status: **ruled — not built.** Filed 27 September from the sixth cold
+review (F2), rated medium. Ruled: per author, only the first close counts,
+the one lowest in the author's own seq. With D151.*
+
+Nothing refuses a close of a session already closed, and the union of closes
+cannot tell a concurrent close from a later one. A closer who writes a row
+after their close and closes again has the row admitted, under `close=any`
+and `close=creator` alike, though chess tells both players no new moves can be
+added.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "cold review 6: a close is
+  final", the two re-close tests (`test.fail`).
+
+#### D153 — A tombstone of a close reopens the session
+
+*Status: **ruled — not built.** Filed 27 September from the sixth cold
+review (F3), rated low. Ruled: a close cannot be revoked; admission and
+`_dai_closed` ignore deletes of close rows. With D151.*
+
+Under `close=creator`, the creator's `deleteEntity` of her close rows takes
+the session out of `_dai_closed` and admits a move written after the close.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "a tombstone of the
+  creator's close rows does not reopen the session" (`test.fail`).
+
+#### D154 — The host's closed list for an older document ignores the close rule
+
+*Status: **ruled — not built.** Filed 27 September from the sixth cold
+review (F4), rated low. Ruled: the fallback applies the close rule, which the
+bootloader already holds. With D151.*
+
+For a document built before `_dai_closed`, the bootloader reads any
+`_dai_close_current` row as a close, so under `close=creator` a joiner's
+close, which admission ignores, retires the creator's mailbox lane (D146's
+defect on older documents). The flag check's exception for that line gave a
+reason that hid the disagreement.
+
+- **Reproduction:** `tests/seat-attacks.spec.ts`, "a document built before
+  _dai_closed calls closed only what its rule permits" (`test.fail`; it reads
+  the host's read through an exported function once the fix gives one).
+
+#### D155 — Documents built before 24 September open no mailbox
+
+*Status: **ruled: not supported.** Filed 27 September from the sixth cold
+review (F5), rated low. Documents built before 24 September are not supported
+by this runtime; step 6's format version is where an older document is met
+(read-only, with the update sentence). No fallback code. Not folded as a
+test: nothing will flip it.*
+
+`sessionsOf` (D149) reads `_dai_open_seat`, which documents built before 24
+September lack; it throws, the host's `heldSessions` catches it, and no
+mailbox opens for any session. The step-5 kit's `seats()` fails on the same
+documents.
+
+#### D156 — The flag check misses closedness reads written in ordinary ways
+
+*Status: **ruled — not built.** Filed 27 September from the sixth cold
+review (F6), rated medium. Ruled: the names `_dai_close_current` and
+`_dai_close_heads` are forbidden in any literal outside `src/replicated.ts`,
+whatever else the literal holds; `.sql` files and inline SQL scripts are
+scanned as text. Its own commit, after D151's.*
+
+A literal is checked for raw tables only when it says `SELECT`, so SQL built
+with `+=`, fragments joined from an array, or a ternary choosing the `FROM`
+clause pass; so does a comma join after a table-valued function, and the
+policy-blind `_dai_close_heads`. An app's own view over `_dai_close_current`
+in its inline `<script type="application/sql">` is tokenized as JavaScript,
+and a `schema.sql` file is not scanned.
+
+- **Reproduction:** `tests/flag-check.spec.ts`, "check-flag sees a closedness
+  read in ...", seven cases (`test.fail`).
+
+#### D157 — A read in a joined literal is placed at the literal's first line
+
+*Status: **ruled — not built.** Filed 27 September from the sixth cold
+review (F7), rated low. Ruled: each part keeps its own position. With D156.*
+
+The check joins `+`-joined literals and reports a read at the first line, so
+an exception names a line that holds no table and keeps excusing when the
+line below it changes from `_dai_seat` to `_dai_close_current`.
+
+- **Reproduction:** `tests/flag-check.spec.ts`, "a read in a +-joined literal
+  is reported on its own line ..." (`test.fail`).
+
 #### D145 — Under close=any, a stranger's close ends the session and every move with it
 
-*Status: **ruled — not built.** Filed 26 September from the fifth cold
+*Status: **fixed** 26 September (`2c492b7`, run 36289559935 read green). Filed 26 September from the fifth cold
 review (of D140 to D144, finding c1), rated high. Ruled: a close is a seat
 action, so this is step 5. Under `close=any` a close counts only from a member
 of the session; under `close=creator`, only from its creator. One commit with
@@ -4424,7 +4545,7 @@ merge, and the report refuses nothing. Chess and tic-tac-toe declare
 
 #### D146 — The host and the apps call a session closed when admission does not
 
-*Status: **ruled — not built.** Filed 26 September from the fifth cold
+*Status: **fixed** 26 September, with D145 (`2c492b7`). Filed 26 September from the fifth cold
 review (finding c2), rated medium. Ruled: one compiled view of closed sessions
 applies the session's rule, and every reader (host, kit, apps) reads it;
 `_dai_close_current` is forbidden outside `src/replicated.ts`, held by the
@@ -4442,7 +4563,7 @@ creator's mailbox lane for good.
 
 #### D147 — An unsigned close under the creator's id is taken, and closes the session
 
-*Status: **ruled — not built.** Filed 26 September from the fifth cold
+*Status: **fixed** 26 September, with D145 (`2c492b7`). Filed 26 September from the fifth cold
 review (finding c3), rated medium. Ruled: `_dai_close` joins the tables whose
 unsigned rows a merge refuses (`BATCH_UNSIGNED`); deferring it at D133 was a
 mistake. With D145.*
@@ -4456,7 +4577,7 @@ no batch merges, and under `close=creator` counts as hers.
 
 #### D148 — An admitted row also shows as waiting
 
-*Status: **ruled — not built.** Filed 26 September from the fifth cold
+*Status: **fixed** 26 September, with D145 (`2c492b7`). Filed 26 September from the fifth cold
 review (finding c4), rated low. Ruled: `t_waiting` excludes admitted rows.
 With D145.*
 
@@ -4471,7 +4592,7 @@ sees her rows in both `t_current` and `t_pending`, so an app that shows
 
 #### D149 — The host opens a mailbox for a session this copy has no part in
 
-*Status: **ruled — not built.** Filed 26 September from the fifth cold
+*Status: **fixed** 26 September, with D145 (`2c492b7`). Filed 26 September from the fifth cold
 review (finding a), rated low. Ruled: the sessions the host opens mailboxes for
 are those this copy is a member of or waits in. With D145.*
 
@@ -4486,7 +4607,7 @@ decides which mailboxes open.
 
 #### D150 — The flag check misses reads a person could write by mistake
 
-*Status: **ruled — not built.** Filed 26 September from the fifth cold
+*Status: **fixed** 26 September (`a34bca2`, run 36289801499 read green after one WebKit shard, cancelled at its 25-minute limit with nothing failed, was rerun). Filed 26 September from the fifth cold
 review (finding b), rated medium. Ruled: rebuild it on the TypeScript scanner:
 string-literal and template contents, joined across lines, case-insensitive,
 every script file type and inline HTML, `examples/` included, and exceptions
@@ -6133,7 +6254,7 @@ omission, there by dropping a tap), D80.
 
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
 
-*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144) and the fifth (D145 to D150, one high) did not.*
+*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144), the fifth (D145 to D150, one high) and the sixth (D151 to D157, one high) did not.*
 
 *Status: **closed 25 September, green re-earned on the seat model**
 (`c997bd4`): CI run `36207287432` read green, both D80 tests passing on all

@@ -135,3 +135,66 @@ test("the repository's own source passes, with every exception still earning its
   const run = spawnSync(process.execPath, [join(repo, "scripts", "check-flag.mjs")], { cwd: repo, encoding: "utf8" });
   expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
 });
+
+/*
+ * The sixth cold review: reads of whether a session is closed that a person
+ * could write by mistake, with the table name in a literal, so none is the
+ * stated limit. A test marked test.fail is a hole still open; its note names
+ * the entry whose fix flips it.
+ */
+const CLOSED_MISSES: Record<string, { name: string; source: string }> = {
+  "SQL accumulated with +=": {
+    name: "a.ts",
+    source: 'let sql = "SELECT 1 AS x ";\nsql += "FROM _dai_close_current WHERE _r_session = ?";\ndb.all(sql, [s]);\n',
+  },
+  "SQL fragments in an array joined": {
+    name: "a.ts",
+    source: 'db.all(["SELECT 1 AS x", "FROM _dai_close_current WHERE _r_session = ?"].join(" "), [s]);\n',
+  },
+  "a ternary choosing the FROM clause": {
+    name: "a.ts",
+    source: 'db.all("SELECT 1 AS x " + (old ? "FROM _dai_close_current WHERE _r_session = ?" : "FROM _dai_closed WHERE session = ?"), [s]);\n',
+  },
+  "a comma join after a table-valued function": {
+    name: "a.ts",
+    source: "db.all(`SELECT 1 AS x FROM json_each(?) j, _dai_close_current x WHERE x._r_session = j.value`);\n",
+  },
+  "the policy-blind heads view of the close": {
+    name: "a.ts",
+    source: 'db.all("SELECT 1 AS x FROM _dai_close_heads WHERE _r_session = ? AND _r_deleted = 0");\n',
+  },
+  "an app schema view in its inline SQL script": {
+    name: "index.html",
+    source: '<script type="application/sql">\nCREATE VIEW my_closed AS SELECT DISTINCT _r_session AS session FROM _dai_close_current;\n</script>\n',
+  },
+  "an app schema view in a schema.sql file": {
+    name: "schema.sql",
+    source: "CREATE VIEW my_closed AS SELECT DISTINCT _r_session AS session FROM _dai_close_current;\n",
+  },
+};
+
+for (const [what, { name, source }] of Object.entries(CLOSED_MISSES)) {
+  test(`check-flag sees a closedness read in ${what}`, () => {
+    test.fail(true, "D156: the close views' names are checked only in a literal that says SELECT, and .sql is not scanned");
+    const { status, output } = scanOne(name, source);
+    expect(status, `the check should fail this read; it said: ${output.trim()}`).toBe(1);
+  });
+}
+
+test("check-flag sees a comma join broken across lines", () => {
+  const { status, output } = scanOne("a.ts", "db.all(`SELECT 1 AS x FROM _dai_member m,\n   _dai_close_current x WHERE x._r_session = m.session`);\n");
+  expect(status, output).toBe(1);
+});
+
+test("a read in a +-joined literal is reported on its own line, so an exception cannot excuse a line that changed below it", () => {
+  test.fail(true, "D157: a joined literal's reads are placed at its first line");
+  const before = 'db.all("SELECT lower(hex(_r_session)) AS s " +\n  "FROM _dai_seat");\n';
+  // Keyed to the line that names the table, where the read is.
+  const key = 'src/a.ts: raw-seat-table: "FROM _dai_seat");';
+  expect(flagReadProblems(ts, [{ path: "src/a.ts", source: before }], { [key]: "a list of sessions" })).toEqual([]);
+  const after = 'db.all("SELECT lower(hex(_r_session)) AS s " +\n  "FROM _dai_close_current");\n';
+  expect(
+    flagReadProblems(ts, [{ path: "src/a.ts", source: after }], { [key]: "a list of sessions" }),
+    "an exception for a seat list does not excuse a closedness read that replaced it",
+  ).not.toEqual([]);
+});
