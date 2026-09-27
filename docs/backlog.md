@@ -4402,9 +4402,115 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D145 — Under close=any, a stranger's close ends the session and every move with it
+
+*Status: **ruled — not built.** Filed 26 September from the fifth cold
+review (of D140 to D144, finding c1), rated high. Ruled: a close is a seat
+action, so this is step 5. Under `close=any` a close counts only from a member
+of the session; under `close=creator`, only from its creator. One commit with
+D146 to D149, before D127.*
+
+`notLate`'s policy clause is empty under `close=any`, so any author's
+`_dai_close` row in the session closes it, though the code comment says "every
+member's close counts". Cy, who holds a copy and no seat, writes one close row
+in Ada's session naming only himself. Every move of Ada's and Bo's is then late:
+`moves_current` goes from `["e4","e5"]` to `[]`. It arrives by an ordinary
+merge, and the report refuses nothing. Chess and tic-tac-toe declare
+`close=any`.
+
+- **Reproduction:** the fifth review's probes, "close=any (chess): a
+  stranger's close row in the session makes nobody's move late", directly and
+  through `mergeSibling`.
+
+#### D146 — The host and the apps call a session closed when admission does not
+
+*Status: **ruled — not built.** Filed 26 September from the fifth cold
+review (finding c2), rated medium. Ruled: one compiled view of closed sessions
+applies the session's rule, and every reader (host, kit, apps) reads it;
+`_dai_close_current` is forbidden outside `src/replicated.ts`, held by the
+flag check. With D145.*
+
+The bootloader's `closedSessions`, chess's `isClosed` and the request and
+tic-tac-toe examples read any `_dai_close_current` row as a close, with no
+policy. Under `close=creator` the joiner's close, which admission ignores,
+shows the session closed and, by reading `mailbox-session.ts`, retires the
+creator's mailbox lane for good.
+
+- **Reproduction:** the fifth review's probe, "close=creator: the joiner's
+  close, which admission ignores, retires the host's lane and shows the app
+  closed": closed `[S]`, expected `[]`.
+
+#### D147 — An unsigned close under the creator's id is taken, and closes the session
+
+*Status: **ruled — not built.** Filed 26 September from the fifth cold
+review (finding c3), rated medium. Ruled: `_dai_close` joins the tables whose
+unsigned rows a merge refuses (`BATCH_UNSIGNED`); deferring it at D133 was a
+mistake. With D145.*
+
+`_dai_close` is not among `SEAT_TABLES`, so a close stamped with Ada's id and
+no batch merges, and under `close=creator` counts as hers.
+
+- **Reproduction:** the fifth review's probe, "close=creator: an unsigned
+  close under the creator's id, merged, closes the session": admitted `[]`,
+  report `[]`.
+
+#### D148 — An admitted row also shows as waiting
+
+*Status: **ruled — not built.** Filed 26 September from the fifth cold
+review (finding c4), rated low. Ruled: `t_waiting` excludes admitted rows.
+With D145.*
+
+A member who also holds a current ask for an open seat nobody holds (the solo
+flow between `join` and the kit's confirmation, or a session of more than two)
+sees her rows in both `t_current` and `t_pending`, so an app that shows
+`t_current` beside its own pending rows shows them twice.
+
+- **Reproduction:** the fifth review's probe, "a creator who also waits in her
+  own open seat ... sees each of her rows once": pending `["solo"]`, expected
+  `[]`.
+
+#### D149 — The host opens a mailbox for a session this copy has no part in
+
+*Status: **ruled — not built.** Filed 26 September from the fifth cold
+review (finding a), rated low. Ruled: the sessions the host opens mailboxes for
+are those this copy is a member of or waits in. With D145.*
+
+The bootloader's `heldSessions` lists every session any `_dai_seat` row names,
+so a stranger's session arriving in a file gets a mailbox. The flag check's
+exception for that line called it "a list of sessions, not a current row"; it
+decides which mailboxes open.
+
+- **Reproduction:** the fifth review's probe, "the sessions the host opens
+  mailboxes for include a session this copy holds nothing in": `[S, T]`,
+  expected `[S]`.
+
+#### D150 — The flag check misses reads a person could write by mistake
+
+*Status: **ruled — not built.** Filed 26 September from the fifth cold
+review (finding b), rated medium. Ruled: rebuild it on the TypeScript scanner:
+string-literal and template contents, joined across lines, case-insensitive,
+every script file type and inline HTML, `examples/` included, and exceptions
+keyed to one kind and one exact line. Its limit is written at the top of the
+script: a static scan catches honest mistakes; admission is the enforcement;
+a table name in a variable is invisible here. The two variable-table reads
+(the writer's roster branch and `close()`'s frontier) are named with that
+reason. Not to be made airtight. Its own commit, after D145's.*
+
+`scripts/check-flag.mjs` passed fourteen constructions of a real read: the
+column in upper case (SQLite ignores case), a SQL line beginning with `*` or
+`--`, a line opening with a block comment, the name built by concatenation, a
+table aliased `OLD`, `main._dai_binding`, a comma join, `FROM` and the table on
+two lines, a table name in a variable, `.tsx`, `.cjs`, inline HTML, and any
+folder named `public`. An exception matched text rather than kind, so a flag
+read added to an excused line passed, and one key excused every line of its
+file containing its text. `examples/` was never scanned.
+
+- **Reproduction:** the fifth review's probes, one test per construction, and
+  two on the exceptions; a control shows the canonical read still fails.
+
 #### D140 — The stored `_r_superseded` flag is still a source of truth: a rival asker makes a contested seat hers
 
-*Status: **ruled — not built.** Filed 26 September from the fourth cold review
+*Status: **fixed** 26 September (`acb9e17`, run 36275032460 read green). Filed 26 September from the fourth cold review
 (of D135's fix, finding 1), rated high. Ruled 26 September, for the class:
 `_r_superseded` is a display cache, demoted the way `_dai_replica` was. No
 view, writer, gate or kit read derives "current" from it; each derives it from
@@ -4446,7 +4552,7 @@ two asked: the kit confirms Cy by itself instead of showing the contest
 
 #### D141 — A stranger's row in her own session takes a waiting joiner out of waiting
 
-*Status: **ruled — not built.** Filed 26 September from the fourth cold
+*Status: **fixed** 26 September, with D140 (`acb9e17`). Filed 26 September from the fourth cold
 review (finding 2), rated medium. Ruled with D140: same root, one change.*
 
 Anyone who holds a copy can write the D140 row: a `_dai_binding` row in a
@@ -4462,7 +4568,7 @@ still finds his binding as his head, so the writer and admission disagree.
 
 #### D142 — A rival asker's pending row hides a waiting joiner's row, and forks his next change
 
-*Status: **ruled — not built.** Filed 26 September from the fourth cold
+*Status: **fixed** 26 September (`cffdc7a`, run 36275759885 read green). Filed 26 September from the fourth cold
 review (question 3), rated medium. Ruled: a pending row is superseded only by
 an admitted row or by a row of its own author. Second commit after D140's,
 before D127.*
@@ -4485,7 +4591,7 @@ heads: his own two renames conflict.
 
 #### D143 — A waiting delete then change forks the entity, with no attacker
 
-*Status: **ruled — not built.** Filed 26 September from the fourth cold
+*Status: **fixed** 26 September, with D142 (`cffdc7a`). Filed 26 September from the fourth cold
 review (question 3), rated medium. Ruled: `writeTargetOf` counts this copy's
 own waiting tombstones. With D142.*
 
@@ -4501,7 +4607,7 @@ game shows conflicted.
 
 #### D144 — A change can name a seat other than its head's, and is silently never admitted
 
-*Status: **ruled — not built.** Filed 26 September from the fourth cold
+*Status: **fixed** 26 September, with D142 (`cffdc7a`). Filed 26 September from the fourth cold
 review (finding 3), rated low. Ruled: `writeTargetOf` returns the seat, and the
 writer refuses a change whose seat differs from its heads', `SEAT_NOT_HELD`.
 With D142.*
@@ -6026,6 +6132,8 @@ family of a write the person believes is done), D79 (the same screen lying by
 omission, there by dropping a tap), D80.
 
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
+
+*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144) and the fifth (D145 to D150, one high) did not.*
 
 *Status: **closed 25 September, green re-earned on the seat model**
 (`c997bd4`): CI run `36207287432` read green, both D80 tests passing on all
