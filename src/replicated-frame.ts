@@ -297,6 +297,7 @@ export {
   raiseSeq,
   rowId,
   sessionsOf,
+  closedSessionsOf,
   startSession,
   writeTargetOf,
   type NewSession,

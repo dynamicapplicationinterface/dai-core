@@ -474,6 +474,24 @@ function closePermitted(close: string, closeCreator: boolean): string {
 }
 
 /**
+ * Whether raw `_dai_close` row `close` is a close that counts: written, not a
+ * delete (a close cannot be revoked, D153), by an author the rule permits.
+ */
+function closedBy(close: string, closeCreator: boolean): string {
+  return `${close}._r_deleted = 0 AND ${closePermitted(close, closeCreator)}`;
+}
+
+/**
+ * The closed sessions, as lowercase hex, for a document whose schema predates
+ * `_dai_closed` (D154): the view's own rule, so the host calls a session closed
+ * exactly when admission does. Needs the seat views (24 September); a document
+ * older than those is not supported (D155).
+ */
+export function closedSessionsSql(closeCreator: boolean): string {
+  return `SELECT DISTINCT lower(hex(x._r_session)) AS s FROM _dai_close x WHERE ${closedBy("x", closeCreator)} ORDER BY 1`;
+}
+
+/**
  * The `_heads` view — heads are where admission is enforced (T1-D29).
  *
  * No view reads the stored `_r_superseded` flag (D140). It is a display cache,
@@ -528,17 +546,17 @@ function headsView(
   // both can flip as rows arrive, so both are recomputed here rather than stored.
   const member = (row: string): string =>
     `EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = ${row}._r_session AND m.replica = ${row}._r_replica)`;
-  // A close counts only if the session's rule permits its author (T1-D32,
-  // D145): `closePermitted`, the one reading `_dai_closed` shares.
-  const authored = (close: string): string => ` AND ${closePermitted(close, closeCreator)}`;
-  // Not late: the session is not closed (by a permitted close), or some permitted
-  // close row for it recorded this row's replica with a seq at least this high —
-  // the closer had seen it. seq, not a clock: a row is dropped because the close
-  // did not see it (T1-D31).
+  // Not late: its author has written no close of this session, the session's
+  // rule permitting, before this row (D151). A close binds only its author: it
+  // makes the closer's own later rows late, ordered by the closer's own seq, so
+  // no signed row removes another person's row. The close's frontier columns
+  // are not read; step 6 retires them. The raw rows, not `_dai_close_current`:
+  // the author's first close is the one that counts (D152), and neither a later
+  // version nor a delete of it moves or revokes it (D153). `closedBy`, which
+  // `_dai_closed` shares.
   const notLate = (row: string): string =>
-    `(NOT EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session${authored("x")})` +
-    ` OR EXISTS (SELECT 1 FROM _dai_close_current x WHERE x._r_session = ${row}._r_session` +
-    ` AND x.replica = ${row}._r_replica AND x.seq >= ${row}._r_seq${authored("x")}))`;
+    `NOT EXISTS (SELECT 1 FROM _dai_close x WHERE ${closedBy("x", closeCreator)}` +
+    ` AND x._r_session = ${row}._r_session AND x._r_replica = ${row}._r_replica AND x._r_seq < ${row}._r_seq)`;
   /*
    * Who may author this table's rows, when its marker says (D15).
    *
@@ -921,19 +939,21 @@ CREATE VIEW IF NOT EXISTS _dai_member AS
 -- The closed sessions: a close the session's rule permits names them (D146).
 -- Every reader of "is this session closed" (the host, the kit, the apps)
 -- reads this, never _dai_close_current, so it agrees with admission, which
--- drops a late row by the same rule.
+-- drops the closer's later rows by the same rule. A delete of a close does
+-- not reopen the session (D153).
 CREATE VIEW IF NOT EXISTS _dai_closed AS
-  SELECT DISTINCT x._r_session AS session FROM _dai_close_current x
-   WHERE ${closePermitted("x", closeCreator)};
+  SELECT DISTINCT x._r_session AS session FROM _dai_close x
+   WHERE ${closedBy("x", closeCreator)};
 `;
 
   /*
-   * The session close (T1-D31). One row per replica the closer had seen in the
-   * session, recording that replica's highest seq: the closer's stated causal
-   * frontier. A session is closed when any `_dai_close` row names it; a move is
-   * late — dropped by the admission views — unless a close row records its
-   * replica with a seq at least as high. Like the roster tables, its own heads
-   * are not admission-filtered: a close is always visible for deciding late-ness.
+   * The session close (T1-D31, amended by D151). A session is closed when a
+   * close its rule permits names it; the close binds only its author, whose
+   * rows after their first close are late. The `replica` and `seq` columns, the
+   * closer's stated frontier, are written and not read: signing proved who
+   * wrote a close and could not prove the list, so the list stopped mattering.
+   * Step 6's format version retires them. Like the roster tables, its own heads
+   * are not admission-filtered.
    */
   const close =
     `CREATE TABLE IF NOT EXISTS _dai_close (\n  replica BLOB NOT NULL CHECK (length(replica) = 16),\n  seq INTEGER NOT NULL,\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +

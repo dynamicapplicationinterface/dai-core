@@ -1270,6 +1270,24 @@ and stored — is deferred (profiles D6); the close is what makes it *possible*,
 because a session with a stated end is one whose rows can be retired without
 losing a live game. Vector: `session-closed-drops-late-rows`.
 
+*Amended 27 September (D151): a close binds only its author.* The residual
+above assumed signing would close it. It did not: signing proved who wrote a
+close and could not prove the list. A member who signed one close row naming
+only himself made every other member's moves late in every copy, a signed row
+removing another person's move. The fix was to stop the list mattering. A
+close makes only its author's own later rows late, ordered by the author's own
+seq, which that author cannot reorder: a row `(R, N)` is late when a close the
+session's rule permits, authored by `R` in the same session, has a seq below
+`N`. Only an author's first close counts (D152), and a close cannot be revoked
+by a later version or a delete (D153). The `replica` and `seq` columns stay in
+this format version, written and not read; step 6's format bump retires them.
+What a session *means* to an application is unchanged: a close still puts the
+session in `_dai_closed`, and a chess game reads that as over. What changes is
+authority. The residual this accepts: a member who keeps writing after seeing
+the other's close is held only by the advisory write gate, and their own copy
+shows the session closed. "Two concurrent closes union" above no longer
+applies: each binds its own author.
+
 **T1-D32 — who may close: a signed profile policy, defaulting to any (Step 5,
 completing T1-D31).** Whether either party may end a session or only its creator
 may is a product decision, and it differs by profile: in chess a close is a

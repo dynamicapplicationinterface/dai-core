@@ -1245,41 +1245,36 @@ CREATE TABLE moves (
     b.close();
   });
 
-  test("session-closed-drops-late-rows: a move past the close's frontier is dropped, one within it kept", () => {
-    // The member plays two moves, then the session is closed with a frontier
-    // that saw only the first. The second is late — a move authored without
-    // seeing the close — and drops; the first, which the close saw, stays. Late
-    // is the closer's stated seq frontier, not a clock (T1-D31).
+  test("session-closed-drops-late-rows: the closer's own row after their close is dropped, one before it kept", () => {
+    // The member plays, closes, and plays again. The row after the close is
+    // late and drops; the one before stays. Late is the closer's own seq, not a
+    // clock (T1-D31, amended by D151), and the close's frontier columns are not
+    // read: this one names O at seq 0, which under the frontier would have
+    // dropped both.
     const db = open3();
     e = 0;
     seated(db);
     put(db, "moves", O, 2, 5, { ply: 1, san: "e5" }); // seq 2
-    put(db, "moves", O, 3, 6, { ply: 2, san: "Nf3" }); // seq 3
-    expect(currentMoves(db)).toEqual(["Nf3", "e5"]);
-
-    // Close: the closer had seen O up to seq 2 — the first move, not the second.
-    put(db, "_dai_close", C, 4, 7, { replica: O, seq: 2 });
-
-    // The second move is past the frontier (3 > 2): late, dropped. The first
-    // (2 >= 2) the close saw: kept. Recomputed on read, so the drop appeared the
-    // moment the close arrived.
+    put(db, "_dai_close", O, 3, 6, { replica: O, seq: 0 }); // seq 3
+    put(db, "moves", O, 4, 7, { ply: 2, san: "Nf3" }); // seq 4
+    // Recomputed on read: the drop is a fact about the rows, whatever order they came in.
     expect(currentMoves(db)).toEqual(["e5"]);
     db.close();
   });
 
-  test("a move from a replica the close never saw is late in whole", () => {
-    // The frontier names the replicas the closer saw; a member whose rows the
-    // close does not mention at all is entirely late.
+  test("a close binds only its author: another member's moves stay, before and after it", () => {
+    // D151: the frontier named the replicas the closer saw, and a member it did
+    // not mention was late in whole, so one member's signed close removed the
+    // other's moves. A close now binds only its author.
     const db = open3();
     e = 0;
     seated(db);
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
     put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
-    expect(currentMoves(db)).toEqual(["e4", "e5"]);
-
-    // Close records only C's frontier; O is unmentioned, so O's move is late.
-    put(db, "_dai_close", C, 5, 7, { replica: C, seq: 4 });
-    expect(currentMoves(db)).toEqual(["e4"]);
+    put(db, "_dai_close", C, 5, 7, { replica: C, seq: 4 }); // names only C
+    put(db, "moves", O, 3, 8, { ply: 2, san: "Nf3" });
+    put(db, "moves", C, 6, 9, { ply: 2, san: "Nc3" });
+    expect(currentMoves(db), "O's rows stay; C's after her close is late").toEqual(["Nf3", "e4", "e5"]);
     db.close();
   });
 });
@@ -1307,9 +1302,10 @@ CREATE TABLE moves (
     });
   const moves = (db: Rows): string[] => db.all(`SELECT san FROM moves_current`).map((r) => String(r["san"]));
 
-  test("a non-creator's close is ignored; the creator's closes and drops the late row", () => {
+  test("a non-creator's close is ignored; the creator's closes and drops her own late row", () => {
     const db = open();
     e = 0;
+    const closed = (): number => db.all("SELECT 1 FROM _dai_closed").length;
     // The session id commits to C, so C is the creator; C seats O. Both are members.
     put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
     put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
@@ -1318,16 +1314,20 @@ CREATE TABLE moves (
     put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });
     expect(moves(db)).toEqual(["e5"]);
 
-    // O — a member but NOT the creator — tries to close, with a frontier that
-    // would drop its own move. Under close=creator this close is not authored by
-    // the creator, so it is not honored: the session is not closed and e5 stays.
-    put(db, "_dai_close", O, 2, 6, { replica: O, seq: 0 });
-    expect(moves(db)).toEqual(["e5"]);
+    // O, a member but NOT the creator, closes and plays on. Under close=creator
+    // the close is not honored: the session is not closed and O's later move
+    // is not late.
+    put(db, "_dai_close", O, 3, 6, { replica: O, seq: 2 });
+    put(db, "moves", O, 4, 7, { ply: 2, san: "Nf3" });
+    expect(moves(db).sort()).toEqual(["Nf3", "e5"]);
+    expect(closed()).toBe(0);
 
-    // C — the creator — closes with the same frontier. Now it is honored: e5 is
-    // past it (seq 2 > 0) and drops.
-    put(db, "_dai_close", C, 4, 7, { replica: O, seq: 0 });
-    expect(moves(db)).toEqual([]);
+    // C, the creator, closes. Honored: the session is closed and her own later
+    // row is late. It binds only her (D151): O's moves stay.
+    put(db, "_dai_close", C, 4, 8, { replica: O, seq: 0 });
+    put(db, "moves", C, 5, 9, { ply: 3, san: "Nc3" });
+    expect(moves(db).sort()).toEqual(["Nf3", "e5"]);
+    expect(closed()).toBe(1);
     db.close();
   });
 });

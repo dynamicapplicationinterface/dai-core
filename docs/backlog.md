@@ -4404,7 +4404,8 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 
 #### D151 — A member's close erases the other member's moves
 
-*Status: **ruled — not built.** Filed 27 September from the sixth cold
+*Status: **fixed** 27 September (the D151 to D154 commit; its run is read
+in the handoff). Filed 27 September from the sixth cold
 review (of D145 to D150, finding F1), rated high. Ruled: option (b), a close
 binds only its author. A close makes only the closer's own later rows late,
 and those are ordered by the closer's own seq, so no signed row removes
@@ -4439,7 +4440,7 @@ late and leaves her board.
 
 #### D152 — A second close extends the first
 
-*Status: **ruled — not built.** Filed 27 September from the sixth cold
+*Status: **fixed** 27 September, with D151. Filed 27 September from the sixth cold
 review (F2), rated medium. Ruled: per author, only the first close counts,
 the one lowest in the author's own seq. With D151.*
 
@@ -4454,7 +4455,8 @@ added.
 
 #### D153 — A tombstone of a close reopens the session
 
-*Status: **ruled — not built.** Filed 27 September from the sixth cold
+*Status: **fixed** 27 September, with D151. The test's late row is now the
+creator's own: her close no longer binds the joiner. Filed 27 September from the sixth cold
 review (F3), rated low. Ruled: a close cannot be revoked; admission and
 `_dai_closed` ignore deletes of close rows. With D151.*
 
@@ -4466,7 +4468,8 @@ the session out of `_dai_closed` and admits a move written after the close.
 
 #### D154 — The host's closed list for an older document ignores the close rule
 
-*Status: **ruled — not built.** Filed 27 September from the sixth cold
+*Status: **fixed** 27 September, with D151 (`closedSessionsOf`, which the
+host reads). Filed 27 September from the sixth cold
 review (F4), rated low. Ruled: the fallback applies the close rule, which the
 bootloader already holds. With D151.*
 

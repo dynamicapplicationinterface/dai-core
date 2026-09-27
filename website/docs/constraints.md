@@ -422,9 +422,9 @@ An open seat nobody has been confirmed in, asked for by two or more different co
 
 **Applies to** session. **Enforcement:** refused at run time; not checked by anything.
 
-Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which rows written later than what the closer had seen are not admitted. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read whether a session is closed in `_dai_closed` (a row for the session), not `_dai_close_current`: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE\_NOT\_PERMITTED; hide or disable the control for them.
+Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which the closer's later rows are not admitted. It binds only the closer, so offer no one a write in a closed session. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), not `_dai_close_current`: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE\_NOT\_PERMITTED; hide or disable the control for them.
 
-**Why.** A close is final for the group, and it is decided by what the closer had seen rather than by a clock. Folding it into "resign" would end a session the other person had not finished with.
+**Why.** A close binds its author by their own rows, never a clock, so no close removes another person's rows. Folding it into "resign" would end a session the other person had not finished with.
 
 <small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts).</small>
 

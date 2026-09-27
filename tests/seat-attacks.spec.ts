@@ -1130,8 +1130,10 @@ test.describe("cold review 5: a close counts only from an author the session's r
     put(db, "_dai_close", BO, 4, 9, { replica: ADA, seq: 4 });
     expect(admitted(db), "what the closer had seen stays").toEqual(["e4", "e5"]);
     expect(closedSessions(db)).toEqual([hex(S)]);
+    put(db, "moves", BO, 5, 10, { seat: OPEN_SEAT, san: "Nf6" });
+    expect(admitted(db), "the closer's later move is late").toEqual(["e4", "e5"]);
     put(db, "moves", ADA, 5, 10, { seat: ADA_SEAT, san: "Nf3" });
-    expect(admitted(db), "a later move is late").toEqual(["e4", "e5"]);
+    expect(admitted(db), "and the close binds only him (D151)").toEqual(["Nf3", "e4", "e5"]);
     db.close();
   });
 
@@ -1265,7 +1267,6 @@ function closeLikeTheHost(db: Rows, session: Uint8Array): Uint8Array[] {
 }
 
 test("cold review 6: close=any, a member's signed close naming only himself leaves the other member's moves admitted", async () => {
-  test.fail(true, "D151: a close's frontier makes another member's rows late");
   const ada = await person();
   const bo = await person();
   const g = await playedGame(ada, bo, "any");
@@ -1278,9 +1279,28 @@ test("cold review 6: close=any, a member's signed close naming only himself leav
   g.close();
 });
 
+test("D151's residual: close=creator, the creator's close leaves the joiner's later move admitted, and the session closed", async () => {
+  // The accepted residual: a close binds only its author, so a member who plays
+  // on after seeing the other's close is held only by the advisory write gate,
+  // and every copy shows the session closed.
+  const ada = await person();
+  const bo = await person();
+  const g = await playedGame(ada, bo, "creator");
+  closeLikeTheHost(g.adaCopy, g.session);
+  await seal(g.adaCopy, ada);
+  await merge(g.boCopy, g.adaCopy, bo);
+  createEntity(g.boCopy, "moves", rnd(), { seat: g.openSeat, game_id: "g1", san: "Nf6" }, g.session);
+  await seal(g.boCopy, bo);
+  await merge(g.adaCopy, g.boCopy, ada);
+  for (const copy of [g.adaCopy, g.boCopy]) {
+    expect(sans(copy, g.session), "her close does not bind his rows").toEqual(["e4", "e5", "Nf6"]);
+    expect(closedOf(copy), "and the session reads closed").toEqual([hex(g.session)]);
+  }
+  g.close();
+});
+
 test.describe("cold review 6: a close is final", () => {
   test("close=any: Bo's move after his own close stays late when he closes again", async () => {
-    test.fail(true, "D152: an author's later close extends their first");
     const ada = await person();
     const bo = await person();
     const g = await playedGame(ada, bo, "any");
@@ -1295,7 +1315,6 @@ test.describe("cold review 6: a close is final", () => {
   });
 
   test("close=creator: the creator's row after her close stays late when she closes again", async () => {
-    test.fail(true, "D152: an author's later close extends their first");
     const ada = await person();
     const bo = await person();
     const g = await playedGame(ada, bo, "creator");
@@ -1310,26 +1329,26 @@ test.describe("cold review 6: a close is final", () => {
   });
 
   test("close=creator: a tombstone of the creator's close rows does not reopen the session", async () => {
-    test.fail(true, "D153: a delete of a close row revokes the close");
+    // A close binds only its author (D151), so the late row is the creator's own.
     const ada = await person();
     const bo = await person();
     const g = await playedGame(ada, bo, "creator");
     const rows = closeLikeTheHost(g.adaCopy, g.session);
+    createEntity(g.adaCopy, "moves", rnd(), { seat: g.creatorSeat, game_id: "g1", san: "LATE" }, g.session);
+    expect(closedOf(g.adaCopy)).toEqual([hex(g.session)]);
+    expect(sans(g.adaCopy, g.session), "her row after her close is late").toEqual(["e4", "e5"]);
+    for (const e of rows) deleteEntity(g.adaCopy, "_dai_close", e);
     await seal(g.adaCopy, ada);
     await merge(g.boCopy, g.adaCopy, bo);
-    createEntity(g.boCopy, "moves", rnd(), { seat: g.openSeat, game_id: "g1", san: "LATE" }, g.session);
-    await seal(g.boCopy, bo);
-    await merge(g.adaCopy, g.boCopy, ada);
-    expect(closedOf(g.adaCopy)).toEqual([hex(g.session)]);
-    for (const e of rows) deleteEntity(g.adaCopy, "_dai_close", e);
-    expect(closedOf(g.adaCopy), "a closed session stays closed").toEqual([hex(g.session)]);
-    expect(sans(g.adaCopy, g.session), "and the late move stays late").toEqual(["e4", "e5"]);
+    for (const copy of [g.adaCopy, g.boCopy]) {
+      expect(closedOf(copy), "a closed session stays closed").toEqual([hex(g.session)]);
+      expect(sans(copy, g.session), "and the late move stays late").toEqual(["e4", "e5"]);
+    }
     g.close();
   });
 });
 
 test("cold review 6: close=creator, a document built before _dai_closed calls closed only what its rule permits", async () => {
-  test.fail(true, "D154: the host's fallback for an older document ignores the close rule");
   const ada = await person();
   const bo = await person();
   const g = await playedGame(ada, bo, "creator");

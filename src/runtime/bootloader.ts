@@ -1469,23 +1469,14 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * dropped by the merge anyway, so polling for them is waste.
    */
   const closedSessions = (): string[] => {
-    if (!liveDb) return [];
+    if (!liveDb || !mergeModule) return [];
     try {
       // Closed by a close the session's rule permits, as admission judges a row
-      // late (D146). A document built before _dai_closed existed reads its
-      // close table as it always did.
-      const db = liveDb;
-      const has = (name: string): boolean =>
-        db.selectObjects("SELECT 1 AS x FROM sqlite_schema WHERE type = 'view' AND name = ?", [name]).length > 0;
-      if (!has("_dai_close_current")) return [];
-      return liveDb
-        .selectObjects(
-          has("_dai_closed")
-            ? "SELECT lower(hex(session)) AS s FROM _dai_closed"
-            : "SELECT DISTINCT lower(hex(_r_session)) AS s FROM _dai_close_current",
-        )
-        .map((row: Any) => String(row.s))
-        .filter((s: string) => /^[0-9a-f]{32}$/.test(s));
+      // late (D146); a document built before _dai_closed gets the same rule
+      // over its close table (D154).
+      return ((mergeModule as Any).closedSessionsOf(frameRows(liveDb), closePolicy === "creator" ? "creator" : "any") as string[]).filter(
+        (s: string) => /^[0-9a-f]{32}$/.test(s),
+      );
     } catch {
       return [];
     }
@@ -2095,10 +2086,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         },
         // Close a session: no more rows, and it becomes eligible for compaction
         // (T1-D31). Not a resignation — that is a game row and leaves the board
-        // readable; a close is the heavier, separate act. One `_dai_close` row
-        // per replica this copy has seen in the session, each recording that
-        // replica's highest seq: the closer's stated causal frontier, against
-        // which later rows are late (T1-D31, never a clock).
+        // readable; a close is the heavier, separate act. It binds only its
+        // author: the closer's own later rows are late (D151, never a clock).
+        // One `_dai_close` row per replica this copy has seen in the session,
+        // at that replica's highest seq: the frontier columns this format
+        // version still carries, written and not read (step 6 retires them).
         close: (sessionHex: string): void => {
           settleReplica(rows);
           const sid = fromHex(sessionHex);

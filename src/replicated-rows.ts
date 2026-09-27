@@ -13,7 +13,7 @@
  * be untestable in the other two.
  */
 import { showAuthorId } from "./identity.js";
-import { SESSION_SYSTEM_TABLES } from "./replicated.js";
+import { closedSessionsSql, SESSION_SYSTEM_TABLES } from "./replicated.js";
 import { sessionIdOf } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
@@ -646,6 +646,20 @@ export function sessionsOf(db: Rows, me: Uint8Array): string[] {
       [me],
     )
     .map((row) => String(row["s"]));
+}
+
+/**
+ * The closed sessions, as lowercase hex, under the document's close rule: what
+ * the host stops polling. `_dai_closed` where the document has it; for one built
+ * before it, the same rule over the close table (D154). A document with no
+ * close table, or older than the seat views (D155), has none.
+ */
+export function closedSessionsOf(db: Rows, policy: "any" | "creator"): string[] {
+  const has = (type: "table" | "view", name: string): boolean =>
+    db.all("SELECT 1 FROM sqlite_schema WHERE type = ? AND name = ?", [type, name]).length > 0;
+  if (has("view", "_dai_closed")) return db.all("SELECT lower(hex(session)) AS s FROM _dai_closed ORDER BY 1").map((row) => String(row["s"]));
+  if (!has("table", "_dai_close") || !has("view", policy === "creator" ? "_dai_creator" : "_dai_member")) return [];
+  return db.all(closedSessionsSql(policy === "creator")).map((row) => String(row["s"]));
 }
 
 /* ---------------------------------------------------- the invite carrier */
