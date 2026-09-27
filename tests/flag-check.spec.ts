@@ -175,7 +175,6 @@ const CLOSED_MISSES: Record<string, { name: string; source: string }> = {
 
 for (const [what, { name, source }] of Object.entries(CLOSED_MISSES)) {
   test(`check-flag sees a closedness read in ${what}`, () => {
-    test.fail(true, "D156: the close views' names are checked only in a literal that says SELECT, and .sql is not scanned");
     const { status, output } = scanOne(name, source);
     expect(status, `the check should fail this read; it said: ${output.trim()}`).toBe(1);
   });
@@ -187,7 +186,6 @@ test("check-flag sees a comma join broken across lines", () => {
 });
 
 test("a read in a +-joined literal is reported on its own line, so an exception cannot excuse a line that changed below it", () => {
-  test.fail(true, "D157: a joined literal's reads are placed at its first line");
   const before = 'db.all("SELECT lower(hex(_r_session)) AS s " +\n  "FROM _dai_seat");\n';
   // Keyed to the line that names the table, where the read is.
   const key = 'src/a.ts: raw-seat-table: "FROM _dai_seat");';
@@ -197,4 +195,12 @@ test("a read in a +-joined literal is reported on its own line, so an exception 
     flagReadProblems(ts, [{ path: "src/a.ts", source: after }], { [key]: "a list of sessions" }),
     "an exception for a seat list does not excuse a closedness read that replaced it",
   ).not.toEqual([]);
+});
+
+test("a read after a template's substitution is placed on its own line, whatever lines the substitution spans", () => {
+  // D157's sibling: the text after `${...}` starts past the brace, not where the template does.
+  const source = "const q = `SELECT 1 AS x ${\n  cond\n    ? 'a' : 'b'} WHERE 1\n  AND EXISTS (SELECT 1 FROM _dai_seat)`;\n";
+  const problems = flagReadProblems(ts, [{ path: "src/a.ts", source }], {});
+  expect(problems).toHaveLength(1);
+  expect(problems[0]).toContain("src/a.ts:4 ");
 });

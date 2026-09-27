@@ -73,9 +73,9 @@ const VARIABLE_TABLE_READS = [
 
 /** Generated copies and build output, never source: each named, not every folder that shares a name. */
 const SKIP = new Set(["apps/runner/public/hosts", "apps/desktop/src-tauri/target", "src/flag-check.ts"]);
-const SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx|html?)$/i;
+const SCRIPT = /\.(?:[cm]?[jt]s|[jt]sx|html?|sql)$/i;
 
-/** Every script file and html page, never a built document or a bundle. */
+/** Every script file, html page and SQL file, never a built document or a bundle. */
 function sourcesUnder(dir, base) {
   const out = [];
   const walk = (at) => {

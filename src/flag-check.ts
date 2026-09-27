@@ -13,10 +13,16 @@
  * `_current` and admission views, not the raw rows, and "is this session
  * closed" is `_dai_closed`, never `_dai_close_current` (D146).
  *
+ * The names `_dai_close_current` and `_dai_close_heads` are refused in any
+ * literal outside `src/replicated.ts`, whatever else it holds, since SQL is
+ * built with `+=`, from arrays and in ternaries, none of which says SELECT
+ * where the name is (D156). A `.sql` file and an inline
+ * `<script type="application/sql">` are scanned as SQL text.
+ *
  * The scan reads tokens, not lines, with the TypeScript scanner: the contents
  * of every string and template literal (a template's parts joined, literals
- * joined by `+` joined too) and every identifier, case-insensitively, since
- * SQLite ignores the case of a name. Comments are the scanner's, so a SQL line
+ * joined by `+` joined too, each part keeping its own line, D157) and every
+ * identifier, case-insensitively, since SQLite ignores the case of a name. Comments are the scanner's, so a SQL line
  * that begins with `*` or `--` is code. The cache's own upkeep passes: its
  * column's declaration, `SET _r_superseded = 0|1`, and the statement of the
  * trigger that keeps it monotonic, whose `OLD.` and `NEW.` are the trigger's.
@@ -44,12 +50,22 @@ const TRIGGER = /CREATE\s+TRIGGER\b[\s\S]*?\bBEFORE\s+UPDATE\s+OF\s+_r_supersede
 // After FROM or JOIN, with or without a schema, or in a comma join that follows
 // a FROM on the same line.
 const RAW_SEAT_TABLE =
-  /(?:\bFROM|\bJOIN|\bFROM\b[^;()'"`\n]*?,)\s+(?:[\w"`[\]]+\s*\.\s*)?["'`[]?_dai_(?:(?:seat|binding|confirm|close)(?!\w)|close_current(?!\w))/gi;
+  /(?:\bFROM|\bJOIN|\bFROM\b[^;()'"`\n]*?,)\s+(?:[\w"`[\]]+\s*\.\s*)?["'`[]?_dai_(?:seat|binding|confirm|close)(?!\w)/gi;
+// The close's own views, which call a session closed by a close its rule does
+// not permit: named in any literal at all, whatever else it holds, since SQL
+// is built in more ways than a literal that says SELECT (D156).
+const CLOSE_VIEW = /_dai_close_(?:current|heads)(?!\w)/gi;
 
 interface Literal {
   text: string;
   /** Offset in the file where the literal's first character sits. */
   start: number;
+  /**
+   * Where each joined part begins: its offset in `text` and in the file. A
+   * literal joined by `+`, or a template's text after a substitution, keeps
+   * its own position, so a read is placed on the line that holds it (D157).
+   */
+  parts: { at: number; start: number }[];
 }
 
 /** Every literal and every identifier in one script, from the TypeScript scanner. */
@@ -59,14 +75,16 @@ function tokensOf(ts: typeof TS, source: string, jsx: boolean): { literals: Lite
   const identifiers: { text: string; start: number }[] = [];
   // Open templates, innermost last, each with the brace depth its current
   // substitution started at, and the text so far.
-  const templates: { text: string; start: number; depth: number }[] = [];
+  const templates: (Literal & { depth: number })[] = [];
   let depth = 0;
   let last: TS.SyntaxKind = ts.SyntaxKind.Unknown;
   let joinNext = false;
   const emit = (literal: Literal) => {
     const previous = literals[literals.length - 1];
-    if (joinNext && previous) previous.text += literal.text;
-    else literals.push(literal);
+    if (joinNext && previous) {
+      for (const part of literal.parts) previous.parts.push({ at: previous.text.length + part.at, start: part.start });
+      previous.text += literal.text;
+    } else literals.push(literal);
     joinNext = false;
   };
   const regexAllowed = () =>
@@ -90,10 +108,13 @@ function tokensOf(ts: typeof TS, source: string, jsx: boolean): { literals: Lite
       const open = templates[templates.length - 1];
       if (open && open.depth === depth) {
         kind = scanner.reScanTemplateToken(false);
-        open.text += "${}" + scanner.getTokenValue();
+        open.text += "${}";
+        // The text after a substitution starts past its closing brace.
+        open.parts.push({ at: open.text.length, start: scanner.getTokenStart() + 1 });
+        open.text += scanner.getTokenValue();
         if (kind === ts.SyntaxKind.TemplateTail) {
           templates.pop();
-          emit({ text: open.text, start: open.start });
+          emit({ text: open.text, start: open.start, parts: open.parts });
         }
         last = kind;
         continue;
@@ -101,9 +122,11 @@ function tokensOf(ts: typeof TS, source: string, jsx: boolean): { literals: Lite
       depth -= 1;
     }
     if (kind === ts.SyntaxKind.StringLiteral || kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
-      emit({ text: scanner.getTokenValue(), start: scanner.getTokenStart() });
+      const start = scanner.getTokenStart();
+      emit({ text: scanner.getTokenValue(), start, parts: [{ at: 0, start }] });
     } else if (kind === ts.SyntaxKind.TemplateHead) {
-      templates.push({ text: scanner.getTokenValue(), start: scanner.getTokenStart(), depth });
+      const start = scanner.getTokenStart();
+      templates.push({ text: scanner.getTokenValue(), start, parts: [{ at: 0, start }], depth });
     } else if (kind === ts.SyntaxKind.Identifier || kind === ts.SyntaxKind.PrivateIdentifier) {
       identifiers.push({ text: scanner.getTokenText(), start: scanner.getTokenStart() });
     } else if (kind === ts.SyntaxKind.PlusToken && (last === ts.SyntaxKind.StringLiteral || last === ts.SyntaxKind.NoSubstitutionTemplateLiteral || last === ts.SyntaxKind.TemplateTail)) {
@@ -119,16 +142,30 @@ function tokensOf(ts: typeof TS, source: string, jsx: boolean): { literals: Lite
   return { literals, identifiers };
 }
 
-/** The scripts in one file: the file itself, or an html file's inline scripts, with their offsets. */
-function scriptsOf(path: string, source: string): { code: string; offset: number; jsx: boolean }[] {
+interface Script {
+  code: string;
+  offset: number;
+  jsx: boolean;
+  /** SQL, scanned as one literal of text rather than tokenized as JavaScript (D156). */
+  sql: boolean;
+}
+
+/**
+ * The scripts in one file: the file itself, or an html file's inline scripts,
+ * with their offsets. A `.sql` file and an inline `<script type="application/sql">`
+ * are SQL.
+ */
+function scriptsOf(path: string, source: string): Script[] {
+  if (/\.sql$/i.test(path)) return [{ code: source, offset: 0, jsx: false, sql: true }];
   if (/\.html?$/i.test(path)) {
-    const out: { code: string; offset: number; jsx: boolean }[] = [];
-    for (const match of source.matchAll(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
-      out.push({ code: match[1]!, offset: match.index! + match[0].indexOf(">") + 1, jsx: false });
+    const out: Script[] = [];
+    for (const match of source.matchAll(/<script\b(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      const sql = /\btype\s*=\s*["']?application\/sql\b/i.test(match[1]!);
+      out.push({ code: match[2]!, offset: match.index! + match[0].indexOf(">") + 1, jsx: false, sql });
     }
     return out;
   }
-  return [{ code: source, offset: 0, jsx: /\.[jt]sx$/i.test(path) }];
+  return [{ code: source, offset: 0, jsx: /\.[jt]sx$/i.test(path), sql: false }];
 }
 
 /** Every read of the cache, or of a raw seat or close table, in one file. */
@@ -149,12 +186,17 @@ export function flagReadsIn(ts: typeof TS, path: string, source: string, options
   const found: FlagRead[] = [];
   const at = (kind: FlagRead["kind"], line: number) => found.push({ kind, line, text: (lines[line - 1] ?? "").trim() });
   for (const script of scriptsOf(path, source)) {
-    const { literals, identifiers } = tokensOf(ts, script.code, script.jsx);
+    const { literals, identifiers } = script.sql
+      ? { literals: [{ text: script.code, start: 0, parts: [{ at: 0, start: 0 }] }], identifiers: [] }
+      : tokensOf(ts, script.code, script.jsx);
     for (const id of identifiers) if (FLAG.test(id.text)) at("flag", lineAt(script.offset + id.start));
     for (const literal of literals) {
-      const first = lineAt(script.offset + literal.start);
-      // A match's line: the literal's first line plus the newlines before it.
-      const lineOf = (index: number) => first + (literal.text.slice(0, index).match(/\n/g)?.length ?? 0);
+      // A match's line: its part's first line plus the newlines in the part before it.
+      const lineOf = (index: number) => {
+        let part = literal.parts[0]!;
+        for (const p of literal.parts) if (p.at <= index) part = p;
+        return lineAt(script.offset + part.start) + (literal.text.slice(part.at, index).match(/\n/g)?.length ?? 0);
+      };
       let text = literal.text;
       for (const upkeep of UPKEEP) text = text.replace(upkeep, (m) => " ".repeat(m.length));
       text = text
@@ -162,8 +204,11 @@ export function flagReadsIn(ts: typeof TS, path: string, source: string, options
         .map((statement) => (TRIGGER.test(statement) ? statement.replace(/[^\n]/g, " ") : statement))
         .join(";");
       for (const match of text.matchAll(new RegExp(FLAG.source, "gi"))) at("flag", lineOf(match.index!));
-      if (options.rawSeatTables && /\bSELECT\b/i.test(literal.text)) {
+      if (options.rawSeatTables && (script.sql || /\bSELECT\b/i.test(literal.text))) {
         for (const match of literal.text.matchAll(RAW_SEAT_TABLE)) at("raw-seat-table", lineOf(match.index!));
+      }
+      if (options.rawSeatTables) {
+        for (const match of literal.text.matchAll(CLOSE_VIEW)) at("raw-seat-table", lineOf(match.index!));
       }
     }
   }

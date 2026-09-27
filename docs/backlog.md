@@ -4498,7 +4498,10 @@ documents.
 
 #### D156 — The flag check misses closedness reads written in ordinary ways
 
-*Status: **ruled — not built.** Filed 27 September from the sixth cold
+*Status: **fixed** 27 September (the D156 and D157 commit; its run is read
+in the handoff). The scan now takes the eight tracked `.sql` schemas, all
+clean; SESSION-CLOSE's prose stopped naming the view rather than take an
+exception. Filed 27 September from the sixth cold
 review (F6), rated medium. Ruled: the names `_dai_close_current` and
 `_dai_close_heads` are forbidden in any literal outside `src/replicated.ts`,
 whatever else the literal holds; `.sql` files and inline SQL scripts are
@@ -4516,7 +4519,9 @@ and a `schema.sql` file is not scanned.
 
 #### D157 — A read in a joined literal is placed at the literal's first line
 
-*Status: **ruled — not built.** Filed 27 September from the sixth cold
+*Status: **fixed** 27 September, with D156. A template's text after a
+substitution keeps its own line too (a test holds it, run red on the old
+scan first). Filed 27 September from the sixth cold
 review (F7), rated low. Ruled: each part keeps its own position. With D156.*
 
 The check joins `+`-joined literals and reports a read at the first line, so
