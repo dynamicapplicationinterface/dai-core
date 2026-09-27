@@ -4404,9 +4404,19 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 
 #### D158 — The creator unseats a confirmed joiner and plays his side
 
-*Status: **open, ruling wanted.** Filed 27 September from the seventh cold
-review (finding F1), rated high: step 5 does not close on this review.
-Reproduced here before filing.*
+*Status: **ruled — not built; fixed in step 6's format bump.** Filed 27
+September from the seventh cold review (finding F1), rated high: step 5 does
+not close on this review. Reproduced here before filing. Ruled 27 September:
+bind the session id to the row, not the nonce. The hole is that "the
+creator's seat row" is any row carrying the nonce, so the creator can mint
+another. The session id commits to one specific row:
+`session = SHA-256(creator author id ‖ creator seq)`, the seq being the seat
+row's own. `_dai_creator` is exactly the row whose `(author, seq)` the
+session id names; a second seat row from the creator, or a backfilled one,
+is just another row and holds nothing. No highest-seq rule: that would
+refuse honest out-of-order delivery by file. A format change, so it rides
+step 6's bump with D134 and the frontier's retirement, under that bump's own
+review.*
 
 `_dai_creator` counts every undeleted `_dai_seat` row whose nonce commits to
 the session, not the first, and not only heads. `_dai_holder` drops a confirm
@@ -4424,8 +4434,12 @@ filled later). The spec says a hold never moves once made; this moves it.
 
 #### D159 — A stranger's ask with unparseable parents makes a contest unrepairable
 
-*Status: **open, ruling wanted.** Filed 27 September from the seventh cold
-review (F2), rated medium.*
+*Status: **ruled — not built.** Filed 27 September from the seventh cold
+review (F2), rated medium. Ruled 27 September, as proposed: `_r_parents` must
+be a flat JSON array of `"<32 hex>:<integer>"` strings, with a length cap;
+anything else is refused at merge under its own code, `ROW_MALFORMED` (the
+registry's 73rd), so the report says what it was rather than
+`ROW_REJECTED`. With D160 in one commit, first in the next session.*
 
 `_r_parents` is checked only by JavaScript's `JSON.parse` at merge. Parents
 nested 1100 deep pass it; SQLite's `json_each` refuses them (depth limit
@@ -4442,8 +4456,15 @@ stays unseated. Admission of author rows is unaffected.
 
 #### D160 — Two confirms at one row id split the copies on who holds the seat
 
-*Status: **open, ruling wanted.** Filed 27 September from the seventh cold
-review (F3), rated medium.*
+*Status: **ruled — not built.** Filed 27 September from the seventh cold
+review (F3), rated medium. Ruled 27 September: void both, and report. Two
+valid signed batches from one author covering the same `(table, seq)` with
+different digests are equivocation, and picking a winner trusts arrival
+order. Once a copy has seen both, neither row counts, and the merge reports
+`AUTHOR_EQUIVOCATED` (the registry's 74th) with the author. Copies converge
+as soon as both rows reach them, which is the property; before that they
+differ, which is honest. The same shape as an author signing two conflicting
+histories in git: the author is the problem, not the merge. With D159.*
 
 The creator signs two different confirm rows at one `(author, seq)`, one
 naming Bo and one Cy, and sends one to each. Each copy keeps the one it saw
@@ -6316,7 +6337,7 @@ omission, there by dropping a tap), D80.
 
 #### D80 — A copy can seat itself as any player, and the other copy will believe it
 
-*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144), the fifth (D145 to D150, one high) and the sixth (D151 to D157, one high) did not. The seventh (27 September, told only the invariant that no row by one author makes another author's row late, hidden, superseded or unadmitted, in any table) found D158 to D160, one high, whose attacker is the creator; a member, a waiting asker or a stranger reached nothing high. It did not.*
+*Step 5 closes when a bounded cold review of the seat model comes back with no finding rated high (ruled 26 September). The fourth review (D140 to D144), the fifth (D145 to D150, one high) and the sixth (D151 to D157, one high) did not. The seventh (27 September, told only the invariant that no row by one author makes another author's row late, hidden, superseded or unadmitted, in any table) found D158 to D160, one high, whose attacker is the creator; a member, a waiting asker or a stranger reached nothing high. It did not. Every high in it came from the creator's own later rows: the creator is the last unbounded author in the model, and D158 is what bounds her. So step 5 closes on the eighth review, told the same invariant, run once step 6 lands with D158.*
 
 *Status: **closed 25 September, green re-earned on the seat model**
 (`c997bd4`): CI run `36207287432` read green, both D80 tests passing on all

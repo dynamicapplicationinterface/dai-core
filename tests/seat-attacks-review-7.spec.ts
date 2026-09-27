@@ -14,8 +14,9 @@ import { Store } from "./fixture/chess/store.js";
  * another author late, hidden, superseded or unadmitted". Every row an attacker
  * writes is signed with the attacker's own key and merged through mergeSibling.
  * Each test asserts what the invariant requires. A test marked test.fail is a
- * hole still open (D158 to D160, filed 27 September, rulings wanted); its note
- * names the entry whose fix flips it. Kept apart from seat-attacks.spec.ts
+ * hole still open (D158 to D160, filed and ruled 27 September); its note names
+ * the entry whose fix flips it. D158's fix is a format change and lands with
+ * step 6. Kept apart from seat-attacks.spec.ts
  * because its helpers share names there; node-only, like that file.
  */
 
@@ -138,7 +139,7 @@ async function playedGame(ada: Person, bo: Person, close: "any" | "creator" = "a
 }
 
 test("F1: the creator's signed second nonce row naming the open seat unseats the confirmed joiner and takes his side", async () => {
-  test.fail(true, "D158: _dai_creator counts every nonce row, so the creator can claim a confirmed open seat");
+  test.fail(true, "D158, fixed in step 6's format bump: _dai_creator counts every nonce row, so the creator can claim a confirmed open seat");
   const ada = await person();
   const bo = await person();
   const g = await playedGame(ada, bo);
