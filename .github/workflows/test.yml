@@ -83,14 +83,20 @@ jobs:
   #
   # webkit is that case: it alone ran past 25 minutes and was cancelled every
   # round — a cancelled job is no verdict, so webkit was effectively ungated and
-  # its reds sat unseen. So webkit is split into two `--shard` halves that each
+  # its reds sat unseen. So webkit is split into `--shard` parts that each
   # finish well inside the budget and each report a verdict; chromium and firefox
   # still run whole, one job each. The count gate skips a sharded run (its count
   # is a fraction by intent) and is carried by the two whole engines, which drop
   # the same count when a test stops being collected.
   #
+  # Two parts became three on 27 September: shard 1 of 2 ran 16 to 24 minutes
+  # against this 25-minute wall and was cancelled at it once (run 36289801499,
+  # 408 passed, none failed), while shard 2 finished in 8. Spec files stay
+  # whole (playwright.config.ts), so the split is by file and uneven; a third
+  # part moves the wall back without raising it.
+  #
   # Firefox is a reading, not the gate (ruled 25 September). Chromium and the
-  # two WebKit halves decide the run; a Firefox red does not. The reason is
+  # WebKit parts decide the run; a Firefox red does not. The reason is
   # D32: `returning-document:511` failed at least once on Firefox in 3 of the
   # last 4 runs on the identity branch, a frame the automation cannot see and
   # not a product failure on the walk. The Firefox job still runs whole and
@@ -110,8 +116,9 @@ jobs:
           # holds them — not once per engine.
           - { browser: chromium, part: whole, extra: "--project=node" }
           - { browser: firefox, part: whole }
-          - { browser: webkit, part: "1", shard: "1/2" }
-          - { browser: webkit, part: "2", shard: "2/2" }
+          - { browser: webkit, part: "1", shard: "1/3" }
+          - { browser: webkit, part: "2", shard: "2/3" }
+          - { browser: webkit, part: "3", shard: "3/3" }
 
     steps:
       - uses: actions/checkout@v4
