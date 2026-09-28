@@ -934,12 +934,12 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * The seat model (identity step 5, ruled 24 September). No clock decides
    * anything in it.
    *
-   * - The session id commits to its creator: SHA-256(creator ‖ nonce), first
-   *   16 bytes, with the nonce on the creator's own seat row. `_dai_creator` is
-   *   the author of a seat row whose nonce hashes, with that author, to the
-   *   row's session (`dai_session_id`, src/session-id.ts). Only the creator can
-   *   write one; checked here, at read, over every row this copy holds however
-   *   it arrived.
+   * - The session id commits to its creator's seat row: SHA-256(creator ‖
+   *   seq), first 16 bytes, the seq being that row's own (D158). `_dai_creator`
+   *   is that one row: a seat row whose own author and seq hash to its session
+   *   (`dai_session_id`, src/session-id.ts). Only the creator can write it, and
+   *   she can write it once; checked here, at read, over every row this copy
+   *   holds however it arrived.
    * - The creator's seat is the seat on that row, and it is the creator's by
    *   definition. A binding to it means nothing.
    * - Every other seat the creator mints is open, and is held by whoever the
@@ -955,20 +955,24 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * that to every table.
    */
   const member = `
+-- The creator's seat row is the one row the session id names, by its own
+-- (author, seq) (D158): no other row of the creator's, and no later version of
+-- that row, is it. One row, so one creator and one creator's seat.
 CREATE VIEW IF NOT EXISTS _dai_creator AS
-  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat
+  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat, s._r_entity AS entity
     FROM _dai_seat s
-   WHERE s.nonce IS NOT NULL AND s._r_deleted = 0 AND ${unequivocal("s", "_dai_seat")}
-     AND ${SESSION_ID_FUNCTION}(s._r_replica, s.nonce) = s._r_session;
+   WHERE s._r_deleted = 0 AND ${unequivocal("s", "_dai_seat")}
+     AND ${SESSION_ID_FUNCTION}(s._r_replica, s._r_seq) = s._r_session;
 
 -- The open seats the creator minted, each at its current value among her own
 -- versions in that session: a version another author wrote of her seat row is
--- not hers, and neither is one in another session (D136).
+-- not hers, and neither is one in another session (D136). Not the creator's
+-- seat row, nor any version of its entity.
 CREATE VIEW IF NOT EXISTS _dai_open_seat AS
   SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
     FROM _dai_seat s
     JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
-   WHERE s.nonce IS NULL AND s._r_deleted = 0 AND ${unequivocal("s", "_dai_seat")}
+   WHERE s._r_entity <> c.entity AND s._r_deleted = 0 AND ${unequivocal("s", "_dai_seat")}
      AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
      AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(n._r_parents) p
                       WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
@@ -1016,7 +1020,7 @@ CREATE VIEW IF NOT EXISTS _dai_closed AS
 
   return (
     base +
-    rosterTable("_dai_seat", "  nonce BLOB CHECK (nonce IS NULL OR length(nonce) = 16),\n", ["seat", "nonce"]) +
+    rosterTable("_dai_seat") +
     rosterTable("_dai_binding") +
     rosterTable("_dai_confirm", "  holder BLOB NOT NULL CHECK (length(holder) = 16),\n", ["seat", "holder"]) +
     close +

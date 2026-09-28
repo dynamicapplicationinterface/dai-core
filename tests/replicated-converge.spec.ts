@@ -864,7 +864,7 @@ CREATE TABLE moves (
     ensureReplica(db, A);
     // A session A created, so A writes in it: a writer versions only heads of a
     // session it is a member of or waits in (D135).
-    const s = startSession(db, { nonce: bytes(0x61), creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    const s = startSession(db, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, s);
     // Change and delete are not told the session — they inherit it from the
     // entity's head, so an entity keeps one session for its whole history.
@@ -1016,7 +1016,7 @@ CREATE TABLE prefs (
     const a = openFilter();
     ensureReplica(a, A);
     // A game A created, so A's change finds its head there (D135).
-    const s1 = startSession(a, { nonce: bytes(0x61), creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    const s1 = startSession(a, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, s1);
     changeEntity(a, "moves", E1, { ply: 1, san: "e4!" });
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
@@ -1078,8 +1078,7 @@ CREATE TABLE moves (
 `;
   const open3 = (): Rows & { close(): void } => openWith(SCHEMA);
   const C = bytes(0xc0); // creator
-  const NONCE = bytes(0x07);
-  const S = sessionIdOf(C, NONCE)!; // the session commits to its creator
+  const S = sessionIdOf(C, 1)!; // the session commits to its creator
   const O = bytes(0x0b); // opener
   const N = bytes(0x0e); // never invited
   const F = bytes(0xff); // forwarded copy
@@ -1114,13 +1113,13 @@ CREATE TABLE moves (
     db.all(`SELECT san FROM moves_current ORDER BY san`).map((r) => String(r["san"]));
 
   /**
-   * The creator's session with the opener seated: her own seat, carrying the
-   * nonce the session id commits to, the open seat, the opener's ask for it,
+   * The creator's session with the opener seated: her own seat, the row the
+   * session id names by its seq (1), the open seat, the opener's ask for it,
    * and her confirmation. The creator's rows are seqs 1–3, the opener's seq 1.
    */
   function seated(db: Rows): void {
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
     put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
     put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
   }
@@ -1217,7 +1216,7 @@ CREATE TABLE moves (
     e = 0;
     const a = open3();
     ensureReplica(a, ada.author);
-    const session = startSession(a, { nonce: NONCE, creatorSeat: SEATC, openSeat: SEATO, entities: [ent(), ent()] });
+    const session = startSession(a, { creatorSeat: SEATC, openSeat: SEATO, entities: [ent(), ent()] });
     await sealAs(a, ada);
     const boCopy = open3();
     ensureReplica(boCopy, bo.author);
@@ -1289,8 +1288,7 @@ CREATE TABLE moves (
 `;
   const open = (): Rows & { close(): void } => openWith(SCHEMA);
   const C = bytes(0xc0); // creator — the session id commits to her
-  const NONCE = bytes(0x07);
-  const S = sessionIdOf(C, NONCE)!;
+  const S = sessionIdOf(C, 1)!;
   const O = bytes(0x0b); // opener — a member, not the creator
   const SEATC = bytes(0xa1);
   const SEATO = bytes(0xa2);
@@ -1307,8 +1305,8 @@ CREATE TABLE moves (
     e = 0;
     const closed = (): number => db.all("SELECT 1 FROM _dai_closed").length;
     // The session id commits to C, so C is the creator; C seats O. Both are members.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
-    put(db, "_dai_seat", C, 2, 2, { seat: SEATO, nonce: null });
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
     put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
     put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
     put(db, "moves", O, 2, 5, { ply: 1, san: "e5" });

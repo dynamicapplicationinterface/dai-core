@@ -621,7 +621,6 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array): Repli
 
 /** What a new session is made from: all fresh random bytes, 16 each. */
 export interface NewSession {
-  nonce: Uint8Array;
   creatorSeat: Uint8Array;
   openSeat: Uint8Array;
   /** The entities of the creator's seat row and the open seat's row. */
@@ -629,16 +628,19 @@ export interface NewSession {
 }
 
 /**
- * A new session under this copy's author (identity step 5): its id commits to
- * that author, `SHA-256(author ‖ nonce)` first 16 bytes, and the nonce rides on
- * the creator's own seat row, which is what makes the creator checkable from
- * the rows. Then one open seat. Returns the session id.
+ * A new session under this copy's author: its id commits to the creator's own
+ * seat row, `SHA-256(author ‖ seq)` first 16 bytes, the seq the one that row is
+ * about to be stamped with (D158), which is what makes the creator checkable
+ * from the rows. Then one open seat. Returns the session id.
  */
 export function startSession(db: Rows, ids: NewSession): Uint8Array {
-  const session = sessionIdOf(replicaState(db).id, ids.nonce);
-  if (!session) throw new RowRejected("A session id needs a 16-byte author id and a 16-byte nonce.");
-  createEntity(db, "_dai_seat", ids.entities[0], { seat: ids.creatorSeat, nonce: ids.nonce }, session);
-  createEntity(db, "_dai_seat", ids.entities[1], { seat: ids.openSeat, nonce: null }, session);
+  const state = replicaState(db);
+  const session = sessionIdOf(state.id, state.seq + 1);
+  if (!session) throw new RowRejected("A session id needs a 16-byte author id and the seq of the creator's seat row.");
+  const row = createEntity(db, "_dai_seat", ids.entities[0], { seat: ids.creatorSeat }, session);
+  // The id names this row; a row stamped at any other seq would name nothing.
+  if (row._r_seq !== state.seq + 1) throw new RowRejected("The creator's seat row was not stamped at the seq its session names.");
+  createEntity(db, "_dai_seat", ids.entities[1], { seat: ids.openSeat }, session);
   return session;
 }
 

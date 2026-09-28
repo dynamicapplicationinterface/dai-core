@@ -69,7 +69,7 @@ const entity = (): Uint8Array => {
 /** The creator's copy, with a new session: her seat is SEAT1, the open seat SEAT2. */
 async function creatorsCopy(): Promise<{ db: Copy; session: Uint8Array }> {
   const db = copy(CREATOR);
-  const session = startSession(db, { nonce: bytes(0x07), creatorSeat: SEAT1, openSeat: SEAT2, entities: [entity(), entity()] });
+  const session = startSession(db, { creatorSeat: SEAT1, openSeat: SEAT2, entities: [entity(), entity()] });
   await sealAs(db, CREATOR);
   return { db, session };
 }
@@ -138,7 +138,7 @@ test.describe("the roster, through _dai_member (identity step 5)", () => {
   test("a copy that writes a seat row of its own does not become the creator", async () => {
     const creator = await creatorsCopy();
     const forwarded = copy(FORWARDED);
-    createEntity(forwarded, "_dai_seat", entity(), { seat: bytes(0x99), nonce: bytes(0x07) }, creator.session);
+    createEntity(forwarded, "_dai_seat", entity(), { seat: bytes(0x99) }, creator.session);
     await sealAs(forwarded, FORWARDED);
     const db = await merged([forwarded, creator.db]);
     expect(db.all("SELECT lower(hex(replica)) AS r FROM _dai_creator").map((r) => r["r"])).toEqual([hx(CREATOR)]);

@@ -742,7 +742,7 @@ async function writeContainer(
  * would seal into the next copy. The loader hands this object over by
  * `postMessage` and sets it locally instead.
  */
-function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, nonce: unknown) => Uint8Array | null }): void {
+function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, seq: unknown) => Uint8Array | null }): void {
   /*
    * The SHA-256 of the merge module this runtime was built against.
    *
@@ -830,7 +830,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    */
   const newDatabase = (api2: Any): Any => {
     const db = new api2.oo1.DB() as Any;
-    db.createFunction(sessionId.name, (_ctx: number, author: unknown, nonce: unknown) => sessionId.of(author, nonce), {
+    db.createFunction(sessionId.name, (_ctx: number, author: unknown, seq: unknown) => sessionId.of(author, seq), {
       arity: 2,
       deterministic: true,
     });
@@ -2038,9 +2038,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // creator's binding to its own seat. Returns the session id and the open
         // seat, which the host carries in the invite (T1-D30). The three rows are
         // one transaction, so a failure leaves no half-formed roster.
-        // The session id commits to this copy's author (identity step 5): the
-        // nonce rides on the creator's own seat row, and the creator's seat is
-        // hers by definition, so she binds nothing.
+        // The session id commits to this copy's author's own seat row, by its
+        // (author, seq) (D158), and the creator's seat is hers by definition,
+        // so she binds nothing.
         create: (): { session: string; seat: string } => {
           settleReplica(rows);
           const openSeat = entity();
@@ -2048,7 +2048,6 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           let sid: Uint8Array;
           try {
             sid = rules().startSession(rows, {
-              nonce: entity(),
               creatorSeat: entity(),
               openSeat,
               entities: [entity(), entity()],
@@ -2175,7 +2174,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
             [sid],
           );
           if (contested.length === 0) throw new Error("CANNOT_RESEAT");
-          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity(), nonce: null });
+          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() });
           nudgeAuthored();
         },
       },

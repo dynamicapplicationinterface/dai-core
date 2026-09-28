@@ -4568,7 +4568,12 @@ row and report them as `AUTHOR_EQUIVOCATED`.
 
 #### D158 — The creator unseats a confirmed joiner and plays his side
 
-*Status: **ruled — not built; fixed in step 6's format bump.** Filed 27
+*Status: **fixed**, 28 September, in step 6's bump (batch format version 2):
+the session id is `SHA-256(author ‖ seq)` of the creator's seat row, eight
+bytes big-endian, and `_dai_creator` is that one row; the `nonce` column is
+gone. F1 flipped, its assertion that the merge refuses nothing rewritten to
+the outcome (her move for Bo's seat is `SEAT_NOT_HELD`). The second variant
+is D165.* *Filed 27
 September from the seventh cold review (finding F1), rated high: step 5 does
 not close on this review. Reproduced here before filing. Ruled 27 September:
 bind the session id to the row, not the nonce. The hole is that "the

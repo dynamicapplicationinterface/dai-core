@@ -54,9 +54,8 @@ function openWith(schema: string): Rows & { close(): void } {
 }
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
-const NONCE = bytes(0x07);
 const C = bytes(0xc0); // the creator: the session id commits to it
-const S = sessionIdOf(C, NONCE)!;
+const S = sessionIdOf(C, 1)!;
 const J = bytes(0x10); // the joiner: it binds the open seat
 const SEATC = bytes(0xa1);
 const SEATJ = bytes(0xa2);
@@ -89,13 +88,13 @@ function put(
 }
 
 /**
- * The roster both copies share: the creator's own seat, carrying the nonce the
- * session id commits to, the open seat, the joiner's ask for it, and the
+ * The roster both copies share: the creator's own seat, the row the session
+ * id names by its seq (1), the open seat, the joiner's ask for it, and the
  * creator's confirmation. The creator's seqs 1–3, the joiner's seq 1.
  */
 function seat(db: Rows): void {
-  put(db, "_dai_seat", C, 1, 1, { seat: SEATC, nonce: NONCE });
-  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ, nonce: null });
+  put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ });
   put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
   put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
 }

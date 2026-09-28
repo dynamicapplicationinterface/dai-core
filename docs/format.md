@@ -13,6 +13,22 @@ SHA-256 of the author's raw public key (P-256, uncompressed, 65 bytes), first
 16 bytes. Shown as base64url without padding (22 characters). The author id is
 the replica id: the id a copy writes rows under.
 
+## Session id
+
+SHA-256 of the creator's author id (16 bytes) followed by the seq of the
+creator's own seat row as eight bytes, unsigned, big-endian; the first 16
+bytes. Held by frozen vectors in `tests/session-id.spec.ts`. The creator's
+seat row is exactly the `_dai_seat` row whose own author and seq hash to its
+session, so the id names one row and nothing else can be it.
+
+**Why the seq (version 2).** At version 1 the id hashed a nonce carried on
+the creator's seat row, and any row carrying that nonce counted as the
+creator's. The creator could sign a second seat row with the nonce and the
+open seat's value, take a seat she had already confirmed someone in, and
+play that side (backlog D158). A seq is spent once per author per document,
+so no second row can carry it. A highest-seq rule was not used instead: it
+would refuse honest rows delivered out of order by file.
+
 ## A batch
 
 One author's rows that left that author's device together, under one

@@ -76,7 +76,7 @@ async function adasGame(db: Rows, document: string): Promise<{ author: Uint8Arra
   const keys = await mintPersonKey();
   const author = await authorIdOf(await rawPublicKey(keys.publicKey));
   ensureReplica(db, author);
-  const session = startSession(db, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const session = startSession(db, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
   createEntity(db, "games", rnd(), { white_name: "Ada", black_name: "", creator_color: "w", initial_fen: "" }, session);
   for (const batch of pendingBatches(db, author, mergeTablesOf(db))) recordSeal(db, await signBatch(batch, { document, keys }));
   return { author, session };

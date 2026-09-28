@@ -51,7 +51,7 @@ CREATE TABLE moves (
 
 function openWith(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
-  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, nonce) => sessionIdOf(author, nonce));
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, seq) => sessionIdOf(author, seq));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -66,8 +66,10 @@ const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const ADA = bytes(0xc0); // the creator
 const BO = bytes(0x10); // the joiner; his id sorts below Ada's
-const NONCE = bytes(0x07); // on Ada's own seat row
-const S = sessionIdOf(ADA, NONCE)!; // the session, which commits to Ada
+const S = sessionIdOf(ADA, 1)!; // the session, which names Ada's seat row, her seq 1
+/** The seq this copy stamps its next row with: a creator's seat row is named by it (D158). */
+const nextSeq = (db: Rows): number => Number(db.all("SELECT seq FROM _dai_replica")[0]!["seq"]) + 1;
+
 const ADA_SEAT = bytes(0xa1);
 const OPEN_SEAT = bytes(0xa2);
 
@@ -116,7 +118,7 @@ function signedBy(db: Rows, author: Uint8Array, id: number): Uint8Array {
 
 /**
  * Ada's session with Bo in the open seat, as the kit leaves it: her own seat
- * carrying the nonce the session id commits to, the open seat, Bo's ask for it,
+ * row, which the session id names by its seq (1), the open seat, Bo's ask for it,
  * and Ada's confirmation. Returns the entity of Ada's own seat row. Ada's rows
  * use seqs 1–3 and Bo's seq 1. `own` is the copy's own author; the rows are
  * signed only when `sign` says.
@@ -125,8 +127,8 @@ function honestRoster(db: Rows, own: Uint8Array | null, sign?: { ada: Uint8Array
   if (own) {
     db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [own]);
   }
-  const adaSeat = put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT, nonce: NONCE }, { batch: sign?.ada });
-  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT, nonce: null }, { batch: sign?.ada });
+  const adaSeat = put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT }, { batch: sign?.ada });
+  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT }, { batch: sign?.ada });
   put(db, "_dai_binding", BO, 1, 3, { seat: OPEN_SEAT }, { batch: sign?.bo });
   put(db, "_dai_confirm", ADA, 3, 4, { seat: OPEN_SEAT, holder: BO }, { batch: sign?.ada });
   return adaSeat;
@@ -289,7 +291,7 @@ async function honestGame(ada: Person, bo: Person) {
   const creatorSeat = rnd();
   const openSeat = rnd();
   const seatEntities: [Uint8Array, Uint8Array] = [rnd(), rnd()];
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: seatEntities });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: seatEntities });
   const game = createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
   await seal(adaCopy, ada);
 
@@ -317,10 +319,9 @@ test.describe("cold review 2: a seat value is not scoped to its session", () => 
     const malCopy = openGame();
     ensureReplica(malCopy, mal.author);
     await merge(malCopy, adaCopy, mal);
-    // His own session S2 = H(mal || nonce): he is its creator, and he picks his seat's bytes.
-    const nonce = rnd();
-    const s2 = sessionIdOf(mal.author, nonce)!;
-    createEntity(malCopy, "_dai_seat", rnd(), { seat: creatorSeat, nonce }, s2);
+    // His own session S2 = H(mal || the seq of his seat row): he is its creator, and he picks his seat's bytes.
+    const s2 = sessionIdOf(mal.author, nextSeq(malCopy))!;
+    createEntity(malCopy, "_dai_seat", rnd(), { seat: creatorSeat }, s2);
     createEntity(malCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", san: "Qh5" }, s2);
     await seal(malCopy, mal);
 
@@ -347,10 +348,9 @@ test.describe("cold review 2: a seat value is not scoped to its session", () => 
     const malCopy = openGame();
     ensureReplica(malCopy, mal.author);
     await merge(malCopy, adaCopy, mal);
-    const nonce = rnd();
-    const s2 = sessionIdOf(mal.author, nonce)!;
+    const s2 = sessionIdOf(mal.author, nextSeq(malCopy))!;
     const malSeat = rnd();
-    createEntity(malCopy, "_dai_seat", rnd(), { seat: malSeat, nonce }, s2);
+    createEntity(malCopy, "_dai_seat", rnd(), { seat: malSeat }, s2);
     // A new version of Ada's e4 entity, naming her row as its parent, in Mallory's session, deleted.
     const st = malCopy.all("SELECT seq, lc FROM _dai_replica")[0]!;
     applyRow(malCopy, "moves", {
@@ -385,9 +385,8 @@ test.describe("cold review 2: the same attacks as a mailbox batch (encode, decod
     const ada = await person();
     const bo = await person();
     const { adaCopy, boCopy, creatorSeat, session } = await honestGame(ada, bo);
-    const nonce = rnd();
-    const s2 = sessionIdOf(bo.author, nonce)!;
-    createEntity(boCopy, "_dai_seat", rnd(), { seat: creatorSeat, nonce }, s2);
+    const s2 = sessionIdOf(bo.author, nextSeq(boCopy))!;
+    createEntity(boCopy, "_dai_seat", rnd(), { seat: creatorSeat }, s2);
     createEntity(boCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", san: "Qh5" }, s2);
     const tables = mergeTablesOf(boCopy);
     const batches = pendingBatches(boCopy, bo.author, tables);
@@ -459,7 +458,7 @@ test.describe("cold review 2: an unsigned row in the seat tables (D133)", () => 
     ensureReplica(adaCopy, ada.author);
     const creatorSeat = rnd();
     const openSeat = rnd();
-    const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+    const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
     await seal(adaCopy, ada);
     const bo = await person();
     const boCopy = openGame();
@@ -499,9 +498,9 @@ test.describe("cold review 2: Q2, a confirm replayed from session A into session
     const adaCopy = openGame();
     ensureReplica(adaCopy, ada.author);
     const seatsA = { creatorSeat: rnd(), openSeat: rnd() };
-    const a = startSession(adaCopy, { nonce: rnd(), ...seatsA, entities: [rnd(), rnd()] });
+    const a = startSession(adaCopy, { ...seatsA, entities: [rnd(), rnd()] });
     const openB = rnd();
-    const b = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: openB, entities: [rnd(), rnd()] });
+    const b = startSession(adaCopy, { creatorSeat: rnd(), openSeat: openB, entities: [rnd(), rnd()] });
     const confirmRow = createEntity(adaCopy, "_dai_confirm", rnd(), { seat: seatsA.openSeat, holder: bo.author }, a);
     await seal(adaCopy, ada);
 
@@ -578,7 +577,7 @@ test.describe("cold review 2: Q2, a confirm and its binding", () => {
     ensureReplica(adaCopy, ada.author);
     const creatorSeat = rnd();
     const openSeat = rnd();
-    const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+    const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
     const cara = rnd();
     const nowhere = rnd();
     confirmSeat(adaCopy, session, nowhere, cara, rnd());
@@ -620,7 +619,7 @@ test.describe("cold review 2: Q3, what a waiting joiner and an offline creator r
     ensureReplica(adaCopy, ada.author);
     const creatorSeat = rnd();
     const openSeat = rnd();
-    const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+    const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
     createEntity(adaCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", san: "e4" }, session);
     await seal(adaCopy, ada);
     const s = hex(session);
@@ -701,9 +700,8 @@ test.describe("cold review 3: a stranger's row in his own session reusing a game
       const malCopy = openGame();
       ensureReplica(malCopy, mal.author);
       await merge(malCopy, adaCopy, mal);
-      const nonce = rnd();
-      const s2 = sessionIdOf(mal.author, nonce)!;
-      createEntity(malCopy, "_dai_seat", rnd(), { seat: rnd(), nonce }, s2);
+      const s2 = sessionIdOf(mal.author, nextSeq(malCopy))!;
+      createEntity(malCopy, "_dai_seat", rnd(), { seat: rnd() }, s2);
       // A new entity in his own session that carries Ada's game's id (D134's parentless reuse).
       raw(malCopy, mal, "games", { entity: game._r_entity, lc, session: s2, columns: { title: "Mallory's game" } });
       await seal(malCopy, mal);
@@ -763,7 +761,7 @@ test("cold review 3: a row of another session reusing the open seat's entity id 
   ensureReplica(adaCopy, ada.author);
   const openSeat = rnd();
   const seatEntities: [Uint8Array, Uint8Array] = [rnd(), rnd()];
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat, entities: seatEntities });
+  const session = startSession(adaCopy, { creatorSeat: rnd(), openSeat, entities: seatEntities });
   await seal(adaCopy, ada);
   // The invite reaches Bo and Cy: a contested seat. Cy is also the attacker.
   const boCopy = openGame();
@@ -776,7 +774,7 @@ test("cold review 3: a row of another session reusing the open seat's entity id 
   await merge(cyCopy, adaCopy, cy);
   createEntity(cyCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
   // Signed with her own key: a seat row in some other session reusing the open seat's entity id, far ahead in clock.
-  raw(cyCopy, cy, "_dai_seat", { entity: seatEntities[1], lc: 1_000_000, session: rnd(), columns: { seat: rnd(), nonce: null } });
+  raw(cyCopy, cy, "_dai_seat", { entity: seatEntities[1], lc: 1_000_000, session: rnd(), columns: { seat: rnd() } });
   await seal(cyCopy, cy);
   await merge(adaCopy, boCopy, ada);
   await merge(adaCopy, cyCopy, ada);
@@ -785,7 +783,7 @@ test("cold review 3: a row of another session reusing the open seat's entity id 
   const contested = contestedSeats(adaCopy, session);
   expect(contested.length, "the seat is contested, so reseat runs").toBe(1);
   const fresh = rnd();
-  changeEntity(adaCopy, "_dai_seat", contested[0]!["ent"] as Uint8Array, { seat: fresh, nonce: null });
+  changeEntity(adaCopy, "_dai_seat", contested[0]!["ent"] as Uint8Array, { seat: fresh });
   const open = adaCopy.all("SELECT lower(hex(seat)) AS s FROM _dai_open_seat WHERE session = ?", [session]).map((r) => r["s"]);
   expect(open, "Ada's session has the fresh open seat, and only it").toEqual([hex(fresh)]);
   adaCopy.close();
@@ -824,7 +822,7 @@ test("cold review 3: the creator's row in her own seat naming a waiting joiner's
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
   await seal(adaCopy, ada);
   const boCopy = openGame();
   ensureReplica(boCopy, bo.author);
@@ -856,7 +854,7 @@ test("cold review 3: a waiting joiner's change of his own waiting move versions 
   const adaCopy = openGame();
   ensureReplica(adaCopy, ada.author);
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat: rnd(), openSeat, entities: [rnd(), rnd()] });
   await seal(adaCopy, ada);
   const boCopy = openGame();
   ensureReplica(boCopy, bo.author);
@@ -881,7 +879,7 @@ test("cold review 3: a waiting joiner's rename of the creator's game waits with 
   const adaCopy = openGame();
   ensureReplica(adaCopy, ada.author);
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat: rnd(), openSeat, entities: [rnd(), rnd()] });
   const game = createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
   await seal(adaCopy, ada);
   const boCopy = openGame();
@@ -904,8 +902,8 @@ test("cold review 3: an entity id in two sessions this copy writes in is refused
   const ada = await person();
   const adaCopy = openGame();
   ensureReplica(adaCopy, ada.author);
-  const s1 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
-  const s2 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const s1 = startSession(adaCopy, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const s2 = startSession(adaCopy, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
   const game = createEntity(adaCopy, "games", rnd(), { title: "first" }, s1);
   createEntity(adaCopy, "games", game._r_entity, { title: "second" }, s2);
   expect(() => changeEntity(adaCopy, "games", game._r_entity, { title: "renamed" }), "a rename cannot tell which game").toThrow(/D134/);
@@ -920,8 +918,8 @@ test("batch format version 2 (D134): a row's key is (session, entity), so a writ
   const ada = await person();
   const adaCopy = openGame();
   ensureReplica(adaCopy, ada.author);
-  const s1 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
-  const s2 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const s1 = startSession(adaCopy, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const s2 = startSession(adaCopy, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
   const game = createEntity(adaCopy, "games", rnd(), { title: "first" }, s1);
   createEntity(adaCopy, "games", game._r_entity, { title: "second" }, s2);
   const change = changeEntity as (...args: unknown[]) => unknown;
@@ -966,7 +964,7 @@ async function waitingGame(o: { cy?: boolean } = {}) {
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
   const game = createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
   createEntity(adaCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", san: "e4" }, session);
   await seal(adaCopy, ada);
@@ -988,9 +986,8 @@ async function waitingGame(o: { cy?: boolean } = {}) {
 
 /** A binding row in a session the writer mints for itself, reusing the id of Bo's binding and naming it as the earlier version. */
 async function bindingInOwnSession(db: Copy, who: Person, boBinding: ReplicatedRow): Promise<void> {
-  const nonce = rnd();
-  const own = sessionIdOf(who.author, nonce)!;
-  createEntity(db, "_dai_seat", rnd(), { seat: rnd(), nonce }, own);
+  const own = sessionIdOf(who.author, nextSeq(db))!;
+  createEntity(db, "_dai_seat", rnd(), { seat: rnd() }, own);
   raw(db, who, "_dai_binding", { entity: boBinding._r_entity, lc: 5, parents: [rowId(boBinding)], session: own, columns: { seat: rnd() } });
   await seal(db, who);
 }
@@ -1185,8 +1182,8 @@ test.describe("cold review 5: a close counts only from an author the session's r
 test("cold review 5: a creator who also waits in her own open seat sees each of her rows once", () => {
   const db = openWith(SCHEMA);
   db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 3, 3)", [ADA]);
-  put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT, nonce: NONCE });
-  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT, nonce: null });
+  put(db, "_dai_seat", ADA, 1, 1, { seat: ADA_SEAT });
+  put(db, "_dai_seat", ADA, 2, 2, { seat: OPEN_SEAT });
   // newSession({ solo: true }) asks for its own open seat before the kit confirms it.
   put(db, "_dai_binding", ADA, 3, 3, { seat: OPEN_SEAT });
   createEntity(db, "games", nextEntity(), { title: "solo" }, S);
@@ -1198,7 +1195,7 @@ test("cold review 5: a creator who also waits in her own open seat sees each of 
 test("cold review 5: the host opens mailboxes only for sessions this copy is a member of or waits in", () => {
   const db = closeGame("any");
   // A stranger's own session, arriving in a whole file: his seat rows there.
-  const T = sessionIdOf(CY, bytes(0x09))!;
+  const T = sessionIdOf(CY, 5)!; // his seat row below is his seq 5
   applyRow(db, "_dai_seat", {
     _r_replica: CY,
     _r_seq: 5,
@@ -1207,7 +1204,7 @@ test("cold review 5: the host opens mailboxes only for sessions this copy is a m
     _r_parents: "[]",
     _r_deleted: 0,
     _r_session: T,
-    columns: { seat: bytes(0xb1), nonce: bytes(0x09) },
+    columns: { seat: bytes(0xb1) },
   });
   expect(sessionsOf(db, ADA), "only the session Ada is in").toEqual([hex(S)]);
   db.close();
@@ -1240,7 +1237,7 @@ async function playedGame(ada: Person, bo: Person, close: "any" | "creator") {
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
   createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
   await seal(adaCopy, ada);
   const boCopy = openGameWith(close);
@@ -1397,7 +1394,7 @@ test("cold review 6: close=any, a waiting asker's close counts in _dai_closed on
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
   await seal(adaCopy, ada);
   const boCopy = openGameWith("any");
   ensureReplica(boCopy, bo.author);

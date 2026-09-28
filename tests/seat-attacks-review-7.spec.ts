@@ -116,9 +116,8 @@ async function playedGame(ada: Person, bo: Person, close: "any" | "creator" = "a
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const nonce = rnd();
   const seatEntities: [Uint8Array, Uint8Array] = [rnd(), rnd()];
-  const session = startSession(adaCopy, { nonce, creatorSeat, openSeat, entities: seatEntities });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: seatEntities });
   createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
   await seal(adaCopy, ada);
   const boCopy = openGameWith(close, extra);
@@ -135,23 +134,24 @@ async function playedGame(ada: Person, bo: Person, close: "any" | "creator" = "a
   await seal(boCopy, bo);
   await merge(adaCopy, boCopy, ada);
   const close2 = () => [adaCopy, boCopy].forEach((c) => c.close());
-  return { adaCopy, boCopy, session, creatorSeat, openSeat, nonce, seatEntities, e5, close: close2 };
+  return { adaCopy, boCopy, session, creatorSeat, openSeat, seatEntities, e5, close: close2 };
 }
 
-test("F1: the creator's signed second nonce row naming the open seat unseats the confirmed joiner and takes his side", async () => {
-  test.fail(true, "D158, fixed in step 6's format bump: _dai_creator counts every nonce row, so the creator can claim a confirmed open seat");
+test("F1: the creator's signed second seat row naming the open seat neither unseats the confirmed joiner nor takes his side", async () => {
   const ada = await person();
   const bo = await person();
   const g = await playedGame(ada, bo);
   expect(holders(g.boCopy, g.session, g.openSeat)).toEqual([hex(bo.author)]);
-  // Ada, signed with her own key: a seat row carrying the session's nonce, whose
-  // seat is the open seat Bo was confirmed in. No writer is involved; the merge takes it.
-  createEntity(g.adaCopy, "_dai_seat", rnd(), { seat: g.openSeat, nonce: g.nonce }, g.session);
+  // Ada, signed with her own key: another seat row in the session, whose seat is
+  // the open seat Bo was confirmed in. No writer is involved; the merge takes it.
+  // At step 5 a row carrying the session's nonce counted as hers (D158); the
+  // session id now names one row by (author, seq), and this is not that row.
+  createEntity(g.adaCopy, "_dai_seat", rnd(), { seat: g.openSeat }, g.session);
   // And she answers Bo's e5 as Black, from the seat now counted as hers.
   raw(g.adaCopy, "moves", g.e5._r_entity, { seat: g.openSeat, game_id: "g1", ply: 2, san: "c5" }, g.session, { parents: [idOf(g.e5)] });
   await seal(g.adaCopy, ada);
   const report = await merge(g.boCopy, g.adaCopy, bo);
-  expect.soft(report.refusedBatches, "the merge refuses nothing").toEqual([]);
+  expect.soft(report.refusedBatches, "her move for the seat Bo holds is refused, in her name").toEqual([{ author: ada.shown, reason: "SEAT_NOT_HELD" }]);
   expect.soft(holders(g.boCopy, g.session, g.openSeat), "a hold never moves once made: Bo still holds the open seat").toEqual([hex(bo.author)]);
   expect.soft(sans(g.boCopy, g.session), "Bo's admitted e5 is still what chess shows").toEqual(["e4", "e5"]);
   g.close();
@@ -193,7 +193,7 @@ async function waitingGame(ada: Person, bo: Person) {
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { nonce: rnd(), creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
   createEntity(adaCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", ply: 1, san: "e4" }, session);
   await seal(adaCopy, ada);
   const boCopy = openGameWith("any");

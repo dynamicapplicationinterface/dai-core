@@ -28,7 +28,6 @@ test("agrees with WebCrypto at every length from 0 to 200 bytes", async () => {
 });
 
 test("batch format version 2 (D158): a session id is SHA-256(author ‖ the creator seat row's seq), frozen", () => {
-  test.fail(true, "step 6, D158: the id still commits to a nonce, which any seat row may carry");
   // Derived with node:crypto: the seq as eight bytes, unsigned, big-endian.
   const author = Buffer.from("a3a8b56f9591737fca3854a36eb4583f", "hex");
   expect(hex(sessionIdOf(new Uint8Array(author), 1)!)).toBe("0ec101b71f3ccd206b5ce69c312b2e75");
@@ -38,13 +37,16 @@ test("batch format version 2 (D158): a session id is SHA-256(author ‖ the crea
   expect(sessionIdOf(new Uint8Array(author), 1.5), "a seq is a whole number").toBeNull();
 });
 
-test("a session id is the first 16 bytes of SHA-256(author ‖ nonce), and malformed input names none", async () => {
+test("a session id agrees with WebCrypto, reads a BigInt seq as its number, and malformed input names none", async () => {
   const author = new Uint8Array(SESSION_ID_BYTES).fill(0xc0);
-  const nonce = new Uint8Array(SESSION_ID_BYTES).fill(0x07);
-  const joined = new Uint8Array([...author, ...nonce]);
-  const full = new Uint8Array(await webcrypto.subtle.digest("SHA-256", joined));
-  expect(hex(sessionIdOf(author, nonce)!)).toBe(hex(full.slice(0, SESSION_ID_BYTES)));
-  expect(sessionIdOf(author, new Uint8Array(15)), "a short nonce").toBeNull();
-  expect(sessionIdOf(null, nonce), "no author").toBeNull();
-  expect(sessionIdOf(author, "07".repeat(16)), "a nonce as text").toBeNull();
+  const seq = new Uint8Array([0, 0, 0, 0, 0, 0, 0x01, 0x2c]); // 300, eight bytes big-endian
+  const full = new Uint8Array(await webcrypto.subtle.digest("SHA-256", new Uint8Array([...author, ...seq])));
+  expect(hex(sessionIdOf(author, 300)!)).toBe(hex(full.slice(0, SESSION_ID_BYTES)));
+  // sqlite-wasm may hand an integer back as a BigInt; it is the same seq.
+  expect(hex(sessionIdOf(author, 300n)!)).toBe(hex(sessionIdOf(author, 300)!));
+  expect(sessionIdOf(new Uint8Array(15), 1), "a short author").toBeNull();
+  expect(sessionIdOf(null, 1), "no author").toBeNull();
+  expect(sessionIdOf(author, "1"), "a seq as text").toBeNull();
+  expect(sessionIdOf(author, -1), "a negative seq").toBeNull();
+  expect(sessionIdOf(author, new Uint8Array(16)), "bytes, as the nonce was").toBeNull();
 });
