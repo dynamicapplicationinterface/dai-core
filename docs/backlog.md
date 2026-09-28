@@ -4404,8 +4404,25 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 
 #### D166 — A signed replicated file picked on the opener is refused as "manifest version 4, which this bootloader does not know"
 
-*Status: **open.** Filed 28 September, while writing step 6's page reds;
-reproduced, not ruled. Not in step 6.*
+*Status: **ruled — not built; first in step 6's remaining order, before
+D134, its own commit.** Filed 28 September, while writing step 6's page
+reds.*
+
+*Ruled 28 September: fix now. A signed replicated file picked on the opener
+is the core arrival on the walk, and production refuses it for a reason no
+test sees, because the tests pin `manifestVersion: 3`: a check passing for
+an unrelated reason. So the fix has two halves. The bootloader reads version
+4. And the tests build at the default version, so a mismatch between what
+the builder emits and what the bootloader knows cannot hide again: the specs
+that pin 3 to step round this stop pinning it, and one new test builds with
+no version given and opens the file through the real picker.*
+
+*The misreading, so it is not repeated: the second sitting of 28 September
+put this sentence down to a stale bundle ("kill 5174 to 5176 and run once").
+It is not staleness. It survives fresh servers, because the refusal is in
+the committed runtime (`verifySignature` refuses a signed manifest above
+version 3). A sentence that survives a clean restart is a finding, not
+weather.*
 
 The compiler writes manifest version 4 for any replicated build, and the
 runtime's `verifySignature` (`src/runtime/bootloader.ts`) refuses a signed
@@ -4433,10 +4450,25 @@ yet read.
 
 #### D165 — A confirm the creator signs at a seq she skipped moves a hold
 
-*Status: **open, needs a ruling.** Filed 28 September, rated high, while
-deciding step 6. This is the second variant named on D158, and D158's ruling
-does not close it: that ruling binds the session id to the creator's seat
-row, and this variant never touches that row. Not in step 6.*
+*Status: **ruled — not built; in step 6, with the roster work.** Filed 28
+September, rated high, while deciding step 6. This is the second variant
+named on D158, and D158's ruling does not close it: that ruling binds the
+session id to the creator's seat row, and this variant never touches that
+row.*
+
+*Ruled 28 September: equivocation, at the seat. A confirmed seat is never
+reseated (already ruled), so a creator who signs two confirms for one seat
+has signed two conflicting claims about one thing: D160's principle one
+level up. One confirm per seat per creator. A second one, whatever its seq,
+voids both; the seat shows as contested on every copy, and the merge reports
+`AUTHOR_EQUIVOCATED` with the creator's id. No ordering by seq or by
+arrival: those are a clock and a race, and both are what broke the earlier
+seat models. The creator repairs by starting a new game, the honest cost of
+having signed twice. The same rule holds for a second seat row from the
+creator in a session whose id already binds one, if any path still admits
+it. Red first; folded into step 6, since it is roster admission and step 6
+has the session id open. The two shapes below were the options before the
+ruling; (a) is the one taken, with the report.*
 
 `_dai_holder` seats whoever the creator's lowest-seq confirm of a seat names
 ("the earliest confirm wins"), and no rule stops the creator from signing a
