@@ -4402,6 +4402,41 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D165 — A confirm the creator signs at a seq she skipped moves a hold
+
+*Status: **open, needs a ruling.** Filed 28 September, rated high, while
+deciding step 6. This is the second variant named on D158, and D158's ruling
+does not close it: that ruling binds the session id to the creator's seat
+row, and this variant never touches that row. Not in step 6.*
+
+`_dai_holder` seats whoever the creator's lowest-seq confirm of a seat names
+("the earliest confirm wins"), and no rule stops the creator from signing a
+row at a seq below her highest: the host's floor stops an honest client, not a
+hostile one. So a creator who left a gap in her seqs before confirming Bo can
+later sign a confirm in the gap naming someone else. The hold moves, Bo's rows
+in the seat stop being admitted, and the merge refuses nothing. Nor is it
+equivocation (D160): the two confirms sit at different row ids. D158's ruling
+turned down a highest-seq rule because it would refuse honest out-of-order
+delivery by file, and that reason applies here too.
+
+- **Reproduction:** a scratch probe on `d1614f5` (not kept): Ada's counter
+  jumps six seqs after `startSession`, she confirms Bo, Bo plays e5, then Ada
+  signs a confirm of the open seat naming Cy at one of the skipped seqs. On
+  Bo's copy the holder goes from Bo to Cy, the admitted moves go from e4 and e5
+  to e4 alone, and `refusedBatches` is empty.
+- **Breaks:** "a hold never moves once made" (`IDENTITY-SEAT-CONFIRMED`), and
+  the seventh review's invariant (no row by one author makes another author's
+  row unadmitted).
+- **Order-free shapes, not ruled:** (a) two confirms of one seat by the
+  creator naming different holders void each other and the seat is contested,
+  as D160 voids a repeated row id; (b) a confirm must name, as its parent, the
+  open seat's row at the version it confirms, so a second confirm is a second
+  version of one chain, a conflict both copies see. Each still lets a hostile
+  creator contest the seat after the fact, and Bo's admitted rows stop
+  counting either way; what each changes is that every copy sees and reports
+  it, rather than seating someone else in silence. Whether that is enough is
+  the ruling's question.
+
 #### D164 — `launch-address:123` reads the manifest while the iPhone relaunch is reloading the page
 
 *Status: open, a test defect, measured locally; CI has passed it.*
@@ -4516,7 +4551,8 @@ session id names; a second seat row from the creator, or a backfilled one,
 is just another row and holds nothing. No highest-seq rule: that would
 refuse honest out-of-order delivery by file. A format change, so it rides
 step 6's bump with D134 and the frontier's retirement, under that bump's own
-review.*
+review. The second variant below (a confirm at a skipped seq) is not closed
+by this ruling: reproduced 28 September and filed as D165.*
 
 `_dai_creator` counts every undeleted `_dai_seat` row whose nonce commits to
 the session, not the first, and not only heads. `_dai_holder` drops a confirm
