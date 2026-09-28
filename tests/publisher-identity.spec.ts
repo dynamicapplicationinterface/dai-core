@@ -28,7 +28,6 @@ async function signedBuild() {
     signingKey: KEY,
     // See tests/test-key.spec.ts: the published key is refused unless asked for.
     allowTestKey: true,
-    manifestVersion: 3,
   });
   const verified = await verifyContainer(built.html);
   return { built, key: verified.publicKey!, signature: built.manifest.signature! };

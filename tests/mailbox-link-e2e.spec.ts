@@ -1873,9 +1873,6 @@ test.describe("a game continues over a shared link (the key path)", () => {
         appName: "Velvet Chess",
         documentUuid: uuid,
         signingKey: resolve(repo, key),
-        // As trust-consent.spec.ts builds its two publishers: a signing key
-        // alone makes version 4, which this opener does not read.
-        manifestVersion: 3,
       });
       const path = join(dir, name);
       writeFileSync(path, built.html, "utf8");

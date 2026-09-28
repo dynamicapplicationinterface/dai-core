@@ -24,7 +24,7 @@ import { zipSync } from "fflate";
 import { unzipBounded, ArchiveTooLarge } from "../unzip.js";
 // Imported rather than reimplemented: the host derives the same value from the
 // same helper, and two spellings of "canonical" would disagree eventually.
-import { payloadFingerprint, signedBytes, signedViewOf } from "../core.js";
+import { payloadFingerprint, signedBytes, signedViewOf, SUPPORTED_MANIFEST_VERSIONS } from "../core.js";
 import { verifySign1 } from "../cose.js";
 import { compatibility, type SchemaDeclaration } from "../schema.js";
 import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
@@ -533,7 +533,7 @@ async function verifySignature(
   if (manifest.signatureAlgorithm !== "COSE-ES256") {
     return { ok: false, reason: `unsupported signature algorithm ${manifest.signatureAlgorithm}` };
   }
-  if (manifest.manifestVersion > 3) {
+  if (!SUPPORTED_MANIFEST_VERSIONS.includes(manifest.manifestVersion)) {
     return {
       ok: false,
       reason: `uses manifest version ${manifest.manifestVersion}, which this bootloader does not know — update the app that opens it`,

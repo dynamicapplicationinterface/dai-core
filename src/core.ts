@@ -38,6 +38,14 @@ import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
 export const MANIFEST_VERSION = 3;
 
 /**
+ * The versions a reader knows (spec §9.1): the host's and the bootloader's
+ * one list. The bootloader once kept its own bound, at 3, and refused every
+ * signed replicated file the compiler wrote at 4 while the host opened it
+ * (backlog D166).
+ */
+export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3, 4];
+
+/**
  * The level whose rules a declared table follows (§3).
  *
  * One value because there is one level. It is written into the manifest rather

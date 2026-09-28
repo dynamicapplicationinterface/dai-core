@@ -48,9 +48,6 @@ async function chessWith(fill: (db: Rows, document: string) => Promise<void>): P
     appName: "Chess",
     signingKey: resolve(repo, "conformance", "signing-key.pem"),
     allowTestKey: true,
-    // As the other specs that pick a signed file build it: a signed version 4
-    // is refused before it opens (backlog D166).
-    manifestVersion: 3,
   });
   const dir = mkdtempSync(join(tmpdir(), "dai-step6-"));
   const path = join(dir, "document.sqlite");

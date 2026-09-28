@@ -22,7 +22,7 @@ import {
   verifyContainerFile,
 } from "./format.js";
 import {
-  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES } from "./core.js";
+  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES, SUPPORTED_MANIFEST_VERSIONS } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -156,8 +156,8 @@ function fillFromHost(
   return { supplied, absent };
 }
 
-/** The versions this reader knows (spec §9.1). */
-export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3, 4];
+/** The versions this reader knows (spec §9.1), owned by `core.ts`. */
+export { SUPPORTED_MANIFEST_VERSIONS };
 
 /**
  * The capability names version 4 defines (spec 2.1.1 §2.1).

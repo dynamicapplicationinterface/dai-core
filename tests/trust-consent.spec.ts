@@ -39,7 +39,6 @@ async function twoCopies(): Promise<{ theirs: string; ours: string; uuid: string
       appName: "Chore chart",
       documentUuid: uuid,
       signingKey: key,
-      manifestVersion: 3,
     });
     const path = join(dir, name);
     writeFileSync(path, built.html, "utf8");
