@@ -4420,8 +4420,24 @@ does) before reading.
 
 #### D163 — A successor opened from the update card reads the open document's link state
 
-*Status: open, waiting on a ruling. Found by D127's bounded cold read; read,
-not run.*
+*Status: ruled 28 September — not built. Built right after step 6, its own
+session on the arrival path with its own cold read. Found by D127's bounded
+cold read; read, not run.*
+
+**Ruled: no inheritance.** A successor is a different document: a new uuid,
+arriving under the address the announcement carries, with its own key in
+that address. It is an arrival like any other and takes nothing from the
+document that is open. The update card only looked like an exception because
+arrival state lives in module variables, so "clear before reading" and "leave
+the open document alone" collide; that is also D127's residual, two arrivals
+sharing the variables. **One fix for both:** arrival state is carried per
+arrival, an object handed to whichever path reads it (the keep, the key-held
+refusals, the mailbox, the card, the icon address), never a module-level set.
+Then the update card's fetch, a second arrival in flight, and a refused
+successor each hold their own state, and the open document's is never
+touched. `forgetArrival()` goes with it. Red first: a successor opened from
+the update card is kept under its own key, and the open document keeps its
+own through a refused successor.
 
 The update card opens the successor with `openFromUrl` while the old document
 is still mounted, and no arrival state is reset on that path. So the
@@ -5341,8 +5357,10 @@ start of an arrival, so two arrivals in flight at once still share the
 variables. A store link resets, then awaits its fetch; a link pasted into the
 tab meanwhile resets and starts its `ingest`; the fetch then lands and sets its
 key, which the pasted arrival's keep reads. Not run. Closing it needs the
-values carried per arrival (in `Carrier`, or under an arrival token), not a
-reset; picked up with that change if a run makes it red.
+values carried per arrival, not a reset. **Ruled 28 September with D163:**
+arrival state is carried per arrival, an object handed to whichever path
+reads it, never a module-level set; one build closes this and D163, right
+after step 6, its own session with its own cold read.
 
 `arrivedKey` and `arrivedSession` are set from a link (and `arrivedKey` from a
 share-target key). They are cleared only in `eject`, which only `deleteApp`
