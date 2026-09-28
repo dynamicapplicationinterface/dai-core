@@ -4402,6 +4402,35 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D166 — A signed replicated file picked on the opener is refused as "manifest version 4, which this bootloader does not know"
+
+*Status: **open.** Filed 28 September, while writing step 6's page reds;
+reproduced, not ruled. Not in step 6.*
+
+The compiler writes manifest version 4 for any replicated build, and the
+runtime's `verifySignature` (`src/runtime/bootloader.ts`) refuses a signed
+manifest above version 3. `hostShell` carries the publisher's key into the
+host's own shell, so the host's runtime makes that check too. Picking a
+signed replicated file on a first visit to the opener's root is refused,
+"Signature check failed — this container is not authentic. uses manifest
+version 4, which this bootloader does not know — update the app that opens
+it", and nothing opens. The specs that pick signed files build them at
+`manifestVersion: 3` to step round it ("a signing key alone makes version 4,
+which this opener does not read", `mailbox-link-e2e.spec.ts`), so no test
+meets it. A store link to the same kind of document opens
+(`arrival-link-state.spec.ts`); why that path does not reach the check is not
+yet read.
+
+- **Reproduction:** an untracked probe on `0854833`, Chromium, three of three:
+  the chess fixture as built, the chess fixture resealed, and receipts as
+  built, each signed with the test key and picked on a fresh context. Each
+  shows the sentence above.
+- **Seen in CI too, probably:** Firefox, `arrival-link-state.spec.ts:131`, run
+  36455823519, the same sentence on the first try, passing on retry.
+- **A correction:** the 28 September handoff's trap put this sentence down to
+  a stale bundle. The probe ran on fresh servers, so staleness is not
+  enough to explain it.
+
 #### D165 — A confirm the creator signs at a seq she skipped moves a hold
 
 *Status: **open, needs a ruling.** Filed 28 September, rated high, while
