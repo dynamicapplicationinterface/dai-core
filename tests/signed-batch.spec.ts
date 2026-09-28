@@ -8,6 +8,8 @@ import {
   canonicalHeader,
   decodeBatch,
   encodeBatch,
+  pendingBatches,
+  recordSeal,
   rowsDigest,
   signBatch,
   stageBatch,
@@ -486,6 +488,32 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
     expect(moves(carol)).toEqual([{ san: "e4", sealed: 1 }]);
     file.close();
     carol.close();
+  });
+
+  test("a forwarder relabels which rows an honest header covers: the honest row is still taken, and nothing is refused in its author's name", async () => {
+    test.fail(true, "D161, fixed in step 6's format bump: covers is outside the signed bytes, so a relabeled header still verifies its signature");
+    const ada = await person();
+    const adaCopy = copyFor(ada);
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    for (const b of pendingBatches(adaCopy, ada.author, TABLES)) recordSeal(adaCopy, await signBatch(b, { document: DOC, keys: ada.keys }));
+    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "e5" });
+    for (const b of pendingBatches(adaCopy, ada.author, TABLES)) recordSeal(adaCopy, await signBatch(b, { document: DOC, keys: ada.keys }));
+
+    // Mal holds Ada's copy and forwards it, with her second header's list of
+    // rows changed to her first row's. Nothing he did needed her key.
+    const mal = copyFor(await person());
+    expect((await mergeSibling(mal, adaCopy, { document: DOC })).refusedBatches).toEqual([]);
+    const [first, second] = ["e4", "e5"].map(
+      (san) => mal.all("SELECT _r_batch FROM moves WHERE san = ?", [san])[0]!["_r_batch"] as Uint8Array,
+    );
+    const firstCovers = mal.all("SELECT covers FROM _dai_batch WHERE id = ?", [first])[0]!["covers"];
+    mal.run("UPDATE _dai_batch SET covers = ? WHERE id = ?", [firstCovers, second]);
+
+    const bo = copyFor(await person());
+    const report = await mergeSibling(bo, mal, { document: DOC });
+    expect.soft(report.refusedBatches, "nothing is refused in Ada's name: she signed nothing wrong").toEqual([]);
+    expect.soft(moves(bo).map((m) => m.san), "both of Ada's signed moves are taken").toEqual(["e4", "e5"]);
+    for (const db of [adaCopy, mal, bo]) db.close();
   });
 });
 

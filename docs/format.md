@@ -52,9 +52,12 @@ part: doing so would make every past batch unvouchable without re-signing.
 A stored header (`_dai_batch`) lists the rows it covers: `covers`, a JSON array
 of `[table, seq]` pairs ordered by table (UTF-8 bytes) and then seq, in exactly
 that spelling (`[["moves",1],["moves",2]]`). The author is the header's own; a
-batch has one. `covers` is not in the signed bytes and does not need to be: the
-digest commits to the rows, their tables and their seqs, and a list that names
-other rows digests to something else. It names the table as well as the seq so
+batch has one. `covers` is not in the signed bytes at version 1. The reason
+given was that the digest commits to the rows, their tables and their seqs, and
+a list that names other rows digests to something else. That holds only where
+the verifier holds the rows the list names: a copy forwarding a header can
+change its list, and the next copy refuses the header in its honest author's
+name (backlog D161). Version 2 signs it. It names the table as well as the seq so
 that a row is looked for only where it was signed: a row of the same number in
 another table is not one the header covers, and cannot spoil it.
 

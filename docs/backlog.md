@@ -4402,6 +4402,36 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D161 — A forwarder relabels which rows an honest header covers, and the honest row is refused in its author's name
+
+*Status: **ruled — not built; fixed in step 6's format bump.** Filed 28
+September, rated high, found by running D160's mechanism before building it.
+Ruled 28 September: `covers` goes inside the signed canonical bytes, format
+version 2, in step 6's bump with D134's key, the frontier's retirement and
+D158. Once covers are signed, D160's first ruling stands as written: the
+evidence travels with the headers.*
+
+A signature covers `[version, document, author, lc, digest]`
+(`docs/format.md`), and the list of rows a stored header covers sits outside
+it. Step 4 left it out on a stated reason: the digest commits to the rows,
+their tables and their seqs, so a list naming other rows digests to something
+else. That holds only where the verifier holds the rows the list names. It did
+not come with `att`, which is outside for its own reason (vouching arriving
+later). A copy that forwards a header can change its list without anyone's
+key. At the next copy the header's signature still verifies, the digest over
+the relabeled rows does not, and the merge refuses the header as
+`BATCH_DIGEST_MISMATCH` in the name of the author, who signed nothing wrong,
+and drops the honest rows it really covered. A forwarder could always
+withhold a row; what this adds is the refusal, reported against an honest
+author. Built on as D160's evidence, the same relabel would void any author's
+row and report them as `AUTHOR_EQUIVOCATED`.
+
+- **Reproduction:** `tests/signed-batch.spec.ts`, "a forwarder relabels which
+  rows an honest header covers ..." (`test.fail`): Ada signs two moves in two
+  batches, Mal relabels the second header to list the first move, and Bo,
+  merging from Mal, refuses Ada's second batch in her name and takes only
+  `e4`.
+
 #### D158 — The creator unseats a confirmed joiner and plays his side
 
 *Status: **ruled — not built; fixed in step 6's format bump.** Filed 27
@@ -4456,7 +4486,13 @@ stays unseated. Admission of author rows is unaffected.
 
 #### D160 — Two confirms at one row id split the copies on who holds the seat
 
-*Status: **ruled — not built.** Filed 27 September from the seventh cold
+*Status: **ruled — not built; fixed in step 6's format bump, after D161.**
+Ruled 28 September: the evidence the mechanism below relies on, a header kept
+without its rows, is forgeable until a header's `covers` is signed (D161), so
+D160 is built on signed covers and not before. No merge-time half-measure is
+built now to be torn out then. F3 stays `test.fail`.*
+
+*Filed 27 September from the seventh cold
 review (F3), rated medium. Ruled 27 September: void both, and report. Two
 valid signed batches from one author covering the same `(table, seq)` with
 different digests are equivocation, and picking a winner trusts arrival
