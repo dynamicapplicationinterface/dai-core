@@ -69,15 +69,10 @@ function seats(session) {
       [session, mine],
     );
   // An open seat is held by whoever the creator's copy seats in it. Asked for by
-  // two before that, it is contested, for the creator to repair.
-  const unheld = "NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)";
-  const contested = rows(
-    `SELECT 1 AS x FROM _dai_binding_current b
-       JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
-      WHERE lower(hex(b._r_session)) = ? AND ${unheld}
-      GROUP BY b.seat HAVING count(DISTINCT b._r_replica) > 1`,
-    [session],
-  ).length > 0;
+  // two before that, or confirmed twice, it is contested (_dai_contested).
+  const unheld = "NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)" +
+    " AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat)";
+  const contested = !!one("SELECT 1 AS x FROM _dai_contested WHERE lower(hex(session)) = ?", [session]);
   const openSeat = one(
     `SELECT lower(hex(s.seat)) AS seat FROM _dai_open_seat s
       WHERE lower(hex(s.session)) = ? AND ${unheld}
@@ -171,6 +166,7 @@ function seatAskers() {
        JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ?
        JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat
       WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)
+        AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat)
       GROUP BY s.session, s.seat`,
     [mine],
   );

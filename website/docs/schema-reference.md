@@ -103,7 +103,13 @@ Which side a row acts for, and whose seat is whose.
 
 **Applies to** session. The asks: seat, \_r\_session; \_r\_replica is the copy that asked for that open seat by opening an invite.
 
-Which open seat is contested: nobody holds it and more than one copy asked for it.
+Who is waiting on which open seat.
+
+### `_dai_contested`
+
+**Applies to** session. session, seat, voided: seats nobody holds until repaired; voided 1: confirmed to two copies.
+
+Contested seats; reseat repairs voided 0.
 
 ### `_dai_member`
 

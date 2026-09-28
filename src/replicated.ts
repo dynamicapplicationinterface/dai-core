@@ -944,8 +944,13 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    *   definition. A binding to it means nothing.
    * - Every other seat the creator mints is open, and is held by whoever the
    *   creator confirms, in `_dai_confirm`, which only the creator's rows count
-   *   in. A joiner's binding asks for a seat; it holds nothing until then. If
-   *   the creator's rows confirm one seat twice, the first by her own seq holds.
+   *   in. A joiner's binding asks for a seat; it holds nothing until then. One
+   *   confirm per seat per creator (D165): two of her confirms of one seat
+   *   naming different copies void each other, whatever their seqs and
+   *   whichever arrived first, and nobody holds the seat (`_dai_voided`). A
+   *   confirmed seat is never reseated, so two confirms are two conflicting
+   *   claims about one thing, as two rows at one id are (D160); the repair is
+   *   a new session.
    *
    * Nothing here is ordered by a clock, so a backdated row gains nothing, and a
    * hold, once made, never moves: the repair (reseat) is refused on a seat
@@ -979,18 +984,44 @@ CREATE VIEW IF NOT EXISTS _dai_open_seat AS
                         AND ${unequivocal("n", "_dai_seat")}
                         AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);
 
+-- The creator's confirms of an open seat: her rows in her session, not of her
+-- own seat, not at an id she signed twice.
+CREATE VIEW IF NOT EXISTS _dai_confirmed AS
+  SELECT f._r_session AS session, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
+    FROM _dai_confirm f
+    JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
+   WHERE f._r_deleted = 0 AND ${unequivocal("f", "_dai_confirm")}
+     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session);
+
+-- The seats the creator confirmed to two different copies (D165): void, held by
+-- nobody, on every copy holding both confirms, whichever arrived first.
+CREATE VIEW IF NOT EXISTS _dai_voided AS
+  SELECT DISTINCT f.session AS session, f.seat AS seat, f.creator AS creator
+    FROM _dai_confirmed f
+   WHERE EXISTS (SELECT 1 FROM _dai_confirmed o WHERE o.session = f.session AND o.seat = f.seat AND o.holder <> f.holder);
+
 CREATE VIEW IF NOT EXISTS _dai_holder AS
   SELECT c.session AS session, c.seat AS seat, c.replica AS replica, 0 AS since
     FROM _dai_creator c
   UNION
-  SELECT f._r_session, f.seat, f.holder, f._r_seq
-    FROM _dai_confirm f
-    JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
-   WHERE f._r_deleted = 0 AND ${unequivocal("f", "_dai_confirm")}
-     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session)
-     AND NOT EXISTS (SELECT 1 FROM _dai_confirm o
-                      WHERE o._r_session = f._r_session AND o.seat = f.seat AND o._r_replica = f._r_replica
-                        AND o._r_deleted = 0 AND o._r_seq < f._r_seq AND ${unequivocal("o", "_dai_confirm")});
+  SELECT f.session, f.seat, f.holder, min(f.seq)
+    FROM _dai_confirmed f
+   WHERE NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = f.session AND v.seat = f.seat)
+   GROUP BY f.session, f.seat, f.holder;
+
+-- The seats nobody may be confirmed in until the creator repairs them: an open
+-- seat nobody holds that two or more copies asked for (voided 0: reseat is the
+-- repair), and a seat the creator confirmed twice (voided 1: a new session is).
+-- Every reader of "contested" reads this: the kit, reseat and the apps.
+CREATE VIEW IF NOT EXISTS _dai_contested AS
+  SELECT s.session AS session, s.seat AS seat, 0 AS voided
+    FROM _dai_open_seat s
+   WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)
+     AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat)
+     AND (SELECT count(DISTINCT b._r_replica) FROM _dai_binding_current b
+           WHERE b._r_session = s.session AND b.seat = s.seat) > 1
+  UNION
+  SELECT session, seat, 1 FROM _dai_voided;
 
 CREATE VIEW IF NOT EXISTS _dai_member AS
   SELECT DISTINCT session, replica FROM _dai_holder;

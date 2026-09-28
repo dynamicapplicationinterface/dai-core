@@ -249,6 +249,7 @@ export const REFUSALS = {
       "signed two histories, which an honest copy never does, since a batch leaves only once saved and " +
       "the host signs only above its sequence floor. Neither row at that id counts, on any copy that holds " +
       "both batches, whichever arrived first; both are kept and passed on, so every copy learns it. " +
+      "So is a session's creator confirming one seat to two copies: neither confirm counts (D165). " +
       "Reported once per author; the rest of the merge runs (D160).",
   },
 

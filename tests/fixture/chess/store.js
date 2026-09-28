@@ -91,8 +91,9 @@ export class Store {
   // An open seat nobody has been seated in, asked for by two or more devices —
   // the creator's cue that an invite went to more than one device and needs
   // replacing. Once the creator's copy has seated someone, a later ask is not a
-  // contest: that seat is taken for good.
-  const contested=this.rows("SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat WHERE lower(hex(b._r_session)) = ? AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) GROUP BY b.seat HAVING count(DISTINCT lower(hex(b._r_replica))) > 1",[session]).length>0;
+  // contest: that seat is taken for good. A seat the creator confirmed twice is
+  // void, and contested too (D165).
+  const contested=this.rows("SELECT 1 AS x FROM _dai_contested WHERE lower(hex(session)) = ?",[session]).length>0;
   // The kit's reads, on the host's author id: never an author column.
   const amCreator=window.daiKit.amCreator(session);
   const haveBinding=!!mine&&!!this.one('SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ? LIMIT 1',[session,mine]);

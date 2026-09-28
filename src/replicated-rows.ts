@@ -1030,6 +1030,16 @@ export function mergeFrom(
   const refuseBatch = (id: string, who: Uint8Array, reason: BatchRefusal): void => {
     refusals.set(`${id}|${reason}|${hex(who)}`, { id, author: who, reason });
   };
+  // The seats a creator confirmed to two copies (D165), keyed by session and seat.
+  const voidedSeats = (): Map<string, Uint8Array> =>
+    local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_voided'").length === 0
+      ? new Map()
+      : new Map(
+          local
+            .all("SELECT session, seat, creator FROM _dai_voided")
+            .map((r) => [`${hex(r["session"] as Uint8Array)}|${hex(r["seat"] as Uint8Array)}`, r["creator"] as Uint8Array]),
+        );
+  const voidedBefore = voidedSeats();
 
   /*
    * The clock first, and durably before any local write that follows.
@@ -1371,6 +1381,16 @@ export function mergeFrom(
    * (cold review of identity step 2, #3).
    */
   if (author instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, author));
+
+  /*
+   * Equivocation at the seat (D165): the creator confirmed one seat to two
+   * copies. Both confirms are void on every copy holding them (`_dai_voided`),
+   * and the merge that brings the second says so, in the creator's name, as
+   * D160 does for two rows at one id: the accusation is of the author.
+   */
+  for (const [seat, creator] of voidedSeats()) {
+    if (!voidedBefore.has(seat)) refuseBatch("", creator, "AUTHOR_EQUIVOCATED");
+  }
 
   result.refusedBatches = [...refusals.values()]
     .sort((a, b) => plainOrder(a.id, b.id) || plainOrder(a.reason, b.reason) || plainOrder(hex(a.author), hex(b.author)))

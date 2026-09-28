@@ -2145,14 +2145,14 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           // moves; picking "a seat the creator didn't bind" also depended on
           // SQLite's row order with more than two seats. So it is refused unless a
           // seat is actually contested (T1-D29) — a repair, never a boot.
-          // Contested: a current open seat nobody has been confirmed in, asked
-          // for by more than one author. A confirmed seat is never reseated, so
-          // a hold, once made, never moves (identity step 5).
+          // Contested, as `_dai_contested` says: a current open seat nobody
+          // has been confirmed in, asked for by more than one author. A
+          // confirmed seat is never reseated, so a hold, once made, never moves
+          // (identity step 5); nor is a seat the creator confirmed twice, whose
+          // repair is a new session (D165).
           const contested = rows.all(
-            "SELECT s.entity AS ent FROM _dai_open_seat s WHERE s.session = ? " +
-              "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
-              "AND (SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
-              "WHERE b._r_session = s.session AND b.seat = s.seat) > 1 LIMIT 1",
+            "SELECT s.entity AS ent FROM _dai_open_seat s JOIN _dai_contested c ON c.session = s.session AND c.seat = s.seat " +
+              "WHERE s.session = ? AND c.voided = 0 LIMIT 1",
             [sid],
           );
           if (contested.length === 0) throw new Error("CANNOT_RESEAT");

@@ -16,7 +16,16 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 141,386 bytes: identity step 5's seat model, ruled 24 September. It bought
+ * 144,370 bytes: identity step 6's D134 and D165, ruled 28 September. The
+ * file had grown to its ceiling (144,213) under the budget below; D134's
+ * session argument on every write was paid for in place, and D165 bought 157
+ * bytes more: a seat the creator confirmed to two copies is void and
+ * contested on every copy, read from `_dai_contested` with its `voided`
+ * column, whose repair is a new game rather than reseat. What it buys is an
+ * author whose app shows that seat as the contest it is, instead of a joiner
+ * waiting forever on a confirmation that can never come.
+ *
+ * Before that, 141,386 bytes: identity step 5's seat model, ruled 24 September. It bought
  * 5,936 bytes: IDENTITY-SEAT-CONFIRMED in place of the withdrawn first-signer
  * rule, the waiting state (pendingSeat, t_pending) through the session rules,
  * and the roster views an author reads. What it buys is an author who knows a
@@ -37,7 +46,7 @@ import { RECIPE } from "../src/recipe.js";
  * invisible to the person, unreproducible on a desk, and routine with a live
  * opponent.
  */
-const BUDGET_BYTES = 141_386;
+const BUDGET_BYTES = 144_370;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;

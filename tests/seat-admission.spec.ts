@@ -267,14 +267,16 @@ test.describe("a row is admitted only when its author holds the seat it names", 
     db.close();
   });
 
-  test("when the creator's rows confirm one seat twice, the first by her own seq holds", () => {
+  test("when the creator's rows confirm one seat to two copies, both are void, whatever their seqs and clocks (D165)", () => {
     const db = openWith(SCHEMA);
     roster(db);
     put(db, "_dai_confirm", C, 5, 4, { seat: SEATJ, holder: K });
     put(db, "_dai_confirm", C, 3, 9, { seat: SEATJ, holder: J });
     put(db, "moves", J, 1, 5, { seat: SEATJ, san: "bo" });
     put(db, "moves", K, 1, 6, { seat: SEATJ, san: "cy" });
-    expect(admitted(db), "seq 3 is first, whatever the clocks say").toEqual(["bo"]);
+    // Ruled 28 September: no ordering by seq or arrival. Until then the lower seq held.
+    expect(admitted(db), "neither copy holds the seat").toEqual([]);
+    expect(db.all("SELECT voided FROM _dai_contested WHERE session = ?", [S]).map((r) => Number(r["voided"])), "it is contested, void").toEqual([1]);
     db.close();
   });
 });

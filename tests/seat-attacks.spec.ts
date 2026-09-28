@@ -549,6 +549,10 @@ test.describe("cold review 2: Q1, schema tricks", () => {
     ["an author table named _dai_confirm", "-- dai:replicated\nCREATE TABLE _dai_confirm (seat BLOB, holder BLOB);\n"],
     ["an author table marked seat= naming a column called _r_replica", "-- dai:replicated seat=_r_replica\nCREATE TABLE t2 (x TEXT);\n"],
     ["a plain view named _dai_holder ahead of the kit's", "CREATE VIEW _dai_holder AS SELECT 1 AS session, 1 AS seat, 1 AS replica, 0 AS since;\n"],
+    // D165's views: an author's own would decide which seats are void.
+    ["a plain view named _dai_confirmed ahead of the kit's", "CREATE VIEW _dai_confirmed AS SELECT 1 AS session, 1 AS seat, 1 AS holder, 1 AS seq, 1 AS creator;\n"],
+    ["a plain view named _dai_voided ahead of the kit's", "CREATE VIEW _dai_voided AS SELECT 1 AS session, 1 AS seat, 1 AS creator WHERE 0;\n"],
+    ["a plain view named _dai_contested ahead of the kit's", "CREATE VIEW _dai_contested AS SELECT 1 AS session, 1 AS seat, 0 AS voided WHERE 0;\n"],
   ] as const) {
     test(name, () => {
       let outcome: string;
@@ -560,7 +564,10 @@ test.describe("cold review 2: Q1, schema tricks", () => {
         const holderSql = db.prepare("SELECT sql FROM sqlite_schema WHERE name = '_dai_holder'").get() as { sql: string } | undefined;
         const confirmSql = db.prepare("SELECT sql FROM sqlite_schema WHERE name = '_dai_confirm'").get() as { sql: string } | undefined;
         const n = (db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE sql LIKE '%CREATE TABLE%_dai_confirm%'").get() as { n: number }).n;
-        outcome = `built; _dai_holder is ${holderSql?.sql.includes("_dai_confirm f") ? "the kit's" : "NOT the kit's"}; _dai_confirm tables ${n}; holder NOT NULL CHECK kept: ${/holder BLOB NOT NULL CHECK/.test(confirmSql?.sql ?? "")}`;
+        // The kit's holder reads the kit's confirms, and those read the kit's table (D165 put a view between).
+        const confirmedSql = db.prepare("SELECT sql FROM sqlite_schema WHERE name = '_dai_confirmed'").get() as { sql: string } | undefined;
+        const kits = Boolean(holderSql?.sql.includes("FROM _dai_confirmed f") && confirmedSql?.sql.includes("FROM _dai_confirm f"));
+        outcome = `built; _dai_holder is ${kits ? "the kit's" : "NOT the kit's"}; _dai_confirm tables ${n}; holder NOT NULL CHECK kept: ${/holder BLOB NOT NULL CHECK/.test(confirmSql?.sql ?? "")}`;
       } catch (error) {
         outcome = `refused: ${String((error as Error).message).slice(0, 160)}`;
       }
@@ -601,7 +608,8 @@ test.describe("cold review 2: Q3, what a waiting joiner and an offline creator r
       : (db.all(
           "SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat " +
             "WHERE lower(hex(b._r_session)) = ? AND lower(hex(b._r_replica)) = ? " +
-            "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) LIMIT 1",
+            "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
+            "AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) LIMIT 1",
           [s, id],
         )[0]?.["seat"] ?? null);
   const seats = (db: Rows, s: string) => [
@@ -680,13 +688,11 @@ function raw(
 const titles = (db: Rows, session: Uint8Array) =>
   db.all("SELECT title FROM games_current WHERE _r_session = ? ORDER BY title", [session]).map((r) => String(r["title"]));
 
-/** The bootloader's reseat query: a current open seat nobody holds, asked for by more than one author. */
+/** The bootloader's reseat query: a contested open seat, not voided (`_dai_contested`, D165). */
 const contestedSeats = (db: Rows, session: Uint8Array) =>
   db.all(
-    "SELECT s.entity AS ent FROM _dai_open_seat s WHERE s.session = ? " +
-      "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
-      "AND (SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
-      "WHERE b._r_session = s.session AND b.seat = s.seat) > 1 LIMIT 1",
+    "SELECT s.entity AS ent FROM _dai_open_seat s JOIN _dai_contested c ON c.session = s.session AND c.seat = s.seat " +
+      "WHERE s.session = ? AND c.voided = 0 LIMIT 1",
     [session],
   );
 
@@ -1037,6 +1043,7 @@ test("cold review 4: a rival asker's binding in her own session, naming Bo's, do
       "JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ? " +
       "JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat " +
       "WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
+      "AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) " +
       "GROUP BY s.session, s.seat",
     [hex(w.ada.author)],
   );

@@ -157,6 +157,125 @@ test("F1: the creator's signed second seat row naming the open seat neither unse
   g.close();
 });
 
+/*
+ * D165, ruled 28 September: equivocation at the seat. A confirmed seat is never
+ * reseated, so a creator who signs two confirms of one seat naming two copies has
+ * signed two conflicting claims about one thing. A second, whatever its seq,
+ * voids both; the seat is contested on every copy (`_dai_contested`, voided);
+ * the merge reports AUTHOR_EQUIVOCATED with the creator's id. No ordering by seq
+ * or by arrival. Probe 3 of step 6's decisions is the first scenario.
+ */
+
+/** Ada's game, Bo confirmed after a gap in her seqs, e4 and e5 played, both copies converged. */
+async function confirmedAfterAGap(ada: Person, bo: Person) {
+  const adaCopy = openGameWith("any");
+  ensureReplica(adaCopy, ada.author);
+  const creatorSeat = rnd();
+  const openSeat = rnd();
+  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  await seal(adaCopy, ada);
+  const boCopy = openGameWith("any");
+  ensureReplica(boCopy, bo.author);
+  await merge(boCopy, adaCopy, bo);
+  createEntity(boCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
+  await seal(boCopy, bo);
+  await merge(adaCopy, boCopy, ada);
+  // Her counter jumps six: nothing an honest host does, everything a hostile client can.
+  const skipped = Number(adaCopy.all("SELECT seq FROM _dai_replica")[0]!["seq"]) + 2;
+  adaCopy.run("UPDATE _dai_replica SET seq = seq + 6");
+  confirmSeat(adaCopy, session, openSeat, bo.author, rnd());
+  createEntity(adaCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", ply: 1, san: "e4" }, session);
+  await seal(adaCopy, ada);
+  await merge(boCopy, adaCopy, bo);
+  createEntity(boCopy, "moves", rnd(), { seat: openSeat, game_id: "g1", ply: 2, san: "e5" }, session);
+  await seal(boCopy, bo);
+  await merge(adaCopy, boCopy, ada);
+  return { adaCopy, boCopy, session, openSeat, skipped, close: () => [adaCopy, boCopy].forEach((c) => c.close()) };
+}
+const contested = (db: Rows, session: Uint8Array): string[] =>
+  db
+    .all("SELECT lower(hex(seat)) AS seat, voided FROM _dai_contested WHERE session = ? ORDER BY seat", [session])
+    .map((r) => `${String(r["seat"])}:${Number(r["voided"])}`);
+
+for (const at of ["a seq she skipped before confirming Bo", "her next seq"] as const) {
+  test(`D165: the creator signs a second confirm of the open seat naming Cy, at ${at}: both are void, nobody holds it, and the merge says so`, async () => {
+    const ada = await person();
+    const bo = await person();
+    const cy = await person();
+    const g = await confirmedAfterAGap(ada, bo);
+    expect(holders(g.boCopy, g.session, g.openSeat), "Bo holds the open seat").toEqual([hex(bo.author)]);
+    expect(sans(g.boCopy, g.session)).toEqual(["e4", "e5"]);
+    raw(g.adaCopy, "_dai_confirm", rnd(), { seat: g.openSeat, holder: cy.author }, g.session, at === "her next seq" ? {} : { seq: g.skipped });
+    await seal(g.adaCopy, ada);
+    const report = await merge(g.boCopy, g.adaCopy, bo);
+    expect.soft(report.refusedBatches, "Bo's copy learns Ada confirmed two copies in one seat").toEqual([{ author: ada.shown, reason: "AUTHOR_EQUIVOCATED" }]);
+    expect.soft(holders(g.boCopy, g.session, g.openSeat), "the hold does not move to Cy: nobody holds the seat").toEqual([]);
+    expect.soft(contested(g.boCopy, g.session), "the seat is contested, voided by the creator").toEqual([`${hex(g.openSeat)}:1`]);
+    expect.soft(contested(g.adaCopy, g.session), "on her own copy too").toEqual([`${hex(g.openSeat)}:1`]);
+    expect.soft(sans(g.boCopy, g.session), "Bo's e5 no longer counts: nobody holds his seat").toEqual(["e4"]);
+    g.close();
+  });
+}
+
+test("D165, every copy: a third copy from either side, in either order, agrees the seat is void, and each reports it", async () => {
+  const ada = await person();
+  const bo = await person();
+  const cy = await person();
+  const g = await confirmedAfterAGap(ada, bo);
+  raw(g.adaCopy, "_dai_confirm", rnd(), { seat: g.openSeat, holder: cy.author }, g.session, { seq: g.skipped });
+  await seal(g.adaCopy, ada);
+  // Dee takes Bo's copy first (one confirm), then Ada's (both); Eve takes Ada's alone.
+  const dee = await person();
+  const deeCopy = openGameWith("any");
+  ensureReplica(deeCopy, dee.author);
+  const first = await merge(deeCopy, g.boCopy, dee);
+  const second = await merge(deeCopy, g.adaCopy, dee);
+  const eve = await person();
+  const eveCopy = openGameWith("any");
+  ensureReplica(eveCopy, eve.author);
+  const once = await merge(eveCopy, g.adaCopy, eve);
+  expect.soft(first.refusedBatches, "one confirm is no equivocation").toEqual([]);
+  expect.soft(second.refusedBatches, "the merge that brings the second reports it").toEqual([{ author: ada.shown, reason: "AUTHOR_EQUIVOCATED" }]);
+  expect.soft(once.refusedBatches, "and so does one that brings both").toEqual([{ author: ada.shown, reason: "AUTHOR_EQUIVOCATED" }]);
+  for (const [name, copy] of [["Dee", deeCopy], ["Eve", eveCopy]] as const) {
+    expect.soft(holders(copy, g.session, g.openSeat), `${name}'s copy seats nobody`).toEqual([]);
+    expect.soft(contested(copy, g.session), `${name}'s copy shows the seat voided`).toEqual([`${hex(g.openSeat)}:1`]);
+  }
+  deeCopy.close();
+  eveCopy.close();
+  g.close();
+});
+
+test("holds (D165): two confirms of one seat naming the same copy claim nothing twice, so that copy holds it and nothing is reported", async () => {
+  const ada = await person();
+  const bo = await person();
+  const g = await confirmedAfterAGap(ada, bo);
+  raw(g.adaCopy, "_dai_confirm", rnd(), { seat: g.openSeat, holder: bo.author }, g.session, { seq: g.skipped });
+  await seal(g.adaCopy, ada);
+  const report = await merge(g.boCopy, g.adaCopy, bo);
+  expect(report.refusedBatches).toEqual([]);
+  expect(holders(g.boCopy, g.session, g.openSeat)).toEqual([hex(bo.author)]);
+  expect(sans(g.boCopy, g.session)).toEqual(["e4", "e5"]);
+  g.close();
+});
+
+test("holds (D165): a seat two copies asked for and nobody was confirmed in is contested, not voided, so reseat is its repair", async () => {
+  const ada = await person();
+  const bo = await person();
+  const cy = await person();
+  const { adaCopy, boCopy, session, openSeat, close } = await waitingGame(ada, bo);
+  const cyCopy = openGameWith("any");
+  ensureReplica(cyCopy, cy.author);
+  await merge(cyCopy, adaCopy, cy);
+  createEntity(cyCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
+  await seal(cyCopy, cy);
+  await merge(adaCopy, boCopy, ada);
+  await merge(adaCopy, cyCopy, ada);
+  expect(contested(adaCopy, session)).toEqual([`${hex(openSeat)}:0`]);
+  cyCopy.close();
+  close();
+});
+
 /** What chess shows for g1 to the copy whose author is me: the Store unions its own pending rows. */
 const sansAs = (db: Rows, session: Uint8Array, me: Uint8Array): string[] => {
   (globalThis as { window?: unknown }).window = { daiKit: { author: () => hex(me) } };
@@ -180,12 +299,11 @@ const CONFIRM_SQL =
   "JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ? " +
   "JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat " +
   "WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
+  "AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) " +
   "GROUP BY s.session, s.seat";
 const RESEAT_SQL =
-  "SELECT s.entity AS ent FROM _dai_open_seat s WHERE s.session = ? " +
-  "AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
-  "AND (SELECT count(DISTINCT lower(hex(b._r_replica))) FROM _dai_binding_current b " +
-  "WHERE b._r_session = s.session AND b.seat = s.seat) > 1 LIMIT 1";
+  "SELECT s.entity AS ent FROM _dai_open_seat s JOIN _dai_contested c ON c.session = s.session AND c.seat = s.seat " +
+  "WHERE s.session = ? AND c.voided = 0 LIMIT 1";
 
 /** Ada's session with Bo asking for the open seat and not yet confirmed (Ada's copy was offline). */
 async function waitingGame(ada: Person, bo: Person) {

@@ -573,7 +573,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ["session"],
     topic: "identity",
     rule:
-      "A session id commits to its creator's seat row: SHA-256 of the creator's author id and that row's seq, first 16 bytes, so who created a session is checked from the rows and no other row, not even a second one of the creator's, can claim it. The creator's seat is the creator's by definition. The open seat is held by whoever the creator's copy confirms, in a row only the creator's copy writes; the kit writes it on the creator's copy when it sees exactly one copy asking for the seat, and leaves a seat two copies asked for contested (SESSION-CONTESTED-SEAT). A copy that opened an invite has asked for the seat and holds nothing until it is confirmed. Over the mailbox the creator's copy reads one batch at a time, so the first ask it reads is the one it seats. No clock decides anything, and once confirmed a seat is never reseated. A seat row crosses a merge only signed (BATCH_UNSIGNED).",
+      "A session id commits to its creator's seat row: SHA-256 of the creator's author id and that row's seq, first 16 bytes, so who created a session is checked from the rows and no other row, not even a second one of the creator's, can claim it. The creator's seat is the creator's by definition. The open seat is held by whoever the creator's copy confirms, in a row only the creator's copy writes; the kit writes it on the creator's copy when it sees exactly one copy asking for the seat, and leaves a seat two copies asked for contested (SESSION-CONTESTED-SEAT). A copy that opened an invite has asked for the seat and holds nothing until it is confirmed. Over the mailbox the creator's copy reads one batch at a time, so the first ask it reads is the one it seats. No clock decides anything, and once confirmed a seat is never reseated: confirming it to two copies voids both. A seat row crosses a merge only signed (BATCH_UNSIGNED).",
     why: "Every rule that ordered seats by clock or author id could be won by a joiner writing rows: a backdated binding took the creator's seat, a backdated seat row made a joiner the creator, and an honest forwarded invite erased an honest player's moves about half the time (cold review of identity step 5). The creator's copy is the one party that may decide, and a key is the one thing a joiner cannot write. An unsigned confirm under the creator's id seated its writer (D133).",
     enforced: ["compiler", "runtime"],
     anchors: [
@@ -739,12 +739,13 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "An open seat nobody has been confirmed in, asked for by two or more different copies, is contested — the invite reached two devices and both asks reached the creator's copy before it seated anyone — and nobody holds it (IDENTITY-SEAT-CONFIRMED). Detect it as a `_dai_open_seat` with no `_dai_holder` row and `count(DISTINCT _r_replica) > 1` among its `_dai_binding_current` rows. Show the creator that the invite went to more than one device and offer a fresh invite: `window.daiKit.reseat(session)`, then share again. The fresh seat retires the one both asked for, so show a copy whose ask names a retired seat (it asked, it is not seated, and `pendingSeat` is null) that nothing it did lost its place, and that the creator can send a new invite. A seat someone was confirmed in is never contested: a later ask for it is simply a copy the seats belong to others. `reseat` refuses with NOT_SEAT_CREATOR for anyone but the creator and with CANNOT_RESEAT when no seat is contested.",
+      "An open seat nobody has been confirmed in, asked for by two or more different copies, is contested — the invite reached two devices and both asks reached the creator's copy before it seated anyone — and nobody holds it (IDENTITY-SEAT-CONFIRMED). So is a seat the creator's copy confirmed to two copies. Read both from `_dai_contested`. Where `voided` is 0, show the creator that the invite went to more than one device and offer a fresh invite: `window.daiKit.reseat(session)`, then share again; where it is 1, only a new game repairs it. The fresh seat retires the one both asked for, so show a copy whose ask names a retired seat (it asked, it is not seated, and `pendingSeat` is null) that nothing it did lost its place, and that the creator can send a new invite. A later ask for a held seat is no contest: the seats belong to others. `reseat` refuses with NOT_SEAT_CREATOR for anyone but the creator and with CANNOT_RESEAT when no seat is contested with `voided` 0.",
     why: "Nothing but the creator's copy may decide who plays, so when it sees two asks at once it decides nothing and asks the creator; an application that treated the contest as an error would leave both people stuck.",
     enforced: ["runtime", "prose"],
     anchors: [
       { file: "src/runtime/bootloader.ts", contains: 'throw new Error("CANNOT_RESEAT")' },
       { file: "src/runtime/bootloader.ts", contains: 'throw new Error("NOT_SEAT_CREATOR")' },
+      { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_contested AS" },
     ],
   },
   {
@@ -1219,8 +1220,15 @@ export const VIEWS: readonly ViewEntry[] = [
     name: "_dai_binding_current",
     shapes: SESSION,
     holds: "The asks: seat, _r_session; _r_replica is the copy that asked for that open seat by opening an invite.",
-    read: "Which open seat is contested: nobody holds it and more than one copy asked for it.",
+    read: "Who is waiting on which open seat.",
     anchor: { file: "src/replicated.ts", contains: "_dai_binding" },
+  },
+  {
+    name: "_dai_contested",
+    shapes: SESSION,
+    holds: "session, seat, voided: seats nobody holds until repaired; voided 1: confirmed to two copies.",
+    read: "Contested seats; reseat repairs voided 0.",
+    anchor: { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_contested AS" },
   },
   {
     name: "_dai_member",
