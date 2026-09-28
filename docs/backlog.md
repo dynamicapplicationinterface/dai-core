@@ -4402,6 +4402,22 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D164 — `launch-address:123` reads the manifest while the iPhone relaunch is reloading the page
+
+*Status: open, a test defect, measured locally; CI has passed it.*
+
+"After a store arrival, keeps the path and the key that fetch it again", on
+WebKit with an iPhone user agent, waits for `body.loaded` and then reads the
+served manifest. On iOS the first open of a store document relaunches at its
+own address (`relaunched=1`), so `loaded` can be the page that is about to
+reload: `page.evaluate` fails with "Execution context was destroyed", or the
+next `page.goto` is interrupted by the relaunch's navigation. Locally, 10
+repeats, no retries: 4 failed on `c85315d` and 3 on `8940204` (D127), the same
+signatures, so it predates D127. The test waits for the first observable
+signal, not the state its next action depends on: it should wait for the
+relaunch to have been taken (the arrival line, as its second half already
+does) before reading.
+
 #### D163 — A successor opened from the update card reads the open document's link state
 
 *Status: open, waiting on a ruling. Found by D127's bounded cold read; read,
@@ -5284,7 +5300,8 @@ saying nothing changed; first make one red by running it.
 
 #### D127 — The arriving link's key outlives the arrival
 
-*Status: fixed 28 September. Filed 25 September from the cold read of the
+*Status: fixed 28 September (`8940204`, CI run `36447491366` read green; the
+three tests pass on all three engines). Filed 25 September from the cold read of the
 arrival refusals (finding 1, rated high); read, not run. Run first.*
 
 **Reachable, run on Chromium and WebKit.** Not by the route the entry names:
