@@ -4402,10 +4402,46 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D168 — "The relay never reads a move" searches random ciphertext for two plaintext bytes
+
+*Status: open, a test defect, one sighting (local, 28 September, third
+sitting's D134 gate). Not filed against CI.*
+
+`tests/mailbox-converge.spec.ts:124` decodes the relay's stored batch as UTF-8
+and asserts it does not contain `"e4"`. The stored bytes are ciphertext, and any
+two adjacent random bytes spell `e4` with probability 1 in 65,536 per position,
+so a batch of a few kilobytes contains it by chance a few percent of the time.
+It failed once in a full local run ("Received string" was ciphertext holding
+`e4`), then passed 40 of 40 on repeat; the failed run's bytes were not kept, so
+the chance collision is the likely reading, not a proven one. The fix is a
+plaintext probe no ciphertext spells by chance: a long, distinctive move text
+(or several), searched for as bytes.
+
+#### D167 — `sign-scope:27` on WebKit: the forger's frame shows no `#out` within 30 seconds
+
+*Status: open, a test defect or a WebKit timing; **three sightings**, each
+passing on retry: `04a86a8` (run 36457916813), `5c336c7` (run 36486827198),
+`a45b510` (run 36491836527), all WebKit shard 3. Filed 28 September, third
+sitting, on the rule "file it if it recurs".*
+
+"A document's code cannot get a header for another document signed" waits for
+the forger's frame to answer (`#out` not "asking"), and on these runs the
+locator never found `#out` at all: the frame's document was not the one the
+test expected when the 30 seconds ran out. Traces are in each run's
+`retried-webkit-3` artifact. Not yet read: whether the frame mounted late (a
+wait on the first signal, like D164) or mounted something else.
+
 #### D166 — A signed replicated file picked on the opener is refused as "manifest version 4, which this bootloader does not know"
 
-*Status: **ruled — not built; first in step 6's remaining order, before
-D134, its own commit.** Filed 28 September, while writing step 6's page
+*Status: **built and landed**: `99d1a25`, run 36489347326 read green
+(Chromium+node 1372, WebKit 267 + 267 + 235, Firefox 763). The bootloader and
+the host read one list, `SUPPORTED_MANIFEST_VERSIONS` in `src/core.ts`; six
+specs stopped pinning 3; `tests/signed-pick.spec.ts` builds at the default and
+picks the file, red first with this sentence. Still unread: why a store link to
+the same kind of document never reached the refusal (below).*
+
+*Earlier status: ruled — not built; first in step 6's remaining order, before
+D134, its own commit. Filed 28 September, while writing step 6's page
 reds.*
 
 *Ruled 28 September: fix now. A signed replicated file picked on the opener
@@ -4450,7 +4486,15 @@ yet read.
 
 #### D165 — A confirm the creator signs at a seq she skipped moves a hold
 
-*Status: **ruled — not built; in step 6, with the roster work.** Filed 28
+*Status: **built**, `775f168` (pushed; its run not yet read): one confirm per
+seat per creator. `_dai_voided` holds the seats a creator confirmed to two
+different copies; `_dai_holder` seats nobody there and no longer orders by seq;
+`_dai_contested` (session, seat, voided) is the one reading of "contested"
+for the kit, reseat and the apps; the merge that makes a seat void reports
+`AUTHOR_EQUIVOCATED` with the creator. Two confirms naming the same copy hold.
+Reds in `tests/seat-attacks-review-7.spec.ts`, run red first.*
+
+*Earlier status: ruled — not built; in step 6, with the roster work. Filed 28
 September, rated high, while deciding step 6. This is the second variant
 named on D158, and D158's ruling does not close it: that ruling binds the
 session id to the creator's seat row, and this variant never touches that
@@ -5210,7 +5254,15 @@ confirmed, `_heads` admits it.
 
 #### D134 — An entity id reused in another session is a second entity, and an app reading by id alone sees two
 
-*Status: open, ruled 26 September: folds into step 6's format bump, where the
+*Status: **built and landed**: `a45b510`, run 36491836527 green on the gate
+(Chromium+node 1373, WebKit 267 + 267 + 233 with two flaky, D167 and
+`sealed-leave`, one sighting). A write in a session table names its session
+(`change(table, entity, values, session)`, `remove(table, entity, session)`);
+an id alone there is refused with a sentence; chess keys a game by
+`session:entity` (`gameById`, `active_game_id`), and tic-tac-toe's and
+request's writes pass the session. D135's two-partition refusal is gone.*
+
+*Earlier status: open, ruled 26 September: folds into step 6's format bump, where the
 entity key becomes (session, entity); not before. Until then a write to an id
 this copy holds in two of its own partitions is refused, not guessed (D135's
 fix). Filed 25 September with the D131 fix; not reproduced in an app.*
