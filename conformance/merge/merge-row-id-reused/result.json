@@ -1,18 +1,17 @@
 {
-  "what": "A row id already held with different content. Refused and counted; the honest rows still merge.",
+  "what": "A holds a row under Bo's id and seq that Bo never signed, with other content. Bo's signed row takes the id on A, the unsigned one is reported as a different row wearing it, and B refuses it; both copies end with Bo's.",
   "cites": [
     "T1-D13",
     "T1-D15",
     "T1-D16"
   ],
-  "converges": false,
-  "shrinksAt": "Track 2 — signatures decide a disputed row id",
+  "converges": true,
   "stable": true,
   "ab": {
-    "applied": 1,
+    "applied": 2,
     "duplicate": 0,
     "rejected": [
-      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"
+      "6fc66a90486171ca69b512be185d66a7:1"
     ],
     "newReplicas": 1,
     "refusedBatches": []
@@ -21,7 +20,7 @@
     "applied": 0,
     "duplicate": 0,
     "rejected": [
-      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"
+      "6fc66a90486171ca69b512be185d66a7:1"
     ],
     "newReplicas": 1,
     "refusedBatches": []

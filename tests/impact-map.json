@@ -1508,7 +1508,8 @@
       "src/unfurl.ts",
       "src/unzip.ts",
       "tests/mailbox-converge.spec.ts",
-      "tests/session-db.ts"
+      "tests/session-db.ts",
+      "tests/signed-people.ts"
     ],
     "tests/mailbox-http.spec.ts": [
       "src/cbor.ts",
@@ -3040,7 +3041,8 @@
       "src/replicated.ts",
       "src/session-id.ts",
       "tests/seat-admission.spec.ts",
-      "tests/session-db.ts"
+      "tests/session-db.ts",
+      "tests/signed-people.ts"
     ],
     "tests/seat-attacks-review-7.spec.ts": [
       "src/cbor.ts",
@@ -3309,7 +3311,8 @@
       "src/replicated.ts",
       "src/session-id.ts",
       "tests/session-db.ts",
-      "tests/session-roles.spec.ts"
+      "tests/session-roles.spec.ts",
+      "tests/signed-people.ts"
     ],
     "tests/share-and-keep-sentences.spec.ts": [
       "apps/runner/",

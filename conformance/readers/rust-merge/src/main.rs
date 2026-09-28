@@ -300,10 +300,38 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         for mut r in load(&c, "S", t) {
             let id = rowid(t, &r);
             let key = format!("{}|{}", t.name, id);
+            // Unsigned: taken only when this copy holds a row at that id in that
+            // table already (a duplicate, or a second row at one id); otherwise
+            // refused in every table, under the id it carries (BATCH_UNSIGNED,
+            // batch format version 2).
+            let held_here = |r: &Row| -> bool {
+                let rep = match &r.vals[t.i_replica] {
+                    V::Blob(x) => rusqlite::types::Value::Blob(x.clone()),
+                    _ => rusqlite::types::Value::Null,
+                };
+                let seq = match &r.vals[t.i_seq] {
+                    V::Int(i) => rusqlite::types::Value::Integer(*i),
+                    _ => rusqlite::types::Value::Null,
+                };
+                c.query_row(
+                    &format!("SELECT 1 FROM main.\"{}\" WHERE _r_replica = ?1 AND _r_seq = ?2", t.name),
+                    rusqlite::params![rep, seq],
+                    |_| Ok(()),
+                )
+                .is_ok()
+            };
             let b = match t.i_batch {
                 Some(b) => b,
                 None => {
-                    unsigned_rows.push((ti, r));
+                    if held_here(&r) {
+                        unsigned_rows.push((ti, r));
+                    } else {
+                        let author = match &r.vals[t.i_replica] {
+                            V::Blob(x) => x.clone(),
+                            _ => vec![],
+                        };
+                        refusals.insert((String::new(), "BATCH_UNSIGNED".to_string(), hexlc(&author)), author);
+                    }
                     continue;
                 }
             };
@@ -328,8 +356,14 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
                     };
                     refusals.insert((n, "BATCH_DIGEST_MISMATCH".to_string(), hexlc(&author)), author);
                 }
-            } else {
+            } else if held_here(&r) {
                 unsigned_rows.push((ti, r));
+            } else {
+                let author = match &r.vals[t.i_replica] {
+                    V::Blob(x) => x.clone(),
+                    _ => vec![],
+                };
+                refusals.insert((String::new(), "BATCH_UNSIGNED".to_string(), hexlc(&author)), author);
             }
         }
     }

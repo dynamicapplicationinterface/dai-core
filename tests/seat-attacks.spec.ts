@@ -139,24 +139,25 @@ const creators = (db: Rows): string[] => db.all("SELECT lower(hex(replica)) AS r
 
 test.describe("a joiner's binding to the creator's seat takes nothing", () => {
   test("backdated, and merged into the creator's copy: her move stands, his is not admitted, and the merge says so", async () => {
-    const ada = openWith(SCHEMA);
-    honestRoster(ada, ADA);
-    put(ada, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
-
-    const bo = openWith(SCHEMA);
-    honestRoster(bo, BO);
+    // Signed with Bo's own key: at batch format version 2 an unsigned row is
+    // refused before admission is asked (BATCH_UNSIGNED), and this is about
+    // what admission does with a joiner's honest signature on a hostile row.
+    const ada = await person();
+    const bo = await person();
+    const { adaCopy, boCopy, session, creatorSeat } = await honestGame(ada, bo);
     // Bo binds Ada's seat at a clock before any of hers, then plays White.
-    put(bo, "_dai_binding", BO, 2, 0, { seat: ADA_SEAT });
-    put(bo, "moves", BO, 3, 7, { seat: ADA_SEAT, san: "Qh5" });
+    raw(boCopy, bo, "_dai_binding", { entity: rnd(), lc: 0, session, columns: { seat: creatorSeat } });
+    raw(boCopy, bo, "moves", { entity: rnd(), lc: 7, session, columns: { seat: creatorSeat, game_id: "g1", san: "Qh5" } });
+    await seal(boCopy, bo);
 
-    const report = await mergeSibling(ada, bo);
-    expect(admitted(ada), "Ada's e4 stands and Bo's White move is not admitted").toEqual(["e4"]);
+    const report = await merge(adaCopy, boCopy, ada);
+    expect(admitted(adaCopy), "Ada's e4 stands and Bo's White move is not admitted").toEqual(["e4"]);
     expect(report.refusedBatches, "the merge names Bo's move as not his seat's").toContainEqual({
-      author: showAuthorId(BO),
+      author: bo.shown,
       reason: "SEAT_NOT_HELD",
     });
-    ada.close();
-    bo.close();
+    adaCopy.close();
+    boCopy.close();
   });
 
   test("at the creator's own clock, with an author id that sorts first: her move stands", () => {

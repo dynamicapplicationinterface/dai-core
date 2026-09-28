@@ -329,9 +329,12 @@ test.describe("verification by signed row set (ruling #3)", () => {
     const bo = await person();
     const adaCopy = copyFor(ada);
     createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
-    // This copy already holds Ada's row, pending (an unsigned merge, the legacy rule).
+    // This copy already holds Ada's row, pending: carried in whole, as a file she
+    // sent before her save sealed it carries it (no merge takes an unsigned row).
     const local = copyFor(await person());
-    await mergeSibling(local, adaCopy, { document: DOC });
+    const pending = adaCopy.all("SELECT ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted FROM moves")[0]!;
+    const names = Object.keys(pending);
+    local.run(`INSERT INTO moves (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => pending[n]));
     expect(moveOf(local)).toEqual([{ san: "e4", batch: null }]);
 
     const entries = authoredSince(adaCopy, ada.author, 0, TABLES);
@@ -403,7 +406,6 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
   }
 
   test("batch format version 2: an unsigned row is refused in every table, not only the seat tables (BATCH_UNSIGNED)", async () => {
-    test.fail(true, "step 6: outside the seat and close tables an unsigned row still merges under the legacy rule");
     const ada = await person();
     const mal = copyFor(await person());
     // A move under Ada's id that no header of hers lists, in a plain table.
@@ -416,7 +418,7 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
     bo.close();
   });
 
-  test("the same (author, seq) in another table is a collision: refused, and the signed batch still verifies downstream", async () => {
+  test("the same (author, seq) in another table, unsigned, is refused on arrival, and the signed batch still verifies downstream", async () => {
     const { ada, file } = await adasMove();
     // Mal's copy: a seat under Ada's id at Ada's seq 1, unsigned.
     const mal = copyFor(await person());
@@ -425,7 +427,8 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
     const bo = copyFor(await person());
     await mergeSibling(bo, file, { document: DOC });
     const fromMal = await mergeSibling(bo, mal, { document: DOC });
-    expect(fromMal.rejected, "Mal's seat is Ada's seq 1 again, in another table").toEqual([idOf(ada.author, 1)]);
+    expect(fromMal.refusedBatches, "nobody signed Mal's seat, so it is nobody's").toEqual([{ author: ada.shown, reason: "BATCH_UNSIGNED" }]);
+    expect(fromMal.rejected).toEqual([]);
     expect(seats(bo)).toEqual([]);
 
     // And Bo's copy, passed on, still carries Ada's move signed.
@@ -436,18 +439,18 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
     for (const db of [file, mal, bo, carol]) db.close();
   });
 
-  test("the forgery first, the signed row after: the signed row takes its id, whatever table the forgery sits in", async () => {
+  test("the forgery first, the signed row after: the forgery never lands, so the signed row takes its id with nothing displaced", async () => {
     const { ada, file } = await adasMove();
     const mal = copyFor(await person());
     forge(mal, "seats", ada.author, 1, { role: "creator", name: "Mallory" });
 
     const bo = copyFor(await person());
-    await mergeSibling(bo, mal, { document: DOC });
-    expect(seats(bo), "unsigned, it merged under the legacy rule").toEqual(["Mallory"]);
+    const fromMal = await mergeSibling(bo, mal, { document: DOC });
+    expect(fromMal.refusedBatches).toEqual([{ author: ada.shown, reason: "BATCH_UNSIGNED" }]);
+    expect(seats(bo), "unsigned, it is refused in every table").toEqual([]);
     const fromAda = await mergeSibling(bo, file, { document: DOC });
-    expect(moves(bo), "the signed row outranks the unsigned one at its id").toEqual([{ san: "e4", sealed: 1 }]);
-    expect(seats(bo)).toEqual([]);
-    expect(fromAda.rejected, "the displaced row is reported as a different row wearing that id").toEqual([idOf(ada.author, 1)]);
+    expect(moves(bo)).toEqual([{ san: "e4", sealed: 1 }]);
+    expect(fromAda.rejected).toEqual([]);
     expect(fromAda.refusedBatches).toEqual([]);
     for (const db of [file, mal, bo]) db.close();
   });
@@ -461,34 +464,31 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
     const report = await mergeSibling(carol, file, { document: DOC });
     expect(moves(carol)).toEqual([{ san: "e4", sealed: 1 }]);
     expect(seats(carol)).toEqual([]);
-    expect(report.refusedBatches, "Ada's batch verified; nothing of hers was refused").toEqual([]);
-    expect(report.rejected).toEqual([idOf(ada.author, 1)]);
+    expect(report.refusedBatches, "Ada's batch verified; only the row nobody signed is refused").toEqual([{ author: ada.shown, reason: "BATCH_UNSIGNED" }]);
+    expect(report.rejected).toEqual([]);
     file.close();
     carol.close();
   });
 
-  test("a signed row outranks an unsigned row at the same id in the same table, whichever arrived first", async () => {
+  test("a signed row outranks an unsigned row at the same id: this copy's own pending row, reissued after a lost save, gives way", async () => {
+    /*
+     * At batch format version 2 no merge takes an unsigned row, so the one
+     * unsigned row a copy can hold is its own, pending. A save that never
+     * landed leaves a copy whose counter is behind what it already sent: it
+     * issues seq 1 again, for a different row. When its signed seq 1 comes back,
+     * the signed row takes the id, and the pending one is reported as a
+     * different row wearing it.
+     */
     const { ada, file } = await adasMove();
-    const mal = copyFor(await person());
-    forge(mal, "moves", ada.author, 1, { ply: 1, san: "f3" });
-
-    const fay = copyFor(await person());
-    await mergeSibling(fay, mal, { document: DOC });
-    expect(moves(fay)).toEqual([{ san: "f3", sealed: 0 }]);
-    const fromAda = await mergeSibling(fay, file, { document: DOC });
-    expect(moves(fay), "Ada's signed e4, not Mal's unsigned f3").toEqual([{ san: "e4", sealed: 1 }]);
-    expect(fromAda.rejected).toEqual([idOf(ada.author, 1)]);
-    expect(fromAda.refusedBatches).toEqual([]);
-
-    // And the other order: the signed row held, the forgery refused.
-    const gus = copyFor(await person());
-    await mergeSibling(gus, file, { document: DOC });
-    const fromMal = await mergeSibling(gus, mal, { document: DOC });
-    expect(moves(gus)).toEqual([{ san: "e4", sealed: 1 }]);
-    expect(fromMal.rejected).toEqual([idOf(ada.author, 1)]);
-    for (const db of [file, mal, fay, gus]) db.close();
+    const lost = copyFor(ada);
+    createEntity(lost, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "f3" });
+    expect(moves(lost)).toEqual([{ san: "f3", sealed: 0 }]);
+    const back = await mergeSibling(lost, file, { document: DOC, author: ada.author });
+    expect(moves(lost), "her signed e4, not the pending f3 reissued at its seq").toEqual([{ san: "e4", sealed: 1 }]);
+    expect(back.rejected).toEqual([idOf(ada.author, 1)]);
+    expect(back.refusedBatches).toEqual([]);
+    for (const db of [file, lost]) db.close();
   });
-
   test("a stowaway naming someone else's batch is refused in the name of whoever wrote it", async () => {
     const { ada, file } = await adasMove();
     const mal = await person();

@@ -9,11 +9,14 @@
   "ab": {
     "applied": 0,
     "duplicate": 0,
-    "rejected": [
-      "2bad0fd610d99eae443e932a26142bca:1"
-    ],
+    "rejected": [],
     "newReplicas": 1,
-    "refusedBatches": []
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_UNSIGNED"
+      }
+    ]
   },
   "ba": {
     "applied": 1,

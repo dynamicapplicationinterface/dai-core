@@ -955,9 +955,9 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * Nothing here is ordered by a clock, so a backdated row gains nothing, and a
    * hold, once made, never moves: the repair (reseat) is refused on a seat
    * anyone has been confirmed in. A row's author is its key once its batch is
-   * verified, and a merge refuses an unsigned row in these three tables and the
-   * close (BATCH_UNSIGNED, D133, D147, `SESSION_SYSTEM_TABLES`); step 6 extends
-   * that to every table.
+   * verified, and a merge refuses an unsigned row (BATCH_UNSIGNED): first in
+   * these three tables and the close (D133, D147), and in every table from
+   * batch format version 2.
    */
   const member = `
 -- The creator's seat row is the one row the session id names, by its own
@@ -1107,9 +1107,9 @@ export const SEAT_TABLES = ["_dai_seat", "_dai_binding", "_dai_confirm"] as cons
 /**
  * The replicated system tables a session document carries beside its author
  * tables (T1-D29): the seat tables and the close. A merge refuses an unsigned
- * row in any of them (BATCH_UNSIGNED, D133, D147), ahead of step 6's refusal in
- * every table, because an unsigned row is a row under an id nobody proved, and
- * here it decides a seat or ends a session.
+ * row in them (BATCH_UNSIGNED, D133, D147) as in every table, because an
+ * unsigned row is a row under an id nobody proved; here it would decide a seat
+ * or end a session, which is why the refusal began here.
  */
 export const SESSION_SYSTEM_TABLES = [...SEAT_TABLES, "_dai_close"] as const;
 

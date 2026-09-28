@@ -6,6 +6,7 @@ import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
 import { withSessionId } from "./session-db.js";
+import { mergeSigned, person, sealAs } from "./signed-people.js";
 
 /**
  * A seat says whether an author may (docs/identity.md, binding rule 5; step 5).
@@ -55,7 +56,10 @@ const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
 const C = bytes(0xc0); // Ada, the creator: she mints the seats
 const S = sessionIdOf(C, 1)!; // the session, which names Ada's seat row, her seq 1
 const OTHER = bytes(0x5f); // another session
-const J = bytes(0x10); // Bo, the joiner
+// Bo, the joiner: a key, not sixteen chosen bytes, because his moves cross a
+// merge, and at batch format version 2 a row crosses a merge only signed.
+const BO = await person();
+const J = BO.author;
 const K = bytes(0x20); // Cy, a second opener of the same invite
 const SEATC = bytes(0xa1); // Ada's seat
 const SEATJ = bytes(0xa2); // the open seat
@@ -304,8 +308,9 @@ test.describe("the merge says what it took and did not admit", () => {
     roster(bo);
     seatBo(bo);
     put(bo, "moves", J, 2, 7, { seat: SEATC, san: "d4" });
+    await sealAs(bo, BO);
 
-    const report = await mergeSibling(ada, bo);
+    const report = await mergeSigned(ada, bo);
     expect(report.refused).toBeUndefined();
     expect(stored(ada), "stored: signed or not, it is Bo's row").toEqual(["d4"]);
     expect(admitted(ada)).toEqual([]);
@@ -322,7 +327,8 @@ test.describe("the merge says what it took and did not admit", () => {
     // Bo's ask reached Ada's copy before (a merge refuses an unsigned one, D133).
     put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ }, { entity: put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ }) });
     put(bo, "moves", J, 2, 5, { seat: null, san: "d4" });
-    const report = await mergeSibling(ada, bo);
+    await sealAs(bo, BO);
+    const report = await mergeSigned(ada, bo);
     expect(report.refusedBatches).toEqual([{ author: showAuthorId(J), reason: "SEAT_NOT_HELD" }]);
     ada.close();
     bo.close();
@@ -336,7 +342,8 @@ test.describe("the merge says what it took and did not admit", () => {
     // Bo's ask reached Ada's copy before (a merge refuses an unsigned one, D133).
     put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ }, { entity: put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ }) });
     put(bo, "moves", J, 2, 5, { seat: SEATJ, san: "e5" });
-    const report = await mergeSibling(ada, bo);
+    await sealAs(bo, BO);
+    const report = await mergeSigned(ada, bo);
     expect(stored(ada)).toEqual(["e5"]);
     expect(admitted(ada)).toEqual([]);
     expect(report.refusedBatches, "pending, not refused").toEqual([]);

@@ -67,11 +67,14 @@ the verdicts and does the rest itself, which is the part these vectors test:
 - a row that names a header and is listed by none is refused, as
   `BATCH_DIGEST_MISMATCH` in the name of the row's own author, unless the
   header it names was refused already;
-- a row that names none and is listed by none is unsigned, and merges as before;
+- a row that names none and is listed by none is unsigned, and is refused as
+  `BATCH_UNSIGNED` in the name of the id it carries (batch format version 2),
+  unless the copy already holds a row at that id in that table, where the ordinary
+  path decides (a duplicate, or a second row at one id);
 - one author's seq names one row whatever table it is in: a row whose
   (author, seq) the copy holds in another table is refused (`rejected`);
-- a signed row outranks an unsigned row at the same id: the unsigned one is
-  removed, the signed one takes its place, and the removed id is reported in
+- a signed row outranks an unsigned row the copy holds at the same id (after
+  version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
   `rejected`; whatever the removed row superseded is a head again unless
   something else names it. Signed rows are placed before unsigned ones, so the
   answer never depends on table order.

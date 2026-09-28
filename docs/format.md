@@ -142,13 +142,16 @@ the removed id is reported in `rejected`, and whatever the removed row
 superseded is a head again unless something else names it. The engine holds
 this itself: a replicated row can be deleted only when it is unsigned and a
 header the copy holds lists its id. A merge places signed rows before unsigned
-ones, so the answer never depends on table order. The principle outlives the
-legacy rule: once unsigned rows are refused outright, it is still true.
-A row that names no header and that no header lists is unsigned. In the seat
-tables (`_dai_seat`, `_dai_binding`, `_dai_confirm`) a merge refuses it,
-`BATCH_UNSIGNED`, unless the copy already holds a row at that id in that table;
-anywhere else, until the legacy rule changes (step 6 of the sitting), it merges
-as rows did before signing. The merge reports refused batches as `refusedBatches`,
+ones, so the answer never depends on table order. Since no merge takes an
+unsigned row, the one a copy can hold is its own, pending: a save lost after
+it left reissues its seq, and the signed row coming back takes the id.
+A row that names no header and that no header lists is unsigned. A merge
+refuses it in every table, `BATCH_UNSIGNED` under the id it carries, unless the
+copy already holds a row at that id in that table (the ordinary path then
+decides: a duplicate, or a second row at one id). Batch format version 1
+refused it only in the seat and close tables and merged it anywhere else, as
+rows did before signing; version 2 ended that (nobody's key vouches for such a
+row, so it is nobody's). The merge reports refused batches as `refusedBatches`,
 one `{author, reason}` per batch and reason, ordered by batch id.
 
 **Published after the save lands.** A batch leaves by the mailbox only once a

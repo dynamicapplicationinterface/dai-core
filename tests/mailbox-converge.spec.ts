@@ -18,7 +18,7 @@ import {
   stageBatch,
   type Batch,
 } from "../src/replicated-batch.js";
-import { mintPersonKey } from "../src/identity.js";
+import { person } from "./signed-people.js";
 import {
   adoptReplica,
   canonicalDump,
@@ -65,19 +65,30 @@ function open(): Rows & { close(): void } {
 }
 
 const bytes = (byte: number) => new Uint8Array(16).fill(byte);
-const A = bytes(0xaa);
-const B = bytes(0xbb);
+/*
+ * Two people with keys. At batch format version 2 a row crosses a merge only
+ * signed, and a pull verifies what it merges, so every batch here is signed by
+ * its author's own key, for this document, as the frame publishes it.
+ */
+const DOC = "mailbox-converge";
+const ADA = await person();
+const BO = await person();
+const A = ADA.author;
+const B = BO.author;
 const tables = ["moves"];
+const keysOf = (author: Uint8Array): CryptoKeyPair => {
+  const who = [ADA, BO].find((p) => Buffer.from(p.author).equals(Buffer.from(author)));
+  if (!who) throw new Error("no key for that author in this spec");
+  return who.keys;
+};
 
 /**
  * Seals what an author has pending, as the frame does before a publish: the
- * mailbox sends sealed batches only (docs/identity.md, step 3). The key is any
- * key; nothing here verifies (that is step 4's merge).
+ * mailbox sends sealed batches only (docs/identity.md, step 3).
  */
 async function sealAll(db: Rows, author: Uint8Array): Promise<void> {
-  const keys = await mintPersonKey();
   for (const batch of pendingBatches(db, author, tables)) {
-    recordSeal(db, await signBatch(batch, { document: "mailbox-converge", keys }));
+    recordSeal(db, await signBatch(batch, { document: DOC, keys: keysOf(author) }));
   }
 }
 
@@ -94,7 +105,10 @@ async function publish(
   if (entries.length === 0) return watermark;
   const lc = Number(db.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
   const batch: Batch = { replica, lc, entries };
-  await mailbox.append(documentId, await sealBatch(encodeBatch(batch), key));
+  // Signed by its author and recorded, as the frame seals before it publishes.
+  const signed = await signBatch(batch, { document: DOC, keys: keysOf(replica) });
+  recordSeal(db, signed);
+  await mailbox.append(documentId, await sealBatch(encodeBatch(signed), key));
   return authoredHead(db, replica, tables);
 }
 
@@ -113,7 +127,7 @@ async function pull(
     const staged = open();
     try {
       stageBatch(staged, batch, tables);
-      await mergeSibling(db, staged, 1);
+      await mergeSibling(db, staged, { document: DOC });
     } finally {
       staged.close();
     }
@@ -209,7 +223,9 @@ test("the watermark advances on ack, not on send: a dropped append still arrives
   let watermark = 0;
   const entries = authoredSince(a, A, watermark, tables);
   const lc = Number(a.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
-  const sealed = await sealBatch(encodeBatch({ replica: A, lc, entries }), key);
+  const signed = await signBatch({ replica: A, lc, entries }, { document: DOC, keys: ADA.keys });
+  recordSeal(a, signed);
+  const sealed = await sealBatch(encodeBatch(signed), key);
 
   let acked = false;
   let attempts = 0;
@@ -280,7 +296,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
     },
   };
   stageBatch(staged, batch, tables);
-  await mergeSibling(b, staged, 1);
+  await mergeSibling(b, staged, { document: DOC });
   stagedDb.close();
 
   expect(b.all("SELECT san FROM moves_current WHERE ply = 1")[0]?.["san"]).toBe("d4");

@@ -62,8 +62,6 @@ CREATE TABLE notes (
 // (a collision in another table is a vector of its own).
 const TABLES = ["cases", "notes"];
 const id = (byte) => new Uint8Array(16).fill(byte);
-const A = id(0xaa);
-const B = id(0xbb);
 const E1 = id(0x11);
 const E2 = id(0x22);
 /** A row id's author part as `_r_parents` spells it: lowercase hex. */
@@ -107,6 +105,17 @@ async function sealAll(db, person) {
   for (const batch of pendingBatches(db, person.author, TABLES)) {
     recordSeal(db, await signBatch(batch, { document: DOC, sign: keptSigner(person) }));
   }
+}
+
+/**
+ * One exchange inside a vector's own history, as an honest one is at batch
+ * format version 2: the sender seals what it wrote, the receiver verifies the
+ * sender's headers and takes only what verified. An unsigned row crosses no
+ * merge (BATCH_UNSIGNED).
+ */
+async function exchange(into, from, sender) {
+  await sealAll(from, sender);
+  return mergeFrom(into, from, TABLES, undefined, await verifyBatches(from, TABLES, DOC));
 }
 
 /** A database on disk, behind the interface the write rules ask for. */
@@ -192,9 +201,9 @@ const VECTORS = [
     name: "merge-conflict",
     cites: ["4", "T1-D6", "T1-D9"],
     what: "Both changed one entity from the same head. Two heads; current shows the deterministic pick, flagged.",
-    fill: (a, b) => {
+    fill: async (a, b) => {
       createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-      mergeFrom(b, a, TABLES);
+      await exchange(b, a, ADA);
       changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
       changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
     },
@@ -203,12 +212,12 @@ const VECTORS = [
     name: "merge-resolve",
     cites: ["5", "T1-D17"],
     what: "A change written while the conflict is open names both heads, which is what resolves it.",
-    fill: (a, b) => {
+    fill: async (a, b) => {
       createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-      mergeFrom(b, a, TABLES);
+      await exchange(b, a, ADA);
       changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
       changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
-      mergeFrom(a, b, TABLES);
+      await exchange(a, b, BO);
       changeEntity(a, "cases", E1, { title: "settled", status: "open", weight: null });
     },
   },
@@ -216,9 +225,9 @@ const VECTORS = [
     name: "merge-tombstone",
     cites: ["5", "T1-D3"],
     what: "A delete on one side and nothing on the other. Absent from current, present in heads.",
-    fill: (a, b) => {
+    fill: async (a, b) => {
       createEntity(a, "cases", E1, { title: "doomed", status: "open", weight: null });
-      mergeFrom(b, a, TABLES);
+      await exchange(b, a, ADA);
       deleteEntity(b, "cases", E1);
     },
   },
@@ -226,9 +235,9 @@ const VECTORS = [
     name: "merge-tombstone-conflict",
     cites: ["T1-D3", "T1-D9"],
     what: "A delete on one side, a change on the other, concurrent. Current shows the change, flagged (T1-D3).",
-    fill: (a, b) => {
+    fill: async (a, b) => {
       createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-      mergeFrom(b, a, TABLES);
+      await exchange(b, a, ADA);
       changeEntity(a, "cases", E1, { title: "edited", status: "open", weight: null });
       deleteEntity(b, "cases", E1);
     },
@@ -236,24 +245,19 @@ const VECTORS = [
   {
     name: "merge-row-id-reused",
     cites: ["T1-D13", "T1-D15", "T1-D16"],
-    what: "A row id already held with different content. Refused and counted; the honest rows still merge.",
-    // The one vector where the copies do not end up the same, and that is the
-    // answer. Each side holds different content under bb:1 and refuses the
-    // other's: union merge converges over rows nobody disputes, and a disputed
-    // id is where the guarantee stops. The alternative is one side silently
-    // adopting the other's version of a row, which refusing it exists to stop.
-    //
-    // A Level 1 property, not a permanent one: at Level 2 the row that fails
-    // to verify is refused and the one that verifies is kept, so the dispute
-    // has an answer instead of two sides. Both copies are still fixed points
-    // here — the run() above merges twice and requires nothing to move.
-    converges: false,
-    shrinksAt: "Track 2 — signatures decide a disputed row id",
+    what:
+      "A holds a row under Bo's id and seq that Bo never signed, with other content. Bo's signed row takes the id on A, the unsigned one is reported as a different row wearing it, and B refuses it; both copies end with Bo's.",
+    // Until batch format version 2 this was the one vector where the copies did
+    // not end up the same: each side held different content under Bo's first
+    // id and refused the other's, and a disputed id was where the guarantee
+    // stopped. The signature now answers the dispute, as this vector said it
+    // would ("signatures decide a disputed row id"): the row that verifies is
+    // kept and the one nobody signed is not.
     fill: (a, b) => {
       createEntity(b, "cases", E1, { title: "honest", status: "open", weight: null });
       createEntity(b, "cases", E2, { title: "also honest", status: "open", weight: null });
       applyRow(a, "cases", {
-        _r_replica: B,
+        _r_replica: BO.author,
         _r_seq: 1,
         _r_lc: 1,
         _r_entity: E1,
@@ -392,6 +396,7 @@ const VECTORS = [
       holdHeader(a, await signBatch(batch, { document: DOC, sign: keptSigner(ADA) }));
       holdHeader(a, await signBatch({ ...batch, lc: batch.lc + 1 }, { document: DOC, sign: keptSigner(ADA) }));
       createEntity(b, "cases", id(0x33), { title: "yours", status: "open", weight: null });
+      await sealAll(b, BO);
     },
   },
   {
@@ -446,11 +451,11 @@ const VECTORS = [
     fill: (a, b) => {
       createEntity(a, "notes", E1, { body: "Ada's note" });
       applyRow(b, "notes", {
-        _r_replica: B,
+        _r_replica: BO.author,
         _r_seq: 1,
         _r_lc: 1,
         _r_entity: E2,
-        _r_parents: JSON.stringify([`${hexOf(A)}:1`]),
+        _r_parents: JSON.stringify([`${hexOf(ADA.author)}:1`]),
         _r_deleted: 0,
         columns: { body: "Bo's note" },
       });
@@ -485,6 +490,7 @@ const VECTORS = [
         _r_deleted: 0,
         columns: { title: "names Bo's case", status: "open", weight: null },
       });
+      await sealAll(b, BO);
     },
   },
   {
@@ -576,15 +582,20 @@ function holdHeader(db, sealed) {
 
 /** Both copies as the vector says: its authors, its rows, and a received file when it has one. */
 async function populate(vector, a, b) {
-  const [first, second] = vector.authors ? [ADA.author, BO.author] : [A, B];
-  asReplica(a, first);
+  asReplica(a, ADA.author);
   if (vector.receives) {
     await vector.fill(a, b);
-    receiveInto(b, a, second);
+    if (!vector.authors) await sealAll(a, ADA);
+    receiveInto(b, a, BO.author);
     await vector.afterReceive(a, b);
   } else {
-    asReplica(b, second);
+    asReplica(b, BO.author);
     await vector.fill(a, b);
+  }
+  // A vector not about seals: every row as its author's saves left it, sealed.
+  if (!vector.authors) {
+    await sealAll(a, ADA);
+    await sealAll(b, BO);
   }
 }
 
@@ -657,11 +668,14 @@ the verdicts and does the rest itself, which is the part these vectors test:
 - a row that names a header and is listed by none is refused, as
   \`BATCH_DIGEST_MISMATCH\` in the name of the row's own author, unless the
   header it names was refused already;
-- a row that names none and is listed by none is unsigned, and merges as before;
+- a row that names none and is listed by none is unsigned, and is refused as
+  \`BATCH_UNSIGNED\` in the name of the id it carries (batch format version 2),
+  unless the copy already holds a row at that id in that table, where the ordinary
+  path decides (a duplicate, or a second row at one id);
 - one author's seq names one row whatever table it is in: a row whose
   (author, seq) the copy holds in another table is refused (\`rejected\`);
-- a signed row outranks an unsigned row at the same id: the unsigned one is
-  removed, the signed one takes its place, and the removed id is reported in
+- a signed row outranks an unsigned row the copy holds at the same id (after
+  version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
   \`rejected\`; whatever the removed row superseded is a head again unless
   something else names it. Signed rows are placed before unsigned ones, so the
   answer never depends on table order.

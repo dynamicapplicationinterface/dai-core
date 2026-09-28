@@ -6,11 +6,11 @@ import {
   rewriteReplicated,
   triggerColumns,
 } from "../src/replicated.js";
-import { mergeCoverageGap, mergeSibling, replicatedSchemaOf } from "../src/replicated-frame.js";
+import { mergeCoverageGap, mergeSibling, mergeTablesOf, replicatedSchemaOf } from "../src/replicated-frame.js";
 import { adoptReplica, confirmSeat, ensureReplica, startSession } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
 import { withSessionId } from "./session-db.js";
-import { mergeSigned, person, sealAs } from "./signed-people.js";
+import { mergeFromSigned, mergeSigned, person, sealAs } from "./signed-people.js";
 import {
   applyRow,
   canonicalDump,
@@ -359,80 +359,87 @@ test.describe("the trigger's column list is checked against the engine", () => {
 });
 
 test.describe("merge", () => {
-  /** Two independent copies of the same schema. */
-  function pair() {
+  /**
+   * Two independent copies of the same schema, each written by a person with a
+   * key: at batch format version 2 a row crosses a merge only signed, so every
+   * exchange below seals what the sender wrote and verifies it on arrival
+   * (`mergeFromSigned`).
+   */
+  async function pair() {
+    const ada = await person();
+    const bo = await person();
     const a = open();
     const b = open();
-    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
-    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
-    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
-    return { a, b };
+    ensureReplica(a, ada.author);
+    ensureReplica(b, bo.author);
+    return { a, b, ada, bo };
   }
 
-  test("merge-disjoint", () => {
-    const { a, b } = pair();
+  test("merge-disjoint", async () => {
+    const { a, b, bo } = await pair();
     createEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
     createEntity(b, "cases", E2, { title: "yours", status: "open", weight: null });
 
-    const result = mergeFrom(a, b, ["cases"]);
+    const result = await mergeFromSigned(a, b, bo, ["cases"]);
     expect(result.applied).toBe(1);
     expect(result.duplicate).toBe(0);
     expect(result.rejected).toEqual([]);
+    expect(result.refusedBatches).toEqual([]);
     expect(a.all("SELECT count(*) c FROM cases_current")[0]!["c"]).toBe(2);
     a.close();
     b.close();
   });
 
-  test("merge-idempotent", () => {
-    const { a, b } = pair();
+  test("merge-idempotent", async () => {
+    const { a, b, bo } = await pair();
     createEntity(b, "cases", E2, { title: "yours", status: "open", weight: null });
 
-    expect(mergeFrom(a, b, ["cases"]).applied).toBe(1);
-    const second = mergeFrom(a, b, ["cases"]);
+    expect((await mergeFromSigned(a, b, bo, ["cases"])).applied).toBe(1);
+    const second = await mergeFromSigned(a, b, bo, ["cases"]);
     expect(second.applied).toBe(0);
     expect(second.duplicate).toBe(1);
     a.close();
     b.close();
   });
 
-  test("merge-commutative", () => {
+  test("merge-commutative", async () => {
     // A←B then A←C against A←C then A←B, by the dump of T1-D9.
-    const build = (order: "bc" | "cb"): string => {
+    const build = async (order: "bc" | "cb"): Promise<string> => {
+      const [ada, bo, cy] = [await person(), await person(), await person()];
       const a = open();
       const b = open();
       const c = open();
-      for (const [db, id] of [[a, A], [b, B], [c, bytes(0xcc)]] as const) {
-        db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [id]);
-        db.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [id]);
-      }
+      for (const [db, who] of [[a, ada], [b, bo], [c, cy]] as const) ensureReplica(db, who.author);
       createEntity(a, "cases", E1, { title: "a", status: "open", weight: 1 });
       createEntity(b, "cases", E2, { title: "b", status: "open", weight: 2 });
       createEntity(c, "cases", bytes(0x33), { title: "c", status: "open", weight: null });
       if (order === "bc") {
-        mergeFrom(a, b, ["cases"]);
-        mergeFrom(a, c, ["cases"]);
+        await mergeFromSigned(a, b, bo, ["cases"]);
+        await mergeFromSigned(a, c, cy, ["cases"]);
       } else {
-        mergeFrom(a, c, ["cases"]);
-        mergeFrom(a, b, ["cases"]);
+        await mergeFromSigned(a, c, cy, ["cases"]);
+        await mergeFromSigned(a, b, bo, ["cases"]);
       }
-      const dump = canonicalDump(a, ["cases"]);
+      // The authors differ between the two builds, so the dump is read without them.
+      const dump = JSON.stringify(a.all("SELECT title, weight FROM cases_current ORDER BY title"));
       a.close();
       b.close();
       c.close();
       return dump;
     };
-    expect(build("bc")).toBe(build("cb"));
+    const bc = await build("bc");
+    expect(JSON.parse(bc), "all three rows merged").toHaveLength(3);
+    expect(bc).toBe(await build("cb"));
   });
 
-  test("merge-conflict, and current shows the pick with the flag up", () => {
-    const { a, b } = pair();
+  test("merge-conflict, and current shows the pick with the flag up", async () => {
+    const { a, b, ada, bo } = await pair();
     const base = createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-    mergeFrom(b, a, ["cases"]);          // both hold the base row
+    await mergeFromSigned(b, a, ada, ["cases"]); // both hold the base row
     changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
     changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
 
-    mergeFrom(a, b, ["cases"]);
+    await mergeFromSigned(a, b, bo, ["cases"]);
     expect(a.all("SELECT count(*) c FROM cases_conflicts")[0]!["c"]).toBe(1);
     expect(a.all("SELECT count(*) c FROM cases_heads")[0]!["c"]).toBe(2);
     const current = a.all("SELECT title, _r_conflicted FROM cases_current");
@@ -444,14 +451,14 @@ test.describe("merge", () => {
     b.close();
   });
 
-  test("merge-tombstone-conflict shows the change, not the delete (T1-D3)", () => {
-    const { a, b } = pair();
+  test("merge-tombstone-conflict shows the change, not the delete (T1-D3)", async () => {
+    const { a, b, ada, bo } = await pair();
     createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-    mergeFrom(b, a, ["cases"]);
+    await mergeFromSigned(b, a, ada, ["cases"]);
     changeEntity(a, "cases", E1, { title: "edited", status: "open", weight: null });
     deleteEntity(b, "cases", E1);
 
-    mergeFrom(a, b, ["cases"]);
+    await mergeFromSigned(a, b, bo, ["cases"]);
     const current = a.all("SELECT title, _r_conflicted FROM cases_current");
     expect(current).toHaveLength(1);
     expect(current[0]!["title"]).toBe("edited");
@@ -462,13 +469,13 @@ test.describe("merge", () => {
     b.close();
   });
 
-  test("merge-resolve clears the conflict", () => {
-    const { a, b } = pair();
+  test("merge-resolve clears the conflict", async () => {
+    const { a, b, ada, bo } = await pair();
     createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-    mergeFrom(b, a, ["cases"]);
+    await mergeFromSigned(b, a, ada, ["cases"]);
     changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
     changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
-    mergeFrom(a, b, ["cases"]);
+    await mergeFromSigned(a, b, bo, ["cases"]);
 
     // A change written while a conflict is open names every head, which is
     // what makes it a resolution; there is no separate operation.
@@ -481,19 +488,19 @@ test.describe("merge", () => {
     b.close();
   });
 
-  test("the clock is above everything the merge brought in, before the next write", () => {
+  test("the clock is above everything the merge brought in, before the next write", async () => {
     /*
      * A local row written after a merge must outrank what the merge delivered.
      * `_current` picks the highest `_r_lc`, so a row written with a stale clock
      * would lose to its own ancestors and the person's newest edit would
      * disappear behind an older one.
      */
-    const { a, b } = pair();
+    const { a, b, bo } = await pair();
     for (let n = 0; n < 5; n += 1) {
       createEntity(b, "cases", bytes(0x40 + n), { title: `b${n}`, status: "open", weight: null });
     }
     const theirs = Number(b.all("SELECT max(_r_lc) m FROM cases")[0]!["m"]);
-    mergeFrom(a, b, ["cases"]);
+    expect((await mergeFromSigned(a, b, bo, ["cases"])).applied).toBe(5);
     expect(Number(a.all("SELECT lc FROM _dai_replica")[0]!["lc"])).toBeGreaterThanOrEqual(theirs);
 
     const mine = createEntity(a, "cases", E1, { title: "after", status: "open", weight: null });
@@ -502,18 +509,20 @@ test.describe("merge", () => {
     b.close();
   });
 
-  test("one refused row does not deny the good ones", () => {
+  test("one refused row does not deny the good ones", async () => {
     // Refusing the whole exchange would make one forged row cheaper than
     // forging anything real.
-    const { a, b } = pair();
+    const { a, b, bo } = await pair();
     createEntity(b, "cases", E1, { title: "honest", status: "open", weight: null });
     createEntity(b, "cases", E2, { title: "also honest", status: "open", weight: null });
-    // A row this copy already holds under that id, with different content.
-    applyRow(a, "cases", row(B, 1, 1, E1, [], { title: "not what B wrote", status: "open", weight: null }));
+    await sealAs(b, bo);
+    // A row nobody signed, under a third id, carried in the same copy.
+    const mal = await person();
+    applyRow(b, "cases", row(mal.author, 1, 1, bytes(0x33), [], { title: "nobody's", status: "open", weight: null }));
 
-    const result = mergeFrom(a, b, ["cases"]);
-    expect(result.rejected).toHaveLength(1);
-    expect(result.applied).toBe(1);
+    const result = await mergeFromSigned(a, b, bo, ["cases"]);
+    expect(result.refusedBatches, "the unsigned row is refused by name").toEqual([{ author: mal.shown, reason: "BATCH_UNSIGNED" }]);
+    expect(result.applied, "and both honest rows are taken").toBe(2);
     expect(a.all("SELECT count(*) c FROM cases")[0]!["c"]).toBe(2);
     a.close();
     b.close();
@@ -524,19 +533,20 @@ test.describe("the frame's side of a merge", () => {
   const rowsFor = (db: ReturnType<typeof open>) => db;
 
   test("a sibling with the same tables merges and reports the conflict count", async () => {
+    const [ada, bo] = [await person(), await person()];
     const a = open();
     const b = open();
-    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
-    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
-    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
+    ensureReplica(a, ada.author);
+    ensureReplica(b, bo.author);
 
     createEntity(a, "cases", E1, { title: "base", status: "open", weight: null });
-    await mergeSibling(rowsFor(b), rowsFor(a));
+    await sealAs(a, ada);
+    await mergeSigned(rowsFor(b), rowsFor(a));
     changeEntity(a, "cases", E1, { title: "mine", status: "open", weight: null });
     changeEntity(b, "cases", E1, { title: "yours", status: "open", weight: null });
+    await sealAs(b, bo);
 
-    const report = await mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSigned(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     // The one number a person is shown, and not derivable from the other four.
@@ -606,11 +616,13 @@ CREATE TABLE cases (
       "-- dai:replicated\nCREATE TABLE cases (\n\n  title text  NOT NULL,\n  status   TEXT   NOT NULL DEFAULT 'open',\n\n  weight real\n);\n",
     );
 
+    const bo = await person();
     ensureReplica(a, A);
-    ensureReplica(b, B);
+    ensureReplica(b, bo.author);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: 1.5 });
+    await sealAs(b, bo);
 
-    const report = await mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSigned(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     expect(a.all("SELECT title FROM cases_current")[0]!["title"]).toBe("theirs");
@@ -644,13 +656,13 @@ CREATE TABLE cases (
     // nothing about whether these two copies can exchange rows.
     const a = openWith(`${SCHEMA}\nCREATE TABLE notes_local (body TEXT);\n`);
     const b = open();
-    a.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-    a.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
-    b.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [B]);
-    b.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [B]);
+    const bo = await person();
+    ensureReplica(a, A);
+    ensureReplica(b, bo.author);
     createEntity(b, "cases", E2, { title: "theirs", status: "open", weight: null });
+    await sealAs(b, bo);
 
-    const report = await mergeSibling(rowsFor(a), rowsFor(b));
+    const report = await mergeSigned(rowsFor(a), rowsFor(b));
     expect(report.refused).toBeUndefined();
     expect(report.applied).toBe(1);
     a.close();
@@ -659,16 +671,20 @@ CREATE TABLE cases (
 });
 
 test.describe("a copy that arrived from somebody else", () => {
-  /** The file, opened on another device: same rows, same _dai_replica. */
+  /** The file, opened on another device: same rows, same headers, same _dai_replica. */
   function received(from: Rows & { close(): void }): Rows & { close(): void } {
     const to = open();
+    for (const header of from.all("SELECT * FROM _dai_batch")) {
+      const names = Object.keys(header);
+      to.run(`INSERT INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => header[n]));
+    }
     for (const row of from.all("SELECT * FROM cases")) {
       to.run(
-        "INSERT INTO cases (title,status,weight,_r_replica,_r_seq,_r_lc,_r_entity,_r_parents,_r_deleted,_r_superseded)" +
-          " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO cases (title,status,weight,_r_replica,_r_seq,_r_lc,_r_entity,_r_parents,_r_deleted,_r_superseded,_r_batch)" +
+          " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         [
           row["title"], row["status"], row["weight"], row["_r_replica"], row["_r_seq"],
-          row["_r_lc"], row["_r_entity"], row["_r_parents"], row["_r_deleted"], row["_r_superseded"],
+          row["_r_lc"], row["_r_entity"], row["_r_parents"], row["_r_deleted"], row["_r_superseded"], row["_r_batch"],
         ],
       );
     }
@@ -693,13 +709,14 @@ test.describe("a copy that arrived from somebody else", () => {
      * twice with different contents. Two people using the document exactly as
      * intended produced a row rejected as tampering.
      */
+    const [ada, bo] = [await person(), await person()];
     const alice = open();
-    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    ensureReplica(alice, ada.author);
     createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
+    await sealAs(alice, ada);
 
     const bob = received(alice);
-    expect(adoptReplica(bob, B)).toBe(true);
+    expect(adoptReplica(bob, bo.author)).toBe(true);
 
     // Bob writes as Bob.
     createEntity(bob, "cases", E2, { title: "e5", status: "open", weight: null });
@@ -707,12 +724,13 @@ test.describe("a copy that arrived from somebody else", () => {
     // row and Alice's carry seq 1 and ordering by it picks arbitrarily. That
     // the two share a sequence number is exactly right — they are different
     // replicas now, which is the whole point.
-    const written = bob.all("SELECT hex(_r_replica) r FROM cases WHERE _r_entity = ?", [E2])[0]!;
-    expect(String(written["r"]).toLowerCase()).toBe("bb".repeat(16));
+    const written = bob.all("SELECT lower(hex(_r_replica)) r FROM cases WHERE _r_entity = ?", [E2])[0]!;
+    expect(String(written["r"])).toBe(Buffer.from(bo.author).toString("hex"));
+    await sealAs(bob, bo);
 
     // And Alice's next move does not collide with it.
     changeEntity(alice, "cases", E1, { title: "Nf3", status: "open", weight: null });
-    const report = await mergeSibling(alice, bob);
+    const report = await mergeSigned(alice, bob);
     expect(report.refused).toBeUndefined();
     expect(report.rejected).toEqual([]);
     expect(report.applied).toBe(1);
@@ -751,26 +769,29 @@ test.describe("a copy that arrived from somebody else", () => {
      * (replica, seq) this device already issued, and the exchange with the
      * device's other copy refuses one as ROW_REJECTED.
      */
+    const [ada, bo] = [await person(), await person()];
     const alice = open();
-    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    ensureReplica(alice, ada.author);
     createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
     createEntity(alice, "cases", E2, { title: "d4", status: "open", weight: null });
+    await sealAs(alice, ada);
 
     const bob = received(alice);
-    adoptReplica(bob, B);
+    adoptReplica(bob, bo.author);
     createEntity(bob, "cases", bytes(0x61), { title: "e5", status: "open", weight: null });
+    await sealAs(bob, bo);
 
     // Alice's device forgot its copy; Bob's comes back and is opened there as a new one.
     const back = received(bob);
-    adoptReplica(back, A);
+    adoptReplica(back, ada.author);
     expect(Number(back.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "resumes at Alice's highest").toBe(2);
     createEntity(back, "cases", bytes(0x62), { title: "Nf3", status: "open", weight: null });
-    const issued = back.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [A]).map((r) => Number(r["s"]));
+    const issued = back.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [ada.author]).map((r) => Number(r["s"]));
     expect(issued, "Alice's new row takes the next seq, not one she already issued").toEqual([1, 2, 3]);
+    await sealAs(back, ada);
 
     // And Bob, who holds Alice's first two rows, takes the new one without a refusal.
-    const report = await mergeSibling(bob, back);
+    const report = await mergeSigned(bob, back);
     expect(report.rejected, "no (replica, seq) was issued twice").toEqual([]);
     expect(report.applied).toBe(1);
 
@@ -787,20 +808,23 @@ test.describe("a copy that arrived from somebody else", () => {
      * own rows 3 and 4 back from the mailbox must raise the counter past them,
      * or its next row is a second, different (A, 3).
      */
+    const ada = await person();
     const alice = open();
-    alice.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-    alice.run("INSERT INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [A]);
+    ensureReplica(alice, ada.author);
     createEntity(alice, "cases", E1, { title: "e4", status: "open", weight: null });
     createEntity(alice, "cases", E2, { title: "d4", status: "open", weight: null });
+    await sealAs(alice, ada); // sealed by the save that landed
     const reopened = received(alice); // the copy as its last landed save left it
     createEntity(alice, "cases", bytes(0x71), { title: "c4", status: "open", weight: null });
     createEntity(alice, "cases", bytes(0x72), { title: "Nf3", status: "open", weight: null });
+    await sealAs(alice, ada); // sealed as they left for the mailbox
 
-    const report = await mergeSibling(reopened, alice, { author: A }); // its own rows, back from the mailbox
+    const report = await mergeSigned(reopened, alice, ada); // its own rows, back from the mailbox
     expect(report.rejected).toEqual([]);
+    expect(report.applied, "rows 3 and 4 came back").toBe(2);
     expect(Number(reopened.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to the highest it brought in").toBe(4);
     createEntity(reopened, "cases", bytes(0x73), { title: "g3", status: "open", weight: null });
-    const issued = reopened.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [A]).map((r) => Number(r["s"]));
+    const issued = reopened.all("SELECT _r_seq s FROM cases WHERE _r_replica = ? ORDER BY _r_seq", [ada.author]).map((r) => Number(r["s"]));
     expect(issued, "the next row takes 5, not a second 3").toEqual([1, 2, 3, 4, 5]);
 
     alice.close();
@@ -894,19 +918,21 @@ CREATE TABLE moves (
     db.close();
   });
 
-  test("one table holds rows from many sessions, and they converge across a merge", () => {
+  test("one table holds rows from many sessions, and they converge across a merge", async () => {
     // The whole point of a per-row session: a games list is many games in one
     // table. Two copies each write a different session; a merge carries both.
+    const [ada, bo] = [await person(), await person()];
     const a = openSession();
-    ensureReplica(a, A);
+    ensureReplica(a, ada.author);
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, S1);
 
     const b = openSession();
-    ensureReplica(b, B);
+    ensureReplica(b, bo.author);
     createEntity(b, "moves", E2, { ply: 1, san: "d4" }, S2);
 
-    mergeFrom(a, b, ["moves"]);
-    mergeFrom(b, a, ["moves"]);
+    await sealAs(a, ada);
+    expect((await mergeFromSigned(a, b, bo, ["moves"])).applied).toBe(1);
+    expect((await mergeFromSigned(b, a, ada, ["moves"])).applied).toBe(1);
 
     // Convergent, and the session travelled with each row rather than being lost.
     expect(canonicalDump(a, ["moves"])).toBe(canonicalDump(b, ["moves"]));
@@ -1010,21 +1036,26 @@ CREATE TABLE prefs (
     db.close();
   });
 
-  test("the kept session is a complete document: it still converges into a fresh copy", () => {
+  test("the kept session is a complete document: it still converges into a fresh copy", async () => {
     // What the invite is for. Filter A's copy to S1, then merge it into an empty
     // copy — the game arrives whole.
+    const ada = await person();
     const a = openFilter();
-    ensureReplica(a, A);
+    ensureReplica(a, ada.author);
     // A game A created, so A's change finds its head there (D135).
     const s1 = startSession(a, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, s1);
     changeEntity(a, "moves", E1, { ply: 1, san: "e4!" }, s1);
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
+    // Sealed as the copy saves, long before an invite is cut from it.
+    await sealAs(a, ada);
     filterToSession(a, s1);
 
     const fresh = openFilter();
     ensureReplica(fresh, B);
-    mergeFrom(fresh, a, ["moves"]);
+    // Every table the copy replicates, as mergeSibling passes them: the seat rows are in the same header.
+    const report = await mergeFromSigned(fresh, a, ada, mergeTablesOf(a));
+    expect(report.refusedBatches).toEqual([]);
     // E1's two rows crossed; E2 (the other session) never left A's invite.
     const entities = new Set(fresh.all(`SELECT hex(_r_entity) e FROM moves`).map((r) => String(r["e"]).toLowerCase()));
     expect(entities).toEqual(new Set([hx(E1)]));

@@ -351,8 +351,18 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                 # name of whoever wrote the row.
                 if named not in held or verdicts.get(named) in ("ok", "incomplete"):
                     refuse_batch(named, row["_r_replica"], "BATCH_DIGEST_MISMATCH")
-            else:
+            elif local.execute(
+                f'SELECT 1 FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+                (row["_r_replica"], row["_r_seq"]),
+            ).fetchone() is not None:
+                # Unsigned, and held here already at that id: not new, so the
+                # ordinary path decides, a duplicate or a second row at one id.
                 unsigned_rows.append((table, row))
+            else:
+                # Unsigned and new: nobody's key vouches for it, so it is refused
+                # in every table (BATCH_UNSIGNED, batch format version 2), under
+                # the id it carries.
+                refuse_batch("", row["_r_replica"], "BATCH_UNSIGNED")
 
     def reject(rid: str) -> None:
         if rid not in result["rejected"]:

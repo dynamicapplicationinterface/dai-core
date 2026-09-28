@@ -628,7 +628,8 @@ export function decodeBatch(bytes: Uint8Array): Batch | SignedBatch {
   });
   const batch: Batch = { replica: asBytes(root.get("replica")), lc: asNumber(root.get("lc")), entries };
   // A batch with no seal decodes as unsigned: what refuses it is the merge, by
-  // name (BATCH_UNSIGNED, step 6), not a decode error.
+  // name (BATCH_UNSIGNED, in every table from batch format version 2), not a
+  // decode error.
   if (!root.has("sig")) return batch;
   const att = root.get("att");
   return {

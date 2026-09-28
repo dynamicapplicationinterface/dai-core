@@ -227,10 +227,14 @@ test("a merge raises the counter for the author it is told, not for whatever _da
   for (const san of ["e4", "d4", "c4", "Nf3"]) {
     createEntity(source, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san });
   }
+  // Sealed as they left her device: a merge takes a row only signed.
+  for (const batch of pendingBatches(source, ada.author, ["moves"])) {
+    recordSeal(source, await signBatch(batch, { document: DOC, keys: ada.keys }));
+  }
   // The copy that gets them back holds a _dai_replica naming somebody else.
   const back = open(PLAIN);
   ensureReplica(back, new Uint8Array(16).fill(0xee));
-  await mergeSibling(back, source, { author: ada.author });
+  await mergeSibling(back, source, { author: ada.author, document: DOC });
   expect(Number(back.all("SELECT seq FROM _dai_replica")[0]!["seq"]), "raised to Ada's highest, 4").toBe(4);
   back.close();
   source.close();

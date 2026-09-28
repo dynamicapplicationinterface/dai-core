@@ -5,6 +5,7 @@ import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
 import { withSessionId } from "./session-db.js";
+import { mergeSigned, person, sealAs } from "./signed-people.js";
 
 /**
  * Asymmetric roles inside a session (backlog D15).
@@ -54,9 +55,13 @@ function openWith(schema: string): Rows & { close(): void } {
 }
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
-const C = bytes(0xc0); // the creator: the session id commits to it
+// Both parties are keys, not chosen bytes: their rows cross merges, and at
+// batch format version 2 a row crosses a merge only signed.
+const ADA = await person();
+const BO = await person();
+const C = ADA.author; // the creator: the session id commits to it
 const S = sessionIdOf(C, 1)!;
-const J = bytes(0x10); // the joiner: it binds the open seat
+const J = BO.author; // the joiner: it binds the open seat
 const SEATC = bytes(0xa1);
 const SEATJ = bytes(0xa2);
 
@@ -167,7 +172,8 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     // enforced nothing, so the row exists and travels.
     put(joinerCopy, "advice", J, 2, 6, { note: "forged by the joiner" });
 
-    expect((await mergeSibling(creatorCopy, joinerCopy)).refused).toBeUndefined();
+    await sealAs(joinerCopy, BO);
+    expect((await mergeSigned(creatorCopy, joinerCopy)).refused).toBeUndefined();
 
     // The forged row reached the creator's copy — the merge carried it — and is
     // not admitted. That it is stored and absent is what shows the admission
@@ -189,7 +195,8 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     put(joinerCopy, "answers", J, 2, 5, { note: "a reply" });
     put(creatorCopy, "answers", C, 4, 6, { note: "forged by the creator" });
 
-    expect((await mergeSibling(joinerCopy, creatorCopy)).refused).toBeUndefined();
+    await sealAs(creatorCopy, ADA);
+    expect((await mergeSigned(joinerCopy, creatorCopy)).refused).toBeUndefined();
 
     expect(stored(joinerCopy, "answers")).toContain("forged by the creator");
     expect(current(joinerCopy, "answers")).toEqual(["a reply"]);
@@ -211,8 +218,10 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     put(joinerCopy, "answers", J, 2, 7, { note: "a reply" });
     put(joinerCopy, "notes", J, 3, 8, { note: "from the joiner" });
 
-    expect((await mergeSibling(creatorCopy, joinerCopy)).refused).toBeUndefined();
-    expect((await mergeSibling(joinerCopy, creatorCopy)).refused).toBeUndefined();
+    await sealAs(creatorCopy, ADA);
+    await sealAs(joinerCopy, BO);
+    expect((await mergeSigned(creatorCopy, joinerCopy)).refused).toBeUndefined();
+    expect((await mergeSigned(joinerCopy, creatorCopy)).refused).toBeUndefined();
 
     for (const copy of [creatorCopy, joinerCopy]) {
       expect(current(copy, "advice")).toEqual(["first note"]);
