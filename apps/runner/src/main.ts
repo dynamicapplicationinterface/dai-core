@@ -64,6 +64,7 @@ import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/tr
 import {
   deleteCartridgeFromLibrary,
   raiseSeqFloor,
+  claimSeqFloor,
   seqFloorWithin,
   deleteDatabaseFromOpfs,
   getCartridgeFromLibrary,
@@ -3265,8 +3266,21 @@ window.addEventListener("message", (event) => {
         showAuthorId(fields[2]) === writes.me.author;
       if (!header || !ours) return reply({ error: "This device signs only its own changes to the document that is open." });
       try {
-        await raiseSeqFloor(mount.documentUuid, seq);
-      } catch {
+        /*
+         * Under the save's lock and its revision check, then the floor
+         * (D105): a tab another tab has saved or signed past signs nothing,
+         * as it saves nothing (D41), so exactly one of two tabs goes on
+         * writing and the other says so.
+         */
+        await withLibraryLock(mount.documentUuid, async () => {
+          const held = await getCartridgeFromLibrary(mount.documentUuid).catch(() => null);
+          if (knownRevision.has(mount.documentUuid) && knownRevision.get(mount.documentUuid) !== (held?.revision ?? 0)) {
+            throw new Error(FLOOR_MOVED);
+          }
+          await claimFloor(mount, writes.seqFloor, seq);
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === FLOOR_MOVED) return reply({ error: FLOOR_MOVED });
         return reply({ error: "This device could not record how far it has written, so the change was not signed." });
       }
       reply({ sig: await signBytes(writes.me.keys.privateKey, header), pub: writes.me.pub });
@@ -3317,7 +3331,8 @@ window.addEventListener("message", (event) => {
       locked(async () => {
         // A document this device may not write is not saved: the same answer
         // the mount gave, waited on here so no save goes through before it.
-        const writes = mountWrites?.documentUuid === documentUuid ? await mountWrites.decided : null;
+        const mount = mountWrites?.documentUuid === documentUuid ? mountWrites : null;
+        const writes = mount ? await mount.decided : null;
         if (writes && "refused" in writes) throw new Error(writes.refused);
         const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
         const current = held?.revision ?? 0;
@@ -3329,7 +3344,11 @@ window.addEventListener("message", (event) => {
         }
         // The floor first, then the save: a save that fails after this has
         // still counted its seqs, and one that fails before it wrote nothing.
-        await raiseSeqFloor(documentUuid, Number(data.payload?.seq ?? 0));
+        // Claimed from where this mount saw it, so a tab another tab has
+        // written past saves nothing (D105).
+        const seq = Number(data.payload?.seq ?? 0);
+        if (mount && writes) await claimFloor(mount, writes.seqFloor, seq);
+        else await raiseSeqFloor(documentUuid, seq);
         await saveDatabaseToOpfs(documentUuid, bytes);
         const next = current + 1;
         if (loaded && loaded.manifest.documentUuid === documentUuid) {
@@ -5359,7 +5378,35 @@ let mountWrites: {
   nonce: string | null;
   documentUuid: string;
   decided: Promise<{ me: Person; seqFloor: number } | { refused: string }>;
+  /** The floor as this mount last saw it: read at mount, then moved only by its own claims (D105). */
+  floorSeen?: number;
+  /** This mount's claims, one at a time, so its own two never read each other as another tab's. */
+  claims?: Promise<unknown>;
 } | null = null;
+
+/** What a tab that lost the floor to another tab is told (D105). */
+const FLOOR_MOVED =
+  "This document was written from another tab since it was opened here, so this change was not signed. " +
+  "To see the other tab's changes, reopen it.";
+
+/**
+ * Raises the floor for a sign or a save of this mount, only from where this
+ * mount last saw it (D105, `claimSeqFloor`). Refused with `FLOOR_MOVED` when
+ * another tab moved it since.
+ */
+function claimFloor(mount: NonNullable<typeof mountWrites>, seen: number, seq: number): Promise<void> {
+  const run = async (): Promise<void> => {
+    const answer = await claimSeqFloor(mount.documentUuid, mount.floorSeen ?? seen, seq);
+    if ("moved" in answer) {
+      console.info(`dai: the floor moved to ${answer.moved} in another tab; this tab signs and saves nothing`);
+      throw new Error(FLOOR_MOVED);
+    }
+    mount.floorSeen = answer.claimed;
+  };
+  const turn = (mount.claims ?? Promise.resolve()).then(run, run);
+  mount.claims = turn.catch(() => undefined);
+  return turn;
+}
 
 function requestReplicaId(): Promise<string | null> {
   return new Promise((resolve) => {

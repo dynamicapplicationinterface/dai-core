@@ -4501,10 +4501,10 @@ per-document sequence floor (the identity review's fixes #1 and #3: raised
 before a save is written and before a mailbox batch is sealed; D109) is what
 prevents that. So `AUTHOR_EQUIVOCATED` accuses correctly **because the floor
 exists**; if the floor ever weakens, this code starts blaming honest people.
-Two holes in the floor are open today, and each is an honest path to this
-code: two tabs on one held copy can both stamp rows under one author (D105),
-and the floor's publish route has no test of its own (D109). Whether D160
-waits on them is a ruling wanted before it is built.*
+Two holes in the floor were open when this was ruled, each an honest path to
+this code: two tabs on one held copy could both sign rows at one seq (D105),
+and the floor's publish route had no test of its own (D109). Ruled 28
+September: D160 waits on them, and both were fixed first.*
 
 The creator signs two different confirm rows at one `(author, seq)`, one
 naming Bo and one Cy, and sends one to each. Each copy keeps the one it saw
@@ -5771,8 +5771,18 @@ that every spec is in exactly one.
 
 #### D109 — The sequence floor's publish route has no test of its own
 
-*Status: open. Filed 24 September from the identity sitting's review fixes
-(#1/#3).*
+*Status: **fixed, 28 September**, with D105. Filed 24 September from the
+identity sitting's review fixes (#1/#3).*
+
+*How it closed:* a batch is published only after the save holding it has
+landed (`tests/publish-after-landed.spec.ts`), and since D105 the floor is
+claimed before the batch is signed, so a published seq was counted twice
+before it left, and `beforePublish` is a third. The test holds the first
+alone, the one with nothing after it on the device: every save is dropped
+before the host sees it, so neither a save nor a publish counts the move, the
+page is reloaded, and the next row must be above the signed one
+(`tests/seq-floor.spec.ts`, "a signed batch whose save never lands"). Run red
+with the sign's claim removed.
 
 The per-document sequence floor is raised before a save is written and before
 a mailbox batch is sealed (`beforePublish` in
@@ -5831,7 +5841,26 @@ lines.
 
 #### D105 — Two tabs on one held copy can both write under one author
 
-*Status: open. Filed 24 September from the identity sitting's cold review.*
+*Status: **fixed, 28 September.** Filed 24 September from the identity
+sitting's cold review. Ruled 28 September: D160 waits on this, and it lands
+first, with D109's test.*
+
+*The fix, as built:* the closer below reserved a seq before it is stamped, but
+a row is stamped by the frame's own SQL, synchronously, a message away from the
+host, so nothing can be reserved there. The same one IndexedDB transaction
+guards the point where a seq first becomes attributable instead, the
+signature. Each mount keeps the floor as it last saw it, and the host signs
+(and saves) only through `claimSeqFloor` (`apps/runner/src/opfs.ts`): the
+floor is raised only if it still stands where that mount saw it. A tab that
+finds it moved signs nothing and is told "This document was written from
+another tab since it was opened here, so this change was not signed. To see
+the other tab's changes, reopen it." A sign also takes the save's lock and
+revision check (D41), so a tab that may no longer save may no longer sign:
+otherwise the older tab signs, cannot save, and its seqs stop the newer tab
+signing, and neither keeps anything. Two tabs can still stamp one seq; only
+one of them ever signs it. Held by `tests/seq-floor.spec.ts`, two tests (the
+floor alone, with saves refused in the second tab; and the revision, with the
+second tab's save on opening), each run red with its half removed.
 
 `IDENTITY-ONE-LIVE-COPY` keeps one copy of a document per device, but two tabs
 can show that one copy at once. D41's lock refuses the stale tab's *save*; it

@@ -740,6 +740,53 @@ export async function raiseSeqFloor(documentUuid: string, seq: number): Promise<
 }
 
 /**
+ * Raises the floor to `seq` only if it still stands where this tab last saw
+ * it, `seen`, in one transaction (D105). Two tabs on one held copy stamp rows
+ * under one author from one counter, so both can reach the same seq with
+ * different rows; the tab that moves the floor first claims what it covers,
+ * and the other finds the floor moved and signs and saves nothing, so a
+ * device never signs two rows at one `(author, seq)`. The answer is the floor
+ * this tab now stands at, or where another tab moved it.
+ */
+export type SeqFloorClaim = { claimed: number } | { moved: number };
+
+export async function claimSeqFloor(documentUuid: string, seen: number, seq: number): Promise<SeqFloorClaim> {
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  const store = tx.objectStore(KEY_STORE);
+  const key = seqFloorKey(documentUuid);
+  let answer: SeqFloorClaim | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          const held = typeof read.result === "number" ? read.result : 0;
+          if (held > seen) {
+            answer = { moved: held };
+            return;
+          }
+          const next = Math.max(seen, Number.isSafeInteger(seq) ? seq : 0);
+          if (next > held) store.put(next, key);
+          answer = { claimed: next };
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
+        tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
+      }),
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("The sequence floor did not answer within 4 seconds.")), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!answer) throw new Error("The sequence floor was not read.");
+  return answer;
+}
+
+/**
  * A document's mailbox state (Track 5).
  *
  * `key` is the 32-byte document key as base64url — the one that rides in a
