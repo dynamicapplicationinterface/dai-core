@@ -453,12 +453,14 @@ export interface WriteTarget {
  * - a roster table (`_dai_seat` and its kin): this copy's own versions, as
  *   `_dai_open_seat` and `_dai_holder` count only the creator's.
  *
- * No such partition, in a session table, is a write nobody would admit. Two
- * is an id reused across partitions this copy writes in (D134, until the key
- * is (session, entity)); a guess would put the write in the other one. Both
- * are refused.
+ * In a session table a row is named by its session and its id (D134, batch
+ * format version 2): the caller names the session, and only that session is
+ * read, so an id reused in another session is never a head of this write. An
+ * id with no session there names no row, and is refused. No partition in the
+ * named session is a write nobody would admit, refused too; in a seated table,
+ * versions of one id in two seats of one session are refused, not guessed.
  */
-export function writeTargetOf(db: Rows, table: string, entity: Uint8Array): WriteTarget {
+export function writeTargetOf(db: Rows, table: string, entity: Uint8Array, session?: Uint8Array): WriteTarget {
   const quoted = (name: string) => `"${name.replace(/"/g, '""')}"`;
   // The order `_current` shows by: the highest clock, then the lowest author id, then the lowest seq.
   const order = (rows: Record<string, unknown>[]) =>
@@ -469,6 +471,9 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array): Writ
     });
   if (!hasSessionColumn(db, table)) {
     return { heads: order(db.all(`SELECT * FROM ${quoted(`${table}_heads`)} WHERE _r_entity = ?`, [entity])) };
+  }
+  if (!session) {
+    throw new RowRejected(`A ${table} row is named by its session and its id, and this write names no session.`);
   }
   const me = replicaState(db).id;
   const view = (name: string) => db.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = ?", [name]).length > 0;
@@ -490,8 +495,8 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array): Writ
     // tombstones (D143); `_pending` is what a screen shows.
     const waiting = view(`${table}_waiting`) ? `${table}_waiting` : `${table}_pending`;
     rows = [
-      ...db.all(`SELECT h.* FROM ${quoted(`${table}_heads`)} h WHERE h._r_entity = ?2 AND ${mine}`, [me, entity]),
-      ...db.all(`SELECT * FROM ${quoted(waiting)} WHERE _r_entity = ? AND _r_replica = ?`, [entity, me]),
+      ...db.all(`SELECT h.* FROM ${quoted(`${table}_heads`)} h WHERE h._r_entity = ?2 AND h._r_session = ?3 AND ${mine}`, [me, entity, session]),
+      ...db.all(`SELECT * FROM ${quoted(waiting)} WHERE _r_entity = ? AND _r_replica = ? AND _r_session = ?`, [entity, me, session]),
     ];
     // An admitted head this copy's own waiting row already versions is not a
     // head of its next write: seated, the waiting row would be admitted and the
@@ -501,33 +506,29 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array): Writ
   } else {
     const t = quoted(table);
     rows = db.all(
-      `SELECT * FROM ${t} r WHERE r._r_entity = ? AND r._r_replica = ?
+      `SELECT * FROM ${t} r WHERE r._r_entity = ? AND r._r_replica = ? AND r._r_session = ?
          AND NOT EXISTS (SELECT 1 FROM ${t} n, json_each(n._r_parents) p
                           WHERE n._r_entity = r._r_entity AND n._r_session = r._r_session AND n._r_replica = r._r_replica
                             AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq)`,
-      [entity, me],
+      [entity, me, session],
     );
   }
-  const partitions = new Set(
-    rows.map((r) => hex(r["_r_session"] as Uint8Array) + (seat ? `/${hex(r[seat] as Uint8Array)}` : "")),
-  );
+  const partitions = new Set(rows.map((r) => (seat ? hex(r[seat] as Uint8Array) : "")));
   if (partitions.size === 0) {
     throw new RowRejected(`This copy holds no version of that ${table} row it may write: nothing to change or delete.`);
   }
   if (partitions.size > 1) {
     throw new RowRejected(
-      `That ${table} entity id names rows in ${partitions.size} sessions or seats this copy writes in (D134); ` +
-        "a write to one would be a guess.",
+      `That ${table} row has versions in ${partitions.size} seats of its session; a write to one would be a guess.`,
     );
   }
   const heads = order(rows);
-  const session = heads[0]!["_r_session"] as Uint8Array;
   return seat ? { session, seat: { column: seat, value: heads[0]![seat] as Uint8Array }, heads } : { session, heads };
 }
 
 /** The ids of the heads a write of this copy versions (`writeTargetOf`), sorted, for a row that supersedes them. */
-export function headsOf(db: Rows, table: string, entity: Uint8Array): string[] {
-  return writeTargetOf(db, table, entity).heads.map(rowIdOf).sort();
+export function headsOf(db: Rows, table: string, entity: Uint8Array, session?: Uint8Array): string[] {
+  return writeTargetOf(db, table, entity, session).heads.map(rowIdOf).sort();
 }
 
 function stamp(
@@ -580,13 +581,12 @@ export function changeEntity(
   table: string,
   entity: Uint8Array,
   columns: Record<string, unknown>,
+  session?: Uint8Array,
 ): ReplicatedRow {
-  // The session is inherited from the heads this copy versions, not supplied by
-  // the caller (T1-D28), and those heads are the ones admission reads, in one
-  // partition (`writeTargetOf`, D135). An entity belongs to one session for its
-  // whole history, so the honest write rules cannot construct a crossing, and
-  // the caller passes no session (bootloader `changeEntity`).
-  const target = writeTargetOf(db, table, entity);
+  // In a session table the caller names the session with the entity (D134):
+  // a row is (session, entity), and the heads are the ones admission reads in
+  // that session alone (`writeTargetOf`). The version stays in it (T1-D28).
+  const target = writeTargetOf(db, table, entity, session);
   // In a seated table a version acts for its heads' seat, which is the
   // partition it replaces: naming another would be a row admission never takes
   // and nothing reports (D144).
@@ -602,13 +602,13 @@ export function changeEntity(
 }
 
 /** A delete: a tombstone carrying the columns of the head it buries. */
-export function deleteEntity(db: Rows, table: string, entity: Uint8Array): ReplicatedRow {
+export function deleteEntity(db: Rows, table: string, entity: Uint8Array, session?: Uint8Array): ReplicatedRow {
   const authored = authorColumnsOf(db, table);
-  // The heads, their session and the head whose columns the tombstone carries
-  // all come from the one partition this copy writes in (D137): the caller
-  // deleting a row need not know which session it was in (T1-D26), and a row of
-  // another seat reusing the id is neither buried nor copied.
-  const target = writeTargetOf(db, table, entity);
+  // The heads and the head whose columns the tombstone carries come from the
+  // one session the caller names (D134) and the partition this copy writes in
+  // there (D137): a row of another session or seat reusing the id is neither
+  // buried nor copied.
+  const target = writeTargetOf(db, table, entity, session);
   const head = target.heads[0];
   const columns: Record<string, unknown> = {};
   for (const name of authored) columns[name] = head ? head[name] : null;

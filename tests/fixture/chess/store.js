@@ -10,8 +10,11 @@ const ORDER='ORDER BY ply, _r_lc, lower(hex(_r_replica)), _r_seq';
  * their *_current views. Every write to them goes through `writer`, which is
  * the kit's replicated-row API in the opener and the test shim in Node:
  *   writer.insert(table, values)          -> entity hex   (create entity)
- *   writer.change(table, entity, values)  -> entity hex   (new row, parents = current heads)
- *   writer.remove(table, entity)          -> entity hex   (tombstone)
+ *   writer.change(table, entity, values, session)  -> entity hex   (new row, parents = current heads)
+ *   writer.remove(table, entity, session)          -> entity hex   (tombstone)
+ * A game is its session and its entity (D134): `key`, `session:entity`, is
+ * what the list, `active_game_id` and `gameById` name, so a stranger's game
+ * reusing the id in another session is never the one shown or written.
  * The board, whose turn it is, the result and any pending draw offer are
  * never stored. `state()` derives them by replaying `moves` in ply order
  * through the engine. A row the engine cannot play is ignored, not trusted.
@@ -27,7 +30,7 @@ export class Store {
  ui(){return this.one('SELECT * FROM ui_state WHERE id = 1');}
 
  // ---- reads -------------------------------------------------------------
- games(){return this.rows(`SELECT lower(hex(g._r_entity)) AS id, lower(hex(g._r_session)) AS session, g.white_name, g.black_name, g.creator_color, g.initial_fen, g._r_conflicted AS names_conflicted,
+ games(){return this.rows(`SELECT lower(hex(g._r_entity)) AS id, lower(hex(g._r_session)) AS session, lower(hex(g._r_session)) || ':' || lower(hex(g._r_entity)) AS key, g.white_name, g.black_name, g.creator_color, g.initial_fen, g._r_conflicted AS names_conflicted,
    COALESCE(l.is_demo,0) AS is_demo, COALESCE(l.hidden,0) AS hidden
    FROM games_current g LEFT JOIN local_games l ON l.game_id = lower(hex(g._r_entity)) ORDER BY g._r_lc`);}
  // This copy's own replica id, hex — for deciding roster membership below.
@@ -75,7 +78,7 @@ export class Store {
   const target=joinable(active)?active:[...this.games()].reverse().find(joinable);
   if(!target)return;
   this.joinIfNeeded(target.session);
-  if(target!==active)this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[target.id]);
+  if(target!==active)this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[target.key]);
  }
  /**
   * The seat picture for a session: is a seat contested, am I the creator, is
@@ -156,12 +159,12 @@ export class Store {
   const g=this.game(),mine=this.myColor(g);name=String(name||'').trim();
   if(!mine)throw new Error('Take a seat in this game first.');
   if(!name||name.length>40)throw new Error('Add your name, up to 40 characters.');
-  this.w.change('games',g.id,{white_name:mine==='w'?name:g.white_name,black_name:mine==='b'?name:g.black_name,creator_color:g.creator_color,initial_fen:g.initial_fen});
+  this.w.change('games',g.id,{white_name:mine==='w'?name:g.white_name,black_name:mine==='b'?name:g.black_name,creator_color:g.creator_color,initial_fen:g.initial_fen},g.session);
  }
  /** Every version of a game's names still standing, when two renames crossed. */
  nameVersions(g){return this.rows('SELECT white_name, black_name FROM games_heads WHERE lower(hex(_r_entity)) = ? AND _r_deleted = 0',[g.id]);}
  /** Keep one version of the names; a change names every current head as its parent, which settles them. */
- keepNames(white,black){const g=this.game();if(!g)return;this.w.change('games',g.id,{white_name:white,black_name:black,creator_color:g.creator_color,initial_fen:g.initial_fen});}
+ keepNames(white,black){const g=this.game();if(!g)return;this.w.change('games',g.id,{white_name:white,black_name:black,creator_color:g.creator_color,initial_fen:g.initial_fen},g.session);}
  /**
   * The creator's half of the repair (T1-D29): mint a fresh open seat for a game
   * whose invite was opened by two people. The old open seat is superseded, so the
@@ -174,7 +177,7 @@ export class Store {
   if(!this.seatState(g.session).amCreator)throw new Error('Only the player who started this game can send a new invite for it.');
   window.daiKit.reseat(g.session);
  }
- gameById(id){return this.games().find(g=>g.id===id)||null;}
+ gameById(key){return this.games().find(g=>g.key===key)||null;}
  game(){const s=this.settings();return s.active_game_id?this.gameById(s.active_game_id):null;}
  /**
   * A table's admitted rows for a game, and this copy's own rows still waiting
@@ -206,8 +209,8 @@ export class Store {
   *   result     '*' | '1-0' | '0-1' | '1/2-1/2', with reason
   *   drawOfferBy   side whose offer is open, if any
   */
- state(gameId=this.game()?.id){
-  const g=gameId&&this.gameById(gameId);if(!g)return null;
+ state(gameKey=this.game()?.key){
+  const g=gameKey&&this.gameById(gameKey);if(!g)return null;
   // The side is the seat's: a move is White's because it was made from White's
   // seat, which the document admitted only from whoever held it then.
   const sides=this.sides(g);
@@ -282,12 +285,12 @@ export class Store {
    this.w.insert('moves',{seat:window.daiKit.seatBytes(this.seatFor(g,r.move.color)),game_id:id,ply:ply+1,color:r.move.color,from_sq:from,to_sq:to,promotion:null,san:r.move.san,draw_offer:0},session);
    p=r.position;
   }
-  if(!this.settings().active_game_id)this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[id]);
+  if(!this.settings().active_game_id)this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[session+':'+id]);
  }
  /** A seated player sees their own side at the bottom; the practice board turns to whoever moves. */
  faceMover(){const st=this.state();if(st)this.exec('UPDATE ui_state SET orientation = ? WHERE id = 1',[this.myColor(st.game)||st.turn]);}
  switchView(view){if(!['board','games','settings'].includes(view))return;this.exec('UPDATE ui_state SET current_view = ? WHERE id = 1',[view]);}
- openGame(id){this.tx(()=>{this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[id]);this.faceMover();this.exec("UPDATE ui_state SET current_view = 'board', selected_square = NULL, promotion_from = NULL, promotion_to = NULL WHERE id = 1");});}
+ openGame(key){this.tx(()=>{this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[key]);this.faceMover();this.exec("UPDATE ui_state SET current_view = 'board', selected_square = NULL, promotion_from = NULL, promotion_to = NULL WHERE id = 1");});}
 
  /**
   * Start a game. Only this player's name is needed: the person invited names
@@ -307,20 +310,20 @@ export class Store {
    const session=window.daiKit.newSession();
    const id=this.w.insert('games',{white_name:white,black_name:black,creator_color:color,initial_fen:START_FEN},session);
    this.exec('INSERT INTO local_games(game_id) VALUES (?)',[id]);
-   this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[id]);
+   this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[session+':'+id]);
    this.exec("UPDATE ui_state SET current_view = 'board', orientation = ?, selected_square = NULL, promotion_from = NULL, promotion_to = NULL WHERE id = 1",[color]);
-   return id;
+   return session+':'+id;
   });
  }
  /** Another game with the same opponent, colors swapped. It is a new session, so it needs its own invite. */
  rematch(){
   const g=this.game(),mine=this.myColor(g);
   if(!mine)throw new Error('A rematch starts from a game you played in.');
-  const id=this.createGame({you:playerName(g,mine),them:mine==='w'?g.black_name:g.white_name,color:opposite(mine)});
-  return this.gameById(id);
+  const key=this.createGame({you:playerName(g,mine),them:mine==='w'?g.black_name:g.white_name,color:opposite(mine)});
+  return this.gameById(key);
  }
  rename(white,black){const g=this.game();if(!g)return;white=white.trim();black=black.trim();if(!white||!black||white.length>40||black.length>40)throw new Error('Both names are needed, up to 40 characters each.');
-  this.w.change('games',g.id,{white_name:white,black_name:black,creator_color:g.creator_color,initial_fen:g.initial_fen});}
+  this.w.change('games',g.id,{white_name:white,black_name:black,creator_color:g.creator_color,initial_fen:g.initial_fen},g.session);}
 
  // ---- playing ----------------------------------------------------------------
  /** A game accepts a move only when it has no result and no unresolved conflict. */
@@ -362,7 +365,7 @@ export class Store {
  resolveConflict(keepEntity){
   const st=this.state();if(!st?.conflict)throw new Error('There is no conflict to resolve.');
   if(!st.conflict.candidates.some(c=>c.entity===keepEntity))throw new Error('That move is not one of the candidates.');
-  this.tx(()=>{for(const c of st.conflict.candidates)if(c.entity!==keepEntity)this.w.remove('moves',c.entity);});
+  this.tx(()=>{for(const c of st.conflict.candidates)if(c.entity!==keepEntity)this.w.remove('moves',c.entity,st.game.session);});
  }
  claimEligibility(st=this.state()){
   if(!st||st.result!=='*'||st.conflict)return null;

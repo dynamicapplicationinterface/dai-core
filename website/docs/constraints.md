@@ -368,13 +368,13 @@ Start each game, match or agreement with `const session = window.daiKit.newSessi
 
 <small>Depends on [`src/runtime/bootloader.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/runtime/bootloader.ts).</small>
 
-### SESSION-ROW-CARRIES-SESSION · Every insert names its session {#SESSION-ROW-CARRIES-SESSION}
+### SESSION-ROW-CARRIES-SESSION · Every write names its session {#SESSION-ROW-CARRIES-SESSION}
 
 **Applies to** session. **Enforcement:** refused at run time.
 
-In a session document, pass the session id as the third argument of every insert: `window.dai.replicated.insert("moves", values, session)`. `change` and `remove` take no session — they inherit the entity's.
+In a session document, pass the session last in every write: `window.dai.replicated.insert("moves", values, session)`, `.change("moves", id, values, session)`, `.remove("moves", id, session)`.
 
-**Why.** Every replicated row in a session document belongs to a session. Run against the write rules: an insert without one throws "A row for … carries no session, but &lt;table&gt; declares the session profile", and nothing is written.
+**Why.** Every replicated row in a session document belongs to a session. An insert without one throws "A row for … carries no session, but &lt;table&gt; declares the session profile", and nothing is written.
 
 <small>Depends on [`src/replicated-rows.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/replicated-rows.ts), [`src/replicated.ts`](https://github.com/dynamicapplicationinterface/dai-core/blob/main/src/replicated.ts).</small>
 

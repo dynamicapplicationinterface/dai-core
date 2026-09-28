@@ -866,10 +866,10 @@ CREATE TABLE moves (
     // session it is a member of or waits in (D135).
     const s = startSession(db, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, s);
-    // Change and delete are not told the session — they inherit it from the
-    // entity's head, so an entity keeps one session for its whole history.
-    changeEntity(db, "moves", E1, { ply: 1, san: "e4!" });
-    deleteEntity(db, "moves", E1);
+    // Change and delete name the session with the entity (D134): a row is
+    // (session, entity), and the version stays in it.
+    changeEntity(db, "moves", E1, { ply: 1, san: "e4!" }, s);
+    deleteEntity(db, "moves", E1, s);
 
     const sessions = db.all(`SELECT _r_session FROM moves`).map((r) => hx(r["_r_session"]));
     expect(sessions).toHaveLength(3);
@@ -1018,7 +1018,7 @@ CREATE TABLE prefs (
     // A game A created, so A's change finds its head there (D135).
     const s1 = startSession(a, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, s1);
-    changeEntity(a, "moves", E1, { ply: 1, san: "e4!" });
+    changeEntity(a, "moves", E1, { ply: 1, san: "e4!" }, s1);
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
     filterToSession(a, s1);
 

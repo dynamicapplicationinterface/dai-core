@@ -1015,10 +1015,8 @@ test.describe("a game continues over a shared link (the key path)", () => {
       appFrame(page).evaluate((target) => {
         const db = (window as any).daiKit.db;
         const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
-        const session = db.selectObjects(
-          "SELECT lower(hex(_r_session)) AS s FROM games_current WHERE lower(hex(_r_entity)) = ?",
-          [active],
-        )[0].s;
+        // The active game is its session and entity (D134).
+        const session = String(active).split(":")[0];
         try {
           (window as any).dai.replicated.insert(target, { note: `into ${target}` }, session);
           return "written";
@@ -1324,10 +1322,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const outcome = await appFrame(pageA).evaluate(() => {
       const db = (window as any).daiKit.db;
       const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
-      const sess = db.selectObjects(
-        "SELECT lower(hex(_r_session)) AS s FROM games_current WHERE lower(hex(_r_entity)) = ?",
-        [active],
-      )[0].s;
+      const sess = String(active).split(":")[0];
       try {
         (window as any).dai.replicated.session.reseat(sess);
         return "did-not-refuse";
@@ -1397,11 +1392,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     appFrame(page).evaluate(() => {
       const db = (window as any).daiKit.db;
       const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
-      return String(
-        db.selectObjects("SELECT lower(hex(_r_session)) AS s FROM games_current WHERE lower(hex(_r_entity)) = ?", [
-          active,
-        ])[0].s,
-      );
+      return String(active).split(":")[0];
     });
 
   /** Pull until a move lands, in the game it belongs to. The poll is the app's own. */

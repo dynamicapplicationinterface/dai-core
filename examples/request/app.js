@@ -265,8 +265,8 @@ function drawQuestion(question, s, request) {
         write(() => {
           // A change names every current version as its parent, so it settles
           // an edit made on both; any second answer row is removed.
-          shared.change("answers", version.id, { question_id: question.id, body: version.body });
-          for (const other of answers.current) if (other.id !== version.id) shared.remove("answers", other.id);
+          shared.change("answers", version.id, { question_id: question.id, body: version.body }, request.session);
+          for (const other of answers.current) if (other.id !== version.id) shared.remove("answers", other.id, request.session);
         });
         draw();
       });
@@ -335,7 +335,7 @@ function drawQuestion(question, s, request) {
     remove.textContent = "Remove";
     remove.setAttribute("aria-label", `Remove question: ${question.prompt}`);
     remove.addEventListener("click", () => {
-      write(() => shared.remove("questions", question.id));
+      write(() => shared.remove("questions", question.id, request.session));
       draw();
     });
     item.append(remove);
@@ -364,7 +364,7 @@ function saveDraft(question, answer, request) {
   const body = drafts.get(question.id).trim();
   const saved = write(() =>
     answer
-      ? shared.change("answers", answer.id, { question_id: question.id, body })
+      ? shared.change("answers", answer.id, { question_id: question.id, body }, request.session)
       : shared.insert("answers", { question_id: question.id, body }, request.session),
   );
   if (saved) drafts.delete(question.id);

@@ -676,18 +676,18 @@ export const CONSTRAINTS: readonly Constraint[] = [
   },
   {
     id: "SESSION-ROW-CARRIES-SESSION",
-    title: "Every insert names its session",
+    title: "Every write names its session",
     shapes: SESSION,
     topic: "session",
     rule:
-      "In a session document, pass the session id as the third argument of every insert: `window.dai.replicated.insert(\"moves\", values, session)`. `change` and `remove` take no session — they inherit the entity's.",
+      "In a session document, pass the session last in every write: `window.dai.replicated.insert(\"moves\", values, session)`, `.change(\"moves\", id, values, session)`, `.remove(\"moves\", id, session)`.",
     why:
-      "Every replicated row in a session document belongs to a session. Run against the write rules: an insert without one throws \"A row for … carries no session, but <table> declares the session profile\", and nothing is written.",
+      "Every replicated row in a session document belongs to a session. An insert without one throws \"A row for … carries no session, but <table> declares the session profile\", and nothing is written.",
     enforced: ["runtime"],
     anchors: [
       { file: "src/replicated-rows.ts", contains: "carries no session, but" },
       { file: "src/replicated.ts", contains: "_r_session    BLOB    NOT NULL" },
-      { file: "src/replicated-rows.ts", contains: "The session is inherited from the heads this copy versions" },
+      { file: "src/replicated-rows.ts", contains: "is named by its session and its id, and this write names no session" },
     ],
   },
   {
@@ -1010,22 +1010,22 @@ export const SURFACE: readonly SurfaceEntry[] = [
   {
     call: "window.dai.replicated.insert(table, values, session?)",
     does:
-      "Creates a shared row and returns its entity (32 hex characters). values is an object of your own columns. In a session document, session (hex) is required.",
+      "Creates a shared row and returns its entity (32 hex characters). values is an object of your own columns.",
     shapes: SHARED,
     anchor: { file: "src/runtime/bootloader.ts", contains: "insert: (table: string, values: Any, sessionHex?: string): string =>" },
   },
   {
-    call: "window.dai.replicated.change(table, entity, values)",
+    call: "window.dai.replicated.change(table, entity, values, session?)",
     does:
       "Writes a new version of a shared row, naming every current version as its parent — which is also how a conflict is resolved. values carries every one of your columns. Returns the entity.",
     shapes: SHARED,
-    anchor: { file: "src/runtime/bootloader.ts", contains: "change: (table: string, entityHex: string, values: Any): string =>" },
+    anchor: { file: "src/runtime/bootloader.ts", contains: "change: (table: string, entityHex: string, values: Any, sessionHex?: string): string =>" },
   },
   {
-    call: "window.dai.replicated.remove(table, entity)",
+    call: "window.dai.replicated.remove(table, entity, session?)",
     does: "Deletes a shared row by writing a tombstone. The row leaves t_current. Returns the entity.",
     shapes: SHARED,
-    anchor: { file: "src/runtime/bootloader.ts", contains: "remove: (table: string, entityHex: string): string =>" },
+    anchor: { file: "src/runtime/bootloader.ts", contains: "remove: (table: string, entityHex: string, sessionHex?: string): string =>" },
   },
   {
     call: "window.dai.replicated.session.create()",

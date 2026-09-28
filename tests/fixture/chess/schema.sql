@@ -13,8 +13,8 @@
 --     between two copies shows up as rejected rows, not a refused merge.
 --   * No board, no turn, no result, no timestamp. All of it is derived by
 --     replaying `moves` through the engine in `ply` order.
---   * A game's identity is the entity of its `games` row. `game_id` in the
---     other two tables is that entity, as hex.
+--   * A game is its `games` row's session and entity (D134); `game_id` in
+--     the other two tables is that entity, as hex.
 --
 -- Profile (Track 3): each game is a session of two, and either player may end
 --   one (close=any — a resignation, and later a retire). The creator seats

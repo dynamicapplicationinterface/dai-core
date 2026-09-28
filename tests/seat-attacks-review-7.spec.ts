@@ -330,7 +330,7 @@ test("holds: an author=creator table admits only the creator's versions, and a m
   const extra = "-- dai:replicated author=creator\nCREATE TABLE notes (body TEXT);\n";
   const g = await playedGame(ada, bo, "any", extra);
   const n = createEntity(g.adaCopy, "notes", rnd(), { body: "v1" }, g.session);
-  changeEntity(g.adaCopy, "notes", n._r_entity, { body: "v2" });
+  changeEntity(g.adaCopy, "notes", n._r_entity, { body: "v2" }, g.session);
   await seal(g.adaCopy, ada);
   await merge(g.boCopy, g.adaCopy, bo);
   raw(g.boCopy, "notes", n._r_entity, { body: "bo" }, g.session, { parents: [`${hex(ada.author)}:${n._r_seq + 1}`] });

@@ -72,9 +72,9 @@ function renderHistory(st){
 function renderGames(){
  const games=store.games().filter(g=>!g.hidden&&!g.is_demo),active=store.settings().active_game_id;
  let open=0,decided=0,drawn=0;const rows=[];
- for(const g of games){const st=store.state(g.id);if(st.result==='*')open++;else if(st.result==='1/2-1/2')drawn++;else decided++;
+ for(const g of games){const st=store.state(g.key);if(st.result==='*')open++;else if(st.result==='1/2-1/2')drawn++;else decided++;
   const outcome=st.result==='1-0'?playerName(g,'w')+' won · '+st.resultReason:st.result==='0-1'?playerName(g,'b')+' won · '+st.resultReason:st.result==='1/2-1/2'?'Draw · '+st.resultReason:st.conflict?'Two moves at once — choose one':store.myColor(g)===st.turn?'Your move':'Waiting on '+playerName(g,st.turn);
-  const b=element('button','game-list-row');b.type='button';b.dataset.gameOpen=g.id;if(g.id===active)b.setAttribute('aria-current','true');
+  const b=element('button','game-list-row');b.type='button';b.dataset.gameOpen=g.key;if(g.key===active)b.setAttribute('aria-current','true');
   const body=element('span','game-list-body');body.append(element('strong','',playerName(g,'w')+' vs '+playerName(g,'b')),element('span','outcome',outcome),element('span','game-date',Math.ceil(st.ply/2)+' moves · '+g.session.slice(0,8)));
   b.append(element('span','game-list-icon','▦'),body,element('span','','›'));rows.push([st.result==='*'?0:1,b]);}
  rows.sort((a,b)=>a[0]-b[0]);
@@ -173,7 +173,7 @@ function renderGameId(g,seat,joined){
    is after every move, every merge and every open. */
 function reportWaiting(){
  if(typeof window.dai?.reportWaiting!=="function")return;
- const mine=store.games().filter(g=>!g.is_demo&&store.canMove(store.state(g.id))).map(g=>g.session);
+ const mine=store.games().filter(g=>!g.is_demo&&store.canMove(store.state(g.key))).map(g=>g.session);
  window.dai.reportWaiting(mine);
 }
 
@@ -341,7 +341,7 @@ function wire(){
  for(const button of document.querySelectorAll('[data-theme-choice]'))button.addEventListener('click',run(()=>dbWrite('UPDATE settings SET theme = ? WHERE id = 1',[button.dataset.themeChoice])));
  bind('animations-toggle',()=>dbWrite('UPDATE settings SET animations = 1 - animations WHERE id = 1'));
  $('rename-form').addEventListener('submit',run(event=>{event.preventDefault();store.rename($('edit-white-name').value,$('edit-black-name').value);notify('Player names updated.');}));
- bind('remove-photos',()=>dbWrite('DELETE FROM photos WHERE game_id = (SELECT active_game_id FROM settings WHERE id = 1)'));
+ bind('remove-photos',()=>dbWrite("DELETE FROM photos WHERE game_id = (SELECT substr(active_game_id, instr(active_game_id, ':') + 1) FROM settings WHERE id = 1)"));
  bind('clear-data',()=>ask('Clear all data?','This hides every game in this copy and removes your names, photos and options. Moves already shared stay in the game.',()=>{store.clearAll();notify('This copy is clear. Start a fresh game.');},{danger:true,clear:true,label:'Clear All Data'}));
  $('delete-confirm-input').addEventListener('input',()=>{$('confirm-yes').disabled=$('delete-confirm-input').value.trim()!=='CLEAR';});
  bind('confirm-no',()=>{confirmation=null;closeDialog($('confirm-dialog'));});

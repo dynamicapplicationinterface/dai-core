@@ -309,7 +309,7 @@ function drawCollision(game, st) {
     b.disabled = !st.seats.member;
     b.addEventListener("click", () => {
       write(() => {
-        for (const other of c.candidates) if (other.entity !== m.entity) shared.remove("marks", other.entity);
+        for (const other of c.candidates) if (other.entity !== m.entity) shared.remove("marks", other.entity, game.session);
       });
       draw();
     });
@@ -333,7 +333,7 @@ function drawNamesConflict(game) {
     b.textContent = `${v.x_name} v ${v.o_name}`;
     b.addEventListener("click", () => {
       // A change names every current version as its parent, so it settles it.
-      write(() => shared.change("games", game.id, { x_name: v.x_name, o_name: v.o_name }));
+      write(() => shared.change("games", game.id, { x_name: v.x_name, o_name: v.o_name }, game.session));
       draw();
     });
     choices.append(b);
@@ -466,7 +466,7 @@ $("rename-form").addEventListener("submit", (event) => {
   const o = $("rename-o").value.trim();
   if (!game || !x || !o) return;
   // change() takes every column, not only the ones that changed.
-  if (write(() => shared.change("games", game.id, { x_name: x, o_name: o }))) $("rename-form").hidden = true;
+  if (write(() => shared.change("games", game.id, { x_name: x, o_name: o }, game.session))) $("rename-form").hidden = true;
   draw();
 });
 

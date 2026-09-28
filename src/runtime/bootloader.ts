@@ -1911,10 +1911,6 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
      * fixes. The creator test is the one `close` uses: the seat rows name the
      * creator, and the author is this copy's key.
      */
-    // The session a change or delete writes in: the one its writer versions
-    // (`writeTargetOf`, D135), so a gate checks the session the row will carry.
-    const sessionOfEntity = (table: string, id: Uint8Array): Uint8Array | undefined =>
-      rules().writeTargetOf(rows, table, id).session;
     /*
      * Whether `me` (hex) is the session's creator: the author of its first
      * verified seat row, as `_dai_creator` decides it (identity step 5). Not
@@ -2009,21 +2005,31 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         nudgeAuthored();
         return hex(id);
       },
-      change: (table: string, entityHex: string, values: Any): string => {
+      /*
+       * A change and a delete name the row as insert made it: its id and, in a
+       * session document, the game's session (D134). The row is (session,
+       * entity), so an id reused in another session is never the one written,
+       * and an id with no session there is refused by the writer. The version
+       * stays in the session it names (T1-D28).
+       */
+      change: (table: string, entityHex: string, values: Any, sessionHex?: string): string => {
         const id = fromHex(entityHex);
+        const session = sessionHex ? fromHex(sessionHex) : undefined;
         settleReplica(rows);
-        authorGate(table, () => sessionOfEntity(table, id));
-        seatGate(table, values, () => sessionOfEntity(table, id));
-        // The session is inherited from the entity's head (T1-D28) — the app
-        // never restates it, so a change cannot move a row to another session.
-        rules().changeEntity(rows, table, id, values);
+        // An id alone in a session table is refused with its own sentence, before a gate names another reason.
+        if (!session) rules().writeTargetOf(rows, table, id);
+        authorGate(table, () => session);
+        seatGate(table, values, () => session);
+        rules().changeEntity(rows, table, id, values, session);
         nudgeAuthored();
         return entityHex;
       },
-      remove: (table: string, entityHex: string): string => {
+      remove: (table: string, entityHex: string, sessionHex?: string): string => {
+        const session = sessionHex ? fromHex(sessionHex) : undefined;
         settleReplica(rows);
-        authorGate(table, () => sessionOfEntity(table, fromHex(entityHex)));
-        rules().deleteEntity(rows, table, fromHex(entityHex));
+        if (!session) rules().writeTargetOf(rows, table, fromHex(entityHex));
+        authorGate(table, () => session);
+        rules().deleteEntity(rows, table, fromHex(entityHex), session);
         nudgeAuthored();
         return entityHex;
       },
@@ -2150,7 +2156,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
             [sid],
           );
           if (contested.length === 0) throw new Error("CANNOT_RESEAT");
-          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() });
+          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() }, sid);
           nudgeAuthored();
         },
       },
