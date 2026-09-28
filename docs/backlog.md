@@ -4495,6 +4495,17 @@ kept):*
   holds. A test for it: a third copy merging from one of the two sides alone
   sees the equivocation.*
 
+*Why the accusation is fair, and what it rests on:* an honest author can reuse
+a seq with different content only if their counter rewinds, and the
+per-document sequence floor (the identity review's fixes #1 and #3: raised
+before a save is written and before a mailbox batch is sealed; D109) is what
+prevents that. So `AUTHOR_EQUIVOCATED` accuses correctly **because the floor
+exists**; if the floor ever weakens, this code starts blaming honest people.
+Two holes in the floor are open today, and each is an honest path to this
+code: two tabs on one held copy can both stamp rows under one author (D105),
+and the floor's publish route has no test of its own (D109). Whether D160
+waits on them is a ruling wanted before it is built.*
+
 The creator signs two different confirm rows at one `(author, seq)`, one
 naming Bo and one Cy, and sends one to each. Each copy keeps the one it saw
 first and rejects the other on every later exchange (the tampering
@@ -5773,6 +5784,11 @@ would pass every test. What would close it: a way to make the host refuse or
 lose one save on demand (scenery), then a test that publishes, loses the save,
 reopens, and asserts the next row is above what was published.
 
+**D160 depends on this floor.** `AUTHOR_EQUIVOCATED` treats two signed rows at
+one `(author, seq)` as the author lying, which is fair only because the floor
+stops an honest counter from rewinding. Weaken the floor, or leave a route
+untested, and D160 blames honest people. Read D160 before changing either.
+
 #### D108 — An old host meets a new document
 
 *Status: open. Ruled 24 September: filed, nothing built until step 6.*
@@ -5821,7 +5837,9 @@ lines.
 can show that one copy at once. D41's lock refuses the stale tab's *save*; it
 does not stop the stale tab stamping rows or publishing them to the mailbox. So
 two tabs can issue the same `(author, seq)` for different rows, and the
-exchange refuses one as tampering.
+exchange refuses one as tampering. Once D160 lands, it does worse: it voids
+both rows and reports the honest author as `AUTHOR_EQUIVOCATED`. So this is
+an honest path into D160's accusation; see D160.
 
 **Likely closer, not built:** the per-document sequence high-water mark the
 sitting keeps in IndexedDB beside the person key. If each tab reserves its seq
