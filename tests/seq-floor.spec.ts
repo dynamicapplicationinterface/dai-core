@@ -283,9 +283,12 @@ test.describe("one (author, seq) per row, whatever copy is open", () => {
     // anything.
     const context = await browser.newContext();
     const { page: first, uuid } = await firstTab(context);
-    const saved = await savesWritten(first);
     const second = await secondTab(context, uuid, "kept");
     await expect.poll(() => savesWritten(second), { timeout: 30_000, message: "the second tab saved on opening" }).toBeGreaterThan(0);
+    // Counted once the second tab's save is written, not before: the first
+    // game's own saves can still be landing until then (the library lock
+    // orders them), and every one after it must be refused.
+    const saved = await savesWritten(first);
     const held = new Set(Object.keys(await ownBySeq(first)).map(Number));
 
     await newGame(app(first), "Ada", "Cy");
