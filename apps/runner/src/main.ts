@@ -4463,11 +4463,10 @@ exportButton.addEventListener("click", () => {
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
   if (file) {
-    arrivedAsFile = true;
     // A file arrived by no link. Cleared rather than left, or the next
-    // document would be given an icon pointing at the last one.
-    arrivedByLink = undefined;
-    arrivedInClear = false;
+    // document would be given an icon pointing at the last one, or its key.
+    forgetArrival();
+    arrivedAsFile = true;
     void ingest(file);
   }
 });
@@ -4491,6 +4490,8 @@ interface LaunchParams {
 launch?.setConsumer((params: LaunchParams) => {
   const handle = params.files?.[0];
   if (!handle) return;
+  forgetArrival();
+  arrivedAsFile = true;
   void handle.getFile().then((file) => ingest(file));
 });
 
@@ -4565,6 +4566,7 @@ async function planSuccession(
  * with the network switched off.
  */
 async function openFromLink(carried: string, consentedFor?: string): Promise<void> {
+  forgetArrival();
   markStep("reading the document from the link");
   slot.classList.add("busy");
   say("Unpacking the document from the link…");
@@ -4675,6 +4677,24 @@ let arrivedSession: string | undefined;
 
 /** The game's key was filed from the record's own link because the library had none for it (D117). */
 let keyFromRecord = false;
+
+/**
+ * An arrival begins: what the last one carried is dropped before this one is read (D127).
+ *
+ * A link's address, key, game and clear flag describe the arrival that carried
+ * them, and the keep, the key-held refusals and the mailbox all read them. A
+ * link refused before its card leaves the chooser on screen, so the next
+ * arrival can come on the same page: a picked file read under the refused
+ * link's key was refused against it, or kept with it, which moved its mailbox.
+ * Every arrival calls this first and then sets what it carries itself.
+ */
+function forgetArrival(): void {
+  arrivedByLink = undefined;
+  arrivedKey = undefined;
+  arrivedSession = undefined;
+  arrivedInClear = false;
+  keyFromRecord = false;
+}
 
 /** The store reference in a link this device kept, if it is one. */
 function keptReference(link: string | undefined): ReturnType<typeof referenceFrom> | undefined {
@@ -4987,6 +5007,7 @@ async function startMailboxIfPossible(): Promise<void> {
  * well-behaved.
  */
 async function openFromReference(reference: { hash: string; key: string; url?: string }): Promise<void> {
+  forgetArrival();
   markStep("fetching the document from the store");
   const href = reference.url ?? (storeConfig() ? `${storeConfig()!.publicBase}${reference.hash}` : undefined);
   if (!href) {
@@ -5108,6 +5129,7 @@ async function start(): Promise<void> {
   if (parameters.has("shared")) {
     const collected = await collectSharedContainer();
     if (collected) {
+      forgetArrival();
       await ingest(collected.file, { from: collected.from });
       return;
     }
@@ -5300,6 +5322,7 @@ async function start(): Promise<void> {
     receiveHandoff(
       window.opener as Window,
       ({ name, bytes }) => {
+        forgetArrival();
         arrivedAsFile = false;
         void ingest(new File([bytes as BlobPart], name, { type: "text/html" }), {
           from: "From the page that just built it. Nothing is uploaded — it runs on this device.",
@@ -5314,6 +5337,9 @@ async function start(): Promise<void> {
   // followed a link to a container meant that container.
   const asked = parameters.get("open");
   if (asked) {
+    // Here and not inside openFromUrl: the update card opens a successor
+    // through it with the old document still mounted (backlog D163).
+    forgetArrival();
     await openFromUrl(asked);
     return;
   }

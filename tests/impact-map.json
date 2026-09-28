@@ -90,6 +90,15 @@
       "tests/arrival-line.spec.ts",
       "tests/fixtures.ts"
     ],
+    "tests/arrival-link-state.spec.ts": [
+      "apps/runner/",
+      "conformance/signing-key.pem",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/arrival-link-state.spec.ts",
+      "tests/fixtures.ts",
+      "tsup.config.ts"
+    ],
     "tests/arrival-refusals.spec.ts": [
       "apps/runner/src/main.ts",
       "tests/arrival-refusals.spec.ts"

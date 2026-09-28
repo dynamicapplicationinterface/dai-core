@@ -4402,6 +4402,44 @@ step 4 is the case to satisfy. Two things to decide, neither ruled here:
 2. what a copy does to learn of one, given decision 2's ping is the only thing
    the relay will know.
 
+#### D163 — A successor opened from the update card reads the open document's link state
+
+*Status: open, waiting on a ruling. Found by D127's bounded cold read; read,
+not run.*
+
+The update card opens the successor with `openFromUrl` while the old document
+is still mounted, and no arrival state is reset on that path. So the
+successor's keep can file the old document's link key as its own
+(`arrivedKeyFields`), its icon can take the old document's link
+(`arrivedByLink`), a key-held check can refuse it against the old key, and its
+`savedAsFile` inherits the old arrival's. Clearing before the fetch is not the
+fix on its own: if the successor is refused, the old document stays mounted
+and a copy the library never kept loses its only key (`documentRootKey` returns
+`arrivedKey` only for a copy not held). **To rule:** whether a successor shares
+its predecessor's mailbox key (adoption carries rows across once, so possibly
+yes, deliberately) or starts with none; then clear or carry on commit, not
+before the fetch. First make it red by running it.
+
+#### D162 — On Firefox, two saves at once kept the earlier one, and passed on retry
+
+*Status: one sighting, recorded not chased.*
+
+CI run 36439000099 (commit `c85315d`, 28 September): `runner.spec.ts:1176`,
+"two saves at once both land, and the later one is what is kept", failed on
+Firefox: both saves acknowledged, and the store read back byte `0x11` where
+`0x22`, the later save, was expected. Passed on retry #1. Its trace is in that
+run's `retried-firefox-whole` artifact. Chromium and WebKit passed it.
+
+The test mounts a plain container from a file, not a replicated document, so
+the sequence floor claimed per mount (D105, `11ce877`) does not reach it: the
+two saves take only the save lock and its revision check (D41). Kept, not
+merged with D32: this is not the reopen path, and the frame answered (both
+saves were acknowledged from inside it). **What
+would make it readable:** a second sighting. If the kept bytes are the earlier
+save again, the lock granted the saves out of the order they were asked in on
+Firefox, or the later save's write landed first; either is a defect, not
+weather.
+
 #### D161 — A forwarder relabels which rows an honest header covers, and the honest row is refused in its author's name
 
 *Status: **ruled — not built; fixed in step 6's format bump.** Filed 28
@@ -5246,8 +5284,48 @@ saying nothing changed; first make one red by running it.
 
 #### D127 — The arriving link's key outlives the arrival
 
-*Status: open. Filed 25 September from the cold read of the arrival refusals
-(finding 1, rated high); read, not run. Run first.*
+*Status: fixed 28 September. Filed 25 September from the cold read of the
+arrival refusals (finding 1, rated high); read, not run. Run first.*
+
+**Reachable, run on Chromium and WebKit.** Not by the route the entry names:
+once a document is open, "Open a file" is hidden and the menu has no open. But
+a store link refused before its card (`refuseArrival`) puts the chooser back,
+"Open a file" with it, on the page that set the link's key. Measured in
+`tests/arrival-link-state.spec.ts`: one replicated document sealed twice, the
+first link opened, the second refused as held under a different key
+(IDENTITY-KEY-HELD). Then, on that page:
+
+- a replicated file this device does not hold, picked from the chooser, was
+  kept with the refused link's key as its document key, so its mailbox would
+  derive from a key that belongs to another document;
+- the held document's own file, picked, was refused with the link's sentence
+  ("This link is for …"), measured against the refused link's key;
+- a link carrying its document in the fragment, pasted into the same tab
+  (a same-document navigation, so `openFromLink` runs on this page), was kept
+  with the refused link's key too. The inline path reset the address and the
+  clear flag, never the key or the game.
+
+Each red on its own before the fix; the third red again with only its own
+reset removed. The launch queue reset nothing, not even the address. The
+share-target path no longer sets a key (the entry's parenthesis is out of
+date); only a store link does.
+
+**Fixed:** `forgetArrival()` drops the link's address, key, game, clear flag
+and `keyFromRecord`, and every arrival calls it before it sets what it carries:
+the file picker, the launch queue, `openFromLink`, `openFromReference`, the
+`?open=` fetch, the share collect and the handoff. `eject` is unchanged. Not
+the update card's successor: it arrives with the old document still mounted,
+and clearing there strips a copy the library never kept of its only key if the
+successor is refused. Whether a successor inherits the open document's link
+state is a ruling, filed as D163.
+
+**Residual, from the bounded cold read, not built:** the reset runs at the
+start of an arrival, so two arrivals in flight at once still share the
+variables. A store link resets, then awaits its fetch; a link pasted into the
+tab meanwhile resets and starts its `ingest`; the fetch then lands and sets its
+key, which the pasted arrival's keep reads. Not run. Closing it needs the
+values carried per arrival (in `Carrier`, or under an arrival token), not a
+reset; picked up with that change if a run makes it red.
 
 `arrivedKey` and `arrivedSession` are set from a link (and `arrivedKey` from a
 share-target key). They are cleared only in `eject`, which only `deleteApp`
