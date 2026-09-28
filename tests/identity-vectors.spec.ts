@@ -126,3 +126,42 @@ test.describe("the frozen identity vectors", () => {
     expect(await verifySignature(unhex(KNOWN.pub), tampered, unhex(KNOWN.sig))).toBe(false);
   });
 });
+
+/**
+ * Batch format version 2 (step 6, D161): the header signs the rows it covers.
+ * `[2, document, author, lc, rowsDigest, covers]`, `covers` a CBOR array of
+ * `[table, seq]`, ordered by table and then seq. Derived by hand as above:
+ * version 1's four middle fields unchanged, `86 02` in front, and the one row's
+ * `[["moves", 1]]` (`81 82 65 6d6f766573 01`) behind; the id and the signature
+ * from node:crypto over those bytes, with the same test key.
+ */
+const KNOWN_V2 = {
+  header:
+    "8602782433663235303465302d346638392d343164332d396130632d30333035653832633333303150a3a8b56f9591737fca3854a36eb4583f0758206bcc8bf4b2faf92f67896af7f0a5203f00cd70b82590be3d9244f1a0f9e7002d8182656d6f76657301",
+  id: "54020e63226c66aa011dcd9b7ac160f4",
+  sig: "5255eb255cfd9549f7812f3c1c28f307ea961732550e263b811272c7b3439db3fead254ba41a8d59d7006d6aa109847f64d77126afe9ba5a256b836ecd6f7cd8",
+};
+
+test.describe("the frozen identity vectors, batch format version 2", () => {
+  test("the canonical header signs the rows it covers, and the id is its hash", async () => {
+    test.fail(true, "step 6, D161: the version-1 header does not carry covers");
+    const header = canonicalHeader({
+      version: 2,
+      document: KNOWN.document,
+      author: unhex(KNOWN.authorHex),
+      lc: 7,
+      digest: unhex(KNOWN.digest),
+      covers: [["moves", 1]],
+    } as Parameters<typeof canonicalHeader>[0]);
+    expect(hex(header)).toBe(KNOWN_V2.header);
+    expect(hex(await batchIdOf(header))).toBe(KNOWN_V2.id);
+  });
+
+  test("a known signature verifies over the version-2 header, and not once its covers change", async () => {
+    // Guards the vector, not the code: it passes before the bump and after.
+    expect(await verifySignature(unhex(KNOWN.pub), unhex(KNOWN_V2.header), unhex(KNOWN_V2.sig))).toBe(true);
+    const relabeled = unhex(KNOWN_V2.header);
+    relabeled[relabeled.length - 1] = 0x02; // [["moves", 2]]
+    expect(await verifySignature(unhex(KNOWN.pub), relabeled, unhex(KNOWN_V2.sig))).toBe(false);
+  });
+});

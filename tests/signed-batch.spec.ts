@@ -400,6 +400,20 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
     return { ada, file };
   }
 
+  test("batch format version 2: an unsigned row is refused in every table, not only the seat tables (BATCH_UNSIGNED)", async () => {
+    test.fail(true, "step 6: outside the seat and close tables an unsigned row still merges under the legacy rule");
+    const ada = await person();
+    const mal = copyFor(await person());
+    // A move under Ada's id that no header of hers lists, in a plain table.
+    forge(mal, "moves", ada.author, 1, { ply: 1, san: "e4" });
+    const bo = copyFor(await person());
+    const report = await mergeSibling(bo, mal, { document: DOC });
+    expect(report.refusedBatches).toEqual([{ author: ada.shown, reason: "BATCH_UNSIGNED" }]);
+    expect(moves(bo), "nothing unsigned is taken").toEqual([]);
+    mal.close();
+    bo.close();
+  });
+
   test("the same (author, seq) in another table is a collision: refused, and the signed batch still verifies downstream", async () => {
     const { ada, file } = await adasMove();
     // Mal's copy: a seat under Ada's id at Ada's seq 1, unsigned.

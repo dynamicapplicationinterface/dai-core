@@ -292,6 +292,29 @@ test.describe("the default build path emits the version the spec says it emits",
     expect(plain.requires).toBeUndefined();
     expect(plain.replication).toBeUndefined();
   });
+
+  test("batch format version 2: a replicated build requires authorship, which a host from before signing refuses (D108)", async () => {
+    test.fail(true, "step 6, D108: a host from before signing opens a signed document and writes unsigned rows into it");
+    const replicated = await versionOf(resolve(repoRoot, "tests/fixture/chess"), "Chess");
+    expect(replicated.requires).toContain("authorship");
+  });
+
+  test("batch format version 2: a seed database holding rows in a replicated table is refused, since nobody signed them", async () => {
+    test.fail(true, "step 6: a seed's replicated rows would ship unsigned, and every copy would refuse them");
+    const dir = mkdtempSync(join(tmpdir(), "dai-seed-"));
+    writeFileSync(join(dir, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">seeded</p>', "utf8");
+    const schema = "-- dai:replicated\nCREATE TABLE notes (body TEXT);\n";
+    writeFileSync(join(dir, "schema.sql"), schema, "utf8");
+    const seed = new DatabaseSync(join(dir, "seed.sqlite"));
+    seed.exec(rewriteReplicated(schema).sql);
+    seed
+      .prepare("INSERT INTO notes (body, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES ('hello', ?, 1, 1, ?, '[]', 0)")
+      .run(new Uint8Array(16).fill(1), new Uint8Array(16).fill(2));
+    seed.close();
+    await expect(compileDirectory({ sourceDir: dir, root: repoRoot, appName: "Seeded", sqlitePath: join(dir, "seed.sqlite") })).rejects.toThrow(
+      /seed.*notes/i,
+    );
+  });
 });
 
 test.describe("the session profile (T1-D26)", () => {
@@ -352,6 +375,25 @@ CREATE TABLE visits (
         .all()
         .map((r) => String((r as { name: unknown }).name));
       expect(cols).toContain("_r_session");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("batch format version 2: a close carries its session and nothing else, and no seat row carries a nonce", () => {
+    test.fail(true, "step 6: the close still carries the frontier (D151), and the seat row the nonce the session id no longer commits to (D158)");
+    const { sql } = rewriteReplicated(SESSION_CASES);
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(sql);
+      const authored = (table: string) =>
+        db
+          .prepare(`SELECT name FROM pragma_table_info('${table}')`)
+          .all()
+          .map((r) => String((r as { name: unknown }).name))
+          .filter((name) => !name.startsWith("_r_"));
+      expect(authored("_dai_close"), "the frontier columns are retired").toEqual([]);
+      expect(authored("_dai_seat"), "the creator's seat row is the one the session id names, by (author, seq)").toEqual(["seat"]);
     } finally {
       db.close();
     }

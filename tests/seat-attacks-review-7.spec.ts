@@ -268,8 +268,14 @@ test("F2: a stranger's signed ask for the open seat, with parents SQLite cannot 
   g.close();
 });
 
-test("F3: the creator signs two confirms at one row id, one per asker, and the copies never agree who holds the open seat", async () => {
-  test.fail(true, "D160, fixed in step 6's format bump on signed covers (D161): two signed rows at one (author, seq) keep whichever arrived first, and a confirm decides another author's admission");
+/**
+ * The creator signs two confirms at one row id, one naming Bo and one Cy, and
+ * sends one to each (D160). Ruled 27 September: void both and report. Picking
+ * either would trust arrival order; once a copy holds both of Ada's headers,
+ * neither confirm counts, nobody holds the open seat on either copy, and the
+ * merge that brings the second header reports AUTHOR_EQUIVOCATED with Ada.
+ */
+async function equivocatedConfirms() {
   const ada = await person();
   const bo = await person();
   const cy = await person();
@@ -284,18 +290,39 @@ test("F3: the creator signs two confirms at one row id, one per asker, and the c
   await seal(g.adaCopy, ada);
   raw(ada2, "_dai_confirm", rnd(), { seat: g.openSeat, holder: cy.author }, g.session, { seq });
   await seal(ada2, ada);
-  // Bo's copy takes the first; Cy's copy the second; then they exchange, both ways.
   const cyCopy = openGameWith("any");
   ensureReplica(cyCopy, cy.author);
+  // Bo's copy takes the first confirm; Cy's copy the second.
   await merge(g.boCopy, g.adaCopy, bo);
   await merge(cyCopy, ada2, cy);
+  return { ada, bo, cy, g, ada2, cyCopy, close: () => [cyCopy, ada2].forEach((c) => c.close()) };
+}
+
+test("F3: the creator signs two confirms at one row id, one per asker: once a copy holds both, neither counts, and every copy says so", async () => {
+  test.fail(true, "D160, fixed in step 6's format bump on signed covers (D161): two signed rows at one (author, seq) keep whichever arrived first, and a confirm decides another author's admission");
+  const { ada, bo, cy, g, cyCopy, close } = await equivocatedConfirms();
   const r1 = await merge(g.boCopy, cyCopy, bo);
   const r2 = await merge(cyCopy, g.boCopy, cy);
-  console.log("rejected:", JSON.stringify(r1.rejected), JSON.stringify(r2.rejected));
-  expect.soft(holders(cyCopy, g.session, g.openSeat), "after a full exchange both copies agree who holds the open seat").toEqual(holders(g.boCopy, g.session, g.openSeat));
-  expect.soft(holders(cyCopy, g.session, g.openSeat), "and a hold, once made on any copy, never moves: Bo's").toEqual([hex(bo.author)]);
-  cyCopy.close();
-  ada2.close();
+  expect.soft(r1.refusedBatches, "Bo's copy learns Ada signed two rows at one id").toEqual([{ author: ada.shown, reason: "AUTHOR_EQUIVOCATED" }]);
+  expect.soft(r2.refusedBatches, "and so does Cy's").toEqual([{ author: ada.shown, reason: "AUTHOR_EQUIVOCATED" }]);
+  expect.soft(holders(g.boCopy, g.session, g.openSeat), "on Bo's copy nobody holds the open seat").toEqual([]);
+  expect.soft(holders(cyCopy, g.session, g.openSeat), "nor on Cy's: the copies agree").toEqual([]);
+  close();
+  g.close();
+});
+
+test("F3, a third copy: merging from one side alone still sees both confirms, because the evidence travels with the headers", async () => {
+  test.fail(true, "D160: a header travels only from a copy that holds its own row, so a third copy never sees the second one");
+  const { ada, bo, g, cyCopy, close } = await equivocatedConfirms();
+  await merge(g.boCopy, cyCopy, bo);
+  const dee = await person();
+  const deeCopy = openGameWith("any");
+  ensureReplica(deeCopy, dee.author);
+  const report = await merge(deeCopy, g.boCopy, dee);
+  expect.soft(report.refusedBatches, "Dee's copy, from Bo's alone, reports it too").toEqual([{ author: ada.shown, reason: "AUTHOR_EQUIVOCATED" }]);
+  expect.soft(holders(deeCopy, g.session, g.openSeat), "and seats nobody").toEqual([]);
+  deeCopy.close();
+  close();
   g.close();
 });
 

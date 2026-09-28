@@ -915,6 +915,27 @@ test("cold review 3: an entity id in two sessions this copy writes in is refused
   adaCopy.close();
 });
 
+test("batch format version 2 (D134): a row's key is (session, entity), so a write names its session and nothing is guessed", async () => {
+  test.fail(true, "step 6, D134: the writers take an entity id alone, and refuse the id when it is in two partitions");
+  const ada = await person();
+  const adaCopy = openGame();
+  ensureReplica(adaCopy, ada.author);
+  const s1 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const s2 = startSession(adaCopy, { nonce: rnd(), creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const game = createEntity(adaCopy, "games", rnd(), { title: "first" }, s1);
+  createEntity(adaCopy, "games", game._r_entity, { title: "second" }, s2);
+  const change = changeEntity as (...args: unknown[]) => unknown;
+  const remove = deleteEntity as (...args: unknown[]) => unknown;
+  change(adaCopy, "games", game._r_entity, { title: "first, renamed" }, s1);
+  expect(titles(adaCopy, s1), "the write went to the session it named").toEqual(["first, renamed"]);
+  expect(titles(adaCopy, s2)).toEqual(["second"]);
+  remove(adaCopy, "games", game._r_entity, s2);
+  expect(titles(adaCopy, s2), "and the delete to its").toEqual([]);
+  expect(titles(adaCopy, s1)).toEqual(["first, renamed"]);
+  expect(() => change(adaCopy, "games", game._r_entity, { title: "which?" }), "an id alone names no row in a session table").toThrow(/session/i);
+  adaCopy.close();
+});
+
 /*
  * The fourth cold review, of D135's fix: what a waiting joiner's writes version.
  * Two faces of one class, the stored _r_superseded flag still read as truth
