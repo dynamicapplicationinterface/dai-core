@@ -64,11 +64,6 @@ const VARIABLE_TABLE_READS = [
     contains: "WHERE n._r_entity = r._r_entity AND n._r_session = r._r_session AND n._r_replica = r._r_replica",
     why: "writeTargetOf's roster branch: this copy's own versions of a roster row, in its session, the partition the roster's _heads view uses (D140)",
   },
-  {
-    path: "src/runtime/bootloader.ts",
-    contains: "`SELECT lower(hex(_r_replica)) AS rep, max(_r_seq) AS m FROM \"${table}\" WHERE _r_session = ? GROUP BY _r_replica`",
-    why: "close()'s frontier: the highest seq each author wrote in the session, over every session table, the seen set a close records",
-  },
 ];
 
 /** Generated copies and build output, never source: each named, not every folder that shares a name. */

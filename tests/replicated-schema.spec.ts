@@ -381,7 +381,6 @@ CREATE TABLE visits (
   });
 
   test("batch format version 2: a close carries its session and nothing else, and no seat row carries a nonce", () => {
-    test.fail(true, "step 6: the close still carries the frontier (D151), and the seat row the nonce the session id no longer commits to (D158)");
     const { sql } = rewriteReplicated(SESSION_CASES);
     const db = new DatabaseSync(":memory:");
     try {

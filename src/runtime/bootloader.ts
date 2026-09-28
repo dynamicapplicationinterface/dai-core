@@ -2087,9 +2087,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // (T1-D31). Not a resignation — that is a game row and leaves the board
         // readable; a close is the heavier, separate act. It binds only its
         // author: the closer's own later rows are late (D151, never a clock).
-        // One `_dai_close` row per replica this copy has seen in the session,
-        // at that replica's highest seq: the frontier columns this format
-        // version still carries, written and not read (step 6 retires them).
+        // One `_dai_close` row, carrying its session and nothing else: the
+        // frontier it once listed retired at batch format version 2 (D151).
         close: (sessionHex: string): void => {
           settleReplica(rows);
           const sid = fromHex(sessionHex);
@@ -2110,32 +2109,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           ) {
             throw new Error("CLOSE_NOT_PERMITTED");
           }
-          // The frontier: per replica, the highest seq it authored in this
-          // session across every replicated table (author rows and roster rows
-          // alike), as this copy has seen them.
-          const sessionTables = rows
-            .all("SELECT name FROM sqlite_schema WHERE type = 'table'")
-            .map((r: Any) => String(r["name"]))
-            .filter(
-              (name: string) =>
-                rows.all("SELECT 1 FROM pragma_table_info(?) WHERE name = '_r_session'", [name]).length > 0,
-            );
-          const frontier = new Map<string, number>();
-          for (const table of sessionTables) {
-            for (const r of rows.all(
-              `SELECT lower(hex(_r_replica)) AS rep, max(_r_seq) AS m FROM "${table}" WHERE _r_session = ? GROUP BY _r_replica`,
-              [sid],
-            )) {
-              const rep = String((r as Any)["rep"]);
-              const seq = Number((r as Any)["m"]);
-              frontier.set(rep, Math.max(frontier.get(rep) ?? 0, seq));
-            }
-          }
           rows.run("SAVEPOINT dai_session_close");
           try {
-            for (const [rep, seq] of frontier) {
-              rules().createEntity(rows, "_dai_close", entity(), { replica: fromHex(rep), seq }, sid);
-            }
+            rules().createEntity(rows, "_dai_close", entity(), {}, sid);
             rows.run("RELEASE dai_session_close");
           } catch (error) {
             rows.run("ROLLBACK TO dai_session_close");

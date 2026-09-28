@@ -1279,8 +1279,9 @@ close makes only its author's own later rows late, ordered by the author's own
 seq, which that author cannot reorder: a row `(R, N)` is late when a close the
 session's rule permits, authored by `R` in the same session, has a seq below
 `N`. Only an author's first close counts (D152), and a close cannot be revoked
-by a later version or a delete (D153). The `replica` and `seq` columns stay in
-this format version, written and not read; step 6's format bump retires them.
+by a later version or a delete (D153). The `replica` and `seq` columns retired
+with batch format version 2 (identity step 6): a close is one row carrying its
+session.
 What a session *means* to an application is unchanged: a close still puts the
 session in `_dai_closed`, and a chess game reads that as over. What changes is
 authority. The residual this accepts: a member who keeps writing after seeing

@@ -1254,7 +1254,7 @@ CREATE TABLE moves (
     e = 0;
     seated(db);
     put(db, "moves", O, 2, 5, { ply: 1, san: "e5" }); // seq 2
-    put(db, "_dai_close", O, 3, 6, { replica: O, seq: 0 }); // seq 3
+    put(db, "_dai_close", O, 3, 6, {}); // seq 3
     put(db, "moves", O, 4, 7, { ply: 2, san: "Nf3" }); // seq 4
     // Recomputed on read: the drop is a fact about the rows, whatever order they came in.
     expect(currentMoves(db)).toEqual(["e5"]);
@@ -1270,7 +1270,7 @@ CREATE TABLE moves (
     seated(db);
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
     put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
-    put(db, "_dai_close", C, 5, 7, { replica: C, seq: 4 }); // names only C
+    put(db, "_dai_close", C, 5, 7, {}); // names only C
     put(db, "moves", O, 3, 8, { ply: 2, san: "Nf3" });
     put(db, "moves", C, 6, 9, { ply: 2, san: "Nc3" });
     expect(currentMoves(db), "O's rows stay; C's after her close is late").toEqual(["Nf3", "e4", "e5"]);
@@ -1315,14 +1315,14 @@ CREATE TABLE moves (
     // O, a member but NOT the creator, closes and plays on. Under close=creator
     // the close is not honored: the session is not closed and O's later move
     // is not late.
-    put(db, "_dai_close", O, 3, 6, { replica: O, seq: 2 });
+    put(db, "_dai_close", O, 3, 6, {});
     put(db, "moves", O, 4, 7, { ply: 2, san: "Nf3" });
     expect(moves(db).sort()).toEqual(["Nf3", "e5"]);
     expect(closed()).toBe(0);
 
     // C, the creator, closes. Honored: the session is closed and her own later
     // row is late. It binds only her (D151): O's moves stay.
-    put(db, "_dai_close", C, 4, 8, { replica: O, seq: 0 });
+    put(db, "_dai_close", C, 4, 8, {});
     put(db, "moves", C, 5, 9, { ply: 3, san: "Nc3" });
     expect(moves(db).sort()).toEqual(["Nf3", "e5"]);
     expect(closed()).toBe(1);

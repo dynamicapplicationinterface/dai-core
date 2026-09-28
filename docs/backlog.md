@@ -4724,7 +4724,8 @@ With D152 to D155 in one commit, before D127.*
 - *The frontier loses its authority. With a close binding only its author,
   the list of seqs the closer had seen has no honest job left: it stays a
   column in this format version, admission ignores it, and step 6's format
-  bump retires it. T1-D31 in `docs/replicated-tables.md` gets an amendment
+  bump retires it (done, 28 September: a close is one row carrying its
+  session). T1-D31 in `docs/replicated-tables.md` gets an amendment
   with the fix: signing proved who wrote a close and could not prove the
   list, so the fix was to stop the list mattering.*
 - *The residual this accepts: a member who keeps playing after seeing the

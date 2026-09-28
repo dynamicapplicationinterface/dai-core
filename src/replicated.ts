@@ -565,8 +565,8 @@ function headsView(
   // Not late: its author has written no close of this session, the session's
   // rule permitting, before this row (D151). A close binds only its author: it
   // makes the closer's own later rows late, ordered by the closer's own seq, so
-  // no signed row removes another person's row. The close's frontier columns
-  // are not read; step 6 retires them. The raw rows, not `_dai_close_current`:
+  // no signed row removes another person's row. A close carries no frontier
+  // (retired at batch format version 2). The raw rows, not `_dai_close_current`:
   // the author's first close is the one that counts (D152), and neither a later
   // version nor a delete of it moves or revokes it (D153). `closedBy`, which
   // `_dai_closed` shares.
@@ -1008,15 +1008,16 @@ CREATE VIEW IF NOT EXISTS _dai_closed AS
   /*
    * The session close (T1-D31, amended by D151). A session is closed when a
    * close its rule permits names it; the close binds only its author, whose
-   * rows after their first close are late. The `replica` and `seq` columns, the
-   * closer's stated frontier, are written and not read: signing proved who
-   * wrote a close and could not prove the list, so the list stopped mattering.
-   * Step 6's format version retires them. Like the roster tables, its own heads
-   * are not admission-filtered.
+   * rows after their first close are late. A close is one row carrying its
+   * session and nothing else. Its frontier (a `replica` and `seq` per author the
+   * closer had seen) retired with batch format version 2: signing proved who
+   * wrote a close and could not prove the list, so the list stopped mattering
+   * (D151), and a column nothing reads is a column somebody will read. Like the
+   * roster tables, its own heads are not admission-filtered.
    */
   const close =
-    `CREATE TABLE IF NOT EXISTS _dai_close (\n  replica BLOB NOT NULL CHECK (length(replica) = 16),\n  seq INTEGER NOT NULL,\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
-    tableObjects("_dai_close", ["replica", "seq"], true, false);
+    `CREATE TABLE IF NOT EXISTS _dai_close (\n${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
+    tableObjects("_dai_close", [], true, false);
 
   return (
     base +

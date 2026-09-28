@@ -1119,7 +1119,7 @@ const closedSessions = (db: Rows): string[] => db.all("SELECT lower(hex(session)
 test.describe("cold review 5: a close counts only from an author the session's rule permits", () => {
   test("close=any: a stranger's close row in the session makes nobody's move late", () => {
     const db = closeGame("any");
-    put(db, "_dai_close", CY, 1, 9, { replica: CY, seq: 1 });
+    put(db, "_dai_close", CY, 1, 9, {});
     expect(admitted(db), "a non-member's close decides nothing").toEqual(["e4", "e5"]);
     expect(closedSessions(db), "and the session is not closed").toEqual([]);
     db.close();
@@ -1133,7 +1133,7 @@ test.describe("cold review 5: a close counts only from an author the session's r
     const cyCopy = openGame();
     ensureReplica(cyCopy, cy.author);
     await merge(cyCopy, g.adaCopy, cy);
-    createEntity(cyCopy, "_dai_close", rnd(), { replica: cy.author, seq: 1 }, g.session);
+    createEntity(cyCopy, "_dai_close", rnd(), {}, g.session);
     await seal(cyCopy, cy);
     await merge(g.adaCopy, cyCopy, ada);
     expect(gameMoves(g.adaCopy, g.session).map((m) => m.split("@")[0]), "a merged non-member close decides nothing").toEqual(["e4"]);
@@ -1144,8 +1144,8 @@ test.describe("cold review 5: a close counts only from an author the session's r
 
   test("close=any: a member's close still closes the session", () => {
     const db = closeGame("any");
-    put(db, "_dai_close", BO, 3, 9, { replica: BO, seq: 3 });
-    put(db, "_dai_close", BO, 4, 9, { replica: ADA, seq: 4 });
+    put(db, "_dai_close", BO, 3, 9, {});
+    put(db, "_dai_close", BO, 4, 9, {});
     expect(admitted(db), "what the closer had seen stays").toEqual(["e4", "e5"]);
     expect(closedSessions(db)).toEqual([hex(S)]);
     put(db, "moves", BO, 5, 10, { seat: OPEN_SEAT, san: "Nf6" });
@@ -1157,7 +1157,7 @@ test.describe("cold review 5: a close counts only from an author the session's r
 
   test("close=creator: the joiner's close, which admission ignores, does not close the session for the host or the apps", () => {
     const db = closeGame("creator");
-    put(db, "_dai_close", BO, 3, 9, { replica: BO, seq: 3 });
+    put(db, "_dai_close", BO, 3, 9, {});
     expect(admitted(db), "admission ignores the joiner's close").toEqual(["e4", "e5"]);
     expect(closedSessions(db), "the session is not closed").toEqual([]);
     db.close();
@@ -1167,7 +1167,7 @@ test.describe("cold review 5: a close counts only from an author the session's r
     const bo = closeGame("creator");
     const cy = openWith(closeSchema("creator"));
     cy.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 1, 9)", [CY]);
-    put(cy, "_dai_close", ADA, 50, 9, { replica: CY, seq: 1 });
+    put(cy, "_dai_close", ADA, 50, 9, {});
     const report = await mergeSibling(bo, cy);
     expect(report.refusedBatches, "refused as unsigned, under the id it names").toContainEqual({
       author: showAuthorId(ADA),
@@ -1261,27 +1261,11 @@ async function playedGame(ada: Person, bo: Person, close: "any" | "creator") {
 const sans = (db: Rows, session: Uint8Array) => gameMoves(db, session).map((m) => m.split("@")[0]!);
 const closedOf = (db: Rows): string[] => db.all("SELECT lower(hex(session)) AS s FROM _dai_closed").map((r) => String(r["s"]));
 
-/**
- * The bootloader's close() without its gate: one `_dai_close` row per replica
- * this copy has seen in the session, at that replica's highest seq, across every
- * table carrying `_r_session`.
- */
+/** The bootloader's close() without its gate: one `_dai_close` row, carrying its session. */
 function closeLikeTheHost(db: Rows, session: Uint8Array): Uint8Array[] {
-  const tables = db
-    .all("SELECT name FROM sqlite_schema WHERE type = 'table'")
-    .map((r) => String(r["name"]))
-    .filter((name) => db.all("SELECT 1 FROM pragma_table_info(?) WHERE name = '_r_session'", [name]).length > 0);
-  const frontier = new Map<string, number>();
-  for (const table of tables) {
-    for (const r of db.all(`SELECT lower(hex(_r_replica)) AS rep, max(_r_seq) AS m FROM "${table}" WHERE _r_session = ? GROUP BY _r_replica`, [session])) {
-      frontier.set(String(r["rep"]), Math.max(frontier.get(String(r["rep"])) ?? 0, Number(r["m"])));
-    }
-  }
-  return [...frontier].map(([rep, seq]) => {
-    const e = rnd();
-    createEntity(db, "_dai_close", e, { replica: Buffer.from(rep, "hex"), seq }, session);
-    return e;
-  });
+  const e = rnd();
+  createEntity(db, "_dai_close", e, {}, session);
+  return [e];
 }
 
 test("cold review 6: close=any, a member's signed close naming only himself leaves the other member's moves admitted", async () => {
@@ -1290,7 +1274,7 @@ test("cold review 6: close=any, a member's signed close naming only himself leav
   const g = await playedGame(ada, bo, "any");
   expect(sans(g.boCopy, g.session), "Bo's copy holds and shows e4").toEqual(["e4", "e5"]);
   const boSeq = Number(g.boCopy.all("SELECT seq FROM _dai_replica")[0]!["seq"]);
-  createEntity(g.boCopy, "_dai_close", rnd(), { replica: bo.author, seq: boSeq }, g.session);
+  createEntity(g.boCopy, "_dai_close", rnd(), {}, g.session);
   await seal(g.boCopy, bo);
   await merge(g.adaCopy, g.boCopy, ada);
   expect(sans(g.adaCopy, g.session), "no signed row of Bo's removes Ada's move").toEqual(["e4", "e5"]);
@@ -1371,7 +1355,7 @@ test("cold review 6: close=creator, a document built before _dai_closed calls cl
   const bo = await person();
   const g = await playedGame(ada, bo, "creator");
   const boSeq = Number(g.boCopy.all("SELECT seq FROM _dai_replica")[0]!["seq"]);
-  createEntity(g.boCopy, "_dai_close", rnd(), { replica: bo.author, seq: boSeq }, g.session);
+  createEntity(g.boCopy, "_dai_close", rnd(), {}, g.session);
   await seal(g.boCopy, bo);
   await merge(g.adaCopy, g.boCopy, ada);
   expect(sans(g.adaCopy, g.session), "admission ignores the joiner's close").toEqual(["e4", "e5"]);
@@ -1400,7 +1384,7 @@ test("cold review 6: close=any, a waiting asker's close counts in _dai_closed on
   ensureReplica(boCopy, bo.author);
   await merge(boCopy, adaCopy, bo);
   createEntity(boCopy, "_dai_binding", rnd(), { seat: openSeat }, session);
-  createEntity(boCopy, "_dai_close", rnd(), { replica: bo.author, seq: 2 }, session);
+  createEntity(boCopy, "_dai_close", rnd(), {}, session);
   await seal(boCopy, bo);
   await merge(adaCopy, boCopy, ada);
   expect(closedOf(adaCopy), "a waiting asker is no member").toEqual([]);
