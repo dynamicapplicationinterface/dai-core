@@ -4466,6 +4466,35 @@ as soon as both rows reach them, which is the property; before that they
 differ, which is honest. The same shape as an author signing two conflicting
 histories in git: the author is the problem, not the merge. With D159.*
 
+*How, ruled 27 September, so it is not derived again: **no new storage; the
+evidence is already replicated.** Rows are keyed by `(author, seq)`, but
+headers in `_dai_batch` are keyed by batch id, and both of an equivocating
+author's signed headers verify and are kept. Equivocation is therefore a
+condition on `_dai_batch`: two verified headers from one author cover the same
+`(table, seq)` with different digests. It is computed at admission, and no
+second row is held. Admission excludes any row id that condition names; the
+merge reports `AUTHOR_EQUIVOCATED` the moment it verifies the second header.
+Every copy converges once it holds both headers.*
+
+*Checked by running it, 27 September (a scratch probe on the F3 scenario, not
+kept):*
+- *After Bo's and Cy's copies exchange, each holds both of Ada's headers, one
+  overlapping `(_dai_confirm, 4)`. An honest played game shows no overlap on
+  either copy, so the condition does not fire on honest play there.*
+- ***One gap the build must close:** a header travels only from a copy that
+  holds its own row. Bo's copy stores Cy's-side header, but the rows Bo holds
+  under that `(author, seq)` are the other ones, so when a third copy merges
+  from Bo, `verifyBatches` recomputes the digest from Bo's row, gets a
+  mismatch, and refuses the header as `BATCH_DIGEST_MISMATCH` (blaming Ada,
+  and dropping the evidence). That third copy ended with one header and no
+  overlap. The fix keeps the ruling's shape: check the header's signature
+  before its digest; a header whose signature verifies but whose covered
+  `(table, seq)` holds a different validly signed row is proof of
+  equivocation, kept and reported as `AUTHOR_EQUIVOCATED`, not refused. Then
+  headers do travel with every copy, and the convergence the ruling states
+  holds. A test for it: a third copy merging from one of the two sides alone
+  sees the equivocation.*
+
 The creator signs two different confirm rows at one `(author, seq)`, one
 naming Bo and one Cy, and sends one to each. Each copy keeps the one it saw
 first and rejects the other on every later exchange (the tampering
@@ -5323,6 +5352,12 @@ added 25 September.*
    page the relaunch is about to replace. Wait for the load after the relaunch
    ("iOS reload: taken on the load before this one"), as the second open in the
    same test already does.
+   A second face on CI, 27 September (run `36359890235`, `b8ea4fc`, WebKit
+   part 2, passed on retry): `page.goto` to the runner root "is interrupted by
+   another navigation" to `/d/<hash>?…&relaunched=1#h=…&k=…`. Same race read
+   from the other side: the test's own navigation meets the relaunch already
+   under way, rather than reading the page the relaunch replaces. Seen once
+   in five runs that day.
 3. **A held copy's card Open never shows the app, Firefox.** The face D125's
    Firefox runs had at `:658`, now met in D122's game test at its setup
    (`mailbox-link-e2e:1655`, B opening the first invite on a copy it holds):
