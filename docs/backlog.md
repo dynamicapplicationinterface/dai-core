@@ -4417,19 +4417,54 @@ the chance collision is the likely reading, not a proven one. The fix is a
 plaintext probe no ciphertext spells by chance: a long, distinctive move text
 (or several), searched for as bytes.
 
-#### D167 — `sign-scope:27` on WebKit: the forger's frame shows no `#out` within 30 seconds
+#### D167 — A save landing after the next document opens puts the old one back as `loaded`, and the next document's code gets the old one's headers signed
 
-*Status: open, a test defect or a WebKit timing; **three sightings**, each
-passing on retry: `04a86a8` (run 36457916813), `5c336c7` (run 36486827198),
-`a45b510` (run 36491836527), all WebKit shard 3. Filed 28 September, third
-sitting, on the rule "file it if it recurs".*
+*Status: **open, rated high, for a ruling; not a test defect.** Filed 28
+September (fourth sitting) as a WebKit flake of `sign-scope:27`; reproduced
+and read the same night. Five CI sightings: `04a86a8`, `5c336c7`, `a45b510`
+(each passing on retry, "#out" not found), then `775f168` (run 36494406706),
+**failing on both tries with the forger showing "signed"**: red on the gate.
+Locally on WebKit, 20 repeats with parallel workers: 9 of 20 failed on the
+working tree, 8 of 20 on `5c336c7` (a clean worktree), so it predates the
+fourth sitting's commits. With one worker, 10 of 10 pass. Chromium has passed
+it every run seen.*
 
-"A document's code cannot get a header for another document signed" waits for
-the forger's frame to answer (`#out` not "asking"), and on these runs the
-locator never found `#out` at all: the frame's document was not the one the
-test expected when the 30 seconds ran out. Traces are in each run's
-`retried-webkit-3` artifact. Not yet read: whether the frame mounted late (a
-wait on the first signal, like D164) or mounted something else.
+**What breaks:** the step 3 finding 1 property, "the host signs only for the
+document open now" (`tests/sign-scope.spec.ts`). A second document's code asked
+for a header naming the first (a shared chess game) and got it signed with the
+person's key.
+
+**The mechanism, read from probes (all removed):** the host's save handler
+(`apps/runner/src/main.ts`, TO_HOST.SAVE) checks that `loaded` is the saving
+document, then awaits `resealCartridge(loaded, bytes)` and assigns the result
+to `loaded`. When the person opens another document while that save is in
+flight, the open sets `loaded` to the new one and mounts it; the save then
+lands and assigns the **old** document back to `loaded`. The new document's
+shell handshakes after that, and the handshake handler builds `mountWrites`
+from `loaded`: `{ nonce: <the new shell's nonce>, documentUuid: <the old
+document> }`. The new document's code then asks for a header naming the old
+document, and every check in the sign handler passes (its message comes from
+the mounted frame with the mounted nonce; the mount, `loaded` and the header
+all name the old document). Recorded on the host, per signing:
+`headerDoc = mountDoc = loadedDoc = <chess>`, `loadedApp: "Velvet Chess"`,
+`msgNonce = mountedNonce = <the forger's shell's nonce>`, `id: "forge"`; and a
+separate probe on the save handler logged `{"was":"Velvet Chess","nowLoaded":
+"Forger","writing":"Velvet Chess"}` in 5 of 20 runs, the forger's request being
+signed in 2 of those.
+
+**A second, smaller defect seen in the same probes, every run:** a sign
+request of the old document, checked while it was mounted, is answered after
+the next one has mounted. The answer is posted to `cartridgeFrame.contentWindow`,
+which now holds the next document's shell, and relayed to its frame. It carries
+a signature over the old document's honest header, so it grants nothing new,
+but "answered only for the document open now" does not hold at reply time.
+
+**What a fix has to settle (for the ruling, not built):** whether `loaded` may
+ever be assigned from a value read before an await (every such site, not only
+the save's reseal: the export path does the same), whether the mount's writing
+decision should come from the mount itself (the cartridge `mount()` was given)
+rather than from `loaded` at handshake time, and whether a sign or save answer
+is dropped when the mount it was asked under is no longer the mounted one.
 
 #### D166 — A signed replicated file picked on the opener is refused as "manifest version 4, which this bootloader does not know"
 
