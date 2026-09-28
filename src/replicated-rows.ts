@@ -153,6 +153,30 @@ export function parentsOf(row: { _r_parents: string }): string[] {
   return parsed.filter((value): value is string => typeof value === "string");
 }
 
+/** The most earlier versions one row may name (D159): one head per writer who wrote concurrently, far below this. */
+export const PARENTS_CAP = 256;
+
+const PARENT_ID = /^[0-9a-f]{32}:[1-9][0-9]{0,15}$/;
+
+/**
+ * Whether a row's `_r_parents` is the one shape every reader walks alike
+ * (D159): a flat JSON array of at most `PARENTS_CAP` row ids, each 32
+ * lowercase hex characters, a colon and a seq. JavaScript's JSON.parse takes
+ * nesting SQLite's json_each refuses (depth over 1000), and a row one reader
+ * parses and another throws on stops every read that walks it.
+ */
+export function wellFormedParents(text: unknown): boolean {
+  if (typeof text !== "string") return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(parsed) || parsed.length > PARENTS_CAP) return false;
+  return parsed.every((p) => typeof p === "string" && PARENT_ID.test(p) && Number.isSafeInteger(Number(p.slice(33))));
+}
+
 /** The author's columns of a table, in declared order. */
 export function authorColumnsOf(db: Rows, table: string): string[] {
   return db
@@ -882,6 +906,7 @@ export type BatchRefusal =
   | "BATCH_SIGNATURE_INVALID"
   | "BATCH_DIGEST_MISMATCH"
   | "BATCH_UNSIGNED"
+  | "ROW_MALFORMED"
   | "SEAT_NOT_HELD"
   | "ENTITY_OTHER_SESSION";
 
@@ -1034,6 +1059,19 @@ export function mergeFrom(
   const held = new Map<string, Uint8Array>(); // every header the sibling holds, by id
   const covering = new Map<string, string>(); // "table|author:seq" -> the lowest verified id listing it
   const covers = new Set<string>(); // "id|table|author:seq", every verified listing
+  /*
+   * A row whose parents are not the one shape is refused before anything else
+   * reads it (D159), and so is every row of a batch that signed one: the
+   * author signed them together, and a header kept without one of its rows
+   * would fail at the next copy in the author's name. The header is not kept.
+   */
+  const malformed = new Set<string>(); // "table|author:seq"
+  for (const table of tables) {
+    for (const r of sibling.all(`SELECT _r_replica, _r_seq, _r_parents FROM "${table}"`)) {
+      if (!wellFormedParents(r["_r_parents"])) malformed.add(`${table}|${rowId(r["_r_replica"] as Uint8Array, Number(r["_r_seq"]))}`);
+    }
+  }
+  const tainted = new Set<string>(); // "table|author:seq" listed by a header that signed a malformed row
   if (hasBatchTable(local) && hasBatchTable(sibling)) {
     const headers = sibling
       .all("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch")
@@ -1046,6 +1084,12 @@ export function mergeFrom(
         // Not checked is not signed: a header nobody verified is refused as one
         // whose signature does not verify.
         refuseBatch(id, header["author"] as Uint8Array, verdict && !verdict.ok ? verdict.reason : "BATCH_SIGNATURE_INVALID");
+        continue;
+      }
+      const listed = verdict.covers.map(([table, seq]) => `${table}|${rowId(verdict.author, seq)}`);
+      if (listed.some((key) => malformed.has(key))) {
+        for (const key of listed) tainted.add(key);
+        refuseBatch(id, verdict.author, "ROW_MALFORMED");
         continue;
       }
       local.run(
@@ -1123,6 +1167,12 @@ export function mergeFrom(
       const key = `${table}|${rowId(row._r_replica, row._r_seq)}`;
       const named = row._r_batch instanceof Uint8Array ? hex(row._r_batch) : null;
       const cover = covering.get(key);
+      // Malformed, or signed only with one that is (D159): never taken. Reported
+      // once, with the batch that signed it, or here when nothing did.
+      if (malformed.has(key) || (!cover && tainted.has(key))) {
+        if (!tainted.has(key)) refuseBatch(named ?? "", row._r_replica, "ROW_MALFORMED");
+        continue;
+      }
       if (cover) {
         const keep = named && covers.has(`${named}|${key}`) ? named : cover;
         row._r_batch = held.get(keep)!;

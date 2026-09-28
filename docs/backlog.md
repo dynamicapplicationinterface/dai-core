@@ -4464,12 +4464,26 @@ filled later). The spec says a hold never moves once made; this moves it.
 
 #### D159 — A stranger's ask with unparseable parents makes a contest unrepairable
 
-*Status: **ruled — not built.** Filed 27 September from the seventh cold
+*Status: **fixed, 28 September.** Filed 27 September from the seventh cold
 review (F2), rated medium. Ruled 27 September, as proposed: `_r_parents` must
 be a flat JSON array of `"<32 hex>:<integer>"` strings, with a length cap;
 anything else is refused at merge under its own code, `ROW_MALFORMED` (the
 registry's 73rd), so the report says what it was rather than
-`ROW_REJECTED`. With D160 in one commit, first in the next session.*
+`ROW_REJECTED`. Built alone: D160 waits for step 6 (D161).*
+
+*As built:* `wellFormedParents` in `src/replicated-rows.ts`: a flat array of at
+most 256 ids (`PARENTS_CAP`), each 32 lowercase hex characters, a colon and a
+positive seq. The merge checks every incoming row before anything reads it. A
+signed row that fails refuses its whole batch: the header is not kept and none
+of its rows are taken, because a header kept without one of its rows would fail
+at the next copy as `BATCH_DIGEST_MISMATCH` in its author's name. The report is
+one `ROW_MALFORMED` per batch, with the batch's author; an unsigned row is
+reported with the author it names. Held by `tests/signed-batch.spec.ts` (eight
+shapes refused, the one shape taken up to the cap) and F2 in
+`tests/seat-attacks-review-7.spec.ts`, rewritten to the ruling; each run red
+with the check removed. The reference readers (`conformance/reference`,
+`conformance/readers/rust-merge`) do not check it, as they do not check step 5's codes;
+they accept a row the runtime refuses.*
 
 `_r_parents` is checked only by JavaScript's `JSON.parse` at merge. Parents
 nested 1100 deep pass it; SQLite's `json_each` refuses them (depth limit

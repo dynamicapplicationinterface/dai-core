@@ -517,6 +517,70 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
   });
 });
 
+test.describe("a row's earlier versions have one shape (D159)", () => {
+  /** Ada's copy with two rows in one pending batch: a plain move, and one whose parents are `parents`. */
+  async function batchWith(parents: string) {
+    const ada = await person();
+    const db = copyFor(ada);
+    const ins = (seq: number, san: string, text: string) =>
+      db.run(
+        "INSERT INTO moves (ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+        [seq, san, ada.author, seq, seq, crypto.getRandomValues(new Uint8Array(16)), text],
+      );
+    ins(1, "e4", "[]");
+    ins(2, "e5", parents);
+    for (const b of pendingBatches(db, ada.author, TABLES)) recordSeal(db, await signBatch(b, { document: DOC, keys: ada.keys }));
+    return { ada, db };
+  }
+  const id = "0123456789abcdef0123456789abcdef";
+  const MALFORMED: [string, string][] = [
+    ["nested past SQLite's depth", "[".repeat(1100) + "]".repeat(1100)],
+    ["nested at all", `[["${id}:1"]]`],
+    ["past the cap", JSON.stringify(Array.from({ length: 257 }, (_, i) => `${id}:${i + 1}`))],
+    ["uppercase hex", `["${id.toUpperCase()}:1"]`],
+    ["a seq of 0", `["${id}:0"]`],
+    ["a number, not an id", "[7]"],
+    ["an object", `{"a":"${id}:1"}`],
+    ["not JSON", "[,"],
+  ];
+  for (const [what, text] of MALFORMED) {
+    test(`parents ${what}: the batch that signed it is refused, in its author's name, and its header is not kept`, async () => {
+      const { ada, db } = await batchWith(text);
+      const bo = copyFor(await person());
+      const report = await mergeSibling(bo, db, { document: DOC });
+      expect(report.refusedBatches).toEqual([{ author: ada.shown, reason: "ROW_MALFORMED" }]);
+      expect(count(bo, "moves"), "neither row of the batch is taken").toBe(0);
+      expect(count(bo, "_dai_batch"), "the header is not kept").toBe(0);
+      db.close();
+      bo.close();
+    });
+  }
+  test("parents of the one shape, up to the cap, are taken", async () => {
+    for (const text of ["[]", `["${id}:1"]`, JSON.stringify(Array.from({ length: 256 }, (_, i) => `${id}:${i + 1}`))]) {
+      const { db } = await batchWith(text);
+      const bo = copyFor(await person());
+      expect((await mergeSibling(bo, db, { document: DOC })).refusedBatches, text.slice(0, 40)).toEqual([]);
+      expect(count(bo, "moves")).toBe(2);
+      db.close();
+      bo.close();
+    }
+  });
+  test("an unsigned row with malformed parents is refused in the name it carries", async () => {
+    const ada = await person();
+    const db = copyFor(ada);
+    db.run(
+      "INSERT INTO moves (ply, san, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES (1, 'e4', ?, 1, 1, ?, ?, 0)",
+      [ada.author, crypto.getRandomValues(new Uint8Array(16)), `[["${id}:1"]]`],
+    );
+    const bo = copyFor(await person());
+    const report = await mergeSibling(bo, db, { document: DOC });
+    expect(report.refusedBatches).toEqual([{ author: ada.shown, reason: "ROW_MALFORMED" }]);
+    expect(count(bo, "moves")).toBe(0);
+    db.close();
+    bo.close();
+  });
+});
+
 test.describe("the stored form (ruling B)", () => {
   test("a replicated table carries _r_batch and no _r_sig; the signed headers live in _dai_batch", () => {
     const db = open();

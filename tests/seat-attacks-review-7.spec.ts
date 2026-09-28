@@ -14,9 +14,9 @@ import { Store } from "./fixture/chess/store.js";
  * another author late, hidden, superseded or unadmitted". Every row an attacker
  * writes is signed with the attacker's own key and merged through mergeSibling.
  * Each test asserts what the invariant requires. A test marked test.fail is a
- * hole still open (D158 to D160, filed and ruled 27 September); its note names
- * the entry whose fix flips it. D158's fix is a format change and lands with
- * step 6. Kept apart from seat-attacks.spec.ts
+ * hole still open (D158 and D160, filed and ruled 27 September; D159 is fixed);
+ * its note names the entry whose fix flips it. Both are fixed in step 6's
+ * format bump, D160 on signed covers (D161). Kept apart from seat-attacks.spec.ts
  * because its helpers share names there; node-only, like that file.
  */
 
@@ -238,11 +238,12 @@ test("holds: a stranger's signed ask for a seat nobody minted, with parents SQLi
   g.close();
 });
 
-test("F2: a stranger's signed ask for the open seat, with parents SQLite cannot parse, leaves the creator unable to repair the contest", async () => {
-  test.fail(true, "D159: _r_parents is not checked at merge, and a roster row json_each refuses commits");
+test("F2: a stranger's signed ask for the open seat, with parents SQLite cannot parse, is refused as malformed, and every seat read still runs", async () => {
+  // D159, ruled 27 September: `_r_parents` is a flat array of row ids, capped,
+  // or the row is refused at merge as ROW_MALFORMED, in its signer's name.
   const ada = await person();
   const bo = await person();
-  const cy = await person(); // a stranger who asks for the open seat: a contest, which the creator repairs
+  const cy = await person(); // a stranger who asks for the open seat
   const g = await waitingGame(ada, bo);
   const cyCopy = openGameWith("any");
   ensureReplica(cyCopy, cy.author);
@@ -250,21 +251,25 @@ test("F2: a stranger's signed ask for the open seat, with parents SQLite cannot 
   raw(cyCopy, "_dai_binding", rnd(), { seat: g.openSeat }, g.session, { parentsText: TOO_DEEP });
   await seal(cyCopy, cy);
   await merge(g.adaCopy, g.boCopy, ada);
-  await merge(g.adaCopy, cyCopy, ada);
-  expect.soft(tryRead(() => g.adaCopy.all(CONFIRM_SQL, [hex(ada.author)]).map((r) => Number(r["n"]))), "the kit sees two askers, and confirms nobody").toBe(JSON.stringify([2]));
-  expect.soft(tryRead(() => g.adaCopy.all(RESEAT_SQL, [g.session]).length), "the reseat read finds the contest, so the creator can repair it").toBe("1");
+  const fromCy = await merge(g.adaCopy, cyCopy, ada);
+  expect.soft(fromCy.refusedBatches, "Cy's ask is refused, in Cy's name").toEqual([{ author: cy.shown, reason: "ROW_MALFORMED" }]);
+  expect.soft(g.adaCopy.all("SELECT 1 FROM _dai_binding WHERE _r_replica = ?", [cy.author]).length, "and not stored").toBe(0);
+  expect.soft(tryRead(() => g.adaCopy.all(CONFIRM_SQL, [hex(ada.author)]).map((r) => [r["who"], Number(r["n"])])), "the kit sees exactly one asker, Bo").toBe(
+    JSON.stringify([[hex(bo.author), 1]]),
+  );
+  expect.soft(tryRead(() => g.adaCopy.all(RESEAT_SQL, [g.session]).length), "the reseat read runs, and finds no contest").toBe("0");
   await merge(g.boCopy, g.adaCopy, bo);
   // The Store's seat picture for Bo's copy (the contested query chess runs).
   const contested =
     "SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat WHERE lower(hex(b._r_session)) = ? AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) GROUP BY b.seat HAVING count(DISTINCT lower(hex(b._r_replica))) > 1";
-  expect.soft(tryRead(() => g.boCopy.all(contested, [hex(g.session)]).length), "Bo's chess can tell him his seat is contested").toBe("1");
+  expect.soft(tryRead(() => g.boCopy.all(contested, [hex(g.session)]).length), "Bo's chess reads his seat, uncontested").toBe("0");
   expect.soft(tryRead(() => sansAs(g.boCopy, g.session, bo.author)), "Bo's chess shows e4 and his waiting e5").toBe(JSON.stringify(["e4", "e5"]));
   cyCopy.close();
   g.close();
 });
 
 test("F3: the creator signs two confirms at one row id, one per asker, and the copies never agree who holds the open seat", async () => {
-  test.fail(true, "D160: two signed rows at one (author, seq) keep whichever arrived first, and a confirm decides another author's admission");
+  test.fail(true, "D160, fixed in step 6's format bump on signed covers (D161): two signed rows at one (author, seq) keep whichever arrived first, and a confirm decides another author's admission");
   const ada = await person();
   const bo = await person();
   const cy = await person();

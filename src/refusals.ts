@@ -234,6 +234,14 @@ export const REFUSALS = {
       "(_dai_seat, _dai_binding, _dai_confirm), where an unsigned row under someone else's id would " +
       "decide a seat. Refused and reported with the author it names; the rest of the merge runs.",
   },
+  ROW_MALFORMED: {
+    recoverable: false,
+    means:
+      "A row whose earlier versions (_r_parents) are not a flat JSON array of at most 256 row ids, each " +
+      "32 lowercase hex characters, a colon and a seq. One reader parses what another refuses, and a row " +
+      "no reader can walk stops every read that walks it (D159). Refused with every row of the batch that " +
+      "signed it, and reported with that batch's author; the rest of the merge runs.",
+  },
 
   // ---- the mailbox
   MAILBOX_KEY_INVALID: {
