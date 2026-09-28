@@ -549,7 +549,7 @@ async function writeInputs(vector) {
   const verdicts = {};
   for (const [name, copy] of [["a", a], ["b", b]]) {
     const found = {};
-    for (const [id, verdict] of await verifyBatches(copy, TABLES, DOC)) found[id] = verdict.ok ? "ok" : verdict.reason;
+    for (const [id, verdict] of await verifyBatches(copy, TABLES, DOC)) found[id] = verdict.ok ? (verdict.complete ? "ok" : "incomplete") : verdict.reason;
     verdicts[name] = Object.fromEntries(Object.entries(found).sort(([x], [y]) => (x < y ? -1 : 1)));
   }
   compare(join(dir, "verdicts.json"), `${JSON.stringify(verdicts, null, 2)}\n`);

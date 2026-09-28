@@ -52,12 +52,18 @@ const hex = (bytes: Uint8Array): string => [...bytes].map((b) => b.toString(16).
 /* ------------------------------------------------ signed batches (identity) */
 
 /**
- * The canonical form's version: signed into every header, bumped only by a
- * format change, never by a refactor (docs/identity.md, binding rule 10).
+ * The batch format's version: signed into every header, bumped only by a
+ * format change, never by a refactor (docs/identity.md, binding rule 10). Not
+ * the container's format version (`FORMAT_VERSION`, src/format.ts), which is
+ * another number with another history.
+ *
+ * Version 2 (identity step 6) signs the rows a header covers (D161): at version
+ * 1 a copy forwarding a header could relabel its list, and the next copy
+ * refused it in its honest author's name.
  */
-export const BATCH_FORMAT_VERSION = 1;
+export const BATCH_FORMAT_VERSION = 2;
 
-/** What a batch's signature covers: `[version, document, author, lc, digest]`. */
+/** What a batch's signature covers: `[version, document, author, lc, digest, covers]`. */
 export interface BatchHeader {
   version: number;
   /** The document's uuid, so a batch signed for one document means nothing in another. */
@@ -66,6 +72,8 @@ export interface BatchHeader {
   lc: number;
   /** SHA-256 of the canonical rows. */
   digest: Uint8Array;
+  /** The rows the header covers, `[table, seq]`, ordered by table (UTF-8 bytes) and then seq. */
+  covers: readonly (readonly [string, number])[];
 }
 
 /**
@@ -142,10 +150,25 @@ export async function rowsDigest(entries: readonly BatchEntry[]): Promise<Uint8A
   return sha256(canonicalRows(entries));
 }
 
-/** The canonical header, `[version, document, author, lc, digest]`: the bytes a batch's signature covers. */
+/**
+ * The canonical header, `[version, document, author, lc, digest, covers]`: the
+ * bytes a batch's signature covers. `covers` is a CBOR array of `[table, seq]`
+ * pairs, so the id, which hashes these bytes, commits to the list too.
+ */
 export function canonicalHeader(header: BatchHeader): Uint8Array {
-  return cborEncode([header.version, header.document, header.author, header.lc, header.digest]);
+  return cborEncode([
+    header.version,
+    header.document,
+    header.author,
+    header.lc,
+    header.digest,
+    header.covers.map(([table, seq]) => [table, seq]),
+  ]);
 }
+
+/** The rows a batch covers, as its header lists them: `[table, seq]` in the one order. */
+export const coversOf = (entries: readonly BatchEntry[]): [string, number][] =>
+  JSON.parse(coversText(entries)) as [string, number][];
 
 /** A batch's id: SHA-256 of its canonical header, first 16 bytes. */
 export async function batchIdOf(header: Uint8Array): Promise<Uint8Array> {
@@ -154,7 +177,14 @@ export async function batchIdOf(header: Uint8Array): Promise<Uint8Array> {
 
 /** The header a signed batch claims. */
 export const headerOf = (batch: SignedBatch): Uint8Array =>
-  canonicalHeader({ version: batch.version, document: batch.document, author: batch.replica, lc: batch.lc, digest: batch.digest });
+  canonicalHeader({
+    version: batch.version,
+    document: batch.document,
+    author: batch.replica,
+    lc: batch.lc,
+    digest: batch.digest,
+    covers: coversOf(batch.entries),
+  });
 
 /**
  * Signs a canonical header and says with which key. The host's own, over the
@@ -184,6 +214,7 @@ export async function signBatch(
     author: batch.replica,
     lc: batch.lc,
     digest,
+    covers: coversOf(batch.entries),
   });
   const { sig, pub } = await sign(header);
   return {
@@ -259,32 +290,37 @@ export function recordSeal(db: Rows, sealed: SignedBatch): void {
 }
 
 /**
- * Verifies every signed header a copy holds, against that copy's own rows
- * (identity ruling #3: verification by signed row set).
+ * Verifies every signed header a copy holds (identity ruling #3; batch format
+ * version 2, D160 and D161).
  *
- * A header names the rows it covers: its author, and `[table, seq]` for each.
- * Verifying one is: find those rows, digest them, and check the signature over
- * the header that digest makes, under a key that fingerprints to the author.
- * What a row says about its batch (`_r_batch`) plays no part: the row set is
- * found from the header, and a row's pointer is a cache the merge fills from
- * the verdicts. So a row claiming a batch that does not list it proves nothing,
- * and a row a save lost the pointer for is still covered.
+ * A header is checked in two parts, and the order matters.
  *
- * Every header gets a verdict, keyed by its id in lowercase hex. The checks, in
- * order:
- *  - the listed rows are `[table, seq]` pairs in the one spelling, each table
- *    one the merge carries and each found as exactly one row of this author in
- *    that table, and the digest over those rows is the header's (else
- *    BATCH_DIGEST_MISMATCH). By table as well as seq: a row of the same number
- *    in another table is not a row this header signed, and cannot spoil it;
- *  - `pub` fingerprints to the author, and the signature verifies over the
- *    canonical header for `document` (else BATCH_SIGNATURE_INVALID). A batch
- *    signed for another document fails here;
- *  - the id is the canonical header's (else BATCH_DIGEST_MISMATCH): an id is a
- *    hash, and one that is not its header's names something else.
+ * **Authentic**: the header is the author's. Its signature covers the list of
+ * rows it names, so it can be checked from the header alone, without holding a
+ * single row. A list makes a canonical header; the header is authentic when
+ * that header's hash is the id, `pub` fingerprints to the author, and the
+ * signature verifies over it for `document`. The list tried first is the one
+ * stored; if it does not make the header, the list of that author's rows
+ * naming the id is tried. A copy that forwards a header can change the stored
+ * list, never the signed one, and the honest rows still name their header.
+ * When neither list makes it, the header is refused as
+ * BATCH_SIGNATURE_INVALID with the author it names: what any forgery in that
+ * name gets, and an accusation of nobody.
  *
- * A format version this copy does not know cannot be checked, so it does not
- * verify (BATCH_SIGNATURE_INVALID); a reader for it is step 6's (D108).
+ * **Complete**: each listed row found once, as that author's row in the table
+ * listed, and the digest over them the header's. By table as well as seq: a
+ * row of the same number in another table is not a row this header signed. An
+ * authentic header whose rows are not all here (withheld, or a different row
+ * at one of its ids) is still the author's statement: its verdict says it is
+ * not complete, and the merge keeps it without taking rows through it. That is
+ * what lets evidence of two conflicting headers travel (D160).
+ *
+ * What a row says about its batch (`_r_batch`) is a cache the merge fills from
+ * the verdicts; it is read here only to recover a relabeled list.
+ *
+ * A batch format this copy does not know cannot be checked, so it does not
+ * verify (BATCH_SIGNATURE_INVALID). A document holding one mounts read-only
+ * (D108); this is the merge's answer to the same fact.
  */
 export async function verifyBatches(
   db: Rows,
@@ -294,58 +330,53 @@ export async function verifyBatches(
   const verdicts = new Map<string, BatchVerdict>();
   const present = db.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
   if (!present) return verdicts;
+  const carried = new Set(tables);
   for (const header of db.all("SELECT * FROM _dai_batch")) {
     const id = header["id"] as Uint8Array;
     const author = header["author"] as Uint8Array;
-    const refuse = (reason: "BATCH_SIGNATURE_INVALID" | "BATCH_DIGEST_MISMATCH"): void => {
-      verdicts.set(hex(id), { ok: false, author, reason });
-    };
+    const digest = header["digest"] as Uint8Array;
+    const pub = header["pub"] as Uint8Array;
+    const version = Number(header["version"]);
 
-    const covers = coveredRowsOf(header["covers"]);
-    const carried = new Set(tables);
-    if (!covers || covers.some(([table]) => !carried.has(table))) {
-      refuse("BATCH_DIGEST_MISMATCH");
+    // The lists to try: the stored one, then the rows naming this header.
+    const lists: [string, number][][] = [];
+    const stored = coveredRowsOf(header["covers"]);
+    if (stored) lists.push(stored);
+    const naming: { table: string; row: { _r_seq: number } }[] = [];
+    for (const table of tables) {
+      for (const r of db.all(`SELECT _r_seq FROM "${table}" WHERE _r_batch = ? AND _r_replica = ?`, [id, author])) {
+        naming.push({ table, row: { _r_seq: Number(r["_r_seq"]) } });
+      }
+    }
+    if (naming.length > 0) {
+      const recovered = coveredRowsOf(coversText(naming));
+      if (recovered && JSON.stringify(recovered) !== JSON.stringify(stored)) lists.push(recovered);
+    }
+
+    let covers: [string, number][] | null = null;
+    const keyed = version === BATCH_FORMAT_VERSION && pub instanceof Uint8Array && digest instanceof Uint8Array && hex(await authorIdOf(pub)) === hex(author);
+    for (const list of keyed ? lists : []) {
+      if (list.some(([table]) => !carried.has(table))) continue;
+      const canonical = canonicalHeader({ version, document, author, lc: Number(header["lc"]), digest, covers: list });
+      if (hex(await batchIdOf(canonical)) !== hex(id)) continue;
+      if (!(await verifySignature(pub, canonical, header["sig"] as Uint8Array))) continue;
+      covers = list;
+      break;
+    }
+    if (!covers) {
+      verdicts.set(hex(id), { ok: false, author, reason: "BATCH_SIGNATURE_INVALID" });
       continue;
     }
-    // Each listed row found once, where it was listed: a missing one is not the
-    // set that was signed.
+
+    // Each listed row found once, where it was listed, digesting to the header's.
     const entries: BatchEntry[] = [];
-    let whole = true;
     for (const [table, seq] of covers) {
       const found = db.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [author, seq]);
-      if (found.length !== 1) {
-        whole = false;
-        break;
-      }
+      if (found.length !== 1) break;
       entries.push({ table, row: readRow(found[0]!, authorColumnsOf(db, table)) });
     }
-    if (!whole) {
-      refuse("BATCH_DIGEST_MISMATCH");
-      continue;
-    }
-    const digest = await rowsDigest(entries);
-    if (hex(digest) !== hex(header["digest"] as Uint8Array)) {
-      refuse("BATCH_DIGEST_MISMATCH");
-      continue;
-    }
-
-    const version = Number(header["version"]);
-    const pub = header["pub"] as Uint8Array;
-    const canonical = canonicalHeader({ version, document, author, lc: Number(header["lc"]), digest });
-    const signedBy =
-      version === BATCH_FORMAT_VERSION &&
-      pub instanceof Uint8Array &&
-      hex(await authorIdOf(pub)) === hex(author) &&
-      (await verifySignature(pub, canonical, header["sig"] as Uint8Array));
-    if (!signedBy) {
-      refuse("BATCH_SIGNATURE_INVALID");
-      continue;
-    }
-    if (hex(await batchIdOf(canonical)) !== hex(id)) {
-      refuse("BATCH_DIGEST_MISMATCH");
-      continue;
-    }
-    verdicts.set(hex(id), { ok: true, author, covers });
+    const complete = entries.length === covers.length && hex(await rowsDigest(entries)) === hex(digest);
+    verdicts.set(hex(id), { ok: true, author, covers, complete });
   }
   return verdicts;
 }

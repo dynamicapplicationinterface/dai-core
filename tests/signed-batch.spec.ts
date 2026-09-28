@@ -4,8 +4,10 @@ import { authorIdOf, mintPersonKey, rawPublicKey, showAuthorId, signBytes } from
 import { rewriteReplicated } from "../src/replicated.js";
 import {
   authoredSince,
+  BATCH_FORMAT_VERSION,
   batchIdOf,
   canonicalHeader,
+  coversOf,
   decodeBatch,
   encodeBatch,
   pendingBatches,
@@ -105,7 +107,7 @@ test.describe("a forged seat is refused (test 2)", () => {
     const entries = authoredSince(boCopy, ada.author, 0, TABLES);
     const lc = Math.max(...entries.map((e) => e.row._r_lc));
     const digest = await rowsDigest(entries);
-    const header = canonicalHeader({ version: 1, document: DOC, author: ada.author, lc, digest });
+    const header = canonicalHeader({ version: BATCH_FORMAT_VERSION, document: DOC, author: ada.author, lc, digest, covers: coversOf(entries) });
 
     for (const pub of [ada.pub, bo.pub]) {
       // Either way a forger could try it: Ada's public key (the signature fails),
@@ -115,7 +117,7 @@ test.describe("a forged seat is refused (test 2)", () => {
         lc,
         entries,
         document: DOC,
-        version: 1,
+        version: BATCH_FORMAT_VERSION,
         digest,
         id: await batchIdOf(header),
         sig: await signBytes(bo.keys.privateKey, header),
@@ -505,7 +507,6 @@ test.describe("a forger's unsigned rows cannot spoil a signed batch (review of s
   });
 
   test("a forwarder relabels which rows an honest header covers: the honest row is still taken, and nothing is refused in its author's name", async () => {
-    test.fail(true, "D161, fixed in step 6's format bump: covers is outside the signed bytes, so a relabeled header still verifies its signature");
     const ada = await person();
     const adaCopy = copyFor(ada);
     createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });

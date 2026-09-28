@@ -302,14 +302,19 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
             hid = bytes(header[0]).hex()
             held[hid] = header[0]
             verdict = verdicts.get(hid, "BATCH_SIGNATURE_INVALID")
-            if verdict != "ok":
+            if verdict not in ("ok", "incomplete"):
                 refuse_batch(hid, header[1], verdict)
                 continue
+            # "incomplete": the author's header (batch format 2 signs its list),
+            # whose rows the sibling does not hold as signed. Kept, so evidence
+            # travels (D160), and no row is taken through it.
             local.execute(
                 "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 header,
             )
+            if verdict != "ok":
+                continue
             for table, seq in json.loads(header[8]):
                 key = f"{table}|{row_id(header[1], seq)}"
                 covers.add(f"{hid}|{key}")
@@ -344,7 +349,7 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
             elif named is not None:
                 # It names a header that does not vouch for it: refused in the
                 # name of whoever wrote the row.
-                if named not in held or verdicts.get(named) == "ok":
+                if named not in held or verdicts.get(named) in ("ok", "incomplete"):
                     refuse_batch(named, row["_r_replica"], "BATCH_DIGEST_MISMATCH")
             else:
                 unsigned_rows.append((table, row))

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
-import { canonicalHeader } from "../src/replicated-batch.js";
+import { BATCH_FORMAT_VERSION, canonicalHeader } from "../src/replicated-batch.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -40,12 +40,14 @@ test("a document's code cannot get a header for another document signed", async 
   const author = Buffer.from((await page.evaluate(() => (window as any).__runner.authorId())) as string, "base64url");
 
   // B: any other document, whose code asks for a header naming A.
+  // Well formed in every other way, so only the document it names can refuse it.
   const header = canonicalHeader({
-    version: 1,
+    version: BATCH_FORMAT_VERSION,
     document: documentA,
     author: new Uint8Array(author),
     lc: 1,
     digest: new Uint8Array(32).fill(7),
+    covers: [["moves", 1]],
   });
   const source = mkdtempSync(join(tmpdir(), "dai-forger-"));
   writeFileSync(

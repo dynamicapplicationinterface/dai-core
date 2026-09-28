@@ -736,6 +736,17 @@
       "tests/open.ts",
       "tsup.config.ts"
     ],
+    "tests/format-version-mount.spec.ts": [
+      "apps/runner/",
+      "conformance/signing-key.pem",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/format-version-mount.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/format.spec.ts": [
       "scripts/retain-host.mjs",
       "src/",

@@ -3257,9 +3257,10 @@ window.addEventListener("message", (event) => {
       } catch {
         fields = null;
       }
+      // `[version, document, author, lc, digest, covers]`, batch format version 2.
       const ours =
         Array.isArray(fields) &&
-        fields.length === 5 &&
+        fields.length === 6 &&
         fields[0] === BATCH_FORMAT_VERSION &&
         fields[1] === mount.documentUuid &&
         fields[2] instanceof Uint8Array &&

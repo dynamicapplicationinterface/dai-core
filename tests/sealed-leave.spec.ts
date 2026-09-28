@@ -133,6 +133,7 @@ test("a saved document's rows are sealed, and every batch verifies under this de
       author: bytes(header["author"]),
       lc: Number(header["lc"]),
       digest: bytes(header["digest"]),
+      covers: JSON.parse(String(header["covers"])) as [string, number][],
     });
     expect(await verifySignature(pub, signed, bytes(header["sig"])), "the signature verifies").toBe(true);
   }

@@ -1,7 +1,8 @@
 # Signed batches: the bytes a signature covers
 
-The canonical form behind signed authorship (`docs/identity.md`). Format
-version **1**, held byte for byte by `tests/identity-vectors.spec.ts`, whose
+The canonical form behind signed authorship (`docs/identity.md`). Batch format
+version **2** (not the container's format version, which is another number),
+held byte for byte by `tests/identity-vectors.spec.ts`, whose
 vectors are derived outside `src` (node:crypto and CBOR assembled by hand), so
 the encoder is checked against this page and not against itself. A change to
 anything here is a format version, never a refactor (binding rule 10).
@@ -31,10 +32,13 @@ supersession is derived.
 
 **Rows digest.** SHA-256 of the canonical rows.
 
-**Canonical header.** `[version, document, author, lc, digest]`, a CBOR array:
-the format version, the document's uuid (so a batch signed for one document
-means nothing in another), the author id, the author's clock, the rows digest.
-This is what the signature covers.
+**Canonical header.** `[version, document, author, lc, digest, covers]`, a
+CBOR array: the batch format version (2), the document's uuid (so a batch
+signed for one document means nothing in another), the author id, the
+author's clock, the rows digest, and the rows the batch covers as a CBOR
+array of `[table, seq]`, ordered by table (UTF-8 bytes) and then seq. This is
+what the signature covers. Version 1 was the first five fields; `covers`
+joined in version 2 (D161, below).
 
 **Batch id.** SHA-256 of the canonical header, first 16 bytes.
 
@@ -52,14 +56,21 @@ part: doing so would make every past batch unvouchable without re-signing.
 A stored header (`_dai_batch`) lists the rows it covers: `covers`, a JSON array
 of `[table, seq]` pairs ordered by table (UTF-8 bytes) and then seq, in exactly
 that spelling (`[["moves",1],["moves",2]]`). The author is the header's own; a
-batch has one. `covers` is not in the signed bytes at version 1. The reason
-given was that the digest commits to the rows, their tables and their seqs, and
-a list that names other rows digests to something else. That holds only where
-the verifier holds the rows the list names: a copy forwarding a header can
-change its list, and the next copy refuses the header in its honest author's
-name (backlog D161). Version 2 signs it. It names the table as well as the seq so
-that a row is looked for only where it was signed: a row of the same number in
-another table is not one the header covers, and cannot spoil it.
+batch has one. The stored list is a cache of the signed one. It names the table
+as well as the seq so that a row is looked for only where it was signed: a row
+of the same number in another table is not one the header covers, and cannot
+spoil it.
+
+**Why the list is signed (version 2).** Version 1 left `covers` out of the
+signed bytes, on the reason that the digest commits to the rows, their tables
+and their seqs, so a list naming other rows digests to something else. That
+holds only where the verifier holds the rows the list names. A copy
+forwarding a header could change its list, and the next copy refused the
+header as a digest mismatch in its honest author's name and dropped the rows
+it really covered (backlog D161). Signed, a changed list no longer verifies,
+so it is a forgery, not a mismatch, and a header can be checked as the
+author's without holding any of its rows, which is what lets evidence of an
+author signing twice travel (D160, below).
 
 **The header lists its rows because saves get lost, not for convenience.** A
 row is written first and sealed later, and the seal reaches the disk only in a
@@ -71,21 +82,39 @@ row that was signed, and a row can claim a batch it was never part of. The
 header, which is signed, is what says which rows it covers, and `_r_batch` is a
 cache of one header that covers the row.
 
-**Verifying a batch** is: find the rows the header lists (the author's row at
-each listed table and seq, found exactly once), digest them as above, and check the
-signature over the canonical header that digest makes, for this document, under
-a `pub` that fingerprints to the author. Then check that the id is that header's.
-A rows or id failure is `BATCH_DIGEST_MISMATCH`; a key or signature failure is
-`BATCH_SIGNATURE_INVALID`.
+**Verifying a batch** has two parts, in this order. **Authentic:** a list of
+rows makes a canonical header; the header is the author's when that header
+hashes to the id, `pub` fingerprints to the author, and the signature verifies
+over it for this document. The stored list is tried first, then the list of
+that author's rows naming the id, so a relabeled list is recovered from the
+rows, which still name their header. When neither makes it, the header is
+refused, `BATCH_SIGNATURE_INVALID`, with the author it names: what any forgery
+in that name gets, and an accusation of nobody. A batch format this reader does
+not know is refused the same way. **Complete:** every listed row found exactly
+once, as that author's row in the table listed, and the digest over them the
+header's. An authentic header that is not complete is still the author's
+statement: it is kept, and no row is taken through it.
 
 **A merge** verifies every header the other copy holds before it takes
-anything. It keeps the headers that verify and refuses the rest. It takes a row
-when a verified header lists it, whatever the row says, and fills the row's
-`_r_batch` with the header it names if that one lists it, else the lowest listed
-id. A row may be covered by more than one header. A row that names a header and
-is listed by none is refused, `BATCH_DIGEST_MISMATCH`, reported in the name of
-whoever wrote the row, not of the header's author, whose batch was taken. A seal
-nobody verified is never adopted onto a row a copy holds pending.
+anything. It keeps the authentic headers, under the list they signed, and
+refuses the rest. It takes a row when a complete header lists it, whatever the
+row says, and fills the row's `_r_batch` with the header it names if that one
+lists it, else the lowest listed id. A row may be covered by more than one
+header. A row that names a header and is listed by no complete one is refused,
+`BATCH_DIGEST_MISMATCH`, reported in the name of whoever wrote the row, not of
+the header's author. A seal nobody verified is never adopted onto a row a copy
+holds pending.
+
+**Signed twice (D160).** Two authentic headers of one author that list the
+same `(table, seq)` with different digests are equivocation: the author signed
+two histories. An honest author never does, because a header leaves the device
+only in bytes a save has landed, and the host signs only above the sequence
+floor; so the accusation is fair while the floor holds. Neither row at such an
+id counts on any copy that holds both headers (`_dai_equivocated`), whichever
+arrived first, in the heads and in the seat, confirm and close views alike.
+Both headers are kept and passed on, so every copy that holds either side
+learns it from a copy that holds the other. The merge that brings the second
+header reports `AUTHOR_EQUIVOCATED`, once per author.
 
 **One id, one row.** A per-author seq is one counter per document, so
 `(author, seq)` names one row whatever table it sits in. The same number in two

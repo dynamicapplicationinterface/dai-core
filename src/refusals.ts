@@ -242,6 +242,15 @@ export const REFUSALS = {
       "no reader can walk stops every read that walks it (D159). Refused with every row of the batch that " +
       "signed it, and reported with that batch's author; the rest of the merge runs.",
   },
+  AUTHOR_EQUIVOCATED: {
+    recoverable: false,
+    means:
+      "Two signed batches from one author list the same row id with different contents: the author " +
+      "signed two histories, which an honest copy never does, since a batch leaves only once saved and " +
+      "the host signs only above its sequence floor. Neither row at that id counts, on any copy that holds " +
+      "both batches, whichever arrived first; both are kept and passed on, so every copy learns it. " +
+      "Reported once per author; the rest of the merge runs (D160).",
+  },
 
   // ---- the mailbox
   MAILBOX_KEY_INVALID: {

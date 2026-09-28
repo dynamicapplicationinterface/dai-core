@@ -21,7 +21,8 @@ const unhex = (text: string): Uint8Array => Uint8Array.from(text.match(/../g)!.m
  * layout and not against itself. A diff here is a format change: it bumps the
  * canonical form version, never passes as a refactor.
  *
- * The layout, version 1:
+ * The layout, batch format version 1 (version 2, below, adds `covers` to the
+ * header and changes nothing else):
  * - Author id: SHA-256 of the raw (uncompressed, 65-byte) P-256 public key,
  *   first 16 bytes; shown as base64url.
  * - Canonical rows: a CBOR array of rows, ordered by table then `_r_seq`. Each
@@ -107,19 +108,10 @@ test.describe("the frozen identity vectors", () => {
     expect(hex(await rowsDigest([ENTRY]))).toBe(KNOWN.digest);
   });
 
-  test("the canonical header and the batch id are exactly the published bytes", async () => {
-    const header = canonicalHeader({
-      version: 1,
-      document: KNOWN.document,
-      author: unhex(KNOWN.authorHex),
-      lc: 7,
-      digest: unhex(KNOWN.digest),
-    });
-    expect(hex(header)).toBe(KNOWN.header);
-    expect(hex(await batchIdOf(header))).toBe(KNOWN.id);
-  });
-
-  test("a known signature verifies over the canonical header, and one flipped byte does not", async () => {
+  test("a known signature verifies over the version-1 header, and one flipped byte does not", async () => {
+    // Version 1's header, `[1, document, author, lc, digest]`, kept as the
+    // record of what was signed before batch format 2: no copy writes it now,
+    // and a document holding one mounts read-only (D108).
     expect(await verifySignature(unhex(KNOWN.pub), unhex(KNOWN.header), unhex(KNOWN.sig))).toBe(true);
     const tampered = unhex(KNOWN.header);
     tampered[tampered.length - 1] ^= 0x01;
@@ -144,7 +136,6 @@ const KNOWN_V2 = {
 
 test.describe("the frozen identity vectors, batch format version 2", () => {
   test("the canonical header signs the rows it covers, and the id is its hash", async () => {
-    test.fail(true, "step 6, D161: the version-1 header does not carry covers");
     const header = canonicalHeader({
       version: 2,
       document: KNOWN.document,
@@ -152,7 +143,7 @@ test.describe("the frozen identity vectors, batch format version 2", () => {
       lc: 7,
       digest: unhex(KNOWN.digest),
       covers: [["moves", 1]],
-    } as Parameters<typeof canonicalHeader>[0]);
+    });
     expect(hex(header)).toBe(KNOWN_V2.header);
     expect(hex(await batchIdOf(header))).toBe(KNOWN_V2.id);
   });

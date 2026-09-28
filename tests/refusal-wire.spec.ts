@@ -22,6 +22,7 @@ import { REFUSALS } from "../src/refusals.js";
  */
 const ON_THE_WIRE = [
   "APPLY_FAILED",
+  "AUTHOR_EQUIVOCATED",
   "BATCH_DIGEST_MISMATCH",
   "BATCH_SIGNATURE_INVALID",
   "BATCH_UNSIGNED",

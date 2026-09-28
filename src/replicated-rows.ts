@@ -730,6 +730,9 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
     .map((r) => String(r["name"]))) {
     if (DOCUMENT_TABLES.has(table)) continue; // this copy's identity — travels whole
     if (table === "_dai_batch") continue; // signed headers: filtered to the kept rows' below
+    // Each header's listings, derived from `_dai_batch` by its triggers: a header
+    // the filter removes takes its listings with it (D160).
+    if (table === "_dai_covers") continue;
     const columns = db.all(`SELECT name FROM pragma_table_info(?)`, [table]).map((c) => String(c["name"]));
     const isReplicated = columns.includes("_r_replica") && columns.includes("_r_seq");
     if (isReplicated) {
@@ -908,14 +911,17 @@ export type BatchRefusal =
   | "BATCH_UNSIGNED"
   | "ROW_MALFORMED"
   | "SEAT_NOT_HELD"
-  | "ENTITY_OTHER_SESSION";
+  | "ENTITY_OTHER_SESSION"
+  | "AUTHOR_EQUIVOCATED";
 
 /**
- * What verifying one signed header found (`verifyBatches`): the rows it covers,
- * or why it covers none. Keyed by the header's id in lowercase hex.
+ * What verifying one signed header found (`verifyBatches`), keyed by the
+ * header's id in lowercase hex: the author's, with the rows it lists and
+ * whether this copy holds them all as signed (`complete`), or not the author's
+ * and why. An authentic header that is not complete is kept and takes no row.
  */
 export type BatchVerdict =
-  | { ok: true; author: Uint8Array; covers: readonly (readonly [string, number])[] }
+  | { ok: true; author: Uint8Array; covers: readonly (readonly [string, number])[]; complete: boolean }
   | { ok: false; author: Uint8Array; reason: BatchRefusal };
 
 /** A batch the merge refused, by the author it names and the reason's code. */
@@ -1076,6 +1082,7 @@ export function mergeFrom(
     const headers = sibling
       .all("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch")
       .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
+    const arrived: { id: Uint8Array; author: Uint8Array; digest: Uint8Array; covers: readonly (readonly [string, number])[] }[] = [];
     for (const header of headers) {
       const id = hex(header["id"] as Uint8Array);
       held.set(id, header["id"] as Uint8Array);
@@ -1087,20 +1094,52 @@ export function mergeFrom(
         continue;
       }
       const listed = verdict.covers.map(([table, seq]) => `${table}|${rowId(verdict.author, seq)}`);
-      if (listed.some((key) => malformed.has(key))) {
+      if (verdict.complete && listed.some((key) => malformed.has(key))) {
         for (const key of listed) tainted.add(key);
         refuseBatch(id, verdict.author, "ROW_MALFORMED");
         continue;
       }
+      /*
+       * Kept under the list it signed, whatever list the sibling stored: a
+       * relabeled list was recovered by the verifier (D161), and is not passed
+       * on. Kept whether or not this copy holds its rows: an authentic header is
+       * the author's statement, and the evidence of two conflicting ones has to
+       * travel with every copy (D160).
+       */
+      const isNew = local.all("SELECT 1 FROM _dai_batch WHERE id = ?", [header["id"]]).length === 0;
       local.run(
         "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], header["covers"]],
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], JSON.stringify(verdict.covers)],
       );
+      if (isNew) arrived.push({ id: header["id"] as Uint8Array, author: verdict.author, digest: header["digest"] as Uint8Array, covers: verdict.covers });
+      // Rows are taken only through a header whose rows the sibling holds, as signed.
+      if (!verdict.complete) continue;
       for (const [table, seq] of verdict.covers) {
         const key = `${table}|${rowId(verdict.author, seq)}`;
         covers.add(`${id}|${key}`);
         if (!covering.has(key)) covering.set(key, id);
       }
+    }
+    /*
+     * Equivocation (D160): two authentic headers of one author listing one row
+     * id with different digests. An honest author never has two headers over one
+     * row (a header leaves only in landed bytes, and the host signs only above
+     * the floor), so this is the author signing two histories. Neither row at
+     * that id is admitted, on any copy holding both headers (`_dai_equivocated`,
+     * src/replicated.ts), and the merge that brings the second header says so,
+     * once per author: the accusation is of the author, not of a batch.
+     */
+    for (const h of arrived) {
+      const clash = h.covers.some(([table, seq]) =>
+        local.all("SELECT 1 FROM _dai_covers WHERE tbl = ? AND author = ? AND seq = ? AND id <> ? AND digest <> ? LIMIT 1", [
+          table,
+          h.author,
+          seq,
+          h.id,
+          h.digest,
+        ]).length > 0,
+      );
+      if (clash) refuseBatch("", h.author, "AUTHOR_EQUIVOCATED");
     }
   }
 

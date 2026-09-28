@@ -299,7 +299,6 @@ async function equivocatedConfirms() {
 }
 
 test("F3: the creator signs two confirms at one row id, one per asker: once a copy holds both, neither counts, and every copy says so", async () => {
-  test.fail(true, "D160, fixed in step 6's format bump on signed covers (D161): two signed rows at one (author, seq) keep whichever arrived first, and a confirm decides another author's admission");
   const { ada, bo, cy, g, cyCopy, close } = await equivocatedConfirms();
   const r1 = await merge(g.boCopy, cyCopy, bo);
   const r2 = await merge(cyCopy, g.boCopy, cy);
@@ -312,7 +311,6 @@ test("F3: the creator signs two confirms at one row id, one per asker: once a co
 });
 
 test("F3, a third copy: merging from one side alone still sees both confirms, because the evidence travels with the headers", async () => {
-  test.fail(true, "D160: a header travels only from a copy that holds its own row, so a third copy never sees the second one");
   const { ada, bo, g, cyCopy, close } = await equivocatedConfirms();
   await merge(g.boCopy, cyCopy, bo);
   const dee = await person();

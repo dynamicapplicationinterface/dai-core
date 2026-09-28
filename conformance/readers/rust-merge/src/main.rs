@@ -258,16 +258,22 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             let hid = hexlc(&id);
             held.insert(hid.clone(), id.clone());
             let verdict = verdicts.get(&hid).cloned().unwrap_or_else(|| "BATCH_SIGNATURE_INVALID".to_string());
-            if verdict != "ok" {
+            if verdict != "ok" && verdict != "incomplete" {
                 refusals.insert((hid, verdict, hexlc(&author)), author);
                 continue;
             }
+            // "incomplete": the author's header (batch format 2 signs its list),
+            // whose rows the sibling does not hold as signed. Kept, so evidence
+            // travels (D160), and no row is taken through it.
             c.execute(
                 "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, covers) \
                  SELECT id, author, lc, sig, pub, att, version, digest, covers FROM S._dai_batch WHERE id = ?1",
                 [&id],
             )
             .unwrap();
+            if verdict != "ok" {
+                continue;
+            }
             if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&listed) {
                 for pair in list {
                     let key = format!("{}|{}:{}", pair[0].as_str().unwrap_or(""), hexlc(&author), pair[1]);
@@ -315,7 +321,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             } else if let Some(n) = named {
                 // It names a header that does not vouch for it: refused in the
                 // name of whoever wrote the row.
-                if !held.contains_key(&n) || verdicts.get(&n).map(|v| v == "ok").unwrap_or(false) {
+                if !held.contains_key(&n) || verdicts.get(&n).map(|v| v == "ok" || v == "incomplete").unwrap_or(false) {
                     let author = match &r.vals[t.i_replica] {
                         V::Blob(x) => x.clone(),
                         _ => vec![],
