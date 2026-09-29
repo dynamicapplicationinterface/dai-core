@@ -1,3 +1,5 @@
+mod admit;
+
 use rusqlite::{types::ValueRef, Connection};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -91,6 +93,9 @@ struct Table {
     i_entity: usize,
     i_parents: usize,
     i_superseded: usize,
+    i_deleted: usize,
+    // The session a row belongs to, in a session document (T1-D26).
+    i_session: Option<usize>,
     // The signed batch a row left in (docs/identity.md), when the table has one.
     // Not row content: the batch is named after the rows.
     i_batch: Option<usize>,
@@ -111,7 +116,10 @@ fn table_cols(c: &Connection, schema: &str, t: &str) -> Vec<String> {
 fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
     let mut st = c
         .prepare(&format!(
-            "SELECT name FROM {}.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_dai\\_%' ESCAPE '\\' ORDER BY name",
+            // The roster tables (_dai_seat, _dai_binding, _dai_confirm,
+            // _dai_close) are replicated tables like any other: they carry the
+            // _r_ columns, and that is what decides, not the name.
+            "SELECT name FROM {}.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
             schema
         ))
         .unwrap();
@@ -125,14 +133,16 @@ fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
     for n in names {
         let cols = table_cols(c, schema, &n);
         let idx = |k: &str| cols.iter().position(|x| x == k);
-        if let (Some(a), Some(b), Some(e), Some(p), Some(s)) = (
+        if let (Some(a), Some(b), Some(e), Some(p), Some(s), Some(d)) = (
             idx("_r_replica"),
             idx("_r_seq"),
             idx("_r_entity"),
             idx("_r_parents"),
             idx("_r_superseded"),
+            idx("_r_deleted"),
         ) {
             let i_batch = idx("_r_batch");
+            let i_session = idx("_r_session");
             out.push(Table {
                 name: n,
                 cols,
@@ -141,6 +151,8 @@ fn replicated_tables(c: &Connection, schema: &str) -> Vec<Table> {
                 i_entity: e,
                 i_parents: p,
                 i_superseded: s,
+                i_deleted: d,
+                i_session,
                 i_batch,
             });
         }
@@ -171,6 +183,29 @@ fn load(c: &Connection, schema: &str, t: &Table) -> Vec<Row> {
     rows
 }
 
+// The one shape of _r_parents (D159): a flat JSON array of at most 256 row ids,
+// each 32 lowercase hex characters, a colon and a positive safe-integer seq.
+// Anything else is ROW_MALFORMED at merge.
+const PARENTS_CAP: usize = 256;
+fn parents_well_formed(v: &V) -> bool {
+    let V::Text(p) = v else { return false };
+    let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(p) else { return false };
+    if a.len() > PARENTS_CAP {
+        return false;
+    }
+    a.iter().all(|e| {
+        let Some(s) = e.as_str() else { return false };
+        let Some((hex, seq)) = s.split_once(':') else { return false };
+        hex.len() == 32
+            && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && !seq.is_empty()
+            && !seq.starts_with('0')
+            && seq.bytes().all(|b| b.is_ascii_digit())
+            && seq.len() <= 16
+            && seq.parse::<u64>().map(|n| n <= (1u64 << 53) - 1).unwrap_or(false)
+    })
+}
+
 fn rowid(t: &Table, r: &Row) -> String {
     let rep = match &r.vals[t.i_replica] {
         V::Blob(b) => hexlc(b),
@@ -196,7 +231,8 @@ struct Counts {
 // `verdicts` is the signature check's answer for each of the sibling's headers,
 // by id in lowercase hex: "ok" or a BATCH_ code. A header missing from it was
 // not checked, and a header not checked is not signed.
-fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (Counts, String) {
+// Returns the counts, the canonical dump, and what the document admits after.
+fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (Counts, String, String) {
     let c = Connection::open(work).unwrap();
     c.execute_batch(&format!(
         "ATTACH DATABASE 'file:{}?mode=ro' AS S;",
@@ -239,9 +275,17 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         .unwrap_or(0)
             > 0
     };
+    // What this copy admitted and held equivocated before the merge, so the
+    // merge reports only what it brings (D160, D165).
+    let eq_before = admit::equivocated(&c, "main");
+    let voided_before = admit::admit(&c, &tables).voided;
+
     let mut held: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut covering: BTreeMap<String, String> = BTreeMap::new(); // "table|author:seq" -> lowest ok id
     let mut covers: BTreeSet<String> = BTreeSet::new(); // "id|table|author:seq"
+    let mut listed_by: BTreeMap<String, BTreeSet<String>> = BTreeMap::new(); // "table|author:seq" -> ok ids
+    let mut authors: BTreeMap<String, Vec<u8>> = BTreeMap::new(); // header id -> its author
+    let mut tainted: BTreeSet<String> = BTreeSet::new(); // complete headers that signed a malformed row
     if has("main") && has("S") {
         let headers: Vec<(Vec<u8>, Vec<u8>, String)> = {
             let mut st = c.prepare("SELECT id, author, covers FROM S._dai_batch").unwrap();
@@ -254,9 +298,11 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         };
         let mut headers = headers;
         headers.sort_by(|a, b| hexlc(&a.0).cmp(&hexlc(&b.0)));
+        let mut keep: Vec<(String, Vec<u8>)> = vec![];
         for (id, author, listed) in headers {
             let hid = hexlc(&id);
             held.insert(hid.clone(), id.clone());
+            authors.insert(hid.clone(), author.clone());
             let verdict = verdicts.get(&hid).cloned().unwrap_or_else(|| "BATCH_SIGNATURE_INVALID".to_string());
             if verdict != "ok" && verdict != "incomplete" {
                 refusals.insert((hid, verdict, hexlc(&author)), author);
@@ -265,12 +311,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             // "incomplete": the author's header (batch format 2 signs its list),
             // whose rows the sibling does not hold as signed. Kept, so evidence
             // travels (D160), and no row is taken through it.
-            c.execute(
-                "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, covers) \
-                 SELECT id, author, lc, sig, pub, att, version, digest, covers FROM S._dai_batch WHERE id = ?1",
-                [&id],
-            )
-            .unwrap();
+            keep.push((hid.clone(), id.clone()));
             if verdict != "ok" {
                 continue;
             }
@@ -278,11 +319,60 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
                 for pair in list {
                     let key = format!("{}|{}:{}", pair[0].as_str().unwrap_or(""), hexlc(&author), pair[1]);
                     covers.insert(format!("{}|{}", hid, key));
-                    covering.entry(key).or_insert_with(|| hid.clone());
+                    listed_by.entry(key).or_default().insert(hid.clone());
                 }
             }
         }
+
+        // D159: every arriving row's parents are checked before anything reads
+        // them. A complete header that signed one is refused whole: not kept,
+        // and none of its rows taken, since a header kept without one of its
+        // rows would fail at the next copy in its author's name.
+        for t in &tables {
+            if !s_tables.iter().any(|x| x.name == t.name) {
+                continue;
+            }
+            for r in load(&c, "S", t) {
+                if parents_well_formed(&r.vals[t.i_parents]) {
+                    continue;
+                }
+                let key = format!("{}|{}", t.name, rowid(t, &r));
+                if let Some(ids) = listed_by.get(&key) {
+                    tainted.extend(ids.iter().cloned());
+                }
+            }
+        }
+        for hid in &tainted {
+            let author = authors[hid].clone();
+            refusals.insert((hid.clone(), "ROW_MALFORMED".to_string(), hexlc(&author)), author);
+        }
+        for (hid, id) in keep {
+            if tainted.contains(&hid) {
+                continue;
+            }
+            c.execute(
+                "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, covers) \
+                 SELECT id, author, lc, sig, pub, att, version, digest, covers FROM S._dai_batch WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        }
+        // A row any tainted header lists is not taken, whoever else lists it.
+        let spoiled: BTreeSet<String> = listed_by
+            .iter()
+            .filter(|(_, ids)| ids.iter().any(|h| tainted.contains(h)))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for (key, ids) in &listed_by {
+            if !spoiled.contains(key) {
+                covering.insert(key.clone(), ids.iter().next().unwrap().clone());
+            }
+        }
+        covers.retain(|x| !tainted.contains(x.split('|').next().unwrap_or("")));
+        listed_by.retain(|k, _| spoiled.contains(k));
     }
+    // What is left in listed_by: the rows a refused-whole batch signed.
+    let spoiled = listed_by;
 
 
     // Signed means listed by an ok header, whatever the row says. Signed rows are
@@ -300,6 +390,24 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         for mut r in load(&c, "S", t) {
             let id = rowid(t, &r);
             let key = format!("{}|{}", t.name, id);
+            // Signed by a batch refused whole (D159): not taken, and the batch
+            // is already reported.
+            if spoiled.contains_key(&key) {
+                continue;
+            }
+            // Malformed and signed by nobody: refused in the name it carries.
+            if !parents_well_formed(&r.vals[t.i_parents]) {
+                let author = match &r.vals[t.i_replica] {
+                    V::Blob(x) => x.clone(),
+                    _ => vec![],
+                };
+                let named = t.i_batch.and_then(|b| match &r.vals[b] {
+                    V::Blob(x) => Some(hexlc(x)),
+                    _ => None,
+                });
+                refusals.insert((named.unwrap_or_default(), "ROW_MALFORMED".to_string(), hexlc(&author)), author);
+                continue;
+            }
             // Unsigned: taken only when this copy holds a row at that id in that
             // table already (a duplicate, or a second row at one id); otherwise
             // refused in every table, under the id it carries (BATCH_UNSIGNED,
@@ -349,7 +457,9 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             } else if let Some(n) = named {
                 // It names a header that does not vouch for it: refused in the
                 // name of whoever wrote the row.
-                if !held.contains_key(&n) || verdicts.get(&n).map(|v| v == "ok" || v == "incomplete").unwrap_or(false) {
+                let refused_already = tainted.contains(&n)
+                    || (held.contains_key(&n) && !verdicts.get(&n).map(|v| v == "ok" || v == "incomplete").unwrap_or(false));
+                if !refused_already {
                     let author = match &r.vals[t.i_replica] {
                         V::Blob(x) => x.clone(),
                         _ => vec![],
@@ -402,6 +512,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             rejected.push(id);
         }
     };
+    let mut taken: Vec<(usize, String)> = vec![];
     for (rows, signed) in [(signed_rows, true), (unsigned_rows, false)] {
         for (ti, r) in rows {
             let t = &tables[ti];
@@ -477,6 +588,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             )
             .unwrap();
             counts.applied += 1;
+            taken.push((ti, id));
         }
     }
 
@@ -513,6 +625,73 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             }
         }
     }
+
+    // After the rows are placed: what the document now admits, and what this
+    // merge made of it.
+    let admitted = admit::admit(&c, &tables);
+    let batch_of = |t: &Table, id: &str| -> String {
+        c.query_row(
+            &format!(
+                "SELECT lower(hex(_r_batch)) FROM main.\"{}\" WHERE lower(hex(_r_replica))||':'||_r_seq = ?1",
+                t.name
+            ),
+            [id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    };
+    // A taken row that is not admitted, and not merely waiting, is reported
+    // with its author (docs/identity.md binding rule 5).
+    for (ti, id) in &taken {
+        let t = &tables[*ti];
+        let reason = match admitted.verdicts.get(&format!("{}|{}", t.name, id)) {
+            Some(admit::Verdict::NotHeld) => "SEAT_NOT_HELD",
+            Some(admit::Verdict::OtherSession) => "ENTITY_OTHER_SESSION",
+            _ => continue,
+        };
+        let author = id.split(':').next().unwrap_or("").to_string();
+        let raw: Vec<u8> = (0..author.len() / 2)
+            .map(|i| u8::from_str_radix(&author[2 * i..2 * i + 2], 16).unwrap_or(0))
+            .collect();
+        refusals.insert((batch_of(t, id), reason.to_string(), author), raw);
+    }
+    // AUTHOR_EQUIVOCATED, once per author, from the merge that brings it: a
+    // (table, seq) signed twice (D160), or a seat confirmed to two copies, in
+    // the creator's name (D165). Filed under the lowest batch id that carries it.
+    let mut accused: BTreeMap<String, String> = BTreeMap::new(); // author hex -> batch id
+    let mut accuse = |author: String, batch: String| {
+        let e = accused.entry(author).or_insert_with(|| batch.clone());
+        if batch < *e {
+            *e = batch;
+        }
+    };
+    for (author, table, seq) in admitted.equivocated.difference(&eq_before) {
+        let key = format!("{}|{}:{}", table, author, seq);
+        let brought = covers
+            .iter()
+            .filter(|x| x.split_once('|').map(|(_, k)| k == key).unwrap_or(false))
+            .map(|x| x.split('|').next().unwrap_or("").to_string())
+            .min()
+            .unwrap_or_default();
+        accuse(author.clone(), brought);
+    }
+    for (sess, seat, cr) in admitted.voided.difference(&voided_before) {
+        let b = admitted
+            .confirm_batches
+            .get(&(sess.clone(), seat.clone()))
+            .and_then(|v| v.iter().min().cloned())
+            .unwrap_or_default();
+        accuse(cr.clone(), b);
+    }
+    for (author, batch) in accused {
+        let raw: Vec<u8> = (0..author.len() / 2)
+            .map(|i| u8::from_str_radix(&author[2 * i..2 * i + 2], 16).unwrap_or(0))
+            .collect();
+        refusals.insert((batch, "AUTHOR_EQUIVOCATED".to_string(), author), raw);
+    }
+    let admitted_text = admit::render(&admitted);
 
     let ids: Vec<Vec<u8>> = {
         let mut st = c
@@ -615,7 +794,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             out.push('\n');
         }
     }
-    (counts, out)
+    (counts, out, admitted_text)
 }
 
 // The expected refusedBatches as (author, reason) pairs; None when misshapen, which fails.
@@ -716,7 +895,7 @@ fn main() {
             let work = tmp.join(format!("{}-{}.db", name, dirn));
             std::fs::copy(f.join(base), &work).unwrap();
             let theirs = verdicts.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
-            let (c, dump) = merge(&work, &f.join(sib), &theirs);
+            let (c, dump, admitted) = merge(&work, &f.join(sib), &theirs);
             let want = std::fs::read_to_string(f.join(exp))
                 .unwrap()
                 .replace("\r\n", "\n");
@@ -725,6 +904,28 @@ fn main() {
                     "{}: dump mismatch\n--- got\n{}--- want\n{}",
                     dirn, dump, want
                 ));
+            }
+            // What the document admits after the merge (README, "What a session
+            // document admits"). A vector that says it ships this and does not
+            // is a failure, not a skip; so is a flag that is not a boolean.
+            match expect["admitted"].as_bool() {
+                Some(true) => {
+                    let file = format!("expected-admitted-{}.txt", dirn);
+                    match std::fs::read_to_string(f.join(&file)) {
+                        Err(_) => problems.push(format!("{} is missing, and result.json says admitted", file)),
+                        Ok(text) => {
+                            let want = text.replace("\r\n", "\n");
+                            if admitted != want {
+                                problems.push(format!(
+                                    "{}: admitted mismatch\n--- got\n{}--- want\n{}",
+                                    dirn, admitted, want
+                                ));
+                            }
+                        }
+                    }
+                }
+                Some(false) => {}
+                None => problems.push("result.json's admitted is not a boolean".to_string()),
             }
             let e = &expect[dirn];
             let er: Vec<String> = e["rejected"]

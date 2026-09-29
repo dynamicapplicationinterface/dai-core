@@ -6,6 +6,7 @@
     "T1-D16"
   ],
   "converges": true,
+  "admitted": false,
   "stable": true,
   "ab": {
     "applied": 2,

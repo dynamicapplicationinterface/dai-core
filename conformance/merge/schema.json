@@ -9,6 +9,7 @@
     "what": "string — one sentence saying what this vector is for",
     "cites": "array of strings, non-empty — sections and numbered decisions of docs/replicated-tables.md that this vector exercises",
     "converges": "boolean — whether the two directions must produce identical dumps",
+    "admitted": "boolean — whether the vector ships expected-admitted-ab.txt and expected-admitted-ba.txt, what the document admits after each merge, which a reader computes from the tables alone",
     "stable": "boolean — whether merging a second time must change nothing",
     "ab": "object — the merge result of B into A",
     "ba": "object — the merge result of A into B"

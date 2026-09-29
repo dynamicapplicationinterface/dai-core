@@ -5,6 +5,7 @@
     "T1-D13"
   ],
   "converges": false,
+  "admitted": false,
   "stable": true,
   "ab": {
     "applied": 0,

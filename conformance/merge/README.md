@@ -13,6 +13,7 @@ Per vector:
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
 | `result.json` | the counts, refused ids and refused batches the merge reports |
 | `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok` or a `BATCH_` code |
+| `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors only: what the document admits after each merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -84,3 +85,42 @@ the verdicts and does the rest itself, which is the part these vectors test:
 each disagree with a reader that has one of those wrong. `refusedBatches` in
 `result.json` is one entry per batch, reason and author, ordered by batch id,
 then reason, then author id in hex, with the author id shown as base64url.
+
+**What a session document admits.** The `session-` vectors are session
+documents (one seated table, `moves`, seated by its `seat` column; the close
+rule `any`), and their `result.json` says `admitted: true`. Each ships
+`expected-admitted-ab.txt` and `expected-admitted-ba.txt`: after the merge,
+the admitted heads of every table the merge covers (`id` and the deleted flag,
+by author then seq), then `# holders` (session, seat, holder), `# voided`
+(session, seat, creator), `# equivocated` (author, table, seq) and `# closed`,
+each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
+document admits, which the stored rows alone cannot show, so these are what a
+reader without one of those changes disagrees with. A reader computes them from
+the tables and headers alone. It reads no view but `_dai_seat_rules` and
+`_dai_author_rules`, which are declarations; the rest are computations, and a
+reader that took them would be the generator agreeing with itself. The rules,
+in docs/identity.md and docs/format.md:
+
+- a row id one author signed twice (two headers listing it with different
+  digests) counts nowhere (D160), and a merge that brings the second header
+  reports `AUTHOR_EQUIVOCATED` once per author;
+- the creator's seat row is the one whose own author and seq hash to its
+  session (D158); her seat is hers, and an open seat is held by whoever her
+  confirms name, unless she confirmed it to two copies, when it is void and
+  held by nobody, and the merge that makes it void reports
+  `AUTHOR_EQUIVOCATED` in her name (D165);
+- a close by a member binds only its author: their rows after it, by their
+  own seq, are late (D151, and no frontier at version 2);
+- a seated row is admitted when its author holds the seat it names, it names
+  no version from another session or another seat, and it is not late. Of
+  the rows a merge takes and does not admit, one naming no seat, a seat
+  someone else holds, or another seat's version is reported
+  `SEAT_NOT_HELD`, and one naming another session's version
+  `ENTITY_OTHER_SESSION`; one waiting on a confirmation, one for a void
+  seat, and a late one are reported nowhere;
+- a row whose parents are not the one shape (D159) is never taken, nor any
+  row of a complete batch that signed one, and the batch is refused
+  `ROW_MALFORMED`.
+
+Each `session-` vector was run against both readers with its change held
+out, and failed.

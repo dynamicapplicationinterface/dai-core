@@ -4434,10 +4434,132 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D172 — On Firefox, `mount-order:194` fails on both tries
+
+*Status: open, filed 29 September from CI; not reproduced locally, not read.
+Firefox is a reading (D32), so it is not red on the gate. Failed on both
+tries in two of the four runs that have reached it; passed in the fourth
+(`daa03a9`, run 36571556289).*
+
+`tests/mount-order.spec.ts:194`, "a save that lands between the next
+document's mount and its handshake gives that document no writer" (D167's
+second forced-order red), hits the 90-second test timeout on Firefox. Seen
+once passing on retry (run 36510731396), then failing on both tries in the
+next two runs that finished it: run 36515027687 (`dfc0aee`) and run
+36568190879 (`d86c9e3`). It passes on Chromium and WebKit every run. The
+three minutes it spends timing out are part of why run 36515027687's Firefox
+job hit its 25-minute limit and was cancelled with no tally. The hold in
+that test is the host's reseal SHA-256, taken by byte length; whether
+Firefox reaches that `crypto.subtle.digest` with the same length, or at all,
+is the first thing to read from its trace.
+
+#### D171 — The reference readers compute none of what batch format version 2 changed after the signature
+
+*Status: **built 29 September**; lands on its CI verdict (identity step 6,
+the readers' leveling). Unsigned-everywhere was level already (`436a972`).
+D111, the readers doing their own signature check, stays the successor and
+is not this.*
+
+*Built as decided below. Both readers pass all 25 vectors. Each of the five
+changes was held out of each reader, in a patched copy, and its vector
+failed; the creator's, held out as "any seat row of hers names her seat",
+fails all five, because in every vector the open seat's row is hers too.
+The Python reader was extended in this sitting's own session. The Rust
+reader was extended by a session given only the specification, the
+fixtures and its own code, as its README requires (the first attempt,
+written beside the Python one, was set aside for that reason). Its five
+breaks were reproduced with patches of this session's own before they were
+relayed. One of them passed at first: a reader comparing one author's seq
+with another's slipped past `session-close-no-frontier`, so the vector now
+has Bo's move after the close past Ada's close by seq and by clock alike.*
+
+*Where that reader found the specification silent, wrong or stale, each a
+line for `docs/format.md`'s rewrite or a fixture for the cold review (none
+decided by any vector unless named):*
+
+- *The one shape of parents (D159) is in no specification document, only
+  here and in D159; neither is `ROW_MALFORMED`.*
+- *The batch id a refusal is filed under decides `refusedBatches` order and
+  is unstated for `AUTHOR_EQUIVOCATED` (the runtime files it under none; the
+  Rust reader under the lowest header that brought it) and for
+  `SEAT_NOT_HELD` (the taken row's own batch, as the runtime does). And
+  whether an equivocation (D160) and a voided seat (D165) by one author in
+  one merge are one entry (both readers and the runtime: one).*
+- *"The merge that brings the second header": the runtime reports when an
+  arriving header clashes with any held one, the Rust reader when the set of
+  equivocated ids grows. They differ when a third conflicting header arrives.*
+- *The close rule cannot be read from the database, only from the manifest;
+  the vectors fix it at `any`.*
+- *Undecided roster details: whether a deleted or superseded confirm still
+  counts (Rust: yes; Python and the runtime: a deleted one does not), whether
+  roster heads partition by author and session (the runtime and Python: yes;
+  Rust: by entity only), and a confirm naming a seat nobody minted.*
+- *Equivocation compares whole-batch digests, so it relies on the floor
+  guaranteeing that a re-seal of rows that already left never happens; the
+  page says so in one clause and should say it outright.*
+- *`docs/replicated-tables.md` T1-D31 still describes the close's frontier
+  and T1-D29's aside still names a nonce; D151 and D158 sit beside them
+  rather than replacing them.*
+
+The two merge readers (`conformance/reference/dai_merge.py`,
+`conformance/readers/rust-merge`) take each header's verdict from
+`verdicts.json` and do the coverage rules. Everything else step 6 changed
+they do not do, and no fixture holds a session document, so nothing shows
+it: equivocation (D160), `ROW_MALFORMED` (D159), the close with no frontier
+(D151 at version 2), the creator by `(author, seq)` (D158), and one confirm
+per seat per creator (D165).
+
+*Decided before code, 29 September:*
+
+- *Only `ROW_MALFORMED` changes what a merge stores. The other four change
+  what the document admits, which lives in views, so a fixture that dumps
+  only the stored rows cannot make a reader disagree with them. Each session
+  vector therefore also ships `expected-admitted-ab.txt` and
+  `expected-admitted-ba.txt`: after the merge, the admitted heads of every
+  replicated table (the `_heads` view's rows, by id, with the deleted flag),
+  then the holders (session, seat, holder), the voided seats, the equivocated
+  ids and the closed sessions, each section sorted. The generator writes them
+  from the runtime's own views. A reader computes them from the tables alone
+  and reads no view but the two that are signed declarations, not
+  computations: `_dai_seat_rules` (which table is seated, by which column)
+  and `_dai_author_rules`. The equivocated ids come from `_dai_batch.covers`,
+  not the trigger-kept `_dai_covers`.*
+- *`result.json` says `"admitted": true` on such a vector, required by
+  `schema.json`, so a reader that finds the flag and no admission of its own
+  fails rather than skipping.*
+- *One schema for the session vectors: a session profile, one seated table
+  `moves` (`seat=seat`), no author roles, the close rule `any`. Two fixed
+  keys as now, Ada the creator and Bo the joiner.*
+- *Five vectors, each built so a reader without its change disagrees, and
+  each run so, with that change held out of both readers and restored, as
+  `436a972` did for unsigned:*
+  1. *`session-creator-by-seq` (D158, F1's shape): Ada's second seat row
+     naming Bo's confirmed seat is not the creator's, so her move for that
+     seat is not admitted. Held out: any seat row of the creator's names her seat.*
+  2. *`session-equivocation` (D160): Ada signs two headers over one
+     `(moves, seq)` with different rows, one on each copy. Reported
+     `AUTHOR_EQUIVOCATED` once, both headers kept, the row at that id
+     admitted on neither copy. Held out: no report, and each copy admits its own.*
+  3. *`session-row-malformed` (D159): a batch that signed a row whose
+     parents are not the one shape (a JSON array of at most the cap of
+     `hex32:seq` strings, a safe integer seq). `ROW_MALFORMED`, and none of
+     that batch's rows taken. Held out: the rows taken.*
+  4. *`session-close-no-frontier` (D151): Ada closes; her own later move is
+     late, and Bo's move written after the close is admitted. Held out: a
+     close makes every author's later rows late.*
+  5. *`session-second-confirm` (D165): Ada confirms Bo's seat on one copy and
+     the same seat to another copy on the other. Reported
+     `AUTHOR_EQUIVOCATED` in Ada's name, the seat voided, Bo's move admitted
+     on neither. Held out: the lowest seq's confirm holds.*
+- *A relabeled header (D161) is the sixth change the handoff named. What it
+  needs is the verdict carrying the signed list, so it sits with the
+  signature, D111's side, and is not in these five.*
+
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
-*Status: **built 29 September**, at the start of the readers' session; lands
-on its CI verdict. Red first: `tests/doc-sentences.spec.ts` (the key that
+*Status: **landed** 29 September: `daa03a9`, run 36571556289 read green
+(Chromium+node 1389, WebKit 268 + 271 + 235, checks, Firefox 768, a reading;
+no failures). Built at the start of the readers' session. Red first: `tests/doc-sentences.spec.ts` (the key that
 could not be read, its sentence exactly, in `#doc-note`, visible and topmost)
 and `scripts/check-sentences.mjs` on the tree, which named nineteen sites and
 the chooser's `refusedByShell` not yet taken out; both run failing on their

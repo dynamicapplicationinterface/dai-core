@@ -1,0 +1,38 @@
+{
+  "what": "Ada signs two headers over one (moves, seq) with different rows, one on each copy. Each merge reports AUTHOR_EQUIVOCATED once and refuses the other row at that id; both headers are kept, and the row at that id is admitted on neither copy (D160).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:4"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:4"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

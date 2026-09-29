@@ -1,0 +1,29 @@
+{
+  "what": "Ada signs a second seat row naming the seat she confirmed Bo in, and plays that seat. The session id names one row by (author, seq), so that row is not the creator's: Bo still holds the seat, her move is not admitted and is reported SEAT_NOT_HELD (D158).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}
