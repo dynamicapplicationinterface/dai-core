@@ -79,15 +79,15 @@ test.describe("the write rules are refused out loud", () => {
     await page.locator("#card-open").click();
 
     // The host says it, not the frame, and it says which failure it was.
-    await expect(page.locator("#report")).toContainText(/MERGE_MODULE_MISMATCH/, {
+    await expect(page.locator("#doc-note")).toContainText(/MERGE_MODULE_MISMATCH/, {
       timeout: 60_000,
     });
     // Both digests, so "which two things disagree" is answerable from a
     // screenshot rather than from a debugger.
-    await expect(page.locator("#report")).toContainText(/got [0-9a-f]{16} expected [0-9a-f]{16}/);
+    await expect(page.locator("#doc-note")).toContainText(/got [0-9a-f]{16} expected [0-9a-f]{16}/);
     // And it is a sentence about what the person can and cannot do, not only a
     // code: the document opens and reads, it just cannot be changed.
-    await expect(page.locator("#report")).toContainText(/read here but not changed/i);
+    await expect(page.locator("#doc-note")).toContainText(/read here but not changed/i);
   });
 
   test("a document that needs no rules is unaffected", async ({ page, context }) => {
@@ -121,7 +121,7 @@ test.describe("the write rules are refused out loud", () => {
     await page.locator("#card-open").click();
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
 
-    await expect(page.locator("#report")).not.toContainText(/MERGE_MODULE/);
-    await expect(page.locator("#report")).not.toContainText(/not be changed/i);
+    await expect(page.locator("#doc-note")).not.toContainText(/MERGE_MODULE/);
+    await expect(page.locator("#doc-note")).not.toContainText(/not be changed/i);
   });
 });

@@ -32,11 +32,11 @@ async function captureClipboard(page: Page): Promise<() => Promise<string | unde
   return () => page.evaluate(() => (window as unknown as { __copied?: string }).__copied);
 }
 
-/** Clears the report and the captured clipboard, so a second share is awaited on its own. */
+/** Clears the sentence over the document and the captured clipboard, so a second share is awaited on its own. */
 async function resetShare(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const report = document.getElementById("report");
-    if (report) report.textContent = "";
+    const note = document.getElementById("doc-note");
+    if (note) note.textContent = "";
     (window as unknown as { __copied?: string }).__copied = undefined;
   });
 }
@@ -92,7 +92,7 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 30_000 });
     const link = (await copied())!;
     expect(new URL(link).searchParams.get("ground")).toBe("rgb(90, 20, 60)");
     expect(new URL(link).hash).toMatch(/^#a=/);
@@ -141,7 +141,7 @@ test.describe("sending a document", () => {
     await expect(page.locator("#send-sheet")).toBeVisible();
     await expect(page.locator("#send-sub")).toContainText("Sealed with a key");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 30_000 });
     const link = (await copied())!;
 
     // A document that would fit inside its link goes through the store all
@@ -178,7 +178,7 @@ test.describe("sending a document", () => {
     await page.click("#send");
     await expect(page.locator("#send-sheet")).toBeVisible();
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 30_000 });
     const link = (await copied())!;
     // No card, then; the link goes rather than not at all.
     expect(link).toMatch(/^http:\/\/localhost:5175\/(\?ground=[^#]*)?#a=/);
@@ -242,7 +242,7 @@ test.describe("sending a document", () => {
     await expect(page.locator("#send-sub")).toContainText("Sealed with a key");
     await expect(page.locator("#send-preview")).toHaveCount(0);
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 60_000 });
     const link = (await copied())!;
     const match = /\/d\/([0-9a-f]{64})#h=([0-9a-f]{64})&k=([A-Za-z0-9_-]{43})$/.exec(link);
     expect(match, link).toBeTruthy();
@@ -306,7 +306,7 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/invite link could not be made/i, { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toContainText(/invite link could not be made/i, { timeout: 60_000 });
     // And no keyless file was handed over in place of the link.
     await page.waitForTimeout(1000);
     expect(exported, "a keyless file was exported for a replicated app").toBe(false);
@@ -330,7 +330,7 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Sharing the file instead/, { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Sharing the file instead/, { timeout: 60_000 });
     expect((await download).suggestedFilename()).toMatch(/\.dai\.html$/);
   });
 });
@@ -399,7 +399,7 @@ test.describe("what a share carries", () => {
     await page.locator("#send-with-data").check();
     await expect(page.locator("#send-note")).toContainText("with what is in it now");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 30_000 });
     const withData = (await copied())!;
 
     // Then a blank copy.
@@ -412,7 +412,7 @@ test.describe("what a share carries", () => {
     await expect(page.locator("#send-with-data")).not.toBeChecked();
     await expect(page.locator("#send-note")).toContainText("none of your entries");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied/, { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 30_000 });
     const blank = (await copied())!;
     expect(blank).not.toBe(withData);
 

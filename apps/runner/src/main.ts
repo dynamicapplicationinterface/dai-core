@@ -1209,6 +1209,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
   markStep("opening this device's own copy");
   slot.classList.add("busy");
   say(`Loading ${item.appName}…`);
+  let openedEmpty = "";
 
   try {
     const file = new File([item.html], `${item.appName}.dai.html`, { type: "text/html" });
@@ -1251,10 +1252,10 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
        * the count was read before or after that write.
        */
       if (item.wrote === true) {
-        say(
+        // Said over the document once it is mounted, which is who it is for (D169).
+        openedEmpty =
           `${item.appName} opened empty: what this device had saved for it isn't here any more. ` +
-            `If you have a link to it, or another copy, open that here and the data comes back with it.`,
-        );
+          `If you have a link to it, or another copy, open that here and the data comes back with it.`;
       }
     }
     // Permanent, on purpose (D22): which database a reopen mounts as its own
@@ -1341,6 +1342,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       return;
     }
     await mount(loaded);
+    if (openedEmpty) tellOverDocument(openedEmpty);
     /*
      * The cover is never a dead end, here either. `mount` clears the launch
      * guard, so it is armed again after it: the merge can wait on a frame that
@@ -1506,6 +1508,8 @@ async function mount(cartridge: Cartridge): Promise<void> {
   framed = cartridge;
   mountNow = null;
   mountedNonce = null;
+  // A sentence over a document was about that document: the next starts clear (D169).
+  tellOverDocument("");
   cartridgeFrame.src = mountedUrl;
 
   // The launch screen holds — the document's icon and name on a still
@@ -2169,8 +2173,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // A document is already open: merge the arriving copy straight into it.
         const report = await mergeSiblingInto(incomingData);
         slot.classList.remove("busy");
-        // A line, not a card: it says what happened and interrupts nothing.
-        say(describeMerge(report), Boolean(report.refused));
+        // A line, not a card: it says what happened and interrupts nothing,
+        // over the document it merged into (D169).
+        tellOverDocument(describeMerge(report), Boolean(report.refused));
         if (!report.refused) return;
         // A refusal is a decision after all, and falls through to the card.
       } else {
@@ -2304,7 +2309,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
               }
               const report = await mergeSiblingInto(incomingData);
               hideCard();
-              say(describeMerge(report), Boolean(report.refused));
+              // Into the document open under the card, so said over it (D169).
+              if (mountedNonce) tellOverDocument(describeMerge(report), Boolean(report.refused));
+              else say(describeMerge(report), Boolean(report.refused));
               /*
                * The choice, recorded — and only when the merge worked.
                *
@@ -2679,7 +2686,7 @@ async function exportContainer(): Promise<void> {
   try {
     leaving = await leavingBytes();
   } catch (error) {
-    say((error as Error).message, true);
+    tellOverDocument((error as Error).message, true);
     return;
   }
   const { doc, mount, db: opfsDb } = leaving;
@@ -2845,7 +2852,7 @@ function recordTimings(timings?: { phase: string; at: number }[]): void {
   (window as unknown as { __daiHostTimings?: unknown }).__daiHostTimings = lastHostPhases;
 
   if (new URLSearchParams(location.search).has("timing")) {
-    say(
+    tellOverDocument(
       `Usable in ${Math.round(host + lastOpenMs)} ms — ` +
         `host ${Math.round(host)} ms (` +
         lastHostPhases.map((entry) => `${entry.phase} ${Math.round(entry.at)}`).join(", ") +
@@ -2898,6 +2905,24 @@ function savedAtOf(container: { manifest: Record<string, unknown> }): string | u
 }
 
 /** Whether a message came from the container this runner is showing. */
+/**
+ * The shell refused to run the document, and the frame comes down.
+ *
+ * The one sentence from the frame's messages that is the chooser's: after it
+ * nothing is open, so `#report` is what a person sees, and any sentence left
+ * over the document goes with it (D169).
+ */
+function refusedByShell(refusal: { message?: string; detail?: string }): void {
+  tellOverDocument("");
+  say(
+    `${refusal.message ?? "This document could not be opened."}${refusal.detail ? ` ${refusal.detail}` : ""} ` +
+      `Nothing has been changed or lost.`,
+    true,
+  );
+  window.clearTimeout(bootingGuard);
+  document.body.classList.remove("loaded", "booting");
+}
+
 function fromMountedContainer(event: MessageEvent, data: { sessionNonce?: string }): boolean {
   if (event.source !== cartridgeFrame.contentWindow) return false;
   return Boolean(mountedNonce) && data.sessionNonce === mountedNonce;
@@ -3028,9 +3053,7 @@ window.addEventListener("message", (event) => {
       const early = await decided;
       if (mountNow !== thisMount) return;
       if ("refused" in early && early.refused === NEEDS_UPDATE) {
-        say(NEEDS_UPDATE);
-        // Over the document too: the chooser's report is under it.
-        tellOverDocument(NEEDS_UPDATE);
+        tellOverDocument(NEEDS_UPDATE, true);
         answerMount(thisMount, event.source, { type: TO_DOCUMENT.WRITE_RULES, readOnly: NEEDS_UPDATE });
         return;
       }
@@ -3053,7 +3076,7 @@ window.addEventListener("message", (event) => {
       // Said about the document on screen, or not at all (D167).
       if (mountNow !== thisMount) return;
       if (!source) {
-        say(
+        tellOverDocument(
           "This document can be read here but not changed: the part of the app that " +
             "writes its shared tables could not be loaded. Reload the page to try again.",
           true,
@@ -3063,7 +3086,7 @@ window.addEventListener("message", (event) => {
       const decision = await decided;
       if (mountNow !== thisMount) return;
       if ("refused" in decision) {
-        say(decision.refused, true);
+        tellOverDocument(decision.refused, true);
         return;
       }
       const replica = decision.me.id;
@@ -3145,16 +3168,10 @@ window.addEventListener("message", (event) => {
        * down under an application that then finishes mounting is the one
        * outcome worse than waiting.
        */
-      say(`${refusal.message ?? "The application is taking a long time to start."} It may still finish.`);
+      tellOverDocument(`${refusal.message ?? "The application is taking a long time to start."} It may still finish.`);
       return;
     }
-    say(
-      `${refusal.message ?? "This document could not be opened."}${refusal.detail ? ` ${refusal.detail}` : ""} ` +
-        `Nothing has been changed or lost.`,
-      true,
-    );
-    window.clearTimeout(bootingGuard);
-    document.body.classList.remove("loaded", "booting");
+    refusedByShell(refusal);
   } else if (data.type === TO_HOST.GROUND) {
     // The colour at the top edge of the application, measured by it once it
     // had painted, for the strip above it that only this page can colour.
@@ -3209,7 +3226,7 @@ window.addEventListener("message", (event) => {
     if (!fromMountedContainer(event, data)) return;
     const why = String(data.why ?? "unknown");
     const detail = typeof data.detail === "string" ? data.detail : "";
-    say(
+    tellOverDocument(
       `This document can be read here but not changed: the app could not load the part ` +
         `that writes its shared tables (${why}${detail ? ` — ${detail}` : ""}).`,
       true,
@@ -3237,7 +3254,7 @@ window.addEventListener("message", (event) => {
     window.clearTimeout(savedFor);
     if (state === "saved") savedFor = window.setTimeout(() => { el.hidden = true; }, 3000);
     if (state === "failed") {
-      say(
+      tellOverDocument(
         `This document could not be saved on this device${typeof data.error === "string" ? ` (${data.error})` : ""}. ` +
           `Your changes are still here; save a copy from the menu to keep them.`,
         true,
@@ -3994,16 +4011,26 @@ async function finishMerge(applied: boolean): Promise<void> {
     document.body.classList.remove("booting");
     if (!applied) reloadGate = "not taken: the arriving move was not applied";
   }
-  if (!applied) tellOverDocument(MOVE_NOT_APPLIED);
+  if (!applied) tellOverDocument(MOVE_NOT_APPLIED, true);
   void showArrival();
 }
 
-/** One sentence over an open document, where the chooser's report cannot be seen. */
-function tellOverDocument(sentence: string): void {
+/**
+ * One sentence over an open document, where the chooser's report cannot be seen.
+ *
+ * While a document is open, everything the host has for the person is said
+ * here (D169): `say` writes to `#report`, which the document covers, and a
+ * refusal nobody can see is a refusal nobody understands. Read as `say` is: an
+ * error is red, and an empty sentence takes the row away.
+ * `scripts/check-sentences.mjs` fails a `say(...)` anywhere not named the
+ * chooser's.
+ */
+function tellOverDocument(sentence: string, isError = false): void {
   const note = document.getElementById("doc-note");
   if (!note) return;
   note.textContent = sentence;
-  note.hidden = false;
+  note.classList.toggle("error", isError);
+  note.hidden = sentence === "";
 }
 
 async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<MergeReport> {
@@ -4278,7 +4305,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
     retire.disabled = false;
     retire.textContent = retireLabel(left);
     const onlyCards = retired > 0 && cards === retired;
-    say(
+    tellOverDocument(
       retired > 0
         ? (onlyCards
             ? `${retired === 1 ? "The card is gone from that link" : `The cards are gone from those ${retired} links`}. The link still opens: the app is inside it.`
@@ -4392,14 +4419,14 @@ async function sendDocument(inviteSession?: string): Promise<void> {
        * equal carrier of a snapshot, and going ahead with it is no loss.
        */
       if (loaded && declaresReplication(loaded.manifest)) {
-        say(
+        tellOverDocument(
           `${why} The invite link could not be made — try again in a moment. ` +
             `To send this app as a file instead, use "Save a copy…".`,
           true,
         );
         return;
       }
-      say(
+      tellOverDocument(
         `${why} Sharing the file instead — the other person will need to open it at ${OPENER}.`,
         true,
       );
@@ -4417,7 +4444,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
     if (canShare) {
       try {
         await navigator.share({ title: name, url: made.link });
-        say(made.uploaded ? "Shared. The store holds a sealed copy only the link can open." : "Shared.");
+        tellOverDocument(made.uploaded ? "Shared. The store holds a sealed copy only the link can open." : "Shared.");
         return;
       } catch (error) {
         // Dismissed is not failed. Anything else falls through to the clipboard.
@@ -4426,13 +4453,13 @@ async function sendDocument(inviteSession?: string): Promise<void> {
     }
     try {
       await navigator.clipboard.writeText(made.link);
-      say(
+      tellOverDocument(
         made.uploaded
           ? "Link copied. The store holds a sealed copy only the link can open."
           : `Link copied — ${(made.link.length / 1024).toFixed(1)} KB. Anyone who opens it gets this document.`,
       );
     } catch {
-      say(made.link);
+      tellOverDocument(made.link);
     }
   };
 }
@@ -4508,13 +4535,13 @@ ${bundle}`;
 
   try {
     await navigator.clipboard.writeText(message);
-    say(
+    tellOverDocument(
       `Copied the source of this app, with instructions. Paste it into your assistant and say ` +
         `what you want changed — the new version will replace this one and keep your data.`,
     );
   } catch {
     // No clipboard: the text is the point, so it goes where it can be selected.
-    say(message);
+    tellOverDocument(message);
   }
 }
 
@@ -5052,7 +5079,7 @@ async function startMailboxIfPossible(): Promise<void> {
     // Replicated, but no key yet: this copy came by file and has not been
     // shared. Sharing a link (or opening one) is what gives it a mailbox, and
     // the person is told rather than left wondering.
-    say("Updates from the other copy arrive when you invite someone, or open a shared link.");
+    tellOverDocument("Updates from the other copy arrive when you invite someone, or open a shared link.");
     return;
   }
   const sessionKeys = await sessionKeysFor(uuid);
@@ -5088,7 +5115,7 @@ async function startMailboxIfPossible(): Promise<void> {
       },
       // A pulled move is stored on this device before the cursor passes it.
       persist: flushDocument,
-      onNote: (message) => say(message),
+      onNote: (message) => tellOverDocument(message),
     });
   }
 }

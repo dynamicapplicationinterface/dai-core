@@ -407,10 +407,16 @@
         padding: calc(env(safe-area-inset-top) + 48px) 16px 10px;
         font-size: 13px;
         line-height: 1.35;
+        color: var(--text);
+        background: var(--surface);
+        border-bottom: 1px solid var(--line-strong);
+        cursor: pointer;
+      }
+      /* A refusal, or anything that did not happen, in the refusal's color. */
+      #doc-note.error {
         color: var(--bad);
         background: color-mix(in srgb, var(--bad) 12%, var(--surface));
-        border-bottom: 1px solid color-mix(in srgb, var(--bad) 28%, transparent);
-        cursor: pointer;
+        border-bottom-color: color-mix(in srgb, var(--bad) 28%, transparent);
       }
       #doc-note[hidden] { display: none; }
 
@@ -1196,8 +1202,9 @@
     </header>
 
     <!--
-      One sentence over an open document, when something it asked for did not
-      happen (a move that arrived and was not added). Tap to dismiss.
+      One sentence over an open document: everything the host has for someone
+      looking at one (D169; the chooser's #report is under it). A refusal, or
+      something asked for that did not happen, is red. Tap to dismiss.
 
       Its own row under the bar rather than a pill inside it: in the bar it
       wrapped past the bar’s height and its translucent ground let the

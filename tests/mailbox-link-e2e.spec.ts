@@ -308,7 +308,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await page.click("#more");
     await page.click("#send");
     await page.click("#send-go");
-    await expect(page.locator("#report")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
+    await expect(page.locator("#doc-note")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
     const link = await page.evaluate(() => (window as any).__copied as string | undefined);
     expect(link, "the share produced a link, not a file").toBeTruthy();
     return { appFrame, link: link! };
@@ -487,7 +487,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageA.click("#more");
     await pageA.click("#send");
     await pageA.click("#send-go");
-    await expect(pageA.locator("#report")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
+    await expect(pageA.locator("#doc-note")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
     const link = await pageA.evaluate(() => (window as any).__copied as string | undefined);
     expect(link, "the share produced a link, not a file").toBeTruthy();
     expect(new URL(link!).pathname).toMatch(/^\/d\/[0-9a-f]{64}$/);

@@ -390,7 +390,7 @@ test.describe("D117: an invite's key survives the iOS relaunch", () => {
           holder.evaluate(() =>
             (window as any).__runner.mailboxPolls !== undefined
               ? "mailbox"
-              : (document.getElementById("report")?.textContent ?? "").includes("arrive when you invite someone")
+              : (document.getElementById("doc-note")?.textContent ?? "").includes("arrive when you invite someone")
                 ? "no key"
                 : "undecided",
           ),

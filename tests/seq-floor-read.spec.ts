@@ -66,7 +66,7 @@ test.describe("a sequence floor that does not answer", () => {
     await page.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
     await expect.poll(() => saves(page), { timeout: 30_000, message: "the document saved" }).toBeGreaterThan(0);
-    await expect(page.locator("#report")).not.toContainText("can be read here but not changed");
+    await expect(page.locator("#doc-note")).not.toContainText("can be read here but not changed");
     await context.close();
   });
 
@@ -79,8 +79,9 @@ test.describe("a sequence floor that does not answer", () => {
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", container);
     await page.locator("#card-open").click({ timeout: 60_000 });
-    await expect(page.locator("#report"), "said, not silently read-only").toContainText(
-      "could not read how far it has written",
+    await expect(page.locator("#doc-note"), "said over the document, not silently read-only").toHaveText(
+      "This document can be read here but not changed: this device could not read how far it " +
+        "has written it. Reload the page to try again.",
       { timeout: 20_000 },
     );
     expect(await saves(page), "no save written").toBe(0);

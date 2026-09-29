@@ -145,7 +145,7 @@ test.describe("batch format version 2: what an arriving copy is mounted as", () 
         db.run("UPDATE _dai_batch SET version = ? WHERE author = ?", [version, author]);
       });
       const { page, close } = await openOnAFreshDevice(browser, file);
-      await expect(page.locator("#report")).toContainText(SENTENCE, { timeout: 30_000 });
+      await expect(page.locator("#doc-note")).toContainText(SENTENCE, { timeout: 30_000 });
       expect(await writable(page), "the copy cannot be written").toBe(false);
       // What is here is kept as it came: a copy can still be saved out, and the
       // export flushes first, so once it lands any save the frame had pending
@@ -155,8 +155,7 @@ test.describe("batch format version 2: what an arriving copy is mounted as", () 
       await page.evaluate(() => (window as any).__runner.exportContainer());
       await download;
       expect(await page.evaluate(() => Number((window as any).__runner.saves)), "a read-only copy asks for no save").toBe(0);
-      await expect(page.locator("#report")).toHaveText(`${SENTENCE}.`);
-      // Where a person sees it: over the document, not under it.
+      // Where a person sees it: over the document, not under it (D169).
       await expect(page.locator("#doc-note")).toBeVisible();
       await expect(page.locator("#doc-note")).toHaveText(`${SENTENCE}.`);
       await expect(page.locator("#save-state")).toBeHidden();

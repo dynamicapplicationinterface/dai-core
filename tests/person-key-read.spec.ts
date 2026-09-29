@@ -103,8 +103,8 @@ test.describe("a person key that cannot be read", () => {
     await page.setInputFiles("#file", container);
     await page.locator("#card-open").click({ timeout: 60_000 });
 
-    await expect(page.locator("#report"), "the page says why nothing can be changed").toContainText(
-      "can be read here but not changed",
+    await expect(page.locator("#doc-note"), "the page says why nothing can be changed, over the document").toHaveText(
+      "This document can be read here but not changed: this device's key could not be read. Reload the page to try again.",
       { timeout: 30_000 },
     );
     expect(await hostAuthor(page), "no key was made in place of the one that could not be read").toBeNull();

@@ -4436,8 +4436,15 @@ finds no write control on screen.
 
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
-*Status: **ruled 29 September, not built**; built at the start or the end of
-the readers' session, whichever leaves the seam cleaner. A real hole on the
+*Status: **built 29 September**, at the start of the readers' session; lands
+on its CI verdict. Red first: `tests/doc-sentences.spec.ts` (the key that
+could not be read, its sentence exactly, in `#doc-note`, visible and topmost)
+and `scripts/check-sentences.mjs` on the tree, which named nineteen sites and
+the chooser's `refusedByShell` not yet taken out; both run failing on their
+subjects. Found building it: `mount()` never cleared the row (only "Remove"
+did), so a sentence over one document stayed over the next opened on the
+same page; it clears now, and "opened empty" is said once the mount starts.
+A real hole on the
 walk: a sentence nobody can see is a refusal nobody understands. Filed 28
 September, seen while building D108 and read on the screen.*
 
@@ -4451,6 +4458,39 @@ names-check family (beside `scripts/check-names.mjs`) that fails any
 existing "can be read here but not changed" sentences (a page test that
 reads `#doc-note`, and the check run against the tree before the sites move,
 failing by name).*
+
+*Decided before code, 29 September (how the ruling is built):*
+
+- *What the document path is, for a check that reads source: every
+  top-level block of `apps/runner/src/main.ts` that says anything is either
+  named as the chooser's, each name with its reason, or it is on the document
+  path, and a `say(...)` there fails. So a new function is on the document
+  path until someone names it the chooser's, and a name that no longer holds a
+  `say(...)` fails too. `scripts/check-sentences.mjs`, in the typecheck chain,
+  `--scan <file>` for its own test.*
+- *The chooser's: the arrival (`ingest`, `refuseArrival`, `launchFromLibrary`,
+  `openFromUrl`, `openFromLink`, `openFromReference`, `start`), `eject`, the
+  card's `namePublisher`, "Remove from this device" (the document is gone),
+  and the shell's refusal, taken out of the message listener into a function
+  of its own because it takes the frame down. `ingest` is mixed: its two merge
+  lines said into a mounted document go over it, and the check cannot see
+  that branch, which its reason says.*
+- *Moved over the document, found by that rule: the message listener (the
+  write-rules refusals, the key and floor that could not be read, the slow
+  start, the failed save), `sendDocument` (shared, link copied, links
+  stopped, an invite that could not be made), `exportContainer`,
+  `copySourceForAssistant`, `startMailboxIfPossible` (its notes and "Updates
+  from the other copy arrive..."), and `recordTimings`'s `?timing` line.
+  About twenty sites, where the filing counted four.*
+- *`tellOverDocument(sentence, isError = false)`, as `say` reads: an error is
+  the red row it is now, anything else the same row in the plain color. An
+  empty sentence hides the row. It stays until tapped or replaced, as it does
+  now; nothing times it out, because a sentence that leaves on a timer is
+  one a slow reader never sees.*
+- *The specs that read these sentences on `#report` move to `#doc-note`, with
+  the text asserted exactly where they matched by containment, and so do
+  their `not.toContainText` lines: on `#report` those would pass for the
+  wrong reason once nothing is said there.*
 
 With a document open, `say()` writes to
 `#report`, which is the chooser's line and sits under the document, so a

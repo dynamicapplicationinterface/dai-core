@@ -577,6 +577,16 @@
       "tests/doc-note.spec.ts",
       "tests/fixtures.ts"
     ],
+    "tests/doc-sentences.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/doc-sentences.spec.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tsup.config.ts"
+    ],
     "tests/document-icon.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/icon.svg",
@@ -3163,6 +3173,10 @@
       "tests/sender.spec.ts",
       "tsup.config.ts",
       "website/"
+    ],
+    "tests/sentences-check.spec.ts": [
+      "scripts/check-sentences.mjs",
+      "tests/sentences-check.spec.ts"
     ],
     "tests/seq-floor-read.spec.ts": [
       "apps/runner/",
