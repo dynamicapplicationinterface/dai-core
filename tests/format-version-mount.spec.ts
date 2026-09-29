@@ -117,7 +117,6 @@ test.describe("batch format version 2: what an arriving copy is mounted as", () 
   test.slow();
 
   test("an arriving database is merged, not mounted: a row nobody signed never reaches the copy, and a signed one does (D133)", async ({ browser }) => {
-    test.fail(true, "step 6: a whole file is mounted as it arrived, and verifies nothing");
     const mal = rnd();
     let ada: { author: Uint8Array; session: Uint8Array } | undefined;
     const file = await chessWith(async (db, document) => {

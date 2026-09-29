@@ -1201,6 +1201,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   let mountFloor = 0;
   /** The document these rows belong to, as the host handed it with the write rules: signed into every batch header. */
   let mountDocument = "";
+  /**
+   * Whether the database this mount was handed arrived rather than came from
+   * this device's own store, as the host said it with the write rules: merged
+   * into an empty copy at open, never mounted as it came (step 6, D133).
+   */
+  let mountArriving = false;
   const heldSeq = (rows: Any): number => Number(rows.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
@@ -1409,6 +1415,78 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       db.exec(sql, { bind: params.slice() });
     },
   });
+
+  /*
+   * An arriving database is merged, not mounted (step 6; D133's load path).
+   *
+   * A file, a link carrying data, or a take is somebody else's bytes, and a
+   * whole file taken as it is verifies nothing: a row nobody signed would be
+   * read as if the merge had admitted it. So the arrival, already reconciled
+   * with this build's schema, is the sibling, and the application gets a fresh
+   * copy of that schema with the local tables copied as they are and the
+   * replicated ones filled by the same verified merge a sibling gets. Only a
+   * mount that can write is rebuilt: without adopted rules there is no merge
+   * to run, and such a mount is read-only and saves nothing.
+   */
+  const mergedArrival = async (arrived: Any): Promise<Any> => {
+    if (!mountArriving || !mergeModule || seed.byteLength === 0) return arrived;
+    const merge = mergeModule as Any;
+    const from = frameRows(arrived);
+    const tables = merge.mergeTablesOf(from) as string[];
+    const replicated = new Set(tables);
+    const api2 = await initSqlite();
+    const fresh = newDatabase(api2);
+    try {
+      const pageSize = Number(from.all("PRAGMA page_size")[0]?.page_size) || DEFAULT_PAGE_SIZE;
+      fresh.exec("PRAGMA page_size=" + pageSize);
+      // Tables first, then what reads them, in the order they were made.
+      const order: Record<string, number> = { table: 0, index: 1, view: 2, trigger: 3 };
+      const statements = from
+        .all("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
+        .sort((a: Any, b: Any) => (order[a.type] ?? 4) - (order[b.type] ?? 4));
+      const to = frameRows(fresh);
+      fresh.exec("BEGIN");
+      for (const statement of statements) fresh.exec(String(statement.sql));
+      for (const statement of statements) {
+        const name = String(statement.name);
+        if (statement.type !== "table" || replicated.has(name)) continue;
+        // `_dai_meta` and `_dai_replica` are this copy's own, not rows: the
+        // schema stamp, and the id cache the host's id is settled over at
+        // mount (binding rule 2), as it is on any open.
+        if (name.startsWith("_dai_") && name !== "_dai_meta" && name !== "_dai_replica") continue;
+        const columns = from.all(`SELECT name FROM pragma_table_info('${name.replace(/'/g, "''")}')`).map((c: Any) => String(c.name));
+        if (columns.length === 0) continue;
+        const quoted = columns.map((c: string) => `"${c.replace(/"/g, '""')}"`).join(", ");
+        const insert = `INSERT INTO "${name.replace(/"/g, '""')}" (${quoted}) VALUES (${columns.map(() => "?").join(", ")})`;
+        for (const row of from.all(`SELECT ${quoted} FROM "${name.replace(/"/g, '""')}"`)) {
+          to.run(insert, columns.map((c: string) => row[c]));
+        }
+      }
+      fresh.exec("COMMIT");
+      // Verified outside the transaction, as every merge is (ruling #3).
+      const verdicts = await merge.verifyBatches(from, tables, mountDocument);
+      fresh.exec("BEGIN");
+      const report = merge.mergeVerified(to, from, {
+        level: 1,
+        document: mountDocument,
+        author: mountReplica ?? undefined,
+        verdicts,
+      });
+      if (report.refused) {
+        fresh.exec("ROLLBACK");
+        console.info(`dai: the arriving copy could not be merged (${report.refused}); only its local tables were kept`);
+      } else {
+        fresh.exec("COMMIT");
+        noteRefusedBatches(report);
+      }
+    } catch (error) {
+      fresh.close();
+      arrived.close();
+      throw error;
+    }
+    arrived.close();
+    return fresh;
+  };
 
   /**
    * The batch of rows this copy authored above `sinceSeq`, for the mailbox.
@@ -2411,6 +2489,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       mountReplica = data.replica instanceof Uint8Array && data.replica.length === 16 ? data.replica : null;
       mountFloor = Number.isSafeInteger(data.seqFloor) && data.seqFloor > 0 ? data.seqFloor : 0;
       mountDocument = typeof data.document === "string" ? data.document : "";
+      mountArriving = data.arriving === true;
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
       // A new author for a document this device wrote before (docs/identity.md,
       // "Loss"): held on window.dai for a kit that loads after, and fired for one
@@ -2683,25 +2762,26 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       (expectsRules ? awaitRules() : Promise.resolve())
         .then(() => openDatabase(options))
         .then((db: Any) => {
-        if (!declaresSchema) {
+        // An arrival is merged into a fresh copy before anything is handed out,
+        // and that copy is saved at once, so this device's store only ever
+        // holds what this frame produced (D133's load path).
+        const opened = db;
+        const live = (db: Any): Any => {
           // Watched first, so the seed rows a first open inserts are saved.
           watched(db);
           runDocumentSql(db);
           markSetupDone(db);
+          if (db !== opened) scheduleAutosave(db);
           return db;
-        }
+        };
+        if (!declaresSchema) return mergedArrival(db).then(live);
         // Closed before the error propagates: an application asking for a
         // handle to data it cannot account for does not get one, which is the
         // only protection left at this point. Reconciled first, then the
         // schema: a migration alters what is there, and CREATE IF NOT EXISTS
         // then fills in what is not.
         return reconcileSchema(db).then(
-          () => {
-            watched(db);
-            runDocumentSql(db);
-            markSetupDone(db);
-            return db;
-          },
+          () => mergedArrival(db).then(live),
           (error: Error) => {
             db.close();
             throw error;
@@ -3151,7 +3231,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown; newAuthor: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown; newAuthor: unknown; arriving: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -3160,7 +3240,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true, arriving: rules.arriving === true },
     "*",
   );
 }
@@ -3606,10 +3686,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown; newAuthor?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown; newAuthor?: unknown; arriving?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor };
+      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor, arriving: pushed.arriving };
       if (listeningWindow) deliverRules();
       return;
     }

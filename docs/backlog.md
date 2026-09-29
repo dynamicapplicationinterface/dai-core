@@ -4419,7 +4419,9 @@ plaintext probe no ciphertext spells by chance: a long, distinctive move text
 
 #### D167 — A save landing after the next document opens puts the old one back as `loaded`, and the next document's code gets the old one's headers signed
 
-*Status: **built, not landed** (29 September): the mount state and the three
+*Status: **landed** 29 September: `e80ddd3`, run 36507399817 read green
+(Chromium+node 1385, WebKit 267 + 271 + 235, checks, Firefox 767, a reading;
+no flakes, `sign-scope:27` among them). Built as: the mount state and the three
 reds below, `tests/mount-order.spec.ts`, and a fourth from the cold read;
 each run red on the host before the fix on Chromium and WebKit and read
 failing on its own subject, then the first three 30 of 30 at five repeats on
@@ -4601,7 +4603,11 @@ yet read.
 
 #### D165 — A confirm the creator signs at a seq she skipped moves a hold
 
-*Status: **built**, `775f168` (pushed; its run not yet read): one confirm per
+*Status: **landed** 29 September, on D167's verdict as ruled: `775f168`'s own
+run (36494406706) was red on the gate for D167 alone (`sign-scope:27`, WebKit),
+and `e80ddd3`, which carries it with D167's fix, read green (run 36507399817:
+Chromium+node 1385, WebKit 267 + 271 + 235, checks, Firefox 767; no flakes).
+Built as `775f168`: one confirm per
 seat per creator. `_dai_voided` holds the seats a creator confirmed to two
 different copies; `_dai_holder` seats nobody there and no longer orders by seq;
 `_dai_contested` (session, seat, voided) is the one reading of "contested"
@@ -5416,6 +5422,49 @@ by `tests/seat-attacks.spec.ts` (the unsigned confirm, and the confirm replayed
 into another session with its batch stripped) and `tests/roster.spec.ts`. Not
 covered: a whole file taken in place is not a merge and verifies nothing, so a
 forged unsigned seat row inside one still counts; that is step 6's load path.*
+
+*Load path built 29 September, below (its commit carries the red flipped:
+`format-version-mount`, "an arriving database is merged, not mounted"); lands
+on its run's verdict.*
+
+**The load path, how it is built (decided 29 September, before code; the rule
+is step 6's decision 7 in the 28 September handoff):**
+
+- **Which databases arrive.** Every mount whose database did not come from
+  this device's own store (`loadDatabaseFromOpfs`) and is not empty: a picked
+  file, a link or store link carrying data, a take, and the library's own copy
+  when the store holds no database for it (an arrival kept before its first
+  save). A resumed copy, and a successor's inherited copy, come from the store
+  and are not verified again. The host decides it per mount, on the cartridge
+  that mount framed (D167), and says so with the write rules (`arriving`); the
+  shell carries it with the rules it holds.
+- **The store holds only what this device's frame wrote.** The take stops
+  writing the arriving bytes to the store before the mount. The merged open
+  saves at once, so a reload finds the merged copy. A page lost in between
+  leaves the held copy as it was, which is the safe direction, and the link
+  that brought the arrival still holds it.
+- **In the frame, at open, before the application gets a handle.** The
+  arriving bytes are opened and reconciled as today (the schema stamp and any
+  migration run on them as on any copy). Then a fresh database is made from
+  their schema (`sqlite_schema`'s statements in order, less SQLite's own),
+  every local table's rows and `_dai_meta` are copied as they are, and the
+  arrival is merged into it through `verifyBatches` and `mergeVerified`, the
+  same pipeline as `mergeSibling`. What the merge refuses is said the way any
+  merge's refusals are (`noteRefusedBatches`); the application only ever sees
+  the merged copy. Local means not in `mergeTablesOf`, not `_dai_%` (other
+  than `_dai_meta` and `_dai_replica`, this copy's own stamp and id cache,
+  which the host's id is settled over at mount as on any open) and not
+  `sqlite_%`. *Found running it:* without `_dai_replica`, a copy of this
+  device's own rows arriving back (removed and received again, or the
+  library's copy) put this device's id into `_dai_replicas` twice, and the
+  page stopped on the constraint.
+- **Only a mount that can write is rebuilt.** Without adopted rules (refused,
+  not delivered, or a read-only mount under D108) there is no verified merge
+  to run. Such a mount shows what arrived, read-only, and this host signs and
+  saves nothing for it, so an unverified row can be read there and goes no
+  further. The update sentence says what is kept.
+- **The red** is `tests/format-version-mount.spec.ts`, "an arriving database
+  is merged, not mounted" (held `test.fail` since `19664d9`).
 
 The code already says unsigned rows stay admissible until `BATCH_UNSIGNED`
 arrives in step 6 (`src/replicated.ts:782-785`, `src/replicated-rows.ts:973-976`).

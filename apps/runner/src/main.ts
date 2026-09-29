@@ -1231,6 +1231,9 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
       loaded = cartridge;
+      // The library's own copy with nothing in the store: an arrival kept
+      // before its first save, so it is merged, not mounted (D133).
+      noteArrived(cartridge);
       /*
        * The library kept the app and the database is gone (D51).
        *
@@ -2517,15 +2520,16 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         );
       }
     } else {
-      // What arrived is the later copy, so it is the one that mounts — and it
-      // is written to this device's storage before the application starts, so
-      // a reload finds the data the person just watched arrive.
+      /*
+       * What arrived is the later copy, so it is the one that mounts: merged
+       * into an empty copy in the frame, never mounted as it came, and saved
+       * by the frame at once (step 6, D133's load path). Its bytes are not
+       * written to this device's store here: the store holds only what this
+       * device's frame produced, so a reload never resumes an unverified
+       * file. A page lost before that save leaves the held copy as it was.
+       */
       loaded = cartridge;
-      const incoming = cartridge.archive["document.sqlite"];
-      if (brought && incoming && incoming.byteLength > 0) {
-        markStep("saving the arriving copy (OPFS)");
-        await saveDatabaseToOpfs(cartridge.manifest.documentUuid, incoming);
-      }
+      noteArrived(cartridge);
     }
 
     // Kept on this device — and said only once it is. Storage can refuse
@@ -3075,6 +3079,8 @@ window.addEventListener("message", (event) => {
         // written, which is what losing a key looks like (docs/identity.md,
         // "Loss"). The kit says so, in its words or the application's.
         newAuthor: mintedThisPage() && wroteBefore,
+        // Its database arrived: merged into an empty copy, not mounted (D133).
+        arriving: arrivedDatabases.has(writing),
       });
     })();
 
@@ -5505,6 +5511,19 @@ let mountNow: Mount | null = null;
 
 /** What `mount()` last put in the frame, until its shell handshakes. */
 let framed: Cartridge | undefined;
+
+/**
+ * Cartridges whose database arrived rather than came from this device's
+ * store: a file, a link with data, a take, or a kept arrival not yet saved.
+ * Their mount is told so with the write rules, and the frame merges the
+ * database into an empty copy instead of mounting it (step 6, D133).
+ */
+const arrivedDatabases = new WeakSet<Cartridge>();
+
+function noteArrived(cartridge: Cartridge): void {
+  const database = cartridge.archive["document.sqlite"];
+  if (database && database.byteLength > 0) arrivedDatabases.add(cartridge);
+}
 
 /** The mount a message came from: the current one, when the message carries its nonce. */
 function mountOf(event: MessageEvent, data: { sessionNonce?: string }): Mount | null {
