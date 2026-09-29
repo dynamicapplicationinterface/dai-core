@@ -4436,11 +4436,23 @@ finds no write control on screen.
 
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
-*Status: open, for a ruling; a real hole on the walk: a sentence nobody can
-see is a refusal nobody understands. Filed 28 September, seen while building
-D108 and read on the screen. **The fix is known: `tellOverDocument`**
-(`apps/runner/src/main.ts`), which D108's sentence already uses; nothing
-needs deriving again.* With a document open, `say()` writes to
+*Status: **ruled 29 September, not built**; built at the start or the end of
+the readers' session, whichever leaves the seam cleaner. A real hole on the
+walk: a sentence nobody can see is a refusal nobody understands. Filed 28
+September, seen while building D108 and read on the screen.*
+
+*Ruled 29 September: while a document is open, every sentence the host has
+for the person goes through `tellOverDocument` (`apps/runner/src/main.ts`,
+`#doc-note`); `#report` belongs to the chooser, and nothing addressed to
+someone looking at a document lands there. The same shape as
+`refuseArrival`: one helper every site calls, and a check in the
+names-check family (beside `scripts/check-names.mjs`) that fails any
+`say(...)` on the document path outside it. Red first, with one of the
+existing "can be read here but not changed" sentences (a page test that
+reads `#doc-note`, and the check run against the tree before the sites move,
+failing by name).*
+
+With a document open, `say()` writes to
 `#report`, which is the chooser's line and sits under the document, so a
 sentence said after the mount is not on screen. D108's update sentence was
 invisible until it also went through `tellOverDocument` (`#doc-note`). The
@@ -4448,10 +4460,9 @@ others said at mount still go only to `#report`: the key that could not be
 read, the floor that could not be read, the write module that did not load
 or was refused (`apps/runner/src/main.ts`, the handshake's write-rules block
 and `TO_HOST.WRITE_RULES_REFUSED`). Each leaves a person looking at a
-document that refuses their writes with no sentence in view. **Proposed, not
-ruled:** every sentence said about the open document goes over it through
-`tellOverDocument` (as well as `say`, which keeps `#report` for the chooser),
-and a page test per sentence reads `#doc-note`.
+document that refuses their writes with no sentence in view. (What was
+proposed at filing, now superseded by the ruling above: `tellOverDocument`
+beside `say`, and a page test per sentence.)
 
 #### D167 — A save landing after the next document opens puts the old one back as `loaded`, and the next document's code gets the old one's headers signed
 
@@ -4646,6 +4657,12 @@ yet read.
 run (36494406706) was red on the gate for D167 alone (`sign-scope:27`, WebKit),
 and `e80ddd3`, which carries it with D167's fix, read green (run 36507399817:
 Chromium+node 1385, WebKit 267 + 271 + 235, checks, Firefox 767; no flakes).
+**The model file's budget raise stands** (ruled 29 September): `BUDGET_BYTES`
+141,386 to 144,370, taken for D165's 157 bytes after every trim, by the spec's
+own process, with the reason written where the number is
+(`tests/model-file-size.spec.ts`). **Step 7 reclaims it:** its rebuild of the
+examples on the kit's seats shrinks what the model file embeds, and the
+budget comes down to the new size in that commit.
 Built as `775f168`: one confirm per
 seat per creator. `_dai_voided` holds the seats a creator confirmed to two
 different copies; `_dai_holder` seats nobody there and no longer orders by seq;
