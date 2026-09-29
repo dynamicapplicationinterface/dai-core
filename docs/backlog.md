@@ -4463,7 +4463,7 @@ Identity step 6, the readers' leveling. Unsigned-everywhere was level already (`
 D111, the readers doing their own signature check, stays the successor and
 is not this.*
 
-*The divergences' rulings (below) built 29 September: the three vectors, the
+*The divergences' rulings (below) **landed** 29 September: `c5f1aa4`, run 36593746511 read green on the gate (Chromium+node 1389, WebKit 268 + 271 + 235, checks, where both readers pass all 28; Firefox cancelled, no tally, a reading). Built: the three vectors, the
 runtime (`_dai_confirmed` reads deleted confirms; `AUTHOR_EQUIVOCATED` filed
 under the lowest revealing header, and not reported for a third conflicting
 header), the Python reader, and the Rust reader levelled by a session given
