@@ -103,7 +103,7 @@ Two headers at one id: equivocation
 
 *27 and 28 September, D160.* Rule: [equivocation](format.md#equivocation),
 [headers kept](format.md#merge-headers-kept),
-[the revealing header](format.md#revealing-160).
+[the revealing header](format.md#revealing-two-headers).
 
 **Problem.** One author can sign two different rows at one id. Picking a
 winner between them trusts arrival order, and two copies that received them
@@ -279,7 +279,7 @@ The order of `refusedBatches`, and where `AUTHOR_EQUIVOCATED` is filed
 
 *29 September, D171.* Rule: [order](format.md#report-order),
 [filed](format.md#equivocated-filed), [third header](format.md#equivocated-third),
-[revealing header](format.md#revealing-165).
+[revealing header](format.md#revealing-two-confirms).
 
 **Problem.** A report two readers emit in different orders is a report that
 cannot be compared, and the batch id a refusal is filed under decides the

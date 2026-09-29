@@ -84,7 +84,8 @@ characters, a colon, and a seq written as a decimal integer from 1 to
 shape; a reader MUST NOT refuse parents for either.
 <a id="parents-malformed"></a>Anything else (not text, not JSON, not an
 array, a longer array, an element that is not such a string, a number, a
-nested array, uppercase hex) is **malformed**.
+nested array, uppercase hex) is **malformed**. A reader MUST check the shape
+before it reads a row's parents for any purpose, not only in a merge.
 
 <a id="parents-not-taken"></a>A merge never takes a malformed row, nor any row
 through a header that signed one (`ROW_MALFORMED`, below).
@@ -213,8 +214,10 @@ header is refused, `BATCH_SIGNATURE_INVALID`, with the author it names.
 
 <a id="verify-complete"></a>**Complete.** Every listed row found exactly once,
 as that author's row in the table listed, and the digest over them the
-header's. <a id="verify-incomplete-kept"></a>An authentic header that is not
-complete is kept, and no row is taken through it.
+header's. A row of the same seq in a table the header does not list is not
+looked for, and does not make the header incomplete.
+<a id="verify-incomplete-kept"></a>An authentic header that is not complete is
+kept, and no row is taken through it.
 
 ## Merge
 
@@ -433,14 +436,14 @@ author per merge, for [equivocation](#equivocation) and [void
 seats](#void) together, when this merge revealed that author signing twice.
 A **revealing header** is:
 
-- <a id="revealing-160"></a>for two headers at one id: a header this merge
-  kept that the local copy did not hold before, which lists a
+- <a id="revealing-two-headers"></a>for two headers at one id: a header this
+  merge kept that the local copy did not hold before, which lists a
   `(table, seq)` of its author that is equivocated after the merge and was
   not before it;
-- <a id="revealing-165"></a>for two confirms of one seat: the header named
-  (`_r_batch`) by a row this merge took that the void rests on, a counting
-  confirm of that seat or the session's creator's seat row, for a seat void
-  after the merge and not before it.
+- <a id="revealing-two-confirms"></a>for two confirms of one seat: the header
+  named (`_r_batch`) by a row this merge took that the void rests on, a
+  counting confirm of that seat or the session's creator's seat row, for a
+  seat void after the merge and not before it.
 
 <a id="equivocated-filed"></a>It is filed under the lowest of that author's
 revealing headers. <a id="equivocated-third"></a>A merge that brings a third

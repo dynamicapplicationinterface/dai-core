@@ -1,6 +1,6 @@
 // What a session document admits, computed from the tables and the headers
 // alone (conformance/merge/README.md, "What a session document admits";
-// docs/identity.md binding rule 5; docs/format.md, Session id and Signed twice).
+// docs/identity.md binding rule 5; docs/format.md#session-id, #equivocation).
 //
 // No view is read but `_dai_seat_rules` and `_dai_author_rules`, declarations of
 // which table is seated by which column and which carries a role. Everything
@@ -28,8 +28,8 @@ pub enum Verdict {
     // After its own author's first close in the session (D151).
     Late,
     // In a table carrying a role (`author=creator` or `author=joiner`), by an
-    // author the role excludes (docs/format.md, "Admitted rows"). "What a
-    // merge reports" names no code for it, so it is silent.
+    // author the role excludes (docs/format.md#admitted-role). The page's
+    // codes (docs/format.md#refused-batches) name none for it, so it is silent.
     Role,
 }
 
@@ -46,22 +46,22 @@ pub struct Admission {
     pub verdicts: BTreeMap<String, Verdict>,
     // (session, seat) -> the rows a void of that seat rests on, as
     // (table, author:seq): its counting confirms and the session's creator's
-    // seat row (docs/format.md, "What a merge reports", revealing header, D165).
+    // seat row (docs/format.md#revealing-two-confirms, D165).
     pub void_rests: BTreeMap<(String, String), Vec<(String, String)>>,
     // "table|author:seq" -> the parents (author:seq, same table) that make the
     // row cross a session or a seat, so a merge that took only the parent can
-    // still report the child ("What a merge reports": "whichever of the two
+    // still report the child (docs/format.md#report-crossing: "whichever of the two
     // rows this merge took, the child or the parent, and is the child's").
     pub crossings: BTreeMap<String, Vec<String>>,
 }
 
-// The roster tables and the close (docs/format.md, "What a session document
-// admits", The tables): their heads partition by session, entity and author.
+// The roster tables and the close (docs/format.md#session-tables,
+// #heads-roster): their heads partition by session, entity and author.
 pub const ROSTER: [&str; 4] = ["_dai_seat", "_dai_binding", "_dai_confirm", "_dai_close"];
 
 // The session id a seat row would be the creator's row of: SHA-256 of the
 // author id (16 bytes) and the seq as eight bytes big-endian, first 16 bytes
-// (docs/format.md, Session id).
+// (docs/format.md#session-id).
 pub fn session_id(author: &[u8], seq: i64) -> Vec<u8> {
     let mut h = Sha256::new();
     h.update(author);
@@ -85,7 +85,7 @@ fn int(v: &V) -> i64 {
 
 // A held row whose parents are not the one shape names nothing: "A reader that
 // holds a malformed row of its own (it can only have written it itself) reads
-// its parents as naming nothing" (docs/format.md, The one shape of parents,
+// its parents as naming nothing" (docs/format.md#parents-own-malformed,
 // D159). Not a lenient parse of what can be salvaged: nothing.
 pub fn parents_of(v: &V) -> Vec<String> {
     if !crate::parents_well_formed(v) {
@@ -164,7 +164,7 @@ fn seat_rules(c: &Connection) -> BTreeMap<String, String> {
 }
 
 // Which author tables carry a role: the `_dai_author_rules` declaration
-// (docs/format.md, "What a session document admits": "which author tables
+// (docs/format.md#session-declarations: "which author tables
 // carry a role (`_dai_author_rules`)"). The page does not give its columns; no
 // fixture carries it. Read here as `_dai_seat_rules` is, (table, role), the
 // role `creator` or `joiner`, with or without the `author=` of the profile
@@ -201,7 +201,7 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
     // The creator of each session: the author of the one `_dai_seat` row, not
     // deleted, whose own (author, seq) hashes to its session (D158; "The
     // creator"). Her seat is hers. A creator's seat row written deleted makes
-    // nobody the creator (docs/format.md, Known silences).
+    // nobody the creator (docs/format.md#creator).
     // session -> (creator, creator's seat, the seat row's id)
     let mut creator: BTreeMap<String, (String, String, String)> = BTreeMap::new();
     let mut holders: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
@@ -223,7 +223,7 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
 
     // The open seats: held by whoever the creator's confirms name. A confirm
     // counts when the creator wrote it, in her session, naming a seat not her
-    // own; deleted or not, superseded or not (docs/format.md, Confirms, D171).
+    // own; deleted or not, superseded or not (docs/format.md#confirms, D171).
     // Two counting confirms of one seat naming different holders void it
     // (D165), whatever their seqs.
     let mut void_rests: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
@@ -241,7 +241,7 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
                 }
                 holders.entry((sess.clone(), seat.clone())).or_default().insert(hx(&r.vals[ih]));
                 // A void rests on "a counting confirm of that seat or the
-                // session's creator's seat row" ("What a merge reports").
+                // session's creator's seat row" (docs/format.md#revealing-two-confirms).
                 let rests = void_rests.entry((sess, seat)).or_default();
                 if rests.is_empty() {
                     rests.push(("_dai_seat".to_string(), crow.clone()));
@@ -261,7 +261,7 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
             void_seats.insert((sess.clone(), seat.clone()));
         }
     }
-    // "The members of a session are its holders" (docs/format.md, Holders).
+    // "The members of a session are its holders" (docs/format.md#members).
     let members: BTreeSet<(String, String)> =
         held.iter().map(|((s, _), h)| (s.clone(), h.clone())).collect();
 
@@ -269,8 +269,8 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
     // declare in the manifest this reader does not see): a close counts when it
     // is not deleted and its author is a member of its own session. A member's
     // first counting close, lowest in their own seq, binds only them. A delete
-    // of a close is not a close and revokes nothing (docs/format.md, A
-    // session's close; Known silences).
+    // of a close is not a close and revokes nothing (docs/format.md#close-counts,
+    // #close-first).
     let mut first_close: BTreeMap<(String, String), i64> = BTreeMap::new();
     if let (Some(t), Some(rs)) = (table("_dai_close"), rows.get("_dai_close")) {
         if let Some(is) = t.i_session {
@@ -298,11 +298,11 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
         let roster = ROSTER.contains(&t.name.as_str());
         let seat_col = seated.get(&t.name).and_then(|k| col(t, k));
         let by_id: BTreeMap<String, &crate::Row> = rs.iter().map(|r| (rowid(t, r), r)).collect();
-        // A seat column names a seat only when it is 16 bytes ("What a merge
-        // reports": "names no seat (a seat column that is not 16 bytes)").
+        // A seat column names a seat only when it is 16 bytes
+        // (docs/format.md#seat-not-held: "names no seat (a seat column that is
+        // not 16 bytes)").
         let seat_of = |r: &crate::Row, ic: usize| blob(&r.vals[ic]).filter(|b| b.len() == 16).map(|b| hexlc(&b));
-        // Whose statement a row is, for partitioning heads (docs/format.md,
-        // Heads): a session author table by entity, session and (seated) seat;
+        // Whose statement a row is, for partitioning heads (docs/format.md#heads): a session author table by entity, session and (seated) seat;
         // the roster tables and the close by session, entity and author; a
         // plain document's tables by entity.
         let part = |r: &crate::Row| -> String {
@@ -324,10 +324,10 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
                 Verdict::Equivocated
             } else if roster || t.i_session.is_none() {
                 // The roster tables and a plain document's tables: heads among
-                // rows at ids not equivocated (docs/format.md, Heads).
+                // rows at ids not equivocated (docs/format.md#heads-roster, #heads-plain).
                 Verdict::Admitted
             } else {
-                // A session author table (docs/format.md, Admitted rows).
+                // A session author table (docs/format.md#admitted).
                 let is = t.i_session.unwrap();
                 let (sess, author) = (hx(&r.vals[is]), hx(&r.vals[t.i_replica]));
                 let seat = seat_col.and_then(|ic| seat_of(r, ic));
@@ -363,7 +363,7 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
                         // Seated: its author holds the seat it names, in the
                         // row's own session. A seat nobody holds yet is
                         // waiting, and a void seat is held by nobody: neither is
-                        // reported (docs/format.md, Waiting).
+                        // reported (docs/format.md#waiting, #void-row).
                         Some(_) => match &seat {
                             None => Err(Verdict::NotHeld),
                             Some(seat) => match held.get(&(sess.clone(), seat.clone())) {

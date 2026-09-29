@@ -215,7 +215,8 @@ def session_id(author: object, seq: object) -> bytes | None:
 
 
 def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
-    """Signed twice (D160): one author's two headers listing one (table, seq)
+    """Equivocation (D160; docs/format.md#equivocation): one author's two
+    headers listing one (table, seq)
     with different digests, as (author, table, seq). From the headers' own lists."""
     digests: dict[tuple[bytes, str, int], set[bytes]] = {}
     has_batch = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").fetchone()
@@ -619,7 +620,8 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
             for key in listed:
                 covers.add(f"{hid}|{key}")
                 covering.setdefault(key, hid)
-        # Signed twice (D160): a header that arrived reveals it when it lists a
+        # Equivocation (D160; docs/format.md#revealing-two-headers): a header
+        # that arrived reveals it when it lists a
         # (table, seq) that another header of its author, held here now, lists
         # with a different digest, and that was not signed twice here before.
         # A third conflicting header reveals nothing new (D171).

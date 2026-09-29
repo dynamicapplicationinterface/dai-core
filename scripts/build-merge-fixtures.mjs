@@ -78,7 +78,7 @@ CREATE TABLE moves (
 
 /**
  * `dai_session_id(author, seq)`: SHA-256 of the author id and the seq as eight
- * bytes, unsigned, big-endian, first 16 bytes (docs/format.md, "Session id").
+ * bytes, unsigned, big-endian, first 16 bytes (docs/format.md#session-id).
  * Written here from the page with node:crypto, not imported: the roster views
  * call it, and a fixture should not take the runtime's own hash on trust.
  */

@@ -288,10 +288,10 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     let mut tainted: BTreeSet<String> = BTreeSet::new(); // complete headers that signed a malformed row
     // Every authentic header's list (ok or incomplete), by id: the revealing
     // headers of D160 are among the ones this merge kept, and "incomplete" is
-    // kept too (docs/format.md, The merge, step 1; What a merge reports).
+    // kept too (docs/format.md#merge-headers-kept, #revealing-two-headers).
     let mut lists: BTreeMap<String, Vec<String>> = BTreeMap::new(); // header id -> "table|author:seq"
     // The headers the local copy held before the merge: a revealing header is
-    // one "the local copy did not hold before" (What a merge reports).
+    // one "the local copy did not hold before" (docs/format.md#revealing-two-headers).
     let mut held_before: BTreeSet<String> = BTreeSet::new();
     if has("main") {
         let mut st = c.prepare("SELECT id FROM main._dai_batch").unwrap();
@@ -380,7 +380,8 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         // No row is taken through a tainted header, but "A row listed by a
         // complete header kept in step 1 ... is signed, and taken", and only
         // "A row listed only by a header refused as ROW_MALFORMED is not
-        // taken" (docs/format.md, The merge, step 2). So a row another kept
+        // taken" (docs/format.md#merge-row-signed, #merge-row-refused-header).
+        // So a row another kept
         // complete header lists is taken through that one, and its _r_batch
         // is chosen among the kept headers only.
         for (key, ids) in &listed_by {
@@ -479,7 +480,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
                 // name of whoever wrote the row; unless the sibling held that
                 // header and it was not authentic. "A header refused as
                 // ROW_MALFORMED was authentic, so a row naming it that it does
-                // not list is reported" (docs/format.md, The merge, step 2).
+                // not list is reported" (docs/format.md#merge-row-digest-mismatch).
                 let refused_already =
                     held.contains_key(&n) && !verdicts.get(&n).map(|v| v == "ok" || v == "incomplete").unwrap_or(false);
                 if !refused_already {
@@ -621,7 +622,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     for t in &tables {
         let all = load(&c, "main", t);
         // A held row whose parents are not the one shape names nothing
-        // (docs/format.md, The one shape of parents).
+        // (docs/format.md#parents-own-malformed).
         let mut parented: BTreeSet<(String, String)> = BTreeSet::new();
         for r in &all {
             let entity = r.vals[t.i_entity].enc();
@@ -665,8 +666,8 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     // with its author, under its own _r_batch after the merge, when this merge
     // made it true: the row was taken, or, for the two crossings, the parent
     // it crosses to was ("the report is made whichever of the two rows this
-    // merge took, the child or the parent, and is the child's"; docs/format.md,
-    // What a merge reports; docs/identity.md binding rule 5).
+    // merge took, the child or the parent, and is the child's";
+    // docs/format.md#report-crossing; docs/identity.md binding rule 5).
     let taken_keys: BTreeSet<String> = taken.iter().map(|(ti, id)| format!("{}|{}", tables[*ti].name, id)).collect();
     for (key, v) in &admitted.verdicts {
         let reason = match v {
@@ -692,7 +693,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     }
     // AUTHOR_EQUIVOCATED, once per author per merge, when this merge revealed
     // that author signing twice, filed under the lowest of that author's
-    // revealing headers (docs/format.md, What a merge reports, D171):
+    // revealing headers (docs/format.md#equivocated-filed, D171):
     let mut accused: BTreeMap<String, String> = BTreeMap::new(); // author hex -> batch id
     let mut accuse = |author: String, batch: String| {
         let e = accused.entry(author).or_insert_with(|| batch.clone());

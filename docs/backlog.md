@@ -4712,6 +4712,21 @@ review, as it stood:*
   with the delete flag set makes nobody the creator (anchor `creator`), and
   a close row written deleted closes nothing (anchor `close-counts`, D153).*
 
+*Fixture tasks, added 29 September (the fix-up after the rule-inventory
+review); each is a rule the page states that no vector holds, and each
+vector needs a reader with the rule wrong to disagree with it:*
+
+- *A creator's seat row written deleted makes nobody the creator
+  (`docs/format.md#creator`): a session vector whose only `_dai_seat` row
+  hashing to its session carries the delete flag, so no confirm counts,
+  nobody holds a seat, and no row of the session is admitted. A reader that
+  ignores the flag admits the would-be creator's rows.*
+- *A close row written deleted closes nothing
+  (`docs/format.md#close-counts`, D153): a vector where a member's only close
+  row carries the delete flag, the session is not closed, and the member's
+  later rows are admitted. A reader that counts it closes the session and
+  makes those rows late.*
+
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
 *Status: **landed** 29 September: `daa03a9`, run 36571556289 read green
@@ -6678,9 +6693,17 @@ which then refuse with the sentence: filed as D170, for step 7.*
 
 - **The document says it.** A replicated build lists `authorship` in
   `requires` (signed, sorted with the rest). Every reader that implements it
-  names it in `IMPLEMENTED_CAPABILITIES` and the Python reader's list; a host
-  from before signing does not, and refuses the document with
-  `UNSUPPORTED_CAPABILITY`, the most it can do.
+  names it in `IMPLEMENTED_CAPABILITIES` and the Python reader's list.
+- **Amended 29 September, checked against `apps/runner/src/main.ts`
+  (`needsUpdate`) and run (`format-version-mount.spec.ts`, headers of batch
+  format 1 and 3, both read-only with the sentence):** a host that writes a
+  batch format version mounts a document of any other version read-only, with
+  the update sentence, in both directions, as `docs/format.md` states
+  (`version-read-only`). This entry said a host from before signing refuses
+  with `UNSUPPORTED_CAPABILITY`; that is true of those builds, which predate
+  the batch format version and cannot be changed now, and it is not what this
+  ruling asks of a host that knows the version. Nothing in this host refuses
+  a document for its batch format version.
 - **The compiler refuses a seed** whose database holds a row in any replicated
   table, naming the table: nobody signed those rows, and every copy would
   refuse them.
