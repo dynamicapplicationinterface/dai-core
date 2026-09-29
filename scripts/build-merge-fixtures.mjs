@@ -658,11 +658,91 @@ const VECTORS = [
       fork.done();
     },
   },
+
+  /*
+   * The rulings on D171's divergences (29 September): each vector splits a
+   * reader that has its ruling wrong.
+   */
+  {
+    name: "session-deleted-confirm",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Ada confirms Bo in the open seat, then writes a delete of that confirm naming another copy as holder. A deleted confirm still counts, so the seat is void: the merge that brings the delete reports AUTHOR_EQUIVOCATED in Ada's name under the delete's header, and Bo's move is admitted nowhere (D165, D171). A reader skipping deleted confirms keeps Bo seated; one reading only current confirms seats nobody and voids nothing.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      createEntity(b, "moves", id(0x82), { seat: SEAT_OPEN, san: "e5" }, session);
+      const confirm = a.all("SELECT _r_replica, _r_seq FROM _dai_confirm WHERE _r_entity = ?", [id(0x71)])[0];
+      raw(a, "_dai_confirm", id(0x71), { seat: SEAT_OPEN, holder: id(0xcc) }, session, JSON.stringify([`${hexOf(confirm._r_replica)}:${confirm._r_seq}`]), 1);
+    },
+  },
+  {
+    name: "session-roster-heads",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Bo writes a version of Ada's open seat row, Ada writes a version of that row in another session, and a row of another entity naming it. Roster heads partition by session, entity and author, so all four rows are heads (D171, T1-D35). A reader partitioning by entity alone, by entity and author, by entity and session, or by session and author hides Ada's row.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const open = a.all("SELECT _r_replica, _r_seq FROM _dai_seat WHERE seat = ? AND _r_session = ?", [SEAT_OPEN, session])[0];
+      const named = JSON.stringify([`${hexOf(open._r_replica)}:${open._r_seq}`]);
+      const entity = a.all("SELECT _r_entity FROM _dai_seat WHERE _r_replica = ? AND _r_seq = ?", [open._r_replica, open._r_seq])[0]._r_entity;
+      raw(b, "_dai_seat", entity, { seat: SEAT_OPEN }, session, named);
+      raw(a, "_dai_seat", entity, { seat: SEAT_OPEN }, id(0xe2), named);
+      // And a row of another entity naming it, which is no version of it (T1-D35).
+      raw(a, "_dai_seat", id(0x54), { seat: SEAT_OPEN }, session, named);
+    },
+  },
+  {
+    name: "session-equivocation-filed",
+    session: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "A holds two of Ada's headers over one (moves, seq) with different rows, and a later header of hers with a move for Bo's seat; B holds a third header at that id. B into A reveals nothing new and reports no equivocation. A into B reports AUTHOR_EQUIVOCATED once, under the lower of A's two headers, after the SEAT_NOT_HELD of the later header, whose id sorts below both: the report is filed under the revealing header, and emitted by batch id, then code (D160, D171).",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const first = await forkOf(a, ADA);
+      const second = await forkOf(a, ADA);
+      createEntity(a, "moves", id(0x81), { seat: SEAT_W, san: "e4" }, session);
+      await sealAll(a, ADA);
+      createEntity(first, "moves", id(0x84), { seat: SEAT_W, san: "d4" }, session);
+      await exchange(a, first, ADA);
+      createEntity(second, "moves", id(0x8c), { seat: SEAT_W, san: "c4" }, session);
+      await exchange(b, second, ADA);
+      first.done();
+      second.done();
+      createEntity(a, "moves", id(0x8b), { seat: SEAT_OPEN, san: "Qh5" }, session);
+      await sealAll(a, ADA);
+      createEntity(a, "moves", id(0x8d), { seat: SEAT_OPEN, san: BETWEEN_SAN }, session);
+      await sealAll(a, ADA);
+      /*
+       * The teeth: the first later header's id sorts below both revealing ones,
+       * and the second's between them, so a reader filing the report under no
+       * id, under the lowest header that arrived, under the higher revealing
+       * one, or under any header of that id it already held, emits a
+       * different list. Asserted, so a change to the rows above cannot quietly
+       * remove them (the second was added when a blind reader showed the first
+       * alone passed a reader filing under the higher revealing header).
+       */
+      const doubled = a.all("SELECT _r_seq FROM moves WHERE _r_entity = ?", [id(0x81)])[0]._r_seq;
+      const ids = (seq) =>
+        a.all("SELECT lower(hex(b.id)) AS id FROM _dai_batch b, json_each(b.covers) c WHERE b.author = ? AND json_extract(c.value, '$[0]') = 'moves' AND json_extract(c.value, '$[1]') = ?", [ADA.author, seq]).map((r) => r.id);
+      const revealing = ids(doubled).sort();
+      const [below] = ids(doubled + 1);
+      const [between] = ids(doubled + 2);
+      if (revealing.length !== 2 || !(below < revealing[0] && revealing[0] < between && between < revealing[1])) {
+        throw new Error(`session-equivocation-filed: need ${below} < ${revealing[0]} < ${between} < ${revealing[1]}`);
+      }
+    },
+  },
 ];
 
 /** The session vectors' seats: Ada's own, and the open one Bo asks for. */
 const SEAT_W = id(0xa1);
 const SEAT_OPEN = id(0xb1);
+/** The move whose header's id falls between session-equivocation-filed's two revealing headers (found by trying moves in order). */
+const BETWEEN_SAN = "h3";
 
 /** Ada's session, Bo confirmed in its open seat, on both copies, every row signed. */
 async function seated(a, b) {
@@ -697,7 +777,7 @@ async function forkOf(from, person) {
 }
 
 /** A row at this copy's next seq and clock with the parents text given, as a copy that skips the writers can write it. */
-function raw(db, table, entity, columns, session, parentsText) {
+function raw(db, table, entity, columns, session, parentsText, deleted = 0) {
   const state = db.all("SELECT id, seq, lc FROM _dai_replica")[0];
   db.run("UPDATE _dai_replica SET seq = ?, lc = ?", [state.seq + 1, state.lc + 1]);
   applyRow(db, table, {
@@ -706,7 +786,7 @@ function raw(db, table, entity, columns, session, parentsText) {
     _r_lc: state.lc + 1,
     _r_entity: entity,
     _r_parents: parentsText,
-    _r_deleted: 0,
+    _r_deleted: deleted,
     _r_session: session,
     columns,
   });
@@ -892,8 +972,10 @@ the verdicts and does the rest itself, which is the part these vectors test:
 \`merge-seal-stowaway\`, \`merge-seal-stowaway-other\`, \`merge-seal-tampered\`,
 \`merge-seal-lost-pointer\`, \`merge-seal-cross-table\` and \`merge-seal-outranks\`
 each disagree with a reader that has one of those wrong. \`refusedBatches\` in
-\`result.json\` is one entry per batch, reason and author, ordered by batch id,
-then reason, then author id in hex, with the author id shown as base64url.
+\`result.json\` is one entry per batch, reason and author, ordered by batch id
+(lowercase hex, no id first), then reason, then author id in hex, with the
+author id shown as base64url. Which batch id each reason is filed under is in
+docs/format.md, "What a merge reports".
 
 **What a session document admits.** The \`session-\` vectors are session
 documents (one seated table, \`moves\`, seated by its \`seat\` column; the close
@@ -911,13 +993,21 @@ reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
 
 - a row id one author signed twice (two headers listing it with different
-  digests) counts nowhere (D160), and a merge that brings the second header
-  reports \`AUTHOR_EQUIVOCATED\` once per author;
+  digests) counts nowhere (D160);
 - the creator's seat row is the one whose own author and seq hash to its
   session (D158); her seat is hers, and an open seat is held by whoever her
   confirms name, unless she confirmed it to two copies, when it is void and
-  held by nobody, and the merge that makes it void reports
-  \`AUTHOR_EQUIVOCATED\` in her name (D165);
+  held by nobody (D165). A confirm counts deleted or not, superseded or not
+  (D171);
+- a merge that reveals an author signing twice, a header it did not hold
+  making an id equivocated that was not, or a row it took making a seat void
+  that was not, reports \`AUTHOR_EQUIVOCATED\` in that author's name, once per
+  merge, filed under the lowest revealing header (docs/format.md, "What a
+  merge reports"); a third conflicting header reveals nothing new;
+- the heads of the roster tables and the close (\`_dai_seat\`,
+  \`_dai_binding\`, \`_dai_confirm\`, \`_dai_close\`) partition by session,
+  entity and author: only an author's own later row in the same session
+  replaces one (D171);
 - a close by a member binds only its author: their rows after it, by their
   own seq, are late (D151, and no frontier at version 2);
 - a seated row is admitted when its author holds the seat it names, it names

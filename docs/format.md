@@ -490,12 +490,16 @@ and each is listed for the review that closes step 6.
 - **A confirm naming a seat nobody minted** counts like any other: its holder
   holds that seat. Nothing checks a confirm's seat against the creator's
   `_dai_seat` rows.
-- **A deleted creator's seat row** is not the creator's row. Nothing makes a
-  session's creator unwrite it, since a delete is a later row at another seq;
-  but a creator's seat row written with the delete flag already set makes
-  nobody the creator.
-- **A deleted close row** closes nothing, including one written deleted with
-  no close before it.
+- **The rest of the list the independent reader returned** on 29 September
+  (backlog D171): which of several conditions a row that is both crossing and
+  waiting is reported under, whether a held row that a new confirm unseats is
+  reported, what `_r_batch` a row listed by both a complete and an incomplete
+  header takes, how the stored `_r_superseded` cache is derived where roster
+  heads partition by author, and the others there.
+
+Stated above as rules, and held by no vector yet: a creator's seat row written
+with the delete flag set makes nobody the creator ("The creator"), and a close
+row written deleted closes nothing ("A session's close", D153).
 
 ## Documents built during the sitting's steps 3 and 4 are dead ends
 

@@ -985,12 +985,14 @@ CREATE VIEW IF NOT EXISTS _dai_open_seat AS
                         AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);
 
 -- The creator's confirms of an open seat: her rows in her session, not of her
--- own seat, not at an id she signed twice.
+-- own seat, not at an id she signed twice. Deleted or not, superseded or not
+-- (D171): a confirm is her statement that she seated a copy, and a hold never
+-- moves once made, so a later version or a delete of one is another confirm.
 CREATE VIEW IF NOT EXISTS _dai_confirmed AS
   SELECT f._r_session AS session, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
     FROM _dai_confirm f
     JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
-   WHERE f._r_deleted = 0 AND ${unequivocal("f", "_dai_confirm")}
+   WHERE ${unequivocal("f", "_dai_confirm")}
      AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session);
 
 -- The seats the creator confirmed to two different copies (D165): void, held by

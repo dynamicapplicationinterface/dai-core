@@ -1,0 +1,41 @@
+{
+  "what": "A holds two of Ada's headers over one (moves, seq) with different rows, and a later header of hers with a move for Bo's seat; B holds a third header at that id. B into A reveals nothing new and reports no equivocation. A into B reports AUTHOR_EQUIVOCATED once, under the lower of A's two headers, after the SEAT_NOT_HELD of the later header, whose id sorts below both: the report is filed under the revealing header, and emitted by batch id, then code (D160, D171).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:4"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:4"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "SEAT_NOT_HELD"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

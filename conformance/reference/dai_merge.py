@@ -214,6 +214,22 @@ def session_id(author: object, seq: object) -> bytes | None:
     return hashlib.sha256(bytes(author) + seq.to_bytes(8, "big")).digest()[:16]
 
 
+def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
+    """Signed twice (D160): one author's two headers listing one (table, seq)
+    with different digests, as (author, table, seq). From the headers' own lists."""
+    digests: dict[tuple[bytes, str, int], set[bytes]] = {}
+    has_batch = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").fetchone()
+    for author, digest, covers in db.execute("SELECT author, digest, covers FROM _dai_batch") if has_batch else []:
+        try:
+            listed = json.loads(covers)
+        except (ValueError, TypeError):
+            listed = []
+        for entry in listed if isinstance(listed, list) else []:
+            if isinstance(entry, list) and len(entry) == 2:
+                digests.setdefault((bytes(author), entry[0], entry[1]), set()).add(bytes(digest))
+    return {key for key, seen in digests.items() if len(seen) > 1}
+
+
 # ------------------------------------------------------------- admission
 
 
@@ -241,19 +257,7 @@ class Admission:
         self.seated = dict(db.execute("SELECT tbl, col FROM _dai_seat_rules")) if "_dai_seat_rules" in views else {}
         self.roles = dict(db.execute("SELECT tbl, author FROM _dai_author_rules")) if "_dai_author_rules" in views else {}
 
-        # Signed twice (D160): one author's two headers listing one (table, seq)
-        # with different digests. From the headers' own lists.
-        digests: dict[tuple[bytes, str, int], set[bytes]] = {}
-        has_batch = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").fetchone()
-        for author, digest, covers in db.execute("SELECT author, digest, covers FROM _dai_batch") if has_batch else []:
-            try:
-                listed = json.loads(covers)
-            except (ValueError, TypeError):
-                listed = []
-            for entry in listed if isinstance(listed, list) else []:
-                if isinstance(entry, list) and len(entry) == 2:
-                    digests.setdefault((bytes(author), entry[0], entry[1]), set()).add(bytes(digest))
-        self.equivocated = {key for key, seen in digests.items() if len(seen) > 1}
+        self.equivocated = equivocated_ids(db)
 
         # The creator's seat row: the one row whose own (author, seq) hashes to
         # its session (D158).
@@ -267,12 +271,13 @@ class Admission:
         self.creator_of = {(session, replica) for session, replica, _seat, _entity in self.creators}
 
         # Her confirms of an open seat; one per seat, or the seat is void (D165).
+        # Deleted or not, superseded or not: a hold never moves once made, so a
+        # delete of a confirm is another confirm (D171).
         confirmed = []
         for f in self.rows.get("_dai_confirm", []):
             session = bytes(f["_r_session"])
             if (
-                f["_r_deleted"] == 0
-                and self.unequivocal(f, "_dai_confirm")
+                self.unequivocal(f, "_dai_confirm")
                 and (session, bytes(f["_r_replica"])) in self.creator_of
                 and bytes(f["seat"]) not in creator_seats.get(session, set())
             ):
@@ -514,6 +519,15 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
     def refuse_batch(hid: str, author: bytes, reason: str) -> None:
         refusals[(hid, reason, bytes(author).hex())] = author
 
+    # The headers that reveal an author signing twice (D160, D165), by author:
+    # reported once per author, under the lowest of them (D171).
+    revealed: dict[str, tuple[bytes, list[str]]] = {}
+
+    def reveal(author: bytes, hid: str) -> None:
+        revealed.setdefault(bytes(author).hex(), (bytes(author), []))[1].append(hid)
+
+    equivocated_before = equivocated_ids(local)
+
     # The seats void before anything arrives: a merge reports only the seats it
     # makes void (D165).
     session = is_session(local)
@@ -605,18 +619,23 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
             for key in listed:
                 covers.add(f"{hid}|{key}")
                 covering.setdefault(key, hid)
-        # Signed twice (D160): a header that arrived lists a (table, seq) that
-        # another header of its author, held here now, lists with a different
-        # digest. Reported once per author: the accusation is of the author.
+        # Signed twice (D160): a header that arrived reveals it when it lists a
+        # (table, seq) that another header of its author, held here now, lists
+        # with a different digest, and that was not signed twice here before.
+        # A third conflicting header reveals nothing new (D171).
         for header in arrived:
-            mine = {(table, seq) for table, seq in json.loads(header[8])}
+            mine = {
+                (table, seq)
+                for table, seq in json.loads(header[8])
+                if (bytes(header[1]), table, seq) not in equivocated_before
+            }
             for other_id, other_digest, other_covers in local.execute(
                 "SELECT id, digest, covers FROM _dai_batch WHERE author = ?", (header[1],)
             ):
                 if bytes(other_id) == bytes(header[0]) or bytes(other_digest) == bytes(header[7]):
                     continue
                 if mine & {(table, seq) for table, seq in json.loads(other_covers)}:
-                    refuse_batch("", header[1], "AUTHOR_EQUIVOCATED")
+                    reveal(header[1], bytes(header[0]).hex())
                     break
 
     # Signed means listed by an ok header, whatever the row says. Signed rows
@@ -757,10 +776,30 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                     batch = child["_r_batch"]
                     refuse_batch(bytes(batch).hex() if batch is not None else "", child["_r_replica"], reason)
         # A seat the creator confirmed to two copies, void once both are held:
-        # the merge that brings the second says so, in her name (D165).
+        # the merge that made it void says so, in her name (D165), revealed by
+        # the rows it took that the void rests on: the seat's confirms and the
+        # session's creator seat row (D171).
         for s, seat, creator in admission.voided:
-            if (s, seat) not in voided_before:
-                refuse_batch("", creator, "AUTHOR_EQUIVOCATED")
+            if (s, seat) in voided_before:
+                continue
+            resting = [
+                row
+                for table, row in added
+                if row.get("_r_session") is not None
+                and bytes(row["_r_session"]) == s
+                and bytes(row["_r_replica"]) == creator
+                and (
+                    (table == "_dai_confirm" and bytes(row["columns"]["seat"]) == seat)
+                    or (table == "_dai_seat" and session_id(bytes(row["_r_replica"]), row["_r_seq"]) == s)
+                )
+            ]
+            for row in resting:
+                reveal(creator, bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else "")
+            if not resting:
+                reveal(creator, "")
+
+    for author, ids in revealed.values():
+        refuse_batch(min(ids), author, "AUTHOR_EQUIVOCATED")
 
     result["refusedBatches"] = [
         {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)

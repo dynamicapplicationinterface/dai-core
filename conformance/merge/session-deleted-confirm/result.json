@@ -1,0 +1,29 @@
+{
+  "what": "Ada confirms Bo in the open seat, then writes a delete of that confirm naming another copy as holder. A deleted confirm still counts, so the seat is void: the merge that brings the delete reports AUTHOR_EQUIVOCATED in Ada's name under the delete's header, and Bo's move is admitted nowhere (D165, D171). A reader skipping deleted confirms keeps Bo seated; one reading only current confirms seats nobody and voids nothing.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

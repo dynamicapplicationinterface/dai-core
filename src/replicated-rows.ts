@@ -1090,7 +1090,26 @@ export function mergeFrom(
     }
   }
   const tainted = new Set<string>(); // "table|author:seq" listed by a header that signed a malformed row
+  /*
+   * The headers that reveal an author signing twice, by author (D160, D165):
+   * a merge reports what it made true, once per author, filed under the lowest
+   * revealing header (D171). Reported with the rest, at the end.
+   */
+  const revealed = new Map<string, { author: Uint8Array; ids: string[] }>();
+  const reveal = (who: Uint8Array, id: string): void => {
+    const entry = revealed.get(hex(who)) ?? { author: who, ids: [] };
+    entry.ids.push(id);
+    revealed.set(hex(who), entry);
+  };
   if (hasBatchTable(local) && hasBatchTable(sibling)) {
+    // The ids already signed twice here, so a header reveals only a new one.
+    const equivocatedBefore = new Set(
+      local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_equivocated'").length === 0
+        ? []
+        : local
+            .all("SELECT lower(hex(author)) AS a, tbl, seq FROM _dai_equivocated")
+            .map((r) => `${String(r["a"])}|${String(r["tbl"])}|${Number(r["seq"])}`),
+    );
     const headers = sibling
       .all("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch")
       .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
@@ -1138,20 +1157,23 @@ export function mergeFrom(
      * row (a header leaves only in landed bytes, and the host signs only above
      * the floor), so this is the author signing two histories. Neither row at
      * that id is admitted, on any copy holding both headers (`_dai_equivocated`,
-     * src/replicated.ts), and the merge that brings the second header says so,
-     * once per author: the accusation is of the author, not of a batch.
+     * src/replicated.ts). A header this merge kept reveals it when it makes an
+     * id equivocated that was not before; a third conflicting header at an id
+     * already signed twice reveals nothing new (D171).
      */
     for (const h of arrived) {
-      const clash = h.covers.some(([table, seq]) =>
-        local.all("SELECT 1 FROM _dai_covers WHERE tbl = ? AND author = ? AND seq = ? AND id <> ? AND digest <> ? LIMIT 1", [
-          table,
-          h.author,
-          seq,
-          h.id,
-          h.digest,
-        ]).length > 0,
+      const reveals = h.covers.some(
+        ([table, seq]) =>
+          !equivocatedBefore.has(`${hex(h.author)}|${table}|${seq}`) &&
+          local.all("SELECT 1 FROM _dai_covers WHERE tbl = ? AND author = ? AND seq = ? AND id <> ? AND digest <> ? LIMIT 1", [
+            table,
+            h.author,
+            seq,
+            h.id,
+            h.digest,
+          ]).length > 0,
       );
-      if (clash) refuseBatch("", h.author, "AUTHOR_EQUIVOCATED");
+      if (reveals) reveal(h.author, hex(h.id));
     }
   }
 
@@ -1381,12 +1403,28 @@ export function mergeFrom(
 
   /*
    * Equivocation at the seat (D165): the creator confirmed one seat to two
-   * copies. Both confirms are void on every copy holding them (`_dai_voided`),
-   * and the merge that brings the second says so, in the creator's name, as
-   * D160 does for two rows at one id: the accusation is of the author.
+   * copies. Both confirms are void on every copy holding them (`_dai_voided`).
+   * The merge that made the seat void says so, in the creator's name, as D160
+   * does for two rows at one id: the accusation is of the author. Its
+   * revealing headers are those of the rows it took that the void rests on,
+   * the seat's confirms and the session's creator seat row (D171).
    */
-  for (const [seat, creator] of voidedSeats()) {
-    if (!voidedBefore.has(seat)) refuseBatch("", creator, "AUTHOR_EQUIVOCATED");
+  for (const [key, creator] of voidedSeats()) {
+    if (voidedBefore.has(key)) continue;
+    const [session, seat] = key.split("|");
+    const resting = added.filter(
+      ({ table, row }) =>
+        row._r_session instanceof Uint8Array &&
+        hex(row._r_session) === session &&
+        hex(row._r_replica) === hex(creator) &&
+        ((table === "_dai_confirm" && row.columns["seat"] instanceof Uint8Array && hex(row.columns["seat"]) === seat) ||
+          (table === "_dai_seat" && hex(sessionIdOf(row._r_replica, row._r_seq) ?? new Uint8Array()) === session)),
+    );
+    for (const { row } of resting) reveal(creator, row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "");
+    if (resting.length === 0) reveal(creator, "");
+  }
+  for (const { author: who, ids } of revealed.values()) {
+    refuseBatch([...ids].sort(plainOrder)[0]!, who, "AUTHOR_EQUIVOCATED");
   }
 
   result.refusedBatches = [...refusals.values()]

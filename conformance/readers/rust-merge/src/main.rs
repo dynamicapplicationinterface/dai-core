@@ -286,6 +286,21 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     let mut listed_by: BTreeMap<String, BTreeSet<String>> = BTreeMap::new(); // "table|author:seq" -> ok ids
     let mut authors: BTreeMap<String, Vec<u8>> = BTreeMap::new(); // header id -> its author
     let mut tainted: BTreeSet<String> = BTreeSet::new(); // complete headers that signed a malformed row
+    // Every authentic header's list (ok or incomplete), by id: the revealing
+    // headers of D160 are among the ones this merge kept, and "incomplete" is
+    // kept too (docs/format.md, The merge, step 1; What a merge reports).
+    let mut lists: BTreeMap<String, Vec<String>> = BTreeMap::new(); // header id -> "table|author:seq"
+    // The headers the local copy held before the merge: a revealing header is
+    // one "the local copy did not hold before" (What a merge reports).
+    let mut held_before: BTreeSet<String> = BTreeSet::new();
+    if has("main") {
+        let mut st = c.prepare("SELECT id FROM main._dai_batch").unwrap();
+        held_before = st
+            .query_map([], |r| r.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .map(|x| hexlc(&x.unwrap()))
+            .collect();
+    }
     if has("main") && has("S") {
         let headers: Vec<(Vec<u8>, Vec<u8>, String)> = {
             let mut st = c.prepare("SELECT id, author, covers FROM S._dai_batch").unwrap();
@@ -312,15 +327,19 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             // whose rows the sibling does not hold as signed. Kept, so evidence
             // travels (D160), and no row is taken through it.
             keep.push((hid.clone(), id.clone()));
+            let mut keys = vec![];
+            if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&listed) {
+                for pair in list {
+                    keys.push(format!("{}|{}:{}", pair[0].as_str().unwrap_or(""), hexlc(&author), pair[1]));
+                }
+            }
+            lists.insert(hid.clone(), keys.clone());
             if verdict != "ok" {
                 continue;
             }
-            if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&listed) {
-                for pair in list {
-                    let key = format!("{}|{}:{}", pair[0].as_str().unwrap_or(""), hexlc(&author), pair[1]);
-                    covers.insert(format!("{}|{}", hid, key));
-                    listed_by.entry(key).or_default().insert(hid.clone());
-                }
+            for key in keys {
+                covers.insert(format!("{}|{}", hid, key));
+                listed_by.entry(key).or_default().insert(hid.clone());
             }
         }
 
@@ -348,6 +367,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         }
         for (hid, id) in keep {
             if tainted.contains(&hid) {
+                lists.remove(&hid);
                 continue;
             }
             c.execute(
@@ -357,21 +377,21 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             )
             .unwrap();
         }
-        // A row any tainted header lists is not taken, whoever else lists it.
-        let spoiled: BTreeSet<String> = listed_by
-            .iter()
-            .filter(|(_, ids)| ids.iter().any(|h| tainted.contains(h)))
-            .map(|(k, _)| k.clone())
-            .collect();
+        // No row is taken through a tainted header, but "A row listed by a
+        // complete header kept in step 1 ... is signed, and taken", and only
+        // "A row listed only by a header refused as ROW_MALFORMED is not
+        // taken" (docs/format.md, The merge, step 2). So a row another kept
+        // complete header lists is taken through that one, and its _r_batch
+        // is chosen among the kept headers only.
         for (key, ids) in &listed_by {
-            if !spoiled.contains(key) {
-                covering.insert(key.clone(), ids.iter().next().unwrap().clone());
+            if let Some(h) = ids.iter().find(|h| !tainted.contains(*h)) {
+                covering.insert(key.clone(), h.clone());
             }
         }
         covers.retain(|x| !tainted.contains(x.split('|').next().unwrap_or("")));
-        listed_by.retain(|k, _| spoiled.contains(k));
+        listed_by.retain(|_, ids| ids.iter().all(|h| tainted.contains(h)));
     }
-    // What is left in listed_by: the rows a refused-whole batch signed.
+    // What is left in listed_by: the rows only a refused-whole batch signed.
     let spoiled = listed_by;
 
 
@@ -456,9 +476,12 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
                 signed_rows.push((ti, r));
             } else if let Some(n) = named {
                 // It names a header that does not vouch for it: refused in the
-                // name of whoever wrote the row.
-                let refused_already = tainted.contains(&n)
-                    || (held.contains_key(&n) && !verdicts.get(&n).map(|v| v == "ok" || v == "incomplete").unwrap_or(false));
+                // name of whoever wrote the row; unless the sibling held that
+                // header and it was not authentic. "A header refused as
+                // ROW_MALFORMED was authentic, so a row naming it that it does
+                // not list is reported" (docs/format.md, The merge, step 2).
+                let refused_already =
+                    held.contains_key(&n) && !verdicts.get(&n).map(|v| v == "ok" || v == "incomplete").unwrap_or(false);
                 if !refused_already {
                     let author = match &r.vals[t.i_replica] {
                         V::Blob(x) => x.clone(),
@@ -597,17 +620,13 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
     // of another entity naming it hides nothing (T1-D35).
     for t in &tables {
         let all = load(&c, "main", t);
+        // A held row whose parents are not the one shape names nothing
+        // (docs/format.md, The one shape of parents).
         let mut parented: BTreeSet<(String, String)> = BTreeSet::new();
         for r in &all {
             let entity = r.vals[t.i_entity].enc();
-            if let V::Text(p) = &r.vals[t.i_parents] {
-                if let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(p) {
-                    for e in a {
-                        if let serde_json::Value::String(s) = e {
-                            parented.insert((entity.clone(), s.to_lowercase()));
-                        }
-                    }
-                }
+            for s in admit::parents_of(&r.vals[t.i_parents]) {
+                parented.insert((entity.clone(), s));
             }
         }
         for r in &all {
@@ -642,24 +661,38 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         .flatten()
         .unwrap_or_default()
     };
-    // A taken row that is not admitted, and not merely waiting, is reported
-    // with its author (docs/identity.md binding rule 5).
-    for (ti, id) in &taken {
-        let t = &tables[*ti];
-        let reason = match admitted.verdicts.get(&format!("{}|{}", t.name, id)) {
-            Some(admit::Verdict::NotHeld) => "SEAT_NOT_HELD",
-            Some(admit::Verdict::OtherSession) => "ENTITY_OTHER_SESSION",
+    // A row not admitted, and not merely waiting, void or late, is reported
+    // with its author, under its own _r_batch after the merge, when this merge
+    // made it true: the row was taken, or, for the two crossings, the parent
+    // it crosses to was ("the report is made whichever of the two rows this
+    // merge took, the child or the parent, and is the child's"; docs/format.md,
+    // What a merge reports; docs/identity.md binding rule 5).
+    let taken_keys: BTreeSet<String> = taken.iter().map(|(ti, id)| format!("{}|{}", tables[*ti].name, id)).collect();
+    for (key, v) in &admitted.verdicts {
+        let reason = match v {
+            admit::Verdict::NotHeld => "SEAT_NOT_HELD",
+            admit::Verdict::OtherSession => "ENTITY_OTHER_SESSION",
             _ => continue,
         };
+        let Some((tname, id)) = key.split_once('|') else { continue };
+        let by_parent = admitted
+            .crossings
+            .get(key)
+            .map(|ps| ps.iter().any(|p| taken_keys.contains(&format!("{}|{}", tname, p))))
+            .unwrap_or(false);
+        if !taken_keys.contains(key) && !by_parent {
+            continue;
+        }
+        let Some(t) = tables.iter().find(|t| t.name == tname) else { continue };
         let author = id.split(':').next().unwrap_or("").to_string();
         let raw: Vec<u8> = (0..author.len() / 2)
             .map(|i| u8::from_str_radix(&author[2 * i..2 * i + 2], 16).unwrap_or(0))
             .collect();
         refusals.insert((batch_of(t, id), reason.to_string(), author), raw);
     }
-    // AUTHOR_EQUIVOCATED, once per author, from the merge that brings it: a
-    // (table, seq) signed twice (D160), or a seat confirmed to two copies, in
-    // the creator's name (D165). Filed under the lowest batch id that carries it.
+    // AUTHOR_EQUIVOCATED, once per author per merge, when this merge revealed
+    // that author signing twice, filed under the lowest of that author's
+    // revealing headers (docs/format.md, What a merge reports, D171):
     let mut accused: BTreeMap<String, String> = BTreeMap::new(); // author hex -> batch id
     let mut accuse = |author: String, batch: String| {
         let e = accused.entry(author).or_insert_with(|| batch.clone());
@@ -667,23 +700,32 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             *e = batch;
         }
     };
+    // D160: a header this merge kept that the local copy did not hold before,
+    // which lists a (table, seq) of its author equivocated after the merge and
+    // not before. A third conflicting header for an id already equivocated
+    // reveals nothing new.
     for (author, table, seq) in admitted.equivocated.difference(&eq_before) {
         let key = format!("{}|{}:{}", table, author, seq);
-        let brought = covers
-            .iter()
-            .filter(|x| x.split_once('|').map(|(_, k)| k == key).unwrap_or(false))
-            .map(|x| x.split('|').next().unwrap_or("").to_string())
-            .min()
-            .unwrap_or_default();
-        accuse(author.clone(), brought);
+        for (hid, keys) in &lists {
+            if !held_before.contains(hid) && keys.contains(&key) {
+                accuse(author.clone(), hid.clone());
+            }
+        }
     }
+    // D165: the header named (_r_batch) by a row this merge took that the void
+    // rests on, a counting confirm of that seat or the session's creator's seat
+    // row, for a seat void after the merge and not before it.
     for (sess, seat, cr) in admitted.voided.difference(&voided_before) {
-        let b = admitted
-            .confirm_batches
-            .get(&(sess.clone(), seat.clone()))
-            .and_then(|v| v.iter().min().cloned())
-            .unwrap_or_default();
-        accuse(cr.clone(), b);
+        for (tname, id) in admitted.void_rests.get(&(sess.clone(), seat.clone())).into_iter().flatten() {
+            if !taken_keys.contains(&format!("{}|{}", tname, id)) {
+                continue;
+            }
+            let Some(t) = tables.iter().find(|t| &t.name == tname) else { continue };
+            let b = batch_of(t, id);
+            if !b.is_empty() {
+                accuse(cr.clone(), b);
+            }
+        }
     }
     for (author, batch) in accused {
         let raw: Vec<u8> = (0..author.len() / 2)

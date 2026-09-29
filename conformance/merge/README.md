@@ -83,8 +83,10 @@ the verdicts and does the rest itself, which is the part these vectors test:
 `merge-seal-stowaway`, `merge-seal-stowaway-other`, `merge-seal-tampered`,
 `merge-seal-lost-pointer`, `merge-seal-cross-table` and `merge-seal-outranks`
 each disagree with a reader that has one of those wrong. `refusedBatches` in
-`result.json` is one entry per batch, reason and author, ordered by batch id,
-then reason, then author id in hex, with the author id shown as base64url.
+`result.json` is one entry per batch, reason and author, ordered by batch id
+(lowercase hex, no id first), then reason, then author id in hex, with the
+author id shown as base64url. Which batch id each reason is filed under is in
+docs/format.md, "What a merge reports".
 
 **What a session document admits.** The `session-` vectors are session
 documents (one seated table, `moves`, seated by its `seat` column; the close
@@ -102,13 +104,21 @@ reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
 
 - a row id one author signed twice (two headers listing it with different
-  digests) counts nowhere (D160), and a merge that brings the second header
-  reports `AUTHOR_EQUIVOCATED` once per author;
+  digests) counts nowhere (D160);
 - the creator's seat row is the one whose own author and seq hash to its
   session (D158); her seat is hers, and an open seat is held by whoever her
   confirms name, unless she confirmed it to two copies, when it is void and
-  held by nobody, and the merge that makes it void reports
-  `AUTHOR_EQUIVOCATED` in her name (D165);
+  held by nobody (D165). A confirm counts deleted or not, superseded or not
+  (D171);
+- a merge that reveals an author signing twice, a header it did not hold
+  making an id equivocated that was not, or a row it took making a seat void
+  that was not, reports `AUTHOR_EQUIVOCATED` in that author's name, once per
+  merge, filed under the lowest revealing header (docs/format.md, "What a
+  merge reports"); a third conflicting header reveals nothing new;
+- the heads of the roster tables and the close (`_dai_seat`,
+  `_dai_binding`, `_dai_confirm`, `_dai_close`) partition by session,
+  entity and author: only an author's own later row in the same session
+  replaces one (D171);
 - a close by a member binds only its author: their rows after it, by their
   own seq, are late (D151, and no frontier at version 2);
 - a seated row is admitted when its author holds the seat it names, it names

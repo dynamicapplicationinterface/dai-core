@@ -4463,6 +4463,66 @@ Identity step 6, the readers' leveling. Unsigned-everywhere was level already (`
 D111, the readers doing their own signature check, stays the successor and
 is not this.*
 
+*The divergences' rulings (below) built 29 September: the three vectors, the
+runtime (`_dai_confirmed` reads deleted confirms; `AUTHOR_EQUIVOCATED` filed
+under the lowest revealing header, and not reported for a third conflicting
+header), the Python reader, and the Rust reader levelled by a session given
+only `docs/format.md` (as rewritten), `docs/identity.md`,
+`docs/replicated-tables.md`, the fixtures and its own code. Both readers pass
+all 28. Each ruling held out of each reader, in patched copies, fails its own
+vector and no other: in Python, skipping deleted confirms, counting only
+current confirms, roster heads by entity alone, by entity and author, by
+entity and session, by session and author, filing under no id, under the
+lowest arrived header, under the higher revealing one, under any header of
+the id, and reporting the third header; in Rust, four of those.*
+
+*The blind reader found the filing vector weak, reproduced here before it was
+acted on: its `SEAT_NOT_HELD` header sorted below every candidate, so filing
+under the higher revealing header, or a header the copy already held, passed.
+A second `SEAT_NOT_HELD` header now sorts between the two revealing ones (the
+generator asserts the order), and the roster vector gained a row of another
+entity naming Ada's seat row, since a reader partitioning by session and
+author alone passed it too. It also brought its reader into line with the
+page where no vector looks (deleted closes, a creator's seat row written
+deleted, membership in unseated session tables, author roles, a seat that is
+not 16 bytes, a crossing reported through a taken parent, a row listed by a
+refused and a kept header): each of those is a fixture the cold review
+should add.*
+
+*What it found the rewritten page silent on or wrong about, for the cold
+review (quoted from its report, condensed; none decided by a vector):*
+
+- *`_dai_author_rules` has no stated shape, and no report is named for a row
+  that breaks its role.*
+- *A row naming a seat nobody holds whose author never asked, or a seat
+  nobody minted, fits neither "waiting" nor `SEAT_NOT_HELD`;
+  `_dai_binding`'s columns are never given. Nor is a non-member's row in an
+  unseated session table.*
+- *Which condition wins, and how many reports, for a row that both crosses
+  and names another's seat, or crosses and is waiting, void or late.*
+- *"A merge reports what it made true" against "a row this merge took": a
+  held row that a new confirm unseats, and a held child reported again when a
+  second crossing parent arrives.*
+- *Whether "that header" and "the lowest listed id" in choosing `_r_batch`
+  include kept incomplete headers, and what a row listed only by an
+  incomplete header is (it refused it `BATCH_UNSIGNED`).*
+- *Whether the merge's step 2 bullets are exclusive and ordered (a malformed
+  row naming a header no one lists matches two).*
+- *The dumped `_r_superseded` cache is derived by entity only, so in
+  `session-roster-heads` a row is superseded in the dump and a head in the
+  admitted list; T1-D35's "every place that decides supersession applies the
+  same condition" contradicts the roster partition.*
+- *In a session author table the session-and-seat partition cannot be seen:
+  an admitted row never names another session's or seat's version.*
+- *"Kept, under the list it signed" cannot be followed from `verdicts.json`,
+  which does not carry a recovered list.*
+- *What the D165 void "rests on" when confirms repeat a holder; whether a
+  roster row after its author's close is late; the first close among all
+  rows or among counting ones.*
+- *`refusedBatches` carries no batch id, so the filing is visible only
+  through order; nothing says so. D165's filing is visible in no vector
+  (`session-deleted-confirm` reports once).*
+
 *Built as decided below. Both readers pass all 25 vectors. Each of the five
 changes was held out of each reader, in a patched copy, and its vector
 failed; the creator's, held out as "any seat row of hers names her seat",
