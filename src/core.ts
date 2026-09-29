@@ -667,11 +667,13 @@ export async function buildContainer(
   // The capabilities the document depends on, named so a reader without them
   // refuses rather than opening a document whose writes it cannot make. `session`
   // is paired with the `session` block below, and a reader refuses one without
-  // the other by name (T1-D27).
+  // the other by name (T1-D27). `authorship` (batch format version 2): every
+  // row is signed by its author's key, so a host from before signing, which
+  // would write unsigned rows here, refuses the document instead (D108).
   const requires = replication
     ? session
-      ? ["replicated", "session"]
-      : ["replicated"]
+      ? ["authorship", "replicated", "session"]
+      : ["authorship", "replicated"]
     : undefined;
   // Version 3 (spec §9.2): the shell is an unsigned, self-attesting part and
   // leaves the signed set, so a host with its own shell verifies a signature

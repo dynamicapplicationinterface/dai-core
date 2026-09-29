@@ -74,7 +74,9 @@ async function adasGame(db: Rows, document: string): Promise<{ author: Uint8Arra
   const author = await authorIdOf(await rawPublicKey(keys.publicKey));
   ensureReplica(db, author);
   const session = startSession(db, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
-  createEntity(db, "games", rnd(), { white_name: "Ada", black_name: "", creator_color: "w", initial_fen: "" }, session);
+  // A real starting position, so the board opens and the screen reads as a person would see it.
+  const start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  createEntity(db, "games", rnd(), { white_name: "Ada", black_name: "", creator_color: "w", initial_fen: start }, session);
   for (const batch of pendingBatches(db, author, mergeTablesOf(db))) recordSeal(db, await signBatch(batch, { document, keys }));
   return { author, session };
 }
@@ -138,7 +140,6 @@ test.describe("batch format version 2: what an arriving copy is mounted as", () 
     [3, "above this host's version 2 (an old host meets a newer document)"],
   ] as const) {
     test(`a document holding a batch format ${version} header mounts read-only, with the sentence: ${why} (D108)`, async ({ browser }) => {
-      test.fail(true, "step 6, D108: a host mounts every document writable, whatever batch format its headers are in");
       const file = await chessWith(async (db, document) => {
         const { author } = await adasGame(db, document);
         db.run("UPDATE _dai_batch SET version = ? WHERE author = ?", [version, author]);
@@ -146,6 +147,19 @@ test.describe("batch format version 2: what an arriving copy is mounted as", () 
       const { page, close } = await openOnAFreshDevice(browser, file);
       await expect(page.locator("#report")).toContainText(SENTENCE, { timeout: 30_000 });
       expect(await writable(page), "the copy cannot be written").toBe(false);
+      // What is here is kept as it came: a copy can still be saved out, and the
+      // export flushes first, so once it lands any save the frame had pending
+      // has been asked. None is, and the sentence is the only thing said.
+      await page.evaluate(() => delete (window as any).showSaveFilePicker);
+      const download = page.waitForEvent("download", { timeout: 60_000 });
+      await page.evaluate(() => (window as any).__runner.exportContainer());
+      await download;
+      expect(await page.evaluate(() => Number((window as any).__runner.saves)), "a read-only copy asks for no save").toBe(0);
+      await expect(page.locator("#report")).toHaveText(`${SENTENCE}.`);
+      // Where a person sees it: over the document, not under it.
+      await expect(page.locator("#doc-note")).toBeVisible();
+      await expect(page.locator("#doc-note")).toHaveText(`${SENTENCE}.`);
+      await expect(page.locator("#save-state")).toBeHidden();
       await close();
     });
   }

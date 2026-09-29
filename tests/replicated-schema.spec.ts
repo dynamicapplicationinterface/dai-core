@@ -277,7 +277,7 @@ test.describe("the default build path emits the version the spec says it emits",
     expect(replicated.manifestVersion).toBe(4);
     // Chess declares the session profile (Step 6), so it requires both the
     // replicated capability and session.
-    expect(replicated.requires).toEqual(["replicated", "session"]);
+    expect(replicated.requires).toEqual(["authorship", "replicated", "session"]);
 
     const dir = mkdtempSync(join(tmpdir(), "dai-plain-"));
     writeFileSync(
@@ -294,13 +294,11 @@ test.describe("the default build path emits the version the spec says it emits",
   });
 
   test("batch format version 2: a replicated build requires authorship, which a host from before signing refuses (D108)", async () => {
-    test.fail(true, "step 6, D108: a host from before signing opens a signed document and writes unsigned rows into it");
     const replicated = await versionOf(resolve(repoRoot, "tests/fixture/chess"), "Chess");
     expect(replicated.requires).toContain("authorship");
   });
 
   test("batch format version 2: a seed database holding rows in a replicated table is refused, since nobody signed them", async () => {
-    test.fail(true, "step 6: a seed's replicated rows would ship unsigned, and every copy would refuse them");
     const dir = mkdtempSync(join(tmpdir(), "dai-seed-"));
     writeFileSync(join(dir, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">seeded</p>', "utf8");
     const schema = "-- dai:replicated\nCREATE TABLE notes (body TEXT);\n";

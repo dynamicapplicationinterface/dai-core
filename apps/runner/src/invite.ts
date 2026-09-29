@@ -103,6 +103,23 @@ export async function unsealedOwnRows(bytes: Uint8Array, author: Uint8Array): Pr
 }
 
 /**
+ * The batch format versions of the headers these database bytes hold, read in
+ * the host's own engine: what decides whether this host may write the copy
+ * (D108). Empty when the bytes hold no header, or no header table.
+ */
+export async function batchVersionsIn(bytes: Uint8Array): Promise<number[]> {
+  if (bytes.byteLength === 0) return [];
+  const scratch = await wasmScratch();
+  try {
+    const rows = scratch.open(bytes);
+    if (rows.all("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length === 0) return [];
+    return rows.all("SELECT DISTINCT version FROM _dai_batch").map((r) => Number(r["version"]));
+  } finally {
+    scratch.close();
+  }
+}
+
+/**
  * The invite for `sessionHex`: this document with its database filtered to
  * that session's rows, resealed. Not yet re-verified — the caller does that
  * before it hands the document on.

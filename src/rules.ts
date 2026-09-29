@@ -170,7 +170,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     why:
       "The mechanism that separates a publisher from its readers — the confidentiality levels — is not implemented. Claiming a protection the runtime does not provide is worse than saying nothing.",
     enforced: ["prose"],
-    anchors: [{ file: "src/container.ts", contains: 'IMPLEMENTED_CAPABILITIES: readonly string[] = ["replicated", "session"]' }],
+    anchors: [{ file: "src/container.ts", contains: 'IMPLEMENTED_CAPABILITIES: readonly string[] = ["authorship", "replicated", "session"]' }],
   },
 
   // -------------------------------------------------------------- container

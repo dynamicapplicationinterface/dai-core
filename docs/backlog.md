@@ -4417,6 +4417,21 @@ the chance collision is the likely reading, not a proven one. The fix is a
 plaintext probe no ciphertext spells by chance: a long, distinctive move text
 (or several), searched for as bytes.
 
+#### D169 — The host's "can be read here but not changed" sentences are said under the open document
+
+*Status: open, minor, for a ruling. Filed 29 September, seen while building
+D108 and read on the screen.* With a document open, `say()` writes to
+`#report`, which is the chooser's line and sits under the document, so a
+sentence said after the mount is not on screen. D108's update sentence was
+invisible until it also went through `tellOverDocument` (`#doc-note`). The
+others said at mount still go only to `#report`: the key that could not be
+read, the floor that could not be read, the write module that did not load
+or was refused (`apps/runner/src/main.ts`, the handshake's write-rules block
+and `TO_HOST.WRITE_RULES_REFUSED`). Each leaves a person looking at a
+document that refuses their writes with no sentence in view. **Proposed, not
+ruled:** every sentence said about the open document goes over it, one
+helper, and a page test per sentence reads `#doc-note`.
+
 #### D167 — A save landing after the next document opens puts the old one back as `loaded`, and the next document's code gets the old one's headers signed
 
 *Status: **landed** 29 September: `e80ddd3`, run 36507399817 read green
@@ -6283,7 +6298,42 @@ untested, and D160 blames honest people. Read D160 before changing either.
 
 #### D108 — An old host meets a new document
 
-*Status: open. Ruled 24 September: filed, nothing built until step 6.*
+*Status: **built** 29 September (lands on its run's verdict). Ruled 24
+September: filed, nothing built until step 6. Its shape is step 6's decision
+8 (28 September handoff). The four reds flipped, each red before. **Found
+running it and reading the screen:** the first green was green for the wrong
+reason. The frame kept asking for saves the host refused, and `#report` read
+"could not be saved (… needs an update …). Your changes are still here",
+which the sentence assertion matched by containment. So a read-only mount
+now schedules no save, the sentence goes over the document (`#doc-note`,
+since `#report` is under it: D169), and the test asserts no save asked (after
+an export, which flushes) and the exact sentence where a person sees it.
+**Residual:** the application still offers its writes (chess's New Game),
+which then refuse with the sentence.*
+
+**How it is built (decided 29 September, before code):**
+
+- **The document says it.** A replicated build lists `authorship` in
+  `requires` (signed, sorted with the rest). Every reader that implements it
+  names it in `IMPLEMENTED_CAPABILITIES` and the Python reader's list; a host
+  from before signing does not, and refuses the document with
+  `UNSUPPORTED_CAPABILITY`, the most it can do.
+- **The compiler refuses a seed** whose database holds a row in any replicated
+  table, naming the table: nobody signed those rows, and every copy would
+  refuse them.
+- **This host mounts read-only**, with the update sentence, a replicated
+  document that is below batch format version 2 (built without `authorship`,
+  or holding a header of version 1) or holds a header above it. It reads the
+  versions from the mount's own database with its own engine (as it reads
+  outgoing bytes, `apps/runner/src/invite.ts`). The mount's write decision is
+  then a refusal carrying the sentence, so it signs and saves nothing; the
+  write rules go to the frame with the refusal instead of the module, and the
+  frame refuses its writes at once rather than waiting out the rules'
+  deadline. What arrived is shown as it came (the load path rebuilds only a
+  mount that can write, D133).
+- **The reds** are the two held in `tests/format-version-mount.spec.ts`
+  (headers of batch format 1 and 3) and the two in
+  `tests/replicated-schema.spec.ts` (`authorship` required; the seed refused).
 
 The skew that can happen is not an old document on a new host: the runner mounts
 every document with its own runtime (`hostShell(..., { runtime: HOST_RUNTIME })`),

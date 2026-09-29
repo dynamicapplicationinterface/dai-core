@@ -1080,7 +1080,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     return saving;
   };
   const scheduleAutosave = (db: Any): void => {
-    if (!autosaves) return;
+    // A mount the host will not write saves nothing (D108): what is here is
+    // kept as it came, and no save is asked only to be refused.
+    if (!autosaves || mountReadOnly) return;
     autosaveDb = db;
     if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
@@ -1207,6 +1209,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * into an empty copy at open, never mounted as it came (step 6, D133).
    */
   let mountArriving = false;
+  /** Whether the host said it will not write this mount (D108): nothing is saved. */
+  let mountReadOnly = false;
   const heldSeq = (rows: Any): number => Number(rows.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.seq ?? 0);
   // The session's close policy, delivered by the host from the signed manifest
   // (T1-D32). `"creator"` gates a close to the replica that authored the seats;
@@ -2491,6 +2495,16 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       mountDocument = typeof data.document === "string" ? data.document : "";
       mountArriving = data.arriving === true;
       closePolicy = typeof data.closePolicy === "string" ? data.closePolicy : undefined;
+      // A mount the host will not write (D108: a batch format this host does
+      // not write, either way): no module, every write refused by the host's
+      // sentence at once rather than after the rules' deadline, and nothing
+      // said upward, since the host has already said it.
+      if (typeof data.readOnly === "string" && data.readOnly.length > 0) {
+        lastRefusal = data.readOnly;
+        mountReadOnly = true;
+        settleRules();
+        return;
+      }
       // A new author for a document this device wrote before (docs/identity.md,
       // "Loss"): held on window.dai for a kit that loads after, and fired for one
       // already listening. The kit owns the sentence.
@@ -3231,7 +3245,7 @@ let knownInsets: Record<string, number> = {};
  * synchronously after installing its listener. Whichever arrives second —
  * the rules or the announcement — delivers. Order cannot matter any more.
  */
-let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown; newAuthor: unknown; arriving: unknown } | null = null;
+let pendingRules: { source: unknown; replica: unknown; seqFloor: unknown; document: unknown; closePolicy: unknown; newAuthor: unknown; arriving: unknown; readOnly: unknown } | null = null;
 /** The bridge's window, once it has said it is listening; the delivery target. */
 let listeningWindow: Window | null = null;
 
@@ -3240,7 +3254,7 @@ function deliverRules(): void {
   const rules = pendingRules;
   pendingRules = null;
   listeningWindow.postMessage(
-    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true, arriving: rules.arriving === true },
+    { type: FRAME_INTERNAL.WRITE_RULES, source: rules.source, replica: rules.replica, seqFloor: rules.seqFloor, document: rules.document, closePolicy: rules.closePolicy, newAuthor: rules.newAuthor === true, arriving: rules.arriving === true, readOnly: rules.readOnly },
     "*",
   );
 }
@@ -3686,10 +3700,10 @@ async function boot(): Promise<void> {
      * The frame holds the digest it must match.
      */
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.WRITE_RULES) {
-      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown; newAuthor?: unknown; arriving?: unknown };
+      const pushed = event.data as { source?: unknown; replica?: unknown; seqFloor?: unknown; document?: unknown; closePolicy?: unknown; newAuthor?: unknown; arriving?: unknown; readOnly?: unknown };
       // Held, not forwarded. See pendingRules: the bridge may not exist yet,
       // and a message to a window with no listener is dropped, not queued.
-      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor, arriving: pushed.arriving };
+      pendingRules = { source: pushed.source, replica: pushed.replica, seqFloor: pushed.seqFloor, document: pushed.document, closePolicy: pushed.closePolicy, newAuthor: pushed.newAuthor, arriving: pushed.arriving, readOnly: pushed.readOnly };
       if (listeningWindow) deliverRules();
       return;
     }

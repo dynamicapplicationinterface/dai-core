@@ -99,7 +99,7 @@ test.describe("the compact inline carrier", () => {
     expect(round.manifest.replication?.level).toBe(1);
     // Chess declares the session profile (Step 6), so it requires session too, and
     // the session block survives the link byte-identically (asserted above).
-    expect(round.manifest.requires).toEqual(["replicated", "session"]);
+    expect(round.manifest.requires).toEqual(["authorship", "replicated", "session"]);
     expect(round.manifest.session).toEqual({ max_parties: 2 });
     // The signature over the signed set — replication and session included — holds.
     expect((await verifyContainer(back)).signature).toBe("valid");

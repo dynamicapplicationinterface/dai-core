@@ -79,7 +79,7 @@ test.describe("the manifest surface (T1-D26)", () => {
   test("a session document declares the capability and carries the signed bound at v4", async () => {
     const { manifest } = await build(SESSION_SCHEMA);
     expect(manifest.manifestVersion).toBe(4);
-    expect(manifest.requires).toEqual(["replicated", "session"]);
+    expect(manifest.requires).toEqual(["authorship", "replicated", "session"]);
     expect(manifest.session).toEqual({ max_parties: 2 });
     expect(manifest.replication?.tables).toEqual(["moves"]);
   });
@@ -110,7 +110,7 @@ CREATE TABLE moves ( ply INTEGER NOT NULL, san TEXT NOT NULL );
 
   test("a plain replicated document carries neither the capability nor the block", async () => {
     const { manifest } = await build(PLAIN_SCHEMA);
-    expect(manifest.requires).toEqual(["replicated"]);
+    expect(manifest.requires).toEqual(["authorship", "replicated"]);
     expect(manifest.session).toBeUndefined();
   });
 });
@@ -182,6 +182,6 @@ test.describe("the pairing is enforced structurally (T1-D27)", () => {
     // well-formed session document is no longer refused; it verifies and opens.
     const { html } = await build(SESSION_SCHEMA);
     const verified = await verifyContainer(html);
-    expect(verified.manifest.requires).toEqual(["replicated", "session"]);
+    expect(verified.manifest.requires).toEqual(["authorship", "replicated", "session"]);
   });
 });

@@ -59,7 +59,7 @@ import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
 import { listMailboxes } from "./opfs.js";
-import { inviteFor, unsealedOwnRows } from "./invite.js";
+import { batchVersionsIn, inviteFor, unsealedOwnRows } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
@@ -3000,6 +3000,8 @@ window.addEventListener("message", (event) => {
        * the page says so. The save handler waits on this same answer.
        */
       const decided = (async (): Promise<{ me: Person; seqFloor: number } | { refused: string }> => {
+        // A batch format this host does not write, either way (D108): read-only.
+        if (await needsUpdate(writing)) return { refused: NEEDS_UPDATE };
         const me = await person().catch(() => null);
         if (!me) {
           return {
@@ -3021,6 +3023,17 @@ window.addEventListener("message", (event) => {
         return { me, seqFloor };
       })();
       thisMount.writes = { documentUuid: writingUuid, decided };
+      // Read-only for its batch format (D108): said here, and the frame told
+      // with the rules instead of the module, so it refuses at once.
+      const early = await decided;
+      if (mountNow !== thisMount) return;
+      if ("refused" in early && early.refused === NEEDS_UPDATE) {
+        say(NEEDS_UPDATE);
+        // Over the document too: the chooser's report is under it.
+        tellOverDocument(NEEDS_UPDATE);
+        answerMount(thisMount, event.source, { type: TO_DOCUMENT.WRITE_RULES, readOnly: NEEDS_UPDATE });
+        return;
+      }
       /*
        * A failure here is said out loud, because the alternative already
        * happened.
@@ -5555,6 +5568,23 @@ function settleInto(mount: Mount, cartridge: Cartridge): void {
   const held = mount.cartridge;
   mount.cartridge = cartridge;
   if (mountNow === mount && loaded === held) loaded = cartridge;
+}
+
+/** What a person is told about a copy in a batch format this host does not write (D108, the ruled sentence). */
+const NEEDS_UPDATE = "This app needs an update before it can be written to; what's here is kept.";
+
+/**
+ * Whether this host must mount a replicated document read-only (D108): it is
+ * below batch format version 2 (built without `authorship`, or holding a
+ * version-1 header), or it holds a header of a version above this host's. A
+ * copy nobody has written yet holds no header and is judged by its build.
+ */
+async function needsUpdate(cartridge: Cartridge): Promise<boolean> {
+  if (!(cartridge.manifest.requires ?? []).includes("authorship")) return true;
+  const database = cartridge.archive["document.sqlite"];
+  if (!database || database.byteLength === 0) return false;
+  const versions = await batchVersionsIn(database);
+  return versions.some((version) => version !== BATCH_FORMAT_VERSION);
 }
 
 /** What a tab that lost the floor to another tab is told (D105). */
