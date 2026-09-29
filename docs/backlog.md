@@ -4438,8 +4438,9 @@ finds no write control on screen.
 
 *Status: open, filed 29 September from CI; not reproduced locally, not read.
 Firefox is a reading (D32), so it is not red on the gate. Failed on both
-tries in two of the four runs that have reached it; passed in the fourth
-(`daa03a9`, run 36571556289).*
+tries in three of the five runs that have reached it (the third: `4ddb2c8`,
+run 36575643417, whose Firefox job was then cancelled); passed in
+`daa03a9`'s (run 36571556289) and once on retry before that.*
 
 `tests/mount-order.spec.ts:194`, "a save that lands between the next
 document's mount and its handshake gives that document no writer" (D167's
@@ -4455,8 +4456,10 @@ is the first thing to read from its trace.
 
 #### D171 — The reference readers compute none of what batch format version 2 changed after the signature
 
-*Status: **built 29 September**; lands on its CI verdict (identity step 6,
-the readers' leveling). Unsigned-everywhere was level already (`436a972`).
+*Status: **landed** 29 September: `4ddb2c8`, run 36575643417 read green on
+the gate (Chromium+node 1389, WebKit 268 + 271 + 235, checks, where both
+readers pass all 25 vectors; Firefox 767 and one failed, D172, a reading).
+Identity step 6, the readers' leveling. Unsigned-everywhere was level already (`436a972`).
 D111, the readers doing their own signature check, stays the successor and
 is not this.*
 
