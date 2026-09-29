@@ -1064,7 +1064,10 @@ looked sound in prose and was a clock race underneath.*
 *Replaced by signed authorship (docs/identity.md, step 5, ruled 24 September).
 A binding no longer seats anyone: it asks. The session id commits to its
 creator (SHA-256 of the creator's author id and a nonce on the creator's own
-seat row, first 16 bytes), so who created a session is checked from the rows;
+seat row, first 16 bytes; **the nonce is superseded**, 27 September, D158, marked
+29 September: the id hashes the seq of the creator's own seat row, so exactly
+one row is the creator's, `docs/format.md` "Session id"), so who created a
+session is checked from the rows;
 the creator's seat is the creator's; the open seat is held by whoever the
 creator's copy confirms in `_dai_confirm`, which only the creator's rows count
 in. A seat two copies asked for before the creator's copy seated anyone admits
@@ -1220,6 +1223,14 @@ close is **late**, and dropped at merge like a non-roster row. The trap is the
 same one the roster had: "late" must not be decided by a Lamport clock, which
 does not order events across replicas and which an author can pick. So the close
 **states what it saw** — a fact with an author — and admission reads that fact.
+
+*Superseded, 27 September (D151) and batch format version 2, marked 29
+September: the frontier.* The next two paragraphs, and "a member states the
+frontier" under the Level 1 residual, describe a close that listed what its
+author had seen and made every author's unseen rows late. A close lists
+nothing and binds only its author (the amendment at the end of this decision;
+`docs/format.md`, "A session's close"). They are kept as the record of what
+was replaced, not as the rule.
 
 *The representation, chosen to be a fact and to be expressible.* Closing a
 session writes rows to `_dai_close`, one per replica the closer had seen in the

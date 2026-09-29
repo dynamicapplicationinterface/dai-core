@@ -4558,6 +4558,79 @@ per seat per creator (D165).
   needs is the verdict carrying the signed list, so it sits with the
   signature, D111's side, and is not in these five.*
 
+*Why the Rust reader is extended only from the specification and the
+fixtures (its README's rule), recorded because this entry is where it paid:
+a reader written from the TypeScript agrees with the TypeScript. It inherits
+every reading the TypeScript made where the page is silent, so it can never
+disagree with it, and a reader that cannot disagree tests nothing. The blind
+rebuild is what found the weak fixture (the close vector passing a reader
+that compared seqs across authors) and every gap in the list above; the
+first extension, written beside the Python one, found none of them.*
+
+*The divergences, ruled 29 September:*
+
+- *A deleted confirm still counts. A confirm is the creator's statement
+  that she seated a copy, and a hold never moves once made; a delete of a
+  confirm is another confirm row naming a holder, and it counts as one.*
+- *`AUTHOR_EQUIVOCATED` is filed under the revealing header's batch id, and
+  `refusedBatches` is emitted in a deterministic order: batch id, then code.*
+- *Roster heads partition by (session, entity, author).*
+- *The one shape of parents and `ROW_MALFORMED` are format: `docs/format.md`
+  states them.*
+- *`docs/replicated-tables.md`'s frontier sentences (T1-D31) and nonce
+  sentences (T1-D29) are marked superseded, with the date.*
+- *One fixture per ruling that would split the readers if either had it
+  wrong; then both readers level on it.*
+
+*Decided before code, 29 September (how the rulings are built):*
+
+- *The revealing header. A merge reports what it made true, as its
+  `SEAT_NOT_HELD` reports do. For D160: a header this merge keeps and did
+  not hold before, listing a `(table, seq)` of its author that is
+  equivocated after the merge and was not before it. For D165: the header
+  named by a row this merge took that the void rests on (a confirm of that
+  seat, or the session's creator seat row), for a seat void after the merge
+  and not before it. The report stays once per author per merge, D160 and
+  D165 together, filed under the lowest of that author's revealing headers.
+  So a third conflicting header at an id already equivocated reveals nothing
+  and is not reported: the runtime reports it today and changes, and the Rust
+  reader's reading (report when the set grows) is this one. "The merge that
+  brings the second header" had both readings; this is the one D165 already
+  had.*
+- *The order: batch id in lowercase hex (no id sorts first), then the code,
+  then the author id in hex. The third key is kept because one header can
+  refuse rows of several authors under one code (`BATCH_DIGEST_MISMATCH` is
+  filed in the row author's name).*
+- *A deleted confirm: `_dai_confirmed` reads every confirm row of the
+  creator's in her session, deleted or not, superseded or not (it already
+  read superseded ones). A tombstone naming another holder voids the seat, as
+  any second confirm does.*
+- *The spec before the Rust reader: that reader can level only from the
+  page, so `docs/format.md` is rewritten (with the rulings) before its
+  session, not after the fixtures. The rewrite is then checked by the reader
+  it is written for.*
+- *Three fixtures, each built so a reader with the ruling wrong disagrees,
+  and each held out of both readers and restored:*
+  1. *`session-deleted-confirm`: Ada confirms Bo, then writes a delete of
+     that confirm naming another copy. The seat is void, the merge that
+     brings the delete reports `AUTHOR_EQUIVOCATED` under the delete's header,
+     and Bo's move is admitted nowhere. Wrong either way: a reader skipping
+     deleted confirms keeps Bo seated; one reading only current confirms
+     seats nobody and voids nothing.*
+  2. *`session-roster-heads`: Bo writes a version of Ada's open seat row,
+     and Ada writes a version of that row in another session. All three
+     rows are heads. A reader partitioning by entity alone, by entity and
+     author, or by entity and session hides Ada's row.*
+  3. *`session-equivocation-filed`: copy A already holds two conflicting
+     headers of Ada's at one id; copy B holds a third, and an earlier,
+     unrelated header of Ada's that A lacks, whose id sorts below the
+     revealing ones, and whose move is refused `SEAT_NOT_HELD`. B into A
+     reports no equivocation (nothing new revealed); A into B reports it
+     once, under the lower of A's two headers, after the `SEAT_NOT_HELD`
+     entry. Wrong readers: filing under no id, under the lowest header that
+     arrived, or reporting the third header. The generator asserts the id
+     order it relies on, so a later change cannot quietly remove the teeth.*
+
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
 *Status: **landed** 29 September: `daa03a9`, run 36571556289 read green
