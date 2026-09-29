@@ -4417,10 +4417,30 @@ the chance collision is the likely reading, not a proven one. The fix is a
 plaintext probe no ciphertext spells by chance: a long, distinctive move text
 (or several), searched for as bytes.
 
+#### D170 — A read-only mount still offers the application's writes
+
+*Status: open; lands in step 7, with the rebuild of the examples. Filed 28
+September, seen on the screen while building D108.* A copy this host mounts
+read-only (D108: a batch format it does not write) shows the update sentence
+over the document, and chess still offers New Game, which then refuses with
+that sentence when pressed. The rule already exists for closed sessions
+(SESSION-CLOSE: "offer no one a write in a closed session"); a read-only
+mount is the same rule seen from the host's side: offer no write the mount
+cannot make. The kit hook is `window.daiKit.whenWritable(fn)` (`src/kit.ts`),
+which already answers false on such a mount (`dai.replicated.writable()`),
+so an application hides or disables its write controls behind it. **Fix:**
+step 7's rebuild of the examples (chess, tic-tac-toe, request) puts every
+write control behind `whenWritable`, and the rule's text says a read-only
+mount beside a closed session; a page test opens a batch format 3 copy and
+finds no write control on screen.
+
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
-*Status: open, minor, for a ruling. Filed 29 September, seen while building
-D108 and read on the screen.* With a document open, `say()` writes to
+*Status: open, for a ruling; a real hole on the walk: a sentence nobody can
+see is a refusal nobody understands. Filed 28 September, seen while building
+D108 and read on the screen. **The fix is known: `tellOverDocument`**
+(`apps/runner/src/main.ts`), which D108's sentence already uses; nothing
+needs deriving again.* With a document open, `say()` writes to
 `#report`, which is the chooser's line and sits under the document, so a
 sentence said after the mount is not on screen. D108's update sentence was
 invisible until it also went through `tellOverDocument` (`#doc-note`). The
@@ -4429,14 +4449,18 @@ read, the floor that could not be read, the write module that did not load
 or was refused (`apps/runner/src/main.ts`, the handshake's write-rules block
 and `TO_HOST.WRITE_RULES_REFUSED`). Each leaves a person looking at a
 document that refuses their writes with no sentence in view. **Proposed, not
-ruled:** every sentence said about the open document goes over it, one
-helper, and a page test per sentence reads `#doc-note`.
+ruled:** every sentence said about the open document goes over it through
+`tellOverDocument` (as well as `say`, which keeps `#report` for the chooser),
+and a page test per sentence reads `#doc-note`.
 
 #### D167 — A save landing after the next document opens puts the old one back as `loaded`, and the next document's code gets the old one's headers signed
 
-*Status: **landed** 29 September: `e80ddd3`, run 36507399817 read green
+*Status: **landed** 28 September: `e80ddd3`, run 36507399817 read green
 (Chromium+node 1385, WebKit 267 + 271 + 235, checks, Firefox 767, a reading;
-no flakes, `sign-scope:27` among them). Built as: the mount state and the three
+no flakes, `sign-scope:27` among them). One sighting since, Firefox (a
+reading), run 36510731396: `mount-order:194` hit the 90-second test timeout
+on its first try and passed in 11 seconds on retry; the kept trace is the
+retry's, so where it waited is not read. Built as: the mount state and the three
 reds below, `tests/mount-order.spec.ts`, and a fourth from the cold read;
 each run red on the host before the fix on Chromium and WebKit and read
 failing on its own subject, then the first three 30 of 30 at five repeats on
@@ -4483,7 +4507,7 @@ which now holds the next document's shell, and relayed to its frame. It carries
 a signature over the old document's honest header, so it grants nothing new,
 but "answered only for the document open now" does not hold at reply time.
 
-*Ruled 29 September: fix now, first, its own commit; D165 lands on this fix's
+*Ruled 28 September: fix now, first, its own commit; D165 lands on this fix's
 verdict. Mount state per mount, keyed by nonce; a late completion never
 overwrites a newer mount; a sign request is bound to its mount and signed only
 while that mount is current and the header names its document; answers go to
@@ -4491,7 +4515,7 @@ the asking window by nonce or are dropped. Three deterministic reds with the
 order forced, and the concurrent-worker test (`sign-scope:27`) kept as a load
 test.*
 
-**How it is built (decided before code, 29 September):**
+**How it is built (decided before code, 28 September):**
 
 - **One state per mount, made at its handshake.** `mount()` records the
   cartridge it put in the frame and clears the current mount and its nonce
@@ -4618,7 +4642,7 @@ yet read.
 
 #### D165 — A confirm the creator signs at a seq she skipped moves a hold
 
-*Status: **landed** 29 September, on D167's verdict as ruled: `775f168`'s own
+*Status: **landed** 28 September, on D167's verdict as ruled: `775f168`'s own
 run (36494406706) was red on the gate for D167 alone (`sign-scope:27`, WebKit),
 and `e80ddd3`, which carries it with D167's fix, read green (run 36507399817:
 Chromium+node 1385, WebKit 267 + 271 + 235, checks, Firefox 767; no flakes).
@@ -5438,11 +5462,12 @@ into another session with its batch stripped) and `tests/roster.spec.ts`. Not
 covered: a whole file taken in place is not a merge and verifies nothing, so a
 forged unsigned seat row inside one still counts; that is step 6's load path.*
 
-*Load path built 29 September, below (its commit carries the red flipped:
-`format-version-mount`, "an arriving database is merged, not mounted"); lands
-on its run's verdict.*
+*Load path **landed** 28 September: `f7d3e99`, run 36510731396 read green
+(Chromium+node 1385, WebKit 268 + 271 + 235, checks; Firefox 766 and one
+flaky, `mount-order:194`, on D167). It flips `format-version-mount`, "an
+arriving database is merged, not mounted".*
 
-**The load path, how it is built (decided 29 September, before code; the rule
+**The load path, how it is built (decided 28 September, before code; the rule
 is step 6's decision 7 in the 28 September handoff):**
 
 - **Which databases arrive.** Every mount whose database did not come from
@@ -6298,7 +6323,9 @@ untested, and D160 blames honest people. Read D160 before changing either.
 
 #### D108 — An old host meets a new document
 
-*Status: **built** 29 September (lands on its run's verdict). Ruled 24
+*Status: **landed** 28 September: `902a274`, run 36512859089 read green
+(Chromium+node 1385, WebKit 267 + 271 + 235, checks, Firefox 767; no flakes).
+Ruled 24
 September: filed, nothing built until step 6. Its shape is step 6's decision
 8 (28 September handoff). The four reds flipped, each red before. **Found
 running it and reading the screen:** the first green was green for the wrong
@@ -6309,9 +6336,9 @@ now schedules no save, the sentence goes over the document (`#doc-note`,
 since `#report` is under it: D169), and the test asserts no save asked (after
 an export, which flushes) and the exact sentence where a person sees it.
 **Residual:** the application still offers its writes (chess's New Game),
-which then refuse with the sentence.*
+which then refuse with the sentence: filed as D170, for step 7.*
 
-**How it is built (decided 29 September, before code):**
+**How it is built (decided 28 September, before code):**
 
 - **The document says it.** A replicated build lists `authorship` in
   `requires` (signed, sorted with the rest). Every reader that implements it
