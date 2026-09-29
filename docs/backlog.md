@@ -4691,6 +4691,27 @@ first extension, written beside the Python one, found none of them.*
      arrived, or reporting the third header. The generator asserts the id
      order it relies on, so a later change cannot quietly remove the teeth.*
 
+*Moved here from `docs/format.md`'s "Known silences" on 29 September, when
+the page was rewritten as a format page (the eighth sitting); for the cold
+review, as it stood:*
+
+- *Not ruled. Each is what the runtime does today, so a reader need not
+  guess, and each is listed for the review that closes step 6.*
+  - *A confirm naming a seat nobody minted counts like any other: its holder
+    holds that seat. Nothing checks a confirm's seat against the creator's
+    `_dai_seat` rows. (The rewritten page keeps the one sentence it already
+    had under Holders: "A confirm is not checked against the seats the
+    creator minted", anchor `confirm-seat-unchecked`.)*
+  - *The rest of the list the independent reader returned on 29 September
+    (above): which of several conditions a row that is both crossing and
+    waiting is reported under, whether a held row that a new confirm unseats
+    is reported, what `_r_batch` a row listed by both a complete and an
+    incomplete header takes, how the stored `_r_superseded` cache is
+    derived where roster heads partition by author, and the others there.*
+- *Stated as rules, and held by no vector yet: a creator's seat row written
+  with the delete flag set makes nobody the creator (anchor `creator`), and
+  a close row written deleted closes nothing (anchor `close-counts`, D153).*
+
 #### D169 — The host's "can be read here but not changed" sentences are said under the open document
 
 *Status: **landed** 29 September: `daa03a9`, run 36571556289 read green
