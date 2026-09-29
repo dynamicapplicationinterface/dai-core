@@ -784,6 +784,12 @@ let hostSavesWritten = 0;
 /** How many saves the running document has asked this host for. Read by tests. */
 let hostSaves = 0;
 
+/** Sign requests this host has finished with, answered or not. Read by tests. */
+let hostSignsSettled = 0;
+
+/** Signatures this host has made with the person key. Read by tests. */
+let hostSignatures = 0;
+
 /** The application's own index.html, as text, when the archive carries one. */
 function indexHtmlOf(cartridge: Cartridge): string | undefined {
   const bytes = cartridge.archive["app/index.html"];
@@ -1139,6 +1145,9 @@ function eject(): void {
   // attributes, so the next cartridge cannot inherit a laxer configuration.
   cartridgeFrame.src = "about:blank";
   loaded = undefined;
+  framed = undefined;
+  mountNow = null;
+  mountedNonce = null;
   handshakeEstablished = false;
   frameSessionLanes = false;
   // The mailbox loop belongs to the document that was open; it stops with it.
@@ -1488,6 +1497,12 @@ async function mount(cartridge: Cartridge): Promise<void> {
   const shell = await hostShell(cartridge, { template: HOST_TEMPLATE, runtime: HOST_RUNTIME });
   const blob = new Blob([shell], { type: "text/html" });
   mountedUrl = URL.createObjectURL(blob);
+  // A new mount, from before the frame leaves the last one: until this shell
+  // handshakes, nothing the frame says is taken as the last mount's, and
+  // nothing started under it is answered into this one (D167).
+  framed = cartridge;
+  mountNow = null;
+  mountedNonce = null;
   cartridgeFrame.src = mountedUrl;
 
   // The launch screen holds — the document's icon and name on a still
@@ -2656,17 +2671,16 @@ async function exportContainer(): Promise<void> {
    * `currentHtml` has always flushed first. This path did not, which is the
    * cost of two functions packaging the same document.
    */
-  let opfsDb: Uint8Array | null;
+  let leaving: Awaited<ReturnType<typeof leavingBytes>>;
   try {
-    await flushBeforeLeaving();
-    opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
-    await mayLeave(opfsDb);
+    leaving = await leavingBytes();
   } catch (error) {
     say((error as Error).message, true);
     return;
   }
-  const activeCartridge = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
-  loaded = activeCartridge;
+  const { doc, mount, db: opfsDb } = leaving;
+  const activeCartridge = opfsDb ? await resealCartridge(doc, opfsDb) : doc;
+  if (mount) settleInto(mount, activeCartridge);
   if (opfsDb) await noteSentOut(activeCartridge, opfsDb);
 
   const name = activeCartridge.manifest.appName ?? "container";
@@ -2899,12 +2913,31 @@ window.addEventListener("message", (event) => {
   if (data.type === TO_HOST.HANDSHAKE) {
     // The frame this runner mounted, and no other window.
     if (event.source !== cartridgeFrame.contentWindow) return;
+    /*
+     * From the shell of the document this host framed, and no other: the
+     * frame is one window across navigations, so the last shell can still
+     * handshake after `mount()` framed the next one, and would be bound to the
+     * next document's writes (D167, its cold read). The shell names its
+     * document from the manifest it verified.
+     */
+    const expected = framed ?? mountNow?.cartridge;
+    if (expected && data.payload?.documentUuid !== expected.manifest.documentUuid) {
+      console.info("dai: a handshake from a document no longer framed here was ignored");
+      return;
+    }
     handshakeEstablished = true;
     mountedNonce = (data.payload?.sessionNonce as string) ?? null;
-    // A new mount: whatever this host agreed to write for the last one is gone
-    // with it (cold review of identity step 3, finding 1). A document that
-    // follows a shared one must not inherit the right to have its headers signed.
-    mountWrites = null;
+    /*
+     * A new mount, with state of its own: whatever this host agreed to write
+     * for the last one is gone with it (cold review of identity step 3,
+     * finding 1). Its document is the one `mount()` put in the frame, or, for
+     * a shell that handshakes again, the one it already showed; never `loaded`,
+     * which a save of the last document landing late once put back (D167).
+     */
+    const shown = framed ?? mountNow?.cartridge;
+    framed = undefined;
+    mountNow = mountedNonce && shown ? { nonce: mountedNonce, cartridge: shown, writes: null } : null;
+    const thisMount = mountNow;
     frameSessionLanes = data.payload?.sessionLanes === true;
 
     // A sibling that arrived on a cold launch, now that there is a frame to
@@ -2950,8 +2983,9 @@ window.addEventListener("message", (event) => {
      * document and a read-only one.
      */
     void (async () => {
-      if (!loaded || !declaresReplication(loaded.manifest)) return;
-      const writingUuid = loaded.manifest.documentUuid;
+      if (!thisMount || !declaresReplication(thisMount.cartridge.manifest)) return;
+      const writing = thisMount.cartridge;
+      const writingUuid = writing.manifest.documentUuid;
       /*
        * Whether this device may write this document at all, decided before any
        * write rule or save goes through (cold review of identity step 2, #5).
@@ -2982,7 +3016,7 @@ window.addEventListener("message", (event) => {
         }
         return { me, seqFloor };
       })();
-      mountWrites = { nonce: mountedNonce, documentUuid: writingUuid, decided };
+      thisMount.writes = { documentUuid: writingUuid, decided };
       /*
        * A failure here is said out loud, because the alternative already
        * happened.
@@ -2999,6 +3033,8 @@ window.addEventListener("message", (event) => {
        * sentence says.
        */
       const source = await loadMergeModule().catch(() => null);
+      // Said about the document on screen, or not at all (D167).
+      if (mountNow !== thisMount) return;
       if (!source) {
         say(
           "This document can be read here but not changed: the part of the app that " +
@@ -3008,6 +3044,7 @@ window.addEventListener("message", (event) => {
         return;
       }
       const decision = await decided;
+      if (mountNow !== thisMount) return;
       if ("refused" in decision) {
         say(decision.refused, true);
         return;
@@ -3019,30 +3056,26 @@ window.addEventListener("message", (event) => {
       const wroteBefore =
         !writtenThisPage.has(writingUuid) &&
         (await getCartridgeFromLibrary(writingUuid).catch(() => null))?.wrote === true;
-      (event.source as Window | null)?.postMessage(
-        {
-          type: TO_DOCUMENT.WRITE_RULES,
-          sessionNonce: mountedNonce,
-          source,
-          // The author id this device writes under: the fingerprint of the
-          // host's person key. The frame writes under it whatever the mounted
-          // file holds, on every mount (docs/identity.md, binding rule 1).
-          replica,
-          seqFloor,
-          // The document every batch header names (docs/identity.md, step 3).
-          document: loaded.manifest.documentUuid,
-          // T1-D32: who may close this session, from the signed manifest. The
-          // frame refuses a close the policy forbids at write time; the views are
-          // the convergent net. Undefined for a document with no session.
-          closePolicy: loaded.manifest.session ? (loaded.manifest.session.close ?? "any") : undefined,
-          // This device made its key on this page, and its library says it wrote
-          // this document before: it is a new author for a document it had
-          // written, which is what losing a key looks like (docs/identity.md,
-          // "Loss"). The kit says so, in its words or the application's.
-          newAuthor: mintedThisPage() && wroteBefore,
-        },
-        "*",
-      );
+      answerMount(thisMount, event.source, {
+        type: TO_DOCUMENT.WRITE_RULES,
+        source,
+        // The author id this device writes under: the fingerprint of the
+        // host's person key. The frame writes under it whatever the mounted
+        // file holds, on every mount (docs/identity.md, binding rule 1).
+        replica,
+        seqFloor,
+        // The document every batch header names (docs/identity.md, step 3).
+        document: writingUuid,
+        // T1-D32: who may close this session, from the signed manifest. The
+        // frame refuses a close the policy forbids at write time; the views are
+        // the convergent net. Undefined for a document with no session.
+        closePolicy: writing.manifest.session ? (writing.manifest.session.close ?? "any") : undefined,
+        // This device made its key on this page, and its library says it wrote
+        // this document before: it is a new author for a document it had
+        // written, which is what losing a key looks like (docs/identity.md,
+        // "Loss"). The kit says so, in its words or the application's.
+        newAuthor: mintedThisPage() && wroteBefore,
+      });
     })();
 
     (event.source as Window | null)?.postMessage(
@@ -3215,15 +3248,13 @@ window.addEventListener("message", (event) => {
   } else if (data.type === TO_HOST.LEAVE_CHECK) {
     // The shell is about to write a file itself (a download or a picker save)
     // and asks first; the answer comes from the bytes, opened here (#2).
-    if (!fromMountedContainer(event, data)) return;
+    const asking = mountOf(event, data);
+    if (!asking) return;
     const answer = (ok: boolean, error?: string): void => {
-      (event.source as Window | null)?.postMessage(
-        { type: TO_DOCUMENT.LEAVE_CHECKED, id: data.id, ok, ...(error ? { error } : {}) },
-        "*",
-      );
+      answerMount(asking, event.source, { type: TO_DOCUMENT.LEAVE_CHECKED, id: data.id, ok, ...(error ? { error } : {}) });
     };
     const bytes = data.sqlite instanceof Uint8Array ? data.sqlite : null;
-    void mayLeave(bytes).then(
+    void mayLeave(bytes, asking).then(
       () => answer(true),
       (error: unknown) => answer(false, error instanceof Error ? error.message : String(error)),
     );
@@ -3235,16 +3266,21 @@ window.addEventListener("message", (event) => {
      * format this host speaks; and only after the sequence floor has counted
      * the batch, so the order at a leave point is floor, seal, send.
      */
-    if (!fromMountedContainer(event, data)) return;
+    // Bound to the mount that asked, and answered only into it (D167).
+    const asking = mountOf(event, data);
+    if (!asking) {
+      hostSignsSettled += 1;
+      return;
+    }
     const reply = (answer: { sig?: Uint8Array; pub?: Uint8Array; error?: string }): void => {
-      (event.source as Window | null)?.postMessage({ type: TO_DOCUMENT.SIGNED, id: data.id, ...answer }, "*");
+      answerMount(asking, event.source, { type: TO_DOCUMENT.SIGNED, id: data.id, ...answer });
     };
     void (async () => {
-      // Only for the document mounted now, under the decision made for this
-      // very mount: never a header for a document opened before this one.
-      const mount = mountWrites && mountWrites.nonce === mountedNonce ? mountWrites : null;
+      // Only for the document of the mount that asked, under the decision made
+      // for that very mount: never a header for a document opened before it.
+      const mount = asking.writes;
       const writes = mount ? await mount.decided : null;
-      if (!mount || !writes || !loaded || loaded.manifest.documentUuid !== mount.documentUuid) {
+      if (!mount || !writes || mount.documentUuid !== asking.cartridge.manifest.documentUuid) {
         return reply({ error: "This document is not open for writing here." });
       }
       const seq = Number(data.seq);
@@ -3266,6 +3302,7 @@ window.addEventListener("message", (event) => {
         fields[2] instanceof Uint8Array &&
         showAuthorId(fields[2]) === writes.me.author;
       if (!header || !ours) return reply({ error: "This device signs only its own changes to the document that is open." });
+      if (mountNow !== asking) return;
       try {
         /*
          * Under the save's lock and its revision check, then the floor
@@ -3284,12 +3321,24 @@ window.addEventListener("message", (event) => {
         if (error instanceof Error && error.message === FLOOR_MOVED) return reply({ error: FLOOR_MOVED });
         return reply({ error: "This device could not record how far it has written, so the change was not signed." });
       }
-      reply({ sig: await signBytes(writes.me.keys.privateKey, header), pub: writes.me.pub });
-    })();
+      // Signed only while the mount that asked is still the one mounted: the
+      // person may have opened another document while this waited (D167).
+      if (mountNow !== asking) {
+        console.info("dai: a sign for a document no longer open here was not made");
+        return;
+      }
+      const sig = await signBytes(writes.me.keys.privateKey, header);
+      hostSignatures += 1;
+      reply({ sig, pub: writes.me.pub });
+    })().finally(() => {
+      hostSignsSettled += 1;
+    });
   } else if (data.type === TO_HOST.SAVE) {
     // A save writes to this device's storage under a document's identity, so it
-    // is answered only for the container that handshook.
-    if (!fromMountedContainer(event, data)) return;
+    // is answered only for the container that handshook, and settles into the
+    // mount that asked, whatever is open by the time it lands (D167).
+    const asking = mountOf(event, data);
+    if (!asking) return;
     hostSaves += 1;
     const saveNumber = hostSaves;
     // Echoed on the reply so the container can tell this answer from any
@@ -3330,9 +3379,14 @@ window.addEventListener("message", (event) => {
        * says so in the header, and Save a copy is in the menu.
        */
       locked(async () => {
+        // The mount's own document, named by its shell from the manifest it
+        // verified: a save naming another is not this mount's to make.
+        if (documentUuid !== asking.cartridge.manifest.documentUuid) {
+          throw new Error("This save names a document that is not the one open here, so it was not written.");
+        }
         // A document this device may not write is not saved: the same answer
         // the mount gave, waited on here so no save goes through before it.
-        const mount = mountWrites?.documentUuid === documentUuid ? mountWrites : null;
+        const mount = asking.writes;
         const writes = mount ? await mount.decided : null;
         if (writes && "refused" in writes) throw new Error(writes.refused);
         const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
@@ -3352,8 +3406,12 @@ window.addEventListener("message", (event) => {
         else await raiseSeqFloor(documentUuid, seq);
         await saveDatabaseToOpfs(documentUuid, bytes);
         const next = current + 1;
-        if (loaded && loaded.manifest.documentUuid === documentUuid) {
-          loaded = await resealCartridge(loaded, bytes);
+        {
+          // The mount's own document, resealed; shown only if it is still the
+          // one open (D167). Written to the library either way: that is the
+          // save's job, whatever the person opened since.
+          const resealed = await resealCartridge(asking.cartridge, bytes);
+          settleInto(asking, resealed);
           await saveCartridgeToLibrary({
             /*
              * What this write does not own, it keeps.
@@ -3367,20 +3425,20 @@ window.addEventListener("message", (event) => {
              * by the code that implements it.
              */
             ...held,
-            documentUuid: loaded.manifest.documentUuid,
-            appName: loaded.manifest.appName ?? "container",
+            documentUuid: resealed.manifest.documentUuid,
+            appName: resealed.manifest.appName ?? "container",
             lastOpened: new Date().toISOString(),
             // Stamped by the reseal a line above. Without it here, this
             // device has no record of when its own copy was last written,
             // and an arriving copy cannot be told newer or older than it.
-            savedAt: savedAtOf(loaded),
+            savedAt: savedAtOf(resealed),
             // Every database this copy has held, so a link it sends now can be
             // recognized as its own when it comes back (D36). A save is a change
             // since the last match, unless the runtime says it was only the
             // document's own setup SQL, which every copy runs.
             ...(held ? afterSave(held, await databaseDigest(bytes), data.payload?.setup === true) : {}),
-            html: loaded.html,
-            publicKeyFingerprint: loaded.publicKeyFingerprint,
+            html: resealed.html,
+            publicKeyFingerprint: resealed.publicKeyFingerprint,
             revision: next,
             // "Something has been written here that nobody would want to lose."
             // Not `revision`, which counts the setup SQL every copy runs and
@@ -3389,10 +3447,8 @@ window.addEventListener("message", (event) => {
             ...(data.payload?.setup === true ? {} : { wrote: true }),
             // Which build this copy is running, so an arriving copy can be told
             // apart by its application rather than by its data (D85).
-            ...(buildOf(loaded.manifest) ? { build: buildOf(loaded.manifest) } : {}),
+            ...(buildOf(resealed.manifest) ? { build: buildOf(resealed.manifest) } : {}),
           });
-        } else if (held) {
-          await saveCartridgeToLibrary({ ...held, revision: next });
         }
         knownRevision.set(documentUuid, next);
       })
@@ -3410,17 +3466,11 @@ window.addEventListener("message", (event) => {
            * reason. Off the save's path, like the replica record below.
            */
           if (data.payload?.setup !== true) askForPersistence("after the first save");
-          (event.source as Window | null)?.postMessage(
-            { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId },
-            "*",
-          );
+          answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "ok", requestId });
         })
         .catch((error: unknown) => {
           console.info(`dai: save ${saveNumber} refused: ${String(error)}`);
-          (event.source as Window | null)?.postMessage(
-            { type: TO_DOCUMENT.SAVE_ACK, status: "error", error: String(error), requestId },
-            "*",
-          );
+          answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "error", error: String(error), requestId });
         });
     }
   }
@@ -3565,13 +3615,38 @@ const UNSIGNED_LEAVE =
  * identity step 3, #2); the frame belongs to the document. Throws the sentence
  * when they may not.
  */
-async function mayLeave(bytes: Uint8Array | null | undefined): Promise<void> {
-  if (!bytes || !loaded || !declaresReplication(loaded.manifest)) return;
-  const mount = mountWrites && mountWrites.nonce === mountedNonce ? mountWrites : null;
-  const writes = mount ? await mount.decided : null;
+async function mayLeave(bytes: Uint8Array | null | undefined, mount: Mount | null = mountNow): Promise<void> {
+  if (!bytes || !mount || !declaresReplication(mount.cartridge.manifest)) return;
+  const writes = mount.writes ? await mount.writes.decided : null;
   // No key this mount may write under: nothing of this device's could be signed.
   if (!writes || "refused" in writes) return;
   if ((await unsealedOwnRows(bytes, writes.me.id)) > 0) throw new Error(UNSIGNED_LEAVE);
+}
+
+/** Said when another document was opened while one was being made ready to leave (D167). */
+const MOUNT_MOVED =
+  "Another document was opened while this one was being prepared, so it was not sent or saved. Open it and try again.";
+
+/**
+ * The open document's bytes as they may leave: flushed, read and checked under
+ * the mount they began under. Refused when the person opened another document
+ * meanwhile, since the check was that mount's (D167).
+ */
+async function leavingBytes(): Promise<{ doc: Cartridge; mount: Mount | null; db: Uint8Array | null }> {
+  const doc = loaded;
+  if (!doc) throw new Error("nothing open");
+  const uuid = doc.manifest.documentUuid;
+  await flushBeforeLeaving();
+  const db = await loadDatabaseFromOpfs(uuid);
+  // The mount as it stands after the flush: a shell still booting when this
+  // began has handshaken since, and that is this document, not another.
+  const mount = mountNow;
+  const moved = (): boolean =>
+    loaded?.manifest.documentUuid !== uuid || (mount !== null && mount.cartridge.manifest.documentUuid !== uuid) || mountNow !== mount;
+  if (moved()) throw new Error(MOUNT_MOVED);
+  await mayLeave(db, mount);
+  if (moved()) throw new Error(MOUNT_MOVED);
+  return { doc, mount, db };
 }
 
 /**
@@ -3979,10 +4054,8 @@ async function currentHtml(withData = true): Promise<string> {
     const blank = await resealCartridge(loaded, new Uint8Array(0));
     return blank.supplied.length > 0 ? refatten(blank) : blank.html;
   }
-  await flushBeforeLeaving();
-  const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
-  await mayLeave(opfsDb);
-  const current = opfsDb ? await resealCartridge(loaded, opfsDb) : loaded;
+  const { doc, db: opfsDb } = await leavingBytes();
+  const current = opfsDb ? await resealCartridge(doc, opfsDb) : doc;
   if (opfsDb) await noteSentOut(current, opfsDb);
   return current.supplied.length > 0 ? refatten(current) : current.html;
 }
@@ -4011,14 +4084,11 @@ async function noteSentOut(sent: Cartridge, database: Uint8Array): Promise<void>
  * recipient's copy recognizing this as the same document.
  */
 async function inviteHtml(session: string): Promise<string> {
-  if (!loaded) throw new Error("nothing open");
-  await flushBeforeLeaving();
-  const opfsDb = await loadDatabaseFromOpfs(loaded.manifest.documentUuid);
+  const { doc, db: opfsDb } = await leavingBytes();
   if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
-  await mayLeave(opfsDb);
   // Made by the one invite function every host shares (exportSession), then
   // re-verified before it leaves, as any resealed document is.
-  const invite = await reverify(await inviteFor(loaded, opfsDb, session));
+  const invite = await reverify(await inviteFor(doc, opfsDb, session));
   return invite.supplied.length > 0 ? refatten(invite) : invite.html;
 }
 
@@ -4942,18 +5012,23 @@ async function carriedReading(): Promise<string | undefined> {
 async function startMailboxIfPossible(): Promise<void> {
   mailboxSession?.stop();
   mailboxSession = null;
-  if (!loaded || !mountedNonce || !relayBase) return;
-  if (!declaresReplication(loaded.manifest)) return;
+  // Started for one mount, and abandoned if another mounts while the keys are
+  // read: its frame and nonce would be the next document's (D167, its cold read).
+  const mount = mountNow;
+  if (!mount || !mountedNonce || !relayBase) return;
+  const doc = mount.cartridge;
+  if (!declaresReplication(doc.manifest)) return;
   const frameWindow = cartridgeFrame.contentWindow;
   if (!frameWindow) return;
 
-  const uuid = loaded.manifest.documentUuid;
+  const uuid = doc.manifest.documentUuid;
   // The person has this document open: a notification about it has done its job.
   void clearNotices(uuid);
   // An invite that named its game hands this copy that game's key. Filed first,
   // so the lane below derives from it on this very open rather than the next.
   if (arrivedKey && arrivedSession) await rememberSessionKey(uuid, arrivedSession, arrivedKey);
   const key = await documentRootKey(uuid);
+  if (mountNow !== mount) return;
   if (!key) {
     // Replicated, but no key yet: this copy came by file and has not been
     // shared. Sharing a link (or opening one) is what gives it a mailbox, and
@@ -4961,20 +5036,22 @@ async function startMailboxIfPossible(): Promise<void> {
     say("Updates from the other copy arrive when you invite someone, or open a shared link.");
     return;
   }
-  if (mountedNonce !== null) {
+  const sessionKeys = await sessionKeysFor(uuid);
+  if (mountNow !== mount) return;
+  {
     const relay = relayBase;
     mailboxSession = startMailboxSession({
       documentUuid: uuid,
       keyBase64Url: key,
       mailbox: httpMailbox({ base: relay, fetch: window.fetch.bind(window), sender: pushSender }),
       frame: frameWindow,
-      sessionNonce: mountedNonce,
+      sessionNonce: mount.nonce,
       // A session document's rows travel in one mailbox per session (T1-D30),
       // when its runtime can scope a batch to one — said in its handshake.
-      sessions: Boolean(loaded.manifest.session),
+      sessions: Boolean(doc.manifest.session),
       sessionLanes: frameSessionLanes,
       // Each game's own key, for the lanes that have one (D37).
-      sessionKeys: await sessionKeysFor(uuid),
+      sessionKeys,
       // And each mailbox wakes this device when it moves, if it may (slice
       // two), until its game closes.
       relay,
@@ -5396,20 +5473,70 @@ void confusables();
  * rather than inferring it from whether a later exchange collided.
  */
 /**
- * Whether this device may write the mounted replicated document: decided once
+ * Whether this device may write a mounted replicated document: decided once
  * per mount from the person key and the sequence floor, and waited on by every
- * save of that document. Null before a replicated document mounts.
+ * save of that document. Held by its mount; none for a document with no
+ * replicated tables.
  */
-let mountWrites: {
-  /** The mount this was decided for: a decision never outlives the frame it was made for. */
-  nonce: string | null;
+type MountWrites = {
   documentUuid: string;
   decided: Promise<{ me: Person; seqFloor: number } | { refused: string }>;
   /** The floor as this mount last saw it: read at mount, then moved only by its own claims (D105). */
   floorSeen?: number;
   /** This mount's claims, one at a time, so its own two never read each other as another tab's. */
   claims?: Promise<unknown>;
-} | null = null;
+};
+
+/**
+ * One mount: the shell that handshook under a nonce, and the document it shows
+ * (D167). Made at the handshake from the cartridge `mount()` put in the frame,
+ * never from `loaded`, and never reused for another nonce. Whatever a message
+ * of that shell starts (a save, a sign) belongs to this state and settles into
+ * it; the page's `loaded` follows only while it is still `mountNow`.
+ */
+type Mount = {
+  nonce: string;
+  cartridge: Cartridge;
+  writes: MountWrites | null;
+};
+
+/** The mount whose nonce is `mountedNonce`; null from `mount()` until the new shell handshakes, and after eject. */
+let mountNow: Mount | null = null;
+
+/** What `mount()` last put in the frame, until its shell handshakes. */
+let framed: Cartridge | undefined;
+
+/** The mount a message came from: the current one, when the message carries its nonce. */
+function mountOf(event: MessageEvent, data: { sessionNonce?: string }): Mount | null {
+  return fromMountedContainer(event, data) && mountNow?.nonce === data.sessionNonce ? mountNow : null;
+}
+
+/**
+ * Answers a mount, to the window that asked, carrying that mount's nonce; and
+ * only while it is still the one mounted. A mount the person has since left
+ * gets nothing: the window that asked now shows another document (D167).
+ */
+function answerMount(mount: Mount, to: MessageEventSource | null, message: { type: string } & Record<string, unknown>): void {
+  if (mountNow !== mount || mountedNonce !== mount.nonce) {
+    console.info(`dai: ${message.type} for a document no longer open here was dropped`);
+    return;
+  }
+  (to as Window | null)?.postMessage({ ...message, sessionNonce: mount.nonce }, "*");
+}
+
+/**
+ * Keeps what a completion made for the mount it began under, and shows it only
+ * while that mount is still current and `loaded` is still the very cartridge
+ * the mount held: an open under way takes `loaded` before its `mount()` runs,
+ * and a take of the same document is a new build under the same id, so the id
+ * alone would put the old build back. A late completion never puts an earlier
+ * document, or an earlier build, back (D167).
+ */
+function settleInto(mount: Mount, cartridge: Cartridge): void {
+  const held = mount.cartridge;
+  mount.cartridge = cartridge;
+  if (mountNow === mount && loaded === held) loaded = cartridge;
+}
 
 /** What a tab that lost the floor to another tab is told (D105). */
 const FLOOR_MOVED =
@@ -5421,7 +5548,7 @@ const FLOOR_MOVED =
  * mount last saw it (D105, `claimSeqFloor`). Refused with `FLOOR_MOVED` when
  * another tab moved it since.
  */
-function claimFloor(mount: NonNullable<typeof mountWrites>, seen: number, seq: number): Promise<void> {
+function claimFloor(mount: MountWrites, seen: number, seq: number): Promise<void> {
   const run = async (): Promise<void> => {
     const answer = await claimSeqFloor(mount.documentUuid, mount.floorSeen ?? seen, seq);
     if ("moved" in answer) {
@@ -5479,6 +5606,14 @@ Object.defineProperty(window, "__runner", {
     /** Saves written to this device's storage. */
     get savesWritten() {
       return hostSavesWritten;
+    },
+    /** Sign requests finished with, answered or dropped. */
+    get signsSettled() {
+      return hostSignsSettled;
+    },
+    /** Signatures made with the person key. */
+    get signatures() {
+      return hostSignatures;
     },
     eject,
     exportContainer,

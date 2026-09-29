@@ -1781,6 +1781,17 @@
       "src/rules.ts",
       "tests/model-file-size.spec.ts"
     ],
+    "tests/mount-order.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/chess-play.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/mount-order.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/names-check.spec.ts": [
       "scripts/check-names.mjs",
       "src/bridge.ts",

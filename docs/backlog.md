@@ -4419,7 +4419,14 @@ plaintext probe no ciphertext spells by chance: a long, distinctive move text
 
 #### D167 — A save landing after the next document opens puts the old one back as `loaded`, and the next document's code gets the old one's headers signed
 
-*Status: **open, rated high, for a ruling; not a test defect.** Filed 28
+*Status: **built, not landed** (29 September): the mount state and the three
+reds below, `tests/mount-order.spec.ts`, and a fourth from the cold read;
+each run red on the host before the fix on Chromium and WebKit and read
+failing on its own subject, then the first three 30 of 30 at five repeats on
+both, and `sign-scope:27` 20 of 20 on WebKit with parallel
+workers (9 of 20 failed before). Lands on its CI verdict.*
+
+*Earlier status: open, rated high, for a ruling; not a test defect. Filed 28
 September (fourth sitting) as a WebKit flake of `sign-scope:27`; reproduced
 and read the same night. Five CI sightings: `04a86a8`, `5c336c7`, `a45b510`
 (each passing on retry, "#out" not found), then `775f168` (run 36494406706),
@@ -4459,7 +4466,80 @@ which now holds the next document's shell, and relayed to its frame. It carries
 a signature over the old document's honest header, so it grants nothing new,
 but "answered only for the document open now" does not hold at reply time.
 
-**What a fix has to settle (for the ruling, not built):** whether `loaded` may
+*Ruled 29 September: fix now, first, its own commit; D165 lands on this fix's
+verdict. Mount state per mount, keyed by nonce; a late completion never
+overwrites a newer mount; a sign request is bound to its mount and signed only
+while that mount is current and the header names its document; answers go to
+the asking window by nonce or are dropped. Three deterministic reds with the
+order forced, and the concurrent-worker test (`sign-scope:27`) kept as a load
+test.*
+
+**How it is built (decided before code, 29 September):**
+
+- **One state per mount, made at its handshake.** `mount()` records the
+  cartridge it put in the frame and clears the current mount and its nonce
+  before the frame navigates, so from then until the new shell handshakes no
+  message from the frame is taken as the mounted one's. The handshake makes a
+  new state, `{ nonce, cartridge, writes }`, from the cartridge `mount()` was
+  given (or, for a second handshake of one mount, from the state before it),
+  never from `loaded`. `mountWrites` becomes that state's `writes`. A nonce
+  names exactly one state; the current one is the state whose nonce is the
+  mounted nonce. Earlier states are not kept: nothing reads them.
+- **A completion settles into the mount it began under.** A save or an export
+  captures its mount when it is asked, reseals that mount's own cartridge, and
+  assigns `loaded` only while that mount is still the current one and `loaded`
+  still names its document (an open under way has taken `loaded` before its
+  `mount()` runs). Otherwise the bytes are still written to the device and the
+  library, which is the save's job, and the page is left alone. The two open
+  paths' own assignments are the arrival's, and two arrivals in flight at once
+  are D163's (order item 2), not this.
+- **A save names its mount's document.** A save whose document is not the
+  mount's is refused. The shell names it from its own verified manifest, so
+  nothing reaches this today; it is the same binding as the sign's.
+- **A sign is checked at the request and again before the signature.** The
+  mount, the header naming its document, then, after the lock and the floor,
+  the mount still current. Otherwise no signature is made and nothing is
+  answered.
+- **Every answer to a mount goes through one helper**: posted to the window
+  that asked, carrying the mount's nonce, and only while that mount is current;
+  otherwise dropped and logged. The write rules, the sign, the save's ack and
+  the leave check all go through it. `currentHtml` and the export abort if the
+  mount changed while they flushed, since the leave check they made was for a
+  mount that is gone.
+- **The reds**, `tests/mount-order.spec.ts`, each forced by the library lock
+  (FIFO: a lock the test takes behind the sign holds the save that follows it)
+  and, for the forgery, by a handshake held at the host (`addInitScript`) and
+  replayed: (1) a save of chess landing after the forger mounted leaves the
+  forger as `loaded`; (2) that save landing between the forger's mount and its
+  handshake does not make the forger's shell a writer of chess, and the
+  forger's request for chess's header is refused; (3) a chess sign asked
+  before the forger opened and finished after it is not answered into the
+  forger's frame. `sign-scope:27` stays as it is: parallel workers, the load
+  test.
+- **The bounded cold read, before the push** (invariant: the host signs,
+  saves into `loaded` and answers only for the mount that asked, and only
+  while it is the one mounted) found two paths, both fixed in the same commit:
+  (a) "still names its document" compared ids, and a take of the same
+  document is a new build under the same id, so a save of the old build
+  landing before the take's `mount()` put the old build back; `settleInto`
+  now requires `loaded` to be the very cartridge the mount held. Fixed from
+  the reading, **not run**: forcing a take in the middle of a save needs a
+  harness this commit does not build. (b) The frame is one window across
+  navigations, so the last shell's handshake could land after `mount()`
+  framed the next document and bind the last shell's nonce to the next
+  document's writes (this predates the fix); a handshake is now taken only
+  when it names the framed document. A fourth test holds both handshakes and
+  replays the last one; red on both engines before, green after. Also:
+  `startMailboxIfPossible` is bound to its mount and gives up if another
+  mounts while it reads keys. **Residuals, read and not run:** a save of the
+  rehearsal mount (iOS) landing after the second mount leaves `loaded` one
+  save behind (the device and the library are right; the next save or
+  export rereads them); a save in flight when a take of the same document
+  lands can still write the old bytes to the device after the take's, which
+  is the arrival path's and goes with D163; `mergeSiblingInto` posts after an
+  await with no mount check, also D163's.
+
+**What a fix had to settle (the questions put for the ruling):** whether `loaded` may
 ever be assigned from a value read before an await (every such site, not only
 the save's reseal: the export path does the same), whether the mount's writing
 decision should come from the mount itself (the cartridge `mount()` was given)
