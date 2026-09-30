@@ -3314,7 +3314,20 @@ window.addEventListener("message", (event) => {
       answerMount(asking, event.source, { type: TO_DOCUMENT.LEAVE_CHECKED, id: data.id, ok, ...(error ? { error } : {}) });
     };
     const bytes = data.sqlite instanceof Uint8Array ? data.sqlite : null;
-    void mayLeave(bytes, asking).then(
+    /*
+     * The file leaves the device, so the left floor counts the headers in it
+     * before the frame hears it may write (docs/format.md, `floor`; D173): the
+     * frame's bytes can hold a header whose save never landed. Under the
+     * library lock, as the publish's raise is; not answered ok if it fails.
+     */
+    const leaving = async (): Promise<void> => {
+      await mayLeave(bytes, asking);
+      const uuid = asking.writes?.documentUuid;
+      const writes = asking.writes ? await asking.writes.decided : null;
+      if (!bytes || !uuid || !writes || "refused" in writes || !declaresReplication(asking.cartridge.manifest)) return;
+      await withLibraryLock(uuid, () => raiseLeftFrom(uuid, bytes, writes.me.id));
+    };
+    void leaving().then(
       () => answer(true),
       (error: unknown) => answer(false, error instanceof Error ? error.message : String(error)),
     );

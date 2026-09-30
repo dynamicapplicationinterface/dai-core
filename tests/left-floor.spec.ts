@@ -1,4 +1,5 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +7,7 @@ import { expect, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { play } from "./chess-play.js";
+import { TO_HOST } from "../src/bridge.js";
 import { FRAME } from "../src/frame.js";
 import { leftFloorKey, seqFloorKey } from "../src/keys.js";
 import { BATCH_FORMAT_VERSION, canonicalHeader } from "../src/replicated-batch.js";
@@ -89,6 +91,36 @@ test.describe("the floor a sign is held to", () => {
         }
         return { rows, listedBy };
       });
+
+  /** The same, from the copy this device's store holds: each own seq and the header its row names. */
+  async function storedOwn(page: Page, uuid: string): Promise<Record<number, string | null>> {
+    const bytes = await page.evaluate(async (id) => {
+      const stored: Uint8Array | null = await (window as any).__runner.loadStored(id);
+      return stored ? [...stored] : null;
+    }, uuid);
+    const rows: Record<number, string | null> = {};
+    if (!bytes) return rows;
+    const file = join(mkdtempSync(join(tmpdir(), "dai-left-stored-")), "document.sqlite");
+    writeFileSync(file, Uint8Array.from(bytes));
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const me = (db.prepare("SELECT id FROM _dai_replica").get() as { id?: Uint8Array } | undefined)?.id;
+      if (!me) return rows;
+      for (const { name } of db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all() as { name: string }[]) {
+        const cols = (db.prepare(`SELECT name FROM pragma_table_info('${name}')`).all() as { name: string }[]).map((c) => c.name);
+        if (!cols.includes("_r_seq") || !cols.includes("_r_batch")) continue;
+        for (const r of db.prepare(`SELECT _r_seq s, lower(hex(_r_batch)) b FROM "${name}" WHERE _r_replica = ?`).all(me) as {
+          s: number;
+          b: string | null;
+        }[]) {
+          rows[Number(r.s)] = r.b ? String(r.b) : null;
+        }
+      }
+    } finally {
+      db.close();
+    }
+    return rows;
+  }
 
   const savesWritten = (page: Page): Promise<number> =>
     page.evaluate(() => Number((window as any).__runner.savesWritten ?? 0));
@@ -187,7 +219,7 @@ test.describe("the floor a sign is held to", () => {
     const context = await browser.newContext();
     // The left floor's write fails on demand, standing in for the page going
     // between the store's write and the count: the save has landed, and the
-    // frame is never told so.
+    // frame is told it was not saved.
     await context.addInitScript((prefix) => {
       const w = window as any;
       const put = IDBObjectStore.prototype.put;
@@ -202,13 +234,22 @@ test.describe("the floor a sign is held to", () => {
     const page = await context.newPage();
     const ui = await openWith(page, container);
     await newGame(ui, "Ada", "Bo");
-    await expect
-      .poll(async () => Object.values((await own(page)).rows).every((r) => r.batch) && (await savesWritten(page)) > 0, {
-        timeout: 30_000,
-        message: "the game is signed and saved",
-      })
-      .toBe(true);
     const uuid = await uuidOf(page);
+    // Every row of the game sealed, and counted by a landed save: not the first
+    // save written, since a later one of the game can still be on its way.
+    await expect
+      .poll(
+        async () => {
+          const seqs = Object.entries((await own(page)).rows);
+          return (
+            seqs.length > 0 &&
+            seqs.every(([, r]) => r.batch) &&
+            (await kept(page, leftFloorKey(uuid))) === Math.max(...seqs.map(([s]) => Number(s)))
+          );
+        },
+        { timeout: 30_000, message: "the game is signed, saved and counted" },
+      )
+      .toBe(true);
     const before = new Set(Object.keys((await own(page)).rows).map(Number));
     const counted = await kept(page, leftFloorKey(uuid));
 
@@ -216,24 +257,30 @@ test.describe("the floor a sign is held to", () => {
       (window as any).__loseLeft = true;
     });
     await play(ui, "e2", "e4");
+    // Landed: the stored copy holds every row of the move, sealed under the
+    // header the frame holds. Not the first save lost: rows written while a
+    // signature was on its way are sealed by the next save.
     await expect
-      .poll(() => page.evaluate(() => Number((window as any).__leftLost ?? 0)), {
-        timeout: 30_000,
-        message: "a save of the move landed and was not counted",
-      })
-      .toBeGreaterThan(0);
-    // Landed: the stored copy holds the move, sealed.
-    const stored = await page.evaluate(async (id) => {
-      const bytes: Uint8Array | null = await (window as any).__runner.loadStored(id);
-      return bytes ? bytes.byteLength : 0;
-    }, uuid);
-    expect(stored, "the stored copy is there").toBeGreaterThan(0);
+      .poll(
+        async () => {
+          const moved = await own(page);
+          const move = Object.keys(moved.rows)
+            .map(Number)
+            .filter((s) => !before.has(s));
+          const stored = await storedOwn(page, uuid);
+          return (
+            move.length > 0 &&
+            move.every((s) => moved.rows[s]!.batch && stored[s] === moved.rows[s]!.batch) &&
+            (await page.evaluate(() => Number((window as any).__leftLost ?? 0))) > 0
+          );
+        },
+        { timeout: 30_000, message: "a save of the move landed, sealed, and was not counted" },
+      )
+      .toBe(true);
     const moved = await own(page);
     const move = Object.keys(moved.rows)
       .map(Number)
       .filter((s) => !before.has(s));
-    expect(move.length, "the move wrote rows").toBeGreaterThan(0);
-    expect(move.every((s) => moved.rows[s]!.batch), "and sealed them").toBe(true);
     expect(await kept(page, leftFloorKey(uuid)), "nothing counted them").toBe(counted);
 
     // The page goes, and comes back to the stored copy.
@@ -266,6 +313,85 @@ test.describe("the floor a sign is held to", () => {
       Object.entries(after.listedBy).filter(([, ids]) => new Set(ids).size > 1),
       "no seq of this device's is listed by two of its headers",
     ).toEqual([]);
+
+    await context.close();
+  });
+
+  test("a file the shell writes itself counts what it carries: after a lost save, a sign over a seq in it is refused", async ({
+    browser,
+  }) => {
+    /*
+     * D173. A save races a sign, and the save is lost: the frame holds a header
+     * the store never did. The shell writes the frame's bytes to a file itself
+     * (a download here; a picker save asks the same `LEAVE_CHECK`), and the
+     * file leaves the device carrying that header. A re-seal over one of its
+     * seqs would be a second header over a seq that left, so the host refuses
+     * it (docs/format.md, `floor`): every route by which bytes leave raises the
+     * left floor before they leave.
+     */
+    const context = await browser.newContext({ acceptDownloads: true });
+    // Registered before the host's own listener, so it runs first, and armed
+    // only once the first game has landed.
+    await context.addInitScript((save) => {
+      const w = window as any;
+      w.__savesLost = 0;
+      window.addEventListener("message", (event) => {
+        if (!w.__loseSaves || (event.data as any)?.type !== save) return;
+        w.__savesLost += 1;
+        event.stopImmediatePropagation();
+      });
+    }, TO_HOST.SAVE);
+    const page = await context.newPage();
+    const ui = await openWith(page, container);
+    await newGame(ui, "Ada", "Bo");
+    const uuid = await uuidOf(page);
+    await expect
+      .poll(
+        async () => {
+          const seqs = Object.entries((await own(page)).rows);
+          return (
+            seqs.length > 0 &&
+            seqs.every(([, r]) => r.batch) &&
+            (await kept(page, leftFloorKey(uuid))) === Math.max(...seqs.map(([s]) => Number(s)))
+          );
+        },
+        { timeout: 30_000, message: "the game is signed, saved and counted" },
+      )
+      .toBe(true);
+    const landed = new Set(Object.keys((await own(page)).rows).map(Number));
+
+    await page.evaluate(() => {
+      (window as any).__loseSaves = true;
+    });
+    await play(ui, "e2", "e4");
+    await expect
+      .poll(
+        async () => {
+          const now = await own(page);
+          const fresh = Object.keys(now.rows).map(Number).filter((s) => !landed.has(s));
+          return fresh.length > 0 && fresh.every((s) => now.rows[s]!.batch);
+        },
+        { timeout: 30_000, message: "the move is signed" },
+      )
+      .toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => Number((window as any).__savesLost)), { timeout: 30_000, message: "the save of it is lost" })
+      .toBeGreaterThan(0);
+    const signed = Math.max(...Object.keys((await own(page)).rows).map(Number));
+    expect(await kept(page, leftFloorKey(uuid)), "no save landed to count the move").toBe(Math.max(...landed));
+
+    // The shell writes the file itself: the frame's bytes, the move's header in them.
+    const downloading = page.waitForEvent("download", { timeout: 60_000 });
+    await ui.locator("#app").evaluate(async () => {
+      const win = window as any;
+      const result = await win.dai.saveDatabase(win.daiKit.db, { method: "download" });
+      if (!result?.saved) throw new Error(`the file was not written: ${JSON.stringify(result)}`);
+    });
+    await downloading;
+
+    expect(await ask(page, await headerOver(page, [["moves", signed]]), signed), "a seq in the written file").toMatch(
+      /^refused: .*already sent/,
+    );
 
     await context.close();
   });

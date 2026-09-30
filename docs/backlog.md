@@ -4434,6 +4434,25 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D173 — A file the shell writes itself leaves the device without raising the left floor
+
+*Status: open, filed 30 September from the eleventh sitting's cold-review
+list (H4). Being fixed in the twelfth.*
+
+The shell's own file write (a download or a picker save) asks the host
+`LEAVE_CHECK` about the frame's bytes, and the host checked only that no row
+of this device's in them is pending. Those bytes can hold a header whose save
+never landed, and they leave the device; the left floor did not count them. A
+re-seal after that save is lost would then sign a second header over a seq
+that left: the author signing twice (`equivocation`). The rule: every route by
+which bytes leave raises the left floor before they leave, and `LEAVE_CHECK`
+is a route. **Fix:** the host raises the left floor from the bytes it was
+asked about, read in its own engine (`sealedTopIn`), under the library lock as
+the publish's raise is, before it answers that they may leave; a raise that
+fails answers no. **Test:** `tests/left-floor.spec.ts`, "a file the shell
+writes itself counts what it carries": a move's save is lost, the shell
+downloads the frame's bytes, and a sign over the move's seq is refused.
+
 #### D172 — On Firefox, `mount-order:194` fails on both tries
 
 *Status: open, filed 29 September from CI; not reproduced locally, not read.
