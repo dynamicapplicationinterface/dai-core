@@ -112,13 +112,20 @@ jobs:
   # scripts/ci-verdict.mjs prints its tally on its own line, so a real Firefox
   # red is seen; it just does not block. Undoing this is D32 closing, not a
   # quiet week.
+  #
+  # Firefox's tests have 40 minutes, not 25 (30 September). Its whole suite
+  # reached the 25-minute wall with no tally on that day's runs (at about
+  # test 638 of 813). Firefox is a reading, so its wall is there only
+  # to stop a hang; no verdict of the gate waits on it, and the rule above
+  # (split, don't raise) is for the engines that gate. Its job has 60, so the
+  # setup keeps the same allowance as the others'.
   browser:
     runs-on: ubuntu-latest
-    # The wall is on the tests (the `npm test` step, 25 minutes), not on the
-    # job: `playwright install --with-deps` took 6 to 11 minutes on runners
+    # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
+    # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
     # whose apt mirror was slow (30 September, D174), and that spent the tests'
     # budget before they began. This is the setup's allowance, not theirs.
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.browser == 'firefox' && 60 || 45 }}
     continue-on-error: ${{ matrix.browser == 'firefox' }}
     strategy:
       fail-fast: false
@@ -163,7 +170,7 @@ jobs:
       - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
-        timeout-minutes: 25
+        timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || 25 }}
 
       - if: failure()
         uses: actions/upload-artifact@v4
