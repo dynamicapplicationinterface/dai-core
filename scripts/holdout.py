@@ -1,7 +1,7 @@
 """Hold-outs of the Python merge reader: the proof that a witness has teeth.
 
     python scripts/holdout.py                    # every rule: each must fail its fixtures
-    python scripts/holdout.py <rule>             # one rule, over every fixture
+    python scripts/holdout.py <rule> ...         # these rules, over every fixture
     python scripts/holdout.py <rule> <fixture>   # one row of a witness table
     python scripts/holdout.py --list             # the rules, their anchors and what each removes
 
@@ -47,6 +47,7 @@ BOTH = "session-equivocation-and-void"
 SEATROW = "session-void-creator-seat-row"
 X3 = "session-void-equivocated-confirm"
 AFTER = "session-seat-not-held-after-merge"
+SILENT = "session-equivocated-row-silent"
 
 SORT = "for key in sorted(refusals)\n"
 
@@ -230,6 +231,22 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "equivocated-filed", "AUTHOR_EQUIVOCATED filed under the highest revealing header", [SEATROW],
         [('refuse_batch(min(ids), author, "AUTHOR_EQUIVOCATED")', 'refuse_batch(max(ids), author, "AUTHOR_EQUIVOCATED")')],
     ),
+    # ------------------------------------------------ R9: a row at an equivocated id
+    "equivocated-unseated-reported": (
+        "report-silent", "a row at an equivocated id naming no seat is reported SEAT_NOT_HELD", [SILENT],
+        [("if self.names_equivocated(row) or not self.unequivocal(row):\n            return False",
+          "if self.names_equivocated(row):\n            return False")],
+    ),
+    "equivocated-foreign-reported": (
+        "report-silent", "a row at an equivocated id naming another session's version is reported ENTITY_OTHER_SESSION", [SILENT],
+        [("if self.names_equivocated(r) or not self.unequivocal(r):\n                continue", "if self.names_equivocated(r):\n                continue"),
+         ('and p[column] != r[column]:', 'and p[column] != r[column] and self.unequivocal(r):')],
+    ),
+    "equivocated-other-seat-reported": (
+        "report-silent", "a row at an equivocated id naming another seat's version is reported SEAT_NOT_HELD", [SILENT],
+        [("if self.names_equivocated(r) or not self.unequivocal(r):\n                continue", "if self.names_equivocated(r):\n                continue"),
+         ('if bytes(p["_r_session"]) != bytes(r["_r_session"]):', 'if bytes(p["_r_session"]) != bytes(r["_r_session"]) and self.unequivocal(r):')],
+    ),
 }
 
 
@@ -300,15 +317,11 @@ def main(argv: list[str]) -> int:
         for rule, (anchor, what, must, _edits) in RULES.items():
             print(f"{rule:34} #{anchor:28} {what}  [{', '.join(must)}]")
         return 0
-    unknown = [a for a in argv[:1] if a not in RULES]
-    if unknown:
-        raise SystemExit(f"no hold-out named {unknown[0]!r}; --list names them")
-    if len(argv) == 2:
-        if argv[1] not in fixtures():
-            raise SystemExit(f"no fixture named {argv[1]!r} in conformance/merge")
+    if len(argv) == 2 and argv[0] in RULES and argv[1] in fixtures():
         return one(argv[0], argv[1])
-    if len(argv) > 2:
-        raise SystemExit(__doc__)
+    unknown = [a for a in argv if a not in RULES]
+    if unknown:
+        raise SystemExit(f"no hold-out named {unknown[0]!r} (nor a fixture); --list names them")
     return every(argv or list(RULES))
 
 

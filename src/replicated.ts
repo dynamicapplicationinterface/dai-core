@@ -721,35 +721,37 @@ CREATE VIEW IF NOT EXISTS ${q}_pending AS
 
 -- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
 -- earlier version a row of its entity from another session, with that parent.
--- Not a row naming an equivocated id, which is reported nowhere.
+-- Not a row naming an equivocated id, which is reported nowhere, nor a row
+-- at one, which is reported only as its author signing twice (R9).
 CREATE VIEW IF NOT EXISTS ${q}_foreign AS
   SELECT r._r_replica, r._r_seq, r._r_batch, fp._r_replica AS parent_replica, fp._r_seq AS parent_seq
     FROM ${q} r, ${q} fp, json_each(${parentsSql("r._r_parents")}) fj
    WHERE fp._r_entity = r._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq
-     AND fp._r_session <> r._r_session AND NOT ${namesEquivocated("r")};` +
+     AND fp._r_session <> r._r_session AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")};` +
     (seatColumn
       ? `
 -- What a merge reports as SEAT_NOT_HELD (identity step 5): a row that names no
 -- seat, or a seat someone else holds, or that names as its earlier version a
 -- row acting for another seat of its session (D132). A row for a seat nobody
 -- holds yet is pending, waiting on the creator's confirmation, and is neither
--- admitted nor reported; nor is a row naming an equivocated id as a parent.
+-- admitted nor reported; nor is a row naming an equivocated id as a parent,
+-- nor a row at an equivocated id (R9).
 CREATE VIEW IF NOT EXISTS ${q}_unseated AS
   SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r
    WHERE (typeof(r."${seatColumn}") <> 'blob' OR length(r."${seatColumn}") <> 16
       OR (EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = r._r_session AND h.seat = r."${seatColumn}")
           AND NOT (${holds("r")}))
       OR ${otherSeat("r")})
-     AND NOT ${namesEquivocated("r")};
+     AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")};
 
 -- The same crossing with the row it names, so a merge reports it whichever of
--- the two arrived (D132).
+-- the two arrived (D132), and like it not for a row at an equivocated id.
 CREATE VIEW IF NOT EXISTS ${q}_other_seat AS
   SELECT r._r_replica, r._r_seq, r._r_batch, sp._r_replica AS parent_replica, sp._r_seq AS parent_seq
     FROM ${q} r, ${q} sp, json_each(${parentsSql("r._r_parents")}) sj
    WHERE sp._r_entity = r._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq
      AND sp._r_session = r._r_session AND sp."${seatColumn}" IS NOT r."${seatColumn}"
-     AND NOT ${namesEquivocated("r")};`
+     AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")};`
       : "");
 }
 

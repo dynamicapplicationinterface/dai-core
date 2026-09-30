@@ -1321,6 +1321,44 @@ const VECTORS = [
       if (got !== "Bo SEAT_NOT_HELD, Ada SEAT_NOT_HELD") return `B into A: refused [${got}], not Bo's SEAT_NOT_HELD then Ada's`;
     },
   },
+
+  /*
+   * R9 (30 September): a row at an equivocated id is reported nowhere but
+   * AUTHOR_EQUIVOCATED. Found building the vector above; the readers split on it.
+   */
+  {
+    name: "session-equivocated-row-silent",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Ada writes, on A, a move naming no seat, a version of Bo's move for her own seat, and in a session S2 of hers a version of her move in S, each naming a row at an id not equivocated. A second copy of hers signs the same seqs as closes, which B holds. Every one of those ids is equivocated after either merge, so the three rows count for nothing and are reported nowhere but AUTHOR_EQUIVOCATED, in Ada's name, in both directions: no SEAT_NOT_HELD, for no seat or for another seat's version, and no ENTITY_OTHER_SESSION (R9).",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const mine = createEntity(a, "moves", id(0x81), { seat: SEAT_W, san: "e4" }, session);
+      await exchange(b, a, ADA);
+      const bos = createEntity(b, "moves", id(0x82), { seat: SEAT_OPEN, san: "e5" }, session);
+      await exchange(a, b, BO);
+      const fork = await forkOf(a, ADA);
+      const first = a.all("SELECT seq FROM _dai_replica")[0].seq + 1;
+      createEntity(a, "moves", id(0x8e), { seat: new Uint8Array([7]), san: "Nf3" }, session);
+      raw(a, "moves", id(0x82), { seat: SEAT_W, san: "d5" }, session, JSON.stringify([`${hexOf(BO.author)}:${bos._r_seq}`]));
+      const s2 = startSession(a, { creatorSeat: SEAT_W, openSeat: SEAT_OPEN, entities: [id(0x56), id(0x57)] });
+      raw(a, "moves", id(0x81), { seat: SEAT_W, san: "d4" }, s2, JSON.stringify([`${hexOf(ADA.author)}:${mine._r_seq}`]));
+      await sealAll(a, ADA);
+      const last = a.all("SELECT seq FROM _dai_replica")[0].seq;
+      for (let seq = first; seq <= last; seq += 1) createEntity(fork, "_dai_close", id(0x90 + seq - first), {}, session);
+      await exchange(b, fork, ADA);
+      fork.done();
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const refused = run.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+        if (refused.join() !== "Ada AUTHOR_EQUIVOCATED") return `${direction}: refused [${refused.join(", ")}], not Ada's AUTHOR_EQUIVOCATED alone`;
+        if (sectionOf(run.admitted, "equivocated").length !== 10) return `${direction}: equivocated is [${sectionOf(run.admitted, "equivocated").join(" | ")}], not five ids in two tables each`;
+        if (sectionOf(run.admitted, "closed").length > 0) return `${direction}: an equivocated close closed the session`;
+      }
+    },
+  },
 ];
 
 /** An author id as `refusedBatches` spells it. */

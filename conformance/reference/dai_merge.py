@@ -404,8 +404,11 @@ class Admission:
         return sorted(found, key=lambda r: (bytes(r["_r_replica"]).hex(), r["_r_seq"]))
 
     def unseated(self, table: str, row: dict) -> bool:
-        """What a merge reports as SEAT_NOT_HELD: no seat, a seat someone else holds, or another seat's row named."""
-        if self.names_equivocated(row):
+        """What a merge reports as SEAT_NOT_HELD: no seat, a seat someone else holds, or another seat's row named.
+
+        Never a row naming an equivocated id, nor a row at one: that is
+        reported only as its author signing twice (R9)."""
+        if self.names_equivocated(row) or not self.unequivocal(row):
             return False
         seat = row[self.seated[table]]
         if not isinstance(seat, bytes) or len(seat) != 16:
@@ -417,7 +420,7 @@ class Admission:
         """(reason, row, the row it names) for every row naming another session's or another seat's version."""
         found = []
         for r in self.rows[table]:
-            if self.names_equivocated(r):
+            if self.names_equivocated(r) or not self.unequivocal(r):
                 continue
             for p in self.named(table, r):
                 if bytes(p["_r_session"]) != bytes(r["_r_session"]):

@@ -452,7 +452,8 @@ whichever of the two rows this merge took, the child or the parent, and is
 the child's. <a id="report-silent"></a>A row waiting on a confirmation, a row
 for a void seat, a late row, and a row naming an equivocated id as a parent
 ([whatever else it meets](#admitted-parent-equivocated)) are reported
-nowhere.
+nowhere; a row at an equivocated id is reported nowhere but as its author
+signing twice (`AUTHOR_EQUIVOCATED`), whatever else it meets.
 
 <a id="equivocated-report"></a>`AUTHOR_EQUIVOCATED` is reported once per
 author per merge, for [equivocation](#equivocation) and [void
@@ -533,6 +534,8 @@ version, never a refactor (identity.md, binding rule 10).
   rule is an unsigned row's.
 - Version 2: a row naming an equivocated id as a parent is neither admitted
   nor reported.
+- Version 2: a row at an equivocated id is reported only as
+  `AUTHOR_EQUIVOCATED`.
 - Version 2: a void rests only on counting confirms and on the creator's seat
   row that counts.
 - Version 2: Infinity is refused.
