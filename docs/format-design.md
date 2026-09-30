@@ -466,6 +466,53 @@ that does not write the document's batch format version mounts it read-only.
 **Rejected.** The page's sentence as it stood: it described a host that
 cannot exist.
 
+What the floor counts
+---------------------
+
+*30 September, the step 6 review, Pass 1.* Rule: [the floor](format.md#floor),
+[two honest seals](format.md#floor-honest-reseal).
+
+**Problem.** The host raised its one floor to a number the frame sent beside
+the header and never read the header's `covers`, so it signed whatever seqs
+the header listed, at or below the floor included. The frame belongs to the
+document and cannot be relied on (identity.md, binding rule 3), and a second
+header over a seq that has left is the author signing twice, in the person's
+own name.
+
+**Rule.** Two marks. The sequence floor counts every seq the device has issued
+a row at, so no new row is issued at one again; the host claims it from the
+seqs the header lists, read from the bytes it signs. The floor the page names
+is the other: the highest seq a header of the device's lists in bytes the host
+saw land in its own store or is about to publish, read in the host's own
+engine, and the host signs no header listing a seq at or below it. A save
+raises it after the write lands and before the frame hears so, and a mount
+reads the stored copy again, so a page gone between the two is counted on the
+next open.
+
+**Rejected.** One strict floor, the sequence floor, with every listed seq
+above it. A save counts pending rows (their seqs are issued), so a seal of
+rows a save held pending while a signature was on its way lists seqs at or
+below it; so does a re-seal after a lost save. Either row would stay pending
+for good, and a pending row refuses every later leave.
+
+A list names each seq once
+--------------------------
+
+*30 September.* Rule: [covers](format.md#covers-seq-once).
+
+**Problem.** A header could list one seq twice, in two tables. One header is
+one statement, so every copy holding it held both rows, took both, and counted
+both: one seq, two rows, which no honest writer produces, since the seq is one
+counter per author per document.
+
+**Rule.** A list names each seq once, in any tables. One that repeats a seq is
+not a list, so no header signed over one is authentic
+(`BATCH_SIGNATURE_INVALID`, in the author's name), and neither row is taken.
+
+**Rejected.** Taking both rows: it spends one seq twice, and makes `(author,
+seq)` name two rows on every copy that holds the header, the thing
+equivocation exists to refuse.
+
 Reasons given inline
 --------------------
 

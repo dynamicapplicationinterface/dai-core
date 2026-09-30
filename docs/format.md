@@ -109,6 +109,10 @@ per session.
 **floor** is the highest seq the device has let leave it for the document,
 and the host signs only rows above the floor. A re-seal after a lost save
 covers rows whose first header never left.
+<a id="floor-honest-reseal"></a>Two seals list seqs the device issued before
+and are not equivocation, since no header listing them has left: a seal of
+rows a save held pending while a signature was on its way, and a re-seal after
+a lost save.
 
 <a id="publish-after-save"></a>A batch MUST NOT leave by the mailbox until a
 save holding its seal has landed, meaning the host has confirmed the write to
@@ -191,6 +195,9 @@ is reserved and empty, and sits outside the signed bytes.
 `[table, seq]` pairs ordered by table (UTF-8 order) and then seq, in exactly
 that spelling (`[["moves",1],["moves",2]]`): non-empty, each seq a positive
 integer, no pair twice. Any other spelling is not a list.
+<a id="covers-seq-once"></a>A list names each seq once, in any tables: one that
+repeats a seq (`[["cases",1],["notes",1]]`) is not a list, so a header signed
+over one is not authentic (`BATCH_SIGNATURE_INVALID`, in the author's name).
 <a id="covers-author"></a>The author is the header's own; a batch has one.
 <a id="covers-cache"></a>The stored list is a cache of the signed one.
 <a id="covers-table"></a>A row is looked for only in the table the list
@@ -466,7 +473,10 @@ A **revealing header** is:
 
 <a id="equivocated-filed"></a>It is filed under the lowest of that author's
 revealing headers. <a id="equivocated-filed-no-id"></a>A void report with no
-taken row it rests on is filed under no id. <a id="equivocated-third"></a>A merge that brings a third
+taken row it rests on is filed under no id; while a void rests only on what
+[void-rests-on](#void-rests-on) names, no merge reaches this, since a void
+newly true needs a counting confirm or the creator's seat row that the merge
+took. <a id="equivocated-third"></a>A merge that brings a third
 conflicting header for an id already equivocated reveals nothing new and
 reports nothing.
 
@@ -526,6 +536,7 @@ version, never a refactor (identity.md, binding rule 10).
 - Version 2: a void rests only on counting confirms and on the creator's seat
   row that counts.
 - Version 2: Infinity is refused.
+- Version 2: a list names each seq once, in any tables.
 - Version 2: deleted and superseded confirms count.
 - Version 2: roster heads partition by session, entity and author.
 - Version 2: the order of `refusedBatches`, and the header
