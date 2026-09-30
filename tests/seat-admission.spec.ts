@@ -297,6 +297,31 @@ test.describe("a contested seat: two asks, nobody seated until the creator acts"
     expect(admitted(db)).toEqual([]);
     db.close();
   });
+
+  test("an ask at an id its author signed twice asks for nothing: his move is not waiting, and the seat is not contested", () => {
+    // docs/format.md#session-skip-equivocated, for a binding: no merge fixture
+    // can show it, since waiting and contested are in no dump.
+    const db = openWith(SCHEMA);
+    roster(db);
+    put(db, "_dai_binding", J, 1, 4, { seat: SEATJ });
+    put(db, "_dai_binding", K, 1, 5, { seat: SEATJ });
+    put(db, "moves", J, 2, 6, { seat: SEATJ, san: "e5" });
+    const waiting = () => db.all("SELECT san FROM moves_pending ORDER BY san").map((r) => String(r["san"]));
+    const contested = () => db.all("SELECT lower(hex(seat)) AS s FROM _dai_contested WHERE session = ?", [S]).map((r) => String(r["s"]));
+    expect(waiting(), "before: Bo's ask holds his move waiting").toEqual(["e5"]);
+    expect(contested(), "before: two asks contest the seat").toEqual([hex(SEATJ)]);
+    // Two of Bo's headers list his seq 1 with different digests.
+    for (const n of [1, 2]) {
+      db.run(
+        "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, 1, x'00', x'00', NULL, 2, ?, ?)",
+        [bytes(0xe0 + n), J, new Uint8Array(32).fill(n), JSON.stringify([["_dai_binding", 1]])],
+      );
+    }
+    expect(waiting(), "his ask is at an equivocated id").toEqual([]);
+    expect(contested(), "one ask left").toEqual([]);
+    expect(admitted(db)).toEqual([]);
+    db.close();
+  });
 });
 
 test.describe("the merge says what it took and did not admit", () => {

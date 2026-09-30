@@ -12,8 +12,8 @@ Per vector:
 | `expected-ab.txt` | the canonical dump of A after merging B into it |
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
 | `result.json` | the counts, refused ids and refused batches the merge reports |
-| `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok` or a `BATCH_` code |
-| `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors only: what the document admits after each merge (below) |
+| `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok`, `incomplete`, or a refusal code |
+| `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors, and `merge-equivocated-plain-heads`: what the document admits after each merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -95,7 +95,9 @@ docs/format.md#refused-batches.
 
 **What a session document admits.** The `session-` vectors are session
 documents (one seated table, `moves`, seated by its `seat` column; the close
-rule `any`), and their `result.json` says `admitted: true`. Each ships
+rule `any`), and their `result.json` says `admitted: true`, as does
+`merge-equivocated-plain-heads`'s, a plain document, whose roster sections
+are empty. Each ships
 `expected-admitted-ab.txt` and `expected-admitted-ba.txt`: after the merge,
 the admitted heads of every table the merge covers (`id` and the deleted flag,
 by author then seq), then `# holders` (session, seat, holder), `# voided`
@@ -145,4 +147,6 @@ in docs/identity.md and docs/format.md:
 Each `session-` vector was run against both readers with its change held
 out, and failed; the step 6 review's (`session-equivocated-parent`,
 `session-void-equivocated-confirm`, `session-equivocation-two-tables`)
-against the Python reader before it was leveled.
+against the Python reader before it was leveled. The witness pass's (30
+September, from the step 6 review's Pass 2) were each run against a Python
+reader with one rule removed, and failed.

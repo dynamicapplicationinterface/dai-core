@@ -1,0 +1,33 @@
+{
+  "what": "B holds Ada's confirm of the open seat to Bo, and not her creator's seat row, so it counts nothing there. A holds the seat row (header Hs) and a second confirm of the seat to another copy (Hc). A into B takes both, making the seat void: the creator's seat row reveals as a counting confirm does, and AUTHOR_EQUIVOCATED is filed under the lower of the two, Hs, before the SEAT_NOT_HELD of a header between them (D165, D171).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 4,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

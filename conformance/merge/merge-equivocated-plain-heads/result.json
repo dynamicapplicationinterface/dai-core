@@ -1,0 +1,34 @@
+{
+  "what": "A plain document. Ada edits her note on A, and from a second copy of her store signs a case at the same seq on B. The edit's id is equivocated after either merge, so among a plain table's heads it is no head and hides nothing: her first note is a head again. It ships the heads it admits, as a session vector does (D160).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

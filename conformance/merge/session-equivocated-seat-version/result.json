@@ -1,0 +1,34 @@
+{
+  "what": "Ada writes a version of her open seat row on A, and from a second copy of her store a move at the same seq on B. The id is equivocated on both copies after either merge: the seat row version there is no head and hides nothing, so her open seat row stays a head of the roster; each merge reports AUTHOR_EQUIVOCATED (D160, D171).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

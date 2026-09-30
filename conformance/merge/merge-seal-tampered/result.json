@@ -1,5 +1,5 @@
 {
-  "what": "B's row was changed after it was signed, so B's header does not verify (BATCH_DIGEST_MISMATCH). Merging B into A takes neither the row nor the header; B keeps its own.",
+  "what": "B's row was changed after it was signed. B's header is still authentic, and incomplete, since the row it lists no longer digests to it: merging B into A keeps the header and takes no row through it, and refuses the changed row, which names that header, as BATCH_DIGEST_MISMATCH in the name of the row's author. B keeps its own.",
   "cites": [
     "6",
     "T1-D13"

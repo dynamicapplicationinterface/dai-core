@@ -1,0 +1,4 @@
+cases	title	TEXT	NOT NULL	
+cases	status	TEXT	NOT NULL	'open'
+cases	weight	REAL		
+notes	body	TEXT	NOT NULL	
