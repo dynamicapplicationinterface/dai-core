@@ -182,11 +182,12 @@ export function startMailboxSession(config: {
    */
   onPublished?: (address: string) => void;
   /**
-   * About to publish this device's rows up to `head`: awaited before the batch
-   * is sealed, so whatever counts how far this device has written counts them
-   * before they can leave. A throw stops the publish, as a failed send does.
+   * About to publish this device's rows up to `head`, in `batch` as the frame
+   * encoded it: awaited before the batch is sealed, so whatever counts how far
+   * this device has written, or what has left it, counts them before they can
+   * leave. A throw stops the publish, as a failed send does.
    */
-  beforePublish?: (head: number) => Promise<void>;
+  beforePublish?: (head: number, batch: Uint8Array) => Promise<void>;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
   let rootKey: Uint8Array;
@@ -523,7 +524,7 @@ export function startMailboxSession(config: {
       const head = Number(answer["head"] ?? lane.state.watermark.seq);
       const replica = String(answer["replica"] ?? lane.state.watermark.replica);
       if (batchBytes instanceof Uint8Array && batchBytes.byteLength > 0) {
-        await config.beforePublish?.(head);
+        await config.beforePublish?.(head, batchBytes);
         const sealed = await sealBatch(batchBytes, await lane.key());
         // Persisted before the send, so a kill mid-publish resumes it.
         lane.state = { ...lane.state, pending: { sealed, head, replica } };

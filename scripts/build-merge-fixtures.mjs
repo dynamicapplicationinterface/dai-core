@@ -895,6 +895,26 @@ const VECTORS = [
       }
     },
   },
+  {
+    name: "merge-seal-seq-twice",
+    cites: ["6", "T1-D13"],
+    what:
+      "Ada signs one header listing her seq 1 twice, a case and a note, each row naming it. A list that repeats a seq in any tables is not a list, so the header is not authentic: merging A into B refuses it as BATCH_SIGNATURE_INVALID in Ada's name and takes neither row, and the rows, naming a header refused already, are not reported again. A reader taking both rows spends one seq on two rows (the step 6 review).",
+    authors: true,
+    converges: false,
+    fill: async (a) => {
+      createEntity(a, "cases", E1, { title: "one seq", status: "open", weight: null });
+      forge(a, "notes", ADA.author, 1, { body: "the same seq" });
+      await sealAll(a, ADA);
+      const listed = a.all("SELECT covers FROM _dai_batch").map((h) => h.covers);
+      if (listed.join() !== '[["cases",1],["notes",1]]') throw new Error(`merge-seal-seq-twice: A holds headers listing ${listed.join(" and ")}`);
+    },
+    expect: ({ ba }) => {
+      const refused = ba.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+      if (refused.join() !== "Ada BATCH_SIGNATURE_INVALID") return `A into B: refused [${refused.join(", ")}], not Ada's header alone as BATCH_SIGNATURE_INVALID`;
+      if (ba.result.applied !== 0) return `A into B: ${ba.result.applied} rows taken`;
+    },
+  },
 ];
 
 /** An author id as `refusedBatches` spells it. */
@@ -1120,7 +1140,10 @@ signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
 the verdicts and does the rest itself, which is the part these vectors test:
 
 - a header that is not \`ok\` is not kept and lists nothing;
-- a header lists its rows in \`covers\` as \`[table, seq]\`, the author being its own;
+- a header lists its rows in \`covers\` as \`[table, seq]\`, the author being its own,
+  and no seq twice in any tables: a list that repeats one is not a list, so a
+  header signed over one is not authentic, and its verdict says so
+  (\`merge-seal-seq-twice\`);
 - a row is taken when an \`ok\` header lists it (its table, its author, its
   seq), whatever the row says, and names the header it names if that one is
   \`ok\` and lists it, else the lowest \`ok\` header that lists it;

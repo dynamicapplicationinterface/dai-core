@@ -13,7 +13,7 @@
  * be untestable in the other two.
  */
 import { showAuthorId } from "./identity.js";
-import { closedSessionsSql } from "./replicated.js";
+import { PARENTS_CAP, closedSessionsSql, parentsSql } from "./replicated.js";
 import { sessionIdOf } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
@@ -146,15 +146,16 @@ const hex = (bytes: Uint8Array): string =>
 /** A row's id in the text form `_r_parents` uses. */
 export const rowId = (replica: Uint8Array, seq: number): string => `${hex(replica)}:${seq}`;
 
-/** The parents of a row, as ids. Sorted on the way in, so two writers agree. */
+/**
+ * The parents of a row, as ids. Sorted on the way in, so two writers agree.
+ * Parents that are not the one shape name nothing, as `parentsSql` reads them
+ * in the views (docs/format.md, `parents-own-malformed`): the shape is checked
+ * before parents are read for any purpose, not only in a merge.
+ */
 export function parentsOf(row: { _r_parents: string }): string[] {
-  const parsed: unknown = JSON.parse(row._r_parents);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((value): value is string => typeof value === "string");
+  if (!wellFormedParents(row._r_parents)) return [];
+  return JSON.parse(row._r_parents) as string[];
 }
-
-/** The most earlier versions one row may name (D159): one head per writer who wrote concurrently, far below this. */
-export const PARENTS_CAP = 256;
 
 const PARENT_ID = /^[0-9a-f]{32}:[1-9][0-9]{0,15}$/;
 
@@ -288,7 +289,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
   // rare case. A row of another entity naming it says nothing about this
   // entity's history, and hides nothing (T1-D35).
   const namedAlready = db.all(
-    `SELECT 1 FROM "${table}", json_each("${table}"._r_parents)
+    `SELECT 1 FROM "${table}", json_each(${parentsSql(`"${table}"._r_parents`)})
       WHERE json_each.value = ? AND "${table}"._r_entity = ? LIMIT 1`,
     [id, row._r_entity],
   ).length > 0;
@@ -507,7 +508,7 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array, sessi
     const t = quoted(table);
     rows = db.all(
       `SELECT * FROM ${t} r WHERE r._r_entity = ? AND r._r_replica = ? AND r._r_session = ?
-         AND NOT EXISTS (SELECT 1 FROM ${t} n, json_each(n._r_parents) p
+         AND NOT EXISTS (SELECT 1 FROM ${t} n, json_each(${parentsSql("n._r_parents")}) p
                           WHERE n._r_entity = r._r_entity AND n._r_session = r._r_session AND n._r_replica = r._r_replica
                             AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq)`,
       [entity, me, session],
@@ -768,7 +769,7 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
     const crossing = db.all(
       `SELECT count(*) AS n
          FROM "${table}" k
-         JOIN json_each(k._r_parents) p
+         JOIN json_each(${parentsSql("k._r_parents")}) p
          JOIN "${table}" parent
            ON lower(hex(parent._r_replica)) || ':' || parent._r_seq = p.value
           AND parent._r_entity = k._r_entity
@@ -958,8 +959,10 @@ export function coversText(entries: readonly { table: string; row: { _r_seq: num
 /**
  * A header's `covers`, or null when it is not the one spelling `coversText`
  * writes: a non-empty JSON array of distinct `[table, seq]` pairs, each seq a
- * positive integer, in that order. One spelling, so two readers never disagree
- * about which rows a header lists.
+ * positive integer, in that order, and no seq twice in any tables. One
+ * spelling, so two readers never disagree about which rows a header lists; and
+ * one seq is one row (docs/format.md, `covers-spelling`), so a list that
+ * repeats one is not a list, and no header is authentic under it.
  */
 export function coveredRowsOf(text: unknown): [string, number][] | null {
   if (typeof text !== "string") return null;
@@ -979,6 +982,7 @@ export function coveredRowsOf(text: unknown): [string, number][] | null {
     const order = utf8Order(pairs[i - 1]![0], pairs[i]![0]) || pairs[i - 1]![1] - pairs[i]![1];
     if (order >= 0) return null;
   }
+  if (new Set(pairs.map(([, seq]) => seq)).size !== pairs.length) return null;
   if (JSON.stringify(pairs) !== text) return null;
   return pairs;
 }
@@ -1286,7 +1290,7 @@ export function mergeFrom(
       local.run(
         `UPDATE "${table}" SET _r_superseded = 0
           WHERE lower(hex(_r_replica)) || ':' || _r_seq = ?
-            AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(n._r_parents) p
+            AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(${parentsSql("n._r_parents")}) p
                              WHERE p.value = ? AND n._r_entity = "${table}"._r_entity)`,
         [parent, parent],
       );

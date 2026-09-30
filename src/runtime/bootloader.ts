@@ -1744,8 +1744,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   /*
    * Asking the host to sign (docs/identity.md, step 3). The private key never
    * enters the frame: the header goes out, a signature and the public key come
-   * back, or the reason the host would not sign. `seq` is the batch's highest,
-   * so the host raises its floor before it signs.
+   * back, or the reason the host would not sign. `seq` is the batch's highest;
+   * the host does not rely on it, and raises its floor from the seqs the header
+   * lists (docs/format.md, `floor`).
    */
   const signWaiters = new Map<
     string,

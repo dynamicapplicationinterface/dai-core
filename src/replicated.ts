@@ -499,6 +499,35 @@ function unequivocal(row: string): string {
   );
 }
 
+/** The most earlier versions one row may name (D159): one head per writer who wrote concurrently, far below this. */
+export const PARENTS_CAP = 256;
+
+/**
+ * A row's parents as SQL reads them: `text` itself when it is the one shape
+ * (docs/format.md, `parents-shape`), and otherwise an empty array, so a copy's
+ * own malformed row names nothing (`parents-own-malformed`). Every `json_each`
+ * over `_r_parents` reads through this, since `json_each` walks what the shape
+ * refuses (257 ids) and throws on what is not JSON or nests past depth 1000,
+ * which stopped every read of the heads (the step 6 review, Pass 1). The same
+ * test as `wellFormedParents`: JSON text, an array of at most `PARENTS_CAP`
+ * strings, each 32 lowercase hex, a colon, and a seq from 1 to 2^53 - 1 with
+ * no leading zero (sixteen digits at most, and a sixteen-digit seq compared as
+ * text, which for equal lengths is numeric order). A CASE, so `json_each`
+ * never sees text that is not valid JSON.
+ */
+export function parentsSql(text: string): string {
+  const id =
+    `pe.value GLOB '${"[0-9a-f]".repeat(32)}:[1-9]*' AND length(pe.value) <= 49` +
+    ` AND substr(pe.value, 35) NOT GLOB '*[^0-9]*'` +
+    ` AND (length(pe.value) < 49 OR substr(pe.value, 34) <= '9007199254740991')`;
+  return (
+    `(CASE WHEN typeof(${text}) = 'text' AND json_valid(${text}) THEN` +
+    ` CASE WHEN json_type(${text}) = 'array' AND json_array_length(${text}) <= ${PARENTS_CAP}` +
+    ` AND NOT EXISTS (SELECT 1 FROM json_each(${text}) pe WHERE pe.type <> 'text' OR NOT (${id}))` +
+    ` THEN ${text} ELSE '[]' END ELSE '[]' END)`
+  );
+}
+
 /**
  * Raw row `row` names an equivocated id as a parent (batch format version 2,
  * the step 6 review, X1). Which row that id is differs from copy to copy, so
@@ -509,7 +538,7 @@ function unequivocal(row: string): string {
  */
 function namesEquivocated(row: string): string {
   return (
-    `EXISTS (SELECT 1 FROM json_each(${row}._r_parents) ep, _dai_equivocated eq` +
+    `EXISTS (SELECT 1 FROM json_each(${parentsSql(`${row}._r_parents`)}) ep, _dai_equivocated eq` +
     ` WHERE ep.value = lower(hex(eq.author)) || ':' || eq.seq)`
   );
 }
@@ -571,7 +600,7 @@ function headsView(
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${unequivocal("r")}
-     AND NOT EXISTS (SELECT 1 FROM ${q} c, json_each(c._r_parents) p
+     AND NOT EXISTS (SELECT 1 FROM ${q} c, json_each(${parentsSql("c._r_parents")}) p
                       WHERE c._r_entity = r._r_entity${ownAuthor} AND ${unequivocal("c")}
                         AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq);`;
   }
@@ -628,7 +657,7 @@ function headsView(
    * the same bytes in a session of their own for nothing: the seat is the pair.
    */
   const foreign = (row: string): string =>
-    `EXISTS (SELECT 1 FROM ${q} fp, json_each(${row}._r_parents) fj` +
+    `EXISTS (SELECT 1 FROM ${q} fp, json_each(${parentsSql(`${row}._r_parents`)}) fj` +
     ` WHERE fp._r_entity = ${row}._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq` +
     ` AND fp._r_session <> ${row}._r_session)`;
   /*
@@ -640,7 +669,7 @@ function headsView(
    * seat honestly, deleted the creator's move by naming it as his row's parent.
    */
   const otherSeat = (row: string): string =>
-    `EXISTS (SELECT 1 FROM ${q} sp, json_each(${row}._r_parents) sj` +
+    `EXISTS (SELECT 1 FROM ${q} sp, json_each(${parentsSql(`${row}._r_parents`)}) sj` +
     ` WHERE sp._r_entity = ${row}._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq` +
     ` AND sp._r_session = ${row}._r_session AND sp."${seatColumn}" IS NOT ${row}."${seatColumn}")`;
   const admitted = (row: string): string =>
@@ -665,7 +694,7 @@ function headsView(
   // own session (D131), and in a seated table only one of r's own seat (D132).
   const supersededBy = (row: string, gate: string): string =>
     `EXISTS (
-       SELECT 1 FROM ${q} c, json_each(c._r_parents) p
+       SELECT 1 FROM ${q} c, json_each(${parentsSql("c._r_parents")}) p
         WHERE c._r_entity = ${row}._r_entity AND c._r_session = ${row}._r_session${seatColumn ? ` AND c."${seatColumn}" = ${row}."${seatColumn}"` : ""}
           AND ${gate}
           AND p.value = lower(hex(${row}._r_replica)) || ':' || ${row}._r_seq
@@ -695,7 +724,7 @@ CREATE VIEW IF NOT EXISTS ${q}_pending AS
 -- Not a row naming an equivocated id, which is reported nowhere.
 CREATE VIEW IF NOT EXISTS ${q}_foreign AS
   SELECT r._r_replica, r._r_seq, r._r_batch, fp._r_replica AS parent_replica, fp._r_seq AS parent_seq
-    FROM ${q} r, ${q} fp, json_each(r._r_parents) fj
+    FROM ${q} r, ${q} fp, json_each(${parentsSql("r._r_parents")}) fj
    WHERE fp._r_entity = r._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq
      AND fp._r_session <> r._r_session AND NOT ${namesEquivocated("r")};` +
     (seatColumn
@@ -717,7 +746,7 @@ CREATE VIEW IF NOT EXISTS ${q}_unseated AS
 -- the two arrived (D132).
 CREATE VIEW IF NOT EXISTS ${q}_other_seat AS
   SELECT r._r_replica, r._r_seq, r._r_batch, sp._r_replica AS parent_replica, sp._r_seq AS parent_seq
-    FROM ${q} r, ${q} sp, json_each(r._r_parents) sj
+    FROM ${q} r, ${q} sp, json_each(${parentsSql("r._r_parents")}) sj
    WHERE sp._r_entity = r._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq
      AND sp._r_session = r._r_session AND sp."${seatColumn}" IS NOT r."${seatColumn}"
      AND NOT ${namesEquivocated("r")};`
@@ -809,7 +838,7 @@ CREATE TRIGGER IF NOT EXISTS ${q}__no_delete BEFORE DELETE ON ${q}
 -- gave way to a signed one.
 CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_superseded ON ${q}
   WHEN OLD._r_superseded = 1 AND NEW._r_superseded = 0 AND EXISTS (
-    SELECT 1 FROM ${q} n, json_each(n._r_parents) p
+    SELECT 1 FROM ${q} n, json_each(${parentsSql("n._r_parents")}) p
      WHERE n._r_entity = OLD._r_entity
        AND p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
@@ -1006,7 +1035,7 @@ CREATE VIEW IF NOT EXISTS _dai_open_seat AS
     JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
    WHERE s._r_entity <> c.entity AND s._r_deleted = 0 AND ${unequivocal("s")}
      AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
-     AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(n._r_parents) p
+     AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(${parentsSql("n._r_parents")}) p
                       WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
                         AND ${unequivocal("n")}
                         AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);

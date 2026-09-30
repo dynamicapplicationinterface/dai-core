@@ -59,12 +59,15 @@ import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
 import { listMailboxes } from "./opfs.js";
-import { batchVersionsIn, inviteFor, unsealedOwnRows } from "./invite.js";
+import { batchVersionsIn, inviteFor, sealedTopIn, unsealedOwnRows } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
   raiseSeqFloor,
   claimSeqFloor,
+  claimSignFloor,
+  raiseLeftFloor,
+  keptLeftFloor,
   seqFloorWithin,
   deleteDatabaseFromOpfs,
   getCartridgeFromLibrary,
@@ -86,7 +89,7 @@ import { TO_DOCUMENT, TO_HOST } from "../../../src/bridge.js";
 import { authorId, mintedThisPage, person, type Person } from "./person.js";
 import { showAuthorId, signBytes } from "../../../src/identity.js";
 import { decode as decodeCbor } from "../../../src/cbor.js";
-import { BATCH_FORMAT_VERSION } from "../../../src/replicated-batch.js";
+import { BATCH_FORMAT_VERSION, decodeBatch } from "../../../src/replicated-batch.js";
 import { KEYS, libraryLock, opensKey } from "../../../src/keys.js";
 import { WORKER } from "../../../src/worker.js";
 import { loadAt, ownWrite } from "./navigate.js";
@@ -3045,6 +3048,27 @@ window.addEventListener("message", (event) => {
               "has written it. Reload the page to try again.",
           };
         }
+        /*
+         * The stored copy landed, so its headers may have left: counted before
+         * any sign, for a save that landed and was never counted (a page gone
+         * between the write and the left floor). Not an arrived database, which
+         * this host never saw land. Not under the library lock, which a save
+         * holds while it waits on this answer; the raise is one transaction.
+         */
+        const stored = writing.archive["document.sqlite"];
+        if (!arrivedDatabases.has(writing) && stored && stored.byteLength > 0) {
+          const counted = await raiseLeftFrom(writingUuid, stored, me.id).then(
+            () => true,
+            () => false,
+          );
+          if (!counted) {
+            return {
+              refused:
+                "This document can be read here but not changed: this device could not record what it " +
+                "has already sent. Reload the page to try again.",
+            };
+          }
+        }
         return { me, seqFloor };
       })();
       thisMount.writes = { documentUuid: writingUuid, decided };
@@ -3319,8 +3343,6 @@ window.addEventListener("message", (event) => {
       if (!mount || !writes || mount.documentUuid !== asking.cartridge.manifest.documentUuid) {
         return reply({ error: "This document is not open for writing here." });
       }
-      const seq = Number(data.seq);
-      if (!Number.isSafeInteger(seq) || seq <= 0) return reply({ error: "A batch names no sequence this device can record." });
       if ("refused" in writes) return reply({ error: writes.refused });
       const header = data.header instanceof Uint8Array ? data.header : null;
       let fields: unknown = null;
@@ -3338,6 +3360,11 @@ window.addEventListener("message", (event) => {
         fields[2] instanceof Uint8Array &&
         showAuthorId(fields[2]) === writes.me.author;
       if (!header || !ours) return reply({ error: "This device signs only its own changes to the document that is open." });
+      // The seqs the floor counts are the ones the header lists, read here from
+      // the bytes being signed: the frame's own count is not relied on
+      // (docs/identity.md, binding rule 3).
+      const covered = coveredSeqs((fields as unknown[])[5]);
+      if (!covered) return reply({ error: "A batch names no sequence this device can record." });
       if (mountNow !== asking) return;
       try {
         /*
@@ -3351,10 +3378,11 @@ window.addEventListener("message", (event) => {
           if (knownRevision.has(mount.documentUuid) && knownRevision.get(mount.documentUuid) !== (held?.revision ?? 0)) {
             throw new Error(FLOOR_MOVED);
           }
-          await claimFloor(mount, writes.seqFloor, seq);
+          await claimSign(mount, writes.seqFloor, covered);
         });
       } catch (error) {
         if (error instanceof Error && error.message === FLOOR_MOVED) return reply({ error: FLOOR_MOVED });
+        if (error instanceof Error && error.message === ALREADY_LEFT) return reply({ error: ALREADY_LEFT });
         return reply({ error: "This device could not record how far it has written, so the change was not signed." });
       }
       // Signed only while the mount that asked is still the one mounted: the
@@ -3487,6 +3515,11 @@ window.addEventListener("message", (event) => {
           });
         }
         knownRevision.set(documentUuid, next);
+        // Landed: the headers these bytes hold may leave from here on, so the
+        // left floor counts them before the frame hears the save landed and
+        // publishes (docs/format.md, `floor`). A crash before this line leaves
+        // them uncounted until the next mount reads the stored copy.
+        if (mount && writes && !("refused" in writes)) await raiseLeftFrom(documentUuid, bytes, writes.me.id);
       })
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
@@ -5105,7 +5138,15 @@ async function startMailboxIfPossible(): Promise<void> {
       onLaneClosed: (address) => void releasePush(address, relay),
       // Before a batch leaves: the floor counts its seqs first (identity step 2
       // review, #1), so a save lost after this publish cannot reissue them.
-      beforePublish: (head) => raiseSeqFloor(uuid, head),
+      // And the left floor counts the header it carries, read here from the
+      // bytes about to leave, not from the frame's word (docs/format.md, `floor`).
+      beforePublish: async (head, batch) => {
+        await raiseSeqFloor(uuid, head);
+        const author = mount?.writes ? await mount.writes.decided : null;
+        if (author && !("refused" in author)) {
+          await withLibraryLock(uuid, () => raiseLeftFloor(uuid, publishedTop(batch, author.me.id)));
+        }
+      },
       // This person's own move reached the relay: whatever the icon said is
       // answered (D34). After the confirmation, never before it, so a move
       // that never left clears nothing. Applies whether or not the app reports
@@ -5638,6 +5679,87 @@ function claimFloor(mount: MountWrites, seen: number, seq: number): Promise<void
   return turn;
 }
 
+/** What a frame asking for a header over a seq that may have left is told (docs/format.md, `floor`). */
+const ALREADY_LEFT =
+  "This change reuses a place in the document that this device has already sent, so it was not signed. " +
+  "Reopen the document to go on.";
+
+/**
+ * The claim a sign makes, in the same turn as this mount's other claims
+ * (`claimFloor`): the sequence floor, claimed from where this mount saw it and
+ * raised to the highest seq the header lists; and the left floor, which every
+ * listed seq must be above (`claimSignFloor`). A seal of rows a save held
+ * pending, or a re-seal after a lost save, lists seqs the sequence floor
+ * already counts, and is signed: nothing listing them has landed or been
+ * published.
+ */
+function claimSign(mount: MountWrites, seen: number, covered: readonly number[]): Promise<void> {
+  const run = async (): Promise<void> => {
+    const answer = await claimSignFloor(mount.documentUuid, mount.floorSeen ?? seen, covered);
+    if ("moved" in answer) {
+      console.info(`dai: the floor moved to ${answer.moved} in another tab; this tab signs and saves nothing`);
+      throw new Error(FLOOR_MOVED);
+    }
+    if ("left" in answer) {
+      console.info(`dai: a header listing a seq at or below ${answer.left}, which has left, was not signed`);
+      throw new Error(ALREADY_LEFT);
+    }
+    mount.floorSeen = answer.claimed;
+  };
+  const turn = (mount.claims ?? Promise.resolve()).then(run, run);
+  mount.claims = turn.catch(() => undefined);
+  return turn;
+}
+
+/**
+ * The seqs a canonical header's `covers` lists (docs/format.md, the canonical
+ * header), or null when it is not a list the host would sign: empty, a pair
+ * that is not a table and a positive seq, or one seq twice in any tables
+ * (`covers-spelling`), since a seq is one row.
+ */
+function coveredSeqs(covers: unknown): number[] | null {
+  if (!Array.isArray(covers) || covers.length === 0) return null;
+  const seqs: number[] = [];
+  for (const pair of covers) {
+    if (!Array.isArray(pair) || pair.length !== 2 || typeof pair[0] !== "string") return null;
+    const seq = pair[1];
+    if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq <= 0) return null;
+    seqs.push(seq);
+  }
+  return new Set(seqs).size === seqs.length ? seqs : null;
+}
+
+/**
+ * Raises the left floor from bytes that landed in this device's store or are
+ * about to be published, read in the host's own engine (`sealedTopIn`), under
+ * the document's library lock, as the sequence floor is (D41).
+ */
+async function raiseLeftFrom(documentUuid: string, bytes: Uint8Array, author: Uint8Array): Promise<void> {
+  await raiseLeftFloor(documentUuid, await sealedTopIn(bytes, author));
+}
+
+/**
+ * The highest seq of `author`'s rows in a batch about to be published, decoded
+ * by the host: a recipient verifies the header against these rows, so they
+ * are what it covers. 0 for bytes that are not a batch, which no recipient
+ * takes either.
+ */
+function publishedTop(batch: Uint8Array, author: Uint8Array): number {
+  let decoded: ReturnType<typeof decodeBatch>;
+  try {
+    decoded = decodeBatch(batch);
+  } catch {
+    return 0;
+  }
+  const mine = showAuthorId(author);
+  let top = 0;
+  for (const { row } of decoded.entries) {
+    const seq = Number(row._r_seq);
+    if (row._r_replica instanceof Uint8Array && showAuthorId(row._r_replica) === mine && Number.isSafeInteger(seq) && seq > top) top = seq;
+  }
+  return top;
+}
+
 function requestReplicaId(): Promise<string | null> {
   return new Promise((resolve) => {
     const target = cartridgeFrame.contentWindow;
@@ -5691,6 +5813,8 @@ Object.defineProperty(window, "__runner", {
     get signatures() {
       return hostSignatures;
     },
+    /** A document's left floor, as kept (docs/format.md, `floor`). */
+    leftFloor: keptLeftFloor,
     eject,
     exportContainer,
     deleteApp,

@@ -61,7 +61,10 @@ signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
 the verdicts and does the rest itself, which is the part these vectors test:
 
 - a header that is not `ok` is not kept and lists nothing;
-- a header lists its rows in `covers` as `[table, seq]`, the author being its own;
+- a header lists its rows in `covers` as `[table, seq]`, the author being its own,
+  and no seq twice in any tables: a list that repeats one is not a list, so a
+  header signed over one is not authentic, and its verdict says so
+  (`merge-seal-seq-twice`);
 - a row is taken when an `ok` header lists it (its table, its author, its
   seq), whatever the row says, and names the header it names if that one is
   `ok` and lists it, else the lowest `ok` header that lists it;

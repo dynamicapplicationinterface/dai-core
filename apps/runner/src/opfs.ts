@@ -20,7 +20,7 @@ import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/publisher-identity.js";
 import type { KeptPersonKey } from "../../../src/identity.js";
-import { KEYS, seqFloorKey } from "../../../src/keys.js";
+import { KEYS, leftFloorKey, seqFloorKey } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
 
@@ -784,6 +784,95 @@ export async function claimSeqFloor(documentUuid: string, seen: number, seq: num
   }
   if (!answer) throw new Error("The sequence floor was not read.");
   return answer;
+}
+
+/**
+ * One read-write transaction on the key store, bounded as the floor's are: a
+ * write that never answers fails, like one that errors, rather than holding
+ * the lock (#4). `work` runs inside the transaction and only queues requests
+ * on the store; what it records is read after the commit.
+ */
+async function inKeyStore(what: string, work: (store: IDBObjectStore) => void): Promise<void> {
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        work(tx.objectStore(KEY_STORE));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error(`${what} was not written.`));
+        tx.onabort = () => reject(tx.error ?? new Error(`${what} write was abandoned.`));
+      }),
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} did not answer within 4 seconds.`)), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The claim a sign makes: the sequence floor as `claimSeqFloor` claims it,
+ * and the left floor checked, in one transaction (docs/format.md, `floor`).
+ * `covered` is every seq the header lists, read by the host from the header
+ * itself, never a number the frame sent. Refused with `left` when one of them
+ * is at or below the highest seq a header of this device's listed in bytes
+ * that landed or were published: those could have left, and a second header
+ * over one of their seqs is the author signing twice.
+ */
+export type SignFloorClaim = SeqFloorClaim | { left: number };
+
+export async function claimSignFloor(documentUuid: string, seen: number, covered: readonly number[]): Promise<SignFloorClaim> {
+  let answer: SignFloorClaim | null = null;
+  await inKeyStore("The sequence floor", (store) => {
+    const floor = store.get(seqFloorKey(documentUuid));
+    const left = store.get(leftFloorKey(documentUuid));
+    left.onsuccess = () => {
+      const held = typeof floor.result === "number" ? floor.result : 0;
+      const sent = typeof left.result === "number" ? left.result : 0;
+      if (held > seen) {
+        answer = { moved: held };
+        return;
+      }
+      if (covered.length === 0 || covered.some((seq) => !Number.isSafeInteger(seq) || seq <= sent)) {
+        answer = { left: sent };
+        return;
+      }
+      const next = Math.max(seen, ...covered);
+      if (next > held) store.put(next, seqFloorKey(documentUuid));
+      answer = { claimed: next };
+    };
+  });
+  if (!answer) throw new Error("The sequence floor was not read.");
+  return answer;
+}
+
+/**
+ * Raises the left floor to `seq`, never lowers it, in one transaction. Called
+ * only with a seq the host read itself, in its own engine, from bytes it saw
+ * land in this device's store or is about to publish.
+ */
+export async function raiseLeftFloor(documentUuid: string, seq: number): Promise<void> {
+  if (!Number.isSafeInteger(seq) || seq <= 0) return;
+  await inKeyStore("The left floor", (store) => {
+    const read = store.get(leftFloorKey(documentUuid));
+    read.onsuccess = () => {
+      const held = typeof read.result === "number" ? read.result : 0;
+      if (seq > held) store.put(seq, leftFloorKey(documentUuid));
+    };
+  });
+}
+
+/** The left floor as kept, 0 when none is: for a test that asserts what has left. */
+export async function keptLeftFloor(documentUuid: string): Promise<number> {
+  const db = await openIdb();
+  return new Promise<number>((resolve, reject) => {
+    const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(leftFloorKey(documentUuid));
+    req.onsuccess = () => resolve(typeof req.result === "number" ? req.result : 0);
+    req.onerror = () => reject(req.error ?? new Error("The left floor was not read."));
+  });
 }
 
 /**

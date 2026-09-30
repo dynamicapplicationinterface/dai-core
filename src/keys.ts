@@ -60,5 +60,13 @@ export const libraryLock = (documentUuid: string): string => `dai:${documentUuid
  */
 export const seqFloorKey = (documentUuid: string): string => `dai:seq-floor:${documentUuid}`;
 
+/**
+ * IndexedDB, beside the sequence floor: the highest seq a header of this
+ * device's lists, in bytes the host saw land in this device's store or
+ * published (docs/format.md, `floor`). The host signs no header listing a seq
+ * at or below it. Kept, and dying, as the sequence floor is.
+ */
+export const leftFloorKey = (documentUuid: string): string => `dai:left-floor:${documentUuid}`;
+
 /** Every key-making function here, for a check that wants to see them all. */
-export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey } as const;
+export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey, leftFloorKey } as const;

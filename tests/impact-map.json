@@ -1425,6 +1425,17 @@
       "tests/leave-check.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/left-floor.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/chess-play.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/left-floor.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/library-record.spec.ts": [
       "apps/runner/src/main.ts",
       "apps/runner/src/opfs.ts",
@@ -2217,6 +2228,13 @@
       "src/",
       "tests/packaging.spec.ts",
       "tsup.config.ts"
+    ],
+    "tests/parents-own-malformed.spec.ts": [
+      "src/identity.ts",
+      "src/replicated-rows.ts",
+      "src/replicated.ts",
+      "src/session-id.ts",
+      "tests/parents-own-malformed.spec.ts"
     ],
     "tests/person-key-read.spec.ts": [
       "apps/runner/",
