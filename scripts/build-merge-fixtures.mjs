@@ -778,7 +778,7 @@ const VECTORS = [
     converges: false,
     cites: ["6", "T1-D13"],
     what:
-      "B holds Ada's row naming header H1, which lists it and a row B does not hold (so H1 is incomplete), and header H2, which lists the row alone. The row is taken through H2, and its _r_batch is H2: the header it names only when that header is complete and kept, else the lowest complete kept header that lists it (review X2).",
+      "B holds Ada's row naming header H1, which lists it and a row B does not hold (so H1 is incomplete), and header H2, which lists the row alone. The row is taken through H2, and its _r_batch is H2: the header it names only when that header is complete and kept, else the lowest complete kept header that lists it (review X2). H1 and H2 both list the row, with different digests, so the merge that keeps both, B into A, also reports AUTHOR_EQUIVOCATED in Ada's name: the comparison is of whole-batch digests.",
     fill: async (a, b) => {
       const path = join(out, "scratch-plain-fork.db");
       const src = open(path);

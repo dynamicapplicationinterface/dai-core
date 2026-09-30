@@ -241,6 +241,9 @@ local copy, in this order:
    and not kept, and no row is taken through it.
    <a id="merge-headers-kept"></a>Every other authentic header is kept, under
    the list it signed, whether or not it is complete.
+   <a id="merge-headers-kept-list"></a>The list it signed is the one that
+   made it authentic ([tried in order](#verify-lists-tried)), and a kept
+   header's stored `covers` is that list, not the one the sibling stored.
 2. <a id="merge-rows"></a>**Rows,** every row of every replicated table the
    sibling holds:
    - <a id="merge-row-malformed"></a>A malformed row is not taken. It is
@@ -280,15 +283,32 @@ local copy, in this order:
    something else names it. Since no merge takes an unsigned row, the one a
    copy can hold is its own, pending: a save lost after it left reissues its
    seq, and the signed row coming back takes the id.
+   <a id="merge-signed-outranks-any-table"></a>The id is `(author, seq)`, so
+   a signed row outranks an unsigned one at the same `(author, seq)` whatever
+   table either is in.
 4. <a id="merge-reports"></a>**Reports,** from the row set after placing
    (below): `SEAT_NOT_HELD`, `ENTITY_OTHER_SESSION` and
    `AUTHOR_EQUIVOCATED`.
 
 <a id="merge-no-adopt"></a>A merge MUST NOT adopt a seal nobody verified onto
-a row a copy holds pending. <a id="merge-counts"></a>The counts (`applied`,
-`duplicate`, `rejected`, `newReplicas`) and the canonical dump are defined in
-[replicated-tables.md](replicated-tables.md), section 8, in its decisions
-on the canonical dump and on the counts a merge reports.
+a row a copy holds pending. <a id="merge-counts"></a>Of the rows it places, a
+merge counts as `applied` those the copy did not hold, as `duplicate` those it
+held already the same in `_r_lc`, `_r_entity`, `_r_parents`, `_r_deleted`,
+`_r_session` and every author column, and lists in `rejected` the
+[ids](#conv-row-id) of those refused as a second row at an id and of the rows
+a signed row outranked; `newReplicas` is how many author ids it added to
+`_dai_replicas`, from the sibling's own and those it lists.
+<a id="merge-dump"></a>The canonical dump, which two copies compare, is a
+section per replicated table in UTF-8 order of name (a line `# <table>`, then
+a line per row ordered by author id and seq, its values tab-separated in the
+table's column order), then `# _dai_replicas` (an author id per line,
+ascending), then, when the copy has it, `# _dai_batch` (a stored header per
+line, every column, ordered by id), each value written `nil`, as a decimal
+integer, as lowercase hex for bytes, as text with tab, newline and backslash
+escaped, or as a float's shortest round-trip decimal.
+Both are decided in [replicated-tables.md](replicated-tables.md), section 8
+(T1-D9 for the dump, with the floats' special cases, and T1-D15 for the
+counts).
 
 ### Equivocation
 
@@ -297,6 +317,8 @@ same seq with different digests are **equivocation**.
 <a id="equivocation-any-table"></a>The seq may be listed in any tables: two
 headers of one author listing one seq, one in one table and one in another,
 with different digests, are equivocation, as two listing it in one table are.
+<a id="equivocation-own-headers"></a>A copy's own headers count as the
+headers a merge keeps do, though a merge verifies only the sibling's.
 <a id="equivocated-id"></a>The id, `(author, seq)`, is **equivocated** on
 every copy that holds both headers, whichever arrived first.
 <a id="equivocated-counts-nothing"></a>A row at an equivocated id counts for
@@ -399,6 +421,10 @@ these hold:
 <a id="parent-other-entity"></a>A parent of another entity, at an id not
 equivocated, is not a version of this row: it neither makes a row cross nor
 hides anything.
+<a id="parent-equivocated-outside"></a>Admission is only a session author
+table's, so in the roster tables, the close and a plain document's tables a
+row naming an equivocated id as a parent counts like any other row, and only
+the row at that id counts for nothing.
 
 ### Heads
 
