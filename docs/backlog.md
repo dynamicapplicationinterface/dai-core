@@ -4436,8 +4436,11 @@ finds no write control on screen.
 
 #### D173 — A file the shell writes itself leaves the device without raising the left floor
 
-*Status: open, filed 30 September from the eleventh sitting's cold-review
-list (H4). Being fixed in the twelfth.*
+*Status: **landed** 30 September: `6b447a1`, run 36754861434 read green on
+the gate (Chromium+node 1397, WebKit 267 + 273 + 235 after one rerun of shard
+2, which hit its time limit with no failure; checks; Firefox 769, a reading).
+Filed from the eleventh sitting's cold-review list (H4), fixed in the
+twelfth.*
 
 The shell's own file write (a download or a picker save) asks the host
 `LEAVE_CHECK` about the frame's bytes, and the host checked only that no row
