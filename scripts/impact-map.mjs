@@ -131,6 +131,10 @@ const OTHER_CHECKS = [
     claims: ["conformance/reference/dai_merge.py", "conformance/merge/"],
   },
   {
+    run: "python3 scripts/holdout.py",
+    claims: ["scripts/holdout.py"],
+  },
+  {
     run: "cargo run --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge",
     claims: ["conformance/readers/rust-merge/", "conformance/merge/"],
   },

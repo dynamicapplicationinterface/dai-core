@@ -55,6 +55,9 @@ jobs:
       # reader nothing runs agrees with nothing: the Rust reader's README said
       # the conformance gate ran it, and until this step nothing did.
       - run: python3 conformance/reference/dai_merge.py
+      # Every witness has teeth: each hold-out (the Python reader with one rule
+      # of docs/format.md removed) still fails the fixtures named for it.
+      - run: python3 scripts/holdout.py
       - run: cargo run --release --quiet --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge
 
       # The host's in-place writer, and its own unit tests. Compiling the
