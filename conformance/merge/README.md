@@ -63,8 +63,8 @@ the verdicts and does the rest itself, which is the part these vectors test:
 - a header that is not `ok` is not kept and lists nothing;
 - a header lists its rows in `covers` as `[table, seq]`, the author being its own;
 - a row is taken when an `ok` header lists it (its table, its author, its
-  seq), whatever the row says, and names the header it names if that one lists
-  it, else the lowest listed id;
+  seq), whatever the row says, and names the header it names if that one is
+  `ok` and lists it, else the lowest `ok` header that lists it;
 - a row that names a header and is listed by none is refused, as
   `BATCH_DIGEST_MISMATCH` in the name of the row's own author, unless the
   header it names was refused already;
@@ -72,8 +72,10 @@ the verdicts and does the rest itself, which is the part these vectors test:
   `BATCH_UNSIGNED` in the name of the id it carries (batch format version 2),
   unless the copy already holds a row at that id in that table, where the ordinary
   path decides (a duplicate, or a second row at one id);
-- one author's seq names one row whatever table it is in: a row whose
-  (author, seq) the copy holds in another table is refused (`rejected`);
+- one author's seq names one row whatever table it is in: an unsigned row
+  whose (author, seq) the copy holds in another table is refused
+  (`rejected`); two signed ones are both taken, and under two headers with
+  different digests are equivocation (batch format version 2);
 - a signed row outranks an unsigned row the copy holds at the same id (after
   version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
   `rejected`; whatever the removed row superseded is a head again unless
@@ -86,7 +88,7 @@ each disagree with a reader that has one of those wrong. `refusedBatches` in
 `result.json` is one entry per batch, reason and author, ordered by batch id
 (lowercase hex, no id first), then reason, then author id in hex, with the
 author id shown as base64url. Which batch id each reason is filed under is in
-docs/format.md, "What a merge reports".
+docs/format.md#refused-batches.
 
 **What a session document admits.** The `session-` vectors are session
 documents (one seated table, `moves`, seated by its `seat` column; the close
@@ -94,8 +96,9 @@ rule `any`), and their `result.json` says `admitted: true`. Each ships
 `expected-admitted-ab.txt` and `expected-admitted-ba.txt`: after the merge,
 the admitted heads of every table the merge covers (`id` and the deleted flag,
 by author then seq), then `# holders` (session, seat, holder), `# voided`
-(session, seat, creator), `# equivocated` (author, table, seq) and `# closed`,
-each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
+(session, seat, creator), `# equivocated` (author, table, seq: one line for
+each table a kept header lists an equivocated id in, the id being the author
+and the seq) and `# closed`, each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
 document admits, which the stored rows alone cannot show, so these are what a
 reader without one of those changes disagrees with. A reader computes them from
 the tables and headers alone. It reads no view but `_dai_seat_rules` and
@@ -103,18 +106,22 @@ the tables and headers alone. It reads no view but `_dai_seat_rules` and
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
 
-- a row id one author signed twice (two headers listing it with different
-  digests) counts nowhere (D160);
+- a row id one author signed twice (two headers listing its seq, in any
+  tables, with different digests) counts nowhere (D160, and the step 6
+  review), and a row naming such an id as a parent is neither admitted nor
+  reported;
 - the creator's seat row is the one whose own author and seq hash to its
   session (D158); her seat is hers, and an open seat is held by whoever her
   confirms name, unless she confirmed it to two copies, when it is void and
   held by nobody (D165). A confirm counts deleted or not, superseded or not
   (D171);
 - a merge that reveals an author signing twice, a header it did not hold
-  making an id equivocated that was not, or a row it took making a seat void
-  that was not, reports `AUTHOR_EQUIVOCATED` in that author's name, once per
-  merge, filed under the lowest revealing header (docs/format.md, "What a
-  merge reports"); a third conflicting header reveals nothing new;
+  making an id equivocated that was not, or a row it took that a seat newly
+  void rests on (a counting confirm, or the creator's seat row that counts),
+  reports `AUTHOR_EQUIVOCATED` in that author's name, once per merge, filed
+  under the lowest revealing header, or under no id when it took no row the
+  void rests on (docs/format.md#equivocated-filed); a third conflicting header
+  reveals nothing new;
 - the heads of the roster tables and the close (`_dai_seat`,
   `_dai_binding`, `_dai_confirm`, `_dai_close`) partition by session,
   entity and author: only an author's own later row in the same session
@@ -133,4 +140,6 @@ in docs/identity.md and docs/format.md:
   `ROW_MALFORMED`.
 
 Each `session-` vector was run against both readers with its change held
-out, and failed.
+out, and failed; the step 6 review's (`session-equivocated-parent`,
+`session-void-equivocated-confirm`, `session-equivocation-two-tables`)
+against the Python reader before it was leveled.

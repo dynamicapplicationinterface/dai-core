@@ -139,9 +139,11 @@ export function encode(value: CborValue): Uint8Array {
        * always a float64 (0xfb, eight bytes, big-endian), never a shorter float.
        * One width is what keeps it deterministic, and a number with no fraction
        * is an integer above whatever its column's type, which is how SQLite
-       * hands a whole REAL back. NaN has no place in a row and is refused.
+       * hands a whole REAL back. NaN has no place in a row and is refused, and
+       * so is Infinity, of either sign (batch format version 2).
        */
       if (Number.isNaN(value)) throw new CborError("NaN is not encodable.");
+      if (!Number.isFinite(value)) throw new CborError("Infinity is not encodable.");
       const out = new Uint8Array(9);
       out[0] = (MAJOR.SIMPLE << 5) | 27;
       new DataView(out.buffer).setFloat64(1, value, false);
@@ -234,6 +236,7 @@ function decodeAt(cursor: Cursor, depth = 0): CborValue {
     const float = view.getFloat64(0, false);
     cursor.at += 9;
     if (Number.isNaN(float)) throw new CborError("NaN is not a value here.");
+    if (!Number.isFinite(float)) throw new CborError("Infinity is not a value here.");
     return float;
   }
   const { major, value: raw } = readHead(cursor);

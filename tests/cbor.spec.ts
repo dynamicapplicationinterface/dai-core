@@ -138,7 +138,7 @@ test.describe("a number with a fraction", () => {
   });
 
   test("reads back through a reference implementation, and through this one", () => {
-    for (const value of [1.5, -2.25, 0.1, 1.5e-300, -Infinity]) {
+    for (const value of [1.5, -2.25, 0.1, 1.5e-300, -2.5e-300]) {
       expect(new Encoder({ tagUint8Array: false, useRecords: false }).decode(encode(value))).toBe(value);
       expect(decode(encode(value))).toBe(value);
     }
@@ -203,6 +203,13 @@ test.describe("what it refuses", () => {
   test("NaN, which has no place in a row", () => {
     expect(() => encode(Number.NaN)).toThrow(/NaN/);
     expect(() => decode(new Uint8Array([0xfb, 0x7f, 0xf8, 0, 0, 0, 0, 0, 0]))).toThrow(/NaN/);
+  });
+
+  test("Infinity, either sign, as NaN is (docs/format.md#cbor-float)", () => {
+    expect(() => encode(Number.POSITIVE_INFINITY)).toThrow(/Infinity/);
+    expect(() => encode(Number.NEGATIVE_INFINITY)).toThrow(/Infinity/);
+    expect(() => decode(new Uint8Array([0xfb, 0x7f, 0xf0, 0, 0, 0, 0, 0, 0]))).toThrow(/Infinity/);
+    expect(() => decode(new Uint8Array([0xfb, 0xff, 0xf0, 0, 0, 0, 0, 0, 0]))).toThrow(/Infinity/);
   });
 
   test("bytes after the end of a value", () => {

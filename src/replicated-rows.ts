@@ -1107,8 +1107,8 @@ export function mergeFrom(
       local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_equivocated'").length === 0
         ? []
         : local
-            .all("SELECT lower(hex(author)) AS a, tbl, seq FROM _dai_equivocated")
-            .map((r) => `${String(r["a"])}|${String(r["tbl"])}|${Number(r["seq"])}`),
+            .all("SELECT lower(hex(author)) AS a, seq FROM _dai_equivocated")
+            .map((r) => `${String(r["a"])}|${Number(r["seq"])}`),
     );
     const headers = sibling
       .all("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch")
@@ -1159,14 +1159,15 @@ export function mergeFrom(
      * that id is admitted, on any copy holding both headers (`_dai_equivocated`,
      * src/replicated.ts). A header this merge kept reveals it when it makes an
      * id equivocated that was not before; a third conflicting header at an id
-     * already signed twice reveals nothing new (D171).
+     * already signed twice reveals nothing new (D171). The id is the author and
+     * the seq, whatever table either header lists it in (batch format version
+     * 2, the step 6 review).
      */
     for (const h of arrived) {
       const reveals = h.covers.some(
-        ([table, seq]) =>
-          !equivocatedBefore.has(`${hex(h.author)}|${table}|${seq}`) &&
-          local.all("SELECT 1 FROM _dai_covers WHERE tbl = ? AND author = ? AND seq = ? AND id <> ? AND digest <> ? LIMIT 1", [
-            table,
+        ([, seq]) =>
+          !equivocatedBefore.has(`${hex(h.author)}|${seq}`) &&
+          local.all("SELECT 1 FROM _dai_covers WHERE author = ? AND seq = ? AND id <> ? AND digest <> ? LIMIT 1", [
             h.author,
             seq,
             h.id,
@@ -1264,8 +1265,9 @@ export function mergeFrom(
 
   /*
    * One id, one row. A per-author seq is one counter per document, so
-   * `(author, seq)` names one row whatever table it sits in: the same number in
-   * two tables is a collision, refused as a different row wearing that id. And a
+   * `(author, seq)` names one row whatever table it sits in: an unsigned row at
+   * a number another table holds is a collision, refused as a different row
+   * wearing that id (two signed ones are equivocation, below in `place`). And a
    * signed row always outranks an unsigned row at the same id, whichever arrived
    * first: the unsigned one is removed and the signed one takes its place (the
    * delete trigger allows exactly that), and the removed id is reported the same
@@ -1301,6 +1303,14 @@ export function mergeFrom(
         displace(other, row);
         continue;
       }
+      /*
+       * Two signed rows at one id in two tables are both taken (batch format
+       * version 2, the step 6 review). Refusing the second made the first to
+       * arrive win, so two copies split and nothing was reported; taken, the
+       * two headers are equivocation per (author, seq), and neither row counts
+       * on any copy holding both. The collision is an unsigned row's rule.
+       */
+      if (signed) continue;
       throw new RowRejected(
         `${rowId(row._r_replica, row._r_seq)} is already a row of ${other}. One author's seq names one row, whatever table it is in.`,
       );
@@ -1406,19 +1416,32 @@ export function mergeFrom(
    * copies. Both confirms are void on every copy holding them (`_dai_voided`).
    * The merge that made the seat void says so, in the creator's name, as D160
    * does for two rows at one id: the accusation is of the author. Its
-   * revealing headers are those of the rows it took that the void rests on,
-   * the seat's confirms and the session's creator seat row (D171).
+   * revealing headers are those of the rows it took that the void rests on
+   * (D171): the seat's counting confirms (`_dai_confirmed`, so not one at an
+   * equivocated id) and the session's creator's seat row that counts
+   * (`_dai_creator`, so not deleted and not equivocated), and nothing else
+   * (batch format version 2, the step 6 review, X3). With no taken row it
+   * rests on, the report is filed under no id.
    */
   for (const [key, creator] of voidedSeats()) {
     if (voidedBefore.has(key)) continue;
     const [session, seat] = key.split("|");
+    const counting = new Set(
+      local
+        .all("SELECT seq FROM _dai_confirmed WHERE lower(hex(session)) = ? AND lower(hex(seat)) = ? AND creator = ?", [session, seat, creator])
+        .map((r) => Number(r["seq"])),
+    );
+    const seatRow = local.all("SELECT 1 FROM _dai_creator WHERE lower(hex(session)) = ? AND replica = ?", [session, creator]).length > 0;
     const resting = added.filter(
       ({ table, row }) =>
         row._r_session instanceof Uint8Array &&
         hex(row._r_session) === session &&
         hex(row._r_replica) === hex(creator) &&
-        ((table === "_dai_confirm" && row.columns["seat"] instanceof Uint8Array && hex(row.columns["seat"]) === seat) ||
-          (table === "_dai_seat" && hex(sessionIdOf(row._r_replica, row._r_seq) ?? new Uint8Array()) === session)),
+        ((table === "_dai_confirm" && counting.has(row._r_seq)) ||
+          (table === "_dai_seat" &&
+            seatRow &&
+            row._r_deleted === 0 &&
+            hex(sessionIdOf(row._r_replica, row._r_seq) ?? new Uint8Array()) === session)),
     );
     for (const { row } of resting) reveal(creator, row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "");
     if (resting.length === 0) reveal(creator, "");

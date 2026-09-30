@@ -1,0 +1,34 @@
+{
+  "what": "Ada signs one seq twice under two headers: a move on A, a close on B. Equivocation is per (author, seq), in any tables: every merge takes both rows, reports AUTHOR_EQUIVOCATED in Ada's name, and neither row counts, so the copies agree. A reader comparing seqs within one table keeps whichever row arrived first as the only one, and the copies split with nothing reported (review, outside the fifteen).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

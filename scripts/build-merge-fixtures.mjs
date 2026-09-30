@@ -736,7 +736,177 @@ const VECTORS = [
       }
     },
   },
+
+  /*
+   * The step 6 review's fixtures and the rulings on them (29 September, batch
+   * format version 2). Each asserts the ruled answer (`expect`), so a runtime
+   * that has it wrong fails the generator, not only a diff.
+   */
+  {
+    name: "session-equivocated-parent",
+    session: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "Bo's move for his own seat names, as its earlier version, Ada's move for her seat at an id Ada signed twice. A row naming an equivocated id as a parent is neither admitted nor reported, on either copy, whichever version of the parent it holds: it neither shows nor hides (review X1). A reader skipping the equivocated parent admits Bo's move; one reading the parent it holds reports SEAT_NOT_HELD.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const fork = await forkOf(a, ADA);
+      createEntity(a, "moves", id(0x81), { seat: SEAT_W, san: "e4" }, session);
+      createEntity(fork, "moves", id(0x81), { seat: SEAT_W, san: "d4" }, session);
+      await exchange(b, fork, ADA);
+      fork.done();
+      const parent = b.all("SELECT _r_replica, _r_seq FROM moves WHERE _r_entity = ?", [id(0x81)])[0];
+      raw(b, "moves", id(0x81), { seat: SEAT_OPEN, san: "Nc6" }, session, JSON.stringify([`${hexOf(parent._r_replica)}:${parent._r_seq}`]));
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const crossing = run.result.refusedBatches.filter((r) => r.author === b64Of(BO.author) && r.reason !== "AUTHOR_EQUIVOCATED");
+        if (crossing.length > 0) return `${direction}: Bo is reported ${crossing.map((r) => r.reason).join(", ")}`;
+        if (sectionOf(run.admitted, "moves").some((line) => line.startsWith(hexOf(BO.author)))) return `${direction}: Bo's move is admitted`;
+      }
+    },
+  },
+  {
+    name: "merge-named-incomplete-header",
+    authors: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds Ada's row naming header H1, which lists it and a row B does not hold (so H1 is incomplete), and header H2, which lists the row alone. The row is taken through H2, and its _r_batch is H2: the header it names only when that header is complete and kept, else the lowest complete kept header that lists it (review X2).",
+    fill: async (a, b) => {
+      const path = join(out, "scratch-plain-fork.db");
+      const src = open(path);
+      asReplica(src, ADA.author);
+      createEntity(src, "notes", id(0x31), { body: "one" });
+      createEntity(src, "notes", id(0x32), { body: "two" });
+      await sealAll(src, ADA);
+      const r1 = src.all("SELECT * FROM notes WHERE _r_entity = ?", [id(0x31)])[0];
+      const row = {
+        _r_replica: r1._r_replica,
+        _r_seq: r1._r_seq,
+        _r_lc: r1._r_lc,
+        _r_entity: r1._r_entity,
+        _r_parents: r1._r_parents,
+        _r_deleted: r1._r_deleted,
+        _r_batch: null,
+        columns: { body: r1.body },
+      };
+      holdHeader(b, await signBatch({ replica: ADA.author, lc: r1._r_lc, entries: [{ table: "notes", row }] }, { document: DOC, sign: keptSigner(ADA) }));
+      for (const header of src.all("SELECT * FROM _dai_batch")) {
+        const names = Object.keys(header);
+        b.run(`INSERT INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => header[n]));
+      }
+      const names = Object.keys(r1);
+      b.run(`INSERT INTO notes (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => r1[n]));
+      b.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [ADA.author]);
+      src.close();
+      rmSync(path);
+    },
+  },
+  {
+    name: "session-void-equivocated-confirm",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "The merge that voids the open seat takes a counting confirm of it (header Hc) and a confirm of it at an id Ada already signed twice (Hx), with a SEAT_NOT_HELD header Hn between them (Hx < Hn < Hc). A void rests only on counting confirms and on a creator's seat row that counts, so AUTHOR_EQUIVOCATED is filed under Hc, after the SEAT_NOT_HELD (review X3). A reader letting the equivocated confirm reveal files it under Hx, first.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const headerOf = (db, table, seq) =>
+        db.all("SELECT lower(hex(b.id)) AS id FROM _dai_batch b, json_each(b.covers) c WHERE b.author = ? AND json_extract(c.value, '$[0]') = ? AND json_extract(c.value, '$[1]') = ?", [ADA.author, table, seq])[0].id;
+      /** The id of the header `write` would seal on a copy standing where `a` stands, found without a kept signature. */
+      const probe = async (write) => {
+        const copy = await forkOf(a, ADA);
+        const before = new Set(copy.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => r.id));
+        write(copy);
+        for (const batch of pendingBatches(copy, ADA.author, copy.tables)) {
+          recordSeal(copy, await signBatch(batch, { document: DOC, sign: async () => ({ sig: new Uint8Array(64), pub: ADA.pub }) }));
+        }
+        const [found] = copy.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => r.id).filter((x) => !before.has(x));
+        copy.done();
+        return found;
+      };
+      const k = a.all("SELECT seq FROM _dai_replica")[0].seq + 1;
+      // The confirm Ada signs twice at seq k, the one A takes under the lower header.
+      let e = 0x10;
+      while ((await probe((c) => confirmSeat(c, session, SEAT_OPEN, id(0xdd), id(e)))) >= "4") e += 1;
+      const f1 = await forkOf(a, ADA);
+      confirmSeat(f1, session, SEAT_OPEN, id(0xdd), id(e));
+      await sealAll(f1, ADA);
+      const hx = headerOf(f1, "_dai_confirm", k);
+      const f2 = await forkOf(a, ADA);
+      confirmSeat(f2, session, SEAT_OPEN, id(0xee), id(0x74));
+      await sealAll(f2, ADA);
+      const hy = headerOf(f2, "_dai_confirm", k);
+      // A takes the first; B holds both headers and neither row, so on B the id
+      // is equivocated before the merge.
+      await exchange(a, f1, ADA);
+      a.run("UPDATE _dai_replica SET seq = ?", [k]);
+      for (const [from, hid] of [[f1, hx], [f2, hy]]) {
+        const header = from.all("SELECT * FROM _dai_batch WHERE lower(hex(id)) = ?", [hid])[0];
+        const names = Object.keys(header);
+        b.run(`INSERT INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => header[n]));
+      }
+      f1.done();
+      f2.done();
+      // The neighbour: Ada's move naming no seat, sealed alone, between Hx and "c".
+      let i = 0;
+      for (;;) {
+        const hn = await probe((c) => createEntity(c, "moves", id(0x8f), { seat: new Uint8Array([7]), san: `n${i}` }, session));
+        if (hx < hn && hn < "c") break;
+        i += 1;
+      }
+      createEntity(a, "moves", id(0x8f), { seat: new Uint8Array([7]), san: `n${i}` }, session);
+      await sealAll(a, ADA);
+      const hn = headerOf(a, "moves", k + 1);
+      // The counting confirm naming another holder, sealed alone, above the neighbour.
+      e = 0x75;
+      while ((await probe((c) => confirmSeat(c, session, SEAT_OPEN, id(0xcc), id(e)))) <= hn) e += 1;
+      confirmSeat(a, session, SEAT_OPEN, id(0xcc), id(e));
+      await sealAll(a, ADA);
+      const hc = headerOf(a, "_dai_confirm", k + 2);
+      if (!(hx < hn && hn < hc)) throw new Error(`session-void-equivocated-confirm: need ${hx} < ${hn} < ${hc}`);
+    },
+    expect: ({ ba }) => {
+      const ada = ba.result.refusedBatches.filter((r) => r.author === b64Of(ADA.author)).map((r) => r.reason);
+      if (ada.join() !== "SEAT_NOT_HELD,AUTHOR_EQUIVOCATED") return `A into B: Ada is reported ${ada.join(", ")}, not SEAT_NOT_HELD then AUTHOR_EQUIVOCATED`;
+    },
+  },
+  {
+    name: "session-equivocation-two-tables",
+    session: true,
+    cites: ["6", "T1-D13"],
+    what:
+      "Ada signs one seq twice under two headers: a move on A, a close on B. Equivocation is per (author, seq), in any tables: every merge takes both rows, reports AUTHOR_EQUIVOCATED in Ada's name, and neither row counts, so the copies agree. A reader comparing seqs within one table keeps whichever row arrived first as the only one, and the copies split with nothing reported (review, outside the fifteen).",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const fork = await forkOf(a, ADA);
+      createEntity(a, "moves", id(0x81), { seat: SEAT_W, san: "e4" }, session);
+      createEntity(fork, "_dai_close", id(0x91), {}, session);
+      await exchange(b, fork, ADA);
+      fork.done();
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        if (!run.result.refusedBatches.some((r) => r.author === b64Of(ADA.author) && r.reason === "AUTHOR_EQUIVOCATED")) return `${direction}: no AUTHOR_EQUIVOCATED`;
+        if (run.result.rejected.length > 0) return `${direction}: rejected ${run.result.rejected.join(", ")}`;
+        if (sectionOf(run.admitted, "closed").length > 0) return `${direction}: an equivocated close closed the session`;
+        if (sectionOf(run.admitted, "equivocated").length !== 2) return `${direction}: equivocated is [${sectionOf(run.admitted, "equivocated").join(" | ")}]`;
+      }
+    },
+  },
 ];
+
+/** An author id as `refusedBatches` spells it. */
+const b64Of = (bytes) => Buffer.from(bytes).toString("base64url");
+/** The lines of one `# name` section of an admitted dump. */
+function sectionOf(dump, name) {
+  const lines = dump.split("\n");
+  const start = lines.indexOf(`# ${name}`);
+  if (start < 0) return [];
+  const end = lines.findIndex((line, i) => i > start && line.startsWith("# "));
+  return lines.slice(start + 1, end < 0 ? undefined : end).filter((line) => line !== "");
+}
 
 /** The session vectors' seats: Ada's own, and the open one Bo asks for. */
 const SEAT_W = id(0xa1);
@@ -952,8 +1122,8 @@ the verdicts and does the rest itself, which is the part these vectors test:
 - a header that is not \`ok\` is not kept and lists nothing;
 - a header lists its rows in \`covers\` as \`[table, seq]\`, the author being its own;
 - a row is taken when an \`ok\` header lists it (its table, its author, its
-  seq), whatever the row says, and names the header it names if that one lists
-  it, else the lowest listed id;
+  seq), whatever the row says, and names the header it names if that one is
+  \`ok\` and lists it, else the lowest \`ok\` header that lists it;
 - a row that names a header and is listed by none is refused, as
   \`BATCH_DIGEST_MISMATCH\` in the name of the row's own author, unless the
   header it names was refused already;
@@ -961,8 +1131,10 @@ the verdicts and does the rest itself, which is the part these vectors test:
   \`BATCH_UNSIGNED\` in the name of the id it carries (batch format version 2),
   unless the copy already holds a row at that id in that table, where the ordinary
   path decides (a duplicate, or a second row at one id);
-- one author's seq names one row whatever table it is in: a row whose
-  (author, seq) the copy holds in another table is refused (\`rejected\`);
+- one author's seq names one row whatever table it is in: an unsigned row
+  whose (author, seq) the copy holds in another table is refused
+  (\`rejected\`); two signed ones are both taken, and under two headers with
+  different digests are equivocation (batch format version 2);
 - a signed row outranks an unsigned row the copy holds at the same id (after
   version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
   \`rejected\`; whatever the removed row superseded is a head again unless
@@ -975,7 +1147,7 @@ each disagree with a reader that has one of those wrong. \`refusedBatches\` in
 \`result.json\` is one entry per batch, reason and author, ordered by batch id
 (lowercase hex, no id first), then reason, then author id in hex, with the
 author id shown as base64url. Which batch id each reason is filed under is in
-docs/format.md, "What a merge reports".
+docs/format.md#refused-batches.
 
 **What a session document admits.** The \`session-\` vectors are session
 documents (one seated table, \`moves\`, seated by its \`seat\` column; the close
@@ -983,8 +1155,9 @@ rule \`any\`), and their \`result.json\` says \`admitted: true\`. Each ships
 \`expected-admitted-ab.txt\` and \`expected-admitted-ba.txt\`: after the merge,
 the admitted heads of every table the merge covers (\`id\` and the deleted flag,
 by author then seq), then \`# holders\` (session, seat, holder), \`# voided\`
-(session, seat, creator), \`# equivocated\` (author, table, seq) and \`# closed\`,
-each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
+(session, seat, creator), \`# equivocated\` (author, table, seq: one line for
+each table a kept header lists an equivocated id in, the id being the author
+and the seq) and \`# closed\`, each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
 document admits, which the stored rows alone cannot show, so these are what a
 reader without one of those changes disagrees with. A reader computes them from
 the tables and headers alone. It reads no view but \`_dai_seat_rules\` and
@@ -992,18 +1165,22 @@ the tables and headers alone. It reads no view but \`_dai_seat_rules\` and
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
 
-- a row id one author signed twice (two headers listing it with different
-  digests) counts nowhere (D160);
+- a row id one author signed twice (two headers listing its seq, in any
+  tables, with different digests) counts nowhere (D160, and the step 6
+  review), and a row naming such an id as a parent is neither admitted nor
+  reported;
 - the creator's seat row is the one whose own author and seq hash to its
   session (D158); her seat is hers, and an open seat is held by whoever her
   confirms name, unless she confirmed it to two copies, when it is void and
   held by nobody (D165). A confirm counts deleted or not, superseded or not
   (D171);
 - a merge that reveals an author signing twice, a header it did not hold
-  making an id equivocated that was not, or a row it took making a seat void
-  that was not, reports \`AUTHOR_EQUIVOCATED\` in that author's name, once per
-  merge, filed under the lowest revealing header (docs/format.md, "What a
-  merge reports"); a third conflicting header reveals nothing new;
+  making an id equivocated that was not, or a row it took that a seat newly
+  void rests on (a counting confirm, or the creator's seat row that counts),
+  reports \`AUTHOR_EQUIVOCATED\` in that author's name, once per merge, filed
+  under the lowest revealing header, or under no id when it took no row the
+  void rests on (docs/format.md#equivocated-filed); a third conflicting header
+  reveals nothing new;
 - the heads of the roster tables and the close (\`_dai_seat\`,
   \`_dai_binding\`, \`_dai_confirm\`, \`_dai_close\`) partition by session,
   entity and author: only an author's own later row in the same session
@@ -1022,10 +1199,13 @@ in docs/identity.md and docs/format.md:
   \`ROW_MALFORMED\`.
 
 Each \`session-\` vector was run against both readers with its change held
-out, and failed.
+out, and failed; the step 6 review's (\`session-equivocated-parent\`,
+\`session-void-equivocated-confirm\`, \`session-equivocation-two-tables\`)
+against the Python reader before it was leveled.
 `;
 
 let differences = 0;
+let wrongs = 0;
 const compare = (path, content) => {
   if (!check) {
     writeFileSync(path, content, "utf8");
@@ -1081,6 +1261,12 @@ for (const vector of VECTORS) {
 
   const ab = await run(vector, "ab");
   const ba = await run(vector, "ba");
+  // The ruled answer, before convergence, so a vector fails for its own rule.
+  const wrong = vector.expect?.({ ab, ba });
+  if (wrong) {
+    console.error(`${vector.name}: ${wrong}`);
+    wrongs += 1;
+  }
   const shouldConverge = vector.converges !== false;
   if (shouldConverge && ab.dump !== ba.dump) {
     console.error(`${vector.name}: merging A<-B and B<-A disagree, which union merge forbids`);
@@ -1142,6 +1328,10 @@ if (!check && signaturesAdded > 0) {
   writeFileSync(SIGNATURES, `${JSON.stringify(ordered, null, 2)}\n`, "utf8");
 }
 
+if (wrongs > 0) {
+  console.error(`\n${wrongs} vector(s) do not give the ruled answer.`);
+  process.exit(1);
+}
 if (check && differences > 0) {
   console.error(`\n${differences} fixture file(s) differ. Regenerate and commit the diff.`);
   process.exit(1);

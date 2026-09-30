@@ -216,9 +216,11 @@ def session_id(author: object, seq: object) -> bytes | None:
 
 def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
     """Equivocation (D160; docs/format.md#equivocation): one author's two
-    headers listing one (table, seq)
-    with different digests, as (author, table, seq). From the headers' own lists."""
-    digests: dict[tuple[bytes, str, int], set[bytes]] = {}
+    headers listing one seq, in any tables, with different digests. Returned as
+    every (author, table, seq) a header lists at such an id, one per table; the
+    id itself is (author, seq). From the headers' own lists."""
+    digests: dict[tuple[bytes, int], set[bytes]] = {}
+    listings: set[tuple[bytes, str, int]] = set()
     has_batch = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").fetchone()
     for author, digest, covers in db.execute("SELECT author, digest, covers FROM _dai_batch") if has_batch else []:
         try:
@@ -227,8 +229,14 @@ def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
             listed = []
         for entry in listed if isinstance(listed, list) else []:
             if isinstance(entry, list) and len(entry) == 2:
-                digests.setdefault((bytes(author), entry[0], entry[1]), set()).add(bytes(digest))
-    return {key for key, seen in digests.items() if len(seen) > 1}
+                digests.setdefault((bytes(author), entry[1]), set()).add(bytes(digest))
+                listings.add((bytes(author), entry[0], entry[1]))
+    return {(author, table, seq) for author, table, seq in listings if len(digests[(author, seq)]) > 1}
+
+
+def ids_of(listings: set[tuple[bytes, str, int]]) -> set[tuple[bytes, int]]:
+    """The equivocated ids, (author, seq), whatever tables list them."""
+    return {(author, seq) for author, _table, seq in listings}
 
 
 # ------------------------------------------------------------- admission
@@ -259,12 +267,14 @@ class Admission:
         self.roles = dict(db.execute("SELECT tbl, author FROM _dai_author_rules")) if "_dai_author_rules" in views else {}
 
         self.equivocated = equivocated_ids(db)
+        self.equivocated_at = ids_of(self.equivocated)
+        self.equivocated_text = {f"{author.hex()}:{seq}" for author, seq in self.equivocated_at}
 
         # The creator's seat row: the one row whose own (author, seq) hashes to
         # its session (D158).
         self.creators: set[tuple[bytes, bytes, bytes, bytes]] = set()
         for s in self.rows.get("_dai_seat", []):
-            if s["_r_deleted"] == 0 and self.unequivocal(s, "_dai_seat") and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
+            if s["_r_deleted"] == 0 and self.unequivocal(s) and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
                 self.creators.add((bytes(s["_r_session"]), bytes(s["_r_replica"]), bytes(s["seat"]), bytes(s["_r_entity"])))
         creator_seats: dict[bytes, set[bytes]] = {}
         for session, _replica, seat, _entity in self.creators:
@@ -278,7 +288,7 @@ class Admission:
         for f in self.rows.get("_dai_confirm", []):
             session = bytes(f["_r_session"])
             if (
-                self.unequivocal(f, "_dai_confirm")
+                self.unequivocal(f)
                 and (session, bytes(f["_r_replica"])) in self.creator_of
                 and bytes(f["seat"]) not in creator_seats.get(session, set())
             ):
@@ -300,12 +310,17 @@ class Admission:
             for x in self.rows.get("_dai_close", [])
             if x["_r_deleted"] == 0
             and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in self.members
-            and self.unequivocal(x, "_dai_close")
+            and self.unequivocal(x)
         ]
         self.closed = {bytes(x["_r_session"]) for x in self.closes}
 
-    def unequivocal(self, row: dict, table: str) -> bool:
-        return (bytes(row["_r_replica"]), table, row["_r_seq"]) not in self.equivocated
+    def unequivocal(self, row: dict) -> bool:
+        return (bytes(row["_r_replica"]), row["_r_seq"]) not in self.equivocated_at
+
+    def names_equivocated(self, row: dict) -> bool:
+        """It names an equivocated id as a parent (docs/format.md#admitted-parent-equivocated):
+        not admitted and not reported, whatever that id holds here."""
+        return any(parent in self.equivocated_text for parent in parents_of(row["_r_parents"]))
 
     def filtered(self, table: str) -> bool:
         """An author table of a session document: its heads are over admitted rows (T1-D29)."""
@@ -349,7 +364,12 @@ class Admission:
                 return False
         elif (session, replica) not in self.members:
             return False
-        return not self.foreign(table, row) and self.not_late(row) and self.unequivocal(row, table)
+        return (
+            not self.foreign(table, row)
+            and self.not_late(row)
+            and self.unequivocal(row)
+            and not self.names_equivocated(row)
+        )
 
     def heads(self, table: str) -> list[dict]:
         rows = self.rows[table]
@@ -370,12 +390,12 @@ class Admission:
                     for c in rows
                 )
             else:
-                if not self.unequivocal(r, table):
+                if not self.unequivocal(r):
                     continue
                 hidden = any(
                     bytes(c["_r_entity"]) == bytes(r["_r_entity"])
                     and (not session or (bytes(c["_r_session"]) == bytes(r["_r_session"]) and bytes(c["_r_replica"]) == bytes(r["_r_replica"])))
-                    and self.unequivocal(c, table)
+                    and self.unequivocal(c)
                     and me in parents_of(c["_r_parents"])
                     for c in rows
                 )
@@ -385,6 +405,8 @@ class Admission:
 
     def unseated(self, table: str, row: dict) -> bool:
         """What a merge reports as SEAT_NOT_HELD: no seat, a seat someone else holds, or another seat's row named."""
+        if self.names_equivocated(row):
+            return False
         seat = row[self.seated[table]]
         if not isinstance(seat, bytes) or len(seat) != 16:
             return True
@@ -395,6 +417,8 @@ class Admission:
         """(reason, row, the row it names) for every row naming another session's or another seat's version."""
         found = []
         for r in self.rows[table]:
+            if self.names_equivocated(r):
+                continue
             for p in self.named(table, r):
                 if bytes(p["_r_session"]) != bytes(r["_r_session"]):
                     found.append(("ENTITY_OTHER_SESSION", r, p))
@@ -527,7 +551,7 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
     def reveal(author: bytes, hid: str) -> None:
         revealed.setdefault(bytes(author).hex(), (bytes(author), []))[1].append(hid)
 
-    equivocated_before = equivocated_ids(local)
+    equivocated_before = ids_of(equivocated_ids(local))
 
     # The seats void before anything arrives: a merge reports only the seats it
     # makes void (D165).
@@ -621,22 +645,22 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                 covers.add(f"{hid}|{key}")
                 covering.setdefault(key, hid)
         # Equivocation (D160; docs/format.md#revealing-two-headers): a header
-        # that arrived reveals it when it lists a
-        # (table, seq) that another header of its author, held here now, lists
-        # with a different digest, and that was not signed twice here before.
-        # A third conflicting header reveals nothing new (D171).
+        # that arrived reveals it when it lists a seq that another header of
+        # its author, held here now, lists in any table with a different
+        # digest, and that was not signed twice here before. A third
+        # conflicting header reveals nothing new (D171).
         for header in arrived:
             mine = {
-                (table, seq)
-                for table, seq in json.loads(header[8])
-                if (bytes(header[1]), table, seq) not in equivocated_before
+                seq
+                for _table, seq in json.loads(header[8])
+                if (bytes(header[1]), seq) not in equivocated_before
             }
             for other_id, other_digest, other_covers in local.execute(
                 "SELECT id, digest, covers FROM _dai_batch WHERE author = ?", (header[1],)
             ):
                 if bytes(other_id) == bytes(header[0]) or bytes(other_digest) == bytes(header[7]):
                     continue
-                if mine & {(table, seq) for table, seq in json.loads(other_covers)}:
+                if mine & {seq for _table, seq in json.loads(other_covers)}:
                     reveal(header[1], bytes(header[0]).hex())
                     break
 
@@ -724,7 +748,8 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
         reject(row_id(row["_r_replica"], row["_r_seq"]))
 
     def place(table: str, row: dict, signed: bool) -> None:
-        # One author's seq names one row, whatever table it is in.
+        # One author's seq names one row, whatever table it is in: an unsigned
+        # row at a seq another table holds is a collision.
         for other in tables:
             if other == table:
                 continue
@@ -733,6 +758,10 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                 continue
             if signed and there[0] is None:
                 displace(other, row)
+                continue
+            # Two signed rows at one id in two tables are both taken: their
+            # headers are equivocation (docs/format.md#row-one-id).
+            if signed:
                 continue
             raise ValueError(f"ROW_REJECTED: {row_id(row['_r_replica'], row['_r_seq'])} is a row of {other}")
         try:
@@ -779,8 +808,10 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                     refuse_batch(bytes(batch).hex() if batch is not None else "", child["_r_replica"], reason)
         # A seat the creator confirmed to two copies, void once both are held:
         # the merge that made it void says so, in her name (D165), revealed by
-        # the rows it took that the void rests on: the seat's confirms and the
-        # session's creator seat row (D171).
+        # the rows it took that the void rests on: the seat's counting confirms
+        # and the session's creator's seat row, not deleted and not at an
+        # equivocated id (docs/format.md#revealing-two-confirms). None taken:
+        # filed under no id.
         for s, seat, creator in admission.voided:
             if (s, seat) in voided_before:
                 continue
@@ -790,9 +821,14 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
                 if row.get("_r_session") is not None
                 and bytes(row["_r_session"]) == s
                 and bytes(row["_r_replica"]) == creator
+                and (bytes(row["_r_replica"]), row["_r_seq"]) not in admission.equivocated_at
                 and (
                     (table == "_dai_confirm" and bytes(row["columns"]["seat"]) == seat)
-                    or (table == "_dai_seat" and session_id(bytes(row["_r_replica"]), row["_r_seq"]) == s)
+                    or (
+                        table == "_dai_seat"
+                        and row["_r_deleted"] == 0
+                        and session_id(bytes(row["_r_replica"]), row["_r_seq"]) == s
+                    )
                 )
             ]
             for row in resting:
