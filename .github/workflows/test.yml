@@ -98,6 +98,10 @@ jobs:
   # Three became four on 30 September: shard 2 of 3 took 24m37s in run
   # 36741672975 and was cancelled at the wall, with no tally and nothing
   # failed, in run 36754861434, two new tests in it having tipped it over.
+  # Four parts did not move it (run 36764093142, both attempts): one file,
+  # tests/mailbox-link-e2e.spec.ts, runs over 15 minutes on WebKit on one
+  # worker, and a file stays whole, so whichever part holds it meets the wall.
+  # It runs as a job of its own (D174) until its time comes down.
   #
   # Firefox is a reading, not the gate (ruled 25 September). Chromium and the
   # WebKit parts decide the run; a Firefox red does not. The reason is
@@ -120,10 +124,13 @@ jobs:
           # holds them — not once per engine.
           - { browser: chromium, part: whole, extra: "--project=node" }
           - { browser: firefox, part: whole }
-          - { browser: webkit, part: "1", shard: "1/4" }
-          - { browser: webkit, part: "2", shard: "2/4" }
-          - { browser: webkit, part: "3", shard: "3/4" }
-          - { browser: webkit, part: "4", shard: "4/4" }
+          # One file runs in a job of its own (D174); the four parts drop it
+          # by its one describe title, and every other file stays in them.
+          - { browser: webkit, part: "1", shard: "1/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "2", shard: "2/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "3", shard: "3/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
 
     steps:
       - uses: actions/checkout@v4

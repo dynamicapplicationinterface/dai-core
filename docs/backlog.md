@@ -4434,6 +4434,69 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D174 — `mailbox-link-e2e.spec.ts` runs over 15 minutes on WebKit, on one worker
+
+*Status: open, filed 30 September from CI. Worked around in CI, not fixed:
+the file runs as a WebKit job of its own, and the four WebKit parts drop it
+by its describe title (`.github/workflows/test.yml`). The spec is untouched.*
+
+Spec files stay whole (`playwright.config.ts`), so all 24 tests of
+`tests/mailbox-link-e2e.spec.ts` run in order on one worker. On WebKit that
+is over 15 minutes: in run 36764093142 (`0e8ddfa`, four WebKit parts) the
+part holding it was cancelled at its 25-minute wall on both attempts, with
+no tally and nothing failed. On the second attempt the file began at
+19:49:46, seven minutes into the part, and was still running at the cancel,
+20:05:39 (22 of its 24 tests done), while the part's other worker had been
+idle since 19:53. Splitting WebKit three ways or four does not move it:
+whichever part holds the file meets the wall. No test retried; every one
+passed on its first try, so the time is the tests' own.
+
+Per test, from the CI log (the line reporter's own times; no trace is kept
+for a test that passed), WebKit attempt 2 of run 36764093142, and Chromium in
+the same attempt:
+
+| line | test | WebKit | Chromium |
+| --- | --- | --- | --- |
+| 457 | the key reaches the second copy through the link, and a move crosses | 49.6s | 30.3s |
+| 532 | only the side to move can move, each copy says whose move it is, and the invitee names themselves | 53.7s | 35.5s |
+| 592 | a second invite to a browser that holds the app opens the new game | 1.1m | 43.5s |
+| 643 | a second invite newer than the recipient's copy keeps the recipient's other games | 56.9s | 37.5s |
+| 693 | reopening the invite on the same copy binds no second seat | 53.0s | 47.2s |
+| 776 | a resignation is a game row; a close is a session act; both cross the link | 36.6s | 32.4s |
+| 866 | a closed game's lane does not retire while its close waits on a save that has not landed | 30.6s | 28.0s |
+| 939 | close=creator: a non-creator's close is refused by name; the creator's is honored | 34.2s | 27.3s |
+| 1000 | roles: each party writes only its own table, and is refused the other's by name | 21.8s | 16.8s |
+| 1110 | a forwarded invite contests the seat, nobody is seated, both are told, and the creator repairs | 56.2s | 53.1s |
+| 1301 | reseat refuses on a healthy session, so an honest joiner is not ejected | 26.4s | 25.6s |
+| 1417 | an invite carries the game it opens, and both copies key that game the same way | 35.0s | 37.0s |
+| 1486 | both invite before either opens, and each game still reaches the other copy | 1.2m | 1.2m |
+| 1538 | the same crossed invites in the other opening order reach each other too | 1.2m | 1.2m |
+| 1486 | the same, with data | 1.2m | 1.2m |
+| 1538 | the same, with data | 1.2m | 1.3m |
+| 1579 | a second invite from the same copy leaves the first game reaching its player | 49.5s | 47.7s |
+| 1624 | a link naming a held game under a different key is refused, and the held key stays | 30.6s | 31.5s |
+| 1765 | a link naming a held document under a different key is refused, and the held key stays | 11.8s | 11.7s |
+| 1947 | a link to a held document from another publisher is refused in sight | 9.3s | 6.7s |
+| 1957 | a link to a held document from another publisher is refused with the pin gone | 9.3s | 8.0s |
+| 1996 | the joiner reopens the invite and moves: the move is the joiner's, and both players stay seated | 55.1s | 57.0s |
+| 2138 | D80: a forged copy's move as the creator is refused | not reached | 37.6s |
+| 2243 | a rewritten `_dai_replica` lasts until the copy's next write | not reached | 42.4s |
+
+About 16 minutes for the 22 WebKit reached (973.6s), and much the same on
+Chromium, where the file shares two workers with 1,400 other tests and does
+not decide the job's time. The four crossed-invite tests (1486, 1538, with
+and without data) take 1.2 minutes on both engines, and most others sit
+between 30 seconds and a minute on both: a time that does not move with the
+engine is more likely a fixed wait (a poll interval, a timeout the test
+waits out) than work. Which waits those are is the first thing to read. The
+tests at 457, 532, 592 and 643 run half again as long on WebKit.
+
+**Fix:** bring the file's time down, from what the waits turn out to be (a
+test that waits out a timeout should wait for the state instead, as
+tests/README.md says), or let its tests split across workers if they share
+no state; then drop the separate job. **Test:** the WebKit job for the file
+finishes well inside its wall, and the four parts take it back.
+
 #### D173 — A file the shell writes itself leaves the device without raising the left floor
 
 *Status: **landed** 30 September: `6b447a1`, run 36754861434 read green on
