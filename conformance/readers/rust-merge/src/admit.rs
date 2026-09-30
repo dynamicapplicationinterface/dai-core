@@ -16,8 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Verdict {
     Admitted,
-    // Its (author, table, seq) was signed twice (D160): it counts nowhere.
+    // Its (author, seq) was signed twice (D160), in any tables: it counts nowhere.
     Equivocated,
+    // It names an equivocated id as a parent, of any entity, whatever row this
+    // copy holds there: neither admitted nor reported, it neither shows nor
+    // hides (docs/format.md#admitted-parent-equivocated, #report-silent).
+    ParentEquivocated,
     // Waiting on a confirmation, or its seat is void (D165): neither admitted
     // nor reported.
     Pending,
@@ -103,9 +107,17 @@ pub fn parents_of(v: &V) -> Vec<String> {
     }
 }
 
-// Equivocation (D160): two headers of one author listing the same
-// (table, seq) with different digests. From `_dai_batch.covers`, the signed
-// list; the author is the header's own.
+// Equivocation (D160): two headers of one author listing the same seq with
+// different digests, in any tables: the id is (author, seq), whatever table
+// each header lists it in (docs/format.md#equivocation-any-table, #row-seq).
+// From `_dai_batch.covers`, the signed list; the author is the header's own.
+// Returned as one (author, table, seq) for each table a kept header lists an
+// equivocated id in, the form the admitted text shows
+// (conformance/merge/README.md); `ids` reduces it to the ids.
+pub fn ids(eq: &BTreeSet<(String, String, i64)>) -> BTreeSet<(String, i64)> {
+    eq.iter().map(|(a, _, s)| (a.clone(), *s)).collect()
+}
+
 pub fn equivocated(c: &Connection, schema: &str) -> BTreeSet<(String, String, i64)> {
     let mut out = BTreeSet::new();
     let has: i64 = c
@@ -126,22 +138,24 @@ pub fn equivocated(c: &Connection, schema: &str) -> BTreeSet<(String, String, i6
         .unwrap()
         .map(|x| x.unwrap())
         .collect();
-    let mut digests: BTreeMap<(String, String, i64), BTreeSet<Vec<u8>>> = BTreeMap::new();
+    let mut digests: BTreeMap<(String, i64), BTreeSet<Vec<u8>>> = BTreeMap::new();
+    let mut tables_of: BTreeMap<(String, i64), BTreeSet<String>> = BTreeMap::new();
     for (author, digest, covers) in rows {
         if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&covers) {
             for pair in list {
                 if let (Some(t), Some(s)) = (pair[0].as_str(), pair[1].as_i64()) {
-                    digests
-                        .entry((hexlc(&author), t.to_string(), s))
-                        .or_default()
-                        .insert(digest.clone());
+                    let id = (hexlc(&author), s);
+                    digests.entry(id.clone()).or_default().insert(digest.clone());
+                    tables_of.entry(id).or_default().insert(t.to_string());
                 }
             }
         }
     }
-    for (k, d) in digests {
+    for (id, d) in digests {
         if d.len() > 1 {
-            out.insert(k);
+            for t in &tables_of[&id] {
+                out.insert((id.0.clone(), t.clone(), id.1));
+            }
         }
     }
     out
@@ -186,15 +200,25 @@ fn author_rules(c: &Connection) -> BTreeMap<String, String> {
 
 pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
     let eq = equivocated(c, "main");
+    let eq_ids = ids(&eq);
     let seated = seat_rules(c);
     let roles = author_rules(c);
     let col = |t: &Table, k: &str| t.cols.iter().position(|x| x == k);
     let rows: BTreeMap<String, Vec<crate::Row>> =
         tables.iter().map(|t| (t.name.clone(), load(c, "main", t))).collect();
     let table = |n: &str| tables.iter().find(|t| t.name == n);
+    // A row is at an equivocated id when its (author, seq) is one, whatever
+    // table the headers list it in (docs/format.md#equivocation-any-table).
     let is_eq = |t: &Table, r: &crate::Row| {
         let a = blob(&r.vals[t.i_replica]).map(|b| hexlc(&b)).unwrap_or_default();
-        eq.contains(&(a, t.name.clone(), int(&r.vals[t.i_seq])))
+        eq_ids.contains(&(a, int(&r.vals[t.i_seq])))
+    };
+    // A parent spelled `<32 hex>:<seq>` names an equivocated id
+    // (docs/format.md#conv-row-id).
+    let names_eq = |p: &str| {
+        p.split_once(':')
+            .and_then(|(a, s)| s.parse::<i64>().ok().map(|s| eq_ids.contains(&(a.to_string(), s))))
+            .unwrap_or(false)
     };
     let hx = |v: &V| blob(v).map(|b| hexlc(&b)).unwrap_or_default();
 
@@ -322,6 +346,14 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
             let v = if is_eq(t, r) {
                 // "Every rule below skips a row at an equivocated id."
                 Verdict::Equivocated
+            } else if !roster
+                && t.i_session.is_some()
+                && parents_of(&r.vals[t.i_parents]).iter().any(|p| names_eq(p))
+            {
+                // A session author table's row naming an equivocated id as a
+                // parent, before any other rule reads its parents
+                // (docs/format.md#admitted-parent-equivocated).
+                Verdict::ParentEquivocated
             } else if roster || t.i_session.is_none() {
                 // The roster tables and a plain document's tables: heads among
                 // rows at ids not equivocated (docs/format.md#heads-roster, #heads-plain).

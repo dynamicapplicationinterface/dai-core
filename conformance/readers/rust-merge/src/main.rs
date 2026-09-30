@@ -542,18 +542,24 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             let t = &tables[ti];
             let id = rowid(t, &r);
             let (replica, seq) = (r.vals[t.i_replica].clone(), r.vals[t.i_seq].clone());
-            // One author's seq names one row, whatever table it is in.
+            // One author's seq names one row, whatever table it is in; the
+            // collision is an unsigned row's. An unsigned row at an id another
+            // table holds is rejected; a signed row outranks an unsigned one
+            // there; two signed rows in two tables are both taken, and are
+            // equivocation when their headers' digests differ
+            // (docs/format.md#row-one-id, #merge-place-rejected,
+            // #merge-signed-outranks).
             let mut refused = false;
             for (oi, o) in tables.iter().enumerate() {
                 if oi == ti {
                     continue;
                 }
                 if let Some(there) = held_row(o, &replica, &seq) {
-                    if signed && unsigned(o, &there) {
+                    if !signed {
+                        refused = true;
+                    } else if unsigned(o, &there) {
                         displace(o, &replica, &seq);
                         reject(id.clone(), &mut counts.rejected);
-                    } else {
-                        refused = true;
                     }
                 }
             }
@@ -702,13 +708,16 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         }
     };
     // D160: a header this merge kept that the local copy did not hold before,
-    // which lists a (table, seq) of its author equivocated after the merge and
-    // not before. A third conflicting header for an id already equivocated
-    // reveals nothing new.
-    for (author, table, seq) in admitted.equivocated.difference(&eq_before) {
-        let key = format!("{}|{}:{}", table, author, seq);
+    // which lists, in any table, a seq of its author whose id is equivocated
+    // after the merge and was not before (docs/format.md#revealing-two-headers).
+    // Compared by id, (author, seq): a header listing an id already
+    // equivocated in another table reveals nothing new
+    // (docs/format.md#equivocated-third).
+    let ids_before = admit::ids(&eq_before);
+    for (author, seq) in admit::ids(&admitted.equivocated).difference(&ids_before) {
+        let suffix = format!("|{}:{}", author, seq);
         for (hid, keys) in &lists {
-            if !held_before.contains(hid) && keys.contains(&key) {
+            if !held_before.contains(hid) && keys.iter().any(|k| k.ends_with(&suffix)) {
                 accuse(author.clone(), hid.clone());
             }
         }
