@@ -70,8 +70,11 @@ and these:
 | <a id="row-batch"></a>`_r_batch` | the id of one header that covers the row; a cache, filled by the merge (below) |
 | <a id="row-superseded"></a>`_r_superseded` | a display cache; derived, never carried, never read by any rule on this page |
 
-<a id="row-one-id"></a>The same `(author, seq)` in two tables is a collision,
-refused as `ROW_REJECTED` (reported in `rejected`), not two rows.
+<a id="row-one-id"></a>An unsigned row at an `(author, seq)` that another table
+holds is a collision, refused as `ROW_REJECTED` (reported in `rejected`), not
+two rows. The collision rule applies only to unsigned rows: two signed rows at
+one `(author, seq)` in two tables are both taken, and under two headers with
+different digests they are [equivocation](#equivocation-any-table).
 
 ### Parents
 
@@ -240,7 +243,8 @@ local copy, in this order:
    - <a id="merge-row-signed"></a>A row listed by a complete header kept in
      step 1 (its table, its author, its seq) is signed, and taken, whatever
      the row says. <a id="merge-row-batch"></a>Its `_r_batch` is the header
-     it names if that header lists it, else the lowest listed id.
+     it names if that header is complete and kept in step 1, else the lowest
+     complete kept header that lists it.
      <a id="merge-row-multi"></a>A row may be covered by more than one
      header.
    - <a id="merge-row-refused-header"></a>A row listed only by a header
@@ -260,7 +264,8 @@ local copy, in this order:
 3. <a id="merge-place"></a>**Placing,** signed rows first, then unsigned ones.
    <a id="merge-place-duplicate"></a>A row the copy already holds, identical,
    is a duplicate. <a id="merge-place-rejected"></a>A different row at an id
-   the copy holds is rejected (`rejected`),
+   the copy holds in the same table is rejected (`rejected`), and so is an
+   unsigned row at an id another table holds ([one id](#row-one-id)),
    <a id="merge-signed-outranks"></a>except that a signed row outranks an
    unsigned row at the same id, whichever arrived first: the unsigned one is
    removed and the signed one takes its place, the removed id is reported in
@@ -281,9 +286,12 @@ on the canonical dump and on the counts a merge reports.
 ### Equivocation
 
 <a id="equivocation"></a>Two authentic headers of one author that list the
-same `(table, seq)` with different digests are **equivocation**.
-<a id="equivocated-id"></a>The id is **equivocated** on every copy that holds
-both headers, whichever arrived first.
+same seq with different digests are **equivocation**.
+<a id="equivocation-any-table"></a>The seq may be listed in any tables: two
+headers of one author listing one seq, one in one table and one in another,
+with different digests, are equivocation, as two listing it in one table are.
+<a id="equivocated-id"></a>The id, `(author, seq)`, is **equivocated** on
+every copy that holds both headers, whichever arrived first.
 <a id="equivocated-counts-nothing"></a>A row at an equivocated id counts for
 nothing anywhere: it is not admitted, it hides no row, it seats, confirms and
 closes nobody. <a id="equivocation-headers-kept"></a>Both headers are kept
@@ -309,7 +317,8 @@ which column (`_dai_seat_rules`), which author tables carry a role
 `_dai_binding` (a copy asking for a seat), `_dai_confirm` (the creator
 seating a copy: a `seat` and a `holder`), `_dai_close`, and the author's own
 tables. <a id="session-skip-equivocated"></a>Every rule below skips a row at
-an equivocated id.
+an equivocated id. A row that names an equivocated id as a parent is not
+skipped: it is [neither admitted nor reported](#admitted-parent-equivocated).
 
 ### Creator
 
@@ -363,6 +372,10 @@ columns.
 these hold:
 
 - <a id="admitted-not-equivocated"></a>its id is not equivocated;
+- <a id="admitted-parent-equivocated"></a>it names as a parent no equivocated
+  id, of any entity, whatever row this copy holds at that id. A row that
+  names one is not admitted, not waiting and not reported; it neither shows
+  nor hides;
 - <a id="admitted-seat"></a>**seated table:** its author holds the seat its
   seat column names, in the row's own session (a seat is the pair of session
   and seat). <a id="admitted-member"></a>**Otherwise:** its author is a
@@ -376,8 +389,9 @@ these hold:
 - <a id="admitted-role"></a>where the table carries a role (`author=creator`
   or `author=joiner`), its author is, or is not, the session's creator.
 
-<a id="parent-other-entity"></a>A parent of another entity is not a version
-of this row: it neither makes a row cross nor hides anything.
+<a id="parent-other-entity"></a>A parent of another entity, at an id not
+equivocated, is not a version of this row: it neither makes a row cross nor
+hides anything.
 
 ### Heads
 
@@ -417,7 +431,7 @@ author id in hex.
 | <a id="code-unsigned"></a>`BATCH_UNSIGNED` | the author id the row carries | no id |
 | <a id="code-seat-not-held"></a>`SEAT_NOT_HELD` | the row's author | the row's own `_r_batch` after the merge |
 | <a id="code-entity-other-session"></a>`ENTITY_OTHER_SESSION` | the row's author | the row's own `_r_batch` after the merge |
-| <a id="code-author-equivocated"></a>`AUTHOR_EQUIVOCATED` | the author who signed twice | the lowest of that author's revealing headers |
+| <a id="code-author-equivocated"></a>`AUTHOR_EQUIVOCATED` | the author who signed twice | the lowest of that author's revealing headers, or no id |
 
 <a id="report-made-true"></a>`SEAT_NOT_HELD` and `ENTITY_OTHER_SESSION`
 report what this merge made true. <a id="seat-not-held"></a>A row this merge
@@ -429,7 +443,9 @@ parent of its entity from another session is `ENTITY_OTHER_SESSION`.
 <a id="report-crossing"></a>For the two crossings, the report is made
 whichever of the two rows this merge took, the child or the parent, and is
 the child's. <a id="report-silent"></a>A row waiting on a confirmation, a row
-for a void seat and a late row are reported nowhere.
+for a void seat, a late row, and a row naming an equivocated id as a parent
+([whatever else it meets](#admitted-parent-equivocated)) are reported
+nowhere.
 
 <a id="equivocated-report"></a>`AUTHOR_EQUIVOCATED` is reported once per
 author per merge, for [equivocation](#equivocation) and [void
@@ -437,16 +453,20 @@ seats](#void) together, when this merge revealed that author signing twice.
 A **revealing header** is:
 
 - <a id="revealing-two-headers"></a>for two headers at one id: a header this
-  merge kept that the local copy did not hold before, which lists a
-  `(table, seq)` of its author that is equivocated after the merge and was
+  merge kept that the local copy did not hold before, which lists, in any
+  table, a seq of its author whose id is equivocated after the merge and was
   not before it;
 - <a id="revealing-two-confirms"></a>for two confirms of one seat: the header
-  named (`_r_batch`) by a row this merge took that the void rests on, a
-  counting confirm of that seat or the session's creator's seat row, for a
+  named (`_r_batch`) by a row this merge took that the void rests on, for a
   seat void after the merge and not before it.
+  <a id="void-rests-on"></a>A void rests only on the
+  [counting confirms](#confirms) of its seat and on the session's creator's
+  seat row that is not deleted and not at an equivocated id; only those
+  reveal. A confirm of the seat at an equivocated id reveals nothing.
 
 <a id="equivocated-filed"></a>It is filed under the lowest of that author's
-revealing headers. <a id="equivocated-third"></a>A merge that brings a third
+revealing headers. <a id="equivocated-filed-no-id"></a>A void report with no
+taken row it rests on is filed under no id. <a id="equivocated-third"></a>A merge that brings a third
 conflicting header for an id already equivocated reveals nothing new and
 reports nothing.
 
@@ -462,6 +482,8 @@ what a row's columns can hold:
   never written as a float.
 - <a id="cbor-float"></a>**A number with a fraction** is a float64 (`fb` and
   eight bytes, big-endian), never a shorter float. NaN MUST be refused.
+  <a id="cbor-infinity"></a>Infinity, of either sign, MUST be refused, as NaN
+  is.
 - <a id="cbor-other"></a>Text is UTF-8; bytes are a byte string; NULL is CBOR
   null.
 
@@ -470,10 +492,12 @@ what a row's columns can hold:
 <a id="version-declared"></a>A document written at batch format version 2
 lists the capability `authorship` in its signed manifest's `requires`, and
 every header it holds carries version 2. <a id="version-read-only"></a>A host
-that does not write version 2 mounts such a document read-only, and a host
-that does write it mounts read-only a document built without `authorship` or
-holding a header of any other version, saying "This app needs an update
-before it can be written to; what's here is kept."
+that lacks the capability `authorship` refuses the document
+(`UNSUPPORTED_CAPABILITY`). A host that has it and does not write the
+document's batch format version mounts it read-only, and so does a host that
+writes version 2 given a document built without `authorship` or holding a
+header of any other version, saying "This app needs an update before it can be
+written to; what's here is kept."
 <a id="version-unknown-header"></a>A merge MUST treat a header of a version it
 does not know as one that does not verify (`BATCH_SIGNATURE_INVALID`).
 
@@ -492,12 +516,20 @@ version, never a refactor (identity.md, binding rule 10).
 - Version 2: a close binds only its author and lists nothing.
 - Version 2: an unsigned row is refused in every table (`BATCH_UNSIGNED`).
 - Version 2: the one shape of parents; `ROW_MALFORMED`.
-- Version 2: a document declares `authorship`; a host that does not write its
-  format mounts it read-only.
+- Version 2: a document declares `authorship`; a host without it refuses the
+  document, and one with it that does not write its format mounts it
+  read-only.
+- Version 2: equivocation is per `(author, seq)`, in any tables; the collision
+  rule is an unsigned row's.
+- Version 2: a row naming an equivocated id as a parent is neither admitted
+  nor reported.
+- Version 2: a void rests only on counting confirms and on the creator's seat
+  row that counts.
+- Version 2: Infinity is refused.
 - Version 2: deleted and superseded confirms count.
 - Version 2: roster heads partition by session, entity and author.
 - Version 2: the order of `refusedBatches`, and the header
-  `AUTHOR_EQUIVOCATED` is filed under.
+  `AUTHOR_EQUIVOCATED` is filed under, or no id.
 
 ## Conformance
 

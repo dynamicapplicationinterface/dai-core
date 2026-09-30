@@ -333,6 +333,139 @@ value nobody wrote. Shorter floats: one width keeps the encoding
 deterministic. No document signed under an earlier rule exists outside that
 sitting's own tests.
 
+A row naming an equivocated id as a parent
+------------------------------------------
+
+*29 September, the step 6 review, X1.* Rule:
+[admitted rows](format.md#admitted-parent-equivocated),
+[reports](format.md#report-silent).
+
+**Problem.** Bo's move for his own seat names, as its earlier version, Ada's
+move for her seat, at an id Ada signed twice. Which row that id is differs
+from copy to copy: each copy holds whichever version reached it first, or
+neither. The page said both "every rule below skips a row at an equivocated
+id" and "names as a parent no row ... whose seat column differs", and the
+two readers took one each.
+
+**Rule.** A row naming an equivocated id as a parent is not admitted and not
+reported, on every copy, whatever that id holds there. It neither shows nor
+hides.
+
+**Rejected.** The skip reading: the equivocated parent names nothing, so
+Bo's move is admitted. It launders a crossing. A row the crossing rules
+refuse (acting for another seat's row, or another session's) becomes
+admitted as soon as the parent's author signs a second row at that id, and a
+creator can do that to any row of hers a joiner's move might name. The reading of the parent this copy
+holds (the runtime's before the ruling): the copy holding one version
+reports `SEAT_NOT_HELD` and a copy holding the other may not, so copies
+disagree on what a merge made true.
+
+Equivocation across tables
+--------------------------
+
+*29 September, the step 6 review.* Rule:
+[equivocation](format.md#equivocation-any-table),
+[one id, one row](format.md#row-one-id).
+
+**Problem.** One author signs seq 4 as a move under one header and as a
+close under another. Equivocation compared `(table, seq)`, so the two
+headers were not equivocation, and the collision rule refused whichever row
+arrived second. A copy that received the move first kept the move, one that
+received the close first kept the close, and nothing was reported: the split
+by arrival order that equivocation was ruled to end (D160).
+
+**Rule.** Equivocation is per `(author, seq)`, in any tables: the seq is one
+counter per author per document, so a seq signed in two tables is signed
+twice. Both rows are taken, both headers are kept, the id counts for nothing,
+and the merge that reveals it reports `AUTHOR_EQUIVOCATED`. The collision rule
+applies only to unsigned rows, which only a copy's own pending rows can be.
+
+**Rejected.** Per-table equivocation with the collision rule for signed rows:
+the split above.
+
+What a void rests on
+--------------------
+
+*29 September, the step 6 review, X3.* Rule:
+[the revealing header](format.md#void-rests-on).
+
+**Problem.** The merge that voids a seat can also take a confirm of that seat
+at an id already signed twice. That confirm counts for nothing, but the
+runtime let every creator confirm of the seat reveal, so the report was
+filed under the equivocated confirm's header, not the counting one's.
+
+**Rule.** A void rests only on the seat's counting confirms and on the
+creator's seat row that counts (not deleted, not at an equivocated id), and
+only those reveal. The page already said "counting confirm"; the runtime was
+brought to it.
+
+**Rejected.** Any creator row naming the seat reveals: it files an accusation
+under a header whose row the rules count as nothing.
+
+A void report with nothing taken
+--------------------------------
+
+*29 September, the step 6 review.* Rule:
+[filing](format.md#equivocated-filed-no-id).
+
+**Problem.** The page named a void report's revealing headers as those of
+rows the merge took, and was silent when it took none of them.
+
+**Rule.** Filed under no id.
+
+**Rejected.** A header of a row the void rests on that the copy already held:
+a merge names a header only for what it took. Not reporting: the void is new
+on this copy, and the report says what this merge made true.
+
+`_r_batch` names a complete header
+----------------------------------
+
+*29 September, the step 6 review, X2.* Rule:
+[`_r_batch`](format.md#merge-row-batch).
+
+**Problem.** "The header it names if that header lists it" read literally
+keeps an incomplete header on the row, though no row is taken through an
+incomplete header. Both readers and the runtime already kept only a complete
+kept one; the page's words said otherwise. The choice decides where a
+`SEAT_NOT_HELD` or `ENTITY_OTHER_SESSION` is filed.
+
+**Rule.** The named header if it is complete and kept in step 1, else the
+lowest complete kept header that lists the row.
+
+**Rejected.** The literal reading, for the reason above.
+
+Infinity
+--------
+
+*29 September, the step 6 review.* Rule:
+[floats](format.md#cbor-infinity).
+
+**Problem.** The page refused NaN and was silent on Infinity, which the
+runtime wrote as a float64.
+
+**Rule.** Infinity, of either sign, is refused, as NaN is.
+
+**Rejected.** Writing it as a float64: it is a valid float64 pattern, but it
+is no more a value a row holds than NaN is, and a text form of it (JSON has
+none) is spelled differently by each reader.
+
+The version rule and an old host
+--------------------------------
+
+*29 September, the step 6 review.* Rule:
+[read-only](format.md#version-read-only).
+
+**Problem.** The page said a host that does not write version 2 mounts a
+version-2 document read-only. A host built before signing cannot: it lacks
+the capability `authorship`, which the document lists in `requires`, and
+refuses it (`UNSUPPORTED_CAPABILITY`), which is the most such a host can do.
+
+**Rule.** A host without the capability refuses the document; one with it
+that does not write the document's batch format version mounts it read-only.
+
+**Rejected.** The page's sentence as it stood: it described a host that
+cannot exist.
+
 Reasons given inline
 --------------------
 
