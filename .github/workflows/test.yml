@@ -74,8 +74,9 @@ jobs:
   #
   # The one thing this must never become again is a run that cannot finish: a
   # check that times out is indistinguishable from one nobody looked at, and
-  # neither is a verdict. The budget below is set roughly double a single
-  # engine's time on purpose — headroom, not a target. When a shard starts
+  # neither is a verdict. The budget below (the `npm test` step's) is set
+  # roughly double a single engine's time on purpose — headroom, not a
+  # target. When a shard starts
   # brushing the wall, the fix is to split the shard further (by test group, by
   # directory), NOT to raise this number: raising the ceiling buys a few months
   # and restores the blind spot. If you are here to bump the timeout, shard
@@ -113,7 +114,11 @@ jobs:
   # quiet week.
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The wall is on the tests (the `npm test` step, 25 minutes), not on the
+    # job: `playwright install --with-deps` took 6 to 11 minutes on runners
+    # whose apt mirror was slow (30 September, D174), and that spent the tests'
+    # budget before they began. This is the setup's allowance, not theirs.
+    timeout-minutes: 45
     continue-on-error: ${{ matrix.browser == 'firefox' }}
     strategy:
       fail-fast: false
@@ -158,6 +163,7 @@ jobs:
       - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
+        timeout-minutes: 25
 
       - if: failure()
         uses: actions/upload-artifact@v4

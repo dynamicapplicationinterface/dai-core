@@ -4497,6 +4497,11 @@ tests/README.md says), or let its tests split across workers if they share
 no state; then drop the separate job. **Test:** the WebKit job for the file
 finishes well inside its wall, and the four parts take it back.
 
+`playwright install --with-deps` is taking 6 to 11 minutes on runners whose
+apt mirror is slow (three runs on 30 September); caching the browser and its
+deps is the fix, for the CI session that reads D174. Until then the 25-minute
+wall is on the `npm test` step, and the job has 45.
+
 #### D173 — A file the shell writes itself leaves the device without raising the left floor
 
 *Status: **landed** 30 September: `6b447a1`, run 36754861434 read green on
