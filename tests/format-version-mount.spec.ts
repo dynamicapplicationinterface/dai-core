@@ -40,14 +40,22 @@ const appFrame = (page: Page): Frame => {
   return frame;
 };
 
-/** Chess, signed, and a database built beside it by `fill`, resealed into it as a file a person could pick. */
-async function chessWith(fill: (db: Rows, document: string) => Promise<void>): Promise<string> {
+/**
+ * Chess, signed, and a database built beside it by `fill`, resealed into it as
+ * a file a person could pick. With `requires`, unsigned, and its manifest
+ * declaring what `requires` leaves of what the build declared: `requires` is
+ * in the signed view, so a document declaring less cannot carry a signature
+ * from this build.
+ */
+async function chessWith(
+  fill: (db: Rows, document: string) => Promise<void>,
+  options: { requires?: (declared: string[]) => string[] } = {},
+): Promise<string> {
   const built = await compileDirectory({
     sourceDir: join(repo, "tests", "fixture", "chess"),
     root: repo,
     appName: "Chess",
-    signingKey: resolve(repo, "conformance", "signing-key.pem"),
-    allowTestKey: true,
+    ...(options.requires ? {} : { signingKey: resolve(repo, "conformance", "signing-key.pem"), allowTestKey: true }),
   });
   const dir = mkdtempSync(join(tmpdir(), "dai-step6-"));
   const path = join(dir, "document.sqlite");
@@ -62,7 +70,11 @@ async function chessWith(fill: (db: Rows, document: string) => Promise<void>): P
   };
   await fill(db, built.manifest.documentUuid);
   sqlite.close();
-  const resealed = await resealContainer(await verifyContainer(built.html), new Uint8Array(readFileSync(path)));
+  const verified = await verifyContainer(built.html);
+  const container = options.requires
+    ? { ...verified, manifest: { ...verified.manifest, requires: options.requires([...(verified.manifest.requires ?? [])]) } }
+    : verified;
+  const resealed = await resealContainer(container, new Uint8Array(readFileSync(path)));
   const file = join(dir, "chess.dai.html");
   writeFileSync(file, resealed.html, "utf8");
   return file;
@@ -162,4 +174,15 @@ test.describe("batch format version 2: what an arriving copy is mounted as", () 
       await close();
     });
   }
+
+  test("a document built without authorship mounts read-only, with the sentence, though it holds no header (D108)", async ({ browser }) => {
+    // The other direction's other half (docs/format.md, version-read-only): a
+    // host that writes version 2, given a replicated document whose build
+    // declared no `authorship`, holding no header at all to judge it by.
+    const file = await chessWith(async () => {}, { requires: (declared) => declared.filter((name) => name !== "authorship") });
+    const { page, close } = await openOnAFreshDevice(browser, file);
+    await expect(page.locator("#doc-note")).toHaveText(`${SENTENCE}.`, { timeout: 30_000 });
+    expect(await writable(page), "the copy cannot be written").toBe(false);
+    await close();
+  });
 });

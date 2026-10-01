@@ -178,6 +178,11 @@ def row_id(replica: bytes, seq: int) -> str:
 
 
 def parents_of(text: str) -> list[str]:
+    """The ids a row names as parents; a row not the one shape names nothing,
+    in every read, a copy's own included (docs/format.md#parents-malformed,
+    #parents-own-malformed)."""
+    if not well_formed_parents(text):
+        return []
     try:
         value = json.loads(text)
     except (ValueError, TypeError):
@@ -533,13 +538,21 @@ def shown(author: bytes) -> str:
     return base64.urlsafe_b64encode(bytes(author)).rstrip(b"=").decode("ascii")
 
 
-def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict[str, str]) -> dict:
+def merge(
+    local: sqlite3.Connection,
+    sibling: sqlite3.Connection,
+    verdicts: dict[str, str],
+    lists: dict[str, str] | None = None,
+) -> dict:
     """Union merge, taking only what a verified header lists (docs/format.md).
 
     `verdicts` is the signature check's answer for each of the sibling's
     headers, by id in lowercase hex: "ok" or a BATCH_ code. A header missing
-    from it was not checked, and a header not checked is not signed.
+    from it was not checked, and a header not checked is not signed. `lists`
+    is, for a header made authentic by a list other than the one it stores,
+    that list: what it lists and is kept under (#merge-headers-kept-list).
     """
+    lists = lists or {}
     tables = replicated_tables(local)
     result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
     refusals: dict[tuple[str, str, str], bytes] = {}  # (id, reason, author hex) -> author
@@ -621,6 +634,8 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection, verdicts: dict
         arrived = []
         for header in sorted(headers, key=lambda h: bytes(h[0]).hex()):
             hid = bytes(header[0]).hex()
+            if hid in lists:
+                header = (*header[:8], lists[hid])
             held[hid] = header[0]
             verdict = verdicts.get(hid, "BATCH_SIGNATURE_INVALID")
             if verdict not in ("ok", "incomplete"):
@@ -912,11 +927,17 @@ def check(name: str) -> list[str]:
     if not verdicts_path.exists():
         return failures + [f"{name}: verdicts.json is missing"]
     verdicts = json.loads(verdicts_path.read_text(encoding="utf-8"))
+    # For a header made authentic by a list other than the one it stores, the
+    # list that did (README, Verdicts): what it is kept under. Only where a
+    # vector has one.
+    lists_path = directory / "lists.json"
+    lists = json.loads(lists_path.read_text(encoding="utf-8")) if lists_path.exists() else {}
 
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
-        result = merge(local, sibling, verdicts.get(other.split(".")[0], {}))
+        copy = other.split(".")[0]
+        result = merge(local, sibling, verdicts.get(copy, {}), lists.get(copy, {}))
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 
@@ -931,7 +952,7 @@ def check(name: str) -> list[str]:
                 failures.append(f"{name} [{direction}]: result.json says admitted and expected-admitted-{direction}.txt is missing")
             elif admitted_dump(local) != admitted_path.read_text(encoding="utf-8"):
                 failures.append(f"{name} [{direction}]: what the document admits differs from expected-admitted-{direction}.txt")
-        for field in ("applied", "duplicate", "rejected", "refusedBatches"):
+        for field in ("applied", "duplicate", "rejected", "newReplicas", "refusedBatches"):
             if result[field] != expected[direction][field]:
                 failures.append(
                     f"{name} [{direction}]: {field} was {result[field]!r},"

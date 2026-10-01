@@ -1,0 +1,37 @@
+{
+  "what": "B holds, beside Bo's signed case (header H0): a note of Bo's that is not the shape, signed alone under Hm, whose _r_batch names H0; a header Hi of Bo's over a note that is not the shape and a note B no longer holds, so Hi is authentic and not complete; and a case of Bo's naming a header nobody holds. Merging B into A refuses Hm as ROW_MALFORMED and does not report its note again under H0; keeps Hi, which is not complete, and reports its note ROW_MALFORMED under Hi, the batch it names; and reports the last case BATCH_DIGEST_MISMATCH under the id it names, since the sibling held no header there to refuse.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_DIGEST_MISMATCH"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

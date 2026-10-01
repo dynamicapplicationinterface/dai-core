@@ -9,6 +9,7 @@
  *
  *     node scripts/build-merge-fixtures.mjs          # write
  *     node scripts/build-merge-fixtures.mjs --check  # fail if anything differs
+ *     node scripts/build-merge-fixtures.mjs --check --only <name>,<name>
  *
  * `--check` is what CI runs. A change to the merge then cannot land without the
  * expected text changing in the same diff, where a reviewer sees it.
@@ -37,7 +38,7 @@ import {
   mergeFrom,
 } from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
-import { adoptReplica, mergeTablesOf, pendingBatches, recordSeal, signBatch, stageBatch, verifyBatches } from "../dist/dai-merge.js";
+import { adoptReplica, headerOf, mergeTablesOf, pendingBatches, recordSeal, signBatch, stageBatch, verifyBatches } from "../dist/dai-merge.js";
 import { confirmSeat, coversText, startSession } from "../dist/replicated-rows.js";
 import { authorIdOf, signBytes } from "../dist/identity.js";
 import { createECDH, createHash, webcrypto } from "node:crypto";
@@ -45,6 +46,13 @@ import { createECDH, createHash, webcrypto } from "node:crypto";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(repo, "conformance", "merge");
 const check = process.argv.includes("--check");
+/*
+ * Some vectors only, by name: how scripts/holdout.py runs a runtime with one
+ * rule removed against the vectors that witness it. Every kept signature is
+ * kept, since the vectors not run still use theirs.
+ */
+const onlyAt = process.argv.indexOf("--only");
+const only = onlyAt >= 0 ? new Set(process.argv[onlyAt + 1].split(",")) : null;
 
 const SCHEMA = `-- dai:replicated
 CREATE TABLE cases (
@@ -172,7 +180,7 @@ function open(path, extra, schema = SCHEMA) {
 }
 
 /** A copy of a vector's document: the session schema for a session vector. */
-const openFor = (vector, path, extra) => open(path, extra, vector.session ? SESSION_SCHEMA : SCHEMA);
+const openFor = (vector, path, extra) => open(path, extra, vector.schema ?? (vector.session ? SESSION_SCHEMA : SCHEMA));
 
 /*
  * What a session document admits after a merge (backlog D171), from the
@@ -1359,7 +1367,266 @@ const VECTORS = [
       }
     },
   },
+
+  /*
+   * Witness pass 2 (30 September): a fixture for each rule of the step 6
+   * review's Pass 2 that had none in the Parents and ordering, Verification,
+   * Merge and Versions groups, and for the page lines from the blind Rust
+   * reader's silences. Each rule's hold-out is named in scripts/holdout.py:
+   * the Python reader with the rule removed, or, for what the verifier and the
+   * signer decide, the runtime with it removed.
+   */
+  {
+    name: "merge-parents-shape",
+    authors: true,
+    admits: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "Bo signs his case and an edit of it, then a third version naming the two out of order and one of them twice, which is the shape. Then, each under a header of its own, a note whose parents are a BLOB, one naming a seq past 2^53 - 1, and one naming a seq with a leading zero: none is the shape. Merging B into A takes the three versions, of which the third is the only head, and refuses the other three headers as ROW_MALFORMED in Bo's name. A holds Ada's note and her own later version of it, pending, naming 257 ids, the note's among them: not the shape, so on A it names nothing, and both are heads; merging A into B refuses it as ROW_MALFORMED under no id.",
+    fill: async (a, b) => {
+      const bo = hexOf(BO.author);
+      const one = createEntity(b, "cases", E1, { title: "one", status: "open", weight: null });
+      const two = changeEntity(b, "cases", E1, { title: "two", status: "open", weight: null });
+      await sealAll(b, BO);
+      raw(b, "cases", E1, { title: "three", status: "open", weight: null }, null, JSON.stringify([`${bo}:${two._r_seq}`, `${bo}:${one._r_seq}`, `${bo}:${two._r_seq}`]));
+      await sealAll(b, BO);
+      const shapes = [
+        ["a BLOB", new TextEncoder().encode(JSON.stringify([`${bo}:${one._r_seq}`]))],
+        ["past 2^53 - 1", JSON.stringify([`${bo}:9007199254740992`])],
+        ["a leading zero", JSON.stringify([`${bo}:0${one._r_seq}`])],
+      ];
+      for (const [i, [body, parents]] of shapes.entries()) {
+        raw(b, "notes", id(0x41 + i), { body }, null, parents);
+        await sealAll(b, BO);
+      }
+      const note = createEntity(a, "notes", id(0x31), { body: "Ada's note" });
+      await sealAll(a, ADA);
+      const named = [`${hexOf(ADA.author)}:${note._r_seq}`, ...Array.from({ length: 256 }, (_, i) => `${"ab".repeat(16)}:${i + 1}`)];
+      raw(a, "notes", id(0x31), { body: "Ada's edit, naming 257" }, null, JSON.stringify(named));
+    },
+    expect: ({ ab, ba }) => {
+      const refused = ab.result.refusedBatches.map((r) => `${r.author === b64Of(BO.author) ? "Bo" : r.author} ${r.reason}`);
+      if (refused.join() !== "Bo ROW_MALFORMED,Bo ROW_MALFORMED,Bo ROW_MALFORMED") return `B into A: refused [${refused.join(", ")}], not Bo's three headers as ROW_MALFORMED`;
+      if (sectionOf(ab.admitted, "cases").join() !== `${hexOf(BO.author)}:3\t0`) return `B into A: case heads are [${sectionOf(ab.admitted, "cases").join(" | ")}], not the third version`;
+      if (sectionOf(ab.admitted, "notes").length !== 2) return `B into A: note heads are [${sectionOf(ab.admitted, "notes").join(" | ")}], not Ada's note and her edit`;
+      const back = ba.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+      if (back.join() !== "Ada ROW_MALFORMED") return `A into B: refused [${back.join(", ")}], not Ada's edit as ROW_MALFORMED`;
+    },
+  },
+  {
+    name: "merge-row-refusals",
+    authors: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds, beside Bo's signed case (header H0): a note of Bo's that is not the shape, signed alone under Hm, whose _r_batch names H0; a header Hi of Bo's over a note that is not the shape and a note B no longer holds, so Hi is authentic and not complete; and a case of Bo's naming a header nobody holds. Merging B into A refuses Hm as ROW_MALFORMED and does not report its note again under H0; keeps Hi, which is not complete, and reports its note ROW_MALFORMED under Hi, the batch it names; and reports the last case BATCH_DIGEST_MISMATCH under the id it names, since the sibling held no header there to refuse.",
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "Ada's", status: "open", weight: null });
+      await sealAll(a, ADA);
+      createEntity(b, "cases", E2, { title: "Bo's", status: "open", weight: null });
+      await sealAll(b, BO);
+      const [h0] = b.all("SELECT id FROM _dai_batch").map((r) => r.id);
+      const m = raw(b, "notes", id(0x42), { body: "not the shape, signed alone" }, null, '["zz"]');
+      await sealAll(b, BO);
+      withoutTriggers(b, ["notes__sealed_once"], () => b.run("UPDATE notes SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?", [h0, BO.author, m._r_seq]));
+      raw(b, "notes", id(0x43), { body: "not the shape, in an incomplete batch" }, null, '["zz"]');
+      const gone = raw(b, "notes", id(0x44), { body: "not held" }, null, "[]");
+      await sealAll(b, BO);
+      withoutTriggers(b, ["notes__no_delete"], () => b.run("DELETE FROM notes WHERE _r_replica = ? AND _r_seq = ?", [BO.author, gone._r_seq]));
+      const x = raw(b, "cases", id(0x45), { title: "names a header nobody holds", status: "open", weight: null }, null, "[]");
+      withoutTriggers(b, ["cases__batch_known_update"], () => b.run("UPDATE cases SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?", [id(0x5a), BO.author, x._r_seq]));
+    },
+    expect: ({ ab }) => {
+      const refused = ab.result.refusedBatches.map((r) => `${r.author === b64Of(BO.author) ? "Bo" : r.author} ${r.reason}`).sort();
+      if (refused.join() !== "Bo BATCH_DIGEST_MISMATCH,Bo ROW_MALFORMED,Bo ROW_MALFORMED") return `B into A: refused [${refused.join(", ")}], not Hm's and Hi's ROW_MALFORMED and a BATCH_DIGEST_MISMATCH`;
+      if (ab.result.applied !== 1) return `B into A: ${ab.result.applied} rows taken, not Bo's signed case alone`;
+    },
+  },
+  {
+    name: "merge-seal-outranks-named",
+    authors: true,
+    converges: false,
+    cites: ["6", "T1-D13", "T1-D35"],
+    what:
+      "B holds Bo's note P and his signed edit V of it, and an unsigned note U under Ada's id and seq that also names P. A holds Ada's signed case at that seq and the same unsigned note U. Merging A into B places the signed case first: it outranks U in another table, U is removed and reported in rejected, and P stays superseded, since V still names it. Then A's copy of U, unsigned, collides with the signed case and is refused: nothing is counted a duplicate.",
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "signed", status: "open", weight: null });
+      await sealAll(a, ADA);
+      const p = createEntity(b, "notes", id(0x46), { body: "P" });
+      changeEntity(b, "notes", id(0x46), { body: "V" });
+      await sealAll(b, BO);
+      const u = { _r_replica: ADA.author, _r_seq: 1, _r_lc: 9, _r_entity: id(0x46), _r_parents: JSON.stringify([`${hexOf(BO.author)}:${p._r_seq}`]), _r_deleted: 0, columns: { body: "U, unsigned" } };
+      applyRow(b, "notes", u);
+      applyRow(a, "notes", u);
+    },
+    expect: ({ ba }) => {
+      if (ba.result.rejected.join() !== `${hexOf(ADA.author)}:1`) return `A into B: rejected [${ba.result.rejected.join(", ")}], not U`;
+      if (ba.result.duplicate !== 0) return `A into B: ${ba.result.duplicate} duplicate, so the unsigned note was placed before the signed case`;
+      const p = ba.dump.split("\n").find((line) => line.startsWith("P\t"));
+      if (!p || p.split("\t")[7] !== "1") return `A into B: P is [${p}], not superseded`;
+    },
+  },
+  {
+    name: "merge-verify-refused",
+    authors: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds five headers under Ada's name, none of them authentic, each for one reason: a header whose signature does not verify, listing a row B does not hold (refused, not kept as incomplete: authenticity is checked first); a real header stored under an id its bytes do not hash to; a header signed at batch format version 3; a header whose only list names a table the document does not replicate; and a header whose stored list is not in the one spelling, whose row names no header. Merging B into A refuses each as BATCH_SIGNATURE_INVALID in Ada's name and takes none of their rows; the rows naming a refused header are not reported again, and the row naming none is BATCH_UNSIGNED.",
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "Ada's own", status: "open", weight: null });
+      await sealAll(a, ADA);
+      const src = open(join(out, "scratch-verify.db"));
+      asReplica(src, ADA.author);
+      src.run("UPDATE _dai_replica SET seq = 10, lc = 10");
+      const dummy = async () => ({ sig: new Uint8Array(64), pub: ADA.pub });
+      /** One case of Ada's at the next seq, sealed on the scratch copy by `sign`, and the batch it made. */
+      const sealOne = async (title, sign) => {
+        createEntity(src, "cases", id(0x60 + Number(src.all("SELECT seq FROM _dai_replica")[0].seq)), { title, status: "open", weight: null });
+        const [batch] = pendingBatches(src, ADA.author, TABLES);
+        const sealed = await signBatch(batch, { document: DOC, sign });
+        recordSeal(src, sealed);
+        return sealed;
+      };
+      /** A header into B by hand, with the covers text and fields given, and its rows naming `named`. */
+      const hold = (sealed, fields, named, rows = sealed.entries) => {
+        const h = { id: sealed.id, author: sealed.replica, lc: sealed.lc, sig: sealed.sig, pub: sealed.pub, att: null, version: sealed.version, digest: sealed.digest, covers: coversText(sealed.entries), ...fields };
+        b.run("INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [h.id, h.author, h.lc, h.sig, h.pub, h.att, h.version, h.digest, h.covers]);
+        for (const { table, row } of rows) {
+          const stored = src.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [ADA.author, row._r_seq])[0];
+          stored._r_batch = named;
+          const names = Object.keys(stored);
+          b.run(`INSERT INTO "${table}" (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => stored[n]));
+        }
+      };
+      // Not authentic, and not complete: its signature is no signature, and B holds none of its rows.
+      hold(await sealOne("forged", dummy), {}, null, []);
+      // A real header, under an id it does not hash to; its row names that id.
+      const real = await sealOne("under another id", keptSigner(ADA));
+      const other = new Uint8Array(real.id);
+      other[0] ^= 0xff;
+      hold(real, { id: other }, other);
+      // Batch format version 3, signed; its row names it.
+      const three = await sealOne("version 3", dummy);
+      const header3 = headerOf({ ...three, version: 3 });
+      const id3 = new Uint8Array(createHash("sha256").update(header3).digest().subarray(0, 16));
+      hold(three, { version: 3, id: id3, sig: (await keptSigner(ADA)(header3)).sig }, id3);
+      // A list naming a table the document does not replicate (nor B hold).
+      createEntity(src, "cases", id(0x7d), { title: "beside a ghost", status: "open", weight: null });
+      const [ghostly] = pendingBatches(src, ADA.author, TABLES);
+      const ghostRow = { _r_replica: ADA.author, _r_seq: ghostly.entries[0].row._r_seq + 1, _r_lc: ghostly.lc, _r_entity: id(0x7e), _r_parents: "[]", _r_deleted: 0, _r_session: null, columns: {} };
+      src.run("UPDATE _dai_replica SET seq = ?", [ghostRow._r_seq]);
+      const withGhost = await signBatch({ ...ghostly, entries: [...ghostly.entries, { table: "ghost", row: ghostRow }] }, { document: DOC, sign: keptSigner(ADA) });
+      recordSeal(src, { ...withGhost, entries: ghostly.entries });
+      hold({ ...withGhost, entries: withGhost.entries }, {}, withGhost.id, ghostly.entries);
+      // Not the one spelling, and its row names no header.
+      const spelled = await sealOne("spelled otherwise", keptSigner(ADA));
+      hold(spelled, { covers: coversText(spelled.entries).replace(",", ", ") }, null);
+      src.close();
+      rmSync(join(out, "scratch-verify.db"));
+    },
+    expect: ({ ab }) => {
+      const refused = ab.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+      if (refused.join() !== "Ada BATCH_UNSIGNED,Ada BATCH_SIGNATURE_INVALID,Ada BATCH_SIGNATURE_INVALID,Ada BATCH_SIGNATURE_INVALID,Ada BATCH_SIGNATURE_INVALID,Ada BATCH_SIGNATURE_INVALID")
+        return `B into A: refused [${refused.join(", ")}], not BATCH_UNSIGNED under no id and five headers BATCH_SIGNATURE_INVALID`;
+      if (ab.result.applied !== 0) return `B into A: ${ab.result.applied} rows taken`;
+    },
+  },
+  {
+    name: "merge-relabeled-list",
+    authors: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "B holds Ada's header H over her case and her note, with its stored list relabeled to the case alone, and both rows naming H; and a note of Bo's naming H. The stored list does not make the header; the list of Ada's rows naming H does, so H is authentic and complete, and Bo's note is not in that list, since only the header's author's rows are. Merging B into A takes both rows and keeps H under the list it signed, the case and the note, not the list B stored; Bo's note is BATCH_DIGEST_MISMATCH under H. lists.json carries the list that made H authentic.",
+    fill: async (a, b) => {
+      const src = open(join(out, "scratch-relabel.db"));
+      asReplica(src, ADA.author);
+      createEntity(src, "cases", E1, { title: "listed", status: "open", weight: null });
+      createEntity(src, "notes", E2, { body: "listed too" });
+      await sealAll(src, ADA);
+      const [h] = headersListing(src, ADA.author, "cases", 1);
+      carry(b, src, [h]);
+      b.run("UPDATE _dai_batch SET covers = ? WHERE lower(hex(id)) = ?", ['[["cases",1]]', h]);
+      src.close();
+      rmSync(join(out, "scratch-relabel.db"));
+      const bos = createEntity(b, "notes", id(0x57), { body: "Bo's, naming Ada's header" });
+      b.run("UPDATE notes SET _r_batch = (SELECT id FROM _dai_batch WHERE lower(hex(id)) = ?) WHERE _r_replica = ? AND _r_seq = ?", [h, BO.author, bos._r_seq]);
+    },
+    expect: ({ ab }) => {
+      const refused = ab.result.refusedBatches.map((r) => `${r.author === b64Of(BO.author) ? "Bo" : r.author} ${r.reason}`);
+      if (refused.join() !== "Bo BATCH_DIGEST_MISMATCH") return `B into A: refused [${refused.join(", ")}], not Bo's note alone`;
+      if (!ab.dump.includes('\t[["cases",1],["notes",2]]\n')) return "B into A: H is not kept under the list it signed";
+    },
+  },
+  {
+    name: "merge-canonical-order",
+    cites: ["6", "T1-D7"],
+    schema: `-- dai:replicated
+CREATE TABLE Zones (
+  name TEXT NOT NULL
+);
+-- dai:replicated
+CREATE TABLE cards (
+  Zeta TEXT,
+  alpha TEXT,
+  ａ TEXT,
+  \u{10400} TEXT
+);
+`,
+    what:
+      "Ada writes a card, then a zone, and seals them together: seq 1 in cards and seq 2 in Zones. Canonical rows and covers are ordered by table in UTF-8 order, then seq, so the zone comes first ([[\"Zones\",2],[\"cards\",1]]), though its seq is higher; a card's columns are ordered by name in UTF-8 order: Zeta, alpha, U+FF41, U+10400. Locale order puts alpha first, and UTF-16 order puts U+10400 before U+FF41. The header's id hashes those bytes, so a reader or signer using any other order makes other ids.",
+    fill: async (a, b) => {
+      createEntity(a, "cards", E1, { Zeta: "Z", alpha: "a", "ａ": "fullwidth a", "\u{10400}": "Deseret" });
+      createEntity(a, "Zones", E2, { name: "the first table" });
+      await sealAll(a, ADA);
+      const covers = a.all("SELECT covers FROM _dai_batch").map((r) => r.covers);
+      if (covers.join() !== '[["Zones",2],["cards",1]]') throw new Error(`merge-canonical-order: A's header lists ${covers.join()}`);
+      createEntity(b, "Zones", id(0x33), { name: "Bo's zone" });
+    },
+  },
+  {
+    name: "merge-equivocated-parent-plain",
+    authors: true,
+    admits: true,
+    cites: ["6", "T1-D13"],
+    what:
+      "A plain document. Ada edits her note on A, and edits it again, naming the first edit; from a second copy of her store she signs a case at the first edit's seq, which B holds. The first edit's id is equivocated after either merge: it is no head and hides nothing. Admission is only a session author table's, so the second edit, which names it, counts like any other row and is a head; her note, which only the equivocated edit names, is a head again.",
+    fill: async (a, b) => {
+      createEntity(a, "notes", E1, { body: "first" });
+      await exchange(b, a, ADA);
+      const fork = await forkOf(a, ADA, SCHEMA);
+      changeEntity(a, "notes", E1, { body: "edited" });
+      changeEntity(a, "notes", E1, { body: "edited again" });
+      await sealAll(a, ADA);
+      createEntity(fork, "cases", E2, { title: "signed at the first edit's seq", status: "open", weight: null });
+      await exchange(b, fork, ADA);
+      fork.done();
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const notes = sectionOf(run.admitted, "notes");
+        if (notes.join() !== [`${hexOf(ADA.author)}:1\t0`, `${hexOf(ADA.author)}:3\t0`].join()) return `${direction}: note heads are [${notes.join(" | ")}], not the note and the second edit`;
+      }
+    },
+  },
 ];
+
+/**
+ * A write the triggers would stop, made with those triggers dropped and put
+ * back as they were: how a copy that skips the writers holds a row they refuse.
+ */
+function withoutTriggers(db, names, write) {
+  const kept = names.map((name) => {
+    const [trigger] = db.all("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?", [name]);
+    if (!trigger) throw new Error(`no trigger ${name}`);
+    db.run(`DROP TRIGGER "${name}"`);
+    return trigger.sql;
+  });
+  write();
+  for (const sql of kept) db.run(sql);
+}
 
 /** An author id as `refusedBatches` spells it. */
 const b64Of = (bytes) => Buffer.from(bytes).toString("base64url");
@@ -1413,11 +1680,11 @@ async function forkOf(from, person, schema = SESSION_SCHEMA) {
   return fork;
 }
 
-/** A row at this copy's next seq and clock with the parents text given, as a copy that skips the writers can write it. */
+/** A row at this copy's next seq and clock with the parents text given, as a copy that skips the writers can write it; the row written. */
 function raw(db, table, entity, columns, session, parentsText, deleted = 0) {
   const state = db.all("SELECT id, seq, lc FROM _dai_replica")[0];
   db.run("UPDATE _dai_replica SET seq = ?, lc = ?", [state.seq + 1, state.lc + 1]);
-  applyRow(db, table, {
+  const row = {
     _r_replica: state.id,
     _r_seq: state.seq + 1,
     _r_lc: state.lc + 1,
@@ -1426,7 +1693,9 @@ function raw(db, table, entity, columns, session, parentsText, deleted = 0) {
     _r_deleted: deleted,
     _r_session: session,
     columns,
-  });
+  };
+  applyRow(db, table, row);
+  return row;
 }
 
 /**
@@ -1527,12 +1796,24 @@ async function writeInputs(vector) {
   // Per copy: a header is verified against the rows of the copy that holds it,
   // so the same header can verify in one and not in the other.
   const verdicts = {};
+  // And, for a header made authentic by a list other than the one it stores
+  // (docs/format.md, verify-lists-tried), the list that did: the one it is
+  // kept under (merge-headers-kept-list), which a reader without its own
+  // signature check cannot know otherwise.
+  const lists = {};
   for (const [name, copy] of [["a", a], ["b", b]]) {
     const found = {};
-    for (const [id, verdict] of await verifyBatches(copy, copy.tables, DOC)) found[id] = verdict.ok ? (verdict.complete ? "ok" : "incomplete") : verdict.reason;
+    const stored = new Map(copy.all("SELECT lower(hex(id)) AS id, covers FROM _dai_batch").map((r) => [r.id, r.covers]));
+    for (const [id, verdict] of await verifyBatches(copy, copy.tables, DOC)) {
+      found[id] = verdict.ok ? (verdict.complete ? "ok" : "incomplete") : verdict.reason;
+      if (verdict.ok && JSON.stringify(verdict.covers) !== stored.get(id)) (lists[name] ??= {})[id] = JSON.stringify(verdict.covers);
+    }
     verdicts[name] = Object.fromEntries(Object.entries(found).sort(([x], [y]) => (x < y ? -1 : 1)));
   }
   compare(join(dir, "verdicts.json"), `${JSON.stringify(verdicts, null, 2)}\n`);
+  // A file of its own, written only where a vector has one, so a reader that
+  // reads verdicts.json as two maps of strings still reads every vector.
+  if (Object.keys(lists).length > 0) compare(join(dir, "lists.json"), `${JSON.stringify(lists, null, 2)}\n`);
   a.close();
   b.close();
 }
@@ -1588,6 +1869,7 @@ Per vector:
 | \`expected-ba.txt\` | the canonical dump of B after merging A into it |
 | \`result.json\` | the counts, refused ids and refused batches the merge reports |
 | \`verdicts.json\` | per copy (\`a\`, \`b\`), the verdict on every signed header it holds: \`ok\`, \`incomplete\`, or a refusal code |
+| \`lists.json\` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |
 | \`expected-admitted-ab.txt\`, \`expected-admitted-ba.txt\` | session vectors, and \`merge-equivocated-plain-heads\`: what the document admits after each merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
@@ -1635,6 +1917,11 @@ reads \`b\`'s, and of A into B, \`a\`'s; the canonical bytes and the
 signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
 the verdicts and does the rest itself, which is the part these vectors test:
 
+- a header made authentic by the list of its author's rows naming it, not by
+  the list it stores (docs/format.md, verify-lists-tried), lists that list
+  and is kept under it (merge-headers-kept-list); \`lists.json\` carries it,
+  since a reader without its own signature check cannot tell which list made
+  the header (\`merge-relabeled-list\`);
 - a header that is not \`ok\` is not kept and lists nothing;
 - a header lists its rows in \`covers\` as \`[table, seq]\`, the author being its own,
   and no seq twice in any tables: a list that repeats one is not a list, so a
@@ -1724,7 +2011,9 @@ out, and failed; the step 6 review's (\`session-equivocated-parent\`,
 \`session-void-equivocated-confirm\`, \`session-equivocation-two-tables\`)
 against the Python reader before it was leveled. The witness pass's (30
 September, from the step 6 review's Pass 2) were each run against a Python
-reader with one rule removed, and failed.
+reader with one rule removed, and failed; what the verifier or the signer
+decides, against the runtime with one rule removed. Every such hold-out is
+in \`scripts/holdout.py\`, which CI runs.
 `;
 
 let differences = 0;
@@ -1777,7 +2066,12 @@ checkCitations(VECTORS);
 mkdirSync(out, { recursive: true });
 compare(join(out, "README.md"), README);
 
-for (const vector of VECTORS) {
+const chosen = only ? VECTORS.filter((vector) => only.has(vector.name)) : VECTORS;
+if (only && chosen.length !== only.size) {
+  console.error(`--only names a vector the generator does not have: ${[...only].filter((name) => !VECTORS.some((v) => v.name === name)).join(", ")}`);
+  process.exit(1);
+}
+for (const vector of chosen) {
   const dir = join(out, vector.name);
   mkdirSync(dir, { recursive: true });
   await writeInputs(vector);
@@ -1849,7 +2143,7 @@ for (const vector of VECTORS) {
 
 // Kept only for headers some vector still signs, so a vector changed or removed
 // leaves no signature behind for a header nothing makes.
-const unused = Object.keys(signatures).filter((key) => !signaturesUsed.has(key));
+const unused = only ? [] : Object.keys(signatures).filter((key) => !signaturesUsed.has(key));
 if (!check && (signaturesAdded > 0 || unused.length > 0)) {
   for (const key of unused) delete signatures[key];
   const ordered = Object.fromEntries(Object.entries(signatures).sort(([x], [y]) => (x < y ? -1 : 1)));
@@ -1864,4 +2158,4 @@ if (check && differences > 0) {
   console.error(`\n${differences} fixture file(s) differ. Regenerate and commit the diff.`);
   process.exit(1);
 }
-console.log(check ? "fixtures match" : `${VECTORS.length} merge fixtures written to conformance/merge`);
+console.log(check ? "fixtures match" : `${chosen.length} merge fixtures written to conformance/merge`);

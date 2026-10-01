@@ -13,6 +13,7 @@ Per vector:
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
 | `result.json` | the counts, refused ids and refused batches the merge reports |
 | `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok`, `incomplete`, or a refusal code |
+| `lists.json` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |
 | `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors, and `merge-equivocated-plain-heads`: what the document admits after each merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
@@ -60,6 +61,11 @@ reads `b`'s, and of A into B, `a`'s; the canonical bytes and the
 signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
 the verdicts and does the rest itself, which is the part these vectors test:
 
+- a header made authentic by the list of its author's rows naming it, not by
+  the list it stores (docs/format.md, verify-lists-tried), lists that list
+  and is kept under it (merge-headers-kept-list); `lists.json` carries it,
+  since a reader without its own signature check cannot tell which list made
+  the header (`merge-relabeled-list`);
 - a header that is not `ok` is not kept and lists nothing;
 - a header lists its rows in `covers` as `[table, seq]`, the author being its own,
   and no seq twice in any tables: a list that repeats one is not a list, so a
@@ -149,4 +155,6 @@ out, and failed; the step 6 review's (`session-equivocated-parent`,
 `session-void-equivocated-confirm`, `session-equivocation-two-tables`)
 against the Python reader before it was leveled. The witness pass's (30
 September, from the step 6 review's Pass 2) were each run against a Python
-reader with one rule removed, and failed.
+reader with one rule removed, and failed; what the verifier or the signer
+decides, against the runtime with one rule removed. Every such hold-out is
+in `scripts/holdout.py`, which CI runs.

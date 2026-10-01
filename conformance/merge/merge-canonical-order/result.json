@@ -1,0 +1,24 @@
+{
+  "what": "Ada writes a card, then a zone, and seals them together: seq 1 in cards and seq 2 in Zones. Canonical rows and covers are ordered by table in UTF-8 order, then seq, so the zone comes first ([[\"Zones\",2],[\"cards\",1]]), though its seq is higher; a card's columns are ordered by name in UTF-8 order: Zeta, alpha, U+FF41, U+10400. Locale order puts alpha first, and UTF-16 order puts U+10400 before U+FF41. The header's id hashes those bytes, so a reader or signer using any other order makes other ids.",
+  "cites": [
+    "6",
+    "T1-D7"
+  ],
+  "converges": true,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

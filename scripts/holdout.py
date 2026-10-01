@@ -1,30 +1,41 @@
-"""Hold-outs of the Python merge reader: the proof that a witness has teeth.
+"""Hold-outs: the proof that a witness has teeth.
 
     python scripts/holdout.py                    # every rule: each must fail its fixtures
-    python scripts/holdout.py <rule> ...         # these rules, over every fixture
+    python scripts/holdout.py <rule> ...         # these rules
     python scripts/holdout.py <rule> <fixture>   # one row of a witness table
     python scripts/holdout.py --list             # the rules, their anchors and what each removes
 
-A hold-out is a copy of conformance/reference/dai_merge.py with one rule of
-docs/format.md removed: a text replacement asserted to match exactly once, so
-a hold-out that no longer applies stops with an error instead of running the
-reader unchanged. A witness is a fixture the hold-out fails. A rule whose
-removal every fixture passes has no witness, whatever the fixtures cite.
+A hold-out removes one rule of docs/format.md, and a witness is a fixture the
+hold-out fails. A rule whose removal every fixture passes has no witness,
+whatever the fixtures cite. Two kinds:
+
+- the reader (RULES): a copy of conformance/reference/dai_merge.py with the
+  rule removed, by text replacements each asserted to match exactly once, so
+  a hold-out that no longer applies stops with an error instead of running
+  the reader unchanged; loaded in memory, run over every fixture;
+- the runtime (RUNTIME): what the verifier and the signer decide, which a
+  reader takes from the fixtures and cannot be held out on. A copy of dist/
+  with the rule removed, under node_modules/.cache/holdout, and the generator
+  run with it in --check mode over the vectors named (needs `npm run build`).
 
 Each rule is named for what it removes, with the anchor it removes it from
 and the fixtures that must fail without it. Run with no arguments, every rule
-is run over every fixture and reported HOLDS (each named fixture fails) or NO
-TEETH (one passes); the reader itself is first run unchanged over the same
-fixtures, since a fixture the reader fails already proves nothing about a
-rule. The copy is never written to disk and the reader is never edited.
+is run and reported HOLDS (each named fixture fails) or NO TEETH (one
+passes); the reader, and the runtime, are first run unchanged over the same
+fixtures, since a fixture they already fail proves nothing about a rule. A
+reader that raises fails the fixture (the fixtures' own triggers refuse some
+removals outright). Nothing in the repository is edited.
 
 The witness tables in the handoffs name rules from here. A rule whose witness
 is a TypeScript spec, not a fixture, is not here: its hold-out is the runtime
-itself, and the handoff says so beside it.
+or the runner itself, removed, run and put back, and the handoff says so.
 """
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -48,6 +59,13 @@ SEATROW = "session-void-creator-seat-row"
 X3 = "session-void-equivocated-confirm"
 AFTER = "session-seat-not-held-after-merge"
 SILENT = "session-equivocated-row-silent"
+SHAPE = "merge-parents-shape"
+REFUSALS = "merge-row-refusals"
+NAMED = "merge-seal-outranks-named"
+VERIFY = "merge-verify-refused"
+RELABEL = "merge-relabeled-list"
+CANON = "merge-canonical-order"
+EPARENT = "merge-equivocated-parent-plain"
 
 SORT = "for key in sorted(refusals)\n"
 
@@ -231,6 +249,79 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "equivocated-filed", "AUTHOR_EQUIVOCATED filed under the highest revealing header", [SEATROW],
         [('refuse_batch(min(ids), author, "AUTHOR_EQUIVOCATED")', 'refuse_batch(max(ids), author, "AUTHOR_EQUIVOCATED")')],
     ),
+    # ------------------------------------------------ witness pass 2: Parents and ordering
+    "parents-blob": (
+        "parents-shape", "parents stored as a BLOB, not text, are read as their text", [SHAPE],
+        [("    if not isinstance(text, str):\n        return False\n    try:\n        value = json.loads(text)",
+          "    if isinstance(text, (bytes, bytearray)):\n        text = bytes(text).decode('utf-8', 'replace')\n    if not isinstance(text, str):\n        return False\n    try:\n        value = json.loads(text)")],
+    ),
+    "parents-past-safe": (
+        "parents-shape", "a parent's seq past 2^53 - 1 is the shape", [SHAPE],
+        [(" and int(item[33:]) <= SAFE_INTEGER", "")],
+    ),
+    "parents-leading-zero": (
+        "parents-shape", "a parent's seq with a leading zero is the shape", [SHAPE],
+        [('PARENT_ID = re.compile(r"[0-9a-f]{32}:[1-9][0-9]{0,15}")', 'PARENT_ID = re.compile(r"[0-9a-f]{32}:[0-9]{1,16}")')],
+    ),
+    "parents-ordered": (
+        "parents-order-unchecked", "parents out of order, or naming one id twice, are malformed", [SHAPE],
+        [("    return all(\n        isinstance(item, str) and PARENT_ID",
+          "    if value != sorted(set(value)):\n        return False\n    return all(\n        isinstance(item, str) and PARENT_ID")],
+    ),
+    "parents-own-read": (
+        "parents-own-malformed", "a copy's own malformed row's parents are read as they stand, outside a merge", [SHAPE],
+        [("    if not well_formed_parents(text):\n        return []\n    try:", "    try:")],
+    ),
+    # ------------------------------------------------ witness pass 2: Merge
+    "malformed-incomplete-refused": (
+        "merge-headers-malformed", "an incomplete header listing a malformed row is refused ROW_MALFORMED", [REFUSALS],
+        [('if verdict == "ok" and any(key in malformed for key in listed):', 'if any(key in malformed for key in listed):')],
+    ),
+    "malformed-reported-again": (
+        "merge-row-malformed", "a malformed row a refused header listed is reported again, under the batch it names", [REFUSALS],
+        [("                if key not in tainted:\n", "                if True:\n")],
+    ),
+    "mismatch-malformed-header-silent": (
+        "merge-row-digest-mismatch", "a row naming a header refused ROW_MALFORMED, which does not list it, is not reported", [ORDER],
+        [('if named not in held or verdicts.get(named) in ("ok", "incomplete"):',
+          'if named not in held or (verdicts.get(named) in ("ok", "incomplete") and (named, "ROW_MALFORMED", bytes(sibling.execute("SELECT author FROM _dai_batch WHERE lower(hex(id)) = ?", (named,)).fetchone()[0]).hex()) not in refusals):')],
+    ),
+    "mismatch-not-held-silent": (
+        "merge-row-digest-mismatch", "a row naming a header the sibling does not hold is not reported", [REFUSALS],
+        [('if named not in held or verdicts.get(named) in ("ok", "incomplete"):', 'if verdicts.get(named) in ("ok", "incomplete"):')],
+    ),
+    "place-unsigned-first": (
+        "merge-place", "unsigned rows are placed before signed ones", [NAMED],
+        [("for rows, signed in ((signed_rows, True), (unsigned_rows, False)):", "for rows, signed in ((unsigned_rows, False), (signed_rows, True)):")],
+    ),
+    "outranked-frees-parent": (
+        "merge-signed-outranks", "what an outranked row superseded is a head again even when something else names it", [NAMED],
+        [(" AND _r_superseded = 1\"\n                f' AND NOT EXISTS (SELECT 1 FROM \"{table}\" n, json_each(n._r_parents) p'\n                f' WHERE p.value = ? AND n._r_entity = \"{table}\"._r_entity)',\n                (parent, parent),",
+          " AND _r_superseded = 1\",\n                (parent,),")],
+    ),
+    "outranks-own-table-only": (
+        "merge-signed-outranks-any-table", "a signed row does not outrank an unsigned one at its id in another table", ["merge-seal-cross-table", NAMED],
+        [("            if signed and there[0] is None:\n                displace(other, row)\n                continue\n",
+          "            if signed and there[0] is None:\n                continue\n")],
+    ),
+    "kept-under-stored-list": (
+        "merge-headers-kept-list", "a header made authentic by the rows' list is kept under the list the sibling stored", [RELABEL],
+        [("            if hid in lists:\n                header = (*header[:8], lists[hid])\n", "")],
+    ),
+    "new-replicas-uncounted": (
+        "merge-counts", "newReplicas counts nothing", ["merge-disjoint", "merge-sealed"],
+        [('        result["newReplicas"] += 1\n', "")],
+    ),
+    # ------------------------------------------------ witness pass 2: the page lines
+    "own-headers-not-counted": (
+        "equivocation-own-headers", "a merge compares an arriving header only with the sibling's headers, not the copy's own", ["session-equivocation", PLAIN],
+        [("            for other_id, other_digest, other_covers in local.execute(", "            for other_id, other_digest, other_covers in sibling.execute(")],
+    ),
+    "outside-names-equivocated": (
+        "parent-equivocated-outside", "a roster or plain row naming an equivocated id as a parent is no head", [EPARENT],
+        [("                if not self.unequivocal(r):\n                    continue\n",
+          "                if not self.unequivocal(r) or self.names_equivocated(r):\n                    continue\n")],
+    ),
     # ------------------------------------------------ R9: a row at an equivocated id
     "equivocated-unseated-reported": (
         "report-silent", "a row at an equivocated id naming no seat is reported SEAT_NOT_HELD", [SILENT],
@@ -248,6 +339,114 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
          ('if bytes(p["_r_session"]) != bytes(r["_r_session"]):', 'if bytes(p["_r_session"]) != bytes(r["_r_session"]) and self.unequivocal(r):')],
     ),
 }
+
+
+# What the verifier and the signer decide, a reader takes from the fixtures
+# (verdicts.json) and cannot be held out on. These hold-outs are the runtime:
+# a copy of dist/ with one rule removed, by regular-expression edits (the
+# bundles rename helpers, `hex2`, `utf8Order2`), each of which must match
+# somewhere; the generator run with it, in --check mode, over the vectors
+# named, which fail when a verdict, a dump or a header's bytes move (a header
+# whose bytes move has no kept signature, and --check signs nothing).
+#
+# name -> (anchor, what the runtime does instead, fixtures that must fail, [(pattern, replacement), ...])
+RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
+    "verify-complete-first": (
+        "verify-order", "a header whose listed rows are not all held is incomplete, kept, before its authenticity is asked", [VERIFY],
+        [(r"if \(!covers\) \{",
+          'if (!covers && stored && !stored.every(([t, s]) => carried.has(t) && db.all(`SELECT 1 FROM "${t}" WHERE _r_replica = ? AND _r_seq = ?`, [author, s]).length === 1)) {'
+          ' verdicts.set([...id].map((x) => x.toString(16).padStart(2, "0")).join(""), { ok: true, author, covers: stored, complete: false }); continue; }'
+          " if (!covers) {")],
+    ),
+    "id-unchecked": (
+        "verify-authentic", "a header need not hash to its id", [VERIFY],
+        [(r"if \((hex\d*)\(await batchIdOf\d*\(canonical\)\) !== \1\(id\)\) continue;", "")],
+    ),
+    "version-unchecked": (
+        "version-unknown-header", "a header of any version is checked as if its version were known", [VERIFY],
+        [(r"version === BATCH_FORMAT_VERSION\d* && ", "")],
+    ),
+    "unreplicated-tried": (
+        "verify-unreplicated", "a list naming a table the document does not replicate is tried, and a row there is not found", [VERIFY],
+        [(r"if \(list\.some\(\(\[table\]\) => !carried\.has\(table\)\)\) continue;", ""),
+         (r'const found = (db\.all\(`SELECT \* FROM "\$\{table\}" WHERE _r_replica = \? AND _r_seq = \?`, \[author, seq\]\));',
+          r"const found = carried.has(table) ? \1 : [];")],
+    ),
+    "spelling-lenient": (
+        "covers-spelling", "a stored list in another spelling of the same pairs is a list", [VERIFY],
+        [(r"if \(JSON\.stringify\(pairs\) !== text\) return null;", "")],
+    ),
+    "lists-any-author": (
+        "verify-lists-tried", "the recovered list is every row naming the id, of any author", [RELABEL],
+        [(r"WHERE _r_batch = \? AND _r_replica = \?`, \[id, author\]", "WHERE _r_batch = ?`, [id]")],
+    ),
+    "rows-seq-order": (
+        "canonical-rows", "canonical rows ordered by seq alone", [CANON],
+        [(r"\.sort\(\(a, b\) => utf8Order\d*\(a\.table, b\.table\) \|\| a\.row\._r_seq - b\.row\._r_seq\)", ".sort((a, b) => a.row._r_seq - b.row._r_seq)")],
+    ),
+    "covers-seq-order": (
+        "canonical-header", "covers ordered by seq alone, when signed and when read", [CANON],
+        [(r"pairs\.sort\(\(a, b\) => utf8Order\d*\(a\[0\], b\[0\]\) \|\| a\[1\] - b\[1\]\);", "pairs.sort((a, b) => a[1] - b[1]);"),
+         (r"utf8Order\d*\(pairs\[i - 1\]\[0\], pairs\[i\]\[0\]\) \|\| pairs\[i - 1\]\[1\] - pairs\[i\]\[1\]", "pairs[i - 1][1] - pairs[i][1]")],
+    ),
+    "locale-order": (
+        "conv-utf8-order", "names ordered by locale, not by their UTF-8 bytes", [CANON],
+        [(r"function (utf8Order\d*)\(a, b\) \{", r"function \1(a, b) { return a.localeCompare(b);")],
+    ),
+    "utf16-order": (
+        "conv-utf8-order", "names ordered by UTF-16 code unit, not by their UTF-8 bytes", [CANON],
+        [(r"function (utf8Order\d*)\(a, b\) \{", r"function \1(a, b) { return a < b ? -1 : a > b ? 1 : 0;")],
+    ),
+}
+
+CACHE = REPO / "node_modules" / ".cache" / "holdout"
+
+
+def runtime_copy(name: str, edits: list[tuple[str, str]], wanted: list[str]) -> Path:
+    """dist/ with the edits made, and the generator and the vectors it checks,
+    under node_modules/.cache so the bundles still resolve their packages."""
+    root = CACHE / name
+    shutil.rmtree(root, ignore_errors=True)
+    (root / "dist").mkdir(parents=True)
+    texts = {path.name: path.read_text(encoding="utf-8") for path in (REPO / "dist").glob("*.js")}
+    if not texts:
+        raise SystemExit("no dist/; run `npm run build` first")
+    for pattern, replacement in edits:
+        total = 0
+        for file, text in texts.items():
+            texts[file], count = re.subn(pattern, replacement, text)
+            total += count
+        if total == 0:
+            raise SystemExit(f"a runtime hold-out's edit matches nothing in dist/: {pattern[:80]!r}")
+    for file, text in texts.items():
+        (root / "dist" / file).write_text(text, encoding="utf-8")
+    (root / "scripts").mkdir()
+    shutil.copy(REPO / "scripts" / "build-merge-fixtures.mjs", root / "scripts")
+    (root / "docs").mkdir()
+    shutil.copy(REPO / "docs" / "replicated-tables.md", root / "docs")
+    suite = root / "conformance" / "merge"
+    suite.mkdir(parents=True)
+    for file in ("signatures.json", "README.md"):
+        shutil.copy(SUITE / file, suite)
+    for name_ in wanted:
+        shutil.copytree(SUITE / name_, suite / name_)
+    return root
+
+
+def generate(name: str, edits: list[tuple[str, str]], wanted: list[str]) -> list[str]:
+    """The generator's complaints, checking `wanted` against a runtime with the edits made; none when it passes."""
+    root = runtime_copy(name, edits, wanted)
+    try:
+        run = subprocess.run(
+            ["node", str(root / "scripts" / "build-merge-fixtures.mjs"), "--check", "--only", ",".join(wanted)],
+            capture_output=True, text=True, encoding="utf-8", cwd=root,
+        )
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    if run.returncode == 0:
+        return []
+    lines = [line for line in (run.stderr + run.stdout).splitlines() if line.strip()]
+    return lines[:8] or [f"exit {run.returncode}"]
 
 
 def held(edits: list[tuple[str, str]]) -> types.ModuleType:
@@ -271,19 +470,57 @@ def fixtures() -> list[str]:
     return sorted(p.name for p in SUITE.iterdir() if p.is_dir())
 
 
-def baseline(names: list[str]) -> None:
-    """The reader unchanged must pass every fixture a hold-out is run over."""
+def checked(reader: types.ModuleType, name: str) -> list[str]:
+    """What a reader gets wrong on one fixture. A reader that raises gets it
+    wrong too: the fixtures' own triggers refuse some removals outright."""
+    try:
+        return reader.check(name)
+    except Exception as error:  # noqa: BLE001, any failure to finish is a failure
+        return [f"{name}: raised {type(error).__name__}: {error}"]
+
+
+def baseline(names: list[str], runtime: list[str]) -> None:
+    """The reader unchanged must pass every fixture a hold-out is run over, and
+    the runtime unchanged every vector a runtime hold-out is run over."""
     reader = held([])
-    failing = [n for n in names if reader.check(n)]
+    failing = [n for n in names if checked(reader, n)]
     if failing:
         raise SystemExit(f"the reader itself fails {', '.join(failing)}; no hold-out proves anything until it passes")
+    if runtime:
+        found = generate("baseline", [], runtime)
+        if found:
+            raise SystemExit("the runtime itself fails " + ", ".join(runtime) + ":\n  " + "\n  ".join(found))
+
+
+def failing_under(rule: str, names: list[str]) -> dict[str, list[str]]:
+    """The fixtures this hold-out fails, with what went wrong: a reader hold-out
+    over every fixture given, a runtime one over the vectors it names."""
+    if rule in RULES:
+        reader = held(RULES[rule][3])
+        return {n: found for n in names if (found := checked(reader, n))}
+    _anchor, _what, must, edits = RUNTIME[rule]
+    wanted = [n for n in names if n in must] or must
+    found = generate(rule, edits, wanted)
+    # The generator stops at the first vector it cannot build; each named
+    # vector is run alone when there are several, so each is seen to fail.
+    if len(wanted) == 1:
+        return {wanted[0]: found} if found else {}
+    return {n: f for n in wanted if (f := generate(rule, edits, [n]))}
+
+
+def describe(rule: str) -> tuple[str, str, list[str], str]:
+    if rule in RULES:
+        anchor, what, must, _edits = RULES[rule]
+        return anchor, what, must, "reader"
+    anchor, what, must, _edits = RUNTIME[rule]
+    return anchor, what, must, "runtime"
 
 
 def one(rule: str, fixture: str) -> int:
-    anchor, what, _must, edits = RULES[rule]
-    baseline([fixture])
-    found = held(edits).check(fixture)
-    print(f"{rule} (#{anchor}): {what}")
+    anchor, what, _must, kind = describe(rule)
+    baseline([fixture], [fixture] if kind == "runtime" else [])
+    found = failing_under(rule, [fixture]).get(fixture, [])
+    print(f"{rule} (#{anchor}, the {kind}): {what}")
     if found:
         for line in found:
             print(f"  {line}")
@@ -295,34 +532,40 @@ def one(rule: str, fixture: str) -> int:
 
 def every(wanted: list[str]) -> int:
     names = fixtures()
-    baseline(names)
+    runtime = sorted({n for rule in wanted if rule in RUNTIME for n in RUNTIME[rule][2]})
+    baseline(names, runtime)
     bad = 0
     for rule in wanted:
-        anchor, what, must, edits = RULES[rule]
-        reader = held(edits)
-        failing = [n for n in names if reader.check(n)]
+        anchor, _what, must, kind = describe(rule)
+        failing = sorted(failing_under(rule, names))
         missed = [n for n in must if n not in failing]
         bad += bool(missed)
         verdict = "NO TEETH" if missed else "HOLDS"
-        line = f"{verdict:9} {rule:34} #{anchor:28} fails: {', '.join(failing) or '-'}"
+        line = f"{verdict:9} {rule:34} {kind:8} #{anchor:30} fails: {', '.join(failing) or '-'}"
         if missed:
             line += f"   (should also fail: {', '.join(missed)})"
-        print(line)
-    print(f"\n{len(wanted) - bad} of {len(wanted)} hold-outs fail every fixture named for them; the reader unchanged passes all {len(names)}.")
+        print(line, flush=True)
+    print(
+        f"\n{len(wanted) - bad} of {len(wanted)} hold-outs fail every fixture named for them; "
+        f"the reader unchanged passes all {len(names)}"
+        + (f", and the runtime unchanged the {len(runtime)} its hold-outs run." if runtime else ".")
+    )
     return 1 if bad else 0
 
 
 def main(argv: list[str]) -> int:
+    rules = {**RULES, **RUNTIME}
     if argv[:1] == ["--list"]:
-        for rule, (anchor, what, must, _edits) in RULES.items():
-            print(f"{rule:34} #{anchor:28} {what}  [{', '.join(must)}]")
+        for rule in rules:
+            anchor, what, must, kind = describe(rule)
+            print(f"{rule:34} {kind:8} #{anchor:30} {what}  [{', '.join(must)}]")
         return 0
-    if len(argv) == 2 and argv[0] in RULES and argv[1] in fixtures():
+    if len(argv) == 2 and argv[0] in rules and argv[1] in fixtures():
         return one(argv[0], argv[1])
-    unknown = [a for a in argv if a not in RULES]
+    unknown = [a for a in argv if a not in rules]
     if unknown:
         raise SystemExit(f"no hold-out named {unknown[0]!r} (nor a fixture); --list names them")
-    return every(argv or list(RULES))
+    return every(argv or list(rules))
 
 
 if __name__ == "__main__":

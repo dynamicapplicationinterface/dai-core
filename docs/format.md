@@ -317,8 +317,9 @@ same seq with different digests are **equivocation**.
 <a id="equivocation-any-table"></a>The seq may be listed in any tables: two
 headers of one author listing one seq, one in one table and one in another,
 with different digests, are equivocation, as two listing it in one table are.
-<a id="equivocation-own-headers"></a>A copy's own headers count as the
-headers a merge keeps do, though a merge verifies only the sibling's.
+<a id="equivocation-own-headers"></a>A copy's own headers count toward
+equivocation as the headers a merge keeps do, though a merge verifies only
+the sibling's.
 <a id="equivocated-id"></a>The id, `(author, seq)`, is **equivocated** on
 every copy that holds both headers, whichever arrived first.
 <a id="equivocated-counts-nothing"></a>A row at an equivocated id counts for
@@ -581,7 +582,8 @@ does is held by the fixtures in `conformance/merge`; the session fixtures
 also carry what the document admits after the merge, and all of them are
 `close=any`. <a id="fixtures-verdicts"></a>The fixtures carry each header's
 verdict in `verdicts.json` (`ok`, `incomplete`, or a refusal code), made
-against the rows of the copy that holds it, so a reader can do the rest of
-the merge without its own signature check. The reference readers,
-`conformance/reference/dai_merge.py` and `conformance/readers/rust-merge`,
-are checked against this page.
+against the rows of the copy that holds it, and in `lists.json` the list
+that made a header authentic where it is not the one the header stores, so a
+reader can do the rest of the merge without its own signature check. The
+reference readers, `conformance/reference/dai_merge.py` and
+`conformance/readers/rust-merge`, are checked against this page.
