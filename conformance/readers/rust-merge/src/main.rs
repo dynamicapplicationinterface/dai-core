@@ -230,9 +230,16 @@ struct Counts {
 // Union merge, taking only what a verified header lists (docs/format.md).
 // `verdicts` is the signature check's answer for each of the sibling's headers,
 // by id in lowercase hex: "ok" or a BATCH_ code. A header missing from it was
-// not checked, and a header not checked is not signed.
+// not checked, and a header not checked is not signed. `signed_lists` is the
+// list that made a header authentic where it is not the one it stores
+// (lists.json; docs/format.md#fixtures-verdicts), by id, in the one spelling.
 // Returns the counts, the canonical dump, and what the document admits after.
-fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (Counts, String, String) {
+fn merge(
+    work: &Path,
+    sibling: &Path,
+    verdicts: &BTreeMap<String, String>,
+    signed_lists: &BTreeMap<String, String>,
+) -> (Counts, String, String) {
     let c = Connection::open(work).unwrap();
     c.execute_batch(&format!(
         "ATTACH DATABASE 'file:{}?mode=ro' AS S;",
@@ -313,9 +320,14 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
         };
         let mut headers = headers;
         headers.sort_by(|a, b| hexlc(&a.0).cmp(&hexlc(&b.0)));
-        let mut keep: Vec<(String, Vec<u8>)> = vec![];
-        for (id, author, listed) in headers {
+        let mut keep: Vec<(String, Vec<u8>, String)> = vec![];
+        for (id, author, stored) in headers {
             let hid = hexlc(&id);
+            // The list it signed is the one that made it authentic (the stored
+            // one tried first, then the author's rows naming it), and a kept
+            // header lists that one, not the one the sibling stored
+            // (docs/format.md#verify-lists-tried, #merge-headers-kept-list).
+            let listed = signed_lists.get(&hid).cloned().unwrap_or(stored);
             held.insert(hid.clone(), id.clone());
             authors.insert(hid.clone(), author.clone());
             let verdict = verdicts.get(&hid).cloned().unwrap_or_else(|| "BATCH_SIGNATURE_INVALID".to_string());
@@ -326,7 +338,7 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             // "incomplete": the author's header (batch format 2 signs its list),
             // whose rows the sibling does not hold as signed. Kept, so evidence
             // travels (D160), and no row is taken through it.
-            keep.push((hid.clone(), id.clone()));
+            keep.push((hid.clone(), id.clone(), listed.clone()));
             let mut keys = vec![];
             if let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(&listed) {
                 for pair in list {
@@ -365,15 +377,16 @@ fn merge(work: &Path, sibling: &Path, verdicts: &BTreeMap<String, String>) -> (C
             let author = authors[hid].clone();
             refusals.insert((hid.clone(), "ROW_MALFORMED".to_string(), hexlc(&author)), author);
         }
-        for (hid, id) in keep {
+        for (hid, id, listed) in keep {
             if tainted.contains(&hid) {
                 lists.remove(&hid);
                 continue;
             }
+            // Its stored covers is the list it signed (#merge-headers-kept-list).
             c.execute(
                 "INSERT OR IGNORE INTO main._dai_batch (id, author, lc, sig, pub, att, version, digest, covers) \
-                 SELECT id, author, lc, sig, pub, att, version, digest, covers FROM S._dai_batch WHERE id = ?1",
-                [&id],
+                 SELECT id, author, lc, sig, pub, att, version, digest, ?2 FROM S._dai_batch WHERE id = ?1",
+                rusqlite::params![id, listed],
             )
             .unwrap();
         }
@@ -940,6 +953,12 @@ fn main() {
             }
             Ok(text) => serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(&text).unwrap(),
         };
+        // The list that made a header authentic where it is not the stored one
+        // (lists.json, only where a vector has one), per copy as verdicts are.
+        let lists: BTreeMap<String, BTreeMap<String, String>> = match std::fs::read_to_string(f.join("lists.json")) {
+            Err(_) => BTreeMap::new(),
+            Ok(text) => serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(&text).unwrap(),
+        };
         for (dirn, base, sib, exp) in [
             ("ab", "a.db", "b.db", "expected-ab.txt"),
             ("ba", "b.db", "a.db", "expected-ba.txt"),
@@ -947,7 +966,8 @@ fn main() {
             let work = tmp.join(format!("{}-{}.db", name, dirn));
             std::fs::copy(f.join(base), &work).unwrap();
             let theirs = verdicts.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
-            let (c, dump, admitted) = merge(&work, &f.join(sib), &theirs);
+            let their_lists = lists.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
+            let (c, dump, admitted) = merge(&work, &f.join(sib), &theirs, &their_lists);
             let want = std::fs::read_to_string(f.join(exp))
                 .unwrap()
                 .replace("\r\n", "\n");
