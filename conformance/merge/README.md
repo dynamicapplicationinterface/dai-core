@@ -89,7 +89,15 @@ the verdicts and does the rest itself, which is the part these vectors test:
   version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
   `rejected`; whatever the removed row superseded is a head again unless
   something else names it. Signed rows are placed before unsigned ones, so the
-  answer never depends on table order.
+  answer never depends on table order;
+- a row the copy holds with `_r_batch` unset, listed by a header the copy held
+  before the merge that is complete over its own rows (its `ok` in
+  `verdicts.json`, under its list in `lists.json` where it has one), is
+  signed, not pending: the merge sets its `_r_batch` to the lowest such
+  header before any row is placed (docs/format.md, merge-row-held-signed;
+  `merge-held-row-signed`);
+- a header the copy already holds under another list is rewritten to the list
+  it signed (merge-headers-rewritten; `merge-held-header-relabeled`).
 
 `merge-seal-stowaway`, `merge-seal-stowaway-other`, `merge-seal-tampered`,
 `merge-seal-lost-pointer`, `merge-seal-cross-table` and `merge-seal-outranks`

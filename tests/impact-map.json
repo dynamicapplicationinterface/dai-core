@@ -454,7 +454,9 @@
       "tests/credentials.spec.ts"
     ],
     "tests/cross-entity-parent.spec.ts": [
+      "src/cbor.ts",
       "src/identity.ts",
+      "src/replicated-batch.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
@@ -2230,7 +2232,9 @@
       "tsup.config.ts"
     ],
     "tests/parents-own-malformed.spec.ts": [
+      "src/cbor.ts",
       "src/identity.ts",
+      "src/replicated-batch.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
@@ -3218,7 +3222,9 @@
       "tsup.config.ts"
     ],
     "tests/session-export-meta.spec.ts": [
+      "src/cbor.ts",
       "src/identity.ts",
+      "src/replicated-batch.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
@@ -3235,6 +3241,7 @@
       "src/identity.ts",
       "src/kit.ts",
       "src/refusals.ts",
+      "src/replicated-batch.ts",
       "src/replicated-export.ts",
       "src/replicated-rows.ts",
       "src/replicated.ts",

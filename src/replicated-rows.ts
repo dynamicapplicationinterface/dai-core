@@ -12,9 +12,11 @@
  * text again from the other side; a module that reached for one of them would
  * be untestable in the other two.
  */
+import { encode as cborEncode, type CborValue } from "./cbor.js";
 import { showAuthorId } from "./identity.js";
+import type { BatchEntry } from "./replicated-batch.js";
 import { PARENTS_CAP, closedSessionsSql, parentsSql } from "./replicated.js";
-import { sessionIdOf } from "./session-id.js";
+import { sessionIdOf, sha256 } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
 export interface Rows {
@@ -945,6 +947,55 @@ function utf8Order(a: string, b: string): number {
 }
 
 /**
+ * The canonical bytes of a batch's rows (format version 1; the layout is held
+ * by tests/identity-vectors.spec.ts): a CBOR array of rows ordered by table,
+ * then `_r_seq`, each `[table, [replica, seq, lc, entity, parents, deleted,
+ * session|null], [[column, value]...]]`, the columns ordered by name.
+ * `_r_batch` is not in it: the batch is named after the rows, not before.
+ */
+export function canonicalRows(entries: readonly BatchEntry[]): Uint8Array {
+  const ordered = [...entries].sort((a, b) => utf8Order(a.table, b.table) || a.row._r_seq - b.row._r_seq);
+  return cborEncode(
+    ordered.map(({ table, row }) => [
+      table,
+      [
+        row._r_replica,
+        row._r_seq,
+        row._r_lc,
+        row._r_entity,
+        row._r_parents,
+        row._r_deleted,
+        row._r_session instanceof Uint8Array ? row._r_session : null,
+      ],
+      Object.keys(row.columns)
+        .sort(utf8Order)
+        .map((name) => [name, (row.columns[name] ?? null) as CborValue]),
+    ]),
+  );
+}
+
+/**
+ * The list a header this copy holds stores, when the header is complete here
+ * (docs/format.md, verify-complete): every row the list names found, as the
+ * header's author's row in the table listed, and the digest over them the
+ * header's. Otherwise null. Synchronous, for the merge, which may hold a
+ * transaction open; not a check of the signature, since the copy's own
+ * headers are not verified (equivocation-own-headers).
+ */
+function completeHere(db: Rows, tables: readonly string[], header: Record<string, unknown>): [string, number][] | null {
+  const covers = coveredRowsOf(header["covers"]);
+  if (!covers || !(header["digest"] instanceof Uint8Array)) return null;
+  const entries: BatchEntry[] = [];
+  for (const [table, seq] of covers) {
+    if (!tables.includes(table)) return null;
+    const found = db.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [header["author"], seq]);
+    if (found.length !== 1) return null;
+    entries.push({ table, row: readRow(found[0]!, authorColumnsOf(db, table)) });
+  }
+  return hex(sha256(canonicalRows(entries))) === hex(header["digest"]) ? covers : null;
+}
+
+/**
  * The `covers` a header stores: its rows as `[table, seq]`, the author being the
  * header's, ordered by table (UTF-8 bytes) and then seq, as JSON. By table as
  * well as seq, so a row is found where it was signed and nowhere else (cold
@@ -1078,6 +1129,8 @@ export function mergeFrom(
    */
   const hasBatchTable = (rows: Rows): boolean =>
     rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  // The headers this copy held before the merge: its own, sealed here or kept before.
+  const heldBefore = new Set(hasBatchTable(local) ? local.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => String(r["id"])) : []);
   const held = new Map<string, Uint8Array>(); // every header the sibling holds, by id
   const covering = new Map<string, string>(); // "table|author:seq" -> the lowest verified id listing it
   const covers = new Set<string>(); // "id|table|author:seq", every verified listing
@@ -1142,10 +1195,16 @@ export function mergeFrom(
        * travel with every copy (D160).
        */
       const isNew = local.all("SELECT 1 FROM _dai_batch WHERE id = ?", [header["id"]]).length === 0;
+      const signedList = JSON.stringify(verdict.covers);
       local.run(
         "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], JSON.stringify(verdict.covers)],
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], signedList],
       );
+      // A header this copy held already, under a relabeled list, is rewritten to
+      // the list it signed: the stored list is a cache of the signed one, and a
+      // cache that disagrees with what verified is the one that changes (the
+      // step 6 re-review).
+      if (!isNew) local.run("UPDATE _dai_batch SET covers = ? WHERE id = ? AND covers <> ?", [signedList, header["id"], signedList]);
       if (isNew) arrived.push({ id: header["id"] as Uint8Array, author: verdict.author, digest: header["digest"] as Uint8Array, covers: verdict.covers });
       // Rows are taken only through a header whose rows the sibling holds, as signed.
       if (!verdict.complete) continue;
@@ -1179,6 +1238,42 @@ export function mergeFrom(
           ]).length > 0,
       );
       if (reveals) reveal(h.author, hex(h.id));
+    }
+  }
+
+  /*
+   * A row this copy holds with `_r_batch` unset, listed by a header the copy
+   * held before the merge that is complete here, is signed, not pending: the
+   * save that wrote the header lost the row's pointer, or the rows were sealed
+   * again after. The merge sets the cache, to the lowest such header, before
+   * any row is placed, so a signed row arriving at that id, in any table, meets
+   * a signed row and does not outrank it (the step 6 re-review, silence A).
+   * Only the headers that list a pending row are digested.
+   */
+  if (heldBefore.size > 0) {
+    const pending = new Map<string, { table: string; replica: Uint8Array; seq: number }>();
+    for (const table of tables) {
+      for (const r of local.all(`SELECT _r_replica, _r_seq FROM "${table}" WHERE _r_batch IS NULL`)) {
+        const replica = r["_r_replica"] as Uint8Array;
+        pending.set(`${table}|${rowId(replica, Number(r["_r_seq"]))}`, { table, replica, seq: Number(r["_r_seq"]) });
+      }
+    }
+    const own = pending.size === 0
+      ? []
+      : local
+          .all("SELECT id, author, digest, covers FROM _dai_batch")
+          .filter((h) => heldBefore.has(hex(h["id"] as Uint8Array)))
+          .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
+    for (const header of own) {
+      const author = header["author"] as Uint8Array;
+      const listed = (coveredRowsOf(header["covers"]) ?? []).map(([table, seq]) => `${table}|${rowId(author, seq)}`);
+      if (!listed.some((key) => pending.has(key)) || !completeHere(local, tables, header)) continue;
+      for (const key of listed) {
+        const row = pending.get(key);
+        if (!row) continue;
+        local.run(`UPDATE "${row.table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL`, [header["id"], row.replica, row.seq]);
+        pending.delete(key);
+      }
     }
   }
 

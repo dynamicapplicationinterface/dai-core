@@ -543,6 +543,8 @@ def merge(
     sibling: sqlite3.Connection,
     verdicts: dict[str, str],
     lists: dict[str, str] | None = None,
+    own_verdicts: dict[str, str] | None = None,
+    own_lists: dict[str, str] | None = None,
 ) -> dict:
     """Union merge, taking only what a verified header lists (docs/format.md).
 
@@ -551,8 +553,13 @@ def merge(
     from it was not checked, and a header not checked is not signed. `lists`
     is, for a header made authentic by a list other than the one it stores,
     that list: what it lists and is kept under (#merge-headers-kept-list).
+    `own_verdicts` and `own_lists` are the same for the local copy's own
+    headers, against its own rows: which of them are complete here, and what
+    they list (#merge-row-held-signed).
     """
     lists = lists or {}
+    own_verdicts = own_verdicts or {}
+    own_lists = own_lists or {}
     tables = replicated_tables(local)
     result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
     refusals: dict[tuple[str, str, str], bytes] = {}  # (id, reason, author hex) -> author
@@ -627,6 +634,10 @@ def merge(
         if not well_formed_parents(r_parents)
     }
     tainted: set[str] = set()
+    # The headers this copy held before the merge: its own.
+    held_before = (
+        {bytes(hid).hex() for (hid,) in local.execute("SELECT id FROM _dai_batch")} if has_batches(local) else set()
+    )
     if has_batches(local) and has_batches(sibling):
         headers = sibling.execute(
             "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch"
@@ -657,6 +668,10 @@ def merge(
             )
             if new:
                 arrived.append(header)
+            else:
+                # Held here already, perhaps under a relabeled list: rewritten
+                # to the list it signed (#merge-headers-rewritten).
+                local.execute("UPDATE _dai_batch SET covers = ? WHERE id = ? AND covers <> ?", (header[8], header[0], header[8]))
             if verdict != "ok":
                 continue
             for key in listed:
@@ -681,6 +696,32 @@ def merge(
                 if mine & {seq for _table, seq in json.loads(other_covers)}:
                     reveal(header[1], bytes(header[0]).hex())
                     break
+
+    # A row this copy holds with _r_batch unset, listed by a header it held
+    # before the merge that is complete here, is signed, not pending: the merge
+    # sets the cache, to the lowest such header, before any row is placed, so
+    # a signed row arriving at that id meets a signed row (#merge-row-held-signed).
+    pending: dict[tuple[str, bytes, int], bytes | None] = {}
+    for table in tables:
+        for r_replica, r_seq in local.execute(f'SELECT _r_replica, _r_seq FROM "{table}" WHERE _r_batch IS NULL'):
+            pending[(table, bytes(r_replica), r_seq)] = None
+    if pending and held_before:
+        for hid_bytes, author, stored in sorted(
+            local.execute("SELECT id, author, covers FROM _dai_batch").fetchall(), key=lambda h: bytes(h[0]).hex()
+        ):
+            hid = bytes(hid_bytes).hex()
+            if hid not in held_before or own_verdicts.get(hid) != "ok":
+                continue
+            for table, seq in json.loads(own_lists.get(hid, stored)):
+                key = (table, bytes(author), seq)
+                if key in pending and pending[key] is None:
+                    pending[key] = hid_bytes
+        for (table, author, seq), hid_bytes in pending.items():
+            if hid_bytes is not None:
+                local.execute(
+                    f'UPDATE "{table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL',
+                    (hid_bytes, author, seq),
+                )
 
     # Signed means listed by an ok header, whatever the row says. Signed rows
     # are placed first, unsigned after, so table order never decides.
@@ -936,8 +977,8 @@ def check(name: str) -> list[str]:
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
-        copy = other.split(".")[0]
-        result = merge(local, sibling, verdicts.get(copy, {}), lists.get(copy, {}))
+        copy, mine = other.split(".")[0], into.split(".")[0]
+        result = merge(local, sibling, verdicts.get(copy, {}), lists.get(copy, {}), verdicts.get(mine, {}), lists.get(mine, {}))
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 

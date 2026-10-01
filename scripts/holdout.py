@@ -66,6 +66,12 @@ VERIFY = "merge-verify-refused"
 RELABEL = "merge-relabeled-list"
 CANON = "merge-canonical-order"
 EPARENT = "merge-equivocated-parent-plain"
+HELDROW = "merge-held-row-signed"
+HELDLIST = "merge-held-header-relabeled"
+OWNSEAT = "session-equivocated-own-seat-parent"
+NAMEDHIGH = "merge-row-batch-named-higher"
+ROSTERNAMES = "session-roster-names-equivocated"
+OTHERTABLE = "session-parent-in-another-table"
 
 SORT = "for key in sorted(refusals)\n"
 
@@ -318,7 +324,7 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         [("            for other_id, other_digest, other_covers in local.execute(", "            for other_id, other_digest, other_covers in sibling.execute(")],
     ),
     "outside-names-equivocated": (
-        "parent-equivocated-outside", "a roster or plain row naming an equivocated id as a parent is no head", [EPARENT],
+        "parent-equivocated-outside", "a roster or plain row naming an equivocated id as a parent is no head", [EPARENT, ROSTERNAMES],
         [("                if not self.unequivocal(r):\n                    continue\n",
           "                if not self.unequivocal(r) or self.names_equivocated(r):\n                    continue\n")],
     ),
@@ -337,6 +343,74 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "report-silent", "a row at an equivocated id naming another seat's version is reported SEAT_NOT_HELD", [SILENT],
         [("if self.names_equivocated(r) or not self.unequivocal(r):\n                continue", "if self.names_equivocated(r):\n                continue"),
          ('if bytes(p["_r_session"]) != bytes(r["_r_session"]):', 'if bytes(p["_r_session"]) != bytes(r["_r_session"]) and self.unequivocal(r):')],
+    ),
+    # ------------------------------------------------ the step 6 re-review's fix-up (1 October)
+    "held-row-pending": (
+        "merge-row-held-signed", "a held row with _r_batch unset is pending, whatever complete header the copy holds lists it", [HELDROW, "merge-seal-lost-pointer", AFTER],
+        [("    if pending and held_before:\n", "    if False:\n")],
+    ),
+    "held-header-kept-relabeled": (
+        "merge-headers-rewritten", "a header the copy held already keeps the list it held it under", [HELDLIST],
+        [('                local.execute("UPDATE _dai_batch SET covers = ? WHERE id = ? AND covers <> ?", (header[8], header[0], header[8]))\n', "                pass\n")],
+    ),
+    # The re-review's own probes, for anchors neither witness table named: each
+    # failed a fixture already, and is kept here so the witness stays named.
+    "equivocation-per-table": (
+        "equivocation-any-table", "one seq signed in two tables under different digests is not equivocation", ["session-equivocation-two-tables", PLAIN],
+        [("digests.setdefault((bytes(author), entry[1]), set())", "digests.setdefault((bytes(author), entry[0], entry[1]), set())"),
+         ("if len(digests[(author, seq)]) > 1}", "if len(digests[(author, table, seq)]) > 1}"),
+         ("                for _table, seq in json.loads(header[8])\n",
+          "                for _table, seq in [(t, (t, s)) for t, s in json.loads(header[8])]\n"),
+         ("if (bytes(header[1]), seq) not in equivocated_before", "if (bytes(header[1]), seq[1]) not in equivocated_before"),
+         ("if mine & {seq for _table, seq in json.loads(other_covers)}:", "if mine & {(t, s) for t, s in json.loads(other_covers)}:")],
+    ),
+    "third-reveals": (
+        "equivocated-third", "a third conflicting header at an id already equivocated reveals", ["session-equivocation-filed"],
+        [("                if (bytes(header[1]), seq) not in equivocated_before\n", "")],
+    ),
+    "row-batch-named-any": (
+        "merge-row-batch", "a signed row keeps the header it names when the sibling holds it, complete or not", ["merge-named-incomplete-header"],
+        [('keep = named if named is not None and f"{named}|{key}" in covers else cover', "keep = named if named is not None and named in held else cover")],
+    ),
+    "unsigned-held-any-table": (
+        "merge-row-unsigned", "an unsigned row the copy holds at its id in any table goes to placing", ["merge-seal-cross-table"],
+        [("            elif local.execute(\n                f'SELECT 1 FROM \"{table}\" WHERE _r_replica = ? AND _r_seq = ?',\n                (row[\"_r_replica\"], row[\"_r_seq\"]),\n            ).fetchone() is not None:",
+          "            elif any(local.execute(\n                f'SELECT 1 FROM \"{t}\" WHERE _r_replica = ? AND _r_seq = ?',\n                (row[\"_r_replica\"], row[\"_r_seq\"]),\n            ).fetchone() is not None for t in tables):")],
+    ),
+    "unsigned-collision-taken": (
+        "row-one-id", "an unsigned row at an id another table holds is placed", [NAMED],
+        [("            raise ValueError(f\"ROW_REJECTED: {row_id(row['_r_replica'], row['_r_seq'])} is a row of {other}\")", "            continue")],
+    ),
+    "revealing-incomplete-silent": (
+        "revealing-two-headers", "an incomplete kept header reveals nothing", ["session-equivocation-filed"],
+        [("            if new:\n                arrived.append(header)\n", "            if new and verdict == \"ok\":\n                arrived.append(header)\n")],
+    ),
+    "creator-seat-row-any-seq": (
+        "session-id-creator-row", "the creator's seat row is any seat row whose author has some seq hashing to its session", ["session-creator-by-seq"],
+        [('if s["_r_deleted"] == 0 and self.unequivocal(s) and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):',
+          'if s["_r_deleted"] == 0 and self.unequivocal(s) and any(session_id(s["_r_replica"], q["_r_seq"]) == bytes(s["_r_session"]) for q in self.rows.get("_dai_seat", []) if bytes(q["_r_replica"]) == bytes(s["_r_replica"])):')],
+    ),
+    "parent-any-table": (
+        "parent-other-entity", "a row of another table at the id a parent names is a version of its entity", [OTHERTABLE],
+        [('return [p for p in self.rows[table] if bytes(p["_r_entity"]) == bytes(row["_r_entity"]) and rid_of(p) in wanted]',
+          'return [p for t in self.rows for p in self.rows[t] if bytes(p["_r_entity"]) == bytes(row["_r_entity"]) and rid_of(p) in wanted]')],
+    ),
+    "parent-equivocated-admitted": (
+        "admitted-parent-equivocated", "a row naming an equivocated id as a parent is admitted when it otherwise would be", [OWNSEAT],
+        [("            and self.unequivocal(row)\n            and not self.names_equivocated(row)\n", "            and self.unequivocal(row)\n")],
+    ),
+    "row-batch-always-lowest": (
+        "merge-row-batch", "a signed row's _r_batch is the lowest complete kept header listing it, whatever it names", [NAMEDHIGH],
+        [('keep = named if named is not None and f"{named}|{key}" in covers else cover', "keep = cover")],
+    ),
+    "confirm-names-equivocated": (
+        "parent-equivocated-outside", "a confirm naming an equivocated id as a parent counts for nothing", [ROSTERNAMES],
+        [("                self.unequivocal(f)\n                and (session",
+          "                self.unequivocal(f)\n                and not self.names_equivocated(f)\n                and (session")],
+    ),
+    "close-names-equivocated": (
+        "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing", [ROSTERNAMES],
+        [("            and self.unequivocal(x)\n        ]", "            and self.unequivocal(x)\n            and not self.names_equivocated(x)\n        ]")],
     ),
 }
 
@@ -396,6 +470,43 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     "utf16-order": (
         "conv-utf8-order", "names ordered by UTF-16 code unit, not by their UTF-8 bytes", [CANON],
         [(r"function (utf8Order\d*)\(a, b\) \{", r"function \1(a, b) { return a < b ? -1 : a > b ? 1 : 0;")],
+    ),
+    # ------------------------------------------------ the step 6 re-review's fix-up (1 October)
+    # The admission and roster views are SQL the reader does not share, so the
+    # rules the reader holds out above are held out of the runtime too.
+    "seq-twice-allowed": (
+        "covers-seq-once", "a list naming one seq in two tables is a list", ["merge-seal-seq-twice"],
+        [(r"if \(new Set\(pairs\.map\(\(\[, seq\]\) => seq\)\)\.size !== pairs\.length\) return null;", "")],
+    ),
+    "held-row-pending-rt": (
+        "merge-row-held-signed", "a held row with _r_batch unset is pending, whatever complete header the copy holds lists it", [HELDROW, "merge-seal-lost-pointer", AFTER],
+        [(r"if \(heldBefore\.size > 0\) \{", "if (false) {")],
+    ),
+    "held-header-kept-relabeled-rt": (
+        "merge-headers-rewritten", "a header the copy held already keeps the list it held it under", [HELDLIST],
+        [(r'if \(!isNew\) local\.run\("UPDATE _dai_batch SET covers', 'if (false) local.run("UPDATE _dai_batch SET covers')],
+    ),
+    "parent-equivocated-admitted-rt": (
+        "admitted-parent-equivocated", "admitted and waiting rows may name an equivocated id as a parent", [OWNSEAT],
+        [(r" AND NOT \$\{namesEquivocated\d*\(row\)\}", "")],
+    ),
+    "row-batch-always-lowest-rt": (
+        "merge-row-batch", "a signed row's _r_batch is the lowest complete kept header listing it, whatever it names", [NAMEDHIGH],
+        [(r"const keep = named && covers\.has\(`\$\{named\}\|\$\{key\}`\) \? named : cover;", "const keep = cover;")],
+    ),
+    "confirm-names-equivocated-rt": (
+        "parent-equivocated-outside", "a confirm naming an equivocated id as a parent counts for nothing (_dai_confirmed)", [ROSTERNAMES],
+        [(r'WHERE \$\{(unequivocal\d*)\("f"\)\}', r'WHERE ${\1("f")} AND NOT ${namesEquivocated("f")}')],
+    ),
+    "close-names-equivocated-rt": (
+        "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing (_dai_closed, and late rows)", [ROSTERNAMES],
+        [(r'\$\{(closedBy\d*)\("x", closeCreator\)\} AND \$\{(unequivocal\d*)\("x"\)\}',
+          r'${\1("x", closeCreator)} AND ${\2("x")} AND NOT ${namesEquivocated("x")}')],
+    ),
+    "outside-names-equivocated-rt": (
+        "parent-equivocated-outside", "a roster, close or plain row naming an equivocated id as a parent is no head", [EPARENT, ROSTERNAMES],
+        [(r'WHERE \$\{(unequivocal\d*)\("r"\)\}(\s+AND NOT EXISTS \(SELECT 1 FROM \$\{q\} c,)',
+          r'WHERE ${\1("r")} AND NOT ${namesEquivocated("r")}\2')],
     ),
 }
 

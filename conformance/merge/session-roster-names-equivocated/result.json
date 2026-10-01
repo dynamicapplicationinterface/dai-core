@@ -1,0 +1,34 @@
+{
+  "what": "Ada confirms Bo in a seat X, then writes a later version of that confirm naming it; from a second copy of her store she signs a move at the first confirm's seq, which B holds. Bo writes a close of the session naming the first confirm's id. After either merge that id is equivocated: the first confirm counts for nothing, and the rows naming it, in the roster tables and the close, count like any other row. The later confirm seats Bo in X and is a head, and Bo's close closes the session and is a head, in both directions.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

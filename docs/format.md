@@ -17,6 +17,9 @@ A reader verifies each header it is given, takes through a merge only the
 rows a verified header covers, reports each thing it refuses and in whose
 name, and, in a session document, computes from the rows and headers alone
 which rows the document admits.
+<a id="arriving-sibling"></a>A reader treats bytes that arrive, a file or a
+batch, as a sibling copy and merges them into its own. It never opens them as
+its own copy, and never adopts a header they hold without verifying it.
 
 ## Identifiers
 
@@ -71,10 +74,13 @@ and these:
 | <a id="row-superseded"></a>`_r_superseded` | a display cache; derived, never carried, never read by any rule on this page |
 
 <a id="row-one-id"></a>An unsigned row at an `(author, seq)` that another table
-holds is a collision, refused as `ROW_REJECTED` (reported in `rejected`), not
-two rows. The collision rule applies only to unsigned rows: two signed rows at
-one `(author, seq)` in two tables are both taken, and under two headers with
-different digests they are [equivocation](#equivocation-any-table).
+holds is not a second row: a merge refuses it `BATCH_UNSIGNED` before placing,
+as it refuses every unsigned row ([merge-row-unsigned](#merge-row-unsigned)),
+unless the copy holds that id in the row's own table too, when placing rejects
+it ([merge-place-rejected](#merge-place-rejected)). Signed rows are one id per
+`(author, seq)` across tables: two signed rows at one `(author, seq)` in two
+tables are both taken, and under two headers with different digests they are
+[equivocation](#equivocation-any-table).
 
 ### Parents
 
@@ -244,6 +250,9 @@ local copy, in this order:
    <a id="merge-headers-kept-list"></a>The list it signed is the one that
    made it authentic ([tried in order](#verify-lists-tried)), and a kept
    header's stored `covers` is that list, not the one the sibling stored.
+   <a id="merge-headers-rewritten"></a>A header the local copy already holds
+   under another list is rewritten to the list it signed: the stored list is a
+   [cache](#covers-cache) of the signed one.
 2. <a id="merge-rows"></a>**Rows,** every row of every replicated table the
    sibling holds:
    - <a id="merge-row-malformed"></a>A malformed row is not taken. It is
@@ -271,6 +280,17 @@ local copy, in this order:
      in the name of the author id it carries; unless the local copy already
      holds a row at that id in that table, when the ordinary path decides (a
      duplicate, or a second row at one id, `rejected`).
+     <a id="merge-row-held-signed"></a>A row the local copy holds with
+     `_r_batch` unset is signed, not pending, when a complete header the copy
+     holds or receives lists it (its table, its author, its seq). For a header
+     the copy held before the merge, complete is over the copy's own rows, the
+     header unverified, as [its own headers](#equivocation-own-headers) are;
+     before any row is placed, the merge sets the row's `_r_batch` to the
+     lowest such header. A header received lists it through a row that
+     arrives the same, a duplicate, whose `_r_batch` the held row takes. Such
+     a row is not unsigned: a signed row at its id does not
+     [outrank](#merge-signed-outranks) it, and in another table the two are
+     both taken.
 3. <a id="merge-place"></a>**Placing,** signed rows first, then unsigned ones.
    <a id="merge-place-duplicate"></a>A row the copy already holds, identical,
    is a duplicate. <a id="merge-place-rejected"></a>A different row at an id
@@ -281,8 +301,9 @@ local copy, in this order:
    removed and the signed one takes its place, the removed id is reported in
    `rejected`, and whatever the removed row superseded is a head again unless
    something else names it. Since no merge takes an unsigned row, the one a
-   copy can hold is its own, pending: a save lost after it left reissues its
-   seq, and the signed row coming back takes the id.
+   copy can hold is its own, pending, listed by no complete header the copy
+   holds ([merge-row-held-signed](#merge-row-held-signed)): a save lost after
+   it left reissues its seq, and the signed row coming back takes the id.
    <a id="merge-signed-outranks-any-table"></a>The id is `(author, seq)`, so
    a signed row outranks an unsigned one at the same `(author, seq)` whatever
    table either is in.
@@ -291,7 +312,9 @@ local copy, in this order:
    `AUTHOR_EQUIVOCATED`.
 
 <a id="merge-no-adopt"></a>A merge MUST NOT adopt a seal nobody verified onto
-a row a copy holds pending. <a id="merge-counts"></a>Of the rows it places, a
+a row a copy holds pending; a header the copy held before the merge and that
+is complete over its rows is its own, and is
+[adopted](#merge-row-held-signed). <a id="merge-counts"></a>Of the rows it places, a
 merge counts as `applied` those the copy did not hold, as `duplicate` those it
 held already the same in `_r_lc`, `_r_entity`, `_r_parents`, `_r_deleted`,
 `_r_session` and every author column, and lists in `rejected` the
@@ -419,9 +442,11 @@ these hold:
 - <a id="admitted-role"></a>where the table carries a role (`author=creator`
   or `author=joiner`), its author is, or is not, the session's creator.
 
-<a id="parent-other-entity"></a>A parent of another entity, at an id not
-equivocated, is not a version of this row: it neither makes a row cross nor
-hides anything.
+<a id="parent-other-entity"></a>Parents name rows by `(author, seq)`, never
+entities, and a version of a row is a row of its own table and entity: a
+parent of another entity, or a row of another table at the id a parent names,
+at an id not equivocated, is not a version of this row: it neither makes a row
+cross nor hides anything.
 <a id="parent-equivocated-outside"></a>Admission is only a session author
 table's, so in the roster tables, the close and a plain document's tables a
 row naming an equivocated id as a parent counts like any other row, and only
@@ -480,7 +505,9 @@ the child's. <a id="report-silent"></a>A row waiting on a confirmation, a row
 for a void seat, a late row, and a row naming an equivocated id as a parent
 ([whatever else it meets](#admitted-parent-equivocated)) are reported
 nowhere; a row at an equivocated id is reported nowhere but as its author
-signing twice (`AUTHOR_EQUIVOCATED`), whatever else it meets.
+signing twice (`AUTHOR_EQUIVOCATED`), whatever else it meets. That covers the
+reports made from the row set after placing; a refusal made before placing, in
+steps 1 and 2 of a [merge](#merge), stands.
 
 <a id="equivocated-report"></a>`AUTHOR_EQUIVOCATED` is reported once per
 author per merge, for [equivocation](#equivocation) and [void
@@ -569,6 +596,8 @@ version, never a refactor (identity.md, binding rule 10).
 - Version 2: a list names each seq once, in any tables.
 - Version 2: deleted and superseded confirms count.
 - Version 2: roster heads partition by session, entity and author.
+- Version 2: a held row a complete header the copy holds lists is signed, and
+  a held header is rewritten to the list it signed.
 - Version 2: the order of `refusedBatches`, and the header
   `AUTHOR_EQUIVOCATED` is filed under, or no id.
 

@@ -1,10 +1,10 @@
 {
-  "what": "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers.",
+  "what": "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers. Merging B into A signs them there too: a row a complete header the copy holds lists is signed, and the merge sets its pointer to the lowest such header, so the copies end the same.",
   "cites": [
     "6",
     "T1-D7"
   ],
-  "converges": false,
+  "converges": true,
   "admitted": false,
   "stable": true,
   "ab": {

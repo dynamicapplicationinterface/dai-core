@@ -1,3 +1,4 @@
+import { createECDH } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, showAuthorId, signBytes } from "../src/identity.js";
@@ -68,6 +69,24 @@ async function person() {
   const pub = await rawPublicKey(keys.publicKey);
   const author = await authorIdOf(pub);
   return { keys, pub, author, shown: showAuthorId(author) };
+}
+
+/**
+ * A person whose key is a fixed scalar, so their author id, and every batch id
+ * over their rows, is the same on every run: for a test whose teeth depend on
+ * which of two ids sorts lower.
+ */
+async function fixedPerson(scalarHex: string) {
+  const ecdh = createECDH("prime256v1");
+  ecdh.setPrivateKey(Buffer.from(scalarHex, "hex"));
+  const pub = new Uint8Array(ecdh.getPublicKey());
+  const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
+  const jwk = { kty: "EC", crv: "P-256", x: b64(pub.subarray(1, 33)), y: b64(pub.subarray(33)), ext: true };
+  const curve = { name: "ECDSA", namedCurve: "P-256" };
+  const privateKey = await crypto.subtle.importKey("jwk", { ...jwk, d: b64(Buffer.from(scalarHex, "hex")) }, curve, true, ["sign"]);
+  const publicKey = await crypto.subtle.importKey("jwk", jwk, curve, true, ["verify"]);
+  const author = await authorIdOf(pub);
+  return { keys: { privateKey, publicKey }, pub, author, shown: showAuthorId(author) };
 }
 
 /** A copy of the document on a person's device, writing under their author id. */
@@ -259,14 +278,21 @@ test.describe("verification by signed row set (ruling #3)", () => {
     );
 
   test("the same rows sealed twice: both headers verify, both are kept, and the row keeps the one it names", async () => {
-    const ada = await person();
+    // A fixed key and entity, so the ids are the same every run.
+    const ada = await fixedPerson("1111111111111111111111111111111111111111111111111111111111111111");
     const adaCopy = copyFor(ada);
-    createEntity(adaCopy, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
+    createEntity(adaCopy, "moves", new Uint8Array(16).fill(0x11), { ply: 1, san: "e4" });
     const first = await signed(adaCopy, ada);
     // Sealed again after the save that held the first seal was lost: the same
-    // rows, a later clock, so another header and another id.
-    const again = await signBatch({ replica: ada.author, lc: first.lc + 1, entries: first.entries }, { document: DOC, keys: ada.keys });
-    expect(hexOf(again.id)).not.toBe(hexOf(first.id));
+    // rows, a later clock, so another header and another id. The first clock
+    // whose id sorts below the first's: the teeth (docs/format.md,
+    // merge-row-batch) are that the row keeps the header it names though a
+    // lower complete one lists it too.
+    let again = first;
+    for (let lc = first.lc + 1; hexOf(again.id) >= hexOf(first.id); lc += 1) {
+      again = await signBatch({ replica: ada.author, lc, entries: first.entries }, { document: DOC, keys: ada.keys });
+    }
+    expect(hexOf(again.id) < hexOf(first.id), "the header the row names is the higher id").toBe(true);
 
     const file = open();
     stageBatch(file, first, TABLES);

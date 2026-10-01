@@ -17,6 +17,7 @@ import { decode as cborDecode, encode as cborEncode, type CborValue } from "./cb
 import { authorIdOf, rawPublicKey, signBytes, verifySignature, type SubtleKey } from "./identity.js";
 import {
   authorColumnsOf,
+  canonicalRows,
   CARRIED_R_FIELDS,
   coveredRowsOf,
   coversText,
@@ -111,33 +112,9 @@ function utf8Order(a: string, b: string): number {
   return x.length - y.length;
 }
 
-/**
- * The canonical bytes of a batch's rows (format version 1; the layout is held
- * by tests/identity-vectors.spec.ts): a CBOR array of rows ordered by table,
- * then `_r_seq`, each `[table, [replica, seq, lc, entity, parents, deleted,
- * session|null], [[column, value]...]]`, the columns ordered by name.
- * `_r_batch` is not in it: the batch is named after the rows, not before.
- */
-export function canonicalRows(entries: readonly BatchEntry[]): Uint8Array {
-  const ordered = [...entries].sort((a, b) => utf8Order(a.table, b.table) || a.row._r_seq - b.row._r_seq);
-  return cborEncode(
-    ordered.map(({ table, row }) => [
-      table,
-      [
-        row._r_replica,
-        row._r_seq,
-        row._r_lc,
-        row._r_entity,
-        row._r_parents,
-        row._r_deleted,
-        row._r_session instanceof Uint8Array ? row._r_session : null,
-      ],
-      Object.keys(row.columns)
-        .sort(utf8Order)
-        .map((name) => [name, (row.columns[name] ?? null) as CborValue]),
-    ]),
-  );
-}
+// The canonical bytes of a batch's rows live beside the merge, which digests a
+// copy's own headers' rows synchronously (docs/format.md, merge-row-held-signed).
+export { canonicalRows };
 
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   const subtle = globalThis.crypto?.subtle;

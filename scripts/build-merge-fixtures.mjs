@@ -464,9 +464,8 @@ const VECTORS = [
     name: "merge-seal-lost-pointer",
     cites: ["6", "T1-D7"],
     what:
-      "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers.",
+      "A holds its rows with no batch named (the save that wrote their pointers was lost) and two headers that each list them (sealed again after). Merging A into B signs the rows under the lower id and keeps both headers. Merging B into A signs them there too: a row a complete header the copy holds lists is signed, and the merge sets its pointer to the lowest such header, so the copies end the same.",
     authors: true,
-    converges: false,
     fill: async (a, b) => {
       createEntity(a, "cases", E1, { title: "one", status: "open", weight: null });
       createEntity(a, "cases", E2, { title: "two", status: "open", weight: null });
@@ -1304,10 +1303,9 @@ const VECTORS = [
   {
     name: "session-seat-not-held-after-merge",
     session: true,
-    converges: false,
     cites: ["6", "T1-D29"],
     what:
-      "B holds Ada's move naming no seat, with its batch unset (the save that wrote its pointer was lost), and the header H that lists it. B into A takes the move through H, so its _r_batch after the merge is H, and SEAT_NOT_HELD is filed there, not under the no id the row carried: after the SEAT_NOT_HELD of Bo's move, whose header sorts below H.",
+      "B holds Ada's move naming no seat, with its batch unset (the save that wrote its pointer was lost), and the header H that lists it. B into A takes the move through H, so its _r_batch after the merge is H, and SEAT_NOT_HELD is filed there, not under the no id the row carried: after the SEAT_NOT_HELD of Bo's move, whose header sorts below H. A into B sets B's own pointer to H too, since a complete header B holds lists the move, so the copies end the same.",
     fill: async (a, b) => {
       const session = await seated(a, b);
       let i = 0;
@@ -1611,6 +1609,184 @@ CREATE TABLE cards (
       }
     },
   },
+
+  /*
+   * The step 6 re-review's fix-up (1 October): a fixture for each silence it
+   * ruled on, and a witness for each MEDIUM. Each rule's hold-out is named in
+   * scripts/holdout.py, and each vector asserts the ruled answer (`expect`).
+   */
+  {
+    name: "merge-held-row-signed",
+    authors: true,
+    cites: ["6", "T1-D13"],
+    what:
+      "A, Ada's copy, holds her note at seq 1 with _r_batch unset (the save that wrote its pointer was lost) and her header H that lists it, complete on A. B holds, from a second copy of her store, her case at seq 1 under H2. A held row that a complete header the copy holds lists is signed, not pending: merging B into A sets the note's _r_batch to H, and the signed case does not replace it; both rows are kept in both directions, the id is equivocated, and each merge reports AUTHOR_EQUIVOCATED in Ada's name. The copies end the same.",
+    fill: async (a, b) => {
+      const fork = await forkOf(a, ADA, SCHEMA);
+      createEntity(a, "notes", E1, { body: "Ada's note, its pointer lost" });
+      await sealAll(a, ADA);
+      withoutTriggers(a, ["notes__sealed_once"], () => a.run("UPDATE notes SET _r_batch = NULL WHERE _r_replica = ?", [ADA.author]));
+      createEntity(fork, "cases", E2, { title: "Ada's case at the note's seq", status: "open", weight: null });
+      await exchange(b, fork, ADA);
+      fork.done();
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const refused = run.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+        if (refused.join() !== "Ada AUTHOR_EQUIVOCATED") return `${direction}: refused [${refused.join(", ")}], not Ada's AUTHOR_EQUIVOCATED alone`;
+        if (run.result.rejected.length > 0) return `${direction}: rejected ${run.result.rejected.join(", ")}`;
+      }
+      const note = ab.dump.split("\n").find((line) => line.startsWith("Ada's note"));
+      if (!note || note.split("\t").includes("nil")) return `B into A: the note is [${note}], its _r_batch not set to H`;
+    },
+  },
+  {
+    name: "merge-held-header-relabeled",
+    authors: true,
+    cites: ["6", "T1-D13"],
+    what:
+      "A holds Ada's header H over her case and her note with its stored list relabeled to the case alone, and both rows naming H; B holds H under the list she signed. A header the copy already holds under another list is rewritten to the list it signed when a merge keeps it: merging B into A stores H's covers as the case and the note. Merging A into B keeps B's as it was, so the copies end the same.",
+    fill: async (a, b) => {
+      const path = join(out, "scratch-held-relabel.db");
+      const src = open(path);
+      asReplica(src, ADA.author);
+      createEntity(src, "cases", E1, { title: "listed", status: "open", weight: null });
+      createEntity(src, "notes", E2, { body: "listed too" });
+      await sealAll(src, ADA);
+      const [h] = headersListing(src, ADA.author, "cases", 1);
+      carry(a, src, [h]);
+      carry(b, src, [h]);
+      a.run("UPDATE _dai_replica SET seq = 2, lc = 2");
+      a.run("UPDATE _dai_batch SET covers = ? WHERE lower(hex(id)) = ?", ['[["cases",1]]', h]);
+      src.close();
+      rmSync(path);
+      createEntity(b, "cases", id(0x33), { title: "Bo's", status: "open", weight: null });
+      await sealAll(b, BO);
+    },
+    expect: ({ ab }) => {
+      if (!ab.dump.includes('\t[["cases",1],["notes",2]]\n')) return "B into A: A's H is not rewritten to the list it signed";
+    },
+  },
+  {
+    name: "session-equivocated-own-seat-parent",
+    session: true,
+    cites: ["6", "T1-D13"],
+    what:
+      "Ada moves for her own seat on A and then writes the move's next version, naming it, for the same seat; from a second copy of her store she signs a close at the first move's seq, which B holds. The first move's id is equivocated after either merge. Its next version names an equivocated id as a parent, though the row that id holds here is its own seat's earlier version in its own session: it is not admitted, not a head and not reported, in both directions. A reader admitting a row whose equivocated parent would otherwise be a version it may replace shows the second move.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const fork = await forkOf(a, ADA);
+      const first = createEntity(a, "moves", id(0x81), { seat: SEAT_W, san: "e4" }, session);
+      const next = changeEntity(a, "moves", id(0x81), { seat: SEAT_W, san: "e4, again" }, session);
+      // The teeth: the next version names the first, its own seat's, alone.
+      if (next._r_parents !== JSON.stringify([`${hexOf(ADA.author)}:${first._r_seq}`])) throw new Error(`session-equivocated-own-seat-parent: the next version names ${next._r_parents}`);
+      await sealAll(a, ADA);
+      createEntity(fork, "_dai_close", id(0x91), {}, session);
+      await exchange(b, fork, ADA);
+      fork.done();
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const refused = run.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+        if (refused.join() !== "Ada AUTHOR_EQUIVOCATED") return `${direction}: refused [${refused.join(", ")}], not Ada's AUTHOR_EQUIVOCATED alone`;
+        const moves = sectionOf(run.admitted, "moves");
+        if (moves.length > 0) return `${direction}: admitted moves are [${moves.join(" | ")}]`;
+        if (sectionOf(run.admitted, "equivocated").length !== 2) return `${direction}: equivocated is [${sectionOf(run.admitted, "equivocated").join(" | ")}], not the first move's id in two tables`;
+      }
+    },
+  },
+  {
+    name: "merge-row-batch-named-higher",
+    authors: true,
+    cites: ["6", "T1-D7"],
+    what:
+      "B holds Ada's note under two complete headers, the same rows sealed twice after a lost save, and the note names the one with the higher id. A row listed by a complete kept header keeps the header it names when that header is complete and kept: merging B into A gives the note the higher id, not the lowest complete header that lists it.",
+    fill: async (a, b) => {
+      createEntity(a, "cases", E1, { title: "Ada's", status: "open", weight: null });
+      await sealAll(a, ADA);
+      const path = join(out, "scratch-named-higher.db");
+      const src = open(path);
+      asReplica(src, ADA.author);
+      src.run("UPDATE _dai_replica SET seq = 5, lc = 5");
+      createEntity(src, "notes", id(0x35), { body: "sealed twice" });
+      const [batch] = pendingBatches(src, ADA.author, TABLES);
+      const first = await signBatch(batch, { document: DOC, sign: keptSigner(ADA) });
+      const again = await signBatch({ ...batch, lc: batch.lc + 1 }, { document: DOC, sign: keptSigner(ADA) });
+      const [low, high] = [first, again].sort((x, y) => (hexOf(x.id) < hexOf(y.id) ? -1 : 1));
+      // The teeth: the header the row names sorts above another complete one listing it.
+      if (!(hexOf(low.id) < hexOf(high.id))) throw new Error("merge-row-batch-named-higher: the two headers have one id");
+      holdHeader(b, first);
+      holdHeader(b, again);
+      const row = src.all("SELECT * FROM notes")[0];
+      row._r_batch = high.id;
+      const names = Object.keys(row);
+      b.run(`INSERT INTO notes (${names.map((n) => `"${n}"`).join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => row[n]));
+      b.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [ADA.author]);
+      src.close();
+      rmSync(path);
+      namedHigher.id = hexOf(high.id);
+    },
+    expect: ({ ab }) => {
+      const note = ab.dump.split("\n").find((line) => line.startsWith("sealed twice\t"));
+      if (!note || note.split("\t").at(-1) !== namedHigher.id) return `B into A: the note is [${note}], not under the header it names, ${namedHigher.id}`;
+    },
+  },
+  {
+    name: "session-roster-names-equivocated",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Ada confirms Bo in a seat X, then writes a later version of that confirm naming it; from a second copy of her store she signs a move at the first confirm's seq, which B holds. Bo writes a close of the session naming the first confirm's id. After either merge that id is equivocated: the first confirm counts for nothing, and the rows naming it, in the roster tables and the close, count like any other row. The later confirm seats Bo in X and is a head, and Bo's close closes the session and is a head, in both directions.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const fork = await forkOf(a, ADA);
+      confirmSeat(a, session, SEAT_X, BO.author, id(0x7a));
+      const k = a.all("SELECT seq FROM _dai_replica")[0].seq;
+      const named = JSON.stringify([`${hexOf(ADA.author)}:${k}`]);
+      raw(a, "_dai_confirm", id(0x7a), { seat: SEAT_X, holder: BO.author }, session, named);
+      await sealAll(a, ADA);
+      const move = createEntity(fork, "moves", id(0x84), { seat: SEAT_W, san: "d4" }, session);
+      if (move._r_seq !== k) throw new Error(`session-roster-names-equivocated: the fork's move is at ${move._r_seq}, not the confirm's ${k}`);
+      await exchange(b, fork, ADA);
+      fork.done();
+      raw(b, "_dai_close", id(0x92), {}, session, named);
+      await sealAll(b, BO);
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const refused = run.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author} ${r.reason}`);
+        if (refused.join() !== "Ada AUTHOR_EQUIVOCATED") return `${direction}: refused [${refused.join(", ")}], not Ada's AUTHOR_EQUIVOCATED alone`;
+        if (!sectionOf(run.admitted, "holders").some((line) => line.endsWith(`\t${hexOf(SEAT_X)}\t${hexOf(BO.author)}`))) return `${direction}: Bo does not hold X`;
+        if (sectionOf(run.admitted, "closed").length !== 1) return `${direction}: closed is [${sectionOf(run.admitted, "closed").join(" | ")}]`;
+        if (sectionOf(run.admitted, "_dai_confirm").length !== 2) return `${direction}: confirm heads are [${sectionOf(run.admitted, "_dai_confirm").join(" | ")}], not Bo's and the later version`;
+        if (!sectionOf(run.admitted, "_dai_close").some((line) => line.startsWith(hexOf(BO.author)))) return `${direction}: Bo's close is not a head`;
+      }
+    },
+  },
+  {
+    name: "session-parent-in-another-table",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Bo, holding the open seat, writes two moves for it: one of entity 0x51, the entity of Ada's creator's seat row, naming that _dai_seat row (its seat column Ada's seat) as its parent; one of entity 0x61, his binding's entity, naming his binding. Parents name rows by (author, seq), and a version of a row is a row of its own table and entity, so neither named row is a version of a move: neither move crosses a seat or hides anything. Both are admitted, nothing is reported, and the seat row and the binding are still heads.",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      const seatRow = a.all("SELECT _r_seq AS s FROM _dai_seat WHERE _r_replica = ? AND seat = ?", [ADA.author, SEAT_W])[0].s;
+      const binding = b.all("SELECT _r_seq AS s FROM _dai_binding WHERE _r_replica = ?", [BO.author])[0].s;
+      raw(b, "moves", id(0x51), { seat: SEAT_OPEN, san: "e5" }, session, JSON.stringify([`${hexOf(ADA.author)}:${seatRow}`]));
+      raw(b, "moves", id(0x61), { seat: SEAT_OPEN, san: "Nc6" }, session, JSON.stringify([`${hexOf(BO.author)}:${binding}`]));
+      await sealAll(b, BO);
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        if (run.result.refusedBatches.length > 0) return `${direction}: reported ${run.result.refusedBatches.map((r) => r.reason).join(", ")}`;
+        const moves = sectionOf(run.admitted, "moves");
+        if (moves.length !== 2 || moves.some((line) => !line.startsWith(hexOf(BO.author)))) return `${direction}: admitted moves are [${moves.join(" | ")}], not Bo's two`;
+        if (sectionOf(run.admitted, "_dai_binding").length !== 1) return `${direction}: Bo's binding is not a head`;
+        if (!sectionOf(run.admitted, "_dai_seat").includes(`${hexOf(ADA.author)}:1\t0`)) return `${direction}: Ada's creator's seat row is not a head`;
+      }
+    },
+  },
 ];
 
 /**
@@ -1641,10 +1817,14 @@ function sectionOf(dump, name) {
 
 /** merge-report-order's ruled answer, which depends on the ids its fill makes. */
 const reportOrder = {};
+/** merge-row-batch-named-higher's named header, the higher of its two. */
+const namedHigher = {};
 
 /** The session vectors' seats: Ada's own, and the open one Bo asks for. */
 const SEAT_W = id(0xa1);
 const SEAT_OPEN = id(0xb1);
+/** A seat Ada never minted, which a confirm names: a confirm is not checked against her seats. */
+const SEAT_X = id(0xb2);
 /** The move whose header's id falls between session-equivocation-filed's two revealing headers (found by trying moves in order). */
 const BETWEEN_SAN = "h3";
 
@@ -1945,7 +2125,15 @@ the verdicts and does the rest itself, which is the part these vectors test:
   version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
   \`rejected\`; whatever the removed row superseded is a head again unless
   something else names it. Signed rows are placed before unsigned ones, so the
-  answer never depends on table order.
+  answer never depends on table order;
+- a row the copy holds with \`_r_batch\` unset, listed by a header the copy held
+  before the merge that is complete over its own rows (its \`ok\` in
+  \`verdicts.json\`, under its list in \`lists.json\` where it has one), is
+  signed, not pending: the merge sets its \`_r_batch\` to the lowest such
+  header before any row is placed (docs/format.md, merge-row-held-signed;
+  \`merge-held-row-signed\`);
+- a header the copy already holds under another list is rewritten to the list
+  it signed (merge-headers-rewritten; \`merge-held-header-relabeled\`).
 
 \`merge-seal-stowaway\`, \`merge-seal-stowaway-other\`, \`merge-seal-tampered\`,
 \`merge-seal-lost-pointer\`, \`merge-seal-cross-table\` and \`merge-seal-outranks\`

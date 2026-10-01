@@ -1,10 +1,10 @@
 {
-  "what": "B holds Ada's move naming no seat, with its batch unset (the save that wrote its pointer was lost), and the header H that lists it. B into A takes the move through H, so its _r_batch after the merge is H, and SEAT_NOT_HELD is filed there, not under the no id the row carried: after the SEAT_NOT_HELD of Bo's move, whose header sorts below H.",
+  "what": "B holds Ada's move naming no seat, with its batch unset (the save that wrote its pointer was lost), and the header H that lists it. B into A takes the move through H, so its _r_batch after the merge is H, and SEAT_NOT_HELD is filed there, not under the no id the row carried: after the SEAT_NOT_HELD of Bo's move, whose header sorts below H. A into B sets B's own pointer to H too, since a complete header B holds lists the move, so the copies end the same.",
   "cites": [
     "6",
     "T1-D29"
   ],
-  "converges": false,
+  "converges": true,
   "admitted": true,
   "stable": true,
   "ab": {
