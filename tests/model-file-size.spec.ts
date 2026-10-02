@@ -16,14 +16,11 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 144,370 bytes: identity step 6's D134 and D165, ruled 28 September. The
- * file had grown to its ceiling (144,213) under the budget below; D134's
- * session argument on every write was paid for in place, and D165 bought 157
- * bytes more: a seat the creator confirmed to two copies is void and
- * contested on every copy, read from `_dai_contested` with its `voided`
- * column, whose repair is a new game rather than reseat. What it buys is an
- * author whose app shows that seat as the contest it is, instead of a joiner
- * waiting forever on a confirmation that can never come.
+ * 145,000 bytes: the file's size on 2 October, 144,301, rounded up to the
+ * next thousand (identity step 7b). Not a raise: step 7a's rebuild of the
+ * examples brought the file down to 143,414 under the 144,370 identity step 6
+ * took for D165, and step 7b's two rules (D170's data-dai-write mark, D177's
+ * dai:kit-merged event) left it under that.
  *
  * Before that, 141,386 bytes: identity step 5's seat model, ruled 24 September. It bought
  * 5,936 bytes: IDENTITY-SEAT-CONFIRMED in place of the withdrawn first-signer
@@ -46,7 +43,7 @@ import { RECIPE } from "../src/recipe.js";
  * invisible to the person, unreproducible on a desk, and routine with a live
  * opponent.
  */
-const BUDGET_BYTES = 144_370;
+const BUDGET_BYTES = 145_000;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;

@@ -5163,6 +5163,10 @@ own process, with the reason written where the number is
 (`tests/model-file-size.spec.ts`). **Step 7 reclaims it:** its rebuild of the
 examples on the kit's seats shrinks what the model file embeds, and the
 budget comes down to the new size in that commit.
+**Reclaimed** 2 October, step 7b: step 7a brought the file to 143,414; after
+step 7b's D170 and D177 rules it is 144,301, under 144,370, and `BUDGET_BYTES`
+is 145,000 (the size rounded up to the next thousand), the D165 reason text
+removed.
 Built as `775f168`: one confirm per
 seat per creator. `_dai_voided` holds the seats a creator confirmed to two
 different copies; `_dai_holder` seats nobody there and no longer orders by seq;
