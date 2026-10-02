@@ -4434,6 +4434,48 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D176 — Rules on the batch format page with no named witness
+
+*Status: open, filed 1 October from the step 6 re-review's fix-up. Not
+blocking step 7.* Of the 152 anchors of `docs/format.md` the step 6 re-review
+audited, 96 were named by no witness table. The fix-up classified each
+(`docs/handoff-2026-10-01.md`, "The 96 unnamed anchors"): 44 are definitions,
+16 are rules a hold-out in `scripts/holdout.py` now names a witness for, and
+these 36 are rules with none:
+
+- The row: `row-lc` (the clock decides no admission), `row-superseded`
+  (no rule reads the flag), `parents-not-taken`.
+- The batch, all host-side, with TypeScript specs and no recorded hold-out:
+  `batch-seal`, `batch-per-leave`, `floor` (`tests/left-floor.spec.ts`),
+  `floor-honest-reseal`, `publish-after-save`.
+- Signature: `unsigned-pub` (`tests/signed-batch.spec.ts` only; no vector
+  fails without it), `att-stays-unsigned`.
+- Covers and verification: `covers-table`, `verify-complete`,
+  `verify-incomplete-kept`.
+- Merge: `merge-headers` (batch id order; a header not authentic not kept),
+  `merge-row-signed`, `merge-place-duplicate`, `merge-place-rejected` (a
+  second row at an id in the same table; its other-table half is witnessed),
+  `merge-no-adopt`, `equivocation-headers-kept`.
+- Session admission: `session-deterministic`, `confirm-versions-count`,
+  `void`, `holders`, `confirm-seat-unchecked` (a fixture reaches it,
+  `session-roster-names-equivocated`, whose seat X Ada never minted; no
+  hold-out), `admitted-not-equivocated`, `admitted-member` and `admitted-role`
+  (no vector has an unseated author table or an author role), `heads-author-table`,
+  `waiting`, `void-row`.
+- Reports: `equivocated-filed-no-id`, which no merge reaches while a void
+  rests only on what `void-rests-on` names, so it can have no fixture witness.
+- Canonical CBOR, TypeScript specs only (`tests/identity-vectors.spec.ts`,
+  `tests/cbor.spec.ts`), no recorded hold-out: `cbor-integer`, `cbor-unsafe`,
+  `cbor-float`, `cbor-infinity`.
+- Versions: `version-declared` (`tests/format-version-mount.spec.ts`).
+
+**Fix:** a witness for each, the way the two witness passes made them: a
+fixture or a spec the rule's hold-out fails, the hold-out in
+`scripts/holdout.py` (or, for a TypeScript witness, the removal run and put
+back, and named in the handoff). The page line added in the fix-up,
+`arriving-sibling` (a reader merges arriving bytes and never opens them as
+its own copy), is host-side and joins this list.
+
 #### D174 — `mailbox-link-e2e.spec.ts` runs over 15 minutes on WebKit, on one worker
 
 *Status: open, filed 30 September from CI. Worked around in CI, not fixed:
