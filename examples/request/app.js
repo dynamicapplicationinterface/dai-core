@@ -226,6 +226,7 @@ function drawQuestion(question, s, request) {
     for (const version of answers.versions) {
       const b = document.createElement("button");
       b.type = "button";
+      b.dataset.daiWrite = "";
       b.className = "quiet";
       b.textContent = version.body;
       b.disabled = !canAnswer;
@@ -250,6 +251,7 @@ function drawQuestion(question, s, request) {
     const box = document.createElement("textarea");
     box.id = `answer-${question.id}`;
     box.rows = 3;
+    box.dataset.daiWrite = "";
     box.maxLength = 2000;
     box.value = drafts.get(question.id) ?? answer?.body ?? "";
     box.setAttribute("aria-label", `Answer to: ${question.prompt}`);
@@ -257,6 +259,7 @@ function drawQuestion(question, s, request) {
     row.className = "choices saving";
     const save = document.createElement("button");
     save.type = "button";
+    save.dataset.daiWrite = "";
     const state = document.createElement("span");
     state.className = "saved";
     // Redrawn on every keystroke without rebuilding the box, so typing is never
@@ -299,6 +302,7 @@ function drawQuestion(question, s, request) {
   if (s.isWriter && !s.closed && !s.answererJoined) {
     const remove = document.createElement("button");
     remove.type = "button";
+    remove.dataset.daiWrite = "";
     remove.className = "link";
     remove.textContent = "Remove";
     remove.setAttribute("aria-label", `Remove question: ${question.prompt}`);

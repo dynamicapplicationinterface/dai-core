@@ -217,6 +217,7 @@ function drawBoard(game, st) {
   st.board.forEach((mark, cell) => {
     const b = document.createElement("button");
     b.type = "button";
+    b.dataset.daiWrite = "";
     b.className = "cell" + (st.line?.includes(cell) ? " win" : "");
     b.textContent = mark ?? "";
     b.setAttribute("aria-label", mark ? `Square ${cell + 1}, ${mark}` : `Square ${cell + 1}, empty`);
@@ -270,6 +271,7 @@ function drawCollision(game, st) {
   for (const m of c.candidates) {
     const b = document.createElement("button");
     b.type = "button";
+    b.dataset.daiWrite = "";
     b.textContent = `Keep square ${m.cell + 1}`;
     b.disabled = !st.seats.member;
     b.addEventListener("click", () => {
@@ -295,6 +297,7 @@ function drawNamesConflict(game) {
   for (const v of versions) {
     const b = document.createElement("button");
     b.type = "button";
+    b.dataset.daiWrite = "";
     b.textContent = `${v.x_name} v ${v.o_name}`;
     b.addEventListener("click", () => {
       // A change names every current version as its parent, so it settles it.

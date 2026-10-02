@@ -88,7 +88,7 @@ function renderConflict(st){
  $('conflict-title').textContent=who+' moved on two copies at the same turn.';
  $('conflict-detail').textContent='Both moves were legal, so neither copy can pick one for you. Keep the move that should stand; the other is set aside and any moves that followed it are dropped.';
  const choices=$('conflict-choices');choices.replaceChildren();
- for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. The other board hears about it by itself.');}));choices.append(b);}
+ for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.dataset.daiWrite='';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. The other board hears about it by itself.');}));choices.append(b);}
 }
 /**
  * The contested-seat state, rendered on the board like a conflict — a condition
@@ -148,7 +148,7 @@ function renderTurnBanner(st,{mine,joined,myTurn,blocked}){
 function renderNames(g){
  const banner=$('names-banner');banner.hidden=!g.names_conflicted;if(banner.hidden)return;
  const choices=$('names-choices');choices.replaceChildren();
- for(const v of store.nameVersions(g)){const b=element('button','button small');b.type='button';b.textContent=(v.white_name||'White')+' vs '+(v.black_name||'Black');b.addEventListener('click',run(()=>{store.keepNames(v.white_name,v.black_name);notify('Names settled.');}));choices.append(b);}
+ for(const v of store.nameVersions(g)){const b=element('button','button small');b.type='button';b.dataset.daiWrite='';b.textContent=(v.white_name||'White')+' vs '+(v.black_name||'Black');b.addEventListener('click',run(()=>{store.keepNames(v.white_name,v.black_name);notify('Names settled.');}));choices.append(b);}
 }
 /**
  * Which game this board is, and whether the other player is really in it.

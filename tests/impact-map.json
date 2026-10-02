@@ -2598,6 +2598,19 @@
       "tests/push-e2e.spec.ts",
       "tests/relay-memory.ts"
     ],
+    "tests/read-only-writes.spec.ts": [
+      "apps/runner/",
+      "conformance/signing-key.pem",
+      "examples/request/",
+      "examples/tic-tac-toe/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/read-only-writes.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/rebuild-refused.spec.ts": [
       "apps/runner/",
       "src/bridge.ts",

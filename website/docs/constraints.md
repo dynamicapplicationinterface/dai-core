@@ -422,7 +422,7 @@ An open seat nobody has been confirmed in, asked for by two or more different co
 
 **Applies to** session. **Enforcement:** refused at run time; not checked by anything.
 
-Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which the closer's later rows are not admitted. It binds only the closer, so offer no one a write in a closed session. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), never the close table: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE\_NOT\_PERMITTED; hide or disable the control for them.
+Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which the closer's later rows are not admitted. It binds only the closer, so offer no one a write in a closed session, as on a read-only mount (IDENTITY-BOOT-WRITES). Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), never the close table: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE\_NOT\_PERMITTED; hide or disable the control for them.
 
 **Why.** A close binds its author by their own rows, never a clock, so no close removes another person's rows. Folding it into "resign" would end a session the other person had not finished with.
 
@@ -600,7 +600,7 @@ When this device made a new key and its library says it wrote the document befor
 
 **Applies to** passable, session. **Enforcement:** refused at run time.
 
-Put any shared write an application makes as it opens (a first practice board, taking a seat) inside `window.daiKit.whenWritable(fn)`, and draw first. On a mount that cannot write (its rules were refused, or never arrived) the write waits instead of throwing, and the page still shows what it holds.
+Put any shared write an application makes as it opens (a first practice board, taking a seat) inside `window.daiKit.whenWritable(fn)`, and draw first. On a mount that cannot write (its rules were refused or never arrived, or its batch format is not this host's) the write waits instead of throwing, and the page still shows what it holds. Mark every control that writes shared rows `data-dai-write`; on such a mount the kit disables each one, so the page offers no write it would refuse.
 
 **Why.** A read-only mount is how a document opens when its host cannot vouch for writes. A boot write that throws there stops the page drawing at all, and the person sees an error instead of their document.
 

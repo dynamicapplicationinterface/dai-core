@@ -25,7 +25,7 @@
     <header>
       <h1>Request</h1>
       <select id="request-list" aria-label="Request"></select>
-      <button id="compose" type="button" class="quiet small" hidden>New request</button>
+      <button id="compose" type="button" class="quiet small" data-dai-write hidden>New request</button>
     </header>
 
     <p id="notice" class="notice" role="status" hidden></p>
@@ -45,13 +45,13 @@
       <div id="seat" class="panel" hidden>
         <p id="seat-text"></p>
         <div class="choices">
-          <button id="reseat" type="button" hidden>Send a fresh link</button>
+          <button id="reseat" type="button" data-dai-write hidden>Send a fresh link</button>
         </div>
       </div>
 
       <ol id="questions" class="questions"></ol>
 
-      <form id="add-question" class="add" autocomplete="off" hidden>
+      <form id="add-question" class="add" autocomplete="off" data-dai-write hidden>
         <label for="prompt">Add a question</label>
         <div class="row">
           <input id="prompt" required maxlength="280" placeholder="e.g. Which start date works for you?" />
@@ -60,12 +60,12 @@
       </form>
 
       <div class="actions">
-        <button id="submit" type="button" hidden>Send answers back</button>
-        <button id="close" type="button" class="quiet" hidden>Close request</button>
+        <button id="submit" type="button" data-dai-write hidden>Send answers back</button>
+        <button id="close" type="button" class="quiet" data-dai-write hidden>Close request</button>
       </div>
     </section>
 
-    <form id="new-request" class="panel" autocomplete="off" hidden>
+    <form id="new-request" class="panel" autocomplete="off" data-dai-write hidden>
       <h2>New request</h2>
       <label>Your name <input id="new-from" required maxlength="60" placeholder="e.g. Jordan Lee" /></label>
       <label>Title <input id="new-title" required maxlength="80" placeholder="e.g. Onboarding details" /></label>

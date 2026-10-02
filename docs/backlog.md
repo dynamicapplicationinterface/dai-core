@@ -4419,8 +4419,18 @@ plaintext probe no ciphertext spells by chance: a long, distinctive move text
 
 #### D170 — A read-only mount still offers the application's writes
 
-*Status: open; lands in step 7, with the rebuild of the examples. Filed 28
-September, seen on the screen while building D108.* A copy this host mounts
+*Status: **landed** 2 October, step 7b. The application marks every control
+that writes shared rows `data-dai-write`; when `dai.replicated.writable()`
+answers false the kit disables each one (every field of a marked form, `inert`
+for an element that cannot be disabled) and keeps it disabled through the
+application's own redraws. Chess, tic-tac-toe and request are marked;
+IDENTITY-BOOT-WRITES says it and SESSION-CLOSE points there.
+`tests/read-only-writes.spec.ts` opens each of the three holding a batch format
+1 header and a batch format 3 header, on Chromium and WebKit: the sentence is
+shown, no listed write control can be pressed (the list is the test's own, not
+read from the mark), and a scripted insert is refused with the sentence and
+lands nothing. Red first on all six (New Game, Start, New request were offered).
+Filed 28 September, seen on the screen while building D108.* A copy this host mounts
 read-only (D108: a batch format it does not write) shows the update sentence
 over the document, and chess still offers New Game, which then refuses with
 that sentence when pressed. The rule already exists for closed sessions

@@ -3,7 +3,7 @@
 ::: info IDENTITY-BOOT-WRITES
 **Shared writes at boot wait for a mount that can write**
 
-Put any shared write an application makes as it opens (a first practice board, taking a seat) inside `window.daiKit.whenWritable(fn)`, and draw first. On a mount that cannot write (its rules were refused, or never arrived) the write waits instead of throwing, and the page still shows what it holds.
+Put any shared write an application makes as it opens (a first practice board, taking a seat) inside `window.daiKit.whenWritable(fn)`, and draw first. On a mount that cannot write (its rules were refused or never arrived, or its batch format is not this host's) the write waits instead of throwing, and the page still shows what it holds. Mark every control that writes shared rows `data-dai-write`; on such a mount the kit disables each one, so the page offers no write it would refuse.
 
 **Why.** A read-only mount is how a document opens when its host cannot vouch for writes. A boot write that throws there stops the page drawing at all, and the person sees an error instead of their document.
 
