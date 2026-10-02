@@ -4448,6 +4448,21 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D178 — `sealed-leave:25` leaves the move pending on local WebKit
+
+*Status: open, filed 2 October from the step 7b gate. Local only: CI's WebKit
+shards passed it on `9c0a815`.* `tests/sealed-leave.spec.ts:25` on local
+WebKit, run alone: 8 of 10 failed on `3f6ba21`, 4 of 5 on the session's
+starting sources (`9c0a815`'s `src`, chess fixture, examples and the spec), 3
+of 5 with only the kit put back. So the failure is older than step 7b. The
+row left pending is always the move the test plays (`moves`, the newest seq):
+the save the test waits on (`savesWritten` above its count before the move)
+lands, and no later save seals the move within 30 seconds. One reading,
+unproven: the counted save is the new game's, arriving late, so the move's
+own save is never waited for and none follows. This is the "a save asked is
+not a save written" family. **Next:** log `savesWritten` and the move's seq
+against each landed save on a failing run before changing the wait.
+
 #### D177 — The application's merge redraw ran before the kit's seating
 
 *Status: **landed** 2 October, step 7b. Filed the same day: step 7a met it
