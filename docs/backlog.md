@@ -4450,9 +4450,40 @@ finds no write control on screen.
 
 #### D178 — `sealed-leave:25` leaves the move pending on local WebKit
 
-*Status: **landed** 2 October, in the sitting after step 7b. The runtime, not the test.
-A save cancelled the save of a row written while its own seal waited for a
-signature (below, "Explained").*
+*Status: **reopened** 2 October, on CI run 37040021127 (`d5f517c`). The
+runtime fix landed the same day (below, "Explained"). Its forced-order test fails
+at its own setup, before the move is played. It does not show the fix
+incomplete (below, "Reopened").*
+
+**Reopened.** CI's WebKit shard 4 failed "a row written while a seal waits
+for its signature is sealed by a later save" twice (the run and its retry),
+both at the setup poll, "the new game's seal asks for its second signature"
+(`sealed-leave:205`), 30 s. Locally on WebKit, 20 runs on `dc67d47`, traced,
+one worker, no retries: **3 failed, 17 passed**, and all three failures were
+at that same poll. In the five steps, every failure stops before step 1:
+no move was played, so no seal for it was asked.
+
+*The order CI took*, the same in all five failing traces (two from CI, three
+local): the setup's first write (the replica key, or opening the new-game
+form) starts an autosave debounce. Filling the form outlasts it, so
+`save 1 asked` lands before the test arms the hold (its `Evaluate` before the
+submit click). That save seals the fixture's rows. The new game's seal then
+has one batch, not two, so it asks for one signature. The test holds the
+*second* one, and no second one ever comes. In every passing run (one
+read in full), no save was asked before the submit. One seal took
+everything, its second signature was held, and the move was sealed by a
+later save, as the fix says. The CI traces show the fill steps taking
+about 0.5 s each against about 0.3 s locally.
+
+So the runtime path D178 fixed was not reached in any failing run, and
+`flushAutosave` has nothing to extend. The broken part is the test's
+assumption that the new game's seal has two batches. **Not fixed here.** A
+test that holds the new game's *last* signature, whatever the batch count
+(for example, wait for nothing pending and no save in flight before arming, then
+hold the first), needs a red-first proof on `0cfda2e` again. That is a test
+change for a sitting that is allowed one. Traces, outside the repo:
+`Documents/dai-traces/d178-2026-10-02/` (CI run and retry, three local
+failures, one local pass).
 
 **Explained.** Twenty runs on local WebKit at `0cfda2e` (step 7b's runtime),
 traced: 11 failed. A probe copy logging every frame's sign, save and ack
