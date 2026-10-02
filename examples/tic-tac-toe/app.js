@@ -1,10 +1,13 @@
 // Tic-tac-toe — a session document. Each game is a session of two: the
 // creator plays X, the invitee takes the open seat and plays O. The board, the
 // turn and the winner are derived from marks every time; shared rows are
-// written through window.dai.replicated and read from the _current views.
+// written through window.dai.replicated and read from the _current views. The
+// seats are the kit's: it starts a game's session, asks for the open seat,
+// seats whoever asked on the creator's copy, and says who this copy is.
 
 const $ = (id) => document.getElementById(id);
-let db; // opened by the start-up at the end of this file
+let db; // the kit's, taken by the start-up at the end of this file
+let kit;
 const shared = window.dai.replicated;
 const rows = (sql, bind) => (bind === undefined ? db.selectObjects(sql) : db.selectObjects(sql, bind));
 const one = (sql, bind) => rows(sql, bind)[0] ?? null;
@@ -35,8 +38,8 @@ function write(fn) {
 
 // ---- reading ------------------------------------------------------------
 
-/** This copy's replica id, or null before this copy has written anything. */
-const myReplica = () => one("SELECT lower(hex(id)) AS id FROM _dai_replica")?.id ?? null;
+/** Who this copy is: the host's author id, never a row. */
+const myReplica = () => kit.author();
 
 function games() {
   return rows(
@@ -56,13 +59,8 @@ function activeGame() {
 function seats(session) {
   const mine = myReplica();
   // The session id commits to its creator; the runtime checks it from the rows.
-  const creator = one(
-    "SELECT lower(hex(replica)) AS r FROM _dai_creator WHERE lower(hex(session)) = ? LIMIT 1",
-    [session],
-  )?.r;
-  const isMember = (replica) =>
-    !!replica &&
-    !!one("SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?", [session, replica]);
+  const all = kit.seats(session);
+  const creator = all.find((s) => s.creator)?.holder ?? null;
   const bound = !!mine &&
     !!one(
       "SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ?",
@@ -81,20 +79,11 @@ function seats(session) {
     [session],
   )?.seat ?? null;
   // Asked for the open seat, and the creator's copy has not seated anyone yet.
-  const pending = !!mine &&
-    !!one(
-      `SELECT 1 AS x FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
-        WHERE lower(hex(b._r_session)) = ? AND lower(hex(b._r_replica)) = ? AND ${unheld}`,
-      [session, mine],
-    );
-  const opponent = one(
-    `SELECT lower(hex(replica)) AS r FROM _dai_member
-      WHERE lower(hex(session)) = ? AND lower(hex(replica)) <> ? LIMIT 1`,
-    [session, creator ?? ""],
-  )?.r ?? null;
+  const pending = !!kit.pendingSeat(session);
+  const opponent = all.find((s) => !s.creator && s.holder)?.holder ?? null;
   const closed = !!one("SELECT 1 AS x FROM _dai_closed WHERE lower(hex(session)) = ? LIMIT 1", [session]);
-  const amCreator = !!mine && mine === creator;
-  const member = isMember(mine);
+  const amCreator = kit.amCreator(session);
+  const member = !!kit.mySeat(session);
   return {
     creator, opponent, amCreator, member, closed, contested, openSeat, pending,
     // Asked once, not seated: another device was seated, or the seat was replaced.
@@ -150,28 +139,9 @@ function state(game) {
 
 // ---- joining ------------------------------------------------------------
 
-/**
- * On the creator's copy, seat whoever asked: an open seat nobody holds, asked
- * for by exactly one other copy, is confirmed to them. Asked for by two, it is
- * left contested for the creator's repair. The runtime refuses this from anyone
- * but the creator; the view only counts the creator's confirmation.
- */
-function seatAskers() {
-  const mine = myReplica();
-  if (!mine) return;
-  const asked = rows(
-    `SELECT lower(hex(s.session)) AS session, lower(hex(s.seat)) AS seat,
-            min(lower(hex(b._r_replica))) AS who, count(DISTINCT b._r_replica) AS n
-       FROM _dai_open_seat s
-       JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ?
-       JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat
-      WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)
-        AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat)
-      GROUP BY s.session, s.seat`,
-    [mine],
-  );
-  for (const r of asked) if (Number(r.n) === 1) write(() => shared.session.confirm(r.session, r.seat, r.who));
-}
+// On the creator's copy the kit seats whoever asked, as it loads and as rows
+// arrive: an open seat asked for by exactly one other copy is confirmed to
+// them, and one asked for by two is left contested for the creator's repair.
 
 /**
  * Take the open seat of the game showing, if this copy arrived with an invite.
@@ -193,8 +163,7 @@ function joinIfInvited() {
   const active = activeGame();
   const target = active && joinable(active) ? active : [...games()].reverse().find(joinable);
   if (!target) return;
-  const seat = seats(target.session).openSeat;
-  if (write(() => shared.session.join(target.session, seat))) {
+  if (write(() => kit.claimSeat(target.session))) {
     db.exec({ sql: "UPDATE settings SET active_game = ? WHERE id = 1", bind: [target.id] });
   }
 }
@@ -407,7 +376,7 @@ $("new-game").addEventListener("submit", (event) => {
     db.exec("BEGIN");
     try {
       // A new game is a new session: this copy is seated, one seat is left open.
-      const { session } = shared.session.create();
+      const session = kit.newSession();
       const id = shared.insert("games", { x_name: you, o_name: them }, session);
       db.exec({ sql: "UPDATE settings SET active_game = ? WHERE id = 1", bind: [id] });
       db.exec("COMMIT");
@@ -436,7 +405,7 @@ $("invite").addEventListener("click", () => {
 
 $("reseat").addEventListener("click", () => {
   const game = activeGame();
-  if (game && write(() => shared.session.reseat(game.session))) window.dai.requestShare(game.session);
+  if (game && write(() => kit.reseat(game.session))) window.dai.requestShare(game.session);
   draw();
 });
 
@@ -474,19 +443,27 @@ $("close-match").addEventListener("click", () => {
 
 // The other player's marks arrive here, and nowhere else. Join only when a
 // file or link was opened; a background mailbox merge never takes a seat.
-window.addEventListener("dai:merged", (event) => {
+// Added once the kit has loaded, so the kit's own listener, which seats whoever
+// asked, runs first and this draw shows them seated.
+function onMerged(event) {
   if (event.detail?.via === "carrier") joinIfInvited();
-  seatAskers();
   draw();
-});
+}
 
 // Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
-  db = await window.dai.openDatabase();
+  // The kit opens the database: one handle for the page, since a second
+  // openDatabase() would be a second copy of it.
+  await import("./dai-kit.js");
+  kit = window.daiKit;
+  db = kit.db;
+  window.addEventListener("dai:merged", onMerged);
   joinIfInvited();
-  seatAskers();
   draw();
+  // The kit seats whoever asked once this mount can write, after this first
+  // draw; draw again then, so a joiner it seated shows seated.
+  kit.whenWritable(draw);
   $("opening").hidden = true;
   $("app").hidden = false;
   $("app").inert = false;

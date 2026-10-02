@@ -25,20 +25,10 @@ async function load(rel) {
 const { seatWriteProblems } = await load("src/seat-check.ts");
 
 /**
- * Applications that predate the kit's seats. Both are rebuilt on the kit at
- * step 7 of the identity sitting (docs/identity.md, "Migration"), which removes
- * these lines; an entry that no longer excuses anything fails the check.
+ * Named exceptions, each with its reason; an entry that no longer excuses
+ * anything fails the check. None: every application here is on the kit's seats.
  */
-const EXCEPTIONS = {
-  "examples/request/app.js: confirm": "seats its one asker until it is rebuilt on the kit at identity step 7",
-  "examples/request/app.js: create": "rebuilt on the kit's seats at identity step 7",
-  "examples/request/app.js: join": "rebuilt on the kit's seats at identity step 7",
-  "examples/request/app.js: reseat": "rebuilt on the kit's seats at identity step 7",
-  "examples/tic-tac-toe/app.js: confirm": "seats its one asker until it is rebuilt on the kit at identity step 7",
-  "examples/tic-tac-toe/app.js: create": "rebuilt on the kit's seats at identity step 7",
-  "examples/tic-tac-toe/app.js: join": "rebuilt on the kit's seats at identity step 7",
-  "examples/tic-tac-toe/app.js: reseat": "rebuilt on the kit's seats at identity step 7",
-};
+const EXCEPTIONS = {};
 
 /** Application source: .js, .mjs, .ts and .html, never a built document or a bundle. */
 function sourcesUnder(dir) {

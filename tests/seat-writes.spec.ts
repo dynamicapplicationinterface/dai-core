@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { lintFiles } from "../src/lint.js";
+import { breaking, lintFiles } from "../src/lint.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -74,6 +74,8 @@ CREATE TABLE moves (
 `;
   const findings = lintFiles({ "schema.sql": schema, "app.js": STRAY });
   expect(findings.map((f) => f.id)).toContain("seat-table-write");
+  // Breaking, not a warning: it stops a build and fails `dai check`.
+  expect(breaking(findings).map((f) => f.id)).toContain("seat-table-write");
   const clean = lintFiles({ "schema.sql": schema, "app.js": "const s = window.daiKit.newSession();\nwindow.addEventListener('dai:merged', () => {});\n" });
   expect(clean.map((f) => f.id)).not.toContain("seat-table-write");
 });

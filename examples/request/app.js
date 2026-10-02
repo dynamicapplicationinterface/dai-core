@@ -2,10 +2,13 @@
 // two: the creator writes the request and its questions and sends a link; the
 // person who opens it takes the open seat and answers. The schema says which
 // side writes which table (author=creator, author=joiner), and the runtime
-// holds both copies to it; this file only decides what to show each side.
+// holds both copies to it; this file only decides what to show each side. The
+// seats are the kit's: it starts a request's session, asks for the open seat,
+// seats whoever asked on the writer's copy, and says who this copy is.
 
 const $ = (id) => document.getElementById(id);
-let db; // opened by the start-up at the end of this file
+let db; // the kit's, taken by the start-up at the end of this file
+let kit;
 const shared = window.dai.replicated;
 const rows = (sql, bind) => (bind === undefined ? db.selectObjects(sql) : db.selectObjects(sql, bind));
 const one = (sql, bind) => rows(sql, bind)[0] ?? null;
@@ -36,8 +39,8 @@ function write(fn) {
 
 // ---- reading ------------------------------------------------------------
 
-/** This copy's replica id, or null before this copy has written anything. */
-const myReplica = () => one("SELECT lower(hex(id)) AS id FROM _dai_replica")?.id ?? null;
+/** Who this copy is: the host's author id, never a row. */
+const myReplica = () => kit.author();
 
 function requests() {
   return rows(
@@ -56,12 +59,8 @@ function activeRequest() {
 function seats(session) {
   const mine = myReplica();
   // The session id commits to its creator; the runtime checks it from the rows.
-  const creator = one(
-    "SELECT lower(hex(replica)) AS r FROM _dai_creator WHERE lower(hex(session)) = ? LIMIT 1",
-    [session],
-  )?.r;
-  const member = !!mine &&
-    !!one("SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?", [session, mine]);
+  const all = kit.seats(session);
+  const member = !!kit.mySeat(session);
   const bound = !!mine &&
     !!one(
       "SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ?",
@@ -80,18 +79,10 @@ function seats(session) {
     [session],
   )?.seat ?? null;
   // Asked for the open seat, and the writer's copy has not seated anyone yet.
-  const pending = !!mine &&
-    !!one(
-      `SELECT 1 AS x FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat
-        WHERE lower(hex(b._r_session)) = ? AND lower(hex(b._r_replica)) = ? AND ${unheld}`,
-      [session, mine],
-    );
-  const answererJoined = !!one(
-    `SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) <> ? LIMIT 1`,
-    [session, creator ?? ""],
-  );
+  const pending = !!kit.pendingSeat(session);
+  const answererJoined = all.some((s) => !s.creator && s.holder);
   const closed = !!one("SELECT 1 AS x FROM _dai_closed WHERE lower(hex(session)) = ? LIMIT 1", [session]);
-  const isWriter = !!mine && mine === creator;
+  const isWriter = kit.amCreator(session);
   return {
     isWriter,
     isAnswerer: (member || pending) && !isWriter,
@@ -147,28 +138,9 @@ const submitted = (request) => !!one(`SELECT 1 AS x FROM ${shown("submissions")}
 
 // ---- joining ------------------------------------------------------------
 
-/**
- * On the writer's copy, seat whoever asked: an open seat nobody holds, asked
- * for by exactly one other copy, is confirmed to them. Asked for by two, it is
- * left contested for the writer's repair. The runtime refuses this from anyone
- * but the writer; the view only counts the writer's confirmation.
- */
-function seatAskers() {
-  const mine = myReplica();
-  if (!mine) return;
-  const asked = rows(
-    `SELECT lower(hex(s.session)) AS session, lower(hex(s.seat)) AS seat,
-            min(lower(hex(b._r_replica))) AS who, count(DISTINCT b._r_replica) AS n
-       FROM _dai_open_seat s
-       JOIN _dai_creator c ON c.session = s.session AND lower(hex(c.replica)) = ?
-       JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat
-      WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)
-        AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat)
-      GROUP BY s.session, s.seat`,
-    [mine],
-  );
-  for (const r of asked) if (Number(r.n) === 1) write(() => shared.session.confirm(r.session, r.seat, r.who));
-}
+// On the writer's copy the kit seats whoever asked, as it loads and as rows
+// arrive: an open seat asked for by exactly one other copy is confirmed to
+// them, and one asked for by two is left contested for the writer's repair.
 
 /**
  * Take the open seat of a request this copy was sent a link to. Called at
@@ -183,7 +155,7 @@ function joinIfInvited() {
   const active = activeRequest();
   const target = active && joinable(active) ? active : [...requests()].reverse().find(joinable);
   if (!target) return;
-  if (write(() => shared.session.join(target.session, seats(target.session).openSeat))) {
+  if (write(() => kit.claimSeat(target.session))) {
     db.exec({ sql: "UPDATE settings SET active_request = ? WHERE id = 1", bind: [target.id] });
   }
 }
@@ -529,7 +501,7 @@ $("new-request").addEventListener("submit", (event) => {
     db.exec("BEGIN");
     try {
       // A new request is a new session: this copy is seated, one seat is left open.
-      const { session } = shared.session.create();
+      const session = kit.newSession();
       const id = shared.insert(
         "requests",
         { from_name: from, title, note: $("new-note").value.trim(), due_on: $("new-due").value || null },
@@ -580,7 +552,7 @@ $("invite").addEventListener("click", () => {
 
 $("reseat").addEventListener("click", () => {
   const request = activeRequest();
-  if (request && write(() => shared.session.reseat(request.session))) window.dai.requestShare(request.session);
+  if (request && write(() => kit.reseat(request.session))) window.dai.requestShare(request.session);
   draw();
 });
 
@@ -633,9 +605,10 @@ for (const type of ["pointerup", "pointercancel"]) {
 }
 const whenPointerLifts = (run) => (pointerDown ? afterPointer.push(run) : run());
 
-window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
+// Added once the kit has loaded, so the kit's own listener, which seats whoever
+// asked, runs first and this draw shows them seated.
+const onMerged = (event) => whenPointerLifts(() => {
   if (event.detail?.via === "carrier") joinIfInvited();
-  seatAskers();
   const typing = document.activeElement?.id?.startsWith("answer-") ? document.activeElement : null;
   const at = typing ? { id: typing.id, start: typing.selectionStart } : null;
   draw();
@@ -643,15 +616,22 @@ window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
     $(at.id).focus();
     $(at.id).setSelectionRange(at.start, at.start);
   }
-}));
+});
 
 // Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
-  db = await window.dai.openDatabase();
+  // The kit opens the database: one handle for the page, since a second
+  // openDatabase() would be a second copy of it.
+  await import("./dai-kit.js");
+  kit = window.daiKit;
+  db = kit.db;
+  window.addEventListener("dai:merged", onMerged);
   joinIfInvited();
-  seatAskers();
   draw();
+  // The kit seats whoever asked once this mount can write, after this first
+  // draw; draw again then, so an answerer it seated shows seated.
+  kit.whenWritable(draw);
   $("opening").hidden = true;
   $("app").hidden = false;
   $("app").inert = false;

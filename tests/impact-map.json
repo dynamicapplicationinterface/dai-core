@@ -653,6 +653,20 @@
       "scripts/evaluate.mjs",
       "tests/evaluation.spec.ts"
     ],
+    "tests/examples-reopen.spec.ts": [
+      "apps/runner/",
+      "examples/receipts/",
+      "examples/request/",
+      "examples/tic-tac-toe/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/chess-play.ts",
+      "tests/examples-reopen.spec.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tsup.config.ts"
+    ],
     "tests/examples-shared.spec.ts": [
       "apps/runner/",
       "examples/receipts/",
@@ -934,6 +948,24 @@
       "tests/host-shell.spec.ts",
       "tests/open.ts",
       "tsup.config.ts"
+    ],
+    "tests/hosted-request.spec.ts": [
+      "apps/runner/public/request.dai.html",
+      "examples/request/",
+      "src/cbor.ts",
+      "src/compile.ts",
+      "src/container.ts",
+      "src/core.ts",
+      "src/cose.ts",
+      "src/format.ts",
+      "src/kit.ts",
+      "src/refusals.ts",
+      "src/replicated.ts",
+      "src/schema.ts",
+      "src/session-id.ts",
+      "src/test-keys.ts",
+      "src/unzip.ts",
+      "tests/hosted-request.spec.ts"
     ],
     "tests/icon-after-wipe.spec.ts": [
       "apps/runner/",

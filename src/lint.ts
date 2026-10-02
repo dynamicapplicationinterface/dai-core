@@ -279,10 +279,6 @@ const SHARED_CHECKS = {
     fix:
       "Use window.daiKit.newSession(), .claimSeat(session), .reseat(session), and read with .mySeat(session), " +
       ".amCreator(session) and .seats(session).",
-    // A warning until the repository's own session examples are rebuilt on the
-    // kit's seats (identity step 7); breaking after. scripts/check-seats.mjs
-    // fails this repository on it now, with those two named as exceptions.
-    severity: "warning",
   },
   "shared-table-constraint": {
     what: "A shared table declares UNIQUE or CHECK.",
