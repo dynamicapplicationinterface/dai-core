@@ -7,11 +7,27 @@ import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
 import { authorIdOf, showAuthorId, verifySignature } from "../src/identity.js";
 import { canonicalHeader, rowsDigest, type BatchEntry } from "../src/replicated-batch.js";
+import { TO_HOST } from "../src/bridge.js";
 import { play } from "./chess-play.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
 const app = (page: Page): FrameLocator => page.frameLocator("iframe").frameLocator("iframe");
+
+/** How many rows of this device's own are still pending (no `_r_batch`), read in the frame. */
+const pendingOwn = (ui: FrameLocator): Promise<number> =>
+  ui.locator("#app").evaluate(() => {
+    const db = (window as any).daiKit.db;
+    const me = db.selectObjects("SELECT id FROM _dai_replica")[0].id;
+    let n = 0;
+    for (const { name } of db.selectObjects("SELECT name FROM sqlite_schema WHERE type = 'table'")) {
+      const cols = db.selectObjects(`SELECT name FROM pragma_table_info('${name}')`).map((c: any) => c.name);
+      if (cols.includes("_r_batch") && cols.includes("_r_replica")) {
+        n += Number(db.selectObjects(`SELECT count(*) AS n FROM "${name}" WHERE _r_replica = ? AND _r_batch IS NULL`, [me])[0].n);
+      }
+    }
+    return n;
+  });
 
 /**
  * What leaves the device is signed (docs/identity.md, step 3: seal on leave).
@@ -54,20 +70,7 @@ test("a saved document's rows are sealed, and every batch verifies under this de
   // Every row written is sealed by the saves that follow it. A row written just
   // after a save is pending until the next one, so wait for what the claim is
   // about: nothing of this device's left pending.
-  const pendingOwn = () =>
-    ui.locator("#app").evaluate(() => {
-      const db = (window as any).daiKit.db;
-      const me = db.selectObjects("SELECT id FROM _dai_replica")[0].id;
-      let n = 0;
-      for (const { name } of db.selectObjects("SELECT name FROM sqlite_schema WHERE type = 'table'")) {
-        const cols = db.selectObjects(`SELECT name FROM pragma_table_info('${name}')`).map((c: any) => c.name);
-        if (cols.includes("_r_batch") && cols.includes("_r_replica")) {
-          n += Number(db.selectObjects(`SELECT count(*) AS n FROM "${name}" WHERE _r_replica = ? AND _r_batch IS NULL`, [me])[0].n);
-        }
-      }
-      return n;
-    });
-  await expect.poll(pendingOwn, { timeout: 30_000, message: "every row this device wrote is sealed by the saves after it" }).toBe(0);
+  await expect.poll(() => pendingOwn(ui), { timeout: 30_000, message: "every row this device wrote is sealed by the saves after it" }).toBe(0);
 
   // Everything the checks need, out of the page as plain arrays.
   const held = await ui.locator("#app").evaluate(() => {
@@ -137,4 +140,80 @@ test("a saved document's rows are sealed, and every batch verifies under this de
     });
     expect(await verifySignature(pub, signed, bytes(header["sig"])), "the signature verifies").toBe(true);
   }
+});
+
+/**
+ * D178, in the order that loses it. A row written while a save's seal waits for
+ * its signature is not in that seal, and is in the bytes that save takes. The
+ * seal's own write queues a save, which the save in flight cancels as its own;
+ * the row's queued save is the same database and was cancelled with it. Locally
+ * on WebKit, the new game's seal was out when the move was played 11 times in 20.
+ * Here the new game's seal (two batches: the fixture's rows and the game's) has
+ * its second signature held, given back the moment the move is written, so the
+ * seal and its save finish inside the move's debounce. Holding the first left
+ * the second to be asked after the release, and on WebKit that outlasted the
+ * debounce two times in three: the move's queued save then ran, the order that
+ * passes.
+ */
+test("a row written while a seal waits for its signature is sealed by a later save", async ({ page }) => {
+  test.slow();
+  // Before the host's own listener, so it runs first; armed by the test.
+  await page.context().addInitScript(
+    ({ sign, authored }) => {
+      if (window !== window.top) return;
+      const w = window as any;
+      w.__signs = 0;
+      window.addEventListener("message", (event) => {
+        const type = (event.data as any)?.type;
+        if (w.__holdSign && type === sign && ++w.__signs === 2) {
+          w.__holdSign = false;
+          w.__heldSign = { data: event.data, source: event.source };
+          event.stopImmediatePropagation();
+        } else if (w.__heldSign && type === authored) {
+          // The move is written: the signature goes back now.
+          const held = w.__heldSign;
+          w.__heldSign = null;
+          w.__released = true;
+          window.dispatchEvent(new MessageEvent("message", { data: held.data, source: held.source }));
+        }
+      });
+    },
+    { sign: TO_HOST.SIGN, authored: TO_HOST.AUTHORED },
+  );
+  const built = await compileDirectory({
+    sourceDir: join(repo, "tests", "fixture", "chess"),
+    root: repo,
+    appName: "Velvet Chess",
+  });
+  const file = join(mkdtempSync(join(tmpdir(), "dai-sealed-leave-")), "velvet-chess.dai.html");
+  writeFileSync(file, built.html, "utf8");
+
+  await page.goto(RUNNER_URL);
+  await page.setInputFiles("#file", file);
+  await page.locator("#card-open").click({ timeout: 60_000 });
+  const ui = app(page);
+  await expect(ui.locator("#app")).toBeVisible({ timeout: 60_000 });
+  await ui.locator("[data-new-game]:visible").first().click();
+  await ui.locator("#setup-you").fill("Ada");
+  await ui.locator("#setup-them").fill("Bo");
+  await ui.locator('input[name="color"][value="w"]').check();
+  await page.evaluate(() => {
+    (window as any).__holdSign = true;
+  });
+  await ui.locator("#new-game-form button[type=submit]").click();
+  await expect
+    .poll(() => page.evaluate(() => Boolean((window as any).__heldSign)), { timeout: 30_000, message: "the new game's seal asks for its second signature" })
+    .toBe(true);
+
+  await play(ui, "e2", "e4");
+  await expect
+    .poll(() => page.evaluate(() => Boolean((window as any).__released)), { timeout: 30_000, message: "the move is written while the signature is held" })
+    .toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => Number((window as any).__runner.savesWritten ?? 0)), { timeout: 30_000, message: "the new game's save lands" })
+    .toBeGreaterThan(0);
+
+  await expect
+    .poll(() => pendingOwn(ui), { timeout: 30_000, message: "the move, written during the seal, is sealed by a save after it" })
+    .toBe(0);
 });

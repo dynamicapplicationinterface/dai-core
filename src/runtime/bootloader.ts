@@ -1047,9 +1047,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     saving = sealPending()
       .then(() => {
         // The seal is a write, and queues a save of its own; the bytes taken
-        // here already hold it (and anything written while it was signed), so
-        // that save is this one.
-        if (autosaveDb === db) {
+        // here already hold it, so that save is this one. Not when a row was
+        // written while the signature was out (D178): the seal did not take
+        // it, these bytes hold it pending, and its queued save is the same
+        // database. That save still runs, and seals it.
+        if (autosaveDb === db && !hasPendingOwn()) {
           autosaveDb = null;
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
           autosaveTimer = undefined;

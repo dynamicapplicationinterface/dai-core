@@ -4450,7 +4450,58 @@ finds no write control on screen.
 
 #### D178 — `sealed-leave:25` leaves the move pending on local WebKit
 
-*Status: open, filed 2 October from the step 7b gate. Local only: CI's WebKit
+*Status: **landed** 2 October, in the sitting after step 7b. The runtime, not the test.
+A save cancelled the save of a row written while its own seal waited for a
+signature (below, "Explained").*
+
+**Explained.** Twenty runs on local WebKit at `0cfda2e` (step 7b's runtime),
+traced: 11 failed. A probe copy logging every frame's sign, save and ack
+messages (and dumping the frame's rows and the stored copy): 14 of 20 failed,
+and every failure had the same shape. The five steps, for seq 13 (Ada's e4,
+`moves`):
+
+1. *Which save should have sealed it:* the move's own. Its write queued an
+   autosave (800 ms debounce) while the new game's save was already sealing.
+2. *Did the frame ask for a seal:* **no. This is the step that breaks.** The
+   new game's seal had listed its batches (seqs 1 to 9, and 10 to 12) and was
+   waiting on the host's first signature when the move was written. It asked
+   for seq 12 and seq 9, never 13.
+3. *Did the host sign:* both that were asked (`signatures` 2).
+4. *Did the save land:* yes, the one save, acked; `savesWritten` 1. Its bytes
+   were taken after the move, so it holds seq 13 pending.
+5. *Did the seal reach the stored copy:* there was none for seq 13. The stored
+   copy has it with `_r_batch` null, and no later save is ever asked.
+
+The mechanism, in `flushAutosave` (`src/runtime/bootloader.ts`): the seal's
+`recordSeal` is a write and queues a save, so after the seal the flush
+cancels any queued save of the same database ("that save is this one"). The
+move's queued save is the same database and was cancelled with it. It loses
+when the move lands after the new game's debounce fired and before the seal
+finishes, with the seal done inside the move's own 800 ms. In each of the
+6 passing probe runs, the move landed before the debounce fired, and one seal
+took seqs 1 to 13. On Chromium the move always landed inside the debounce:
+sealed-leave:25 passed 20 of 20, and the probe's 20 all asked a seal naming
+seq 13. Why CI's WebKit passes is not shown. Its timing differs, and a later
+incidental write can re-queue the save. Instrumented, the forced test below
+passed twice in five on WebKit, each time by a second save that started at
+the first one's ack and sealed seq 13. What wrote to queue it was not read.
+
+**Not the test.** The test's counted save is the new game's (`before` is 0
+at the move in every run), as the reading above guessed. But its 30-second
+poll for nothing pending is what the invariant claims, and the runtime never
+saves again.
+
+**Fix:** the flush cancels the queued save only when no own row is left
+pending (`hasPendingOwn()`). The read is synchronous with the export, so no
+write falls between them. **Red first:** `sealed-leave` "a row written while
+a seal waits for its signature is sealed by a later save" holds the new
+game's second signature at the host and gives it back on the move's
+`DAI_HOST_AUTHORED`. On the old runtime: Chromium 5 of 5 red, WebKit 2 of 5
+(the rescue above, in the other three). Holding the first signature instead
+was red on Chromium 3 of 3 and WebKit 1 of 3. On the fix, the counts are in
+`docs/handoff-2026-10-02.md`, "Two timing failures".
+
+*Filed 2 October from the step 7b gate. Local only: CI's WebKit
 shards passed it on `9c0a815`.* `tests/sealed-leave.spec.ts:25` on local
 WebKit, run alone: 8 of 10 failed on `3f6ba21`, 4 of 5 on the session's
 starting sources (`9c0a815`'s `src`, chess fixture, examples and the spec), 3
