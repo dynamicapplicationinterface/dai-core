@@ -17,6 +17,17 @@ import { expect, type FrameLocator } from "@playwright/test";
  * picked-up piece puts it down.
  */
 export async function play(app: FrameLocator, from: string, to: string): Promise<void> {
+  await pick(app, from, to);
+  await app.locator("#play-move").click();
+}
+
+/**
+ * Everything `play` does before Play: the move chosen and drafted, not played.
+ * Choosing writes (the picked-up square, then the draft); playing writes the
+ * move. A test that needs the move to be the only write in some window picks
+ * first and presses Play inside it.
+ */
+export async function pick(app: FrameLocator, from: string, to: string): Promise<void> {
   const piece = app.locator(`[data-square="${from}"]`);
   await expect(async () => {
     if ((await piece.getAttribute("aria-selected")) !== "true") await piece.click();
@@ -24,5 +35,4 @@ export async function play(app: FrameLocator, from: string, to: string): Promise
   }).toPass({ timeout: 15_000 });
   await app.locator(`[data-square="${to}"]`).click();
   await expect(app.locator("#play-move")).toBeEnabled({ timeout: 15_000 });
-  await app.locator("#play-move").click();
 }
