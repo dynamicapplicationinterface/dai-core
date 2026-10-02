@@ -446,9 +446,12 @@ $("close-match").addEventListener("click", () => {
 
 // The other player's marks arrive here, and nowhere else. Join only when a
 // file or link was opened; a background mailbox merge never takes a seat.
-// Added once the kit has loaded, so the kit's own listener, which seats whoever
-// asked, runs first and this draw shows them seated.
+// The kit's event, not dai:merged: the kit fires it once it has seated whoever
+// asked, so this draw shows them seated, whenever this listener was added.
+// Before the start-up has drawn, there is nothing to redraw; the first draw
+// reads what arrived.
 function onMerged(event) {
+  if (!kit) return;
   if (event.detail?.via === "carrier") joinIfInvited();
   draw();
 }
@@ -456,12 +459,12 @@ function onMerged(event) {
 // Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
+  window.addEventListener("dai:kit-merged", onMerged);
   // The kit opens the database: one handle for the page, since a second
   // openDatabase() would be a second copy of it.
   await import("./dai-kit.js");
   kit = window.daiKit;
   db = kit.db;
-  window.addEventListener("dai:merged", onMerged);
   joinIfInvited();
   draw();
   // The kit seats whoever asked once this mount can write, after this first

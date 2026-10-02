@@ -368,6 +368,8 @@ async function boot(){
  wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;
  store.bootWrites().then(()=>{store.faceMover();refresh();maybeAskName();}).catch(e=>notify(e.message));
  // After a merge the host tells the frame; redraw so a newly arrived move or conflict shows without a reload.
+ // On the kit's dai:kit-merged, not dai:merged: the kit fires it once it has seated whoever asked (D177),
+ // so the redraw shows them seated whatever order the listeners were added in.
  // Join ONLY when the merge came from opening a carrier — a file or link (T1-D34).
  // A mailbox merge, or any event without a source tag, must NOT join: the safe
  // default is background, so a future dispatch site that forgets the tag cannot
@@ -378,7 +380,7 @@ async function boot(){
  let pointerDown=false;const afterPointer=[];
  document.addEventListener('pointerdown',()=>{pointerDown=true;},true);
  for(const type of ['pointerup','pointercancel'])document.addEventListener(type,()=>{pointerDown=false;setTimeout(()=>{if(pointerDown)return;for(const r of afterPointer.splice(0))r();},0);},true);
- window.addEventListener('dai:merged',e=>{const merged=()=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);};if(pointerDown)afterPointer.push(merged);else merged();});
+ window.addEventListener('dai:kit-merged',e=>{const merged=()=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);};if(pointerDown)afterPointer.push(merged);else merged();});
  const st=store.state();if(st?.last&&!store.draft(st.game.id))requestAnimationFrame(()=>{replay()?.catch?.(e=>notify(e.message));});
 }
 boot().catch(error=>{console.error(error);$('boot-notice').hidden=false;$('boot-notice').textContent='Your board could not be opened safely. '+error.message;});

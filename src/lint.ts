@@ -256,11 +256,11 @@ const SHARED_CHECKS = {
     fix: "Read the table's _current view: SELECT … FROM moves_current rather than FROM moves.",
   },
   "shared-no-merge-listener": {
-    what: "It has shared tables and never listens for dai:merged.",
+    what: "It has shared tables and never listens for dai:merged (or the kit's dai:kit-merged).",
     why:
       "Nothing else tells the application that the other copy's rows arrived, so it never redraws when " +
       "they do and looks broken in exactly the case it exists for. See SHARED-REDRAW-ON-MERGE.",
-    fix: 'Add window.addEventListener("dai:merged", () => redraw()) — and call window.daiKit.refresh() in it if the page uses the kit.',
+    fix: 'Add window.addEventListener("dai:merged", () => redraw()); on a page that loads the kit, listen for "dai:kit-merged" instead and call window.daiKit.refresh() in it.',
   },
   "shared-conflicts-unshown": {
     what: "It changes or removes shared rows and never shows a conflict.",
@@ -370,8 +370,9 @@ function lintShared(files: Record<string, string>): (Finding & { file: string })
   const everything = code.map(([, source]) => source).join("\n");
   const entry = code.find(([name]) => /(?:^|\/)index\.html?$/i.test(name))?.[0] ?? code[0]?.[0] ?? schemaName;
   // The event an app listens for, spelled by its owner (D78): a rename there is a rename here.
-  const quoted = ['"', "'", "`"].some((open) =>
-    ['"', "'", "`"].some((close) => everything.includes(`${open}${FRAME_PUBLIC.MERGED}${close}`)),
+  // A page on the kit listens for the kit's, fired after the kit's own merge work (D177).
+  const quoted = [FRAME_PUBLIC.MERGED, FRAME_PUBLIC.KIT_MERGED].some((name) =>
+    ['"', "'", "`"].some((open) => ['"', "'", "`"].some((close) => everything.includes(`${open}${name}${close}`))),
   );
   if (!quoted) findings.push(sharedFinding("shared-no-merge-listener", entry));
   if (/\.(?:change|remove)\s*\(/.test(everything) && !/_r_conflicted|_conflicts\b/.test(everything)) {

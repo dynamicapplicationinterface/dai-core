@@ -4444,6 +4444,30 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D177 — The application's merge redraw ran before the kit's seating
+
+*Status: **landed** 2 October, step 7b. Filed the same day: step 7a met it
+on 1 October (`docs/handoff-2026-10-01.md`, "What the rebuild met", item 2)
+and left it as a task chip, not a backlog entry.* The kit seated whoever asked
+in a capturing `dai:merged` listener on window, and said that listener ran
+before the application's. On Chromium it did not: tic-tac-toe's listener,
+added before the kit loaded, drew first with the joiner unseated (their marks
+still in `t_pending`), and nothing drew after the confirm. Step 7a worked
+around it by order: the apps added their listener after the kit loaded.
+**Fix:** the kit takes `dai:merged`, finishes its seat work, then fires
+`dai:kit-merged` on window with the same detail (`FRAME_PUBLIC.KIT_MERGED`).
+Tic-tac-toe, request and chess redraw on that. The two examples register it
+before the kit loads, and the order workaround is gone.
+SHARED-REDRAW-ON-MERGE and SESSION-JOIN-ON-OPEN name the kit's event, the lint
+accepts either event, and `tests/kit-names.spec.ts` holds the kit's literals
+to the owner. `tests/kit-merge-order.spec.ts`: tic-tac-toe built with its
+listener registered before the kit loads still shows the joiner's mark on
+the creator's board after the joiner's file is merged in (red first on
+Chromium, on `dai:merged`; WebKit ran the capturing listener first and passed
+either way). Chess gets the same join flow: the creator's board shows the
+pending joiner's move once his file arrives. Both fail with the kit's
+dispatch removed (run).
+
 #### D176 — Rules on the batch format page with no named witness
 
 *Status: open, filed 1 October from the step 6 re-review's fix-up. Not

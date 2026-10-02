@@ -1320,6 +1320,18 @@
       "tests/fixtures.ts",
       "tests/keep-intent.spec.ts"
     ],
+    "tests/kit-merge-order.spec.ts": [
+      "apps/runner/",
+      "examples/tic-tac-toe/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/chess-play.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/kit-merge-order.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/kit-names.spec.ts": [
       "src/frame.ts",
       "src/kit.ts",

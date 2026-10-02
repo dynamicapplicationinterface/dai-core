@@ -458,13 +458,14 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SHARED,
     topic: "shared",
     rule:
-      "Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener(\"dai:merged\", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — \"carrier\" when a file or link was opened, \"mailbox\" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener. A redraw must never discard what the person is in the middle of — text typed into a field, an editor that is open, a selection: rows arrive whenever the other copy's changes do, including mid-sentence. Keep work in progress outside what the redraw rebuilds — in a form written once in the HTML rather than recreated on every draw, or in a local drafts table the redraw reads back — or leave the element being edited untouched until it is saved or cancelled. The same failure arriving at start-up rather than mid-edit is NO-INPUT-LOST-WHILE-OPENING.",
+      "Listen for the `dai:merged` event on window and redraw everything drawn from shared tables when it fires: `window.addEventListener(\"dai:merged\", (event) => { redraw(); })`. `event.detail` carries `applied`, `duplicate`, `rejected`, `newReplicas`, `conflicts` and `via` — \"carrier\" when a file or link was opened, \"mailbox\" when rows arrived in the background. If the page uses the kit's reading elements, call `window.daiKit.refresh()` in the listener. A page that loads the kit listens for `dai:kit-merged` instead: the kit fires it with the same detail once it has seated whoever asked, so the redraw shows them seated whatever order the listeners were added in. A redraw must never discard what the person is in the middle of — text typed into a field, an editor that is open, a selection: rows arrive whenever the other copy's changes do, including mid-sentence. Keep work in progress outside what the redraw rebuilds — in a form written once in the HTML rather than recreated on every draw, or in a local drafts table the redraw reads back — or leave the element being edited untouched until it is saved or cancelled. The same failure arriving at start-up rather than mid-edit is NO-INPUT-LOST-WHILE-OPENING.",
     why:
       "Nothing else tells the application that another copy's rows landed. Without it the application draws once and redraws only after its own writes, so a two-person document looks broken in exactly the case it exists for. And a redraw that rebuilds an open editor from the stored wording throws away what was being typed, silently — found by running a blind candidate over the mailbox, where a background merge landed while a term was being edited.",
     enforced: ["lint"],
     lint: ["shared-no-merge-listener"],
     anchors: [
       { file: "src/frame.ts", contains: 'MERGED: "dai:merged"' },
+      { file: "src/kit.ts", contains: "window.dispatchEvent(new CustomEvent('dai:kit-merged', { detail: event.detail }));" },
       { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent(names.MERGED, { detail: { ...report, via: "carrier" } })' },
       { file: "src/runtime/bootloader.ts", contains: 'new CustomEvent(names.MERGED, { detail: { ...report, via: "mailbox" } })' },
       { file: "tests/fixture/chess/schema.sql", contains: "A tentative move lives here until the player commits it" },
@@ -715,7 +716,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "When this copy opens an invite, take its open seat with `window.daiKit.claimSeat(session)`: once at start-up, inside `window.daiKit.whenWritable` (IDENTITY-BOOT-WRITES), and again in the `dai:merged` listener only when `event.detail.via === \"carrier\"` — never for \"mailbox\". The kit asks for the open seat only if this copy holds none, has not already asked, and one is open, and returns the seat this copy holds, or null: null too while it waits for the creator's copy to seat it (`pendingSeat(session)` names the seat it asked for). A copy waiting to be seated may write for that seat; the rows wait in t_pending and are admitted once it is. Join the session the invite was sent for. An invite carries only that session and none of the sender's local rows (SESSION-INVITE), so it is a session with an open seat that this copy did not create and is not a member of — in a fresh copy made from an invite there is exactly one. That includes a copy whose seat was contested or replaced: opening the creator's fresh invite is how it gets back in, and excluding copies that were ever seated would lock it out for good. Prefer the item that is showing when it is joinable (a copy that arrived as a whole document carries the sender's local rows, including which item was showing), otherwise take the newest joinable one, and make it the item showing.",
+      "When this copy opens an invite, take its open seat with `window.daiKit.claimSeat(session)`: once at start-up, inside `window.daiKit.whenWritable` (IDENTITY-BOOT-WRITES), and again in the `dai:kit-merged` listener only when `event.detail.via === \"carrier\"` — never for \"mailbox\". The kit asks for the open seat only if this copy holds none, has not already asked, and one is open, and returns the seat this copy holds, or null: null too while it waits for the creator's copy to seat it (`pendingSeat(session)` names the seat it asked for). A copy waiting to be seated may write for that seat; the rows wait in t_pending and are admitted once it is. Join the session the invite was sent for. An invite carries only that session and none of the sender's local rows (SESSION-INVITE), so it is a session with an open seat that this copy did not create and is not a member of — in a fresh copy made from an invite there is exactly one. That includes a copy whose seat was contested or replaced: opening the creator's fresh invite is how it gets back in, and excluding copies that were ever seated would lock it out for good. Prefer the item that is showing when it is joinable (a copy that arrived as a whole document carries the sender's local rows, including which item was showing), otherwise take the newest joinable one, and make it the item showing.",
     why:
       "Membership comes from opening an invite, not from rows arriving. A copy that joined on every background merge would re-take a seat it had lost, and a copy that joined twice would contest its own seat.",
     enforced: ["prose"],
@@ -1070,8 +1071,14 @@ export const SURFACE: readonly SurfaceEntry[] = [
     anchor: { file: "src/frame.ts", contains: 'MERGED: "dai:merged"' },
   },
   {
+    call: 'window.addEventListener("dai:kit-merged", fn)',
+    does: "Fired by the kit after a merge, once it has seated whoever asked, with dai:merged's detail. A page that loads the kit redraws on this, not on dai:merged.",
+    shapes: SHARED,
+    anchor: { file: "src/frame.ts", contains: 'KIT_MERGED: "dai:kit-merged"' },
+  },
+  {
     call: "window.daiKit.refresh()",
-    does: "Re-runs every kit query on the page. Call it in the dai:merged listener when the page uses <dai-rows> or <dai-value>.",
+    does: "Re-runs every kit query on the page. Call it in the merge listener when the page uses <dai-rows> or <dai-value>.",
     shapes: ALL,
     anchor: { file: "src/kit.ts", contains: "db: db, run: run, refresh: refresh," },
   },

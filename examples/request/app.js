@@ -609,9 +609,12 @@ for (const type of ["pointerup", "pointercancel"]) {
 }
 const whenPointerLifts = (run) => (pointerDown ? afterPointer.push(run) : run());
 
-// Added once the kit has loaded, so the kit's own listener, which seats whoever
-// asked, runs first and this draw shows them seated.
+// The kit's event, not dai:merged: the kit fires it once it has seated whoever
+// asked, so this draw shows them seated, whenever this listener was added.
+// Before the start-up has drawn, there is nothing to redraw; the first draw
+// reads what arrived.
 const onMerged = (event) => whenPointerLifts(() => {
+  if (!kit) return;
   if (event.detail?.via === "carrier") joinIfInvited();
   const typing = document.activeElement?.id?.startsWith("answer-") ? document.activeElement : null;
   const at = typing ? { id: typing.id, start: typing.selectionStart } : null;
@@ -625,12 +628,12 @@ const onMerged = (event) => whenPointerLifts(() => {
 // Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
+  window.addEventListener("dai:kit-merged", onMerged);
   // The kit opens the database: one handle for the page, since a second
   // openDatabase() would be a second copy of it.
   await import("./dai-kit.js");
   kit = window.daiKit;
   db = kit.db;
-  window.addEventListener("dai:merged", onMerged);
   joinIfInvited();
   draw();
   // The kit seats whoever asked once this mount can write, after this first

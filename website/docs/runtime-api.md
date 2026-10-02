@@ -23,7 +23,7 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `window.dai.signature` — "valid", "unsigned" or "invalid" for this container.
 - `window.dai.onAppModeChange(fn)` — Called when the container enters or leaves full-screen App Mode.
 - `window.dai.requestShare(session?)` — Opens the host's own share sheet — the same one behind its menu. Does not share anything itself: the person still sees the card, still chooses whether to include their data, and still presses Send. In a session document, pass the session id to make it an invite into that one session: the copy that travels holds only that session's rows, and none of the other sessions or of this copy's local tables. Without one, the whole document is offered.
-- `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the dai:merged listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
+- `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the merge listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
 
 ## Shared tables (passable and session)
 
@@ -43,7 +43,8 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `window.dai.replicated.change(table, entity, values, session?)` — Writes a new version of a shared row, naming every current version as its parent — which is also how a conflict is resolved. values carries every one of your columns. Returns the entity.
 - `window.dai.replicated.remove(table, entity, session?)` — Deletes a shared row by writing a tombstone. The row leaves t\_current. Returns the entity.
 - `window.addEventListener("dai:merged", fn)` — Fired when another copy's rows arrive. event.detail: { applied, duplicate, rejected, newReplicas, conflicts, via } — via is "carrier" (a file or link was opened) or "mailbox" (rows arrived in the background).
-- `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the dai:merged listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
+- `window.addEventListener("dai:kit-merged", fn)` — Fired by the kit after a merge, once it has seated whoever asked, with dai:merged's detail. A page that loads the kit redraws on this, not on dai:merged.
+- `window.daiKit.refresh()` — Re-runs every kit query on the page. Call it in the merge listener when the page uses &lt;dai-rows&gt; or &lt;dai-value&gt;.
 - `window.daiKit.whenWritable(fn)` — Runs fn when this mount can write shared rows, and never on a read-only one. Resolves with fn's result, or undefined when read-only.
 - `window.daiKit.author()` — This copy's author id, hex, as the host handed it: never read from a row. Null until the host has said.
 

@@ -41,6 +41,13 @@ export const FRAME_PUBLIC = {
    * that loads after.
    */
   NEW_PLAYER: "dai:new-player",
+  /**
+   * Fired on `window` by the kit after it has done its own work on a merge
+   * (seated whoever asked), with the merge's detail. A page that loads the kit
+   * redraws on this rather than on MERGED, so its draw follows the kit's
+   * whatever order the listeners were added in (D177).
+   */
+  KIT_MERGED: "dai:kit-merged",
 } as const;
 
 /** Names between the shell and the runtime's own frame code. Renamable together. */
