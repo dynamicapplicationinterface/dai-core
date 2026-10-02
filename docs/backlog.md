@@ -4450,10 +4450,68 @@ finds no write control on screen.
 
 #### D178 — `sealed-leave:25` leaves the move pending on local WebKit
 
-*Status: **reopened** 2 October, on CI run 37040021127 (`d5f517c`). The
-runtime fix landed the same day (below, "Explained"). Its forced-order test fails
-at its own setup, before the move is played. It does not show the fix
-incomplete (below, "Reopened").*
+*Status: **closed** 2 October, on the forced-order test's own fix (below,
+"Closed"): 40 of 40 green at HEAD, 40 of 40 red on `0cfda2e`'s runtime, the
+full spec 20 times on WebKit green. Reopened earlier the same day on CI run
+37040021127 (`d5f517c`), where the test failed at its own setup (below,
+"Reopened"). The runtime fix (below, "Explained") was not changed.*
+
+**Closed.** The forced-order test (`sealed-leave`, "a row written while a seal
+waits for its signature is sealed by a later save") now holds the new game's
+*last* signature, whatever the batch count or order, and nothing else changed
+in the runtime (`flushAutosave` untouched). Four changes, each found by
+running, not reading:
+
+1. *Which signature.* Every signature asked after the hold is armed is held
+   and read from outside (the header's `covers`, decoded). It is kept only if
+   the new game is written (an own seq above the one read before arming) and
+   every own row still pending is in this batch, so no batch follows it. Any
+   other goes back at once. The first version also required the kept batch
+   to hold the game's rows. That failed 3 of 8 on WebKit: a seal goes by
+   session and sorts by session id, so in about half the runs the game's
+   batch is signed first and the fixture's batch is the seal's last.
+2. *No publish during the hold.* On `0cfda2e` the test with rule 1 alone
+   was green 20 of 20 on WebKit (Chromium 20 of 20 red). A probe showed the
+   host's lane answering the move's `AUTHORED` with a publish, and a publish
+   seals and flushes what is pending, which sealed the move. From the move on,
+   the test keeps the frame's `AUTHORED` from the host. It checks the save, not
+   the publish. WebKit then went 9 of 20 red.
+3. *The answer, not the request.* The hold moved from the frame's request at
+   the host to the host's answer in the shell (`DAI_HOST_SIGNED`, given back
+   with the shell's own parent as its source). The host's signing step is
+   then out of the window. This alone did not change the WebKit count (2 of 5
+   red).
+4. *The move is the only write in the hold.* Probes of `flushAutosave` showed
+   the remaining rescue. The test's own taps write (the picked-up square, then
+   the draft), and `play` waits about 800 ms for Play to enable. The draft's
+   debounce then fired during the hold, and a flush asked while a save is in
+   flight goes round again after it and seals the move: the order that
+   passes. `tests/chess-play.ts` now exports `pick` (everything before Play;
+   `play` is `pick` plus the click, unchanged for its other callers). The
+   test picks straight after the submit, inside the new game's debounce, and
+   only presses Play during the hold.
+
+**Counts, final test, local, one worker, no retries:**
+
+| runtime | engine | runs | result |
+| --- | --- | --- | --- |
+| HEAD (`fa2baf8`, fix `d5f517c`) | WebKit | 20 | 20 passed |
+| HEAD | Chromium | 20 | 20 passed |
+| `0cfda2e` (before the fix) | WebKit | 20 | **20 failed**, all at the last poll, the move pending |
+| `0cfda2e` | Chromium | 20 | **20 failed**, the same |
+| HEAD, one-batch order forced (a save landed before arming) | WebKit | 3 | 3 passed |
+| `0cfda2e`, one-batch order forced | WebKit | 3 | **3 failed** |
+| HEAD, full `sealed-leave` spec | WebKit | 20 × 2 tests | 40 passed |
+
+Every red run reached the move (the hold was released by the move's write)
+and failed at "the move, written during the seal, is sealed by a save after
+it", one row pending. The 40 HEAD runs all gave one signature back (two
+batches). The one-batch order CI hit did not occur locally, so it was
+forced, both ways. CI: run 37074792407 on `86fcfa4`, read by
+`scripts/ci-verdict.mjs`, **gate green**. WebKit 4/4 (where it failed before)
+156 passed, 0 failed; every other WebKit shard, mailbox and Chromium whole 0
+failed. Firefox (reading, D32): `mount-order:194` failed (D172) and
+`mailbox-link-e2e:1538` was flaky (D174), as before.
 
 **Reopened.** CI's WebKit shard 4 failed "a row written while a seal waits
 for its signature is sealed by a later save" twice (the run and its retry),
