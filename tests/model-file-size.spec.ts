@@ -16,7 +16,7 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 145,000 bytes: the file's size on 2 October, 144,301, rounded up to the
+ * 145,000 bytes: the file's size on 2 October, 144,342, rounded up to the
  * next thousand (identity step 7b). Not a raise: step 7a's rebuild of the
  * examples brought the file down to 143,414 under the 144,370 identity step 6
  * took for D165, and step 7b's two rules (D170's data-dai-write mark, D177's

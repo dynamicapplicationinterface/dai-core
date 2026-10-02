@@ -4420,8 +4420,9 @@ plaintext probe no ciphertext spells by chance: a long, distinctive move text
 #### D170 — A read-only mount still offers the application's writes
 
 *Status: **landed** 2 October, step 7b. The application marks every control
-that writes shared rows `data-dai-write`; when `dai.replicated.writable()`
-answers false the kit disables each one (every field of a marked form, `inert`
+that writes shared rows `data-dai-write`; when `dai.replicated.readOnly()`
+answers true (the host mounted the copy read-only and said so over it) the
+kit disables each one (every field of a marked form, `inert`
 for an element that cannot be disabled) and keeps it disabled through the
 application's own redraws. Chess, tic-tac-toe and request are marked;
 IDENTITY-BOOT-WRITES says it and SESSION-CLOSE points there.
@@ -4430,6 +4431,9 @@ IDENTITY-BOOT-WRITES says it and SESSION-CLOSE points there.
 shown, no listed write control can be pressed (the list is the test's own, not
 read from the mark), and a scripted insert is refused with the sentence and
 lands nothing. Red first on all six (New Game, Start, New request were offered).
+First built on `writable()` false, which also disabled a copy opened with no
+host, where nothing says why (`examples-shared:244` caught it); narrowed to
+`readOnly()` in a follow-up commit.
 Filed 28 September, seen on the screen while building D108.* A copy this host mounts
 read-only (D108: a batch format it does not write) shows the update sentence
 over the document, and chess still offers New Game, which then refuses with
@@ -5164,7 +5168,7 @@ own process, with the reason written where the number is
 examples on the kit's seats shrinks what the model file embeds, and the
 budget comes down to the new size in that commit.
 **Reclaimed** 2 October, step 7b: step 7a brought the file to 143,414; after
-step 7b's D170 and D177 rules it is 144,301, under 144,370, and `BUDGET_BYTES`
+step 7b's D170 and D177 rules it is 144,342, under 144,370, and `BUDGET_BYTES`
 is 145,000 (the size rounded up to the next thousand), the D165 reason text
 removed.
 Built as `775f168`: one confirm per

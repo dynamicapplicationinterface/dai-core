@@ -2077,6 +2077,20 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         await awaitRules();
         return Boolean(mergeModule) && Boolean(mountReplica);
       },
+      /*
+       * Whether the host mounted this copy read-only and said why over the
+       * document (D108: a batch format it does not write, either way). Waits
+       * for the rules as writable() does. The kit disables the application's
+       * write controls on such a mount (D170). A mount that is only without
+       * rules (no host, rules refused) is not this one: nothing over the
+       * document says why, so the kit leaves it to the application's own
+       * refusal sentence.
+       */
+      readOnly: async (): Promise<boolean> => {
+        if (!expectsRules) return false;
+        await awaitRules();
+        return mountReadOnly;
+      },
       insert: (table: string, values: Any, sessionHex?: string): string => {
         const id = entity();
         settleReplica(rows);
