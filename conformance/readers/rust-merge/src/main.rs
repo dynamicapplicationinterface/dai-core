@@ -233,12 +233,17 @@ struct Counts {
 // not checked, and a header not checked is not signed. `signed_lists` is the
 // list that made a header authentic where it is not the one it stores
 // (lists.json; docs/format.md#fixtures-verdicts), by id, in the one spelling.
+// `own_verdicts` and `own_lists` are the same for the local copy's headers,
+// each against the local copy's rows: a held header complete over them adopts
+// the pending rows it lists (docs/format.md#merge-row-held-signed).
 // Returns the counts, the canonical dump, and what the document admits after.
 fn merge(
     work: &Path,
     sibling: &Path,
     verdicts: &BTreeMap<String, String>,
     signed_lists: &BTreeMap<String, String>,
+    own_verdicts: &BTreeMap<String, String>,
+    own_lists: &BTreeMap<String, String>,
 ) -> (Counts, String, String) {
     let c = Connection::open(work).unwrap();
     c.execute_batch(&format!(
@@ -300,13 +305,25 @@ fn merge(
     // The headers the local copy held before the merge: a revealing header is
     // one "the local copy did not hold before" (docs/format.md#revealing-two-headers).
     let mut held_before: BTreeSet<String> = BTreeSet::new();
+    // Of those, the ones complete over the copy's own rows, the header
+    // unverified (its "ok" in its own verdicts), with the list it signed (its
+    // own lists.json entry where it has one): id -> (id bytes, author, list).
+    let mut own_complete: BTreeMap<String, (Vec<u8>, Vec<u8>, String)> = BTreeMap::new();
     if has("main") {
-        let mut st = c.prepare("SELECT id FROM main._dai_batch").unwrap();
-        held_before = st
-            .query_map([], |r| r.get::<_, Vec<u8>>(0))
+        let mut st = c.prepare("SELECT id, author, covers FROM main._dai_batch").unwrap();
+        let v: Vec<(Vec<u8>, Vec<u8>, String)> = st
+            .query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, String>(2)?)))
             .unwrap()
-            .map(|x| hexlc(&x.unwrap()))
+            .map(|x| x.unwrap())
             .collect();
+        for (id, author, stored) in v {
+            let hid = hexlc(&id);
+            held_before.insert(hid.clone());
+            if own_verdicts.get(&hid).map(|x| x == "ok").unwrap_or(false) {
+                let listed = own_lists.get(&hid).cloned().unwrap_or(stored);
+                own_complete.insert(hid, (id, author, listed));
+            }
+        }
     }
     if has("main") && has("S") {
         let headers: Vec<(Vec<u8>, Vec<u8>, String)> = {
@@ -389,6 +406,13 @@ fn merge(
                 rusqlite::params![id, listed],
             )
             .unwrap();
+            // A header the local copy already holds under another list is
+            // rewritten to the list it signed (#merge-headers-rewritten).
+            c.execute(
+                "UPDATE main._dai_batch SET covers = ?2 WHERE id = ?1 AND covers IS NOT ?2",
+                rusqlite::params![id, listed],
+            )
+            .unwrap();
         }
         // No row is taken through a tainted header, but "A row listed by a
         // complete header kept in step 1 ... is signed, and taken", and only
@@ -407,6 +431,32 @@ fn merge(
     }
     // What is left in listed_by: the rows only a refused-whole batch signed.
     let spoiled = listed_by;
+
+    // A row the local copy holds with _r_batch unset is signed, not pending,
+    // when a complete header the copy held before the merge lists it (its
+    // table, its author, its seq): before any row is placed, its _r_batch is
+    // set to the lowest such header (docs/format.md#merge-row-held-signed,
+    // #merge-no-adopt). So a signed row arriving at its id does not outrank
+    // it. Ascending id order, each filling only what is still unset, leaves
+    // the lowest.
+    for (_, (id, author, listed)) in &own_complete {
+        let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(listed) else { continue };
+        for pair in list {
+            let (Some(tname), Some(seq)) = (pair[0].as_str(), pair[1].as_i64()) else { continue };
+            let Some(t) = tables.iter().find(|t| t.name == tname) else { continue };
+            if t.i_batch.is_none() {
+                continue;
+            }
+            c.execute(
+                &format!(
+                    "UPDATE main.\"{}\" SET _r_batch = ?1 WHERE _r_replica = ?2 AND _r_seq = ?3 AND _r_batch IS NULL",
+                    t.name
+                ),
+                rusqlite::params![id, author, seq],
+            )
+            .unwrap();
+        }
+    }
 
 
     // Signed means listed by an ok header, whatever the row says. Signed rows are
@@ -967,7 +1017,9 @@ fn main() {
             std::fs::copy(f.join(base), &work).unwrap();
             let theirs = verdicts.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
             let their_lists = lists.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
-            let (c, dump, admitted) = merge(&work, &f.join(sib), &theirs, &their_lists);
+            let ours = verdicts.get(base.trim_end_matches(".db")).cloned().unwrap_or_default();
+            let our_lists = lists.get(base.trim_end_matches(".db")).cloned().unwrap_or_default();
+            let (c, dump, admitted) = merge(&work, &f.join(sib), &theirs, &their_lists, &ours, &our_lists);
             let want = std::fs::read_to_string(f.join(exp))
                 .unwrap()
                 .replace("\r\n", "\n");
