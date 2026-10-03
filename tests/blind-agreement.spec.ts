@@ -172,7 +172,7 @@ test("what B is typing survives the other copy's rows arriving", async ({ browse
   await pageA.click("#more");
   await pageA.click("#send");
   await pageA.click("#send-go");
-  await expect(pageA.locator("#report")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
+  await expect(pageA.locator("#doc-note")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
   const link = (await pageA.evaluate(() => (window as any).__copied as string | undefined))!;
   await pageB.goto(link);
   await pageB.locator("#card-open").click({ timeout: 60_000 });
@@ -223,7 +223,7 @@ test("an agreement is written, contested, accepted, voided, re-accepted and seal
   await pageA.click("#more");
   await pageA.click("#send");
   await pageA.click("#send-go");
-  await expect(pageA.locator("#report")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
+  await expect(pageA.locator("#doc-note")).toContainText(/Link copied|Shared/, { timeout: 30_000 });
   const link = (await pageA.evaluate(() => (window as any).__copied as string | undefined))!;
   expect(link, "the share produced a link").toBeTruthy();
 

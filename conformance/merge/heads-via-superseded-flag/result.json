@@ -6,17 +6,20 @@
     "T1-D10"
   ],
   "converges": true,
+  "admitted": false,
   "stable": true,
   "ab": {
     "applied": 1,
     "duplicate": 0,
     "rejected": [],
-    "newReplicas": 1
+    "newReplicas": 1,
+    "refusedBatches": []
   },
   "ba": {
     "applied": 2,
     "duplicate": 0,
     "rejected": [],
-    "newReplicas": 1
+    "newReplicas": 1,
+    "refusedBatches": []
   }
 }

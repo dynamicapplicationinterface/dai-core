@@ -9,6 +9,7 @@
     "what": "string — one sentence saying what this vector is for",
     "cites": "array of strings, non-empty — sections and numbered decisions of docs/replicated-tables.md that this vector exercises",
     "converges": "boolean — whether the two directions must produce identical dumps",
+    "admitted": "boolean — whether the vector ships expected-admitted-ab.txt and expected-admitted-ba.txt, what the document admits after each merge, which a reader computes from the tables alone",
     "stable": "boolean — whether merging a second time must change nothing",
     "ab": "object — the merge result of B into A",
     "ba": "object — the merge result of A into B"
@@ -17,7 +18,8 @@
     "applied": "integer — rows inserted that were not held before",
     "duplicate": "integer — rows already held with the same content",
     "rejected": "array of strings — row ids refused, in the _r_parents text form",
-    "newReplicas": "integer — replica ids written to _dai_replicas"
+    "newReplicas": "integer — replica ids written to _dai_replicas",
+    "refusedBatches": "array of {author, reason} — batches refused, by the author id they name (base64url) and a BATCH_ code, ordered by batch id; empty when none was"
   },
   "optional": {
     "shrinksAt": "string — when a stated limitation stops applying",

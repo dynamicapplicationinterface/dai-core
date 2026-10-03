@@ -3,7 +3,7 @@
 ::: info SESSION-CREATE
 **A new game is a new session**
 
-Start each game, match or agreement with `const { session, seat } = window.dai.replicated.session.create()`. It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex), `seat` is the open seat. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them: `session.create()` and `insert` work inside a `BEGIN` … `COMMIT` you open. The creator is a member from the moment the session exists, so the creator's rows are admitted before anyone has joined — the first move can be made before the invite is sent.
+Start each game, match or agreement with `const session = window.daiKit.newSession()` (IDENTITY-KIT-SEATS). It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex). A board one copy plays alone takes both seats: `newSession({ solo: true })`. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them: `newSession()` and `insert` work inside a `BEGIN` … `COMMIT` you open. The creator is a member from the moment the session exists, so the creator's rows are admitted before anyone has joined — the first move can be made before the invite is sent.
 
 **Why.** A session is the unit of membership. Rows written outside one belong to nobody, and a second game in the same session would share the first game's roster.
 

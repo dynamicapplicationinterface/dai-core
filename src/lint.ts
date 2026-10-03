@@ -19,6 +19,7 @@
 
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
+import { seatWritesIn } from "./seat-check.js";
 
 export interface Finding {
   /** Stable identifier, for callers that want to filter or count. */
@@ -255,11 +256,11 @@ const SHARED_CHECKS = {
     fix: "Read the table's _current view: SELECT … FROM moves_current rather than FROM moves.",
   },
   "shared-no-merge-listener": {
-    what: "It has shared tables and never listens for dai:merged.",
+    what: "It has shared tables and never listens for dai:merged (or the kit's dai:kit-merged).",
     why:
       "Nothing else tells the application that the other copy's rows arrived, so it never redraws when " +
       "they do and looks broken in exactly the case it exists for. See SHARED-REDRAW-ON-MERGE.",
-    fix: 'Add window.addEventListener("dai:merged", () => redraw()) — and call window.daiKit.refresh() in it if the page uses the kit.',
+    fix: 'Add window.addEventListener("dai:merged", () => redraw()); on a page that loads the kit, listen for "dai:kit-merged" instead and call window.daiKit.refresh() in it.',
   },
   "shared-conflicts-unshown": {
     what: "It changes or removes shared rows and never shows a conflict.",
@@ -268,6 +269,16 @@ const SHARED_CHECKS = {
       "the other version waits in _heads. An application that never reads either silently shows one of " +
       "two edits. See SHARED-SURFACE-CONFLICTS.",
     fix: "Read _r_conflicted from the _current view, show the competing versions from _heads, and let the person choose.",
+  },
+  "seat-table-write": {
+    what: "It writes a seat table (_dai_seat, _dai_binding, _dai_confirm) itself, or calls the session writers the kit wraps.",
+    why:
+      "The seat tables are the kit's: who holds a seat is what the document admits a row by, and the kit's " +
+      "reads are built on the host's author id, never on a row. A seat written around the kit is a seat " +
+      "nothing vouches for. See IDENTITY-KIT-SEATS.",
+    fix:
+      "Use window.daiKit.newSession(), .claimSeat(session), .reseat(session), and read with .mySeat(session), " +
+      ".amCreator(session) and .seats(session).",
   },
   "shared-table-constraint": {
     what: "A shared table declares UNIQUE or CHECK.",
@@ -353,13 +364,15 @@ function lintShared(files: Record<string, string>): (Finding & { file: string })
     const source = withoutComments(raw);
     if (rawWrite.test(source)) findings.push(sharedFinding("shared-raw-write", name));
     if (baseRead.test(source)) findings.push(sharedFinding("shared-base-read", name));
+    if (seatWritesIn(source).length > 0) findings.push(sharedFinding("seat-table-write", name));
   }
 
   const everything = code.map(([, source]) => source).join("\n");
   const entry = code.find(([name]) => /(?:^|\/)index\.html?$/i.test(name))?.[0] ?? code[0]?.[0] ?? schemaName;
   // The event an app listens for, spelled by its owner (D78): a rename there is a rename here.
-  const quoted = ['"', "'", "`"].some((open) =>
-    ['"', "'", "`"].some((close) => everything.includes(`${open}${FRAME_PUBLIC.MERGED}${close}`)),
+  // A page on the kit listens for the kit's, fired after the kit's own merge work (D177).
+  const quoted = [FRAME_PUBLIC.MERGED, FRAME_PUBLIC.KIT_MERGED].some((name) =>
+    ['"', "'", "`"].some((open) => ['"', "'", "`"].some((close) => everything.includes(`${open}${name}${close}`))),
   );
   if (!quoted) findings.push(sharedFinding("shared-no-merge-listener", entry));
   if (/\.(?:change|remove)\s*\(/.test(everything) && !/_r_conflicted|_conflicts\b/.test(everything)) {

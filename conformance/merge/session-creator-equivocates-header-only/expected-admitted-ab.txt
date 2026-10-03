@@ -1,0 +1,12 @@
+# _dai_binding
+6fc66a90486171ca69b512be185d66a7:1	0
+# _dai_close
+# _dai_confirm
+# _dai_seat
+# moves
+# holders
+# voided
+# equivocated
+2bad0fd610d99eae443e932a26142bca	_dai_confirm	3
+2bad0fd610d99eae443e932a26142bca	moves	3
+# closed

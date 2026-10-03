@@ -1,0 +1,24 @@
+{
+  "what": "A session declared max_parties=2, Bo seated in its open seat. Ada mints a third seat, confirms Cy in it, and Cy moves for it. Seats minted beyond max_parties, in the creator's seq order, are not minted, and a confirm counts only for a seat the creator minted: nobody holds the third seat, Cy's move is admitted nowhere, Bo's hold stands, and nothing is reported (R11). Before the ruling, Cy held the third seat and three parties played (review 8, A8).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

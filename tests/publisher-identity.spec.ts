@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
 import { compileDirectory } from "../src/compile.js";
 import { verifyContainer } from "../src/container.js";
-import { verifyIdentity } from "../src/identity.js";
+import { verifyIdentity } from "../src/publisher-identity.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const KEY = resolve(repo, "conformance", "signing-key.pem");
@@ -28,7 +28,6 @@ async function signedBuild() {
     signingKey: KEY,
     // See tests/test-key.spec.ts: the published key is refused unless asked for.
     allowTestKey: true,
-    manifestVersion: 3,
   });
   const verified = await verifyContainer(built.html);
   return { built, key: verified.publicKey!, signature: built.manifest.signature! };

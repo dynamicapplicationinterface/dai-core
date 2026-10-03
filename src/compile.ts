@@ -149,6 +149,61 @@ export function packagedAsset(name: string): string {
 }
 
 /**
+ * Refuses a seed database that holds rows in a replicated table (batch format
+ * version 2, step 6).
+ *
+ * Every row in a replicated table crosses a merge only signed, by its author's
+ * key, and a seed's rows were signed by nobody: every copy would refuse them,
+ * and the one that shipped them would show rows no other copy can hold. So the
+ * build says so, naming the table, where the author can act on it. Shared
+ * example rows go in through the write surface (SHARED-SEED-THROUGH-SURFACE).
+ */
+async function refuseUnsignedSeed(files: Record<string, Uint8Array>, seed: Uint8Array, warnings: string[]): Promise<void> {
+  const source = files["schema.sql"];
+  if (!source) return;
+  const { tables } = rewriteReplicated(new TextDecoder().decode(source));
+  if (tables.length === 0) return;
+  let DatabaseSync:
+    | (new (path: string, options?: { readOnly?: boolean }) => {
+        prepare(sql: string): { all(...params: unknown[]): unknown[] };
+        close(): void;
+      })
+    | undefined;
+  try {
+    ({ DatabaseSync } = (await import("node:sqlite")) as unknown as { DatabaseSync: typeof DatabaseSync });
+  } catch {
+    warnings.push(
+      "This Node has no built-in SQLite (it needs 22.5 or later), so the seed database was not checked " +
+        "for rows in shared tables. Any there would be refused by every copy, since nobody signed them.",
+    );
+    return;
+  }
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "dai-seed-"));
+  const path = join(dir, "seed.sqlite");
+  writeFileSync(path, seed);
+  const db = new DatabaseSync!(path, { readOnly: true });
+  try {
+    for (const table of tables) {
+      const present = db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").all(table).length > 0;
+      if (!present) continue;
+      const count = Number((db.prepare(`SELECT count(*) AS n FROM "${table.replace(/"/g, '""')}"`).all()[0] as { n: number }).n);
+      if (count > 0) {
+        throw new CompileError(
+          `The seed database holds ${count} row(s) in the shared table ${table}. Nobody signed them, so every copy ` +
+            "would refuse them. Leave shared tables empty in the seed, and add an example row through " +
+            "window.dai.replicated.insert once, guarded by a flag in a local table.",
+        );
+      }
+    }
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Loads the schema the compiler will seal into a real SQLite engine, and
  * refuses the build if it does not load.
  *
@@ -287,6 +342,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
         `Shipping an empty document instead.`,
     );
   }
+  if (sqlite) await refuseUnsignedSeed(files, sqlite, warnings);
 
   const wasmPath = findFirst(root, options.sqliteWasmPath, SQLITE_WASM_LOOKUP);
   if (!wasmPath) {

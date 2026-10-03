@@ -90,7 +90,7 @@ const ROOTS = ["src", "apps", "website", "examples", "scripts", "conformance", "
 const OTHER_CHECKS = [
   {
     run: "npm run typecheck",
-    claims: ["scripts/check-symbols.mjs", "scripts/check-routes.mjs", "scripts/check-callers.mjs"],
+    claims: ["scripts/check-symbols.mjs", "scripts/check-routes.mjs", "scripts/check-callers.mjs", "scripts/check-flag.mjs"],
   },
   {
     run: "python3 conformance/reference/run.py",
@@ -129,6 +129,10 @@ const OTHER_CHECKS = [
   {
     run: "python3 conformance/reference/dai_merge.py",
     claims: ["conformance/reference/dai_merge.py", "conformance/merge/"],
+  },
+  {
+    run: "python3 scripts/holdout.py",
+    claims: ["scripts/holdout.py"],
   },
   {
     run: "cargo run --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge",
@@ -174,8 +178,14 @@ const ALLOWED = [
 
 // ------------------------------------------------------------------ files
 
+/**
+ * The tracked files only. The map is committed and CI regenerates it from the
+ * pushed tree, so a file on disk that the push will not carry — a probe spec,
+ * a helper not yet added — must not enter it, or the pushed map is stale.
+ * `impact.mjs` still errs wide for such a file: unclaimed means a full run.
+ */
 function listFiles() {
-  const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+  const out = execFileSync("git", ["ls-files", "-z", "--cached"], {
     cwd: repo,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

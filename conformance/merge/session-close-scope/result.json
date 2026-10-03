@@ -1,0 +1,24 @@
+{
+  "what": "Ada closes S and then deletes her close; she starts S2 and moves there, then moves in S. Bo writes a close of S that is itself a delete, then moves in S, and closes S2, where he holds no seat. A delete of a close revokes nothing and a deleted close row counts for nothing: S is closed, and Bo's move is admitted. A close binds its author in its own session only: Ada's S2 move is admitted and her later S move is late, reported nowhere by the merge that takes it. A close counts only by a member of its own session: S2 is not closed (D151, D152, D153).",
+  "cites": [
+    "6",
+    "T1-D31"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 3,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 6,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

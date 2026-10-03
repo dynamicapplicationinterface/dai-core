@@ -20,13 +20,31 @@ Level 1: no signatures, no keys. A replica id is a claim.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import math
+import re
 import sqlite3
 import sys
 from pathlib import Path
 
 SUITE = Path(__file__).resolve().parents[1] / "merge"
+
+# The roster tables a session document carries beside its author tables: who
+# created a session, who asked for its open seat, whom the creator confirmed,
+# and the close (docs/identity.md, step 5). Named by the spec, so listed here.
+ROSTER = ("_dai_binding", "_dai_close", "_dai_confirm", "_dai_seat")
+
+# The one shape a row's parents take (D159): a JSON array of at most 256 row
+# ids, each 32 lowercase hex digits, a colon and a seq from 1, a safe integer.
+PARENTS_CAP = 256
+
+# The session profile's bound on seats (docs/format.md#confirm-minted): every
+# session fixture declares max_parties=2, as every one declares close=any.
+MAX_PARTIES = 2
+PARENT_ID = re.compile(r"[0-9a-f]{32}:[1-9][0-9]{0,15}")
+SAFE_INTEGER = 2**53 - 1
 
 
 # ----------------------------------------------------------------- the dump
@@ -80,6 +98,10 @@ def replicated_tables(db: sqlite3.Connection) -> list[str]:
         columns = [row[1] for row in db.execute(f'PRAGMA table_info("{name}")')]
         if "_r_replica" in columns and "_r_seq" in columns:
             names.append(name)
+    # And the roster tables, where the document has them: they are signed rows
+    # like any other and merge by the same rules.
+    present = {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    names.extend(name for name in ROSTER if name in present)
     return sorted(names)
 
 
@@ -102,6 +124,14 @@ def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
     lines.append("# _dai_replicas")
     for (rid,) in db.execute("SELECT id FROM _dai_replicas ORDER BY hex(id) ASC"):
         lines.append(encode(rid))
+    # The signed batch headers, every column: the same bytes on every copy that
+    # holds one, so two copies that merged agree on the set (docs/identity.md).
+    if db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").fetchone():
+        lines.append("# _dai_batch")
+        for header in db.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch ORDER BY hex(id) ASC"
+        ):
+            lines.append("\t".join(encode(value) for value in header))
     return "\n".join(lines) + "\n"
 
 
@@ -119,7 +149,9 @@ def replicated_schema_of(db: sqlite3.Connection) -> str:
     no row-level fixture can catch because the rows never get compared.
     """
     lines: list[str] = []
-    for table in sorted(replicated_tables(db)):
+    # The author's tables: the roster tables are the format's, the same in
+    # every session document, and not the author's to declare.
+    for table in sorted(t for t in replicated_tables(db) if t not in ROSTER):
         for _cid, name, decl, notnull, default, _pk in db.execute(
             f'PRAGMA table_info("{table}")'
         ):
@@ -150,11 +182,352 @@ def row_id(replica: bytes, seq: int) -> str:
 
 
 def parents_of(text: str) -> list[str]:
+    """The ids a row names as parents; a row not the one shape names nothing,
+    in every read, a copy's own included (docs/format.md#parents-malformed,
+    #parents-own-malformed)."""
+    if not well_formed_parents(text):
+        return []
     try:
         value = json.loads(text)
     except (ValueError, TypeError):
         return []
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def well_formed_parents(text: object) -> bool:
+    """Whether a row's parents are the one shape (D159)."""
+    if not isinstance(text, str):
+        return False
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return False
+    if not isinstance(value, list) or len(value) > PARENTS_CAP:
+        return False
+    return all(
+        isinstance(item, str) and PARENT_ID.fullmatch(item) is not None and int(item[33:]) <= SAFE_INTEGER
+        for item in value
+    )
+
+
+def rid_of(row: dict) -> str:
+    return row_id(row["_r_replica"], row["_r_seq"])
+
+
+def session_id(author: object, seq: object) -> bytes | None:
+    """SHA-256 of the author id and the seq as eight bytes big-endian, first 16 bytes (D158)."""
+    if not isinstance(author, (bytes, bytearray)) or len(author) != 16:
+        return None
+    if not isinstance(seq, int) or seq < 0 or seq >= 2**64:
+        return None
+    return hashlib.sha256(bytes(author) + seq.to_bytes(8, "big")).digest()[:16]
+
+
+def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
+    """Equivocation (D160; docs/format.md#equivocation): one author's two
+    headers listing one seq, in any tables, with different digests. Returned as
+    every (author, table, seq) a header lists at such an id, one per table; the
+    id itself is (author, seq). From the headers' own lists."""
+    digests: dict[tuple[bytes, int], set[bytes]] = {}
+    listings: set[tuple[bytes, str, int]] = set()
+    has_batch = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").fetchone()
+    for author, digest, covers in db.execute("SELECT author, digest, covers FROM _dai_batch") if has_batch else []:
+        try:
+            listed = json.loads(covers)
+        except (ValueError, TypeError):
+            listed = []
+        for entry in listed if isinstance(listed, list) else []:
+            if isinstance(entry, list) and len(entry) == 2:
+                digests.setdefault((bytes(author), entry[1]), set()).add(bytes(digest))
+                listings.add((bytes(author), entry[0], entry[1]))
+    return {(author, table, seq) for author, table, seq in listings if len(digests[(author, seq)]) > 1}
+
+
+def ids_of(listings: set[tuple[bytes, str, int]]) -> set[tuple[bytes, int]]:
+    """The equivocated ids, (author, seq), whatever tables list them."""
+    return {(author, seq) for author, _table, seq in listings}
+
+
+# ------------------------------------------------------------- admission
+
+
+class Admission:
+    """What a session document admits, computed from its tables (backlog D171).
+
+    Written from the rules in docs/identity.md and docs/format.md, over the
+    stored rows and headers, never the document's own views: a reader that read
+    the runtime's views would be the runtime agreeing with itself. The two
+    views it reads are declarations the schema carries, not computations: which
+    table is seated and by which column, and which tables have an author role.
+    The close rule is `any` in every vector (D171), and the bound
+    `max_parties=2` (MAX_PARTIES).
+    """
+
+    def __init__(self, db: sqlite3.Connection, tables: list[str]):
+        self.tables = tables
+        self.rows: dict[str, list[dict]] = {}
+        self.sessioned: set[str] = set()
+        for table in tables:
+            names = columns_of(db, table)
+            if "_r_session" in names:
+                self.sessioned.add(table)
+            self.rows[table] = [dict(zip(names, raw)) for raw in db.execute(f'SELECT * FROM "{table}"')]
+        views = {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'view'")}
+        self.seated = dict(db.execute("SELECT tbl, col FROM _dai_seat_rules")) if "_dai_seat_rules" in views else {}
+        self.roles = dict(db.execute("SELECT tbl, author FROM _dai_author_rules")) if "_dai_author_rules" in views else {}
+
+        self.equivocated = equivocated_ids(db)
+        self.equivocated_at = ids_of(self.equivocated)
+        self.equivocated_text = {f"{author.hex()}:{seq}" for author, seq in self.equivocated_at}
+
+        # An equivocator: an author with two authentic headers at one (author,
+        # seq) anywhere in the document. Her seat, binding, confirm and close
+        # rows count for nothing (docs/format.md#equivocator).
+        self.equivocators = {author for author, _seq in self.equivocated_at}
+
+        # The creator's seat row: the one row whose own (author, seq) hashes to
+        # its session (D158). A session whose creator is an equivocator has no
+        # creator, and is void (docs/format.md#session-void).
+        self.creators: set[tuple[bytes, bytes, bytes, bytes]] = set()
+        self.void_sessions: set[bytes] = set()
+        # The seq of each session's creator's seat row: the session exists from
+        # it (docs/format.md#session-from-creator-row).
+        self.creator_seq: dict[tuple[bytes, bytes], int] = {}
+        for s in self.rows.get("_dai_seat", []):
+            if s["_r_deleted"] == 0 and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
+                if bytes(s["_r_replica"]) in self.equivocators:
+                    self.void_sessions.add(bytes(s["_r_session"]))
+                else:
+                    self.creators.add((bytes(s["_r_session"]), bytes(s["_r_replica"]), bytes(s["seat"]), bytes(s["_r_entity"])))
+                    self.creator_seq[(bytes(s["_r_session"]), bytes(s["_r_replica"]))] = s["_r_seq"]
+        creator_entity = {session: entity for session, _replica, _seat, entity in self.creators}
+        self.creator_of = {(session, replica) for session, replica, _seat, _entity in self.creators}
+
+        # Her seat rows: her seat entities in her session, each at the lowest
+        # seq of hers in it at or above her creator's seat row, deleted or not;
+        # the first MAX_PARTIES in that order mint (docs/format.md#confirm-minted).
+        # A seat is a seat row (docs/format.md#seat-is-row): each value belongs
+        # to the row whose version named it first, in her seq order, and is a
+        # seat when that row mints.
+        first: dict[tuple[bytes, bytes], int] = {}
+        mine = [s for s in self.rows.get("_dai_seat", []) if self.of_creator_session(s)]
+        for s in mine:
+            key = (bytes(s["_r_session"]), bytes(s["_r_entity"]))
+            first[key] = min(first.get(key, s["_r_seq"]), s["_r_seq"])
+        minting = {
+            (session, entity)
+            for (session, entity), seq in first.items()
+            if sum(1 for (other, _entity), at in first.items() if other == session and at < seq) < MAX_PARTIES
+        }
+        named_first: dict[tuple[bytes, bytes], tuple[int, bytes]] = {}
+        for s in mine:
+            key = (bytes(s["_r_session"]), bytes(s["seat"]))
+            if key not in named_first or s["_r_seq"] < named_first[key][0]:
+                named_first[key] = (s["_r_seq"], bytes(s["_r_entity"]))
+        # (session, value) -> the seat row it is a seat of.
+        self.seat_row = {key: entity for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}
+
+        # Her confirms of an open seat she minted, each bound to its seat row;
+        # one holder per row, or the seat is void (D165). Deleted or not,
+        # superseded or not: a hold never moves once made, so a delete of a
+        # confirm is another confirm (D171).
+        confirmed = []
+        for f in self.rows.get("_dai_confirm", []):
+            session = bytes(f["_r_session"])
+            row = self.seat_row.get((session, bytes(f["seat"])))
+            if self.unequivocal(f) and self.of_creator_session(f) and row is not None and row != creator_entity[session]:
+                confirmed.append((session, row, bytes(f["holder"]), bytes(f["_r_replica"]), f["_r_seq"], bytes(f["seat"])))
+        self.counting_confirms = {(session, creator, seq): row for session, row, _holder, creator, seq, _value in confirmed}
+        self.voided_rows = {
+            (session, row, creator)
+            for session, row, holder, creator, _seq, _value in confirmed
+            if any(o[0] == session and o[1] == row and o[2] != holder for o in confirmed)
+        }
+        void_rows = {(session, row) for session, row, _creator in self.voided_rows}
+        values_of: dict[tuple[bytes, bytes], set[bytes]] = {}
+        for (session, value), row in self.seat_row.items():
+            values_of.setdefault((session, row), set()).add(value)
+        self.voided = {(session, value, creator) for session, row, creator in self.voided_rows for value in values_of[(session, row)]}
+        self.holders = {(session, seat, replica) for session, replica, seat, _entity in self.creators}
+        # The holder holds the seat under the values its confirms name: a later
+        # version of a held row moves nothing (docs/format.md#held-row-frozen).
+        self.holders |= {(session, value, holder) for session, row, holder, _c, _seq, value in confirmed if (session, row) not in void_rows}
+        self.members = {(session, replica) for session, _seat, replica in self.holders}
+
+        # A close counts when a member wrote it and it is not a delete (the
+        # rule `any`, D146, D153); it binds only its author (D151).
+        self.closes = [
+            x
+            for x in self.rows.get("_dai_close", [])
+            if x["_r_deleted"] == 0
+            and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in self.members
+            and self.counts(x)
+        ]
+        self.closed = {bytes(x["_r_session"]) for x in self.closes}
+
+    def unequivocal(self, row: dict) -> bool:
+        return (bytes(row["_r_replica"]), row["_r_seq"]) not in self.equivocated_at
+
+    def before_session(self, row: dict) -> bool:
+        """A creator's row in her session below her creator's seat row: it counts for
+        nothing there (docs/format.md#session-from-creator-row)."""
+        at = self.creator_seq.get((bytes(row["_r_session"]), bytes(row["_r_replica"])))
+        return at is not None and row["_r_seq"] < at
+
+    def of_creator_session(self, row: dict) -> bool:
+        """A row of the session's creator in her session, from her creator's seat row on."""
+        return (bytes(row["_r_session"]), bytes(row["_r_replica"])) in self.creator_seq and not self.before_session(row)
+
+    def counts(self, row: dict) -> bool:
+        """A roster or close row counts for something: its author is no equivocator,
+        and it is not a creator's row below her creator's seat row."""
+        return bytes(row["_r_replica"]) not in self.equivocators and not self.before_session(row)
+
+    def void(self, row: dict) -> bool:
+        """A row of a void session: neither admitted nor reported."""
+        return bytes(row["_r_session"]) in self.void_sessions
+
+    def names_equivocated(self, row: dict) -> bool:
+        """It names an equivocated id as a parent (docs/format.md#admitted-parent-equivocated):
+        not admitted and not reported, whatever that id holds here."""
+        return any(parent in self.equivocated_text for parent in parents_of(row["_r_parents"]))
+
+    def filtered(self, table: str) -> bool:
+        """An author table of a session document: its heads are over admitted rows (T1-D29)."""
+        return table not in ROSTER and table in self.sessioned
+
+    def not_late(self, row: dict) -> bool:
+        return not any(
+            bytes(x["_r_session"]) == bytes(row["_r_session"])
+            and bytes(x["_r_replica"]) == bytes(row["_r_replica"])
+            and x["_r_seq"] < row["_r_seq"]
+            for x in self.closes
+        )
+
+    def named(self, table: str, row: dict) -> list[dict]:
+        """The rows of its own entity that this row names as earlier versions."""
+        wanted = set(parents_of(row["_r_parents"]))
+        return [p for p in self.rows[table] if bytes(p["_r_entity"]) == bytes(row["_r_entity"]) and rid_of(p) in wanted]
+
+    def foreign(self, table: str, row: dict) -> bool:
+        return any(bytes(p["_r_session"]) != bytes(row["_r_session"]) for p in self.named(table, row))
+
+    def other_seat(self, table: str, row: dict) -> bool:
+        column = self.seated[table]
+        return any(
+            bytes(p["_r_session"]) == bytes(row["_r_session"]) and p[column] != row[column] for p in self.named(table, row)
+        )
+
+    def holds(self, table: str, row: dict) -> bool:
+        seat = row[self.seated[table]]
+        return isinstance(seat, bytes) and (bytes(row["_r_session"]), seat, bytes(row["_r_replica"])) in self.holders
+
+    def admitted(self, table: str, row: dict) -> bool:
+        session, replica = bytes(row["_r_session"]), bytes(row["_r_replica"])
+        role = self.roles.get(table)
+        if role == "creator" and (session, replica) not in self.creator_of:
+            return False
+        if role == "joiner" and (session, replica) in self.creator_of:
+            return False
+        if table in self.seated:
+            if not self.holds(table, row) or self.other_seat(table, row):
+                return False
+        elif (session, replica) not in self.members:
+            return False
+        return (
+            not self.foreign(table, row)
+            and self.not_late(row)
+            and self.unequivocal(row)
+            and not self.names_equivocated(row)
+        )
+
+    def heads(self, table: str) -> list[dict]:
+        rows = self.rows[table]
+        session = table in self.sessioned
+        found = []
+        for r in rows:
+            me = rid_of(r)
+            if self.filtered(table):
+                if not self.admitted(table, r):
+                    continue
+                column = self.seated.get(table)
+                hidden = any(
+                    bytes(c["_r_entity"]) == bytes(r["_r_entity"])
+                    and bytes(c["_r_session"]) == bytes(r["_r_session"])
+                    and (column is None or (c[column] is not None and c[column] == r[column]))
+                    and self.admitted(table, c)
+                    and me in parents_of(c["_r_parents"])
+                    for c in rows
+                )
+            else:
+                # A roster or close row by an equivocator neither shows nor
+                # hides; a plain table's, only at an equivocated id.
+                counts = self.counts if table in ROSTER else self.unequivocal
+                if not counts(r):
+                    continue
+                hidden = any(
+                    bytes(c["_r_entity"]) == bytes(r["_r_entity"])
+                    and (not session or (bytes(c["_r_session"]) == bytes(r["_r_session"]) and bytes(c["_r_replica"]) == bytes(r["_r_replica"])))
+                    and counts(c)
+                    and me in parents_of(c["_r_parents"])
+                    for c in rows
+                )
+            if not hidden:
+                found.append(r)
+        return sorted(found, key=lambda r: (bytes(r["_r_replica"]).hex(), r["_r_seq"]))
+
+    def unseated(self, table: str, row: dict) -> bool:
+        """What a merge reports as SEAT_NOT_HELD: no seat, a seat someone else holds, or another seat's row named.
+
+        Never a row naming an equivocated id, nor a row at one: that is
+        reported only as its author signing twice (R9), nor a row of a void
+        session (R10)."""
+        if self.names_equivocated(row) or not self.unequivocal(row) or self.void(row):
+            return False
+        seat = row[self.seated[table]]
+        if not isinstance(seat, bytes) or len(seat) != 16:
+            return True
+        held = any(h[0] == bytes(row["_r_session"]) and h[1] == seat for h in self.holders)
+        return (held and not self.holds(table, row)) or self.other_seat(table, row)
+
+    def crossings(self, table: str) -> list[tuple[str, dict, dict]]:
+        """(reason, row, the row it names) for every row naming another session's or another seat's version."""
+        found = []
+        for r in self.rows[table]:
+            if self.names_equivocated(r) or not self.unequivocal(r) or self.void(r):
+                continue
+            for p in self.named(table, r):
+                if bytes(p["_r_session"]) != bytes(r["_r_session"]):
+                    found.append(("ENTITY_OTHER_SESSION", r, p))
+                if table in self.seated:
+                    column = self.seated[table]
+                    if bytes(p["_r_session"]) == bytes(r["_r_session"]) and p[column] != r[column]:
+                        found.append(("SEAT_NOT_HELD", r, p))
+        return found
+
+
+def is_session(db: sqlite3.Connection) -> bool:
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_seat'").fetchone() is not None
+
+
+def admitted_dump(db: sqlite3.Connection) -> str:
+    """The admitted state in the text expected-admitted-*.txt holds (backlog D171)."""
+    tables = replicated_tables(db)
+    admission = Admission(db, tables)
+    lines: list[str] = []
+    for table in tables:
+        lines.append(f"# {table}")
+        lines.extend(f"{rid_of(r)}\t{r['_r_deleted']}" for r in admission.heads(table))
+    lines.append("# holders")
+    lines.extend("\t".join(part.hex() for part in h) for h in sorted(admission.holders, key=lambda h: tuple(p.hex() for p in h)))
+    lines.append("# voided")
+    lines.extend("\t".join(part.hex() for part in v) for v in sorted(admission.voided, key=lambda v: tuple(p.hex() for p in v)))
+    lines.append("# equivocated")
+    for author, table, seq in sorted(admission.equivocated, key=lambda e: (e[0].hex(), e[1], e[2])):
+        lines.append(f"{author.hex()}\t{table}\t{seq}")
+    lines.append("# closed")
+    lines.extend(session.hex() for session in sorted(admission.closed, key=bytes.hex))
+    return "\n".join(lines) + "\n"
 
 
 def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
@@ -177,28 +550,42 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             and bytes(existing["_r_entity"]) == bytes(row["_r_entity"])
             and existing["_r_parents"] == row["_r_parents"]
             and existing["_r_deleted"] == row["_r_deleted"]
+            and ("_r_session" not in existing or existing["_r_session"] == row.get("_r_session"))
             and all(existing[name] == row["columns"].get(name) for name in authored)
         )
         if same:
+            # The same row, sealed where this copy still holds it pending: it
+            # takes the seal, once, from NULL (docs/identity.md, step 3).
+            if existing.get("_r_batch") is None and row.get("_r_batch") is not None:
+                db.execute(
+                    f'UPDATE "{table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?',
+                    (row["_r_batch"], row["_r_replica"], row["_r_seq"]),
+                )
             return "duplicate"
         raise ValueError(f"ROW_REJECTED: a different row already exists as {rid}")
 
-    # Superseded on arrival when something present already names this row. A
-    # merge delivers children before parents, so this is not a rare case.
+    # Superseded on arrival when something of its own entity present already
+    # names this row. A merge delivers children before parents, so this is not a
+    # rare case. Another entity's row naming it hides nothing (T1-D35).
     named = db.execute(
         f'SELECT 1 FROM "{table}", json_each("{table}"._r_parents)'
-        " WHERE json_each.value = ? LIMIT 1",
-        (rid,),
+        f' WHERE json_each.value = ? AND "{table}"._r_entity = ? LIMIT 1',
+        (rid, row["_r_entity"]),
     ).fetchone()
 
     names = authored + [
         "_r_replica", "_r_seq", "_r_lc", "_r_entity",
-        "_r_parents", "_r_deleted", "_r_superseded", "_r_sig",
+        "_r_parents", "_r_deleted", "_r_superseded", "_r_batch",
     ]
     values = [row["columns"].get(name) for name in authored] + [
         row["_r_replica"], row["_r_seq"], row["_r_lc"], row["_r_entity"],
-        row["_r_parents"], row["_r_deleted"], 1 if named else 0, row.get("_r_sig"),
+        row["_r_parents"], row["_r_deleted"], 1 if named else 0, row.get("_r_batch"),
     ]
+    # A session document's rows carry their session (T1-D29); it travels with
+    # the row like the other carried fields, and a row without it is refused.
+    if "_r_session" in columns_of(db, table):
+        names.append("_r_session")
+        values.append(row.get("_r_session"))
     placeholders = ", ".join("?" for _ in names)
     quoted = ", ".join(f'"{name}"' for name in names)
     db.execute(f'INSERT INTO "{table}" ({quoted}) VALUES ({placeholders})', values)
@@ -209,15 +596,59 @@ def apply_row(db: sqlite3.Connection, table: str, row: dict) -> str:
             continue
         db.execute(
             f'UPDATE "{table}" SET _r_superseded = 1'
-            " WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_superseded = 0",
-            (replica_hex.upper(), int(seq)),
+            " WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ? AND _r_superseded = 0",
+            (replica_hex.upper(), int(seq), row["_r_entity"]),
         )
     return "added"
 
 
-def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
+def shown(author: bytes) -> str:
+    """An author id as a person is shown it: base64url, no padding."""
+    return base64.urlsafe_b64encode(bytes(author)).rstrip(b"=").decode("ascii")
+
+
+def merge(
+    local: sqlite3.Connection,
+    sibling: sqlite3.Connection,
+    verdicts: dict[str, str],
+    lists: dict[str, str] | None = None,
+    own_verdicts: dict[str, str] | None = None,
+    own_lists: dict[str, str] | None = None,
+) -> dict:
+    """Union merge, taking only what a verified header lists (docs/format.md).
+
+    `verdicts` is the signature check's answer for each of the sibling's
+    headers, by id in lowercase hex: "ok" or a BATCH_ code. A header missing
+    from it was not checked, and a header not checked is not signed. `lists`
+    is, for a header made authentic by a list other than the one it stores,
+    that list: what it lists and is kept under (#merge-headers-kept-list).
+    `own_verdicts` and `own_lists` are the same for the local copy's own
+    headers, against its own rows: which of them are complete here, and what
+    they list (#merge-row-held-signed).
+    """
+    lists = lists or {}
+    own_verdicts = own_verdicts or {}
+    own_lists = own_lists or {}
     tables = replicated_tables(local)
-    result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0}
+    result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
+    refusals: dict[tuple[str, str, str], bytes] = {}  # (id, reason, author hex) -> author
+
+    def refuse_batch(hid: str, author: bytes, reason: str) -> None:
+        refusals[(hid, reason, bytes(author).hex())] = author
+
+    # The headers that reveal an author signing twice (D160, D165), by author:
+    # reported once per author, under the lowest of them (D171).
+    revealed: dict[str, tuple[bytes, list[str]]] = {}
+
+    def reveal(author: bytes, hid: str) -> None:
+        revealed.setdefault(bytes(author).hex(), (bytes(author), []))[1].append(hid)
+
+    equivocated_before = ids_of(equivocated_ids(local))
+
+    # The seats void before anything arrives: a merge reports only the seats it
+    # makes void (D165).
+    session = is_session(local)
+    voided_before = {(s, row) for s, row, _c in Admission(local, tables).voided_rows} if session else set()
 
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
@@ -253,6 +684,118 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
             (rid, before),
         )
 
+    # The signed headers: a union by id of the verified ones, before any row.
+    # A header lists the rows it covers as [table, seq], its author being its
+    # own; a row's _r_batch is a cache of one header that lists it, never the truth.
+    has_batches = lambda db: db.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'"
+    ).fetchone()
+    held: dict[str, bytes] = {}
+    covering: dict[str, str] = {}  # "table|author:seq" -> the lowest ok id listing it
+    covers: set[str] = set()  # "id|table|author:seq"
+    # A row whose parents are not the one shape is refused before anything else
+    # reads it, and so is every row of a complete batch that signed one: the
+    # author signed them together, and that header is not kept (D159).
+    malformed = {
+        f"{table}|{row_id(r_replica, r_seq)}"
+        for table in tables
+        for r_replica, r_seq, r_parents in sibling.execute(f'SELECT _r_replica, _r_seq, _r_parents FROM "{table}"')
+        if not well_formed_parents(r_parents)
+    }
+    tainted: set[str] = set()
+    # The headers this copy held before the merge: its own.
+    held_before = (
+        {bytes(hid).hex() for (hid,) in local.execute("SELECT id FROM _dai_batch")} if has_batches(local) else set()
+    )
+    if has_batches(local) and has_batches(sibling):
+        headers = sibling.execute(
+            "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch"
+        ).fetchall()
+        arrived = []
+        for header in sorted(headers, key=lambda h: bytes(h[0]).hex()):
+            hid = bytes(header[0]).hex()
+            if hid in lists:
+                header = (*header[:8], lists[hid])
+            held[hid] = header[0]
+            verdict = verdicts.get(hid, "BATCH_SIGNATURE_INVALID")
+            if verdict not in ("ok", "incomplete"):
+                refuse_batch(hid, header[1], verdict)
+                continue
+            listed = [f"{table}|{row_id(header[1], seq)}" for table, seq in json.loads(header[8])]
+            if verdict == "ok" and any(key in malformed for key in listed):
+                tainted.update(listed)
+                refuse_batch(hid, header[1], "ROW_MALFORMED")
+                continue
+            # "incomplete": the author's header (batch format 2 signs its list),
+            # whose rows the sibling does not hold as signed. Kept, so evidence
+            # travels (D160), and no row is taken through it.
+            new = local.execute("SELECT 1 FROM _dai_batch WHERE id = ?", (header[0],)).fetchone() is None
+            local.execute(
+                "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                header,
+            )
+            if new:
+                arrived.append(header)
+            else:
+                # Held here already, perhaps under a relabeled list: rewritten
+                # to the list it signed (#merge-headers-rewritten).
+                local.execute("UPDATE _dai_batch SET covers = ? WHERE id = ? AND covers <> ?", (header[8], header[0], header[8]))
+            if verdict != "ok":
+                continue
+            for key in listed:
+                covers.add(f"{hid}|{key}")
+                covering.setdefault(key, hid)
+        # Equivocation (D160; docs/format.md#revealing-two-headers): a header
+        # that arrived reveals it when it lists a seq that another header of
+        # its author, held here now, lists in any table with a different
+        # digest, and that was not signed twice here before. A third
+        # conflicting header reveals nothing new (D171).
+        for header in arrived:
+            mine = {
+                seq
+                for _table, seq in json.loads(header[8])
+                if (bytes(header[1]), seq) not in equivocated_before
+            }
+            for other_id, other_digest, other_covers in local.execute(
+                "SELECT id, digest, covers FROM _dai_batch WHERE author = ?", (header[1],)
+            ):
+                if bytes(other_id) == bytes(header[0]) or bytes(other_digest) == bytes(header[7]):
+                    continue
+                if mine & {seq for _table, seq in json.loads(other_covers)}:
+                    reveal(header[1], bytes(header[0]).hex())
+                    break
+
+    # A row this copy holds with _r_batch unset, listed by a header it held
+    # before the merge that is complete here, is signed, not pending: the merge
+    # sets the cache, to the lowest such header, before any row is placed, so
+    # a signed row arriving at that id meets a signed row (#merge-row-held-signed).
+    pending: dict[tuple[str, bytes, int], bytes | None] = {}
+    for table in tables:
+        for r_replica, r_seq in local.execute(f'SELECT _r_replica, _r_seq FROM "{table}" WHERE _r_batch IS NULL'):
+            pending[(table, bytes(r_replica), r_seq)] = None
+    if pending and held_before:
+        for hid_bytes, author, stored in sorted(
+            local.execute("SELECT id, author, covers FROM _dai_batch").fetchall(), key=lambda h: bytes(h[0]).hex()
+        ):
+            hid = bytes(hid_bytes).hex()
+            if hid not in held_before or own_verdicts.get(hid) != "ok":
+                continue
+            for table, seq in json.loads(own_lists.get(hid, stored)):
+                key = (table, bytes(author), seq)
+                if key in pending and pending[key] is None:
+                    pending[key] = hid_bytes
+        for (table, author, seq), hid_bytes in pending.items():
+            if hid_bytes is not None:
+                local.execute(
+                    f'UPDATE "{table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL',
+                    (hid_bytes, author, seq),
+                )
+
+    # Signed means listed by an ok header, whatever the row says. Signed rows
+    # are placed first, unsigned after, so table order never decides.
+    signed_rows: list[tuple[str, dict]] = []
+    unsigned_rows: list[tuple[str, dict]] = []
     for table in tables:
         names = columns_of(sibling, table)
         authored = [name for name in names if not name.startswith("_r_")]
@@ -265,16 +808,170 @@ def merge(local: sqlite3.Connection, sibling: sqlite3.Connection) -> dict:
                 "_r_entity": incoming["_r_entity"],
                 "_r_parents": incoming["_r_parents"],
                 "_r_deleted": incoming["_r_deleted"],
-                "_r_sig": incoming.get("_r_sig"),
+                "_r_batch": incoming.get("_r_batch"),
+                "_r_session": incoming.get("_r_session"),
                 "columns": {name: incoming[name] for name in authored},
             }
+            key = f"{table}|{row_id(row['_r_replica'], row['_r_seq'])}"
+            named = bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else None
+            cover = covering.get(key)
+            if key in malformed or (cover is None and key in tainted):
+                # Never taken; reported once, with the batch that signed it, or
+                # here when nothing complete did.
+                if key not in tainted:
+                    refuse_batch(named or "", row["_r_replica"], "ROW_MALFORMED")
+                continue
+            if cover is not None:
+                keep = named if named is not None and f"{named}|{key}" in covers else cover
+                row["_r_batch"] = held[keep]
+                signed_rows.append((table, row))
+            elif named is not None:
+                # It names a header that does not vouch for it: refused in the
+                # name of whoever wrote the row.
+                if named not in held or verdicts.get(named) in ("ok", "incomplete"):
+                    refuse_batch(named, row["_r_replica"], "BATCH_DIGEST_MISMATCH")
+            elif local.execute(
+                f'SELECT 1 FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+                (row["_r_replica"], row["_r_seq"]),
+            ).fetchone() is not None:
+                # Unsigned, and held here already at that id: not new, so the
+                # ordinary path decides, a duplicate or a second row at one id.
+                unsigned_rows.append((table, row))
+            else:
+                # Unsigned and new: nobody's key vouches for it, so it is refused
+                # in every table (BATCH_UNSIGNED, batch format version 2), under
+                # the id it carries.
+                refuse_batch("", row["_r_replica"], "BATCH_UNSIGNED")
+
+    def reject(rid: str) -> None:
+        if rid not in result["rejected"]:
+            result["rejected"].append(rid)
+
+    def held_batch(table: str, row: dict):
+        return local.execute(
+            f'SELECT _r_batch FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        ).fetchone()
+
+    def displace(table: str, row: dict) -> None:
+        # A signed row outranks an unsigned one at its id: the unsigned one goes,
+        # and what it superseded is a head again unless something else of its
+        # entity names it (T1-D35).
+        (parents,) = local.execute(
+            f'SELECT _r_parents FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        ).fetchone()
+        local.execute(
+            f'DELETE FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
+            (row["_r_replica"], row["_r_seq"]),
+        )
+        for parent in parents_of(parents):
+            local.execute(
+                f'UPDATE "{table}" SET _r_superseded = 0'
+                " WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1"
+                f' AND NOT EXISTS (SELECT 1 FROM "{table}" n, json_each(n._r_parents) p'
+                f' WHERE p.value = ? AND n._r_entity = "{table}"._r_entity)',
+                (parent, parent),
+            )
+        reject(row_id(row["_r_replica"], row["_r_seq"]))
+
+    def place(table: str, row: dict, signed: bool) -> None:
+        # One author's seq names one row, whatever table it is in: an unsigned
+        # row at a seq another table holds is a collision.
+        for other in tables:
+            if other == table:
+                continue
+            there = held_batch(other, row)
+            if there is None:
+                continue
+            if signed and there[0] is None:
+                displace(other, row)
+                continue
+            # Two signed rows at one id in two tables are both taken: their
+            # headers are equivocation (docs/format.md#row-one-id).
+            if signed:
+                continue
+            raise ValueError(f"ROW_REJECTED: {row_id(row['_r_replica'], row['_r_seq'])} is a row of {other}")
+        try:
+            outcome = apply_row(local, table, row)
+        except ValueError:
+            there = held_batch(table, row)
+            if not signed or there is None or there[0] is not None:
+                raise
+            displace(table, row)
+            outcome = apply_row(local, table, row)
+        result["applied" if outcome == "added" else "duplicate"] += 1
+        if outcome == "added":
+            added.append((table, row))
+
+    added: list[tuple[str, dict]] = []
+    for rows, signed in ((signed_rows, True), (unsigned_rows, False)):
+        for table, row in rows:
             try:
-                outcome = apply_row(local, table, row)
-                result["applied" if outcome == "added" else "duplicate"] += 1
+                place(table, row, signed)
             except ValueError:
                 # One refused row does not deny the rest (T1-D13): a refusal
                 # must never be cheaper than the thing it refuses.
-                result["rejected"].append(row_id(row["_r_replica"], row["_r_seq"]))
+                reject(row_id(row["_r_replica"], row["_r_seq"]))
+
+    if session:
+        # Read after every row is in, so a confirm that arrived in the same
+        # exchange counts. Taken and stored, since they are signed, and not
+        # admitted: a row for a seat its author does not hold, or naming a
+        # version of another seat's (identity step 5, D132), and a row naming
+        # another session's version of its entity, whichever of the two
+        # arrived (D131).
+        admission = Admission(local, tables)
+        for table, row in added:
+            stored = next(r for r in admission.rows[table] if rid_of(r) == rid_of(row))
+            if table in admission.seated and admission.unseated(table, stored):
+                refuse_batch(bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else "", row["_r_replica"], "SEAT_NOT_HELD")
+        for table in tables:
+            if not admission.filtered(table):
+                continue
+            came = {rid_of(row) for t, row in added if t == table}
+            for reason, child, parent in admission.crossings(table):
+                if rid_of(child) in came or rid_of(parent) in came:
+                    batch = child["_r_batch"]
+                    refuse_batch(bytes(batch).hex() if batch is not None else "", child["_r_replica"], reason)
+        # A seat the creator confirmed to two copies, void once both are held:
+        # the merge that made it void says so, in her name (D165), revealed by
+        # the rows it took that the void rests on: the seat's counting confirms
+        # and the session's creator's seat row, not deleted and not at an
+        # equivocated id (docs/format.md#revealing-two-confirms). None taken:
+        # filed under no id.
+        # The seat is its row (docs/format.md#seat-is-row): its counting confirms
+        # are those bound to the row, whatever value each names.
+        for s, seat_row, creator in admission.voided_rows:
+            if (s, seat_row) in voided_before:
+                continue
+            resting = [
+                row
+                for table, row in added
+                if row.get("_r_session") is not None
+                and bytes(row["_r_session"]) == s
+                and bytes(row["_r_replica"]) == creator
+                and (bytes(row["_r_replica"]), row["_r_seq"]) not in admission.equivocated_at
+                and (
+                    (table == "_dai_confirm" and admission.counting_confirms.get((s, creator, row["_r_seq"])) == seat_row)
+                    or (
+                        table == "_dai_seat"
+                        and row["_r_deleted"] == 0
+                        and session_id(bytes(row["_r_replica"]), row["_r_seq"]) == s
+                    )
+                )
+            ]
+            for row in resting:
+                reveal(creator, bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else "")
+            if not resting:
+                reveal(creator, "")
+
+    for author, ids in revealed.values():
+        refuse_batch(min(ids), author, "AUTHOR_EQUIVOCATED")
+
+    result["refusedBatches"] = [
+        {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)
+    ]
     return result
 
 
@@ -336,16 +1033,38 @@ def check(name: str) -> list[str]:
     # ran and passed; it is one nothing checked.
     failures.extend(validate_shape(name, expected))
 
+    # The signature check's answer for every header, made once by the verifier
+    # (README, Verdicts). Required: a vector without it is one nothing checked.
+    verdicts_path = directory / "verdicts.json"
+    if not verdicts_path.exists():
+        return failures + [f"{name}: verdicts.json is missing"]
+    verdicts = json.loads(verdicts_path.read_text(encoding="utf-8"))
+    # For a header made authentic by a list other than the one it stores, the
+    # list that did (README, Verdicts): what it is kept under. Only where a
+    # vector has one.
+    lists_path = directory / "lists.json"
+    lists = json.loads(lists_path.read_text(encoding="utf-8")) if lists_path.exists() else {}
+
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
-        result = merge(local, sibling)
+        copy, mine = other.split(".")[0], into.split(".")[0]
+        result = merge(local, sibling, verdicts.get(copy, {}), lists.get(copy, {}), verdicts.get(mine, {}), lists.get(mine, {}))
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 
         if dump != wanted:
             failures.append(f"{name} [{direction}]: the tables differ from the expected dump")
-        for field in ("applied", "duplicate", "rejected"):
+        # What the document admits after the merge, computed here from the
+        # tables (backlog D171). A vector that says it ships this and does not
+        # is one nothing checked.
+        if expected.get("admitted") is True:
+            admitted_path = directory / f"expected-admitted-{direction}.txt"
+            if not admitted_path.exists():
+                failures.append(f"{name} [{direction}]: result.json says admitted and expected-admitted-{direction}.txt is missing")
+            elif admitted_dump(local) != admitted_path.read_text(encoding="utf-8"):
+                failures.append(f"{name} [{direction}]: what the document admits differs from expected-admitted-{direction}.txt")
+        for field in ("applied", "duplicate", "rejected", "newReplicas", "refusedBatches"):
             if result[field] != expected[direction][field]:
                 failures.append(
                     f"{name} [{direction}]: {field} was {result[field]!r},"

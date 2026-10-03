@@ -1,0 +1,24 @@
+{
+  "what": "B holds Ada's note under two complete headers, the same rows sealed twice after a lost save, and the note names the one with the higher id. A row listed by a complete kept header keeps the header it names when that header is complete and kept: merging B into A gives the note the higher id, not the lowest complete header that lists it.",
+  "cites": [
+    "6",
+    "T1-D7"
+  ],
+  "converges": true,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

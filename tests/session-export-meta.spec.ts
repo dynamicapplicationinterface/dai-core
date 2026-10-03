@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
 import { createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
@@ -16,7 +17,7 @@ import { createEntity, ensureReplica, filterToSession, type Rows } from "../src/
 const SCHEMA = "-- dai:profile session max_parties=2\n-- dai:replicated\nCREATE TABLE moves (ply INTEGER NOT NULL);\n";
 
 function opened(): Rows & { db: DatabaseSync } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(SCHEMA).sql);
   // What the runtime's reconcileSchema writes on every open.
   db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");

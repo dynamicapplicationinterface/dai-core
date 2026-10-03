@@ -81,7 +81,9 @@ test.describe("write rules that arrive before the frame is listening", () => {
             type: writeRules,
             sessionNonce: data.payload?.sessionNonce ?? null,
             source,
-            ownCopy: true,
+            // The author id a host always sends with its rules (docs/identity.md,
+            // binding rule 1): the kit reads who this copy is from it.
+            replica: crypto.getRandomValues(new Uint8Array(16)),
           },
           "*",
         );
@@ -95,7 +97,7 @@ test.describe("write rules that arrive before the frame is listening", () => {
     // Seeding the practice board is a replicated write; a visible board means
     // the early rules reached the bridge and the first write went through.
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
-    await expect(page.locator("#report")).not.toContainText(/WRITE_RULES|MERGE_MODULE/);
+    await expect(page.locator("#doc-note")).not.toContainText(/WRITE_RULES|MERGE_MODULE/);
 
     await app(page).locator("[data-new-game]:visible").first().click();
     await app(page).locator("#setup-you").fill("Ada");
@@ -126,9 +128,9 @@ test.describe("write rules that arrive before the frame is listening", () => {
     await page.locator("#card-open").waitFor({ timeout: 60_000 });
     await page.locator("#card-open").click();
 
-    await expect(page.locator("#report")).toContainText(/WRITE_RULES_NOT_DELIVERED/, {
+    await expect(page.locator("#doc-note")).toContainText(/WRITE_RULES_NOT_DELIVERED/, {
       timeout: 60_000,
     });
-    await expect(page.locator("#report")).toContainText(/read here but not changed/i);
+    await expect(page.locator("#doc-note")).toContainText(/read here but not changed/i);
   });
 });

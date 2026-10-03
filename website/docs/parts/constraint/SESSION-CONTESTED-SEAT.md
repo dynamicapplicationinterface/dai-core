@@ -3,9 +3,9 @@
 ::: info SESSION-CONTESTED-SEAT
 **A contested seat is a state to show**
 
-A seat bound by two or more different replicas is contested — two people opened the same invite — and admits neither. Detect it as a `_dai_binding_current` seat with `count(DISTINCT _r_replica) > 1` for the session. Show the creator that the invite went to more than one device and offer a fresh invite: `window.dai.replicated.session.reseat(session)`, then share again. Show a copy whose own seat was lost that nothing it did lost its place, and that the creator can send a new invite. `reseat` refuses with NOT\_SEAT\_CREATOR for anyone but the creator and with CANNOT\_RESEAT when no seat is contested.
+An open seat nobody has been confirmed in, asked for by two or more different copies, is contested — the invite reached two devices and both asks reached the creator's copy before it seated anyone — and nobody holds it (IDENTITY-SEAT-CONFIRMED). So is a seat the creator's copy confirmed to two copies. Read both from `_dai_contested`. Where `voided` is 0, show the creator that the invite went to more than one device and offer a fresh invite: `window.daiKit.reseat(session)`, then share again; where it is 1, only a new game repairs it. The fresh seat retires the one both asked for, so show a copy whose ask names a retired seat (it asked, it is not seated, and `pendingSeat` is null) that nothing it did lost its place, and that the creator can send a new invite. A later ask for a held seat is no contest: the seats belong to others. `reseat` refuses with NOT\_SEAT\_CREATOR for anyone but the creator and with CANNOT\_RESEAT when no seat is contested with `voided` 0.
 
-**Why.** It is resolved without a clock deciding who opened the invite first, so neither copy can be admitted until the creator repairs it; an application that treated it as an error would leave both people stuck.
+**Why.** Nothing but the creator's copy may decide who plays, so when it sees two asks at once it decides nothing and asks the creator; an application that treated the contest as an error would leave both people stuck.
 
 <small>Applies to session · refused at run time; not checked by anything · [SESSION-CONTESTED-SEAT in Constraints](/docs/constraints#SESSION-CONTESTED-SEAT)</small>
 :::

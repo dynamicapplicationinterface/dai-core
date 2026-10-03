@@ -11,7 +11,10 @@ Per vector:
 | `a.db`, `b.db` | the two copies, before any merge |
 | `expected-ab.txt` | the canonical dump of A after merging B into it |
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
-| `result.json` | the counts and refused ids the merge reports |
+| `result.json` | the counts, refused ids and refused batches the merge reports |
+| `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok`, `incomplete`, or a refusal code |
+| `lists.json` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |
+| `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors, and `merge-equivocated-plain-heads`: what the document admits after each merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -24,8 +27,11 @@ correct implementation.
 merge is commutative, so they must be; a fixture asserting it is worth more than
 a sentence claiming it.
 
-One vector says `converges: false`, and that is the answer rather than a
-failure. When two copies hold different content under one row id, each refuses
+Some vectors say `converges: false`, and that is the answer rather than a
+failure. A copy keeps what it holds and a merge refuses what it cannot take, so
+the two directions differ wherever one copy holds something the other refuses
+or lacks: a disputed row id, a row no valid header lists, a pointer left unset
+that the other side fills. When two copies hold different content under one row id, each refuses
 the other's and each keeps its own: union merge converges over rows nobody
 disputes, and a disputed id is where the guarantee stops. The alternative would
 be one side silently adopting the other's version of a row, which is what
@@ -35,3 +41,133 @@ pinned rather than described.
 A second implementation reads `a.db` and `b.db`, performs its own merge in both
 directions, and diffs its own dump against these files. It never reads the
 generator's output at run time.
+
+**Seals.** Every dump ends with a `# _dai_batch` section: the signed batch
+headers the copy holds (docs/identity.md), which are the same bytes on every copy
+that merged. `merge-sealed` and `merge-seal-adopted` carry real seals, so a
+reader that does not union the headers, or does not let a row it holds pending
+take the seal that arrives for it, disagrees here rather than passing without
+ever meeting one. Their two authors sign with fixed keys, so the author ids are
+real key fingerprints; the signatures themselves are not deterministic, so each
+is kept in `signatures.json` by the header it covers, signed once when the
+fixtures are written and reused after.
+
+**Verdicts.** A merge verifies every header the other copy holds before it takes
+anything (docs/format.md): it finds the rows the header lists, digests them, and
+checks the signature. `verdicts.json` is that check's answer for every header in
+`a.db` and in `b.db`, each against its own copy's rows (so a header can verify in
+one and not the other), made by the TypeScript verifier; a merge of B into A
+reads `b`'s, and of A into B, `a`'s; the canonical bytes and the
+signatures are held apart, by tests/identity-vectors.spec.ts. A reader merges by
+the verdicts and does the rest itself, which is the part these vectors test:
+
+- a header made authentic by the list of its author's rows naming it, not by
+  the list it stores (docs/format.md, verify-lists-tried), lists that list
+  and is kept under it (merge-headers-kept-list); `lists.json` carries it,
+  since a reader without its own signature check cannot tell which list made
+  the header (`merge-relabeled-list`);
+- a header that is not `ok` is not kept and lists nothing;
+- a header lists its rows in `covers` as `[table, seq]`, the author being its own,
+  and no seq twice in any tables: a list that repeats one is not a list, so a
+  header signed over one is not authentic, and its verdict says so
+  (`merge-seal-seq-twice`);
+- a row is taken when an `ok` header lists it (its table, its author, its
+  seq), whatever the row says, and names the header it names if that one is
+  `ok` and lists it, else the lowest `ok` header that lists it;
+- a row that names a header and is listed by none is refused, as
+  `BATCH_DIGEST_MISMATCH` in the name of the row's own author, unless the
+  header it names was refused already;
+- a row that names none and is listed by none is unsigned, and is refused as
+  `BATCH_UNSIGNED` in the name of the id it carries (batch format version 2),
+  unless the copy already holds a row at that id in that table, where the ordinary
+  path decides (a duplicate, or a second row at one id);
+- one author's seq names one row whatever table it is in: an unsigned row
+  whose (author, seq) the copy holds in another table is refused
+  (`rejected`); two signed ones are both taken, and under two headers with
+  different digests are equivocation (batch format version 2);
+- a signed row outranks an unsigned row the copy holds at the same id (after
+  version 2, only its own pending row can be one): the unsigned one is removed, the signed one takes its place, and the removed id is reported in
+  `rejected`; whatever the removed row superseded is a head again unless
+  something else names it. Signed rows are placed before unsigned ones, so the
+  answer never depends on table order;
+- a row the copy holds with `_r_batch` unset, listed by a header the copy held
+  before the merge that is complete over its own rows (its `ok` in
+  `verdicts.json`, under its list in `lists.json` where it has one), is
+  signed, not pending: the merge sets its `_r_batch` to the lowest such
+  header before any row is placed (docs/format.md, merge-row-held-signed;
+  `merge-held-row-signed`);
+- a header the copy already holds under another list is rewritten to the list
+  it signed (merge-headers-rewritten; `merge-held-header-relabeled`).
+
+`merge-seal-stowaway`, `merge-seal-stowaway-other`, `merge-seal-tampered`,
+`merge-seal-lost-pointer`, `merge-seal-cross-table` and `merge-seal-outranks`
+each disagree with a reader that has one of those wrong. `refusedBatches` in
+`result.json` is one entry per batch, reason and author, ordered by batch id
+(lowercase hex, no id first), then reason, then author id in hex, with the
+author id shown as base64url. Which batch id each reason is filed under is in
+docs/format.md#refused-batches.
+
+**What a session document admits.** The `session-` vectors are session
+documents (one seated table, `moves`, seated by its `seat` column; the close
+rule `any`), and their `result.json` says `admitted: true`, as does
+`merge-equivocated-plain-heads`'s, a plain document, whose roster sections
+are empty. Each ships
+`expected-admitted-ab.txt` and `expected-admitted-ba.txt`: after the merge,
+the admitted heads of every table the merge covers (`id` and the deleted flag,
+by author then seq), then `# holders` (session, seat, holder), `# voided`
+(session, seat, creator), `# equivocated` (author, table, seq: one line for
+each table a kept header lists an equivocated id in, the id being the author
+and the seq) and `# closed`, each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
+document admits, which the stored rows alone cannot show, so these are what a
+reader without one of those changes disagrees with. A reader computes them from
+the tables and headers alone. It reads no view but `_dai_seat_rules` and
+`_dai_author_rules`, which are declarations; the rest are computations, and a
+reader that took them would be the generator agreeing with itself. The rules,
+in docs/identity.md and docs/format.md:
+
+- a row id one author signed twice (two headers listing its seq, in any
+  tables, with different digests) counts nowhere (D160, and the step 6
+  review), and a row naming such an id as a parent is neither admitted nor
+  reported;
+- the creator's seat row is the one whose own author and seq hash to its
+  session (D158); her seat is hers, and an open seat is held by whoever her
+  confirms name, unless she confirmed it to two copies, when it is void and
+  held by nobody (D165). A confirm counts deleted or not, superseded or not
+  (D171), and only for a seat she minted: the first `max_parties` (2 in
+  every vector) seats her seat rows in the session name, in her seq order (R11);
+- an author with two headers at one id anywhere in the document is an
+  equivocator: her seat, binding, confirm and close rows count for nothing,
+  and a session she created is void: nothing in it is admitted, held, voided
+  or closed, and nothing in it is reported but `AUTHOR_EQUIVOCATED` (R10);
+- a merge that reveals an author signing twice, a header it did not hold
+  making an id equivocated that was not, or a row it took that a seat newly
+  void rests on (a counting confirm, or the creator's seat row that counts),
+  reports `AUTHOR_EQUIVOCATED` in that author's name, once per merge, filed
+  under the lowest revealing header, or under no id when it took no row the
+  void rests on (docs/format.md#equivocated-filed); a third conflicting header
+  reveals nothing new;
+- the heads of the roster tables and the close (`_dai_seat`,
+  `_dai_binding`, `_dai_confirm`, `_dai_close`) partition by session,
+  entity and author: only an author's own later row in the same session
+  replaces one (D171);
+- a close by a member binds only its author: their rows after it, by their
+  own seq, are late (D151, and no frontier at version 2);
+- a seated row is admitted when its author holds the seat it names, it names
+  no version from another session or another seat, and it is not late. Of
+  the rows a merge takes and does not admit, one naming no seat, a seat
+  someone else holds, or another seat's version is reported
+  `SEAT_NOT_HELD`, and one naming another session's version
+  `ENTITY_OTHER_SESSION`; one waiting on a confirmation, one for a void
+  seat, and a late one are reported nowhere;
+- a row whose parents are not the one shape (D159) is never taken, nor any
+  row of a complete batch that signed one, and the batch is refused
+  `ROW_MALFORMED`.
+
+Each `session-` vector was run against both readers with its change held
+out, and failed; the step 6 review's (`session-equivocated-parent`,
+`session-void-equivocated-confirm`, `session-equivocation-two-tables`)
+against the Python reader before it was leveled. The witness pass's (30
+September, from the step 6 review's Pass 2) were each run against a Python
+reader with one rule removed, and failed; what the verifier or the signer
+decides, against the runtime with one rule removed. Every such hold-out is
+in `scripts/holdout.py`, which CI runs.

@@ -72,9 +72,9 @@ function renderHistory(st){
 function renderGames(){
  const games=store.games().filter(g=>!g.hidden&&!g.is_demo),active=store.settings().active_game_id;
  let open=0,decided=0,drawn=0;const rows=[];
- for(const g of games){const st=store.state(g.id);if(st.result==='*')open++;else if(st.result==='1/2-1/2')drawn++;else decided++;
+ for(const g of games){const st=store.state(g.key);if(st.result==='*')open++;else if(st.result==='1/2-1/2')drawn++;else decided++;
   const outcome=st.result==='1-0'?playerName(g,'w')+' won · '+st.resultReason:st.result==='0-1'?playerName(g,'b')+' won · '+st.resultReason:st.result==='1/2-1/2'?'Draw · '+st.resultReason:st.conflict?'Two moves at once — choose one':store.myColor(g)===st.turn?'Your move':'Waiting on '+playerName(g,st.turn);
-  const b=element('button','game-list-row');b.type='button';b.dataset.gameOpen=g.id;if(g.id===active)b.setAttribute('aria-current','true');
+  const b=element('button','game-list-row');b.type='button';b.dataset.gameOpen=g.key;if(g.key===active)b.setAttribute('aria-current','true');
   const body=element('span','game-list-body');body.append(element('strong','',playerName(g,'w')+' vs '+playerName(g,'b')),element('span','outcome',outcome),element('span','game-date',Math.ceil(st.ply/2)+' moves · '+g.session.slice(0,8)));
   b.append(element('span','game-list-icon','▦'),body,element('span','','›'));rows.push([st.result==='*'?0:1,b]);}
  rows.sort((a,b)=>a[0]-b[0]);
@@ -88,7 +88,7 @@ function renderConflict(st){
  $('conflict-title').textContent=who+' moved on two copies at the same turn.';
  $('conflict-detail').textContent='Both moves were legal, so neither copy can pick one for you. Keep the move that should stand; the other is set aside and any moves that followed it are dropped.';
  const choices=$('conflict-choices');choices.replaceChildren();
- for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. The other board hears about it by itself.');}));choices.append(b);}
+ for(const cand of c.candidates){const b=element('button','button small');b.type='button';b.dataset.daiWrite='';b.textContent='Keep '+cand.san;b.addEventListener('click',run(()=>{store.resolveConflict(cand.entity);notify(cand.san+' stands. The other board hears about it by itself.');}));choices.append(b);}
 }
 /**
  * The contested-seat state, rendered on the board like a conflict — a condition
@@ -107,7 +107,7 @@ function renderContested(st){
  if(s.amCreator&&s.contested){
   banner.hidden=false;invite.hidden=false;
   $('contested-title').textContent='Two people opened this invite.';
-  $('contested-detail').textContent='The invite reached more than one device, so its seat is contested and neither can play it. Send a fresh invite to the one person you meant to play, then share the game again.';
+  $('contested-detail').textContent='The invite reached more than one device, so neither has the seat yet. Send a fresh invite to the person you meant to play, and share the game again.';
   return false; // the creator's own seat is fine
  }
  if(!s.amCreator&&s.mineOut){
@@ -148,7 +148,7 @@ function renderTurnBanner(st,{mine,joined,myTurn,blocked}){
 function renderNames(g){
  const banner=$('names-banner');banner.hidden=!g.names_conflicted;if(banner.hidden)return;
  const choices=$('names-choices');choices.replaceChildren();
- for(const v of store.nameVersions(g)){const b=element('button','button small');b.type='button';b.textContent=(v.white_name||'White')+' vs '+(v.black_name||'Black');b.addEventListener('click',run(()=>{store.keepNames(v.white_name,v.black_name);notify('Names settled.');}));choices.append(b);}
+ for(const v of store.nameVersions(g)){const b=element('button','button small');b.type='button';b.dataset.daiWrite='';b.textContent=(v.white_name||'White')+' vs '+(v.black_name||'Black');b.addEventListener('click',run(()=>{store.keepNames(v.white_name,v.black_name);notify('Names settled.');}));choices.append(b);}
 }
 /**
  * Which game this board is, and whether the other player is really in it.
@@ -163,7 +163,7 @@ function renderNames(g){
 function renderGameId(g,seat,joined){
  const line=$('game-id');
  if(!g||g.is_demo){line.hidden=true;return;}
- const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':'waiting for the other player to join';
+ const who=joined?'both players in':seat&&seat.notIn?'you are not in this game':seat&&seat.mineOut?'your seat here was taken':seat&&seat.contested?'two people opened the invite':seat&&seat.pending?'waiting for '+(playerName(g,g.creator_color)||'the other player')+' to let you in':'waiting for the other player to join';
  line.textContent='Game '+g.session.slice(0,8)+' · '+who;
  line.hidden=false;
 }
@@ -173,7 +173,7 @@ function renderGameId(g,seat,joined){
    is after every move, every merge and every open. */
 function reportWaiting(){
  if(typeof window.dai?.reportWaiting!=="function")return;
- const mine=store.games().filter(g=>!g.is_demo&&store.canMove(store.state(g.id))).map(g=>g.session);
+ const mine=store.games().filter(g=>!g.is_demo&&store.canMove(store.state(g.key))).map(g=>g.session);
  window.dai.reportWaiting(mine);
 }
 
@@ -341,7 +341,7 @@ function wire(){
  for(const button of document.querySelectorAll('[data-theme-choice]'))button.addEventListener('click',run(()=>dbWrite('UPDATE settings SET theme = ? WHERE id = 1',[button.dataset.themeChoice])));
  bind('animations-toggle',()=>dbWrite('UPDATE settings SET animations = 1 - animations WHERE id = 1'));
  $('rename-form').addEventListener('submit',run(event=>{event.preventDefault();store.rename($('edit-white-name').value,$('edit-black-name').value);notify('Player names updated.');}));
- bind('remove-photos',()=>dbWrite('DELETE FROM photos WHERE game_id = (SELECT active_game_id FROM settings WHERE id = 1)'));
+ bind('remove-photos',()=>dbWrite("DELETE FROM photos WHERE game_id = (SELECT substr(active_game_id, instr(active_game_id, ':') + 1) FROM settings WHERE id = 1)"));
  bind('clear-data',()=>ask('Clear all data?','This hides every game in this copy and removes your names, photos and options. Moves already shared stay in the game.',()=>{store.clearAll();notify('This copy is clear. Start a fresh game.');},{danger:true,clear:true,label:'Clear All Data'}));
  $('delete-confirm-input').addEventListener('input',()=>{$('confirm-yes').disabled=$('delete-confirm-input').value.trim()!=='CLEAR';});
  bind('confirm-no',()=>{confirmation=null;closeDialog($('confirm-dialog'));});
@@ -361,11 +361,15 @@ async function boot(){
  const writer=window.dai.replicated;
  if(!writer)throw new Error('This document needs the replicated-tables runtime. Open it in a newer DAI opener.');
  store=new Store(window.daiKit.db,writer);store.bootstrap();
- // If this copy arrived at a game somebody shared, take the open seat — once,
- // after the mount adopted this copy's own identity (T1-D22/D29). Idempotent, so
- // a reopen or a later merge never binds twice.
- store.joinActive();store.faceMover();wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;maybeAskName();
+ // The shared boot writes (the practice board; the open seat of a game somebody
+ // shared, taken once after the mount adopted this copy's own identity,
+ // T1-D22/D29) go through the kit, which runs them only on a mount that can
+ // write. The page draws first either way.
+ wire();refresh();$('boot-notice').hidden=true;$('app').hidden=false;
+ store.bootWrites().then(()=>{store.faceMover();refresh();maybeAskName();}).catch(e=>notify(e.message));
  // After a merge the host tells the frame; redraw so a newly arrived move or conflict shows without a reload.
+ // On the kit's dai:kit-merged, not dai:merged: the kit fires it once it has seated whoever asked (D177),
+ // so the redraw shows them seated whatever order the listeners were added in.
  // Join ONLY when the merge came from opening a carrier — a file or link (T1-D34).
  // A mailbox merge, or any event without a source tag, must NOT join: the safe
  // default is background, so a future dispatch site that forgets the tag cannot
@@ -376,7 +380,7 @@ async function boot(){
  let pointerDown=false;const afterPointer=[];
  document.addEventListener('pointerdown',()=>{pointerDown=true;},true);
  for(const type of ['pointerup','pointercancel'])document.addEventListener(type,()=>{pointerDown=false;setTimeout(()=>{if(pointerDown)return;for(const r of afterPointer.splice(0))r();},0);},true);
- window.addEventListener('dai:merged',e=>{const merged=()=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);};if(pointerDown)afterPointer.push(merged);else merged();});
+ window.addEventListener('dai:kit-merged',e=>{const merged=()=>{const before=seen;if(e.detail&&e.detail.via==='carrier')store.joinActive();store.faceMover();refresh();maybeAskName();announceArrival(before);};if(pointerDown)afterPointer.push(merged);else merged();});
  const st=store.state();if(st?.last&&!store.draft(st.game.id))requestAnimationFrame(()=>{replay()?.catch?.(e=>notify(e.message));});
 }
 boot().catch(error=>{console.error(error);$('boot-notice').hidden=false;$('boot-notice').textContent='Your board could not be opened safely. '+error.message;});

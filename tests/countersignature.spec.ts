@@ -36,7 +36,6 @@ async function signedBuild() {
     // The suite's published key: refused by the compiler unless asked for,
     // and these tests are exercising signing rather than publishing.
     allowTestKey: true,
-    manifestVersion: 3,
   });
 }
 
@@ -96,7 +95,7 @@ test.describe("a countersignature", () => {
     const source = mkdtempSync(join(tmpdir(), "dai-cs-"));
     writeFileSync(join(source, "index.html"), '<!doctype html><meta charset="utf-8"><p>cs</p>', "utf8");
     const b = await compileDirectory({
-      sourceDir: source, root: repo, appName: "Countersigned", signingKey: KEY, allowTestKey: true, manifestVersion: 3,
+      sourceDir: source, root: repo, appName: "Countersigned", signingKey: KEY, allowTestKey: true,
       documentUuid: a.manifest.documentUuid,
     });
     const second = await secondKey();

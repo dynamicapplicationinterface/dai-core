@@ -118,7 +118,7 @@ test.describe("a reopen with the database gone", () => {
     await page.reload();
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
 
-    const said = page.locator("#report");
+    const said = page.locator("#doc-note");
     await expect(said, "the person is told, rather than left with an app that looks right").toContainText(
       "opened empty",
       { timeout: 30_000 },
@@ -197,7 +197,7 @@ test.describe("a reopen with the database gone", () => {
     await page.reload();
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
     await expect(
-      page.locator("#report"),
+      page.locator("#doc-note"),
       "nothing was lost, so nothing is claimed to be",
     ).not.toContainText("opened empty");
     await device.close();

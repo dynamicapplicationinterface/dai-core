@@ -1,0 +1,29 @@
+{
+  "what": "Ada signs one header listing her seq 1 twice, a case and a note, each row naming it. A list that repeats a seq in any tables is not a list, so the header is not authentic: merging A into B refuses it as BATCH_SIGNATURE_INVALID in Ada's name and takes neither row, and the rows, naming a header refused already, are not reported again. A reader taking both rows spends one seq on two rows (the step 6 review).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      }
+    ]
+  }
+}

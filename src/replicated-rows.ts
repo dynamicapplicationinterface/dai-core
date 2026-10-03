@@ -12,6 +12,11 @@
  * text again from the other side; a module that reached for one of them would
  * be untestable in the other two.
  */
+import { encode as cborEncode, type CborValue } from "./cbor.js";
+import { showAuthorId } from "./identity.js";
+import type { BatchEntry } from "./replicated-batch.js";
+import { PARENTS_CAP, closedSessionsSql, parentsSql } from "./replicated.js";
+import { sessionIdOf, sha256 } from "./session-id.js";
 
 /** The little that is needed of a SQLite connection. */
 export interface Rows {
@@ -43,7 +48,12 @@ export interface ReplicatedRow {
   _r_entity: Uint8Array;
   _r_parents: string;
   _r_deleted: number;
-  _r_sig?: Uint8Array | null;
+  /**
+   * The signed batch this row left its author's device in, or null while it is
+   * pending: written and not yet sealed (docs/identity.md, step 3). Not part of
+   * the row's identity or its canonical bytes: the batch is named after them.
+   */
+  _r_batch?: Uint8Array | null;
   /**
    * The session this row belongs to (T1-D26). Present only in a document that
    * declares the session profile — where the table carries `_r_session` — and
@@ -90,7 +100,7 @@ export const CARRIED_R_FIELDS: readonly CarriedRField[] = [
   { col: "_r_entity", key: "e", kind: "bytes" },
   { col: "_r_parents", key: "p", kind: "string" },
   { col: "_r_deleted", key: "d", kind: "number" },
-  { col: "_r_sig", key: "sig", kind: "bytesOrNull" },
+  { col: "_r_batch", key: "b", kind: "bytesOrNull" },
   { col: "_r_session", key: "ss", kind: "bytes", optional: true },
 ];
 
@@ -138,11 +148,36 @@ const hex = (bytes: Uint8Array): string =>
 /** A row's id in the text form `_r_parents` uses. */
 export const rowId = (replica: Uint8Array, seq: number): string => `${hex(replica)}:${seq}`;
 
-/** The parents of a row, as ids. Sorted on the way in, so two writers agree. */
+/**
+ * The parents of a row, as ids. Sorted on the way in, so two writers agree.
+ * Parents that are not the one shape name nothing, as `parentsSql` reads them
+ * in the views (docs/format.md, `parents-own-malformed`): the shape is checked
+ * before parents are read for any purpose, not only in a merge.
+ */
 export function parentsOf(row: { _r_parents: string }): string[] {
-  const parsed: unknown = JSON.parse(row._r_parents);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((value): value is string => typeof value === "string");
+  if (!wellFormedParents(row._r_parents)) return [];
+  return JSON.parse(row._r_parents) as string[];
+}
+
+const PARENT_ID = /^[0-9a-f]{32}:[1-9][0-9]{0,15}$/;
+
+/**
+ * Whether a row's `_r_parents` is the one shape every reader walks alike
+ * (D159): a flat JSON array of at most `PARENTS_CAP` row ids, each 32
+ * lowercase hex characters, a colon and a seq. JavaScript's JSON.parse takes
+ * nesting SQLite's json_each refuses (depth over 1000), and a row one reader
+ * parses and another throws on stops every read that walks it.
+ */
+export function wellFormedParents(text: unknown): boolean {
+  if (typeof text !== "string") return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(parsed) || parsed.length > PARENTS_CAP) return false;
+  return parsed.every((p) => typeof p === "string" && PARENT_ID.test(p) && Number.isSafeInteger(Number(p.slice(33))));
 }
 
 /** The author's columns of a table, in declared order. */
@@ -229,24 +264,41 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
       Number(existing["_r_deleted"]) === row._r_deleted &&
       (!session || sameValue(existing["_r_session"], row._r_session)) &&
       authored.every((name) => sameValue(existing[name], row.columns[name]));
-    if (same) return "duplicate";
+    if (same) {
+      /*
+       * The same row, sealed where this copy still holds it pending: a save
+       * that never landed, and the row coming back from the mailbox in the
+       * batch it was published in. The copy takes the seal. The trigger allows
+       * _r_batch to change exactly once, from NULL.
+       */
+      if (existing["_r_batch"] == null && row._r_batch instanceof Uint8Array) {
+        db.run(`UPDATE "${table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ?`, [
+          row._r_batch,
+          row._r_replica,
+          row._r_seq,
+        ]);
+      }
+      return "duplicate";
+    }
     throw new RowRejected(
       `A different row already exists as ${id}. A replica issues each sequence number once, ` +
         "so two contents under one id cannot both be honest.",
     );
   }
 
-  // Superseded on arrival if anything already present names this row as a
-  // parent. The DAG is not ordered by arrival, so this is not a rare case.
+  // Superseded on arrival if anything of its own entity already present names
+  // this row as a parent. The DAG is not ordered by arrival, so this is not a
+  // rare case. A row of another entity naming it says nothing about this
+  // entity's history, and hides nothing (T1-D35).
   const namedAlready = db.all(
-    `SELECT 1 FROM "${table}", json_each("${table}"._r_parents)
-      WHERE json_each.value = ? LIMIT 1`,
-    [id],
+    `SELECT 1 FROM "${table}", json_each(${parentsSql(`"${table}"._r_parents`)})
+      WHERE json_each.value = ? AND "${table}"._r_entity = ? LIMIT 1`,
+    [id, row._r_entity],
   ).length > 0;
 
   const names = [
     ...authored,
-    "_r_replica", "_r_seq", "_r_lc", "_r_entity", "_r_parents", "_r_deleted", "_r_superseded", "_r_sig",
+    "_r_replica", "_r_seq", "_r_lc", "_r_entity", "_r_parents", "_r_deleted", "_r_superseded", "_r_batch",
     ...(session ? ["_r_session"] : []),
   ];
   const values = [
@@ -258,7 +310,7 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     row._r_parents,
     row._r_deleted,
     namedAlready ? 1 : 0,
-    row._r_sig ?? null,
+    row._r_batch ?? null,
     ...(session ? [row._r_session as Uint8Array] : []),
   ];
   db.run(
@@ -266,15 +318,15 @@ export function applyRow(db: Rows, table: string, row: ReplicatedRow): "added" |
     values,
   );
 
-  // And every parent this row names is now superseded. Rows that have not
-  // arrived yet are covered by the check above when they do.
+  // And every parent this row names in its own entity is now superseded. Rows
+  // that have not arrived yet are covered by the check above when they do.
   for (const parent of parentsOf(row)) {
     const [replicaHex, seq] = parent.split(":");
     if (!replicaHex || seq === undefined) continue;
     db.run(
       `UPDATE "${table}" SET _r_superseded = 1
-        WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_superseded = 0`,
-      [replicaHex.toUpperCase(), Number(seq)],
+        WHERE hex(_r_replica) = ? AND _r_seq = ? AND _r_entity = ?`,
+      [replicaHex.toUpperCase(), Number(seq), row._r_entity],
     );
   }
 
@@ -323,8 +375,13 @@ export function ensureReplica(db: Rows, id: Uint8Array): void {
  * sender's id moves into `_dai_replicas` — their rows stay theirs, and their
  * authorship of everything already in the file is untouched.
  *
- * `seq` restarts at zero because sequence numbers are per replica and this
- * replica has issued none. The clock does **not** restart: this copy has seen
+ * `seq` resumes from the highest this id has already issued in the file, 0 if
+ * none. The id is this device's author id (docs/identity.md), the same for
+ * every copy the device holds, so a file can come back carrying rows this
+ * device wrote before: a copy sent out and returned, or a document forgotten
+ * and received again. Restarting at zero there would issue a `(replica, seq)`
+ * this device already issued, and the next exchange refuses one of them as
+ * `ROW_REJECTED`. The clock does **not** restart: this copy has seen
  * everything in the file, so its clock must be at least as high as anything
  * it holds, or the first row it writes would sort below rows it was written
  * after.
@@ -344,8 +401,9 @@ export function adoptReplica(db: Rows, id: Uint8Array): boolean {
     Number(current["lc"] ?? 0),
   ]);
   db.run("DELETE FROM _dai_replica");
-  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, ?)", [
+  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
     id,
+    highestSeqOf(db, id),
     Number(current["lc"] ?? 0),
   ]);
   db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [
@@ -355,15 +413,125 @@ export function adoptReplica(db: Rows, id: Uint8Array): boolean {
   return true;
 }
 
-/** The ids of an entity's current heads, sorted, for a row that supersedes them. */
-export function headsOf(db: Rows, table: string, entity: Uint8Array): string[] {
-  return db
-    .all(
-      `SELECT _r_replica, _r_seq FROM "${table}" WHERE _r_entity = ? AND _r_superseded = 0`,
-      [entity],
-    )
-    .map((row) => rowId(row["_r_replica"] as Uint8Array, Number(row["_r_seq"])))
-    .sort();
+/** The highest `_r_seq` any replicated table holds under `id`, or 0. An index seek per table: the key is (_r_replica, _r_seq). */
+export function highestSeqOf(db: Rows, id: Uint8Array): number {
+  let highest = 0;
+  for (const { name } of db.all("SELECT name FROM sqlite_schema WHERE type = 'table'") as { name: string }[]) {
+    const columns = db.all("SELECT name FROM pragma_table_info(?)", [name]).map((c) => String(c["name"]));
+    if (!columns.includes("_r_replica") || !columns.includes("_r_seq")) continue;
+    const found = db.all(`SELECT max(_r_seq) AS m FROM "${name}" WHERE _r_replica = ?`, [id])[0]?.["m"];
+    if (typeof found === "number" && found > highest) highest = found;
+  }
+  return highest;
+}
+
+const rowIdOf = (row: Record<string, unknown>): string => rowId(row["_r_replica"] as Uint8Array, Number(row["_r_seq"]));
+
+/** What a write versions: the session it writes in, and the heads it names, first the one `_current` would show. */
+export interface WriteTarget {
+  session?: Uint8Array;
+  /** In a seated table, the seat column and the seat the heads act for (D144). */
+  seat?: { column: string; value: Uint8Array };
+  heads: Record<string, unknown>[];
+}
+
+/**
+ * The heads a write of this copy versions, found the way admission finds them
+ * (D135 to D138).
+ *
+ * Admission partitions an entity: in an admission-filtered session table by
+ * (session, entity), in a seated table by seat too (D131, D132). A writer that
+ * found heads by the id alone, through the stored `_r_superseded` flag, took a
+ * stranger's row reusing the id in another session or seat as a head, and
+ * wrote a row every copy refuses, or into the stranger's session. So a writer
+ * reads the one view the merge admits by, and only a partition this copy
+ * writes in:
+ *
+ * - a plain table: `t_heads`, the entity alone;
+ * - an admission-filtered session table: `t_heads` in a session this copy is a
+ *   member of or waits in (in a seated table, its own rows, since an admitted
+ *   row's author holds its seat), and this copy's own rows waiting in
+ *   `t_waiting`, tombstones included (D143), less any head one of them
+ *   already versions;
+ * - a roster table (`_dai_seat` and its kin): this copy's own versions, as
+ *   `_dai_open_seat` and `_dai_holder` count only the creator's.
+ *
+ * In a session table a row is named by its session and its id (D134, batch
+ * format version 2): the caller names the session, and only that session is
+ * read, so an id reused in another session is never a head of this write. An
+ * id with no session there names no row, and is refused. No partition in the
+ * named session is a write nobody would admit, refused too; in a seated table,
+ * versions of one id in two seats of one session are refused, not guessed.
+ */
+export function writeTargetOf(db: Rows, table: string, entity: Uint8Array, session?: Uint8Array): WriteTarget {
+  const quoted = (name: string) => `"${name.replace(/"/g, '""')}"`;
+  // The order `_current` shows by: the highest clock, then the lowest author id, then the lowest seq.
+  const order = (rows: Record<string, unknown>[]) =>
+    [...new Map(rows.map((row) => [rowIdOf(row), row])).values()].sort((a, b) => {
+      const ra = hex(a["_r_replica"] as Uint8Array);
+      const rb = hex(b["_r_replica"] as Uint8Array);
+      return Number(b["_r_lc"]) - Number(a["_r_lc"]) || (ra < rb ? -1 : ra > rb ? 1 : 0) || Number(a["_r_seq"]) - Number(b["_r_seq"]);
+    });
+  if (!hasSessionColumn(db, table)) {
+    return { heads: order(db.all(`SELECT * FROM ${quoted(`${table}_heads`)} WHERE _r_entity = ?`, [entity])) };
+  }
+  if (!session) {
+    throw new RowRejected(`A ${table} row is named by its session and its id, and this write names no session.`);
+  }
+  const me = replicaState(db).id;
+  const view = (name: string) => db.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = ?", [name]).length > 0;
+  let seat: string | undefined;
+  let rows: Record<string, unknown>[];
+  if (view(`${table}_pending`)) {
+    const column = view("_dai_seat_rules") ? db.all("SELECT col FROM _dai_seat_rules WHERE tbl = ?", [table])[0]?.["col"] : undefined;
+    seat = typeof column === "string" ? column : undefined;
+    // A session this copy writes in: one it is a member of, or one it waits in,
+    // having asked for an open seat nobody holds yet, since its rows there are
+    // pending, not refused, and admitted once it is confirmed.
+    const mine = seat
+      ? "h._r_replica = ?1"
+      : "(EXISTS (SELECT 1 FROM _dai_member m WHERE m.session = h._r_session AND m.replica = ?1)" +
+        " OR EXISTS (SELECT 1 FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat" +
+        " WHERE b._r_session = h._r_session AND b._r_replica = ?1" +
+        " AND NOT EXISTS (SELECT 1 FROM _dai_holder x WHERE x.session = s.session AND x.seat = s.seat)))";
+    // This copy's own waiting versions come from `_waiting`, which keeps its
+    // tombstones (D143); `_pending` is what a screen shows.
+    const waiting = view(`${table}_waiting`) ? `${table}_waiting` : `${table}_pending`;
+    rows = [
+      ...db.all(`SELECT h.* FROM ${quoted(`${table}_heads`)} h WHERE h._r_entity = ?2 AND h._r_session = ?3 AND ${mine}`, [me, entity, session]),
+      ...db.all(`SELECT * FROM ${quoted(waiting)} WHERE _r_entity = ? AND _r_replica = ? AND _r_session = ?`, [entity, me, session]),
+    ];
+    // An admitted head this copy's own waiting row already versions is not a
+    // head of its next write: seated, the waiting row would be admitted and the
+    // head behind it. So a waiting write names what the same write names seated.
+    const named = new Set(rows.flatMap((r) => parentsOf({ _r_parents: String(r["_r_parents"] ?? "[]") })));
+    rows = rows.filter((r) => !named.has(rowIdOf(r)));
+  } else {
+    const t = quoted(table);
+    rows = db.all(
+      `SELECT * FROM ${t} r WHERE r._r_entity = ? AND r._r_replica = ? AND r._r_session = ?
+         AND NOT EXISTS (SELECT 1 FROM ${t} n, json_each(${parentsSql("n._r_parents")}) p
+                          WHERE n._r_entity = r._r_entity AND n._r_session = r._r_session AND n._r_replica = r._r_replica
+                            AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq)`,
+      [entity, me, session],
+    );
+  }
+  const partitions = new Set(rows.map((r) => (seat ? hex(r[seat] as Uint8Array) : "")));
+  if (partitions.size === 0) {
+    throw new RowRejected(`This copy holds no version of that ${table} row it may write: nothing to change or delete.`);
+  }
+  if (partitions.size > 1) {
+    throw new RowRejected(
+      `That ${table} row has versions in ${partitions.size} seats of its session; a write to one would be a guess.`,
+    );
+  }
+  const heads = order(rows);
+  return seat ? { session, seat: { column: seat, value: heads[0]![seat] as Uint8Array }, heads } : { session, heads };
+}
+
+/** The ids of the heads a write of this copy versions (`writeTargetOf`), sorted, for a row that supersedes them. */
+export function headsOf(db: Rows, table: string, entity: Uint8Array, session?: Uint8Array): string[] {
+  return writeTargetOf(db, table, entity, session).heads.map(rowIdOf).sort();
 }
 
 function stamp(
@@ -416,50 +584,111 @@ export function changeEntity(
   table: string,
   entity: Uint8Array,
   columns: Record<string, unknown>,
+  session?: Uint8Array,
 ): ReplicatedRow {
-  // The session is inherited from the entity's head, not supplied by the caller
-  // (T1-D28). An entity belongs to one session for its whole history; letting a
-  // change name a different session is what would produce a row whose parents
-  // are in another session, which the export refuses as malformed. Deriving it
-  // here means the honest write rules cannot construct that crossing at all —
-  // and matches the caller, which passes no session (bootloader `changeEntity`).
-  // Only a session table has `_r_session` to read; a `SELECT` of it against a
-  // plain table is a "no such column" error, so the column check gates the query.
-  let session: Uint8Array | undefined;
-  if (hasSessionColumn(db, table)) {
-    const head = db.all(
-      `SELECT _r_session FROM "${table}" WHERE _r_entity = ? AND _r_superseded = 0
-        ORDER BY _r_lc DESC, hex(_r_replica) ASC, _r_seq ASC LIMIT 1`,
-      [entity],
-    )[0];
-    if (head?.["_r_session"] instanceof Uint8Array) session = head["_r_session"] as Uint8Array;
+  // In a session table the caller names the session with the entity (D134):
+  // a row is (session, entity), and the heads are the ones admission reads in
+  // that session alone (`writeTargetOf`). The version stays in it (T1-D28).
+  const target = writeTargetOf(db, table, entity, session);
+  // In a seated table a version acts for its heads' seat, which is the
+  // partition it replaces: naming another would be a row admission never takes
+  // and nothing reports (D144).
+  if (target.seat) {
+    const named = columns[target.seat.column];
+    if (!(named instanceof Uint8Array) || hex(named) !== hex(target.seat.value)) {
+      throw new RowRejected(`SEAT_NOT_HELD: a change of a ${table} row acts for the seat its earlier version acts for, and this one names another.`);
+    }
   }
-  const row = stamp(db, table, entity, headsOf(db, table, entity), columns, 0, session);
+  const row = stamp(db, table, entity, target.heads.map(rowIdOf), columns, 0, target.session);
   applyRow(db, table, row);
   return row;
 }
 
 /** A delete: a tombstone carrying the columns of the head it buries. */
-export function deleteEntity(db: Rows, table: string, entity: Uint8Array): ReplicatedRow {
+export function deleteEntity(db: Rows, table: string, entity: Uint8Array, session?: Uint8Array): ReplicatedRow {
   const authored = authorColumnsOf(db, table);
-  const heads = headsOf(db, table, entity);
-  const head = db.all(
-    `SELECT * FROM "${table}" WHERE _r_entity = ? AND _r_superseded = 0
-      ORDER BY _r_lc DESC, hex(_r_replica) ASC, _r_seq ASC LIMIT 1`,
-    [entity],
-  )[0];
+  // The heads and the head whose columns the tombstone carries come from the
+  // one session the caller names (D134) and the partition this copy writes in
+  // there (D137): a row of another session or seat reusing the id is neither
+  // buried nor copied.
+  const target = writeTargetOf(db, table, entity, session);
+  const head = target.heads[0];
   const columns: Record<string, unknown> = {};
   for (const name of authored) columns[name] = head ? head[name] : null;
-  // A delete belongs to the same session as the entity it buries, so the session
-  // is taken from the head rather than asked for again — the caller deleting a
-  // row need not know which session it was in (T1-D26).
-  const session =
-    hasSessionColumn(db, table) && head?.["_r_session"] instanceof Uint8Array
-      ? (head["_r_session"] as Uint8Array)
-      : undefined;
-  const row = stamp(db, table, entity, heads, columns, 1, session);
+  const row = stamp(db, table, entity, target.heads.map(rowIdOf), columns, 1, target.session);
   applyRow(db, table, row);
   return row;
+}
+
+/* ------------------------------------------------------- the seat writers */
+
+/** What a new session is made from: all fresh random bytes, 16 each. */
+export interface NewSession {
+  creatorSeat: Uint8Array;
+  openSeat: Uint8Array;
+  /** The entities of the creator's seat row and the open seat's row. */
+  entities: readonly [Uint8Array, Uint8Array];
+}
+
+/**
+ * A new session under this copy's author: its id commits to the creator's own
+ * seat row, `SHA-256(author ‖ seq)` first 16 bytes, the seq the one that row is
+ * about to be stamped with (D158), which is what makes the creator checkable
+ * from the rows. Then one open seat. Returns the session id.
+ */
+export function startSession(db: Rows, ids: NewSession): Uint8Array {
+  const state = replicaState(db);
+  const session = sessionIdOf(state.id, state.seq + 1);
+  if (!session) throw new RowRejected("A session id needs a 16-byte author id and the seq of the creator's seat row.");
+  const row = createEntity(db, "_dai_seat", ids.entities[0], { seat: ids.creatorSeat }, session);
+  // The id names this row; a row stamped at any other seq would name nothing.
+  if (row._r_seq !== state.seq + 1) throw new RowRejected("The creator's seat row was not stamped at the seq its session names.");
+  createEntity(db, "_dai_seat", ids.entities[1], { seat: ids.openSeat }, session);
+  return session;
+}
+
+/**
+ * The creator's confirmation that `holder` holds `seat`: the only thing that
+ * seats anyone in an open seat. Only rows by the session's creator count, so a
+ * caller checks that this copy is the creator first.
+ */
+export function confirmSeat(db: Rows, session: Uint8Array, seat: Uint8Array, holder: Uint8Array, entity: Uint8Array): void {
+  createEntity(db, "_dai_confirm", entity, { seat, holder }, session);
+}
+
+/**
+ * The sessions `me` takes part in, as lowercase hex: those it holds a seat in,
+ * and those it waits in, having asked for an open seat nobody holds yet
+ * (admission's `waiting`). What the host opens a mailbox for (D149): a session
+ * that merely arrived in a file, in which this copy holds and asks for nothing,
+ * is none of its business.
+ */
+export function sessionsOf(db: Rows, me: Uint8Array): string[] {
+  if (db.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_member'").length === 0) return [];
+  return db
+    .all(
+      "SELECT lower(hex(session)) AS s FROM _dai_member WHERE replica = ?1 " +
+        "UNION SELECT lower(hex(b._r_session)) FROM _dai_binding_current b " +
+        "JOIN _dai_open_seat o ON o.session = b._r_session AND o.seat = b.seat " +
+        "WHERE b._r_replica = ?1 AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = o.session AND h.seat = o.seat) " +
+        "ORDER BY 1",
+      [me],
+    )
+    .map((row) => String(row["s"]));
+}
+
+/**
+ * The closed sessions, as lowercase hex, under the document's close rule: what
+ * the host stops polling. `_dai_closed` where the document has it; for one built
+ * before it, the same rule over the close table (D154). A document with no
+ * close table, or older than the seat views (D155), has none.
+ */
+export function closedSessionsOf(db: Rows, policy: "any" | "creator"): string[] {
+  const has = (type: "table" | "view", name: string): boolean =>
+    db.all("SELECT 1 FROM sqlite_schema WHERE type = ? AND name = ?", [type, name]).length > 0;
+  if (has("view", "_dai_closed")) return db.all("SELECT lower(hex(session)) AS s FROM _dai_closed ORDER BY 1").map((row) => String(row["s"]));
+  if (!has("table", "_dai_close") || !has("view", policy === "creator" ? "_dai_creator" : "_dai_member")) return [];
+  return db.all(closedSessionsSql(policy === "creator")).map((row) => String(row["s"]));
 }
 
 /* ---------------------------------------------------- the invite carrier */
@@ -505,6 +734,10 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
     .all(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
     .map((r) => String(r["name"]))) {
     if (DOCUMENT_TABLES.has(table)) continue; // this copy's identity — travels whole
+    if (table === "_dai_batch") continue; // signed headers: filtered to the kept rows' below
+    // Each header's listings, derived from `_dai_batch` by its triggers: a header
+    // the filter removes takes its listings with it (D160).
+    if (table === "_dai_covers") continue;
     const columns = db.all(`SELECT name FROM pragma_table_info(?)`, [table]).map((c) => String(c["name"]));
     const isReplicated = columns.includes("_r_replica") && columns.includes("_r_seq");
     if (isReplicated) {
@@ -531,14 +764,17 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
     }
   }
 
-  // D4 over every replicated table — author and roster alike, not a subset.
+  // D4 over every replicated table — author and roster alike, not a subset. A
+  // parent of another entity is not the row's history (T1-D35), so only a
+  // parent of the row's own entity can cross.
   for (const table of replicated) {
     const crossing = db.all(
       `SELECT count(*) AS n
          FROM "${table}" k
-         JOIN json_each(k._r_parents) p
+         JOIN json_each(${parentsSql("k._r_parents")}) p
          JOIN "${table}" parent
            ON lower(hex(parent._r_replica)) || ':' || parent._r_seq = p.value
+          AND parent._r_entity = k._r_entity
         WHERE k._r_session = ? AND parent._r_session != ?`,
       [session, session],
     );
@@ -560,6 +796,29 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
 
   // Local (non-replicated) author tables travel as schema, emptied of rows.
   for (const table of local) db.run(`DELETE FROM "${table}"`);
+
+  /*
+   * The signed batch headers travel, but only those whose rows all travel
+   * (docs/identity.md). A batch is sealed per session, so an invite for one game
+   * carries that game's signatures and nothing about any other. By what a header
+   * lists, not by what the rows name: a row's `_r_batch` is a cache a lost save
+   * can leave unset, and the header is what says it was signed (ruling #3).
+   */
+  const hasBatches =
+    db.all("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  if (hasBatches) {
+    const kept = replicated
+      .map((table) => `SELECT '${table}' AS t, _r_replica AS r, _r_seq AS s FROM "${table}"`)
+      .join(" UNION ALL ");
+    db.run(
+      kept
+        ? `DELETE FROM _dai_batch WHERE EXISTS (SELECT 1 FROM json_each(_dai_batch.covers) AS listed
+             WHERE NOT EXISTS (SELECT 1 FROM (${kept}) AS k
+               WHERE k.t = json_extract(listed.value, '$[0]') AND k.r = _dai_batch.author
+                 AND k.s = json_extract(listed.value, '$[1]')))`
+        : "DELETE FROM _dai_batch",
+    );
+  }
 }
 
 /* -------------------------------------------------------------- the dump */
@@ -631,10 +890,153 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
   for (const row of db.all("SELECT id FROM _dai_replicas ORDER BY hex(id) ASC")) {
     lines.push(encodeValue(row["id"]));
   }
+  /*
+   * The signed batch headers (docs/identity.md), every column: a header is the
+   * same bytes on every copy that holds it, so two copies that merged agree on
+   * the set. In the dump so that a reader that does not carry them disagrees
+   * out loud, rather than passing for an unrelated reason.
+   */
+  if (db.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0) {
+    lines.push("# _dai_batch");
+    for (const row of db.all(
+      "SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch ORDER BY hex(id) ASC",
+    )) {
+      lines.push(["id", "author", "lc", "sig", "pub", "att", "version", "digest", "covers"].map((c) => encodeValue(row[c])).join("\t"));
+    }
+  }
   return `${lines.join("\n")}\n`;
 }
 
 /* -------------------------------------------------------------- the merge */
+
+/** Why a merge refused a batch (src/refusals.ts). */
+export type BatchRefusal =
+  | "BATCH_SIGNATURE_INVALID"
+  | "BATCH_DIGEST_MISMATCH"
+  | "BATCH_UNSIGNED"
+  | "ROW_MALFORMED"
+  | "SEAT_NOT_HELD"
+  | "ENTITY_OTHER_SESSION"
+  | "AUTHOR_EQUIVOCATED";
+
+/**
+ * What verifying one signed header found (`verifyBatches`), keyed by the
+ * header's id in lowercase hex: the author's, with the rows it lists and
+ * whether this copy holds them all as signed (`complete`), or not the author's
+ * and why. An authentic header that is not complete is kept and takes no row.
+ */
+export type BatchVerdict =
+  | { ok: true; author: Uint8Array; covers: readonly (readonly [string, number])[]; complete: boolean }
+  | { ok: false; author: Uint8Array; reason: BatchRefusal };
+
+/** A batch the merge refused, by the author it names and the reason's code. */
+export interface RefusedBatch {
+  author: string;
+  reason: BatchRefusal;
+}
+
+/** Code-unit order, the same in every reader; never a locale's. */
+const plainOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Bytewise order of two strings' UTF-8, the order every canonical list is sorted by. */
+function utf8Order(a: string, b: string): number {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i]! - y[i]!;
+  return x.length - y.length;
+}
+
+/**
+ * The canonical bytes of a batch's rows (format version 1; the layout is held
+ * by tests/identity-vectors.spec.ts): a CBOR array of rows ordered by table,
+ * then `_r_seq`, each `[table, [replica, seq, lc, entity, parents, deleted,
+ * session|null], [[column, value]...]]`, the columns ordered by name.
+ * `_r_batch` is not in it: the batch is named after the rows, not before.
+ */
+export function canonicalRows(entries: readonly BatchEntry[]): Uint8Array {
+  const ordered = [...entries].sort((a, b) => utf8Order(a.table, b.table) || a.row._r_seq - b.row._r_seq);
+  return cborEncode(
+    ordered.map(({ table, row }) => [
+      table,
+      [
+        row._r_replica,
+        row._r_seq,
+        row._r_lc,
+        row._r_entity,
+        row._r_parents,
+        row._r_deleted,
+        row._r_session instanceof Uint8Array ? row._r_session : null,
+      ],
+      Object.keys(row.columns)
+        .sort(utf8Order)
+        .map((name) => [name, (row.columns[name] ?? null) as CborValue]),
+    ]),
+  );
+}
+
+/**
+ * The list a header this copy holds stores, when the header is complete here
+ * (docs/format.md, verify-complete): every row the list names found, as the
+ * header's author's row in the table listed, and the digest over them the
+ * header's. Otherwise null. Synchronous, for the merge, which may hold a
+ * transaction open; not a check of the signature, since the copy's own
+ * headers are not verified (equivocation-own-headers).
+ */
+function completeHere(db: Rows, tables: readonly string[], header: Record<string, unknown>): [string, number][] | null {
+  const covers = coveredRowsOf(header["covers"]);
+  if (!covers || !(header["digest"] instanceof Uint8Array)) return null;
+  const entries: BatchEntry[] = [];
+  for (const [table, seq] of covers) {
+    if (!tables.includes(table)) return null;
+    const found = db.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [header["author"], seq]);
+    if (found.length !== 1) return null;
+    entries.push({ table, row: readRow(found[0]!, authorColumnsOf(db, table)) });
+  }
+  return hex(sha256(canonicalRows(entries))) === hex(header["digest"]) ? covers : null;
+}
+
+/**
+ * The `covers` a header stores: its rows as `[table, seq]`, the author being the
+ * header's, ordered by table (UTF-8 bytes) and then seq, as JSON. By table as
+ * well as seq, so a row is found where it was signed and nowhere else (cold
+ * review of step 4, finding 1).
+ */
+export function coversText(entries: readonly { table: string; row: { _r_seq: number } }[]): string {
+  const pairs = entries.map((e) => [e.table, e.row._r_seq] as const);
+  pairs.sort((a, b) => utf8Order(a[0], b[0]) || a[1] - b[1]);
+  return JSON.stringify(pairs);
+}
+
+/**
+ * A header's `covers`, or null when it is not the one spelling `coversText`
+ * writes: a non-empty JSON array of distinct `[table, seq]` pairs, each seq a
+ * positive integer, in that order, and no seq twice in any tables. One
+ * spelling, so two readers never disagree about which rows a header lists; and
+ * one seq is one row (docs/format.md, `covers-spelling`), so a list that
+ * repeats one is not a list, and no header is authentic under it.
+ */
+export function coveredRowsOf(text: unknown): [string, number][] | null {
+  if (typeof text !== "string") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const shaped = parsed.every(
+    (p) => Array.isArray(p) && p.length === 2 && typeof p[0] === "string" && Number.isSafeInteger(p[1]) && p[1] > 0,
+  );
+  if (!shaped) return null;
+  const pairs = parsed as [string, number][];
+  for (let i = 1; i < pairs.length; i++) {
+    const order = utf8Order(pairs[i - 1]![0], pairs[i]![0]) || pairs[i - 1]![1] - pairs[i]![1];
+    if (order >= 0) return null;
+  }
+  if (new Set(pairs.map(([, seq]) => seq)).size !== pairs.length) return null;
+  if (JSON.stringify(pairs) !== text) return null;
+  return pairs;
+}
 
 export interface MergeResult {
   /** Rows this copy did not have. */
@@ -645,6 +1047,12 @@ export interface MergeResult {
   rejected: string[];
   /** Replica ids this copy had never seen. */
   newReplicas: number;
+  /**
+   * Batches refused, one entry per batch and reason, ordered by batch id. Always
+   * present, empty when nothing was refused. Not `rejected`, which counts row ids
+   * reused, and not `refused`, which means the merge did not run.
+   */
+  refusedBatches: RefusedBatch[];
 }
 
 /**
@@ -663,8 +1071,35 @@ export function mergeFrom(
   local: Rows,
   sibling: Rows,
   tables: readonly string[],
+  /** This copy's own author, as the host holds it (binding rule 1); never read from a row. */
+  author?: Uint8Array,
+  /**
+   * The sibling's signed headers, verified (`verifyBatches`). Nothing verified
+   * is the default, and then nothing sealed is taken: a seal is adopted only
+   * once it has been checked (identity ruling #3).
+   */
+  verdicts: ReadonlyMap<string, BatchVerdict> = new Map(),
 ): MergeResult {
-  const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0 };
+  const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0, refusedBatches: [] };
+  const refusals = new Map<string, { id: string; author: Uint8Array; reason: BatchRefusal }>();
+  const refuseBatch = (id: string, who: Uint8Array, reason: BatchRefusal): void => {
+    refusals.set(`${id}|${reason}|${hex(who)}`, { id, author: who, reason });
+  };
+  // The seats a creator confirmed to two copies (D165), keyed by session and
+  // seat row (R12: a seat is its row, so one void seat is one key whatever
+  // values its versions name). A view built before R12 has no row: its seat.
+  const voidedSeats = (): Map<string, Uint8Array> =>
+    local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_voided'").length === 0
+      ? new Map()
+      : new Map(
+          local
+            .all("SELECT * FROM _dai_voided")
+            .map((r) => [
+              `${hex(r["session"] as Uint8Array)}|${hex((r["entity"] ?? r["seat"]) as Uint8Array)}|${"entity" in r ? "entity" : "seat"}`,
+              r["creator"] as Uint8Array,
+            ]),
+        );
+  const voidedBefore = voidedSeats();
 
   /*
    * The clock first, and durably before any local write that follows.
@@ -684,6 +1119,168 @@ export function mergeFrom(
     if (typeof highest === "number") ceiling = Math.max(ceiling, highest);
   }
   local.run("UPDATE _dai_replica SET lc = ?", [ceiling]);
+
+  /*
+   * The signed headers travel with the rows they cover (docs/identity.md). A
+   * header is the same bytes on every copy, so this is a union by id, of the
+   * verified ones only; a header that did not verify is refused and reported
+   * with the author it names. Before the rows: a row may name only a header this
+   * copy holds.
+   *
+   * Which rows a header covers is its own list, checked by the verifier against
+   * the digest; a row's `_r_batch` is a cache of one covering header (ruling
+   * #3). A row may be covered by more than one: the same rows sealed again after
+   * a save that held the first seal was lost.
+   */
+  const hasBatchTable = (rows: Rows): boolean =>
+    rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+  // The headers this copy held before the merge: its own, sealed here or kept before.
+  const heldBefore = new Set(hasBatchTable(local) ? local.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => String(r["id"])) : []);
+  const held = new Map<string, Uint8Array>(); // every header the sibling holds, by id
+  const covering = new Map<string, string>(); // "table|author:seq" -> the lowest verified id listing it
+  const covers = new Set<string>(); // "id|table|author:seq", every verified listing
+  /*
+   * A row whose parents are not the one shape is refused before anything else
+   * reads it (D159), and so is every row of a batch that signed one: the
+   * author signed them together, and a header kept without one of its rows
+   * would fail at the next copy in the author's name. The header is not kept.
+   */
+  const malformed = new Set<string>(); // "table|author:seq"
+  for (const table of tables) {
+    for (const r of sibling.all(`SELECT _r_replica, _r_seq, _r_parents FROM "${table}"`)) {
+      if (!wellFormedParents(r["_r_parents"])) malformed.add(`${table}|${rowId(r["_r_replica"] as Uint8Array, Number(r["_r_seq"]))}`);
+    }
+  }
+  const tainted = new Set<string>(); // "table|author:seq" listed by a header that signed a malformed row
+  /*
+   * The headers that reveal an author signing twice, by author (D160, D165):
+   * a merge reports what it made true, once per author, filed under the lowest
+   * revealing header (D171). Reported with the rest, at the end.
+   */
+  const revealed = new Map<string, { author: Uint8Array; ids: string[] }>();
+  const reveal = (who: Uint8Array, id: string): void => {
+    const entry = revealed.get(hex(who)) ?? { author: who, ids: [] };
+    entry.ids.push(id);
+    revealed.set(hex(who), entry);
+  };
+  if (hasBatchTable(local) && hasBatchTable(sibling)) {
+    // The ids already signed twice here, so a header reveals only a new one.
+    const equivocatedBefore = new Set(
+      local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_equivocated'").length === 0
+        ? []
+        : local
+            .all("SELECT lower(hex(author)) AS a, seq FROM _dai_equivocated")
+            .map((r) => `${String(r["a"])}|${Number(r["seq"])}`),
+    );
+    const headers = sibling
+      .all("SELECT id, author, lc, sig, pub, att, version, digest, covers FROM _dai_batch")
+      .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
+    const arrived: { id: Uint8Array; author: Uint8Array; digest: Uint8Array; covers: readonly (readonly [string, number])[] }[] = [];
+    for (const header of headers) {
+      const id = hex(header["id"] as Uint8Array);
+      held.set(id, header["id"] as Uint8Array);
+      const verdict = verdicts.get(id);
+      if (!verdict || !verdict.ok) {
+        // Not checked is not signed: a header nobody verified is refused as one
+        // whose signature does not verify.
+        refuseBatch(id, header["author"] as Uint8Array, verdict && !verdict.ok ? verdict.reason : "BATCH_SIGNATURE_INVALID");
+        continue;
+      }
+      const listed = verdict.covers.map(([table, seq]) => `${table}|${rowId(verdict.author, seq)}`);
+      if (verdict.complete && listed.some((key) => malformed.has(key))) {
+        for (const key of listed) tainted.add(key);
+        refuseBatch(id, verdict.author, "ROW_MALFORMED");
+        continue;
+      }
+      /*
+       * Kept under the list it signed, whatever list the sibling stored: a
+       * relabeled list was recovered by the verifier (D161), and is not passed
+       * on. Kept whether or not this copy holds its rows: an authentic header is
+       * the author's statement, and the evidence of two conflicting ones has to
+       * travel with every copy (D160).
+       */
+      const isNew = local.all("SELECT 1 FROM _dai_batch WHERE id = ?", [header["id"]]).length === 0;
+      const signedList = JSON.stringify(verdict.covers);
+      local.run(
+        "INSERT OR IGNORE INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [header["id"], header["author"], header["lc"], header["sig"], header["pub"], header["att"] ?? null, header["version"], header["digest"], signedList],
+      );
+      // A header this copy held already, under a relabeled list, is rewritten to
+      // the list it signed: the stored list is a cache of the signed one, and a
+      // cache that disagrees with what verified is the one that changes (the
+      // step 6 re-review).
+      if (!isNew) local.run("UPDATE _dai_batch SET covers = ? WHERE id = ? AND covers <> ?", [signedList, header["id"], signedList]);
+      if (isNew) arrived.push({ id: header["id"] as Uint8Array, author: verdict.author, digest: header["digest"] as Uint8Array, covers: verdict.covers });
+      // Rows are taken only through a header whose rows the sibling holds, as signed.
+      if (!verdict.complete) continue;
+      for (const [table, seq] of verdict.covers) {
+        const key = `${table}|${rowId(verdict.author, seq)}`;
+        covers.add(`${id}|${key}`);
+        if (!covering.has(key)) covering.set(key, id);
+      }
+    }
+    /*
+     * Equivocation (D160): two authentic headers of one author listing one row
+     * id with different digests. An honest author never has two headers over one
+     * row (a header leaves only in landed bytes, and the host signs only above
+     * the floor), so this is the author signing two histories. Neither row at
+     * that id is admitted, on any copy holding both headers (`_dai_equivocated`,
+     * src/replicated.ts). A header this merge kept reveals it when it makes an
+     * id equivocated that was not before; a third conflicting header at an id
+     * already signed twice reveals nothing new (D171). The id is the author and
+     * the seq, whatever table either header lists it in (batch format version
+     * 2, the step 6 review).
+     */
+    for (const h of arrived) {
+      const reveals = h.covers.some(
+        ([, seq]) =>
+          !equivocatedBefore.has(`${hex(h.author)}|${seq}`) &&
+          local.all("SELECT 1 FROM _dai_covers WHERE author = ? AND seq = ? AND id <> ? AND digest <> ? LIMIT 1", [
+            h.author,
+            seq,
+            h.id,
+            h.digest,
+          ]).length > 0,
+      );
+      if (reveals) reveal(h.author, hex(h.id));
+    }
+  }
+
+  /*
+   * A row this copy holds with `_r_batch` unset, listed by a header the copy
+   * held before the merge that is complete here, is signed, not pending: the
+   * save that wrote the header lost the row's pointer, or the rows were sealed
+   * again after. The merge sets the cache, to the lowest such header, before
+   * any row is placed, so a signed row arriving at that id, in any table, meets
+   * a signed row and does not outrank it (the step 6 re-review, silence A).
+   * Only the headers that list a pending row are digested.
+   */
+  if (heldBefore.size > 0) {
+    const pending = new Map<string, { table: string; replica: Uint8Array; seq: number }>();
+    for (const table of tables) {
+      for (const r of local.all(`SELECT _r_replica, _r_seq FROM "${table}" WHERE _r_batch IS NULL`)) {
+        const replica = r["_r_replica"] as Uint8Array;
+        pending.set(`${table}|${rowId(replica, Number(r["_r_seq"]))}`, { table, replica, seq: Number(r["_r_seq"]) });
+      }
+    }
+    const own = pending.size === 0
+      ? []
+      : local
+          .all("SELECT id, author, digest, covers FROM _dai_batch")
+          .filter((h) => heldBefore.has(hex(h["id"] as Uint8Array)))
+          .sort((a, b) => plainOrder(hex(a["id"] as Uint8Array), hex(b["id"] as Uint8Array)));
+    for (const header of own) {
+      const author = header["author"] as Uint8Array;
+      const listed = (coveredRowsOf(header["covers"]) ?? []).map(([table, seq]) => `${table}|${rowId(author, seq)}`);
+      if (!listed.some((key) => pending.has(key)) || !completeHere(local, tables, header)) continue;
+      for (const key of listed) {
+        const row = pending.get(key);
+        if (!row) continue;
+        local.run(`UPDATE "${row.table}" SET _r_batch = ? WHERE _r_replica = ? AND _r_seq = ? AND _r_batch IS NULL`, [header["id"], row.replica, row.seq]);
+        pending.delete(key);
+      }
+    }
+  }
 
   // Union, and nothing else. A replica id seen is a replica id known.
   const known = new Set(
@@ -720,13 +1317,129 @@ export function mergeFrom(
     ]);
   }
 
+  /*
+   * Signed means listed by a verified header, whatever the row says. The row's
+   * own pointer is kept when it names a header that lists it, and otherwise set
+   * to the one that does. A row that claims a batch and is listed by none is
+   * refused: it names a signature that does not vouch for it
+   * (BATCH_DIGEST_MISMATCH, in the name of whoever wrote the row, unless the
+   * batch it names was refused already). A row that claims none and is listed by
+   * none is unsigned, and is refused in every table (BATCH_UNSIGNED, batch
+   * format version 2): nobody's key vouches for it, so it is nobody's row. It
+   * began in the seat and close tables (D133, D147), where an unsigned confirm
+   * under the creator's id seated whoever wrote it; the legacy rule that let it
+   * merge anywhere else is gone. A row naming this copy's own id is refused too,
+   * since a forgery under someone's id arriving at their own copy is the case.
+   * A row this copy already holds at the same id in the same table is not new,
+   * so it is not refused: the same row is a duplicate, as ever, and a different
+   * one is rejected as a second row under one id (a save of this copy's own
+   * pending rows, merged back, is the first).
+   */
+  const signedRows: { table: string; row: ReplicatedRow }[] = [];
+  const unsignedRows: { table: string; row: ReplicatedRow }[] = [];
   for (const table of tables) {
     const authored = authorColumnsOf(sibling, table);
     for (const incoming of sibling.all(`SELECT * FROM "${table}"`)) {
       const row = readRow(incoming, authored);
+      const key = `${table}|${rowId(row._r_replica, row._r_seq)}`;
+      const named = row._r_batch instanceof Uint8Array ? hex(row._r_batch) : null;
+      const cover = covering.get(key);
+      // Malformed, or signed only with one that is (D159): never taken. Reported
+      // once, with the batch that signed it, or here when nothing did.
+      if (malformed.has(key) || (!cover && tainted.has(key))) {
+        if (!tainted.has(key)) refuseBatch(named ?? "", row._r_replica, "ROW_MALFORMED");
+        continue;
+      }
+      if (cover) {
+        const keep = named && covers.has(`${named}|${key}`) ? named : cover;
+        row._r_batch = held.get(keep)!;
+        signedRows.push({ table, row });
+      } else if (named) {
+        const verdict = verdicts.get(named);
+        if (!held.has(named) || verdict?.ok) refuseBatch(named, row._r_replica, "BATCH_DIGEST_MISMATCH");
+      } else {
+        // Held already: the ordinary path, which cannot insert (the id is taken)
+        // and counts the same row a duplicate and a different one a rejection.
+        const already = local.all(`SELECT 1 FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
+        if (already.length > 0) unsignedRows.push({ table, row });
+        else refuseBatch("", row._r_replica, "BATCH_UNSIGNED");
+      }
+    }
+  }
+
+  /*
+   * One id, one row. A per-author seq is one counter per document, so
+   * `(author, seq)` names one row whatever table it sits in: an unsigned row at
+   * a number another table holds is a collision, refused as a different row
+   * wearing that id (two signed ones are equivocation, below in `place`). And a
+   * signed row always outranks an unsigned row at the same id, whichever arrived
+   * first: the unsigned one is removed and the signed one takes its place (the
+   * delete trigger allows exactly that), and the removed id is reported the same
+   * way. Signed rows go first, so which one wins never depends on table order.
+   * (Cold review of identity step 4, findings 1 and 2.)
+   */
+  const reject = (id: string): void => {
+    if (!result.rejected.includes(id)) result.rejected.push(id);
+  };
+  const displace = (table: string, row: ReplicatedRow): void => {
+    const gone = local.all(`SELECT _r_parents FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
+    local.run(`DELETE FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
+    // What the removed row superseded is a head again unless something else of
+    // its entity names it (T1-D2, T1-D35).
+    for (const parent of parentsOf({ _r_parents: String(gone?.["_r_parents"] ?? "[]") })) {
+      local.run(
+        `UPDATE "${table}" SET _r_superseded = 0
+          WHERE lower(hex(_r_replica)) || ':' || _r_seq = ?
+            AND NOT EXISTS (SELECT 1 FROM "${table}" n, json_each(${parentsSql("n._r_parents")}) p
+                             WHERE p.value = ? AND n._r_entity = "${table}"._r_entity)`,
+        [parent, parent],
+      );
+    }
+    reject(rowId(row._r_replica, row._r_seq));
+  };
+  const added: { table: string; row: ReplicatedRow }[] = [];
+  const place = (table: string, row: ReplicatedRow, signed: boolean): void => {
+    for (const other of tables) {
+      if (other === table) continue;
+      const there = local.all(`SELECT _r_batch FROM "${other}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
+      if (!there) continue;
+      if (signed && there["_r_batch"] == null) {
+        displace(other, row);
+        continue;
+      }
+      /*
+       * Two signed rows at one id in two tables are both taken (batch format
+       * version 2, the step 6 review). Refusing the second made the first to
+       * arrive win, so two copies split and nothing was reported; taken, the
+       * two headers are equivocation per (author, seq), and neither row counts
+       * on any copy holding both. The collision is an unsigned row's rule.
+       */
+      if (signed) continue;
+      throw new RowRejected(
+        `${rowId(row._r_replica, row._r_seq)} is already a row of ${other}. One author's seq names one row, whatever table it is in.`,
+      );
+    }
+    try {
+      if (applyRow(local, table, row) === "added") {
+        result.applied += 1;
+        added.push({ table, row });
+      } else result.duplicate += 1;
+    } catch (error) {
+      const there = local.all(`SELECT _r_batch FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq])[0];
+      if (!(error instanceof RowRejected) || !signed || !there || there["_r_batch"] != null) throw error;
+      displace(table, row);
+      applyRow(local, table, row);
+      result.applied += 1;
+      added.push({ table, row });
+    }
+  };
+  for (const [rows, signed] of [
+    [signedRows, true],
+    [unsignedRows, false],
+  ] as const) {
+    for (const { table, row } of rows) {
       try {
-        if (applyRow(local, table, row) === "added") result.applied += 1;
-        else result.duplicate += 1;
+        place(table, row, signed);
       } catch (error) {
         if (!(error instanceof RowRejected)) throw error;
         /*
@@ -743,10 +1456,121 @@ export function mergeFrom(
          * is a claim, and reporting it as authorship would dress a guess as a
          * fact.
          */
-        result.rejected.push(rowId(row._r_replica, row._r_seq));
+        reject(rowId(row._r_replica, row._r_seq));
       }
     }
   }
 
+  /*
+   * Rows taken and not admitted because their author did not hold the seat they
+   * name when they wrote them (identity step 5). Stored, since they are signed
+   * and attributable, and reported by author, as every refusal is. Read after
+   * every row is in, so a binding that arrived in the same exchange counts.
+   */
+  const seated = new Set(
+    local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_seat_rules'").length > 0
+      ? local.all("SELECT tbl FROM _dai_seat_rules").map((r) => String(r["tbl"]))
+      : [],
+  );
+  for (const { table, row } of added) {
+    if (!seated.has(table)) continue;
+    const unseated = local.all(`SELECT 1 FROM "${table}_unseated" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
+    if (unseated.length > 0) {
+      refuseBatch(row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "", row._r_replica, "SEAT_NOT_HELD");
+    }
+  }
+
+  /*
+   * Rows taken and not admitted because they name as an earlier version a row
+   * of their entity from another session (D131). Stored, and reported by author,
+   * whichever of the two rows this exchange brought: the admission is a fact of
+   * the row set, and the report says what this merge made true.
+   */
+  // And, in a seated table, a row naming a row of another seat of its session
+  // (D132), reported as SEAT_NOT_HELD the same way.
+  const views = new Set(local.all("SELECT name FROM sqlite_schema WHERE type = 'view'").map((r) => String(r["name"])));
+  const crossings = [
+    ["_foreign", "ENTITY_OTHER_SESSION"],
+    ["_other_seat", "SEAT_NOT_HELD"],
+  ] as const;
+  for (const table of tables) {
+    const arrived = new Set(added.filter((a) => a.table === table).map((a) => rowId(a.row._r_replica, a.row._r_seq)));
+    if (arrived.size === 0) continue;
+    for (const [suffix, reason] of crossings) {
+      if (!views.has(`${table}${suffix}`)) continue;
+      for (const f of local.all(`SELECT _r_replica, _r_seq, _r_batch, parent_replica, parent_seq FROM "${table}${suffix}"`)) {
+        const child = rowId(f["_r_replica"] as Uint8Array, Number(f["_r_seq"]));
+        const parent = rowId(f["parent_replica"] as Uint8Array, Number(f["parent_seq"]));
+        if (!arrived.has(child) && !arrived.has(parent)) continue;
+        refuseBatch(f["_r_batch"] instanceof Uint8Array ? hex(f["_r_batch"]) : "", f["_r_replica"] as Uint8Array, reason);
+      }
+    }
+  }
+
+  /*
+   * This copy's own rows can come back to it: a save that never landed, and
+   * the same rows returning from the mailbox. The counter is raised past the
+   * highest of them, or this copy's next row reissues a seq it already issued
+   * (cold review of identity step 2, #3).
+   */
+  if (author instanceof Uint8Array) raiseSeq(local, highestSeqOf(local, author));
+
+  /*
+   * Equivocation at the seat (D165): the creator confirmed one seat to two
+   * copies. Both confirms are void on every copy holding them (`_dai_voided`).
+   * The merge that made the seat void says so, in the creator's name, as D160
+   * does for two rows at one id: the accusation is of the author. Its
+   * revealing headers are those of the rows it took that the void rests on
+   * (D171): the seat's counting confirms (`_dai_confirmed`, so not one at an
+   * equivocated id) and the session's creator's seat row that counts
+   * (`_dai_creator`, so not deleted and not equivocated), and nothing else
+   * (batch format version 2, the step 6 review, X3). With no taken row it
+   * rests on, the report is filed under no id. The seat is its row (R12): its
+   * counting confirms are those naming any value of the row.
+   */
+  for (const [key, creator] of voidedSeats()) {
+    if (voidedBefore.has(key)) continue;
+    const [session, seat, by] = key.split("|");
+    const counting = new Set(
+      local
+        .all(`SELECT seq FROM _dai_confirmed WHERE lower(hex(session)) = ? AND lower(hex(${by === "entity" ? "entity" : "seat"})) = ? AND creator = ?`, [session, seat, creator])
+        .map((r) => Number(r["seq"])),
+    );
+    const seatRow = local.all("SELECT 1 FROM _dai_creator WHERE lower(hex(session)) = ? AND replica = ?", [session, creator]).length > 0;
+    const resting = added.filter(
+      ({ table, row }) =>
+        row._r_session instanceof Uint8Array &&
+        hex(row._r_session) === session &&
+        hex(row._r_replica) === hex(creator) &&
+        ((table === "_dai_confirm" && counting.has(row._r_seq)) ||
+          (table === "_dai_seat" &&
+            seatRow &&
+            row._r_deleted === 0 &&
+            hex(sessionIdOf(row._r_replica, row._r_seq) ?? new Uint8Array()) === session)),
+    );
+    for (const { row } of resting) reveal(creator, row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "");
+    if (resting.length === 0) reveal(creator, "");
+  }
+  for (const { author: who, ids } of revealed.values()) {
+    refuseBatch([...ids].sort(plainOrder)[0]!, who, "AUTHOR_EQUIVOCATED");
+  }
+
+  result.refusedBatches = [...refusals.values()]
+    .sort((a, b) => plainOrder(a.id, b.id) || plainOrder(a.reason, b.reason) || plainOrder(hex(a.author), hex(b.author)))
+    .map(({ author: who, reason }) => ({ author: showAuthorId(who), reason }));
   return result;
+}
+
+/**
+ * Holds this copy's counter at or above `floor`, never lowering it.
+ *
+ * The floor is the highest seq this device has let leave it for this document,
+ * or the highest this copy holds under its own id: either way, a seq at or
+ * below it has been issued already. Returns whether the counter moved.
+ */
+export function raiseSeq(db: Rows, floor: number): boolean {
+  const held = Number(db.all("SELECT seq FROM _dai_replica LIMIT 1")[0]?.["seq"] ?? 0);
+  if (!(floor > held)) return false;
+  db.run("UPDATE _dai_replica SET seq = ?", [floor]);
+  return true;
 }

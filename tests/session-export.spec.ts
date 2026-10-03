@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -46,7 +47,7 @@ const hx = (u: unknown): string => (u instanceof Uint8Array ? Buffer.from(u).toS
 
 /** `node:sqlite` behind the `Rows` interface, backed by a temp file. */
 function rowsOn(path: string): Rows & { db: DatabaseSync } {
-  const db = new DatabaseSync(path);
+  const db = withSessionId(new DatabaseSync(path));
   return {
     db,
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -92,7 +93,7 @@ function nodeEngine(): ScratchEngine {
 function sessionsIn(database: Uint8Array): string[] {
   const path = join(mkdtempSync(join(tmpdir(), "dai-check-")), "document.sqlite");
   writeFileSync(path, database);
-  const check = new DatabaseSync(path);
+  const check = withSessionId(new DatabaseSync(path));
   const sessions = check
     .prepare("SELECT _r_session FROM moves")
     .all()

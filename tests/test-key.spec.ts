@@ -93,7 +93,6 @@ test.describe("a key that is published in this repository", () => {
       await input({
         signingKey: TEST_KEY,
         allowTestKey: true,
-        manifestVersion: 3,
         // A name on it changes nothing: the key is what is being judged.
         publisherName: "Acme Finance",
       }),
@@ -116,7 +115,7 @@ test.describe("a key that is published in this repository", () => {
     // keys, and the vectors that exercise known / new / conflict could not
     // reach any of those states.
     const built = await buildContainer(
-      await input({ signingKey: PUBLISHER_KEY, manifestVersion: 3, publisherName: "Ace Space" }),
+      await input({ signingKey: PUBLISHER_KEY, publisherName: "Ace Space" }),
     );
     const container = await verifyContainer(built.html);
     const who = await publisherState(emptyStore(), container, TABLE);

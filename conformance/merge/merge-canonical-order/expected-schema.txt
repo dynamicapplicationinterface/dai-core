@@ -1,0 +1,5 @@
+Zones	name	TEXT	NOT NULL	
+cards	Zeta	TEXT		
+cards	alpha	TEXT		
+cards	ａ	TEXT		
+cards	𐐀	TEXT		

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -38,7 +39,7 @@ const read = (path: string): string => readFileSync(resolve(repo, path), "utf8")
  * that line, and a line that moves fails a test.
  */
 
-const ID_SHAPED = /\b(?:SHAPE|SHARED|SESSION|NO|KIT|STORE|MODULE|ONE|SHARE|SCHEMA|SEED|WRITE|MIGRATE|TIMES|ICON|DESCRIBE|EDGE|TOP|LOOK|HANDOVER)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
+const ID_SHAPED = /\b(?:IDENTITY|SHAPE|SHARED|SESSION|NO|KIT|STORE|MODULE|ONE|SHARE|SCHEMA|SEED|WRITE|MIGRATE|TIMES|ICON|DESCRIBE|EDGE|TOP|LOOK|HANDOVER)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g;
 
 function everyAnchor(): { owner: string; anchor: Anchor }[] {
   return [
@@ -276,7 +277,7 @@ test.describe("the lint holds applications to the shared-table constraints", () 
  */
 test.describe("what the constraints claim, run against the rewrite", () => {
   const open = (schema: string): DatabaseSync => {
-    const db = new DatabaseSync(":memory:");
+    const db = withSessionId(new DatabaseSync(":memory:"));
     db.exec(rewriteReplicated(schema).sql);
     return db;
   };

@@ -314,7 +314,7 @@ test.describe("the mailbox mechanism (with an injected key — not the key path)
       })
       .toBeGreaterThan(0);
     // And the sentence a person reads, which is what D46 is about.
-    await expect(pageB.locator("#report")).toContainText("it will send when the connection returns", {
+    await expect(pageB.locator("#doc-note")).toContainText("it will send when the connection returns", {
       timeout: 30_000,
     });
     /*

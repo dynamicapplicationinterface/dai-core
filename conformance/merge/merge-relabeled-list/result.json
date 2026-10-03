@@ -1,0 +1,29 @@
+{
+  "what": "B holds Ada's header H over her case and her note, with its stored list relabeled to the case alone, and both rows naming H; and a note of Bo's naming H. The stored list does not make the header; the list of Ada's rows naming H does, so H is authentic and complete, and Bo's note is not in that list, since only the header's author's rows are. Merging B into A takes both rows and keeps H under the list it signed, the case and the note, not the list B stored; Bo's note is BATCH_DIGEST_MISMATCH under H. lists.json carries the list that made H authentic.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_DIGEST_MISMATCH"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

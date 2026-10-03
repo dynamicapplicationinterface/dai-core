@@ -87,8 +87,8 @@ test.describe("a declared table", () => {
     expect(sql).toContain("title  TEXT NOT NULL");
     expect(sql).toContain("status TEXT NOT NULL DEFAULT 'open'");
 
-    // And the ones §4 requires, including the one that is always NULL at
-    // Level 1 so that Level 2 needs no migration (T1-D7).
+    // And the ones §4 requires, including the batch a row was sealed in
+    // (docs/identity.md, step 3), which replaced the per-row _r_sig of T1-D7.
     for (const column of [
       "_r_replica",
       "_r_seq",
@@ -97,10 +97,12 @@ test.describe("a declared table", () => {
       "_r_parents",
       "_r_deleted",
       "_r_superseded",
-      "_r_sig",
+      "_r_batch",
     ]) {
       expect(sql, column).toContain(column);
     }
+    expect(sql, "one place a signature lives").not.toContain("_r_sig");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_batch");
     expect(sql).toContain("PRIMARY KEY (_r_replica, _r_seq)");
     expect(sql).toContain("WITHOUT ROWID");
   });
@@ -131,8 +133,11 @@ test.describe("a declared table", () => {
      * the trigger read correctly; running it against SQLite is what found it.
      */
     expect(sql).toMatch(
-      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig ON cases/,
+      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted ON cases/,
     );
+    // _r_batch has a trigger of its own: it may change once, from NULL, when the
+    // row is sealed, and never after.
+    expect(sql).toMatch(/cases__sealed_once BEFORE UPDATE OF _r_batch ON cases\s+WHEN OLD\._r_batch IS NOT NULL/);
 
     // And the flag only rises. Two hosts with the same rows and different
     // flags never reconcile, so clearing one is refused.
@@ -141,13 +146,16 @@ test.describe("a declared table", () => {
     expect(sql).toContain("ROW_REJECTED");
   });
 
-  test("heads come from the flag, not from a scan of every row's parents", () => {
+  test("heads come from the rows of the entity, never from the stored flag (D140)", () => {
     const { sql } = rewriteReplicated(CASES);
-    expect(sql).toContain(
-      "CREATE VIEW IF NOT EXISTS cases_heads AS\n  SELECT * FROM cases WHERE _r_superseded = 0",
-    );
-    // Draft 1 walked json_each over every row on every read; D5 replaced it.
-    expect(sql).not.toMatch(/CREATE VIEW cases_heads[\s\S]*?json_each/);
+    const heads = /CREATE VIEW IF NOT EXISTS cases_heads AS[\s\S]*?;/.exec(sql)?.[0] ?? "";
+    expect(heads, "the view exists").not.toBe("");
+    // A head is a row no row of its own entity names: the walk is bounded by the entity.
+    expect(heads).toContain("c._r_entity = r._r_entity");
+    expect(heads).toContain("json_each(c._r_parents)");
+    // The flag is a display cache: which rows raised it depends on arrival.
+    expect(heads).not.toContain("_r_superseded");
+    expect(sql, "and no index is kept for reading it").not.toMatch(/INDEX[^;]*WHERE _r_superseded/);
   });
 
   test("current counts every head when it reports a conflict, not the live ones", () => {
@@ -269,7 +277,7 @@ test.describe("the default build path emits the version the spec says it emits",
     expect(replicated.manifestVersion).toBe(4);
     // Chess declares the session profile (Step 6), so it requires both the
     // replicated capability and session.
-    expect(replicated.requires).toEqual(["replicated", "session"]);
+    expect(replicated.requires).toEqual(["authorship", "replicated", "session"]);
 
     const dir = mkdtempSync(join(tmpdir(), "dai-plain-"));
     writeFileSync(
@@ -283,6 +291,27 @@ test.describe("the default build path emits the version the spec says it emits",
     // it — which is why the bump was cheap and rode only the replicated branch.
     expect(plain.requires).toBeUndefined();
     expect(plain.replication).toBeUndefined();
+  });
+
+  test("batch format version 2: a replicated build requires authorship, which a host from before signing refuses (D108)", async () => {
+    const replicated = await versionOf(resolve(repoRoot, "tests/fixture/chess"), "Chess");
+    expect(replicated.requires).toContain("authorship");
+  });
+
+  test("batch format version 2: a seed database holding rows in a replicated table is refused, since nobody signed them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dai-seed-"));
+    writeFileSync(join(dir, "index.html"), '<!doctype html><meta charset="utf-8"><p id="app">seeded</p>', "utf8");
+    const schema = "-- dai:replicated\nCREATE TABLE notes (body TEXT);\n";
+    writeFileSync(join(dir, "schema.sql"), schema, "utf8");
+    const seed = new DatabaseSync(join(dir, "seed.sqlite"));
+    seed.exec(rewriteReplicated(schema).sql);
+    seed
+      .prepare("INSERT INTO notes (body, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES ('hello', ?, 1, 1, ?, '[]', 0)")
+      .run(new Uint8Array(16).fill(1), new Uint8Array(16).fill(2));
+    seed.close();
+    await expect(compileDirectory({ sourceDir: dir, root: repoRoot, appName: "Seeded", sqlitePath: join(dir, "seed.sqlite") })).rejects.toThrow(
+      /seed.*notes/i,
+    );
   });
 });
 
@@ -300,7 +329,7 @@ ${CASES}`;
     // Named in the append-only trigger, so a row's session cannot be edited in
     // place any more than its author columns can.
     expect(sql).toMatch(
-      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig, _r_session ON cases/,
+      /BEFORE UPDATE OF\s+title, status, notes, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session ON cases/,
     );
   });
 
@@ -316,11 +345,12 @@ CREATE TABLE visits (
     // `tables` is the author tables — the manifest surface (T1-D29 keeps the
     // roster tables out of it, like _dai_replica).
     expect(tables).toEqual(["cases", "visits"]);
-    // But the profile stamps _r_session onto both author tables and the three
-    // roster/close system tables the schema now carries — five in the SQL.
-    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(5);
+    // But the profile stamps _r_session onto both author tables and the four
+    // roster/close system tables the schema now carries — six in the SQL.
+    expect(sql.match(/_r_session    BLOB/g)).toHaveLength(6);
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_seat");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_binding");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_confirm");
     expect(sql).toContain("CREATE TABLE IF NOT EXISTS _dai_close");
   });
 
@@ -343,6 +373,24 @@ CREATE TABLE visits (
         .all()
         .map((r) => String((r as { name: unknown }).name));
       expect(cols).toContain("_r_session");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("batch format version 2: a close carries its session and nothing else, and no seat row carries a nonce", () => {
+    const { sql } = rewriteReplicated(SESSION_CASES);
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(sql);
+      const authored = (table: string) =>
+        db
+          .prepare(`SELECT name FROM pragma_table_info('${table}')`)
+          .all()
+          .map((r) => String((r as { name: unknown }).name))
+          .filter((name) => !name.startsWith("_r_"));
+      expect(authored("_dai_close"), "the frontier columns are retired").toEqual([]);
+      expect(authored("_dai_seat"), "the creator's seat row is the one the session id names, by (author, seq)").toEqual(["seat"]);
     } finally {
       db.close();
     }

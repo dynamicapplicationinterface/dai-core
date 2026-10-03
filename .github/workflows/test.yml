@@ -55,6 +55,9 @@ jobs:
       # reader nothing runs agrees with nothing: the Rust reader's README said
       # the conformance gate ran it, and until this step nothing did.
       - run: python3 conformance/reference/dai_merge.py
+      # Every witness has teeth: each hold-out (the Python reader with one rule
+      # of docs/format.md removed) still fails the fixtures named for it.
+      - run: python3 scripts/holdout.py
       - run: cargo run --release --quiet --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge
 
       # The host's in-place writer, and its own unit tests. Compiling the
@@ -74,8 +77,9 @@ jobs:
   #
   # The one thing this must never become again is a run that cannot finish: a
   # check that times out is indistinguishable from one nobody looked at, and
-  # neither is a verdict. The budget below is set roughly double a single
-  # engine's time on purpose — headroom, not a target. When a shard starts
+  # neither is a verdict. The budget below (the `npm test` step's) is set
+  # roughly double a single engine's time on purpose — headroom, not a
+  # target. When a shard starts
   # brushing the wall, the fix is to split the shard further (by test group, by
   # directory), NOT to raise this number: raising the ceiling buys a few months
   # and restores the blind spot. If you are here to bump the timeout, shard
@@ -83,14 +87,49 @@ jobs:
   #
   # webkit is that case: it alone ran past 25 minutes and was cancelled every
   # round — a cancelled job is no verdict, so webkit was effectively ungated and
-  # its reds sat unseen. So webkit is split into two `--shard` halves that each
+  # its reds sat unseen. So webkit is split into `--shard` parts that each
   # finish well inside the budget and each report a verdict; chromium and firefox
   # still run whole, one job each. The count gate skips a sharded run (its count
   # is a fraction by intent) and is carried by the two whole engines, which drop
   # the same count when a test stops being collected.
+  #
+  # Two parts became three on 27 September: shard 1 of 2 ran 16 to 24 minutes
+  # against this 25-minute wall and was cancelled at it once (run 36289801499,
+  # 408 passed, none failed), while shard 2 finished in 8. Spec files stay
+  # whole (playwright.config.ts), so the split is by file and uneven; a third
+  # part moves the wall back without raising it.
+  #
+  # Three became four on 30 September: shard 2 of 3 took 24m37s in run
+  # 36741672975 and was cancelled at the wall, with no tally and nothing
+  # failed, in run 36754861434, two new tests in it having tipped it over.
+  # Four parts did not move it (run 36764093142, both attempts): one file,
+  # tests/mailbox-link-e2e.spec.ts, runs over 15 minutes on WebKit on one
+  # worker, and a file stays whole, so whichever part holds it meets the wall.
+  # It runs as a job of its own (D174) until its time comes down.
+  #
+  # Firefox is a reading, not the gate (ruled 25 September). Chromium and the
+  # WebKit parts decide the run; a Firefox red does not. The reason is
+  # D32: `returning-document:511` failed at least once on Firefox in 3 of the
+  # last 4 runs on the identity branch, a frame the automation cannot see and
+  # not a product failure on the walk. The Firefox job still runs whole and
+  # scripts/ci-verdict.mjs prints its tally on its own line, so a real Firefox
+  # red is seen; it just does not block. Undoing this is D32 closing, not a
+  # quiet week.
+  #
+  # Firefox's tests have 40 minutes, not 25 (30 September). Its whole suite
+  # reached the 25-minute wall with no tally on that day's runs (at about
+  # test 638 of 813). Firefox is a reading, so its wall is there only
+  # to stop a hang; no verdict of the gate waits on it, and the rule above
+  # (split, don't raise) is for the engines that gate. Its job has 60, so the
+  # setup keeps the same allowance as the others'.
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
+    # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
+    # whose apt mirror was slow (30 September, D174), and that spent the tests'
+    # budget before they began. This is the setup's allowance, not theirs.
+    timeout-minutes: ${{ matrix.browser == 'firefox' && 60 || 45 }}
+    continue-on-error: ${{ matrix.browser == 'firefox' }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,8 +139,13 @@ jobs:
           # holds them — not once per engine.
           - { browser: chromium, part: whole, extra: "--project=node" }
           - { browser: firefox, part: whole }
-          - { browser: webkit, part: "1", shard: "1/2" }
-          - { browser: webkit, part: "2", shard: "2/2" }
+          # One file runs in a job of its own (D174); the four parts drop it
+          # by its one describe title, and every other file stays in them.
+          - { browser: webkit, part: "1", shard: "1/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "2", shard: "2/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "3", shard: "3/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
 
     steps:
       - uses: actions/checkout@v4
@@ -129,6 +173,7 @@ jobs:
       - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
+        timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || 25 }}
 
       - if: failure()
         uses: actions/upload-artifact@v4

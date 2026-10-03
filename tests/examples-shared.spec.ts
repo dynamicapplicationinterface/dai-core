@@ -237,8 +237,9 @@ test.describe("nothing a person does while the app is opening is lost", () => {
   };
 
   for (const example of [
-    { dir: "examples/receipts", name: "Receipts", field: "#store", page: "#entry" },
-    { dir: "examples/tic-tac-toe", name: "Tic-tac-toe", field: "#you", page: "#new-game" },
+    { dir: "examples/receipts", name: "Receipts", field: "#store", page: "#entry", opened: "db = await window.dai.openDatabase();" },
+    // On the kit's seats, so on the kit's database handle.
+    { dir: "examples/tic-tac-toe", name: "Tic-tac-toe", field: "#you", page: "#new-game", opened: "db = kit.db;" },
   ]) {
     test(`${example.name}: while opening nothing can be typed or submitted, even when a style rule undoes hidden`, async ({ page }) => {
       // `main { display: flex }` beats the browser's [hidden] rule — the case
@@ -269,11 +270,7 @@ test.describe("nothing a person does while the app is opening is lost", () => {
 
     test(`${example.name}: a start-up that fails says what went wrong instead of "Opening…"`, async ({ page }) => {
       const container = await variant(example.dir, example.name, (copy) =>
-        edit(
-          join(copy, "app.js"),
-          "db = await window.dai.openDatabase();",
-          'db = await window.dai.openDatabase();\n  throw new Error("start-up broke on purpose");',
-        ),
+        edit(join(copy, "app.js"), example.opened, `${example.opened}\n  throw new Error("start-up broke on purpose");`),
       );
       const app = await openWithoutHost(page, container);
       await expect(app.locator("#opening")).toContainText("could not be opened", { timeout: 30_000 });
@@ -370,13 +367,18 @@ test.describe("tic-tac-toe, a session document", () => {
     await expect(appC.locator("#seat-text")).not.toContainText("invited");
     await expect(cell(appC, 8)).toBeDisabled();
 
-    // D opens A's original invite too: two replicas bind one seat, which admits neither.
+    // D opens A's original invite too, after A's copy has seated Bo (it did when
+    // B's file arrived). D asks for a seat that is already held, and a hold never
+    // moves (identity step 5): A's copy is not contested, offers no repair, and
+    // Bo keeps his seat and his mark.
     const appD = await firstOpen(pageD, a1, "#play");
-    await expect(appD.locator("#status")).toContainText(/Your move, Bo|not playing/, { timeout: 30_000 });
+    await expect(appD.locator("#status")).toContainText("Your move, Bo", { timeout: 30_000 });
     const d1 = await saveOut(pageD, join(scratch, "d1.dai.html"));
     await mergeIn(pageA, d1, false);
-    await expect(appA.locator("#seat-text")).toContainText("Two people opened this invite", { timeout: 60_000 });
-    await expect(appA.locator("#reseat")).toBeVisible();
+    await expect(appA.locator("#status")).toContainText("Your move, Ada.", { timeout: 60_000 });
+    await expect(cell(appA, 4)).toHaveText("O");
+    await expect(appA.locator("#seat-text")).not.toContainText("Two people opened this invite");
+    await expect(appA.locator("#reseat")).toBeHidden();
 
     for (const context of contexts) await context.close();
   });

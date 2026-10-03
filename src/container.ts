@@ -22,7 +22,7 @@ import {
   verifyContainerFile,
 } from "./format.js";
 import {
-  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES } from "./core.js";
+  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES, SUPPORTED_MANIFEST_VERSIONS } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -156,8 +156,8 @@ function fillFromHost(
   return { supplied, absent };
 }
 
-/** The versions this reader knows (spec §9.1). */
-export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3, 4];
+/** The versions this reader knows (spec §9.1), owned by `core.ts`. */
+export { SUPPORTED_MANIFEST_VERSIONS };
 
 /**
  * The capability names version 4 defines (spec 2.1.1 §2.1).
@@ -174,6 +174,9 @@ export const CAPABILITY_REGISTRY: readonly string[] = [
   "passphrase",
   "recipient-bound",
   "relay",
+  // Batch format version 2 (identity step 6, D108): every row signed by its
+  // author's key. Added after the rest, as a new name, never a redefinition.
+  "authorship",
 ];
 
 /**
@@ -196,7 +199,12 @@ export const CAPABILITY_REGISTRY: readonly string[] = [
  * document declaring it opens and behaves, and adding one before the behaviour
  * exists is the silent degradation the field refuses on a reader's behalf.
  */
-export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["replicated", "session"];
+/*
+ * `authorship` joins with batch format version 2 (step 6, D108): this reader
+ * signs every row it writes and merges only signed rows. A reader from before
+ * that, which would write unsigned rows, does not list it and refuses.
+ */
+export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["authorship", "replicated", "session"];
 
 /**
  * Refuses a document that needs something this reader does not have.

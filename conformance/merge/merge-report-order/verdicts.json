@@ -1,0 +1,10 @@
+{
+  "a": {
+    "0f9fbeeb5ab945e7ba1b28540ae06b35": "ok"
+  },
+  "b": {
+    "47e03eadcb99b8b71fbd71d32e3d0c46": "ok",
+    "b92c18473686bf435833ea7ce7d7eaaf": "BATCH_SIGNATURE_INVALID",
+    "dad1ee0a4dfabbaebd2880cb6d97f82a": "ok"
+  }
+}

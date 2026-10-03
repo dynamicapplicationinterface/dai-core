@@ -6,17 +6,20 @@
   ],
   "pairedWith": "tests/replicated-converge.spec.ts — a copy that arrived from somebody else",
   "converges": true,
+  "admitted": false,
   "stable": true,
   "ab": {
     "applied": 1,
     "duplicate": 1,
     "rejected": [],
-    "newReplicas": 1
+    "newReplicas": 1,
+    "refusedBatches": []
   },
   "ba": {
     "applied": 1,
     "duplicate": 1,
     "rejected": [],
-    "newReplicas": 0
+    "newReplicas": 0,
+    "refusedBatches": []
   }
 }

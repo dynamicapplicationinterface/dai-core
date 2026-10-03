@@ -1,0 +1,24 @@
+{
+  "what": "A holds Ada's header H over her case and her note with its stored list relabeled to the case alone, and both rows naming H; B holds H under the list she signed. A header the copy already holds under another list is rewritten to the list it signed when a merge keeps it: merging B into A stores H's covers as the case and the note. Merging A into B keeps B's as it was, so the copies end the same.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

@@ -5,17 +5,20 @@
     "T1-D17"
   ],
   "converges": true,
+  "admitted": false,
   "stable": true,
   "ab": {
     "applied": 0,
     "duplicate": 2,
     "rejected": [],
-    "newReplicas": 0
+    "newReplicas": 0,
+    "refusedBatches": []
   },
   "ba": {
     "applied": 2,
     "duplicate": 2,
     "rejected": [],
-    "newReplicas": 0
+    "newReplicas": 0,
+    "refusedBatches": []
   }
 }

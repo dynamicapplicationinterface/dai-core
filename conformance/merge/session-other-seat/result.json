@@ -1,0 +1,34 @@
+{
+  "what": "Bo, holding the open seat, writes a move for his seat naming as its earlier version Ada's move for her seat, which B does not hold, and a move of another entity naming the same. A version acts only for its own seat: Bo's first move is not admitted on either copy, and Ada's stays a head. B into A takes the child and A into B only the parent; each reports SEAT_NOT_HELD in Bo's name, under his moves' batch (D132). A parent of another entity is no version: Bo's second move crosses nothing and is admitted, and hides nothing (T1-D35).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

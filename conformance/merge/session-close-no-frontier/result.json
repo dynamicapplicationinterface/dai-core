@@ -1,0 +1,24 @@
+{
+  "what": "Ada closes the session, then moves; Bo moves after her close, at a seq and a clock both past hers. A close binds only its author: her later move is late, and Bo's is admitted, by any order a reader might compare them in. A close carries no frontier (D151, batch format version 2).",
+  "cites": [
+    "6",
+    "T1-D31"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 11,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 11,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

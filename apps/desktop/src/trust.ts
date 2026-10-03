@@ -71,7 +71,7 @@ export async function forgetTrust(invoke: Invoke, documentUuid: string): Promise
 }
 
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
-import type { SigstoreRoot } from "../../../src/identity.js";
+import type { SigstoreRoot } from "../../../src/publisher-identity.js";
 
 /**
  * Publishers, kept by the Rust side (4.3). The decision is shared with the
