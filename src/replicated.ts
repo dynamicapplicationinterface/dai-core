@@ -499,6 +499,28 @@ function unequivocal(row: string): string {
   );
 }
 
+/**
+ * Not an equivocator's row (R10, the eighth attack review): raw row `row`'s
+ * author has no two headers listing one seq with different digests anywhere
+ * in the document. What a roster or close row needs to count for anything: an
+ * equivocator's seat, binding, confirm and close rows count for nothing, as a
+ * row at an equivocated id does, so no second header can take back a
+ * statement she made and leave the rest of hers standing. Implies
+ * `unequivocal`.
+ */
+function notEquivocator(row: string): string {
+  return (
+    `NOT EXISTS (SELECT 1 FROM _dai_covers ea JOIN _dai_covers eb` +
+    ` ON eb.author = ea.author AND eb.seq = ea.seq AND eb.digest <> ea.digest` +
+    ` WHERE ea.author = ${row}._r_replica)`
+  );
+}
+
+/** Raw row `row` is in a void session (R10): one whose creator is an equivocator. */
+function inVoidSession(row: string): string {
+  return `EXISTS (SELECT 1 FROM _dai_void_session vs WHERE vs.session = ${row}._r_session)`;
+}
+
 /** The most earlier versions one row may name (D159): one head per writer who wrote concurrently, far below this. */
 export const PARENTS_CAP = 256;
 
@@ -597,11 +619,14 @@ function headsView(
 ): string {
   if (!admissionFiltered) {
     const ownAuthor = session ? " AND c._r_session = r._r_session AND c._r_replica = r._r_replica" : "";
+    // A roster or close row by an equivocator counts for nothing (R10): no
+    // head, and it hides nothing. A plain table's row, only at its own id.
+    const counts = session ? notEquivocator : unequivocal;
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
-   WHERE ${unequivocal("r")}
+   WHERE ${counts("r")}
      AND NOT EXISTS (SELECT 1 FROM ${q} c, json_each(${parentsSql("c._r_parents")}) p
-                      WHERE c._r_entity = r._r_entity${ownAuthor} AND ${unequivocal("c")}
+                      WHERE c._r_entity = r._r_entity${ownAuthor} AND ${counts("c")}
                         AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq);`;
   }
   // A row is admitted when it is a member's row (T1-D29) AND not late relative to
@@ -618,7 +643,7 @@ function headsView(
   // version nor a delete of it moves or revokes it (D153). `closedBy`, which
   // `_dai_closed` shares.
   const notLate = (row: string): string =>
-    `NOT EXISTS (SELECT 1 FROM _dai_close x WHERE ${closedBy("x", closeCreator)} AND ${unequivocal("x")}` +
+    `NOT EXISTS (SELECT 1 FROM _dai_close x WHERE ${closedBy("x", closeCreator)} AND ${notEquivocator("x")}` +
     ` AND x._r_session = ${row}._r_session AND x._r_replica = ${row}._r_replica AND x._r_seq < ${row}._r_seq)`;
   /*
    * Who may author this table's rows, when its marker says (D15).
@@ -722,12 +747,14 @@ CREATE VIEW IF NOT EXISTS ${q}_pending AS
 -- What a merge reports as ENTITY_OTHER_SESSION (D131): a row naming as an
 -- earlier version a row of its entity from another session, with that parent.
 -- Not a row naming an equivocated id, which is reported nowhere, nor a row
--- at one, which is reported only as its author signing twice (R9).
+-- at one, which is reported only as its author signing twice (R9), nor a row
+-- of a void session, which is reported nowhere (R10).
 CREATE VIEW IF NOT EXISTS ${q}_foreign AS
   SELECT r._r_replica, r._r_seq, r._r_batch, fp._r_replica AS parent_replica, fp._r_seq AS parent_seq
     FROM ${q} r, ${q} fp, json_each(${parentsSql("r._r_parents")}) fj
    WHERE fp._r_entity = r._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq
-     AND fp._r_session <> r._r_session AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")};` +
+     AND fp._r_session <> r._r_session AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")}
+     AND NOT ${inVoidSession("r")};` +
     (seatColumn
       ? `
 -- What a merge reports as SEAT_NOT_HELD (identity step 5): a row that names no
@@ -735,14 +762,14 @@ CREATE VIEW IF NOT EXISTS ${q}_foreign AS
 -- row acting for another seat of its session (D132). A row for a seat nobody
 -- holds yet is pending, waiting on the creator's confirmation, and is neither
 -- admitted nor reported; nor is a row naming an equivocated id as a parent,
--- nor a row at an equivocated id (R9).
+-- nor a row at an equivocated id (R9), nor a row of a void session (R10).
 CREATE VIEW IF NOT EXISTS ${q}_unseated AS
   SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r
    WHERE (typeof(r."${seatColumn}") <> 'blob' OR length(r."${seatColumn}") <> 16
       OR (EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = r._r_session AND h.seat = r."${seatColumn}")
           AND NOT (${holds("r")}))
       OR ${otherSeat("r")})
-     AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")};
+     AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")} AND NOT ${inVoidSession("r")};
 
 -- The same crossing with the row it names, so a merge reports it whichever of
 -- the two arrived (D132), and like it not for a row at an equivocated id.
@@ -751,7 +778,7 @@ CREATE VIEW IF NOT EXISTS ${q}_other_seat AS
     FROM ${q} r, ${q} sp, json_each(${parentsSql("r._r_parents")}) sj
    WHERE sp._r_entity = r._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq
      AND sp._r_session = r._r_session AND sp."${seatColumn}" IS NOT r."${seatColumn}"
-     AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")};`
+     AND NOT ${namesEquivocated("r")} AND ${unequivocal("r")} AND NOT ${inVoidSession("r")};`
       : "");
 }
 
@@ -877,7 +904,7 @@ CREATE VIEW IF NOT EXISTS ${q}_current AS
  * in-memory database and runs the schema exactly once; the first thing to hit
  * it was a second person opening a document that had been used.
  */
-function documentTables(session: boolean, closeCreator = false): string {
+function documentTables(session: boolean, closeCreator = false, maxParties = 0): string {
   const base = `
 CREATE TABLE IF NOT EXISTS _dai_replica (
   id    BLOB PRIMARY KEY CHECK (length(id) = 16),
@@ -1021,22 +1048,60 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
 -- The creator's seat row is the one row the session id names, by its own
 -- (author, seq) (D158): no other row of the creator's, and no later version of
 -- that row, is it. One row, so one creator and one creator's seat.
+-- And not an equivocator's (R10): her seat rows count for nothing, so a
+-- session whose creator signed two headers at one seq anywhere in the document
+-- has no creator here; it is void (_dai_void_session).
 CREATE VIEW IF NOT EXISTS _dai_creator AS
   SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat, s._r_entity AS entity
     FROM _dai_seat s
-   WHERE s._r_deleted = 0 AND ${unequivocal("s")}
+   WHERE s._r_deleted = 0 AND ${notEquivocator("s")}
      AND ${SESSION_ID_FUNCTION}(s._r_replica, s._r_seq) = s._r_session;
+
+-- The void sessions (R10): those whose creator, the author of the row the
+-- session id names, is an equivocator in this document. No row in one is
+-- admitted, nobody holds a seat in it, nothing closes it, and nothing in it is
+-- reported but its creator signing twice. Equivocation is never undone (both
+-- headers are kept and passed on), so a void session stays void: a creator who
+-- signs a second header at her own confirm's seq cannot take the confirm back
+-- and keep the rest of the session. The repair is a new session.
+CREATE VIEW IF NOT EXISTS _dai_void_session AS
+  SELECT DISTINCT s._r_session AS session, s._r_replica AS creator
+    FROM _dai_seat s
+   WHERE s._r_deleted = 0 AND NOT ${notEquivocator("s")}
+     AND ${SESSION_ID_FUNCTION}(s._r_replica, s._r_seq) = s._r_session;
+
+-- Each seat row the creator wrote in her session (an entity, with every
+-- version of it hers), at the lowest seq of hers in it: deleted or not,
+-- superseded or not, since a seat once minted is not unminted by a later row.
+CREATE VIEW IF NOT EXISTS _dai_seat_first AS
+  SELECT s._r_session AS session, s._r_entity AS entity, min(s._r_seq) AS seq
+    FROM _dai_seat s
+    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
+   GROUP BY s._r_session, s._r_entity;
+
+-- The seats the creator minted (R11): those her first max_parties seat rows
+-- name, in her seq order (the signed bound, ${maxParties} here), each with every
+-- value its versions have given it, since a reseat gives an open seat a new
+-- value and it is the same seat. A seat named only past the bound is not
+-- minted: nobody can be confirmed in it, and nobody asks for it.
+CREATE VIEW IF NOT EXISTS _dai_minted AS
+  SELECT DISTINCT s._r_session AS session, s.seat AS seat
+    FROM _dai_seat s
+    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
+    JOIN _dai_seat_first f ON f.session = s._r_session AND f.entity = s._r_entity
+   WHERE (SELECT count(*) FROM _dai_seat_first g WHERE g.session = f.session AND g.seq < f.seq) < ${maxParties};
 
 -- The open seats the creator minted, each at its current value among her own
 -- versions in that session: a version another author wrote of her seat row is
 -- not hers, and neither is one in another session (D136). Not the creator's
--- seat row, nor any version of its entity.
+-- seat row, nor any version of its entity, nor a seat past the bound (R11).
 CREATE VIEW IF NOT EXISTS _dai_open_seat AS
   SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
     FROM _dai_seat s
     JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
    WHERE s._r_entity <> c.entity AND s._r_deleted = 0 AND ${unequivocal("s")}
      AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
+     AND EXISTS (SELECT 1 FROM _dai_minted m WHERE m.session = s._r_session AND m.seat = s.seat)
      AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(${parentsSql("n._r_parents")}) p
                       WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
                         AND ${unequivocal("n")}
@@ -1046,12 +1111,14 @@ CREATE VIEW IF NOT EXISTS _dai_open_seat AS
 -- own seat, not at an id she signed twice. Deleted or not, superseded or not
 -- (D171): a confirm is her statement that she seated a copy, and a hold never
 -- moves once made, so a later version or a delete of one is another confirm.
+-- Only of a seat she minted (R11): a confirm of any other seat seats nobody.
 CREATE VIEW IF NOT EXISTS _dai_confirmed AS
   SELECT f._r_session AS session, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
     FROM _dai_confirm f
     JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
    WHERE ${unequivocal("f")}
-     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session);
+     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session)
+     AND EXISTS (SELECT 1 FROM _dai_minted m WHERE m.session = f._r_session AND m.seat = f.seat);
 
 -- The seats the creator confirmed to two different copies (D165): void, held by
 -- nobody, on every copy holding both confirms, whichever arrived first.
@@ -1093,7 +1160,7 @@ CREATE VIEW IF NOT EXISTS _dai_member AS
 -- not reopen the session (D153).
 CREATE VIEW IF NOT EXISTS _dai_closed AS
   SELECT DISTINCT x._r_session AS session FROM _dai_close x
-   WHERE ${closedBy("x", closeCreator)} AND ${unequivocal("x")};
+   WHERE ${closedBy("x", closeCreator)} AND ${notEquivocator("x")};
 `;
 
   /*
@@ -1353,7 +1420,7 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
   out += sql.slice(cursor);
 
   return {
-    sql: documentTables(session !== null, session?.close === "creator") + out + authorRulesView(authors) + seatRulesView(seats),
+    sql: documentTables(session !== null, session?.close === "creator", session?.maxParties ?? 0) + out + authorRulesView(authors) + seatRulesView(seats),
     // Author tables only — the manifest's `replication.tables` surface, and what
     // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
     // the schema and the digest but not this list; they are implicit in a session

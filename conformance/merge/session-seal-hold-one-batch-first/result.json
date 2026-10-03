@@ -1,0 +1,24 @@
+{
+  "what": "A one-batch seal by Ada with its first signature held (D178): while it is out, she writes a move in the session being sealed and merges Bo's next move. The write stays pending and the next leave seals it alone: no seq of hers is listed by two of her headers, no row names a header that does not list it, no id is equivocated, Bo's hold stands and nothing is reported (review 8, A10; for the record).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

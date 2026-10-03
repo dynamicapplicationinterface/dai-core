@@ -2,7 +2,6 @@
 # _dai_close
 # _dai_confirm
 # _dai_seat
-2bad0fd610d99eae443e932a26142bca:2	0
 # moves
 # holders
 # voided

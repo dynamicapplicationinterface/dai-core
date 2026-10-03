@@ -1,5 +1,5 @@
 {
-  "what": "Ada moves for her own seat on A and then writes the move's next version, naming it, for the same seat; from a second copy of her store she signs a close at the first move's seq, which B holds. The first move's id is equivocated after either merge. Its next version names an equivocated id as a parent, though the row that id holds here is its own seat's earlier version in its own session: it is not admitted, not a head and not reported, in both directions. A reader admitting a row whose equivocated parent would otherwise be a version it may replace shows the second move.",
+  "what": "Bo moves for his own seat on B and then writes the move's next version, naming it, for the same seat; from a second copy of his store he signs a close at the first move's seq, which A holds. The first move's id is equivocated after either merge. Its next version names an equivocated id as a parent, though the row that id holds here is its own seat's earlier version in its own session: it is not admitted, not a head and not reported, in both directions. A reader admitting a row whose equivocated parent would otherwise be a version it may replace shows the second move. Bo is the joiner, so the session stands (R10).",
   "cites": [
     "6",
     "T1-D13"
@@ -8,25 +8,25 @@
   "admitted": true,
   "stable": true,
   "ab": {
-    "applied": 1,
-    "duplicate": 4,
-    "rejected": [],
-    "newReplicas": 0,
-    "refusedBatches": [
-      {
-        "author": "K60P1hDZnq5EPpMqJhQryg",
-        "reason": "AUTHOR_EQUIVOCATED"
-      }
-    ]
-  },
-  "ba": {
     "applied": 2,
     "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
       {
-        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
         "reason": "AUTHOR_EQUIVOCATED"
       }
     ]

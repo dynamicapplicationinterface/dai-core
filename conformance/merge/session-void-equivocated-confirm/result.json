@@ -1,5 +1,5 @@
 {
-  "what": "The merge that voids the open seat takes a counting confirm of it (header Hc) and a confirm of it at an id Ada already signed twice (Hx), with a SEAT_NOT_HELD header Hn between them (Hx < Hn < Hc). A void rests only on counting confirms and on a creator's seat row that counts, so AUTHOR_EQUIVOCATED is filed under Hc, after the SEAT_NOT_HELD (review X3). A reader letting the equivocated confirm reveal files it under Hx, first.",
+  "what": "B holds two headers of Ada's at one confirm's seq, so on B she is already an equivocator and her session void. A into B takes a confirm of the open seat to another copy (header Hc) and a confirm at the equivocated id (Hx), with Ada's move naming no seat (Hn) between them (Hx < Hn < Hc). A void session stays void and reports nothing but its creator signing twice, which this merge does not newly reveal: nothing is reported, and no seat is voided (R10). Before R10, the merge voided the open seat and filed AUTHOR_EQUIVOCATED under Hc, after the SEAT_NOT_HELD of Hn (review X3).",
   "cites": [
     "6",
     "T1-D29"
@@ -24,15 +24,6 @@
     "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
-    "refusedBatches": [
-      {
-        "author": "K60P1hDZnq5EPpMqJhQryg",
-        "reason": "SEAT_NOT_HELD"
-      },
-      {
-        "author": "K60P1hDZnq5EPpMqJhQryg",
-        "reason": "AUTHOR_EQUIVOCATED"
-      }
-    ]
+    "refusedBatches": []
   }
 }

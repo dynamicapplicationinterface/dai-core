@@ -1,5 +1,5 @@
 {
-  "what": "A holds two of Ada's headers over one (moves, seq) with different rows, and a later header of hers with a move for Bo's seat; B holds a third header at that id. B into A reveals nothing new and reports no equivocation. A into B reports AUTHOR_EQUIVOCATED once, under the lower of A's two headers, after the SEAT_NOT_HELD of the later header, whose id sorts below both: the report is filed under the revealing header, and emitted by batch id, then code (D160, D171).",
+  "what": "A holds two of Ada's headers over one (moves, seq) with different rows, and two later headers of hers, each with a move for Bo's seat in Bo's own session; B holds a third header at that id. B into A reveals nothing new and reports no equivocation. A into B reports AUTHOR_EQUIVOCATED once, under the lower of A's two headers, after the SEAT_NOT_HELD of the first later header, whose id sorts below both, and before that of the second, whose id sorts between them: the report is filed under the revealing header, and emitted by batch id, then code (D160, D171). The later moves are in Bo's session because Ada's own is void once she signs twice, and a void session reports nothing else (R10).",
   "cites": [
     "6",
     "T1-D13"
@@ -9,7 +9,7 @@
   "stable": true,
   "ab": {
     "applied": 0,
-    "duplicate": 4,
+    "duplicate": 6,
     "rejected": [
       "2bad0fd610d99eae443e932a26142bca:4"
     ],
@@ -18,7 +18,7 @@
   },
   "ba": {
     "applied": 2,
-    "duplicate": 4,
+    "duplicate": 6,
     "rejected": [
       "2bad0fd610d99eae443e932a26142bca:4"
     ],

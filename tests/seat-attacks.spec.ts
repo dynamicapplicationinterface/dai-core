@@ -579,7 +579,9 @@ test.describe("cold review 2: Q1, schema tricks", () => {
 });
 
 test.describe("cold review 2: Q2, a confirm and its binding", () => {
-  test("a confirm with no binding and for a seat Ada never minted still seats its holder", async () => {
+  // R11 (the eighth attack review): a confirm counts only for a seat the
+  // creator minted, so this hole, recorded here as found, is closed.
+  test("a confirm with no binding and for a seat Ada never minted seats nobody", async () => {
     const ada = await person();
     const adaCopy = openGame();
     ensureReplica(adaCopy, ada.author);
@@ -592,7 +594,7 @@ test.describe("cold review 2: Q2, a confirm and its binding", () => {
     const holders = adaCopy.all("SELECT lower(hex(seat)) AS s, lower(hex(replica)) AS r FROM _dai_holder WHERE lower(hex(seat)) = ?", [hex(nowhere)]);
     const open_ = adaCopy.all("SELECT 1 FROM _dai_open_seat WHERE seat = ?", [nowhere]);
     console.log("holder of an unminted seat:", JSON.stringify(holders), "is it an open seat:", open_.length);
-    expect(holders).toHaveLength(1);
+    expect(holders).toHaveLength(0);
     adaCopy.close();
   });
 });

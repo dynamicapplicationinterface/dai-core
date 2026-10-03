@@ -133,7 +133,12 @@ in docs/identity.md and docs/format.md:
   session (D158); her seat is hers, and an open seat is held by whoever her
   confirms name, unless she confirmed it to two copies, when it is void and
   held by nobody (D165). A confirm counts deleted or not, superseded or not
-  (D171);
+  (D171), and only for a seat she minted: the first `max_parties` (2 in
+  every vector) seats her seat rows in the session name, in her seq order (R11);
+- an author with two headers at one id anywhere in the document is an
+  equivocator: her seat, binding, confirm and close rows count for nothing,
+  and a session she created is void: nothing in it is admitted, held, voided
+  or closed, and nothing in it is reported but `AUTHOR_EQUIVOCATED` (R10);
 - a merge that reveals an author signing twice, a header it did not hold
   making an id equivocated that was not, or a row it took that a seat newly
   void rests on (a counting confirm, or the creator's seat row that counts),

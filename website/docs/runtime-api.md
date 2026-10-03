@@ -62,6 +62,7 @@ against the runtime that defines it by `tests/rules.spec.ts`.
 - `window.daiKit.reseat(session)` — The creator's repair for a contested seat: a fresh open seat, for a new invite. Refused on a seat anyone has been seated in.
 - `window.daiKit.seatBytes(hex)` — A seat, as the bytes a seat column holds: what a row names in its seat=&lt;column&gt;.
 - `window.daiKit.onNewPlayer(fn)` — Takes the loss sentence: fn gets the kit's sentence when this device is a new author for a document it wrote before, and shows it the application's way.
+- `window.daiKit.onSessionVoid(fn)` — Takes the void-session sentence: fn gets the session, the sentence and a function that starts a new session, when whoever started a session this copy took part in signed two different changes at one point.
 
 ## Custom properties
 

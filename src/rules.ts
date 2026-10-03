@@ -1125,6 +1125,12 @@ export const SURFACE: readonly SurfaceEntry[] = [
     anchor: { file: "src/kit.ts", contains: "function onNewPlayer(fn)" },
   },
   {
+    call: "window.daiKit.onSessionVoid(fn)",
+    does: "Takes the void-session sentence: fn gets the session, the sentence and a function that starts a new session, when whoever started a session this copy took part in signed two different changes at one point.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "function onSessionVoid(fn)" },
+  },
+  {
     call: "window.daiKit.author()",
     does: "This copy's author id, hex, as the host handed it: never read from a row. Null until the host has said.",
     shapes: SHARED,

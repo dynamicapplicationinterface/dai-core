@@ -39,6 +39,10 @@ ROSTER = ("_dai_binding", "_dai_close", "_dai_confirm", "_dai_seat")
 # The one shape a row's parents take (D159): a JSON array of at most 256 row
 # ids, each 32 lowercase hex digits, a colon and a seq from 1, a safe integer.
 PARENTS_CAP = 256
+
+# The session profile's bound on seats (docs/format.md#confirm-minted): every
+# session fixture declares max_parties=2, as every one declares close=any.
+MAX_PARTIES = 2
 PARENT_ID = re.compile(r"[0-9a-f]{32}:[1-9][0-9]{0,15}")
 SAFE_INTEGER = 2**53 - 1
 
@@ -255,7 +259,8 @@ class Admission:
     the runtime's views would be the runtime agreeing with itself. The two
     views it reads are declarations the schema carries, not computations: which
     table is seated and by which column, and which tables have an author role.
-    The close rule is `any` in every vector (D171).
+    The close rule is `any` in every vector (D171), and the bound
+    `max_parties=2` (MAX_PARTIES).
     """
 
     def __init__(self, db: sqlite3.Connection, tables: list[str]):
@@ -275,20 +280,46 @@ class Admission:
         self.equivocated_at = ids_of(self.equivocated)
         self.equivocated_text = {f"{author.hex()}:{seq}" for author, seq in self.equivocated_at}
 
+        # An equivocator: an author with two authentic headers at one (author,
+        # seq) anywhere in the document. Her seat, binding, confirm and close
+        # rows count for nothing (docs/format.md#equivocator).
+        self.equivocators = {author for author, _seq in self.equivocated_at}
+
         # The creator's seat row: the one row whose own (author, seq) hashes to
-        # its session (D158).
+        # its session (D158). A session whose creator is an equivocator has no
+        # creator, and is void (docs/format.md#session-void).
         self.creators: set[tuple[bytes, bytes, bytes, bytes]] = set()
+        self.void_sessions: set[bytes] = set()
         for s in self.rows.get("_dai_seat", []):
-            if s["_r_deleted"] == 0 and self.unequivocal(s) and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
-                self.creators.add((bytes(s["_r_session"]), bytes(s["_r_replica"]), bytes(s["seat"]), bytes(s["_r_entity"])))
+            if s["_r_deleted"] == 0 and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
+                if bytes(s["_r_replica"]) in self.equivocators:
+                    self.void_sessions.add(bytes(s["_r_session"]))
+                else:
+                    self.creators.add((bytes(s["_r_session"]), bytes(s["_r_replica"]), bytes(s["seat"]), bytes(s["_r_entity"])))
         creator_seats: dict[bytes, set[bytes]] = {}
         for session, _replica, seat, _entity in self.creators:
             creator_seats.setdefault(session, set()).add(seat)
         self.creator_of = {(session, replica) for session, replica, _seat, _entity in self.creators}
 
-        # Her confirms of an open seat; one per seat, or the seat is void (D165).
-        # Deleted or not, superseded or not: a hold never moves once made, so a
-        # delete of a confirm is another confirm (D171).
+        # The seats she minted: her seat rows in her session (each an entity,
+        # at the lowest seq of hers in it, deleted or not), the first
+        # MAX_PARTIES in that order, and every seat any version of one of them
+        # names (docs/format.md#confirm-minted).
+        first: dict[tuple[bytes, bytes], int] = {}
+        mine = [s for s in self.rows.get("_dai_seat", []) if (bytes(s["_r_session"]), bytes(s["_r_replica"])) in self.creator_of]
+        for s in mine:
+            key = (bytes(s["_r_session"]), bytes(s["_r_entity"]))
+            first[key] = min(first.get(key, s["_r_seq"]), s["_r_seq"])
+        minting = {
+            (session, entity)
+            for (session, entity), seq in first.items()
+            if sum(1 for (other, _entity), at in first.items() if other == session and at < seq) < MAX_PARTIES
+        }
+        self.minted = {(bytes(s["_r_session"]), bytes(s["seat"])) for s in mine if (bytes(s["_r_session"]), bytes(s["_r_entity"])) in minting}
+
+        # Her confirms of an open seat she minted; one per seat, or the seat is
+        # void (D165). Deleted or not, superseded or not: a hold never moves once
+        # made, so a delete of a confirm is another confirm (D171).
         confirmed = []
         for f in self.rows.get("_dai_confirm", []):
             session = bytes(f["_r_session"])
@@ -296,6 +327,7 @@ class Admission:
                 self.unequivocal(f)
                 and (session, bytes(f["_r_replica"])) in self.creator_of
                 and bytes(f["seat"]) not in creator_seats.get(session, set())
+                and (session, bytes(f["seat"])) in self.minted
             ):
                 confirmed.append((session, bytes(f["seat"]), bytes(f["holder"]), bytes(f["_r_replica"])))
         self.voided = {
@@ -315,12 +347,20 @@ class Admission:
             for x in self.rows.get("_dai_close", [])
             if x["_r_deleted"] == 0
             and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in self.members
-            and self.unequivocal(x)
+            and self.counts(x)
         ]
         self.closed = {bytes(x["_r_session"]) for x in self.closes}
 
     def unequivocal(self, row: dict) -> bool:
         return (bytes(row["_r_replica"]), row["_r_seq"]) not in self.equivocated_at
+
+    def counts(self, row: dict) -> bool:
+        """A roster or close row counts for something: its author is no equivocator."""
+        return bytes(row["_r_replica"]) not in self.equivocators
+
+    def void(self, row: dict) -> bool:
+        """A row of a void session: neither admitted nor reported."""
+        return bytes(row["_r_session"]) in self.void_sessions
 
     def names_equivocated(self, row: dict) -> bool:
         """It names an equivocated id as a parent (docs/format.md#admitted-parent-equivocated):
@@ -395,12 +435,15 @@ class Admission:
                     for c in rows
                 )
             else:
-                if not self.unequivocal(r):
+                # A roster or close row by an equivocator neither shows nor
+                # hides; a plain table's, only at an equivocated id.
+                counts = self.counts if table in ROSTER else self.unequivocal
+                if not counts(r):
                     continue
                 hidden = any(
                     bytes(c["_r_entity"]) == bytes(r["_r_entity"])
                     and (not session or (bytes(c["_r_session"]) == bytes(r["_r_session"]) and bytes(c["_r_replica"]) == bytes(r["_r_replica"])))
-                    and self.unequivocal(c)
+                    and counts(c)
                     and me in parents_of(c["_r_parents"])
                     for c in rows
                 )
@@ -412,8 +455,9 @@ class Admission:
         """What a merge reports as SEAT_NOT_HELD: no seat, a seat someone else holds, or another seat's row named.
 
         Never a row naming an equivocated id, nor a row at one: that is
-        reported only as its author signing twice (R9)."""
-        if self.names_equivocated(row) or not self.unequivocal(row):
+        reported only as its author signing twice (R9), nor a row of a void
+        session (R10)."""
+        if self.names_equivocated(row) or not self.unequivocal(row) or self.void(row):
             return False
         seat = row[self.seated[table]]
         if not isinstance(seat, bytes) or len(seat) != 16:
@@ -425,7 +469,7 @@ class Admission:
         """(reason, row, the row it names) for every row naming another session's or another seat's version."""
         found = []
         for r in self.rows[table]:
-            if self.names_equivocated(r) or not self.unequivocal(r):
+            if self.names_equivocated(r) or not self.unequivocal(r) or self.void(r):
                 continue
             for p in self.named(table, r):
                 if bytes(p["_r_session"]) != bytes(r["_r_session"]):

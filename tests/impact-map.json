@@ -3421,6 +3421,16 @@
       "tests/session-roles.spec.ts",
       "tests/signed-people.ts"
     ],
+    "tests/session-void.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/session-void.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/share-and-keep-sentences.spec.ts": [
       "apps/runner/",
       "examples/packing-list/",

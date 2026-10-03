@@ -349,6 +349,13 @@ every copy that holds both headers, whichever arrived first.
 nothing anywhere: it is not admitted, it hides no row, it seats, confirms and
 closes nobody. <a id="equivocation-headers-kept"></a>Both headers are kept
 and passed on.
+<a id="equivocator"></a>An author with two authentic headers at one
+`(author, seq)` anywhere in the document is an **equivocator** in that
+document, on every copy that holds both. Every `_dai_seat`, `_dai_binding`,
+`_dai_confirm` and `_dai_close` row by an equivocator counts for nothing, as a
+row at an equivocated id does: it seats, asks, confirms and closes nobody, and
+it is no head and hides no row. Her rows in author tables count as any
+author's, except at the equivocated ids.
 
 <a id="equivocation-whole-digest"></a>The comparison is of whole-batch
 digests, so two headers that list one row and differ anywhere, even in
@@ -364,7 +371,8 @@ whatever order they arrived in. Admission MUST NOT read a clock.
 <a id="session-declarations"></a>A reader computes it from the tables and
 headers; the only declarations it needs are which tables are seated and by
 which column (`_dai_seat_rules`), which author tables carry a role
-(`_dai_author_rules`), and the session's close rule (below).
+(`_dai_author_rules`), the session's close rule (below) and its
+`max_parties` ([confirm-minted](#confirm-minted)).
 
 <a id="session-tables"></a>The tables: `_dai_seat` (seats the creator mints),
 `_dai_binding` (a copy asking for a seat), `_dai_confirm` (the creator
@@ -377,14 +385,25 @@ skipped: it is [neither admitted nor reported](#admitted-parent-equivocated).
 
 <a id="creator"></a>The session's creator is the author of its creator's seat
 row: the `_dai_seat` row, not deleted, whose own author and seq hash to its
-`_r_session` ([Session id](#session-id)). <a id="creator-seat"></a>The
+`_r_session` ([Session id](#session-id)), when that author is no
+[equivocator](#equivocator). <a id="creator-seat"></a>The
 creator's seat is that row's `seat`, and it is the creator's by definition.
+
+<a id="session-void"></a>A session whose creator is an equivocator is
+**void**. Here the creator is the author of that row, not deleted, whether or
+not its rows count. No row in a void session is admitted, nobody holds a seat
+in it, no seat in it is void (its confirms count for nothing), nothing closes
+it, and nothing in it is reported but its creator signing twice
+(`AUTHOR_EQUIVOCATED`, by the merge that reveals it, as for any
+equivocation). Both headers are kept, so a session void on a copy stays void
+on it, whatever arrives later. The repair is a new session.
 
 ### Confirms
 
 <a id="confirms"></a>A confirm counts when it is a `_dai_confirm` row
 authored by the session's creator, in the creator's session, naming a seat
-that is not the creator's own; deleted or not, superseded or not.
+that is not the creator's own and that she [minted](#confirm-minted);
+deleted or not, superseded or not.
 <a id="confirm-versions-count"></a>A later version or a delete of a confirm is
 another confirm naming a holder, and counts as one.
 
@@ -400,8 +419,14 @@ a new session.
 <a id="holders"></a>The creator holds the creator's seat. Every other seat
 with counting confirms that is not void is held by the one holder they name.
 <a id="members"></a>The members of a session are its holders.
-<a id="confirm-seat-unchecked"></a>A confirm is not checked against the seats
-the creator minted.
+<a id="confirm-minted"></a>A confirm counts only for a seat the creator
+minted. Her seat rows in the session are her `_dai_seat` entities there, each
+at the lowest seq of hers in it, deleted or not, superseded or not; only the
+first `max_parties` of them in that seq order mint (the bound the signed
+manifest's session profile declares, `max_parties=N`), and each mints every
+seat its versions of hers name (a fresh open seat is a version of the open
+seat's row). A seat no minting row names is not minted: nobody holds it, and
+a row for it is waiting on nothing.
 
 ### Close
 
@@ -461,8 +486,9 @@ parent, and a head may be a delete (the tombstone is the head, with its flag):
   rows only, partitioned by entity, session and (seated) seat. A row not
   admitted neither shows nor hides.
 - <a id="heads-roster"></a>**the roster tables and the close** (`_dai_seat`,
-  `_dai_binding`, `_dai_confirm`, `_dai_close`): among rows at ids not
-  equivocated, partitioned by **session, entity and author**. Only a row's
+  `_dai_binding`, `_dai_confirm`, `_dai_close`): among rows by authors who
+  are no [equivocator](#equivocator), partitioned by **session, entity and
+  author**. Only a row's
   own author's later row in the same session replaces it.
 - <a id="heads-plain"></a>**a plain document's tables:** among rows at ids
   not equivocated, partitioned by entity.
@@ -477,7 +503,8 @@ a void seat is neither admitted nor reported.
 ## Reports
 
 <a id="refused-batches"></a>`refusedBatches` is one entry `{author, reason}`
-per batch id, code and author, where `author` is base64url.
+per batch id, code and author, where `author` is base64url: the author the
+entry is about, which accuses her only where the code is `AUTHOR_EQUIVOCATED`.
 <a id="report-order"></a>It MUST be emitted ordered by the batch id it is
 filed under (lowercase hex, and no id sorts first), then by code, then by the
 author id in hex.
@@ -486,7 +513,7 @@ author id in hex.
 | --- | --- | --- |
 | <a id="code-signature-invalid"></a>`BATCH_SIGNATURE_INVALID` | the author the header names | the header's id |
 | <a id="code-row-malformed"></a>`ROW_MALFORMED` | the header's author, or the row's | the refused header's id; for a malformed row no refused header listed, the batch the row names, or no id |
-| <a id="code-digest-mismatch"></a>`BATCH_DIGEST_MISMATCH` | the row's author | the header the row names |
+| <a id="code-digest-mismatch"></a>`BATCH_DIGEST_MISMATCH` | the row's author, reported about her and not in accusation of her: a copy that forwards a header without a row it lists brings it about | the header the row names |
 | <a id="code-unsigned"></a>`BATCH_UNSIGNED` | the author id the row carries | no id |
 | <a id="code-seat-not-held"></a>`SEAT_NOT_HELD` | the row's author | the row's own `_r_batch` after the merge |
 | <a id="code-entity-other-session"></a>`ENTITY_OTHER_SESSION` | the row's author | the row's own `_r_batch` after the merge |
@@ -505,7 +532,8 @@ the child's. <a id="report-silent"></a>A row waiting on a confirmation, a row
 for a void seat, a late row, and a row naming an equivocated id as a parent
 ([whatever else it meets](#admitted-parent-equivocated)) are reported
 nowhere; a row at an equivocated id is reported nowhere but as its author
-signing twice (`AUTHOR_EQUIVOCATED`), whatever else it meets. That covers the
+signing twice (`AUTHOR_EQUIVOCATED`), whatever else it meets; and a row of a
+[void session](#session-void) is reported nowhere. That covers the
 reports made from the row set after placing; a refusal made before placing, in
 steps 1 and 2 of a [merge](#merge), stands.
 
@@ -600,6 +628,10 @@ version, never a refactor (identity.md, binding rule 10).
   a held header is rewritten to the list it signed.
 - Version 2: the order of `refusedBatches`, and the header
   `AUTHOR_EQUIVOCATED` is filed under, or no id.
+- Version 2: an equivocator's seat, binding, confirm and close rows count for
+  nothing, and a session whose creator is an equivocator is void.
+- Version 2: a confirm counts only for a seat the creator minted, the first
+  `max_parties` in her seq order.
 
 ## Conformance
 
@@ -609,7 +641,7 @@ its values are derived outside the runtime (node:crypto and CBOR assembled
 by hand). The session id is held by `tests/session-id.spec.ts`. What a merge
 does is held by the fixtures in `conformance/merge`; the session fixtures
 also carry what the document admits after the merge, and all of them are
-`close=any`. <a id="fixtures-verdicts"></a>The fixtures carry each header's
+`max_parties=2` and `close=any`. <a id="fixtures-verdicts"></a>The fixtures carry each header's
 verdict in `verdicts.json` (`ok`, `incomplete`, or a refusal code), made
 against the rows of the copy that holds it, and in `lists.json` the list
 that made a header authentic where it is not the one the header stores, so a

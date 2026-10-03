@@ -513,6 +513,61 @@ not a list, so no header signed over one is authentic
 seq)` name two rows on every copy that holds the header, the thing
 equivocation exists to refuse.
 
+Equivocation never benefits the equivocator
+-------------------------------------------
+
+*2 October, the eighth attack review, R10.* Rule:
+[equivocator](format.md#equivocator), [void session](format.md#session-void).
+
+**Problem.** A row at an equivocated id counts for nothing, and a void rests
+only on counting confirms. Together they let a creator take back her own
+confirm after the fact. She signs a second header at the confirm's seq, in
+any table, with or without a row (an authentic header is kept whether or not
+it is complete), and the confirm stops counting. Then she confirms whoever she
+likes, herself or a copy that never held the seat: a hold made moves. A seat
+void under D165 rests on its other confirm alone, and the void lifts onto it.
+Every copy computed the same holder, and in one arrival order the merge that
+moved the hold reported nothing.
+
+**Rule.** Equivocation never benefits the equivocator. An author with two
+authentic headers at one id anywhere in the document is an equivocator there,
+and every seat, binding, confirm and close row of hers counts for nothing. A
+session whose creator is an equivocator is void: nothing in it is admitted,
+seats or closes, and nothing in it is reported but her signing twice. What
+cannot be kept deterministically is voided, and the repair is a new session,
+as for D165. Both headers are kept and passed on, so equivocation is never
+undone, and void is monotone: nothing that arrives later restores the session.
+
+**Rejected.** Keeping the earlier statement: the confirm she made before the
+second header stands, and what she signs after it does not. Which of two
+headers at one id came first is a fact about one copy's arrival order, not
+about the rows (a seq orders nothing between two headers at the same seq), so
+copies that received them in different orders would seat different holders:
+non-deterministic across copies.
+
+A confirm counts only for a seat the creator minted
+---------------------------------------------------
+
+*2 October, the eighth attack review, R11.* Rule:
+[confirms](format.md#confirms), [minted](format.md#confirm-minted).
+
+**Problem.** A confirm was not checked against the seats the creator minted,
+and no reader read `max_parties`, which the manifest signs as the bound a
+reader enforces (replicated-tables.md T1-D27). The creator of a two-party
+session minted a third seat, confirmed a third copy in it, and three parties
+played. The page said only that the confirm was not checked.
+
+**Rule.** A confirm counts only for a seat she minted, and the seats she
+minted are those her first `max_parties` seat rows in the session name, in her
+seq order, a seat row being one entity of hers at the lowest seq of hers in
+it. Deleted and superseded seat rows count, as deleted and superseded confirms
+do, so no later row of hers unmints a seat. A row counts once whatever values
+its versions give it, since a reseat gives the open seat's row a fresh value
+and it is still the second seat.
+
+**Rejected.** A confirm of any seat: the signed bound is enforced nowhere, and
+a session declared for two holds as many parties as its creator confirms.
+
 Reasons given inline
 --------------------
 
@@ -529,5 +584,10 @@ recorded for them.
 - [A header that does not verify](format.md#verify-refused) is refused in the
   name it carries: what any forgery in that name gets, and an accusation of
   nobody.
+- [`BATCH_DIGEST_MISMATCH`](format.md#code-digest-mismatch) is reported
+  about the row's author, not in accusation of her: a copy forwarding a
+  header without a row it lists brings it about, so the report names whose
+  row was refused, and only `AUTHOR_EQUIVOCATED` accuses (the eighth attack
+  review, A4).
 - [A parent of another entity](format.md#parent-other-entity) hides nothing:
   replicated-tables.md T1-D35.

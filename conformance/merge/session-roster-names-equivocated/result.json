@@ -1,5 +1,5 @@
 {
-  "what": "Ada confirms Bo in a seat X, then writes a later version of that confirm naming it; from a second copy of her store she signs a move at the first confirm's seq, which B holds. Bo writes a close of the session naming the first confirm's id. After either merge that id is equivocated: the first confirm counts for nothing, and the rows naming it, in the roster tables and the close, count like any other row. The later confirm seats Bo in X and is a head, and Bo's close closes the session and is a head, in both directions.",
+  "what": "Bo asks for the open seat (B holds his binding's header) and from a second copy of his store signs a move at his binding's seq (A holds that header and not the binding). Ada confirms Bo in the open seat with a confirm naming his binding's id, and writes a close of the session naming the same. After either merge that id is equivocated and Bo is an equivocator, so his binding counts for nothing; the rows naming it, in the roster tables and the close, count like any other row. Ada's confirm seats Bo and is a head, and her close closes the session and is a head, in both directions (R10: an equivocator's own roster rows count for nothing, not those naming them).",
   "cites": [
     "6",
     "T1-D29"
@@ -8,25 +8,25 @@
   "admitted": true,
   "stable": true,
   "ab": {
-    "applied": 2,
-    "duplicate": 4,
+    "applied": 1,
+    "duplicate": 2,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
       {
-        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
         "reason": "AUTHOR_EQUIVOCATED"
       }
     ]
   },
   "ba": {
-    "applied": 2,
-    "duplicate": 4,
+    "applied": 3,
+    "duplicate": 2,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
       {
-        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
         "reason": "AUTHOR_EQUIVOCATED"
       }
     ]

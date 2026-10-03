@@ -1,0 +1,3 @@
+moves	seat	BLOB		
+moves	san	TEXT	NOT NULL	
+notes	body	TEXT	NOT NULL	

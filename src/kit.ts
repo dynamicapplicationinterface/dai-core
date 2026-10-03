@@ -751,6 +751,49 @@ function sayNewPlayer() {
 }
 function onNewPlayer(fn) { newPlayerHandler = fn; }
 /*
+ * A void session (R10, docs/format.md#session-void): whoever started it signed
+ * two different changes at one point, so every copy sets the whole session
+ * aside, and the repair is a new one. Said once per session this copy took
+ * part in (it started the session, or asked for a seat in it), in the kit's words
+ * with a button that starts a new session, unless the application takes the
+ * hook. onSessionVoid(fn) takes it: fn gets the session, the sentence and a
+ * function that starts a new session and returns it.
+ */
+const SESSION_VOID = 'This game cannot go on: whoever started it signed two different changes at the same point, so every copy has set it aside. Start a new game to keep playing.';
+let sessionVoidHandler = null;
+const sessionVoidSaid = new Set();
+function startOver() {
+  const made = newSession();
+  window.dispatchEvent(new CustomEvent('dai:kit-new-session', { detail: { session: made } }));
+  return made;
+}
+function sayVoidSessions() {
+  const id = me();
+  if (!id || !first("SELECT 1 AS x FROM sqlite_schema WHERE name = '_dai_void_session'")) return;
+  db.selectObjects(
+    'SELECT DISTINCT lower(hex(v.session)) AS session FROM _dai_void_session v ' +
+    'WHERE lower(hex(v.creator)) = ? ' +
+    'OR EXISTS (SELECT 1 FROM _dai_binding_current b WHERE b._r_session = v.session AND lower(hex(b._r_replica)) = ?) ORDER BY 1', [id, id]
+  ).forEach(function (r) {
+    if (sessionVoidSaid.has(r.session)) return;
+    sessionVoidSaid.add(r.session);
+    if (sessionVoidHandler) { sessionVoidHandler(r.session, SESSION_VOID, startOver); return; }
+    const line = document.createElement('p');
+    line.setAttribute('role', 'status');
+    line.setAttribute('data-dai-session-void', r.session);
+    line.textContent = SESSION_VOID + ' ';
+    line.style.cssText = 'margin:0;padding:.5em 1em;font:inherit;background:Canvas;color:CanvasText;border-bottom:1px solid GrayText';
+    const start = document.createElement('button');
+    start.type = 'button';
+    start.textContent = 'Start a new game';
+    start.setAttribute('data-dai-write', '');
+    start.addEventListener('click', function () { startOver(); line.remove(); });
+    line.appendChild(start);
+    document.body.prepend(line);
+  });
+}
+function onSessionVoid(fn) { sessionVoidHandler = fn; }
+/*
  * The creator's copy confirms as rows arrive, and then the application hears
  * of the merge (D177). Listener order on one target is not something to lean
  * on (a capturing listener on window did not run first on Chromium), so the
@@ -761,8 +804,11 @@ function onNewPlayer(fn) { newPlayerHandler = fn; }
 window.addEventListener('dai:merged', function (event) {
   try { confirmSeats(); } catch (e) { /* a read-only mount confirms nothing; the next writable open will */ }
   window.dispatchEvent(new CustomEvent('dai:kit-merged', { detail: event.detail }));
+  sayVoidSessions();
 });
 whenWritable(confirmSeats);
+// Once the host has handed over who this copy is, writable or not.
+if (shared() && shared().writable) shared().writable().then(function () { sayVoidSessions(); });
 window.addEventListener('dai:new-player', function () { setTimeout(sayNewPlayer, 0); });
 if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
 
@@ -771,7 +817,8 @@ if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
 window.daiKit = {
   db: db, run: run, refresh: refresh,
   newSession: newSession, claimSeat: claimSeat, reseat: reseat, mySeat: mySeat, amCreator: amCreator,
-  pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer, author: me,
+  pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer,
+  onSessionVoid: onSessionVoid, author: me,
 };
 `;
 

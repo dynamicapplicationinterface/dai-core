@@ -4448,6 +4448,66 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D181 — The document's code obtains two signatures over one seq above the floor
+
+*Status: open, a design question, after the merge. Filed 2 October, from the
+eighth attack review (A9, rated MEDIUM).*
+
+The host signs no header listing a seq at or below the left floor
+(`floor-honest-reseal`), and nothing else stops two of the person's headers
+over one seq. Above the floor, the frame (the document's own code, which
+nothing relies on: identity.md, binding rule 3) asks the host for two headers
+over seq n = floor + 1 with two digests, and both are signed. It writes both
+into its bytes; the shell asks the host about those bytes (`LEAVE_CHECK`,
+D173), which answers ok and raises the floor to n, and the file is written. A
+copy that receives the file reports `AUTHOR_EQUIVOCATED` in the person's name,
+and seq n counts for nothing. In a session the person created, R10 then voids
+the session: a hostile document can make its own creator an equivocator.
+Reproduced as a Chromium spec in the review (chess fixture, the frame's
+`FRAME.SIGN` twice with `covers` `[["moves", n]]`, the headers inserted into
+the exported bytes, `FRAME.SAVE` with method `download`);
+`tests/session-void.spec.ts` uses the same path to make a void session.
+
+The question: should the host refuse a second header over a seq it has
+already signed above the floor (a sign-time record of every seq signed, not
+only the floor), or should `LEAVE_CHECK` and the publish path refuse bytes
+holding two of the person's headers over one seq with different digests, or
+both? The first changes the signer's state; the second is a check on bytes
+that already exist. Either changes what an honest re-seal after a lost save
+may do (`floor-honest-reseal` is two seals of seqs whose first header never
+left), so it waits for the merge of this branch and a ruling.
+
+#### D180 — A merge that brings a held row's header without the row is not a fixed point
+
+*Status: open. Filed 2 October, from the eighth attack review (A6, rated
+MEDIUM). The fix comes with a fixture for the order below.*
+
+Bo moves (row R, pending); his seal H over R leaves by the mailbox, and the
+save that held R's pointer is lost, so his stored copy holds R pending and no
+H. A copy that relays holds H and not R, and Bo's copy merges it. Under
+`merge-row-held-signed`, a header received lists a held row only "through a
+row that arrives the same", so R stays pending, and H is kept. A second merge
+of anything (even an empty copy) then adopts H, since H is now a header the
+copy held before the merge and complete over its own rows: R's `_r_batch`
+becomes H. So the first merge is not a fixed point, against the check the
+fixture generator makes of every vector (`run()` merges twice and requires
+nothing to move); that is why the order is not a fixture yet: the generator
+refuses it. The page's "a complete header the copy holds or receives" was read
+as complete on the sibling.
+
+**The order that harms:** between those two merges, Bo's next leave re-seals R
+with a later move under a second header. Both headers list R's seq with
+different digests, so a third copy holding both reports Bo `AUTHOR_EQUIVOCATED`
+and R's id counts for nothing. Only the host's left floor refuses that sign (H
+left, so the floor covers R's seq; `tests/left-floor.spec.ts`:178 holds the
+rule, nothing holds this order).
+
+**Direction, not ruled:** the first merge adopts H as the second does, since H
+is complete over the copy's own rows once kept, which makes the merge a fixed
+point and leaves nothing for the next leave to re-seal. The fixture: Bo's
+stored copy (R pending, no H) merging a relay's copy holding H without R, both
+directions, with the generator's fixed-point check passing.
+
 #### D178 — `sealed-leave:25` leaves the move pending on local WebKit
 
 *Status: **closed** 2 October, on the forced-order test's own fix (below,

@@ -1,0 +1,29 @@
+{
+  "what": "As session-creator-equivocates-reconfirm, with no equivocating row anywhere but the fork: A holds Ada's header over a move at her first confirm's seq and not its row (authentic, not complete, kept), her confirm of herself in the open seat and her move for it. The session is void after either merge (R10), and Bo's honest move, arriving at A, is reported nowhere: before the ruling it was reported SEAT_NOT_HELD in Bo's own name (review 8, A3).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}
