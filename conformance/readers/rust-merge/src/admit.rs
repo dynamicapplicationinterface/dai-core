@@ -35,6 +35,13 @@ pub enum Verdict {
     // author the role excludes (docs/format.md#admitted-role). The page's
     // codes (docs/format.md#refused-batches) name none for it, so it is silent.
     Role,
+    // A roster row by an equivocator, or by a creator below her creator's
+    // seat row: it counts for nothing (docs/format.md#equivocator,
+    // #session-from-creator-row).
+    Nothing,
+    // In a session whose creator is an equivocator: neither admitted nor
+    // reported (docs/format.md#session-void).
+    VoidSession,
 }
 
 pub struct Admission {
@@ -48,9 +55,9 @@ pub struct Admission {
     pub closed: BTreeSet<String>,
     // "table|author:seq" -> verdict, for every row held
     pub verdicts: BTreeMap<String, Verdict>,
-    // (session, seat) -> the rows a void of that seat rests on, as
-    // (table, author:seq): its counting confirms and the session's creator's
-    // seat row (docs/format.md#revealing-two-confirms, D165).
+    // (session, seat value) -> the rows a void of that value's seat row rests
+    // on, as (table, author:seq): its counting confirms and the session's
+    // creator's seat row (docs/format.md#revealing-two-confirms, #void-rests-on).
     pub void_rests: BTreeMap<(String, String), Vec<(String, String)>>,
     // "table|author:seq" -> the parents (author:seq, same table) that make the
     // row cross a session or a seat, so a merge that took only the parent can
@@ -62,6 +69,11 @@ pub struct Admission {
 // The roster tables and the close (docs/format.md#session-tables,
 // #heads-roster): their heads partition by session, entity and author.
 pub const ROSTER: [&str; 4] = ["_dai_seat", "_dai_binding", "_dai_confirm", "_dai_close"];
+
+// The session's `max_parties`, declared in the signed manifest's session
+// profile, which this reader does not see; every fixture declares 2
+// (docs/format.md#confirm-minted, "Conformance").
+const MAX_PARTIES: usize = 2;
 
 // The session id a seat row would be the creator's row of: SHA-256 of the
 // author id (16 bytes) and the seq as eight bytes big-endian, first 16 bytes
@@ -222,51 +234,124 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
     };
     let hx = |v: &V| blob(v).map(|b| hexlc(&b)).unwrap_or_default();
 
-    // The creator of each session: the author of the one `_dai_seat` row, not
-    // deleted, whose own (author, seq) hashes to its session (D158; "The
-    // creator"). Her seat is hers. A creator's seat row written deleted makes
-    // nobody the creator (docs/format.md#creator).
-    // session -> (creator, creator's seat, the seat row's id)
-    let mut creator: BTreeMap<String, (String, String, String)> = BTreeMap::new();
-    let mut holders: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    // An equivocator: an author with two authentic headers at one (author, seq)
+    // anywhere in the document. Her seat, binding, confirm and close rows count
+    // for nothing (docs/format.md#equivocator).
+    let equivocators: BTreeSet<String> = eq_ids.iter().map(|(a, _)| a.clone()).collect();
+
+    // The creator of each session: the author of the `_dai_seat` row, not
+    // deleted, whose own (author, seq) hashes to its session, when that author
+    // is no equivocator (docs/format.md#creator, #session-id-creator-row). A
+    // session whose creator's row is by an equivocator is void, whether or not
+    // that row counts (docs/format.md#session-void).
+    // session -> (creator, creator's seat value, the seat row's id, its seq, its entity)
+    let mut creator: BTreeMap<String, (String, String, String, i64, String)> = BTreeMap::new();
+    let mut void_sessions: BTreeSet<String> = BTreeSet::new();
     if let (Some(t), Some(rs)) = (table("_dai_seat"), rows.get("_dai_seat")) {
         if let (Some(is), Some(iseat)) = (t.i_session, col(t, "seat")) {
             for r in rs {
-                if is_eq(t, r) || int(&r.vals[t.i_deleted]) != 0 {
+                if int(&r.vals[t.i_deleted]) != 0 {
                     continue;
                 }
                 let (Some(a), Some(s)) = (blob(&r.vals[t.i_replica]), blob(&r.vals[is])) else { continue };
                 if session_id(&a, int(&r.vals[t.i_seq])) == s {
-                    let (sess, seat) = (hexlc(&s), hx(&r.vals[iseat]));
-                    creator.insert(sess.clone(), (hexlc(&a), seat.clone(), rowid(t, r)));
-                    holders.entry((sess, seat)).or_default().insert(hexlc(&a));
+                    let sess = hexlc(&s);
+                    if equivocators.contains(&hexlc(&a)) {
+                        void_sessions.insert(sess);
+                        continue;
+                    }
+                    creator.insert(
+                        sess,
+                        (hexlc(&a), hx(&r.vals[iseat]), rowid(t, r), int(&r.vals[t.i_seq]), r.vals[t.i_entity].enc()),
+                    );
                 }
             }
         }
     }
+    // A roster row that counts for nothing: by an equivocator, or by a
+    // session's creator in her session below her creator's seat row
+    // (docs/format.md#equivocator, #session-from-creator-row).
+    let roster_void = |t: &Table, r: &crate::Row| -> bool {
+        let a = hx(&r.vals[t.i_replica]);
+        if equivocators.contains(&a) {
+            return true;
+        }
+        let Some(is) = t.i_session else { return false };
+        match creator.get(&hx(&r.vals[is])) {
+            Some((cr, _, _, cseq, _)) => *cr == a && int(&r.vals[t.i_seq]) < *cseq,
+            None => false,
+        }
+    };
 
-    // The open seats: held by whoever the creator's confirms name. A confirm
-    // counts when the creator wrote it, in her session, naming a seat not her
-    // own; deleted or not, superseded or not (docs/format.md#confirms, D171).
-    // Two counting confirms of one seat naming different holders void it
-    // (D165), whatever their seqs.
-    let mut void_rests: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
+    // The seats: a seat is a seat row (an entity), not its `seat` value. Her
+    // seat rows in the session are her `_dai_seat` entities there, each at its
+    // lowest seq at or above her creator's seat row's, deleted or not,
+    // superseded or not; each value belongs to the row whose version named it
+    // first in her seq order; only the first `max_parties` rows, counted from
+    // the creator's seat row, mint (docs/format.md#seat-is-row, #confirm-minted).
+    // session -> value -> owning entity
+    let mut owner: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    // session -> the minting entities
+    let mut minted: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    if let (Some(t), Some(rs)) = (table("_dai_seat"), rows.get("_dai_seat")) {
+        if let (Some(is), Some(iseat)) = (t.i_session, col(t, "seat")) {
+            for (sess, (cr, _, _, cseq, _)) in &creator {
+                let mut mine: Vec<&crate::Row> = rs
+                    .iter()
+                    .filter(|r| {
+                        hx(&r.vals[is]) == *sess
+                            && hx(&r.vals[t.i_replica]) == *cr
+                            && int(&r.vals[t.i_seq]) >= *cseq
+                            && !is_eq(t, r)
+                    })
+                    .collect();
+                mine.sort_by_key(|r| int(&r.vals[t.i_seq]));
+                let mut order: Vec<String> = vec![];
+                let own = owner.entry(sess.clone()).or_default();
+                for r in mine {
+                    let e = r.vals[t.i_entity].enc();
+                    if !order.contains(&e) {
+                        order.push(e.clone());
+                    }
+                    own.entry(hx(&r.vals[iseat])).or_insert(e);
+                }
+                minted.insert(sess.clone(), order.into_iter().take(MAX_PARTIES).collect());
+            }
+        }
+    }
+
+    // The open seats: held by whoever the creator's counting confirms name. A
+    // confirm counts when the creator wrote it, in her session, not below her
+    // creator's seat row, naming a seat not her own that she minted; deleted or
+    // not, superseded or not (docs/format.md#confirms, D171). A confirm naming
+    // a value is a confirm of the row that owns it, and two counting confirms
+    // of one seat naming different holders void it (D165), under every value
+    // of its row (docs/format.md#void, #held-row-frozen).
+    // (session, entity) -> the holders named, and the values named
+    let mut confirmed: BTreeMap<(String, String), (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+    let mut rests_of: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
     if let (Some(t), Some(rs)) = (table("_dai_confirm"), rows.get("_dai_confirm")) {
         if let (Some(is), Some(iseat), Some(ih)) = (t.i_session, col(t, "seat"), col(t, "holder")) {
             for r in rs {
-                if is_eq(t, r) {
+                if is_eq(t, r) || roster_void(t, r) {
                     continue;
                 }
                 let sess = hx(&r.vals[is]);
-                let Some((cr, cseat, crow)) = creator.get(&sess) else { continue };
-                let seat = hx(&r.vals[iseat]);
-                if &hx(&r.vals[t.i_replica]) != cr || &seat == cseat {
+                let Some((cr, _, crow, _, cent)) = creator.get(&sess) else { continue };
+                if &hx(&r.vals[t.i_replica]) != cr {
                     continue;
                 }
-                holders.entry((sess.clone(), seat.clone())).or_default().insert(hx(&r.vals[ih]));
-                // A void rests on "a counting confirm of that seat or the
-                // session's creator's seat row" (docs/format.md#revealing-two-confirms).
-                let rests = void_rests.entry((sess, seat)).or_default();
+                let value = hx(&r.vals[iseat]);
+                let Some(e) = owner.get(&sess).and_then(|o| o.get(&value)) else { continue };
+                if e == cent || !minted[&sess].contains(e) {
+                    continue;
+                }
+                let c = confirmed.entry((sess.clone(), e.clone())).or_default();
+                c.0.insert(hx(&r.vals[ih]));
+                c.1.insert(value);
+                // A void rests on the counting confirms of its seat and the
+                // session's creator's seat row (docs/format.md#void-rests-on).
+                let rests = rests_of.entry((sess, e.clone())).or_default();
                 if rests.is_empty() {
                     rests.push(("_dai_seat".to_string(), crow.clone()));
                 }
@@ -274,15 +359,34 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
             }
         }
     }
+    // (session, value) -> its holder: the creator under her seat row's value,
+    // and each held seat under the values its counting confirms name
+    // (docs/format.md#holders).
     let mut held: BTreeMap<(String, String), String> = BTreeMap::new();
+    // (session, entity) -> the one holder of a seat row held
+    let mut row_holder: BTreeMap<(String, String), String> = BTreeMap::new();
     let mut voided = BTreeSet::new();
-    let mut void_seats: BTreeSet<(String, String)> = BTreeSet::new();
-    for ((sess, seat), hs) in &holders {
+    let mut void_rows: BTreeSet<(String, String)> = BTreeSet::new();
+    // (session, value) -> what the void of that value's seat rests on
+    let mut void_rests: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
+    for (sess, (cr, cseat, _, _, _)) in &creator {
+        held.insert((sess.clone(), cseat.clone()), cr.clone());
+    }
+    for ((sess, e), (hs, values)) in &confirmed {
         if hs.len() == 1 {
-            held.insert((sess.clone(), seat.clone()), hs.iter().next().unwrap().clone());
+            let h = hs.iter().next().unwrap().clone();
+            for v in values {
+                held.insert((sess.clone(), v.clone()), h.clone());
+            }
+            row_holder.insert((sess.clone(), e.clone()), h);
         } else {
-            voided.insert((sess.clone(), seat.clone(), creator[sess].0.clone()));
-            void_seats.insert((sess.clone(), seat.clone()));
+            void_rows.insert((sess.clone(), e.clone()));
+            for (v, o) in &owner[sess] {
+                if o == e {
+                    voided.insert((sess.clone(), v.clone(), creator[sess].0.clone()));
+                    void_rests.insert((sess.clone(), v.clone()), rests_of[&(sess.clone(), e.clone())].clone());
+                }
+            }
         }
     }
     // "The members of a session are its holders" (docs/format.md#members).
@@ -294,12 +398,14 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
     // is not deleted and its author is a member of its own session. A member's
     // first counting close, lowest in their own seq, binds only them. A delete
     // of a close is not a close and revokes nothing (docs/format.md#close-counts,
-    // #close-first).
+    // #close-first). An equivocator's close, and the creator's below her
+    // creator's seat row, close nobody (docs/format.md#equivocator,
+    // #session-from-creator-row).
     let mut first_close: BTreeMap<(String, String), i64> = BTreeMap::new();
     if let (Some(t), Some(rs)) = (table("_dai_close"), rows.get("_dai_close")) {
         if let Some(is) = t.i_session {
             for r in rs {
-                if is_eq(t, r) || int(&r.vals[t.i_deleted]) != 0 {
+                if is_eq(t, r) || roster_void(t, r) || int(&r.vals[t.i_deleted]) != 0 {
                     continue;
                 }
                 let key = (hx(&r.vals[is]), hx(&r.vals[t.i_replica]));
@@ -354,6 +460,11 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
                 // parent, before any other rule reads its parents
                 // (docs/format.md#admitted-parent-equivocated).
                 Verdict::ParentEquivocated
+            } else if roster && roster_void(t, r) {
+                // An equivocator's roster row, or the creator's below her
+                // creator's seat row: no head, and hides no row
+                // (docs/format.md#equivocator, #session-from-creator-row).
+                Verdict::Nothing
             } else if roster || t.i_session.is_none() {
                 // The roster tables and a plain document's tables: heads among
                 // rows at ids not equivocated (docs/format.md#heads-roster, #heads-plain).
@@ -363,6 +474,12 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
                 let is = t.i_session.unwrap();
                 let (sess, author) = (hx(&r.vals[is]), hx(&r.vals[t.i_replica]));
                 let seat = seat_col.and_then(|ic| seat_of(r, ic));
+                if void_sessions.contains(&sess) {
+                    // No row in a void session is admitted, and none is
+                    // reported (docs/format.md#session-void, #report-silent).
+                    verdicts.insert(format!("{}|{}", t.name, id), Verdict::VoidSession);
+                    continue;
+                }
                 // The versions it names, of its own entity (T1-D35: another
                 // entity's row is not a version of this one), skipping any at an
                 // equivocated id, which counts for nothing anywhere ("Signed
@@ -393,15 +510,26 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
                 } else {
                     let holds = match seat_col {
                         // Seated: its author holds the seat it names, in the
-                        // row's own session. A seat nobody holds yet is
-                        // waiting, and a void seat is held by nobody: neither is
-                        // reported (docs/format.md#waiting, #void-row).
+                        // row's own session, under the value it names. A seat
+                        // nobody holds yet is waiting, a void seat is held by
+                        // nobody, and a value nothing minted is waiting on
+                        // nothing: none is reported (docs/format.md#waiting,
+                        // #void-row, #confirm-minted). A value of a held row
+                        // no counting confirm names acts for nothing
+                        // (docs/format.md#holders): silent when its author
+                        // holds the row, a seat someone else holds when not.
                         Some(_) => match &seat {
                             None => Err(Verdict::NotHeld),
                             Some(seat) => match held.get(&(sess.clone(), seat.clone())) {
                                 Some(h) if *h == author => Ok(()),
                                 Some(_) => Err(Verdict::NotHeld),
-                                None => Err(Verdict::Pending),
+                                None => {
+                                    let row = owner.get(&sess).and_then(|o| o.get(seat));
+                                    match row.and_then(|e| row_holder.get(&(sess.clone(), e.clone()))) {
+                                        Some(h) if *h != author => Err(Verdict::NotHeld),
+                                        _ => Err(Verdict::Pending),
+                                    }
+                                }
                             },
                         },
                         // Otherwise: its author is a member of the row's
@@ -454,8 +582,6 @@ pub fn admit(c: &Connection, tables: &[Table]) -> Admission {
         hs.sort();
         heads.insert(t.name.clone(), hs);
     }
-    // Only the seats void now carry what their void rests on.
-    void_rests.retain(|k, _| void_seats.contains(k));
 
     Admission {
         heads,
