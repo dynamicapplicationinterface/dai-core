@@ -1959,6 +1959,68 @@ CREATE TABLE cards (
     },
   },
   {
+    name: "session-held-seat-versioned",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Bo holds the open seat and moved (B). Then Ada writes a version of the open seat's row naming a fresh seat, confirms Cy in the fresh seat, and Cy moves for it (A). A seat is a seat row, not its value: the version of a held row mints nothing, and a confirm naming it is a confirm of the same seat, here naming another holder, so the seat is void (D165): nobody but Ada holds a seat, neither Bo's move nor Cy's is admitted, and the merge into B, which makes the void, reports Ada AUTHOR_EQUIVOCATED (R12). Read by seat value, the version minted a seat of its own and three parties held seats in a two-party session (the R10 and R11 handoff's finding).",
+    fill: async (a, b) => {
+      const session = await seated(a, b);
+      createEntity(b, "moves", id(0x82), { seat: SEAT_OPEN, san: "e5" }, session);
+      changeEntity(a, "_dai_seat", id(0x52), { seat: SEAT_FRESH }, session);
+      confirmSeat(a, session, SEAT_FRESH, CY.author, id(0x73));
+      const cy = copyFor(CY);
+      await exchange(cy, a, ADA);
+      createEntity(cy, "moves", id(0x89), { seat: SEAT_FRESH, san: "Nc6" }, session);
+      await exchange(a, cy, CY);
+      cy.done();
+    },
+    expect: ({ ab, ba }) => {
+      const reports = { ab: [], ba: ["Ada AUTHOR_EQUIVOCATED"] };
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        const refused = run.result.refusedBatches.map((r) => `${r.author === b64Of(ADA.author) ? "Ada" : r.author === b64Of(BO.author) ? "Bo" : r.author} ${r.reason}`);
+        if (refused.join() !== reports[direction].join()) return `${direction}: refused [${refused.join(", ")}], not [${reports[direction].join(", ")}]`;
+        const holders = sectionOf(run.admitted, "holders").map((line) => line.split("\t").slice(1).join(" "));
+        if (holders.join() !== `${hexOf(SEAT_W)} ${hexOf(ADA.author)}`) return `${direction}: holders are [${holders.join(" | ")}], not Ada's seat alone`;
+        const voided = sectionOf(run.admitted, "voided").map((line) => line.split("\t")[1]);
+        if (voided.join() !== [hexOf(SEAT_OPEN), hexOf(SEAT_FRESH)].join()) return `${direction}: voided is [${voided.join(" | ")}], not the open seat's two values`;
+        const moves = sectionOf(run.admitted, "moves");
+        if (moves.some((line) => line.startsWith(hexOf(BO.author)) || line.startsWith(hexOf(CY.author)))) return `${direction}: admitted moves are [${moves.join(" | ")}]`;
+      }
+    },
+  },
+  {
+    name: "session-roster-row-below-creator",
+    session: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Ada skips two seqs before her creator's seat row, so the session id is hers to compute before the row exists. Bo is confirmed in the open seat and moves. Then she signs, at the two skipped seqs below her creator's seat row, a seat row in the session naming a third seat and a confirm of Cy in the open seat. A session exists from its creator's seat row: a creator's roster row below it counts for nothing in that session, and minted seats are counted in seq order from it. The open seat stays minted, Bo holds it, his move is admitted, nothing is voided and nothing is reported (R13). Counted from below, the third seat came first and the open seat fell past max_parties=2, so Bo's hold went to nobody with nothing reported (the R10 and R11 handoff's finding).",
+    fill: async (a, b) => {
+      a.run("UPDATE _dai_replica SET seq = seq + 2");
+      const creatorSeq = a.all("SELECT seq FROM _dai_replica")[0].seq + 1;
+      const session = startSession(a, { creatorSeat: SEAT_W, openSeat: SEAT_OPEN, entities: [id(0x51), id(0x52)] });
+      await exchange(b, a, ADA);
+      createEntity(b, "_dai_binding", id(0x61), { seat: SEAT_OPEN }, session);
+      await exchange(a, b, BO);
+      confirmSeat(a, session, SEAT_OPEN, BO.author, id(0x71));
+      await exchange(b, a, ADA);
+      createEntity(b, "moves", id(0x82), { seat: SEAT_OPEN, san: "e5" }, session);
+      await exchange(a, b, BO);
+      rawAt(a, creatorSeq - 2, "_dai_seat", id(0x54), { seat: SEAT_THIRD }, session);
+      rawAt(a, creatorSeq - 1, "_dai_confirm", id(0x74), { seat: SEAT_OPEN, holder: CY.author }, session);
+      await sealAll(a, ADA);
+    },
+    expect: ({ ab, ba }) => {
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        if (run.result.refusedBatches.length > 0) return `${direction}: reported ${run.result.refusedBatches.map((r) => r.reason).join(", ")}`;
+        const holders = sectionOf(run.admitted, "holders").map((line) => line.split("\t").slice(1).join(" "));
+        if (holders.join() !== [`${hexOf(SEAT_W)} ${hexOf(ADA.author)}`, `${hexOf(SEAT_OPEN)} ${hexOf(BO.author)}`].join()) return `${direction}: holders are [${holders.join(" | ")}], not Ada's seat and Bo's`;
+        if (sectionOf(run.admitted, "voided").length > 0) return `${direction}: voided is [${sectionOf(run.admitted, "voided").join(" | ")}]`;
+        if (!sectionOf(run.admitted, "moves").some((line) => line.startsWith(hexOf(BO.author)))) return `${direction}: Bo's move is not admitted`;
+      }
+    },
+  },
+  {
     name: "session-equivocated-parent-unseated",
     session: true,
     schema: SESSION_NOTES_SCHEMA,

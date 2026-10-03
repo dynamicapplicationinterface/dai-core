@@ -1085,14 +1085,19 @@ export function mergeFrom(
   const refuseBatch = (id: string, who: Uint8Array, reason: BatchRefusal): void => {
     refusals.set(`${id}|${reason}|${hex(who)}`, { id, author: who, reason });
   };
-  // The seats a creator confirmed to two copies (D165), keyed by session and seat.
+  // The seats a creator confirmed to two copies (D165), keyed by session and
+  // seat row (R12: a seat is its row, so one void seat is one key whatever
+  // values its versions name). A view built before R12 has no row: its seat.
   const voidedSeats = (): Map<string, Uint8Array> =>
     local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_voided'").length === 0
       ? new Map()
       : new Map(
           local
-            .all("SELECT session, seat, creator FROM _dai_voided")
-            .map((r) => [`${hex(r["session"] as Uint8Array)}|${hex(r["seat"] as Uint8Array)}`, r["creator"] as Uint8Array]),
+            .all("SELECT * FROM _dai_voided")
+            .map((r) => [
+              `${hex(r["session"] as Uint8Array)}|${hex((r["entity"] ?? r["seat"]) as Uint8Array)}|${"entity" in r ? "entity" : "seat"}`,
+              r["creator"] as Uint8Array,
+            ]),
         );
   const voidedBefore = voidedSeats();
 
@@ -1520,14 +1525,15 @@ export function mergeFrom(
    * equivocated id) and the session's creator's seat row that counts
    * (`_dai_creator`, so not deleted and not equivocated), and nothing else
    * (batch format version 2, the step 6 review, X3). With no taken row it
-   * rests on, the report is filed under no id.
+   * rests on, the report is filed under no id. The seat is its row (R12): its
+   * counting confirms are those naming any value of the row.
    */
   for (const [key, creator] of voidedSeats()) {
     if (voidedBefore.has(key)) continue;
-    const [session, seat] = key.split("|");
+    const [session, seat, by] = key.split("|");
     const counting = new Set(
       local
-        .all("SELECT seq FROM _dai_confirmed WHERE lower(hex(session)) = ? AND lower(hex(seat)) = ? AND creator = ?", [session, seat, creator])
+        .all(`SELECT seq FROM _dai_confirmed WHERE lower(hex(session)) = ? AND lower(hex(${by === "entity" ? "entity" : "seat"})) = ? AND creator = ?`, [session, seat, creator])
         .map((r) => Number(r["seq"])),
     );
     const seatRow = local.all("SELECT 1 FROM _dai_creator WHERE lower(hex(session)) = ? AND replica = ?", [session, creator]).length > 0;

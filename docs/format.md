@@ -388,6 +388,12 @@ row: the `_dai_seat` row, not deleted, whose own author and seq hash to its
 `_r_session` ([Session id](#session-id)), when that author is no
 [equivocator](#equivocator). <a id="creator-seat"></a>The
 creator's seat is that row's `seat`, and it is the creator's by definition.
+<a id="session-from-creator-row"></a>A session exists from its creator's seat
+row. A `_dai_seat`, `_dai_binding`, `_dai_confirm` or `_dai_close` row by the
+creator in her session at a seq below her creator's seat row's counts for
+nothing in that session, as a row at an equivocated id does: it seats, asks,
+confirms and closes nobody, it mints nothing, and it is no head and hides no
+row.
 
 <a id="session-void"></a>A session whose creator is an equivocator is
 **void**. Here the creator is the author of that row, not deleted, whether or
@@ -401,9 +407,21 @@ on it, whatever arrives later. The repair is a new session.
 ### Confirms
 
 <a id="confirms"></a>A confirm counts when it is a `_dai_confirm` row
-authored by the session's creator, in the creator's session, naming a seat
-that is not the creator's own and that she [minted](#confirm-minted);
-deleted or not, superseded or not.
+authored by the session's creator, in the creator's session, not below her
+[creator's seat row](#session-from-creator-row), naming a seat that is not the
+creator's own and that she [minted](#confirm-minted); deleted or not,
+superseded or not.
+<a id="seat-is-row"></a>A seat is a seat row (an entity), not its `seat`
+value. Each value the creator's seat rows in her session name belongs to the
+row whose version of hers named it first, in her seq order; a confirm naming a
+value is a confirm of that row, and binds to it. A version of a seat row
+naming a value another row named first mints nothing.
+<a id="held-row-frozen"></a>Once a seat row has a counting confirm it is
+**held**. Every later version of a held row mints nothing and moves nothing:
+the seat stays at the values its counting confirms name, and a confirm naming
+the value a later version gives it is a confirm of the same seat, so one
+naming another holder voids it ([void](#void)). A version of a
+seat row nobody holds is a reseat: the same seat under a fresh value.
 <a id="confirm-versions-count"></a>A later version or a delete of a confirm is
 another confirm naming a holder, and counts as one.
 
@@ -411,22 +429,26 @@ another confirm naming a holder, and counts as one.
 
 <a id="void"></a>When the counting confirms of one seat name two or more
 different holders, the seat is **void**: held by nobody, on every copy
-holding both, whatever their seqs and whichever arrived first. The repair is
-a new session.
+holding both, whatever their seqs and whichever arrived first, under every
+value of its row. The repair is a new session.
 
 ### Holders
 
 <a id="holders"></a>The creator holds the creator's seat. Every other seat
-with counting confirms that is not void is held by the one holder they name.
+with counting confirms that is not void is held by the one holder they name,
+under the values they name: a row whose seat column names a value of the
+seat's row that no counting confirm names (a reseat's old value) acts for
+nothing.
 <a id="members"></a>The members of a session are its holders.
 <a id="confirm-minted"></a>A confirm counts only for a seat the creator
 minted. Her seat rows in the session are her `_dai_seat` entities there, each
-at the lowest seq of hers in it, deleted or not, superseded or not; only the
-first `max_parties` of them in that seq order mint (the bound the signed
-manifest's session profile declares, `max_parties=N`), and each mints every
-seat its versions of hers name (a fresh open seat is a version of the open
-seat's row). A seat no minting row names is not minted: nobody holds it, and
-a row for it is waiting on nothing.
+at the lowest seq of hers in it at or above her creator's seat row's, deleted
+or not, superseded or not; only the first `max_parties` of them in that seq
+order, counted from the creator's seat row, mint (the bound the signed
+manifest's session profile declares, `max_parties=N`), and each mints the
+values that are [its own](#seat-is-row) (a fresh open seat is a version of the
+open seat's row). A value no minting row named first is not minted: nobody
+holds it, and a row for it is waiting on nothing.
 
 ### Close
 
@@ -456,7 +478,8 @@ these hold:
   nor hides;
 - <a id="admitted-seat"></a>**seated table:** its author holds the seat its
   seat column names, in the row's own session (a seat is the pair of session
-  and seat). <a id="admitted-member"></a>**Otherwise:** its author is a
+  and seat row, and the column names the row by a [value](#seat-is-row) of
+  it). <a id="admitted-member"></a>**Otherwise:** its author is a
   member of the row's session;
 - <a id="admitted-no-other-session"></a>it names as a parent no row of its
   own entity from another session;
@@ -632,6 +655,10 @@ version, never a refactor (identity.md, binding rule 10).
   nothing, and a session whose creator is an equivocator is void.
 - Version 2: a confirm counts only for a seat the creator minted, the first
   `max_parties` in her seq order.
+- Version 2: a seat is a seat row, not its value; a held row's later versions
+  mint nothing and move nothing.
+- Version 2: a session exists from its creator's seat row; her roster rows
+  below it count for nothing there.
 
 ## Conformance
 

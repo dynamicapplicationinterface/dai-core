@@ -101,8 +101,8 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "confirm-any-creator": (
         "confirms", "a confirm counts by the creator of any session", [CREATOR],
-        [('and (session, bytes(f["_r_replica"])) in self.creator_of\n',
-          'and bytes(f["_r_replica"]) in {c[1] for c in self.creator_of}\n')],
+        [("if self.unequivocal(f) and self.of_creator_session(f) and row is not None",
+          'if self.unequivocal(f) and bytes(f["_r_replica"]) in {c[1] for c in self.creator_of} and row is not None')],
     ),
     "close-deleted-counts": (
         "close-counts", "a close row written deleted counts", [CLOSE],
@@ -170,7 +170,7 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "confirm-unminted-counts": (
         "confirm-minted", "a confirm of a seat the creator did not mint counts", [MAXP],
-        [('                and (session, bytes(f["seat"])) in self.minted\n', "")],
+        [("for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}", "for key, (_seq, entity) in named_first.items()}")],
     ),
     "minted-last-first": (
         "confirm-minted", "the seats minted are the last max_parties in the creator's seq order", [MAXP],
@@ -179,7 +179,35 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     "minted-by-value": (
         "confirm-minted", "the seats minted are the first max_parties seat values, not seat rows: a reseat's fresh seat is past the bound", ["session-reseat-minted"],
         [("            key = (bytes(s[\"_r_session\"]), bytes(s[\"_r_entity\"]))\n", "            key = (bytes(s[\"_r_session\"]), bytes(s[\"seat\"]))\n"),
-         ("if (bytes(s[\"_r_session\"]), bytes(s[\"_r_entity\"])) in minting}", "if (bytes(s[\"_r_session\"]), bytes(s[\"seat\"])) in minting}")],
+         ("for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}", "for key, (_seq, entity) in named_first.items() if key in minting}")],
+    ),
+    # ------------------------------------------------ R12, R13 (2 October)
+    "seat-by-value": (
+        "seat-is-row", "a seat is its value: a confirm binds to the value it names, and a hold and a void are the value's", ["session-held-seat-versioned"],
+        [("        self.seat_row = {key: entity for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}",
+          "        self.seat_row = {key: (entity if entity == creator_entity[key[0]] else key[1]) for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}")],
+    ),
+    "held-row-versions-mint": (
+        "held-row-frozen", "a version of a held seat row, written after its first counting confirm, is a seat of its own", ["session-held-seat-versioned"],
+        [("        self.counting_confirms = ",
+          "        held_at: dict = {}\n"
+          "        for c in confirmed:\n"
+          "            held_at[(c[0], c[1])] = min(held_at.get((c[0], c[1]), c[4]), c[4])\n"
+          "        for (session, value), (seq, entity) in named_first.items():\n"
+          "            if (session, value) in self.seat_row and (session, entity) in held_at and seq > held_at[(session, entity)]:\n"
+          "                self.seat_row[(session, value)] = value\n"
+          "        confirmed = [(c[0], self.seat_row[(c[0], c[5])], c[2], c[3], c[4], c[5]) for c in confirmed]\n"
+          "        self.counting_confirms = ")],
+    ),
+    "seat-row-below-mints": (
+        "session-from-creator-row", "a creator's seat row below her creator's seat row counts toward the bound, first in her seq order", ["session-roster-row-below-creator"],
+        [('        mine = [s for s in self.rows.get("_dai_seat", []) if self.of_creator_session(s)]',
+          '        mine = [s for s in self.rows.get("_dai_seat", []) if (bytes(s["_r_session"]), bytes(s["_r_replica"])) in self.creator_seq]')],
+    ),
+    "confirm-below-counts": (
+        "session-from-creator-row", "a creator's confirm below her creator's seat row counts", ["session-roster-row-below-creator"],
+        [("if self.unequivocal(f) and self.of_creator_session(f) and row is not None",
+          "if self.unequivocal(f) and (session, bytes(f[\"_r_replica\"])) in self.creator_seq and row is not None")],
     ),
     # ------------------------------------------------ witness pass 1: Equivocation
     # A reader comparing the row at the id rather than the whole batch cannot
@@ -431,8 +459,8 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "confirm-names-equivocated": (
         "parent-equivocated-outside", "a confirm naming an equivocated id as a parent counts for nothing", [ROSTERNAMES],
-        [("                self.unequivocal(f)\n                and (session",
-          "                self.unequivocal(f)\n                and not self.names_equivocated(f)\n                and (session")],
+        [("if self.unequivocal(f) and self.of_creator_session(f)",
+          "if self.unequivocal(f) and not self.names_equivocated(f) and self.of_creator_session(f)")],
     ),
     "close-names-equivocated": (
         "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing", [ROSTERNAMES],
@@ -545,15 +573,26 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "equivocator-roster-rt": (
         "equivocator", "an equivocator's roster and close rows count, but at an equivocated id (heads)", [SEATV],
-        [(r"const (counts\d*) = session \? notEquivocator\d* : (unequivocal\d*);", r"const \1 = \2;")],
+        [(r"const (counts\d*) = session \? \(row\) => `\$\{notEquivocator\d*\(row\)\} AND \$\{(fromSession\d*)\(row\)\}` : (unequivocal\d*);",
+          r"const \1 = session ? (row) => `${\3(row)} AND ${\2(row)}` : \3;")],
     ),
     "equivocator-close-rt": (
         "equivocator", "an equivocator's close at an id not equivocated counts (_dai_closed, and late rows)", [UNSEATED],
         [(r'\$\{(closedBy\d*)\("x", closeCreator\)\} AND \$\{notEquivocator\d*\("x"\)\}', r'${\1("x", closeCreator)} AND ${unequivocal("x")}')],
     ),
     "confirm-unminted-rt": (
-        "confirm-minted", "a confirm of a seat the creator did not mint counts (_dai_confirmed)", [MAXP],
-        [(r"\n\s+AND EXISTS \(SELECT 1 FROM _dai_minted m WHERE m\.session = f\._r_session AND m\.seat = f\.seat\)", "")],
+        "confirm-minted", "a confirm of a seat the creator did not mint counts (_dai_seat_value: every seat row mints)", [MAXP],
+        [(r"WHERE seq = value_first AND place <= \$\{maxParties\};", "WHERE seq = value_first;")],
+    ),
+    # R12, R13 (2 October).
+    "void-by-value-rt": (
+        "seat-is-row", "two confirms void a seat only when they name one value (_dai_voided)", ["session-held-seat-versioned"],
+        [(r"o\.session = f\.session AND o\.entity = f\.entity AND o\.holder <> f\.holder", "o.session = f.session AND o.seat = f.seat AND o.holder <> f.holder")],
+    ),
+    "session-before-creator-rt": (
+        "session-from-creator-row", "a creator's seat rows and confirms below her creator's seat row count (_dai_seat_value, _dai_confirmed)", ["session-roster-row-below-creator"],
+        [(r"\n\s+WHERE s\._r_seq >= c\.seq\)\)", "))"),
+         (r" AND f\._r_seq >= v\.since AND v\.entity <> v\.creator_entity;", " AND v.entity <> v.creator_entity;")],
     ),
     # A10, the seal orders (D178): what a seal records is the runtime's alone.
     "seal-takes-later-rows-rt": (

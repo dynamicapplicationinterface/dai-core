@@ -475,10 +475,11 @@ function closePermitted(close: string, closeCreator: boolean): string {
 
 /**
  * Whether raw `_dai_close` row `close` is a close that counts: written, not a
- * delete (a close cannot be revoked, D153), by an author the rule permits.
+ * delete (a close cannot be revoked, D153), by an author the rule permits, and
+ * not by the creator below her creator's seat row (R13).
  */
 function closedBy(close: string, closeCreator: boolean): string {
-  return `${close}._r_deleted = 0 AND ${closePermitted(close, closeCreator)}`;
+  return `${close}._r_deleted = 0 AND ${closePermitted(close, closeCreator)} AND ${fromSession(close)}`;
 }
 
 /**
@@ -513,6 +514,19 @@ function notEquivocator(row: string): string {
     `NOT EXISTS (SELECT 1 FROM _dai_covers ea JOIN _dai_covers eb` +
     ` ON eb.author = ea.author AND eb.seq = ea.seq AND eb.digest <> ea.digest` +
     ` WHERE ea.author = ${row}._r_replica)`
+  );
+}
+
+/**
+ * Not a creator's row below her creator's seat row (R13): a session exists from
+ * that row, so a seat, binding, confirm or close she signs in the session at a
+ * seq below it, one she skipped, counts for nothing there. An honest writer
+ * never writes in a session before it exists.
+ */
+function fromSession(row: string): string {
+  return (
+    `NOT EXISTS (SELECT 1 FROM _dai_creator sc WHERE sc.session = ${row}._r_session` +
+    ` AND sc.replica = ${row}._r_replica AND ${row}._r_seq < sc.seq)`
   );
 }
 
@@ -569,10 +583,11 @@ function namesEquivocated(row: string): string {
  * The closed sessions, as lowercase hex, for a document whose schema predates
  * `_dai_closed` (D154): the view's own rule, so the host calls a session closed
  * exactly when admission does. Needs the seat views (24 September); a document
- * older than those is not supported (D155).
+ * older than those is not supported (D155). Its `_dai_creator` has no seq, and
+ * such a document predates R13, so the rule is the one it was built under.
  */
 export function closedSessionsSql(closeCreator: boolean): string {
-  return `SELECT DISTINCT lower(hex(x._r_session)) AS s FROM _dai_close x WHERE ${closedBy("x", closeCreator)} ORDER BY 1`;
+  return `SELECT DISTINCT lower(hex(x._r_session)) AS s FROM _dai_close x WHERE x._r_deleted = 0 AND ${closePermitted("x", closeCreator)} ORDER BY 1`;
 }
 
 /**
@@ -620,8 +635,9 @@ function headsView(
   if (!admissionFiltered) {
     const ownAuthor = session ? " AND c._r_session = r._r_session AND c._r_replica = r._r_replica" : "";
     // A roster or close row by an equivocator counts for nothing (R10): no
-    // head, and it hides nothing. A plain table's row, only at its own id.
-    const counts = session ? notEquivocator : unequivocal;
+    // head, and it hides nothing. A plain table's row, only at its own id. And
+    // neither does a creator's row below her creator's seat row (R13).
+    const counts = session ? (row: string): string => `${notEquivocator(row)} AND ${fromSession(row)}` : unequivocal;
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
   SELECT r.* FROM ${q} r
    WHERE ${counts("r")}
@@ -1052,7 +1068,7 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
 -- session whose creator signed two headers at one seq anywhere in the document
 -- has no creator here; it is void (_dai_void_session).
 CREATE VIEW IF NOT EXISTS _dai_creator AS
-  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat, s._r_entity AS entity
+  SELECT DISTINCT s._r_session AS session, s._r_replica AS replica, s.seat AS seat, s._r_entity AS entity, s._r_seq AS seq
     FROM _dai_seat s
    WHERE s._r_deleted = 0 AND ${notEquivocator("s")}
      AND ${SESSION_ID_FUNCTION}(s._r_replica, s._r_seq) = s._r_session;
@@ -1070,71 +1086,89 @@ CREATE VIEW IF NOT EXISTS _dai_void_session AS
    WHERE s._r_deleted = 0 AND NOT ${notEquivocator("s")}
      AND ${SESSION_ID_FUNCTION}(s._r_replica, s._r_seq) = s._r_session;
 
--- Each seat row the creator wrote in her session (an entity, with every
--- version of it hers), at the lowest seq of hers in it: deleted or not,
--- superseded or not, since a seat once minted is not unminted by a later row.
-CREATE VIEW IF NOT EXISTS _dai_seat_first AS
-  SELECT s._r_session AS session, s._r_entity AS entity, min(s._r_seq) AS seq
-    FROM _dai_seat s
-    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
-   GROUP BY s._r_session, s._r_entity;
-
--- The seats the creator minted (R11): those her first max_parties seat rows
--- name, in her seq order (the signed bound, ${maxParties} here), each with every
--- value its versions have given it, since a reseat gives an open seat a new
--- value and it is the same seat. A seat named only past the bound is not
--- minted: nobody can be confirmed in it, and nobody asks for it.
-CREATE VIEW IF NOT EXISTS _dai_minted AS
-  SELECT DISTINCT s._r_session AS session, s.seat AS seat
-    FROM _dai_seat s
-    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
-    JOIN _dai_seat_first f ON f.session = s._r_session AND f.entity = s._r_entity
-   WHERE (SELECT count(*) FROM _dai_seat_first g WHERE g.session = f.session AND g.seq < f.seq) < ${maxParties};
-
--- The open seats the creator minted, each at its current value among her own
--- versions in that session: a version another author wrote of her seat row is
--- not hers, and neither is one in another session (D136). Not the creator's
--- seat row, nor any version of its entity, nor a seat past the bound (R11).
-CREATE VIEW IF NOT EXISTS _dai_open_seat AS
-  SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
-    FROM _dai_seat s
-    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
-   WHERE s._r_entity <> c.entity AND s._r_deleted = 0 AND ${unequivocal("s")}
-     AND s.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = s._r_session)
-     AND EXISTS (SELECT 1 FROM _dai_minted m WHERE m.session = s._r_session AND m.seat = s.seat)
-     AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(${parentsSql("n._r_parents")}) p
-                      WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
-                        AND ${unequivocal("n")}
-                        AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq);
+-- The seats (R12): a seat is a seat row, not its value. The creator's seat
+-- rows in her session are her _dai_seat entities there (every version of one
+-- hers), each at the lowest seq of hers in it: deleted or not, superseded or
+-- not, since a seat once minted is not unminted by a later row. Only her first
+-- max_parties of them in that seq order mint (R11, the signed bound,
+-- ${maxParties} here), counted from her creator's seat row: a session exists from
+-- that row (R13), so a row of hers below it counts for nothing in the session,
+-- and no row she signs at a seq she skipped comes first and pushes a seat
+-- already held past the bound. Each value her rows name belongs to the row
+-- whose version named it first, so a reseat (a version of an open seat's row
+-- naming a fresh value) is the same seat, and a version naming another row's
+-- value mints nothing. A value no minting row named first is no seat: nobody
+-- can be confirmed in it, and nobody asks for it. One scan of her seat rows,
+-- carrying the creator's row for the views that read this one.
+CREATE VIEW IF NOT EXISTS _dai_seat_value AS
+  SELECT session, seat, entity, creator, since, creator_entity
+    FROM (SELECT *, dense_rank() OVER (PARTITION BY session ORDER BY row_first) AS place
+            FROM (SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity, s._r_seq AS seq,
+                         c.replica AS creator, c.seq AS since, c.entity AS creator_entity,
+                         min(s._r_seq) OVER (PARTITION BY s._r_session, s.seat) AS value_first,
+                         min(s._r_seq) OVER (PARTITION BY s._r_session, s._r_entity) AS row_first
+                    FROM _dai_seat s
+                    JOIN _dai_creator c ON c.session = s._r_session AND c.replica = s._r_replica
+                   WHERE s._r_seq >= c.seq))
+   WHERE seq = value_first AND place <= ${maxParties};
 
 -- The creator's confirms of an open seat: her rows in her session, not of her
--- own seat, not at an id she signed twice. Deleted or not, superseded or not
--- (D171): a confirm is her statement that she seated a copy, and a hold never
--- moves once made, so a later version or a delete of one is another confirm.
--- Only of a seat she minted (R11): a confirm of any other seat seats nobody.
+-- own seat, not at an id she signed twice, not below her creator's seat row
+-- (R13). Deleted or not, superseded or not (D171): a confirm is her statement
+-- that she seated a copy, and a hold never moves once made, so a later version
+-- or a delete of one is another confirm. Only of a seat she minted (R11): a
+-- confirm of any other seat seats nobody. A confirm binds to the seat row
+-- (R12): one naming any value of the row is a confirm of that seat.
 CREATE VIEW IF NOT EXISTS _dai_confirmed AS
-  SELECT f._r_session AS session, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
+  SELECT f._r_session AS session, v.entity AS entity, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
     FROM _dai_confirm f
-    JOIN _dai_creator c ON c.session = f._r_session AND c.replica = f._r_replica
-   WHERE ${unequivocal("f")}
-     AND f.seat NOT IN (SELECT k.seat FROM _dai_creator k WHERE k.session = f._r_session)
-     AND EXISTS (SELECT 1 FROM _dai_minted m WHERE m.session = f._r_session AND m.seat = f.seat);
+    JOIN _dai_seat_value v ON v.session = f._r_session AND v.seat = f.seat AND v.creator = f._r_replica
+   WHERE ${unequivocal("f")} AND f._r_seq >= v.since AND v.entity <> v.creator_entity;
 
 -- The seats the creator confirmed to two different copies (D165): void, held by
--- nobody, on every copy holding both confirms, whichever arrived first.
+-- nobody, on every copy holding both confirms, whichever arrived first. The
+-- seat is the row (R12), so every value of it is void: a version of a held
+-- seat's row and a confirm of another copy in it is a second confirm of one
+-- seat, not a seat of its own.
 CREATE VIEW IF NOT EXISTS _dai_voided AS
-  SELECT DISTINCT f.session AS session, f.seat AS seat, f.creator AS creator
+  SELECT DISTINCT v.session AS session, v.seat AS seat, f.creator AS creator, v.entity AS entity
     FROM _dai_confirmed f
-   WHERE EXISTS (SELECT 1 FROM _dai_confirmed o WHERE o.session = f.session AND o.seat = f.seat AND o.holder <> f.holder);
+    JOIN _dai_seat_value v ON v.session = f.session AND v.entity = f.entity
+   WHERE EXISTS (SELECT 1 FROM _dai_confirmed o WHERE o.session = f.session AND o.entity = f.entity AND o.holder <> f.holder);
 
+-- Who holds each seat: the creator her seat row's value, and the one copy the
+-- counting confirms of a seat row name, under the values they name. A hold is
+-- the row's (R12), so a later version of a held row moves nothing: the seat
+-- keeps the value it was confirmed under, and a row for a value nobody was
+-- confirmed in (a reseat's old one) acts for nothing.
 CREATE VIEW IF NOT EXISTS _dai_holder AS
   SELECT c.session AS session, c.seat AS seat, c.replica AS replica, 0 AS since
     FROM _dai_creator c
   UNION
   SELECT f.session, f.seat, f.holder, min(f.seq)
     FROM _dai_confirmed f
-   WHERE NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = f.session AND v.seat = f.seat)
+   WHERE NOT EXISTS (SELECT 1 FROM _dai_voided x WHERE x.session = f.session AND x.entity = f.entity)
    GROUP BY f.session, f.seat, f.holder;
+
+-- The open seats the creator minted, each at its current value among her own
+-- versions in that session: a version another author wrote of her seat row is
+-- not hers, and neither is one in another session (D136). Not the creator's
+-- seat row, nor any version of its entity, nor a value that is not this row's
+-- seat (R12), nor a row past the bound (R11), nor a row below the creator's
+-- seat row (R13). A seat row with a counting confirm is at the values its
+-- confirms name instead: a later version of it moves nothing (R12).
+CREATE VIEW IF NOT EXISTS _dai_open_seat AS
+  SELECT s._r_session AS session, s.seat AS seat, s._r_entity AS entity
+    FROM _dai_seat s
+    JOIN _dai_seat_value v ON v.session = s._r_session AND v.seat = s.seat AND v.entity = s._r_entity AND v.creator = s._r_replica
+   WHERE s._r_entity <> v.creator_entity AND s._r_deleted = 0 AND ${unequivocal("s")} AND s._r_seq >= v.since
+     AND NOT EXISTS (SELECT 1 FROM _dai_confirmed k WHERE k.session = s._r_session AND k.entity = s._r_entity)
+     AND NOT EXISTS (SELECT 1 FROM _dai_seat n, json_each(${parentsSql("n._r_parents")}) p
+                      WHERE n._r_entity = s._r_entity AND n._r_replica = s._r_replica AND n._r_session = s._r_session
+                        AND ${unequivocal("n")} AND n._r_seq >= v.since
+                        AND p.value = lower(hex(s._r_replica)) || ':' || s._r_seq)
+  UNION ALL
+  SELECT DISTINCT session, seat, entity FROM _dai_confirmed;
 
 -- The seats nobody may be confirmed in until the creator repairs them: an open
 -- seat nobody holds that two or more copies asked for (voided 0: reseat is the

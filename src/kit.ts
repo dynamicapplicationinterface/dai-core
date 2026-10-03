@@ -608,12 +608,11 @@ function seats(session) {
     'SELECT lower(hex(s.seat)) AS seat, s.entity AS entity, lower(hex(h.replica)) AS holder FROM _dai_open_seat s ' +
     'LEFT JOIN _dai_holder h ON h.session = s.session AND h.seat = s.seat WHERE lower(hex(s.session)) = ?', [session]
   ).map(function (r) {
-    // The creator's own versions of this seat, in this session: a seat is the
-    // pair (session, seat), and a row of another session that reuses the seat
-    // row's id gives it no value here (D131).
+    // The values of this seat row, in this session (R12): a seat is its row,
+    // and a row of another session that reuses the seat row's id gives it no
+    // value here (D131), nor does a value another row named first.
     const values = db.selectObjects(
-      'SELECT DISTINCT lower(hex(v.seat)) AS v FROM _dai_seat v JOIN _dai_creator c ON c.session = v._r_session AND c.replica = v._r_replica ' +
-      'WHERE v._r_entity = ? AND lower(hex(v._r_session)) = ?', [r.entity, session]
+      'SELECT DISTINCT lower(hex(seat)) AS v FROM _dai_seat_value WHERE entity = ? AND lower(hex(session)) = ?', [r.entity, session]
     ).map(function (x) { return x.v; });
     return { seat: r.seat, holder: r.holder || null, creator: false, values: values };
   });

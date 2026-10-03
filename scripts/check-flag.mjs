@@ -47,8 +47,6 @@ const EXCEPTIONS = {
     "prose in a rule's reason, listing the columns replication adds",
   'src/rules.ts: flag: anchor: { file: "src/replicated.ts", contains: "_r_superseded INTEGER NOT NULL DEFAULT 0" },':
     "a rule's anchor, the text it pins in the column's declaration",
-  "src/kit.ts: raw-seat-table: 'SELECT DISTINCT lower(hex(v.seat)) AS v FROM _dai_seat v JOIN _dai_creator c ON c.session = v._r_session AND c.replica = v._r_replica ' +":
-    "every value the creator ever gave a seat, in its session: history the seat's rows may act for, not its current value",
   'src/runtime/bootloader.ts: raw-seat-table: : rows.all("SELECT 1 FROM _dai_seat WHERE _r_session = ? AND lower(hex(_r_replica)) = ? LIMIT 1", [session, me]).length > 0;':
     "the creator test for a document built before _dai_creator existed; a current document takes the view",
 };

@@ -290,23 +290,27 @@ class Admission:
         # creator, and is void (docs/format.md#session-void).
         self.creators: set[tuple[bytes, bytes, bytes, bytes]] = set()
         self.void_sessions: set[bytes] = set()
+        # The seq of each session's creator's seat row: the session exists from
+        # it (docs/format.md#session-from-creator-row).
+        self.creator_seq: dict[tuple[bytes, bytes], int] = {}
         for s in self.rows.get("_dai_seat", []):
             if s["_r_deleted"] == 0 and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
                 if bytes(s["_r_replica"]) in self.equivocators:
                     self.void_sessions.add(bytes(s["_r_session"]))
                 else:
                     self.creators.add((bytes(s["_r_session"]), bytes(s["_r_replica"]), bytes(s["seat"]), bytes(s["_r_entity"])))
-        creator_seats: dict[bytes, set[bytes]] = {}
-        for session, _replica, seat, _entity in self.creators:
-            creator_seats.setdefault(session, set()).add(seat)
+                    self.creator_seq[(bytes(s["_r_session"]), bytes(s["_r_replica"]))] = s["_r_seq"]
+        creator_entity = {session: entity for session, _replica, _seat, entity in self.creators}
         self.creator_of = {(session, replica) for session, replica, _seat, _entity in self.creators}
 
-        # The seats she minted: her seat rows in her session (each an entity,
-        # at the lowest seq of hers in it, deleted or not), the first
-        # MAX_PARTIES in that order, and every seat any version of one of them
-        # names (docs/format.md#confirm-minted).
+        # Her seat rows: her seat entities in her session, each at the lowest
+        # seq of hers in it at or above her creator's seat row, deleted or not;
+        # the first MAX_PARTIES in that order mint (docs/format.md#confirm-minted).
+        # A seat is a seat row (docs/format.md#seat-is-row): each value belongs
+        # to the row whose version named it first, in her seq order, and is a
+        # seat when that row mints.
         first: dict[tuple[bytes, bytes], int] = {}
-        mine = [s for s in self.rows.get("_dai_seat", []) if (bytes(s["_r_session"]), bytes(s["_r_replica"])) in self.creator_of]
+        mine = [s for s in self.rows.get("_dai_seat", []) if self.of_creator_session(s)]
         for s in mine:
             key = (bytes(s["_r_session"]), bytes(s["_r_entity"]))
             first[key] = min(first.get(key, s["_r_seq"]), s["_r_seq"])
@@ -315,29 +319,39 @@ class Admission:
             for (session, entity), seq in first.items()
             if sum(1 for (other, _entity), at in first.items() if other == session and at < seq) < MAX_PARTIES
         }
-        self.minted = {(bytes(s["_r_session"]), bytes(s["seat"])) for s in mine if (bytes(s["_r_session"]), bytes(s["_r_entity"])) in minting}
+        named_first: dict[tuple[bytes, bytes], tuple[int, bytes]] = {}
+        for s in mine:
+            key = (bytes(s["_r_session"]), bytes(s["seat"]))
+            if key not in named_first or s["_r_seq"] < named_first[key][0]:
+                named_first[key] = (s["_r_seq"], bytes(s["_r_entity"]))
+        # (session, value) -> the seat row it is a seat of.
+        self.seat_row = {key: entity for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}
 
-        # Her confirms of an open seat she minted; one per seat, or the seat is
-        # void (D165). Deleted or not, superseded or not: a hold never moves once
-        # made, so a delete of a confirm is another confirm (D171).
+        # Her confirms of an open seat she minted, each bound to its seat row;
+        # one holder per row, or the seat is void (D165). Deleted or not,
+        # superseded or not: a hold never moves once made, so a delete of a
+        # confirm is another confirm (D171).
         confirmed = []
         for f in self.rows.get("_dai_confirm", []):
             session = bytes(f["_r_session"])
-            if (
-                self.unequivocal(f)
-                and (session, bytes(f["_r_replica"])) in self.creator_of
-                and bytes(f["seat"]) not in creator_seats.get(session, set())
-                and (session, bytes(f["seat"])) in self.minted
-            ):
-                confirmed.append((session, bytes(f["seat"]), bytes(f["holder"]), bytes(f["_r_replica"])))
-        self.voided = {
-            (session, seat, creator)
-            for session, seat, holder, creator in confirmed
-            if any(o[0] == session and o[1] == seat and o[2] != holder for o in confirmed)
+            row = self.seat_row.get((session, bytes(f["seat"])))
+            if self.unequivocal(f) and self.of_creator_session(f) and row is not None and row != creator_entity[session]:
+                confirmed.append((session, row, bytes(f["holder"]), bytes(f["_r_replica"]), f["_r_seq"], bytes(f["seat"])))
+        self.counting_confirms = {(session, creator, seq): row for session, row, _holder, creator, seq, _value in confirmed}
+        self.voided_rows = {
+            (session, row, creator)
+            for session, row, holder, creator, _seq, _value in confirmed
+            if any(o[0] == session and o[1] == row and o[2] != holder for o in confirmed)
         }
-        void_seats = {(session, seat) for session, seat, _creator in self.voided}
+        void_rows = {(session, row) for session, row, _creator in self.voided_rows}
+        values_of: dict[tuple[bytes, bytes], set[bytes]] = {}
+        for (session, value), row in self.seat_row.items():
+            values_of.setdefault((session, row), set()).add(value)
+        self.voided = {(session, value, creator) for session, row, creator in self.voided_rows for value in values_of[(session, row)]}
         self.holders = {(session, seat, replica) for session, replica, seat, _entity in self.creators}
-        self.holders |= {(session, seat, holder) for session, seat, holder, _c in confirmed if (session, seat) not in void_seats}
+        # The holder holds the seat under the values its confirms name: a later
+        # version of a held row moves nothing (docs/format.md#held-row-frozen).
+        self.holders |= {(session, value, holder) for session, row, holder, _c, _seq, value in confirmed if (session, row) not in void_rows}
         self.members = {(session, replica) for session, _seat, replica in self.holders}
 
         # A close counts when a member wrote it and it is not a delete (the
@@ -354,9 +368,20 @@ class Admission:
     def unequivocal(self, row: dict) -> bool:
         return (bytes(row["_r_replica"]), row["_r_seq"]) not in self.equivocated_at
 
+    def before_session(self, row: dict) -> bool:
+        """A creator's row in her session below her creator's seat row: it counts for
+        nothing there (docs/format.md#session-from-creator-row)."""
+        at = self.creator_seq.get((bytes(row["_r_session"]), bytes(row["_r_replica"])))
+        return at is not None and row["_r_seq"] < at
+
+    def of_creator_session(self, row: dict) -> bool:
+        """A row of the session's creator in her session, from her creator's seat row on."""
+        return (bytes(row["_r_session"]), bytes(row["_r_replica"])) in self.creator_seq and not self.before_session(row)
+
     def counts(self, row: dict) -> bool:
-        """A roster or close row counts for something: its author is no equivocator."""
-        return bytes(row["_r_replica"]) not in self.equivocators
+        """A roster or close row counts for something: its author is no equivocator,
+        and it is not a creator's row below her creator's seat row."""
+        return bytes(row["_r_replica"]) not in self.equivocators and not self.before_session(row)
 
     def void(self, row: dict) -> bool:
         """A row of a void session: neither admitted nor reported."""
@@ -623,7 +648,7 @@ def merge(
     # The seats void before anything arrives: a merge reports only the seats it
     # makes void (D165).
     session = is_session(local)
-    voided_before = {(s, seat) for s, seat, _c in Admission(local, tables).voided} if session else set()
+    voided_before = {(s, row) for s, row, _c in Admission(local, tables).voided_rows} if session else set()
 
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
@@ -915,8 +940,10 @@ def merge(
         # and the session's creator's seat row, not deleted and not at an
         # equivocated id (docs/format.md#revealing-two-confirms). None taken:
         # filed under no id.
-        for s, seat, creator in admission.voided:
-            if (s, seat) in voided_before:
+        # The seat is its row (docs/format.md#seat-is-row): its counting confirms
+        # are those bound to the row, whatever value each names.
+        for s, seat_row, creator in admission.voided_rows:
+            if (s, seat_row) in voided_before:
                 continue
             resting = [
                 row
@@ -926,7 +953,7 @@ def merge(
                 and bytes(row["_r_replica"]) == creator
                 and (bytes(row["_r_replica"]), row["_r_seq"]) not in admission.equivocated_at
                 and (
-                    (table == "_dai_confirm" and bytes(row["columns"]["seat"]) == seat)
+                    (table == "_dai_confirm" and admission.counting_confirms.get((s, creator, row["_r_seq"])) == seat_row)
                     or (
                         table == "_dai_seat"
                         and row["_r_deleted"] == 0

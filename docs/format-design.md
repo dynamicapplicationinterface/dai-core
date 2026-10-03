@@ -568,6 +568,53 @@ and it is still the second seat.
 **Rejected.** A confirm of any seat: the signed bound is enforced nowhere, and
 a session declared for two holds as many parties as its creator confirms.
 
+A seat is a seat row
+--------------------
+
+*2 October, R12.* Rule: [seat is a row](format.md#seat-is-row),
+[a held row is frozen](format.md#held-row-frozen).
+
+**Problem.** Under R11 a minting row minted every value its versions named,
+and a hold was a value's. After the creator confirmed one copy in the open
+seat, she wrote a version of the open seat's row naming a fresh value and
+confirmed another copy in it: two confirms, two values, two holders, and
+three parties seated in a two-party session, without equivocating.
+
+**Rule.** A seat is a seat row (an entity). A confirm binds to the row: each
+value belongs to the row whose version named it first, in the creator's seq
+order, and a confirm naming any value of a row is a confirm of that seat. Once
+a row has a counting confirm it is held, and its later versions mint nothing
+and move nothing; a confirm naming a later version's value is a second confirm
+of the same seat, so another holder voids it (D165). The holder holds the seat
+under the values its confirms name, so a later version of a held row does not
+move the seat to its new value. A version of a row nobody holds is a reseat,
+the same seat under a fresh value; a row for the old value, never confirmed,
+acts for nothing.
+
+**Rejected.** A seat by its value: a held seat's row can be versioned to a
+fresh value and the fresh value confirmed to someone else, so a held seat is
+reminted under another value, and the bound and the hold that never moves
+both fall to a version of a row.
+
+A session exists from its creator's seat row
+--------------------------------------------
+
+*2 October, R13.* Rule:
+[session from the creator's row](format.md#session-from-creator-row),
+[minted](format.md#confirm-minted).
+
+**Problem.** The session id is computable before the creator's seat row
+exists. A creator could skip a seq, write her creator's seat row above it,
+and later sign at the skipped seq a seat row in the session. In seq order it
+came first, so the open seat's row fell past `max_parties`, the confirm of the
+copy holding it stopped counting, and the hold went to nobody with nothing
+reported.
+
+**Rule.** A session exists from its creator's seat row. A roster or close row
+of the creator's in her session below that row's seq counts for nothing
+there, and the seats she mints are counted in seq order from it. An honest
+writer never writes in a session before it exists.
+
 Reasons given inline
 --------------------
 

@@ -1,0 +1,24 @@
+{
+  "what": "Ada skips two seqs before her creator's seat row, so the session id is hers to compute before the row exists. Bo is confirmed in the open seat and moves. Then she signs, at the two skipped seqs below her creator's seat row, a seat row in the session naming a third seat and a confirm of Cy in the open seat. A session exists from its creator's seat row: a creator's roster row below it counts for nothing in that session, and minted seats are counted in seq order from it. The open seat stays minted, Bo holds it, his move is admitted, nothing is voided and nothing is reported (R13). Counted from below, the third seat came first and the open seat fell past max_parties=2, so Bo's hold went to nobody with nothing reported (the R10 and R11 handoff's finding).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}
