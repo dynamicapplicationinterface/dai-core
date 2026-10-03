@@ -4797,6 +4797,30 @@ apt mirror is slow (three runs on 30 September); caching the browser and its
 deps is the fix, for the CI session that reads D174. Until then the 25-minute
 wall is on the `npm test` step, and the job has 45.
 
+**3 October: the crossed invites given a budget of their own (a stopgap, not
+this fix).** The four crossed-invite tests failed the gate in four of the five
+runs from `3eaee4c` to `6696fda` (the WebKit mailbox job in all four, Chromium
+in `a7c8146` and `6696fda`). `7bcbfe1` passed them with the same runtime and
+tests as `a7c8146` and `6696fda`, which change only docs and the Rust reader.
+Every failure, on CI and locally on all three engines, was the describe's
+90-second test timeout cutting a test off mid-step; none was a move that
+failed to arrive. Each test joins two games, so it pays the seat's relay
+round trip twice: the name dialog alone waited 12 and 16 s in the CI traces.
+Alone they take about 60 s locally. CI runners varied 1.5 times from one run
+to the next (88 Chromium tests compared, `7bcbfe1` against `6696fda`), which
+took them from 53 s to past 90. Locally, four workers failed them 77 of 80 on
+Chromium and 40 of 40 on WebKit (`1486`), and `a19fce6`, before R12 and R13,
+failed them the same way (16 of 20), so the views did not cause it.
+
+The tests now set `test.setTimeout(240_000)`, and `nameIfAsked` takes a
+`within` that these tests set to 60 s. A dialog that opened after the old
+20 s window went unanswered, and its modal then covered the board (seen in a
+local trace). With both: Chromium, four workers, 20 of 20 (55 s to 2.8 min);
+WebKit, two workers as in CI, 20 of 20 (1.4 to 1.8 min). WebKit at four
+workers still failed 8 of 20, stuck opening a document with eight WebKit
+contexts busy, a shape CI does not run. The fix above still stands: the
+waits are the cost, and the mailbox job runs close to its wall either way.
+
 #### D173 — A file the shell writes itself leaves the device without raising the left floor
 
 *Status: **landed** 30 September: `6b447a1`, run 36754861434 read green on
@@ -4821,7 +4845,8 @@ downloads the frame's bytes, and a sign over the move's seq is refused.
 
 #### D172 — On Firefox, `mount-order:194` fails on both tries
 
-*Status: open, filed 29 September from CI; not reproduced locally, not read.
+*Status: open, filed 29 September from CI; reproduced and read 3 October
+(below): a Playwright frame-tracking hang on Firefox, not a host defect.
 Firefox is a reading (D32), so it is not red on the gate. Failed on both
 tries in three of the five runs that have reached it (the third: `4ddb2c8`,
 run 36575643417, whose Firefox job was then cancelled); passed in
@@ -4838,6 +4863,37 @@ job hit its 25-minute limit and was cancelled with no tally. The hold in
 that test is the host's reseal SHA-256, taken by byte length; whether
 Firefox reaches that `crypto.subtle.digest` with the same length, or at all,
 is the first thing to read from its trace.
+
+**Read, 3 October: the stall is Playwright's frame tree on Firefox, not the
+host.** Reproduced locally: 16 of 20 failed (`--repeat-each=20`, four
+workers, `6696fda`), every one at the test timeout. CI on the same day: failed
+on both tries in six of the last nine Firefox runs (`fa2baf8` through
+`6696fda`), passed in `020fc6b`, `7bcbfe1` and `a7c8146` in 10 to 13 s.
+
+The hold works: the save is held inside its reseal, the forger's handshake is
+held, the save is written on release, the handshake is replayed. The trace
+then shows the Forger's shell mounted and its app frame saying `ready`. The
+test's next step, `expect(app(page).locator("#out")).toHaveText("ready")`
+through `#cartridge` and `#dai-app`, never resolves, and **never returns**:
+given a 15 s timeout it was still pending at the 90 s wall. A probe (a copy
+of the test, not committed) raced that expect against a 25 s timer and then
+asked both sides what the frame holds. In the two of six runs where the
+expect hung, `page.evaluate` saw one `#cartridge` holding the Forger's new
+shell (blob `c5703560…`, title "Forger", one app frame), while Playwright's
+`page.frames()` still listed the *previous* shell's blob (`375febd5…`) under
+the page. Its Firefox driver never registered the cartridge frame's navigation
+to the new shell, so every locator through it waits on a frame that is gone.
+In the four runs where the expect resolved, the two lists agreed.
+
+So the host mounted the right document. What the test asks next (does the
+forger get a header signed?) is untested on Firefox whenever this happens.
+**Not fixable inside the test:** the app frame is sandboxed, so the page
+cannot read `#out` either, and every route to it is the frame tree that went
+stale. Options for whoever takes it: report it upstream with this repro, or
+skip this one test on Firefox by name (the playwright#34450 pattern in
+`tests/offline.ts`), leaving it on Chromium and WebKit where it discriminates.
+Which is Chris's call. Firefox is a reading (D32), so the gate is not red
+from it. The trace and the probe's output are kept outside the repo.
 
 #### D171 — The reference readers compute none of what batch format version 2 changed after the signature
 

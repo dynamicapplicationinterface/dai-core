@@ -1403,10 +1403,16 @@ test.describe("a game continues over a shared link (the key path)", () => {
     }).toPass({ timeout: 30_000 });
   }
 
-  /** A copy that took an open seat is asked to name itself, once. */
-  async function nameIfAsked(page: Page, name: string, inviter?: string): Promise<void> {
+  /**
+   * A copy that took an open seat is asked to name itself, once.
+   *
+   * The dialog opens when the seat is confirmed, a round trip over the relay.
+   * A caller that knows it will open passes a longer `within`: a dialog that
+   * opens after the wait is never answered, and its modal then covers the board.
+   */
+  async function nameIfAsked(page: Page, name: string, inviter?: string, within = 20_000): Promise<void> {
     const dialog = app(page).locator("#name-dialog");
-    if (await dialog.waitFor({ state: "visible", timeout: 20_000 }).then(() => true, () => false)) {
+    if (await dialog.waitFor({ state: "visible", timeout: within }).then(() => true, () => false)) {
       // Who invited is the other player, never this one (D65: both were once "Ada").
       if (inviter) await expect(app(page).locator("#name-detail")).toContainText(`${inviter} invited you`);
       await app(page).locator("#my-name").fill(name);
@@ -1482,8 +1488,21 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await deviceB.close();
   });
 
+  /*
+   * The crossed invites make two games and join each, so they pay the seat's
+   * relay round trip twice. Alone they take about 60 s; on a CI runner 53 s to
+   * past 90 s from one run to the next on the same code, and under four local
+   * workers past 90 s in 77 runs of 80, so the describe's 90 s cut them off mid-step
+   * (3 October: 6696fda and a19fce6 alike). Given their own budget, four
+   * workers passed 20 of 20 in 55 s to 2.8 min, the longest when all four
+   * start at once. D174 is cutting the waits; until then the budget is theirs.
+   */
+  const CROSSED_BUDGET = 240_000;
+  const CROSSED_NAME_WAIT = 60_000;
+
   for (const withData of [false, true]) {
   test(`both invite before either opens, and each game still reaches the other copy${withData ? " (with data)" : ""}`, async ({ browser }) => {
+    test.setTimeout(CROSSED_BUDGET);
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1506,13 +1525,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB);
-    await nameIfAsked(pageB, "Bo", "Ada");
+    await nameIfAsked(pageB, "Bo", "Ada", CROSSED_NAME_WAIT);
 
     await pageA.goto(linkFromB);
     await pageA.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageA);
-    await nameIfAsked(pageA, "Ada", "Bo");
+    await nameIfAsked(pageA, "Ada", "Bo", CROSSED_NAME_WAIT);
 
     // B replies in A's game, and A replies in B's. Both must arrive: the failure
     // this guards is both of them looking healthy and neither hearing anything.
@@ -1536,6 +1555,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   test(`the same crossed invites in the other opening order reach each other too${withData ? " (with data)" : ""}`, async ({ browser }) => {
+    test.setTimeout(CROSSED_BUDGET);
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1556,13 +1576,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await pageA.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageA).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageA);
-    await nameIfAsked(pageA, "Ada", "Bo");
+    await nameIfAsked(pageA, "Ada", "Bo", CROSSED_NAME_WAIT);
 
     await pageB.goto(linkFromA);
     await pageB.locator("#card-open").click({ timeout: 60_000 });
     await expect(app(pageB).locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB);
-    await nameIfAsked(pageB, "Bo", "Ada");
+    await nameIfAsked(pageB, "Bo", "Ada", CROSSED_NAME_WAIT);
 
     await firstMailboxMerge(pageA);
     await play(app(pageA), "e7", "e5");
