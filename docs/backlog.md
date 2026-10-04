@@ -4448,6 +4448,21 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D188 — The contested-invite e2e test fails half its runs on Chromium locally
+
+*Status: open. Filed 4 October, from the host session's CI reading.*
+
+`tests/mailbox-link-e2e.spec.ts:1111` (a forwarded invite contests the seat,
+the kit starts a new session) failed its first try in CI run 37206902948 on
+Chromium and passed its retry; it had passed first time on the two runs
+before. Locally, Chromium, `--retries=0 --repeat-each=10`: 5 of 10 failed at
+`46bc1b4d` and 6 of 10 at `96554987`, before the host session, every failure
+the same: "the joiner is still waiting to be seated" (`expect(seen.waiting)`
+0, got 1) when its 30-second `toPass` runs out. So it is older than H5 to H7,
+and not a CI draw. Not read further: whether the joiner's ask in the new
+session is never confirmed, or confirmed after 30 seconds, is the first
+question (a trace of one failure answers it).
+
 #### D187 — A first merge into a copy that arrived put its library record behind the tab
 
 *Status: closed 4 October. Found and fixed in the R14 to R20 step.*
