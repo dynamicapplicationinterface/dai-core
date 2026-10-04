@@ -1249,7 +1249,10 @@ test.describe("a game continues over a shared link (the key path)", () => {
 
     // B opens the new invite on a fresh page — a deliberate open, so join runs on
     // init and B takes the new game's open seat. C, which never opens it, never
-    // enters the new game (T1-D34).
+    // enters the new game (T1-D34). B's old tab is closed first: left open, it
+    // saved its copy just after the new tab read it, so the new tab, written
+    // past by another tab, signed nothing (D105) and B's ask never left (D188).
+    await pageB.close();
     const pageB2 = await deviceB.newPage();
     await pageB2.goto(link2);
     // The new invite is a newer copy of a document this device holds, so it

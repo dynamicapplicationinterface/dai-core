@@ -4450,7 +4450,8 @@ finds no write control on screen.
 
 #### D188 — The contested-invite e2e test fails half its runs on Chromium locally
 
-*Status: open. Filed 4 October, from the host session's CI reading.*
+*Status: the test fixed 4 October (the cause below); one product question open
+(the last paragraph). Filed 4 October, from the host session's CI reading.*
 
 `tests/mailbox-link-e2e.spec.ts:1111` (a forwarded invite contests the seat,
 the kit starts a new session) failed its first try in CI run 37206902948 on
@@ -4462,6 +4463,48 @@ the same: "the joiner is still waiting to be seated" (`expect(seen.waiting)`
 and not a CI draw. Not read further: whether the joiner's ask in the new
 session is never confirmed, or confirmed after 30 seconds, is the first
 question (a trace of one failure answers it).
+
+**Counts.** Chromium, `--retries=0 --repeat-each=10`, each commit built in its
+own worktree: `d894d1f2` (before R14, the creator's reseat) 0 of 10 failed;
+`96554987` (after R14 to R20) 8 of 10; `18e570d4` 5 of 10. Every failure the
+same line. So it came in with R14, but not in R14's repair.
+
+**Where the joiner stops.** A probe in `letIn` read both copies on every poll
+(two failures, 21 and 24 polls). The joiner's copy learns the new session
+(it is in `games_current`, with its open seat), and its binding lands in the
+new session on its own copy. The creator's copy never holds that binding
+(`_dai_binding_current` empty for the new session), so nothing names the new
+session in a confirm, because no ask ever arrives. The ask never left B: in
+both traces B's new tab opened the lane for the new session and never
+published on it. Device B's console, the first failure:
+
+    42605 pageB2  stored database read from OPFS
+    43017 pageB2  reopen mounted the stored database
+    43074 pageB   save 7 asked          (the old tab, still open)
+    43398 pageB   save 7 written
+    46507 pageB2  seal failed at 3fdebd3a8388: This document was written from
+                  another tab since it was opened here, so this change was not signed.
+
+The second failure is the same order, with the old tab's save asked 10 ms
+after the new tab mounted. The test opened the new invite in a second tab of
+device B while the first was still open; the old tab wrote the stored copy
+after the new one read it, so by D105 the new tab signs nothing, and B's ask
+in the new session is held on its own copy for good. In the passing runs the
+old tab's last save landed before the new tab read the copy. Why R14 made it
+common is a reading, not measured: the old flow had steps between the old
+tab's last pull and the new invite (the repair click, the wait for the fresh
+seat to reach C) that the new flow does not.
+
+**Fix (in the test).** B's old tab is closed before the new invite opens: 20
+of 20 at `18e570d4` with the fix.
+
+**Open: why the old tab saves when the new tab mounts.** In both traces the
+old tab's save was asked 57 ms and 10 ms after the new tab's mount, with no
+action of the test's on the old tab between. If the mount provokes that save,
+then a person who opens a new invite while an older tab of the document is
+open gets a new tab that, by D105, signs nothing: the older tab keeps the
+floor. Not read: what asks that save, and whether the tab a person just opened
+should be the one that keeps writing.
 
 #### D187 — A first merge into a copy that arrived put its library record behind the tab
 
