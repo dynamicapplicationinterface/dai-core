@@ -1451,11 +1451,19 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       const verdicts = await merge.verifyBatches(rows(sibling), merge.mergeTablesOf(rows(sibling)), mountDocument);
       liveDb.exec("BEGIN");
       try {
+        // The two signed-view digests when the shell relayed them: this
+        // document's and the sibling's. The merge refuses the sibling whole
+        // when they differ (SIGNED_VIEW_MISMATCH, R16).
+        const views =
+          request.views && typeof request.views.local === "string" && typeof request.views.sibling === "string"
+            ? { local: request.views.local, sibling: request.views.sibling }
+            : undefined;
         const report = merge.mergeVerified(rows(liveDb), rows(sibling), {
           level: request.level || 1,
           document: mountDocument,
           author: mountReplica ?? undefined,
           verdicts,
+          ...(views ? { views } : {}),
         });
         if (report.refused) {
           // Nothing was written. Rolled back rather than assumed: a refusal
@@ -3516,6 +3524,16 @@ async function boot(): Promise<void> {
   // From here on a refusal can name the document it refused.
   refusalUuid = manifest?.documentUuid ?? null;
 
+  // This document's signed-view digest, SHA-256 of its manifest's signed bytes
+  // (docs/format.md, `document-mismatch`): what the frame's merge holds a
+  // sibling's to (R16). Null with no manifest, when no sibling's is compared.
+  const ownView: Promise<string | null> = manifest
+    ? crypto.subtle
+        .digest("SHA-256", signedBytes(signedViewOf(manifest)) as unknown as BufferSource)
+        .then((digest) => Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join(""))
+        .catch(() => null)
+    : Promise.resolve(null);
+
   if (policy === "required") {
     // A required policy with no manifest is a stripped seal, not an unsealed
     // container: refuse rather than fall back to trusting the payload.
@@ -3820,7 +3838,7 @@ async function boot(): Promise<void> {
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.MERGE) {
       const request = event.data as {
         id?: string;
-        payload?: { databaseBytes?: unknown; mergeSource?: unknown; level?: unknown };
+        payload?: { databaseBytes?: unknown; mergeSource?: unknown; level?: unknown; view?: unknown };
       };
       const payload = request.payload ?? {};
       const message = {
@@ -3830,7 +3848,12 @@ async function boot(): Promise<void> {
         mergeSource: payload.mergeSource,
         level: payload.level,
       };
-      toFrame(message);
+      // The sibling's signed-view digest, from the host, beside this document's
+      // own, from the manifest this shell checked: the frame's merge refuses a
+      // sibling whose digest differs (R16). Resolved long before any merge, so
+      // the relay keeps the order messages arrived in.
+      const sibling = typeof payload.view === "string" ? payload.view : null;
+      void ownView.then((local) => toFrame(sibling && local ? { ...message, views: { local, sibling } } : message));
       return;
     }
     // The host's signature for a batch header, or why it would not sign.

@@ -30,7 +30,7 @@ import { verifyIdentity } from "../../../src/publisher-identity.js";
 const STANDING_LINE = "Send an app like you send a document.";
 import { applicationFiles, authoredFiles, hostShell } from "../../../src/container.js";
 import { writeBundle } from "../../../src/bundle.js";
-import { SCHEMA_ENTRY } from "../../../src/core.js";
+import { SCHEMA_ENTRY, sha256Hex, signedBytes, signedViewOf } from "../../../src/core.js";
 // The shell this host runs, shipped with this host: never the container's own.
 import HOST_TEMPLATE from "../../../dist/template.html?raw";
 import HOST_RUNTIME from "../../../dist/dai-runtime.js?raw";
@@ -2174,7 +2174,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
       markStep("merging by standing consent");
       if (mountedNonce) {
         // A document is already open: merge the arriving copy straight into it.
-        const report = await mergeSiblingInto(incomingData);
+        const report = await mergeSiblingInto(incomingData, 1, await signedViewDigest(cartridge.manifest));
         slot.classList.remove("busy");
         // A line, not a card: it says what happened and interrupts nothing,
         // over the document it merged into (D169).
@@ -2186,7 +2186,7 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         // and fold the arriving one in once it is up, silently, as the
         // standing choice asks.
         slot.classList.remove("busy");
-        await openThenMerge(heldHere, incomingData, false);
+        await openThenMerge(heldHere, incomingData, false, await signedViewDigest(cartridge.manifest));
         return;
       }
     }
@@ -2307,10 +2307,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
               // the standing choice once it lands. See openThenMerge.
               if (!mountedNonce && heldHere) {
                 hideCard();
-                await openThenMerge(heldHere, incomingData, true);
+                await openThenMerge(heldHere, incomingData, true, await signedViewDigest(cartridge.manifest));
                 return;
               }
-              const report = await mergeSiblingInto(incomingData);
+              const report = await mergeSiblingInto(incomingData, 1, await signedViewDigest(cartridge.manifest));
               hideCard();
               // Into the document open under the card, so said over it (D169).
               if (mountedNonce) tellOverDocument(describeMerge(report), Boolean(report.refused));
@@ -3953,15 +3953,16 @@ async function loadMergeModule(): Promise<string> {
  * device's copy is opened and the arriving one is remembered here; the merge
  * is applied from the handshake, once there is a frame to merge into.
  */
-let pendingMerge: { data: Uint8Array; heldItem: LibraryItem; recordStanding: boolean } | null = null;
+let pendingMerge: { data: Uint8Array; heldItem: LibraryItem; recordStanding: boolean; view?: string } | null = null;
 
-/** Open this device's copy, then merge the arriving sibling into it. */
+/** Open this device's copy, then merge the arriving sibling into it (`view`: its signed-view digest, when known). */
 async function openThenMerge(
   heldItem: LibraryItem,
   data: Uint8Array,
   recordStanding: boolean,
+  view?: string,
 ): Promise<void> {
-  pendingMerge = { data, heldItem, recordStanding };
+  pendingMerge = { data, heldItem, recordStanding, ...(view ? { view } : {}) };
   await launchFromLibrary(heldItem, "a copy already here, with an arriving move to merge");
 }
 
@@ -3983,7 +3984,7 @@ async function applyPendingMerge(): Promise<void> {
   for (;;) {
     // Ended by the person: nothing more is asked of the frame.
     if (mergeCancelled) return;
-    const report = await mergeSiblingInto(job.data);
+    const report = await mergeSiblingInto(job.data, 1, job.view);
     // Permanent, on purpose: a merge folded in after a cold launch has no other
     // trace, and "it did not land" looked exactly like "nothing to merge".
     console.info(
@@ -4095,7 +4096,31 @@ function tellOverDocument(sentence: string, isError = false): void {
   note.hidden = sentence === "";
 }
 
-async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<MergeReport> {
+/** A manifest's signed-view digest: SHA-256 of its signed bytes, lowercase hex (docs/format.md, `document-mismatch`). */
+function signedViewDigest(manifest: Parameters<typeof signedViewOf>[0]): Promise<string> {
+  return sha256Hex(signedBytes(signedViewOf(manifest)));
+}
+
+/**
+ * Merges a sibling's database into the open document, `siblingView` being
+ * the signed-view digest of the manifest the sibling arrived under. Two copies
+ * built from two signed manifests of one document are two builds, which may
+ * declare another bound on the parties or other tables, so their rows are
+ * not merged (R16): refused here, before the frame is asked, when the open
+ * document's digest differs; and the frame's merge is given the sibling's
+ * digest to hold its own document's to, so it refuses the same.
+ */
+async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1, siblingView?: string): Promise<MergeReport> {
+  const open = mountNow?.cartridge.manifest ?? loaded?.manifest;
+  if (siblingView !== undefined && open && (await signedViewDigest(open)) !== siblingView) {
+    console.info("dai: a sibling built from another signed manifest was not merged (SIGNED_VIEW_MISMATCH)");
+    return { applied: 0, duplicate: 0, rejected: [], newReplicas: 0, refusedBatches: [], conflicts: 0, refused: "SIGNED_VIEW_MISMATCH" };
+  }
+  return frameMerge(databaseBytes, level, siblingView);
+}
+
+/** The frame's merge of a sibling's database, given the sibling's signed-view digest when the host knows it. */
+async function frameMerge(databaseBytes: Uint8Array, level: number, siblingView?: string): Promise<MergeReport> {
   const target = cartridgeFrame.contentWindow;
   const refused = (why: string): MergeReport => ({
     applied: 0,
@@ -4144,7 +4169,7 @@ async function mergeSiblingInto(databaseBytes: Uint8Array, level = 1): Promise<M
     };
     window.addEventListener("message", onResult);
     target.postMessage(
-      { type: TO_DOCUMENT.MERGE, id, payload: { databaseBytes, mergeSource: source, level } },
+      { type: TO_DOCUMENT.MERGE, id, payload: { databaseBytes, mergeSource: source, level, ...(siblingView ? { view: siblingView } : {}) } },
       "*",
     );
   });
@@ -5900,6 +5925,14 @@ Object.defineProperty(window, "__runner", {
       const held = (await listCartridgesFromLibrary()).find((item) => item.documentUuid === uuid);
       if (!held) throw new Error("not held here");
       await openThenMerge(held, new Uint8Array(bytes), false);
+    },
+    // The frame's own merge, past the host's check, given the signed-view
+    // digest a sibling arrived under and said over the document as a merge is:
+    // how a test sees the frame hold its own document's digest to it (R16).
+    mergeInFrame: async (bytes: number[], view: string): Promise<MergeReport> => {
+      const report = await frameMerge(new Uint8Array(bytes), 1, view);
+      tellOverDocument(describeMerge(report), Boolean(report.refused));
+      return report;
     },
     // The launch fail-safe arms inside iOS-only launch paths a desktop test
     // cannot enter (the service worker injects the launching class; the

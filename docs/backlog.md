@@ -4493,9 +4493,10 @@ one author, which a client that fills a skipped seq reorders. **Fix (R18):** a
 close that counts and any row of its author in that session at a higher seq are
 equivocation, reported `AUTHOR_EQUIVOCATED`; the author holds no seat and none
 of his rows is admitted (R17). `late` and `admitted-not-late` retired. Vectors
-`session-close-skipped-seq`, `session-close-deleted`. The runtime's refusal of
-an author's own writes in a session after his close, so an honest app never
-makes its user an equivocator, is the host session's (not built).
+`session-close-skipped-seq`, `session-close-deleted`. The runtime refuses an
+author's own writes in a session after his counting close (`SESSION_CLOSED`,
+4 October, `tests/closed-writes.spec.ts`), so an honest app never makes its
+user an equivocator.
 
 #### D184 — The session profile is in no row, header or file a reader reads
 
@@ -4510,8 +4511,10 @@ each fixture carries `manifest.json` beside it, per copy, with the signed-view
 digest and the session profile, and the Python reader reads it (the Rust
 reader's blind level is next); a merge refuses whole
 a sibling whose signed-view digest differs (`SIGNED_VIEW_MISMATCH`, R16).
-Vectors `session-three-parties`, `merge-signed-view-mismatch`. What the host
-hands the frame's merge as the two digests is the host session's (not built).
+Vectors `session-three-parties`, `merge-signed-view-mismatch`. Since 4 October
+the host refuses such a sibling before asking the frame, and the frame's merge
+is given the sibling's digest beside its own document's (the shell's, from the
+manifest it checked) and refuses it too (`tests/merge-signed-view.spec.ts`).
 
 #### D181 — The document's code obtains two signatures over one seq above the floor
 
