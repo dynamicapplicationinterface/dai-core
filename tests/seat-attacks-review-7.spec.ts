@@ -43,7 +43,7 @@ CREATE TABLE moves (
 type Copy = Rows & { close(): void };
 function openGameWith(close: "any" | "creator", extra = ""): Copy {
   const db = new DatabaseSync(":memory:");
-  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (a, n) => sessionIdOf(a, n));
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (a, n, seat, seats, close) => sessionIdOf(a, n, seat, seats, close));
   db.exec(rewriteReplicated(GAME_SCHEMA.replace("close=any", `close=${close}`) + extra).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -117,7 +117,7 @@ async function playedGame(ada: Person, bo: Person, close: "any" | "creator" = "a
   const creatorSeat = rnd();
   const openSeat = rnd();
   const seatEntities: [Uint8Array, Uint8Array] = [rnd(), rnd()];
-  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: seatEntities });
+  const session = startSession(adaCopy, { creatorSeat, openSeats: [openSeat], close, entity: seatEntities[0] });
   createEntity(adaCopy, "games", rnd(), { title: "Ada v Bo" }, session);
   await seal(adaCopy, ada);
   const boCopy = openGameWith(close, extra);
@@ -172,7 +172,7 @@ async function confirmedAfterAGap(ada: Person, bo: Person) {
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeats: [openSeat], close: "any", entity: rnd() });
   await seal(adaCopy, ada);
   const boCopy = openGameWith("any");
   ensureReplica(boCopy, bo.author);
@@ -259,7 +259,7 @@ test("holds (D165): two confirms of one seat naming the same copy claim nothing 
   g.close();
 });
 
-test("holds (D165): a seat two copies asked for and nobody was confirmed in is contested, not voided, so reseat is its repair", async () => {
+test("holds (D165): a seat two copies asked for and nobody was confirmed in is contested, not voided, so a new session is its repair", async () => {
   const ada = await person();
   const bo = await person();
   const cy = await person();
@@ -301,8 +301,8 @@ const CONFIRM_SQL =
   "WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) " +
   "AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) " +
   "GROUP BY s.session, s.seat";
-const RESEAT_SQL =
-  "SELECT s.entity AS ent FROM _dai_open_seat s JOIN _dai_contested c ON c.session = s.session AND c.seat = s.seat " +
+const CONTEST_SQL =
+  "SELECT s.seat AS seat FROM _dai_open_seat s JOIN _dai_contested c ON c.session = s.session AND c.seat = s.seat " +
   "WHERE s.session = ? AND c.voided = 0 LIMIT 1";
 
 /** Ada's session with Bo asking for the open seat and not yet confirmed (Ada's copy was offline). */
@@ -311,7 +311,7 @@ async function waitingGame(ada: Person, bo: Person) {
   ensureReplica(adaCopy, ada.author);
   const creatorSeat = rnd();
   const openSeat = rnd();
-  const session = startSession(adaCopy, { creatorSeat, openSeat, entities: [rnd(), rnd()] });
+  const session = startSession(adaCopy, { creatorSeat, openSeats: [openSeat], close: "any", entity: rnd() });
   createEntity(adaCopy, "moves", rnd(), { seat: creatorSeat, game_id: "g1", ply: 1, san: "e4" }, session);
   await seal(adaCopy, ada);
   const boCopy = openGameWith("any");
@@ -347,8 +347,8 @@ test("holds: a stranger's signed ask for a seat nobody minted, with parents SQLi
   expect.soft(tryRead(() => g.adaCopy.all(CONFIRM_SQL, [hex(ada.author)]).map((r) => [r["who"], Number(r["n"])])), "the kit sees exactly one asker, Bo").toBe(
     JSON.stringify([[hex(bo.author), 1]]),
   );
-  // What the runtime's reseat reads, the creator's only repair.
-  expect.soft(tryRead(() => g.adaCopy.all(RESEAT_SQL, [g.session]).length), "the reseat read runs (and finds no contest)").toBe("0");
+  // What the kit reads before it sets a contested session aside, the creator's only repair.
+  expect.soft(tryRead(() => g.adaCopy.all(CONTEST_SQL, [g.session]).length), "the contest read runs (and finds no contest)").toBe("0");
   // Bo's own copy, once it has Ada's rows: what chess shows him while he waits.
   await merge(g.boCopy, g.adaCopy, bo);
   expect.soft(tryRead(() => sansAs(g.boCopy, g.session, bo.author)), "Bo's chess shows e4 and his waiting e5").toBe(JSON.stringify(["e4", "e5"]));
@@ -375,7 +375,7 @@ test("F2: a stranger's signed ask for the open seat, with parents SQLite cannot 
   expect.soft(tryRead(() => g.adaCopy.all(CONFIRM_SQL, [hex(ada.author)]).map((r) => [r["who"], Number(r["n"])])), "the kit sees exactly one asker, Bo").toBe(
     JSON.stringify([[hex(bo.author), 1]]),
   );
-  expect.soft(tryRead(() => g.adaCopy.all(RESEAT_SQL, [g.session]).length), "the reseat read runs, and finds no contest").toBe("0");
+  expect.soft(tryRead(() => g.adaCopy.all(CONTEST_SQL, [g.session]).length), "the contest read runs, and finds no contest").toBe("0");
   await merge(g.boCopy, g.adaCopy, bo);
   // The Store's seat picture for Bo's copy (the contested query chess runs).
   const contested =

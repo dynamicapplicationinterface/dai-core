@@ -27,26 +27,44 @@ test("agrees with WebCrypto at every length from 0 to 200 bytes", async () => {
   }
 });
 
-test("batch format version 2 (D158): a session id is SHA-256(author ‖ the creator seat row's seq), frozen", () => {
-  // Derived with node:crypto: the seq as eight bytes, unsigned, big-endian.
-  const author = Buffer.from("a3a8b56f9591737fca3854a36eb4583f", "hex");
-  expect(hex(sessionIdOf(new Uint8Array(author), 1)!)).toBe("0ec101b71f3ccd206b5ce69c312b2e75");
-  expect(hex(sessionIdOf(new Uint8Array(author), 256)!)).toBe("c30e1e3772d8abae3831c7c995d81730");
-  expect(hex(sessionIdOf(new Uint8Array(author), 2 ** 40 + 3)!)).toBe("bc4d38c643aa664b995621a6916c7e45");
-  expect(sessionIdOf(new Uint8Array(author), 0), "no row has seq 0").toBeNull();
-  expect(sessionIdOf(new Uint8Array(author), 1.5), "a seq is a whole number").toBeNull();
+/*
+ * The frozen vectors were refrozen on 3 October (R15): the id hashes the roster
+ * the creator's seat row declares after its author and seq. Before, it hashed
+ * the author and the seq alone (D158): SHA-256(author ‖ seq), whose vectors for
+ * this author were 0ec101b7… (seq 1), c30e1e37… (256) and bc4d38c6… (2^40 + 3).
+ */
+const SEAT = new Uint8Array(16).fill(0xa1);
+const OPEN = new Uint8Array(16).fill(0xb1);
+const THIRD = new Uint8Array(16).fill(0xb5);
+
+test("batch format version 2 (D158, R15): a session id is SHA-256(author ‖ seq ‖ CBOR([seat, seats, close])), frozen", () => {
+  // Derived with node:crypto and the CBOR assembled by hand: the seq as eight
+  // bytes, unsigned, big-endian, then 0x83 and the row's three columns.
+  const author = new Uint8Array(Buffer.from("a3a8b56f9591737fca3854a36eb4583f", "hex"));
+  expect(hex(sessionIdOf(author, 1, SEAT, OPEN, "any")!)).toBe("ea45a57ec6e9e904105cea3e64546408");
+  expect(hex(sessionIdOf(author, 256, SEAT, new Uint8Array([...OPEN, ...THIRD]), "creator")!)).toBe("2152ab64f3f5b83485e5ac523836fbfb");
+  expect(hex(sessionIdOf(author, 2 ** 40 + 3, SEAT, new Uint8Array(0), "any")!)).toBe("ab63076b384fc251580e1ceba4aece87");
+  // A roster that is not valid still names its session (and that session is void).
+  expect(hex(sessionIdOf(author, 1, SEAT, null, null)!)).toBe("790ad3cce7904ff5318edcbbe9a00633");
+  expect(sessionIdOf(author, 0, SEAT, OPEN, "any"), "no row has seq 0").toBeNull();
+  expect(sessionIdOf(author, 1.5, SEAT, OPEN, "any"), "a seq is a whole number").toBeNull();
 });
 
 test("a session id agrees with WebCrypto, reads a BigInt seq as its number, and malformed input names none", async () => {
   const author = new Uint8Array(SESSION_ID_BYTES).fill(0xc0);
   const seq = new Uint8Array([0, 0, 0, 0, 0, 0, 0x01, 0x2c]); // 300, eight bytes big-endian
-  const full = new Uint8Array(await webcrypto.subtle.digest("SHA-256", new Uint8Array([...author, ...seq])));
-  expect(hex(sessionIdOf(author, 300)!)).toBe(hex(full.slice(0, SESSION_ID_BYTES)));
+  const roster = new Uint8Array([0x83, 0x50, ...SEAT, 0x50, ...OPEN, 0x63, 0x61, 0x6e, 0x79]);
+  const full = new Uint8Array(await webcrypto.subtle.digest("SHA-256", new Uint8Array([...author, ...seq, ...roster])));
+  expect(hex(sessionIdOf(author, 300, SEAT, OPEN, "any")!)).toBe(hex(full.slice(0, SESSION_ID_BYTES)));
   // sqlite-wasm may hand an integer back as a BigInt; it is the same seq.
-  expect(hex(sessionIdOf(author, 300n)!)).toBe(hex(sessionIdOf(author, 300)!));
-  expect(sessionIdOf(new Uint8Array(15), 1), "a short author").toBeNull();
-  expect(sessionIdOf(null, 1), "no author").toBeNull();
-  expect(sessionIdOf(author, "1"), "a seq as text").toBeNull();
-  expect(sessionIdOf(author, -1), "a negative seq").toBeNull();
-  expect(sessionIdOf(author, new Uint8Array(16)), "bytes, as the nonce was").toBeNull();
+  expect(hex(sessionIdOf(author, 300n, SEAT, OPEN, "any")!)).toBe(hex(sessionIdOf(author, 300, SEAT, OPEN, "any")!));
+  // The roster is hashed as the row holds it: another roster is another session.
+  expect(hex(sessionIdOf(author, 300, SEAT, THIRD, "any")!)).not.toBe(hex(sessionIdOf(author, 300, SEAT, OPEN, "any")!));
+  expect(hex(sessionIdOf(author, 300, SEAT, OPEN, "creator")!)).not.toBe(hex(sessionIdOf(author, 300, SEAT, OPEN, "any")!));
+  expect(sessionIdOf(new Uint8Array(15), 1, SEAT, OPEN, "any"), "a short author").toBeNull();
+  expect(sessionIdOf(null, 1, SEAT, OPEN, "any"), "no author").toBeNull();
+  expect(sessionIdOf(author, "1", SEAT, OPEN, "any"), "a seq as text").toBeNull();
+  expect(sessionIdOf(author, -1, SEAT, OPEN, "any"), "a negative seq").toBeNull();
+  expect(sessionIdOf(author, new Uint8Array(16), SEAT, OPEN, "any"), "bytes, as the nonce was").toBeNull();
+  expect(sessionIdOf(author, 1, SEAT, Number.NaN, "any"), "a column no signed row can hold").toBeNull();
 });

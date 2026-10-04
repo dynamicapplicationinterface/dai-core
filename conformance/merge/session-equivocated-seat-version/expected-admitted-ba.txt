@@ -7,6 +7,6 @@
 # holders
 # voided
 # equivocated
-2bad0fd610d99eae443e932a26142bca	_dai_seat	4
-2bad0fd610d99eae443e932a26142bca	moves	4
+2bad0fd610d99eae443e932a26142bca	_dai_seat	3
+2bad0fd610d99eae443e932a26142bca	moves	3
 # closed

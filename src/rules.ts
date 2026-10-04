@@ -574,7 +574,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ["session"],
     topic: "identity",
     rule:
-      "A session id commits to its creator's seat row: SHA-256 of the creator's author id and that row's seq, first 16 bytes, so who created a session is checked from the rows and no other row, not even a second one of the creator's, can claim it. The creator's seat is the creator's by definition. The open seat is held by whoever the creator's copy confirms, in a row only the creator's copy writes; the kit writes it on the creator's copy when it sees exactly one copy asking for the seat, and leaves a seat two copies asked for contested (SESSION-CONTESTED-SEAT). A copy that opened an invite has asked for the seat and holds nothing until it is confirmed. Over the mailbox the creator's copy reads one batch at a time, so the first ask it reads is the one it seats. No clock decides anything, and once confirmed a seat is never reseated: confirming it to two copies voids both. A seat row crosses a merge only signed (BATCH_UNSIGNED).",
+      "A session id commits to its creator's seat row: SHA-256 of the creator's author id, that row's seq and the roster it declares, first 16 bytes, so who created a session, and which seats it has, is checked from the rows and no other row, not even a second one of the creator's, can claim it. That row declares the roster once: the creator's seat, every open seat, and the close rule; no seat is added, ordered or reseated later. The creator's seat is the creator's by definition. An open seat is held by whoever the creator's copy confirms, in a row only the creator's copy writes; the kit writes it on the creator's copy when it sees exactly one copy asking for the seat, and when it sees two it starts a new session instead (SESSION-CONTESTED-SEAT). A copy that opened an invite has asked for the seat and holds nothing until it is confirmed. Over the mailbox the creator's copy reads one batch at a time, so the first ask it reads is the one it seats. No clock decides anything, and once confirmed a seat never moves: confirming it to two copies voids it, and so does its holder signing twice. A seat row crosses a merge only signed (BATCH_UNSIGNED).",
     why: "Every rule that ordered seats by clock or author id could be won by a joiner writing rows: a backdated binding took the creator's seat, a backdated seat row made a joiner the creator, and an honest forwarded invite erased an honest player's moves about half the time (cold review of identity step 5). The creator's copy is the one party that may decide, and a key is the one thing a joiner cannot write. An unsigned confirm under the creator's id seated its writer (D133).",
     enforced: ["compiler", "runtime"],
     anchors: [
@@ -590,7 +590,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ["session"],
     topic: "identity",
     rule:
-      "Start a session with `window.daiKit.newSession()` (`{ solo: true }` for a board one copy plays alone), ask for the open seat with `claimSeat(session)`, repair a contested one with `reseat(session)`, and read with `mySeat(session)`, `pendingSeat(session)` (asked for, not yet seated), `amCreator(session)` and `seats(session)`. The kit seats whoever asked on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED). Never write `_dai_seat`, `_dai_binding` or `_dai_confirm` with SQL, and never call `window.dai.replicated.session` yourself: the kit is their only writer. Never decide who this copy is from `_dai_replica` or an author column: `daiKit.author()` is the host's id.",
+      "Start a session with `window.daiKit.newSession()` (`{ solo: true }` for a board one copy plays alone), ask for an open seat with `claimSeat(session)`, and read with `mySeat(session)`, `pendingSeat(session)` (asked for, not yet seated), `amCreator(session)` and `seats(session)`. The kit seats whoever asked on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED). Never write `_dai_seat`, `_dai_binding` or `_dai_confirm` with SQL, and never call `window.dai.replicated.session` yourself: the kit is their only writer. Never decide who this copy is from `_dai_replica` or an author column: `daiKit.author()` is the host's id.",
     why: "Who holds a seat is what the document admits a row by. The kit's reads are built on the host's author id, never on a row a copy can rewrite, and a seat written around the kit is a seat nothing vouches for.",
     enforced: ["lint"],
     lint: ["seat-table-write"],
@@ -676,7 +676,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
       "Start each game, match or agreement with `const session = window.daiKit.newSession()` (IDENTITY-KIT-SEATS). It seats the creator and leaves one open seat for the invitee; `session` is the id to keep (hex). A board one copy plays alone takes both seats: `newSession({ solo: true })`. Then insert the thing itself — the games row — with that session (SESSION-ROW-CARRIES-SESSION). Do both in one transaction if you write local rows beside them: `newSession()` and `insert` work inside a `BEGIN` … `COMMIT` you open. The creator is a member from the moment the session exists, so the creator's rows are admitted before anyone has joined — the first move can be made before the invite is sent.",
     why: "A session is the unit of membership. Rows written outside one belong to nobody, and a second game in the same session would share the first game's roster.",
     enforced: ["prose"],
-    anchors: [{ file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string } =>" }],
+    anchors: [{ file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string; seats: string[] } =>" }],
   },
   {
     id: "SESSION-ROW-CARRIES-SESSION",
@@ -743,11 +743,11 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "An open seat nobody has been confirmed in, asked for by two or more different copies, is contested — the invite reached two devices and both asks reached the creator's copy before it seated anyone — and nobody holds it (IDENTITY-SEAT-CONFIRMED). So is a seat the creator's copy confirmed to two copies. Read both from `_dai_contested`. Where `voided` is 0, show the creator that the invite went to more than one device and offer a fresh invite: `window.daiKit.reseat(session)`, then share again; where it is 1, only a new game repairs it. The fresh seat retires the one both asked for, so show a copy whose ask names a retired seat (it asked, it is not seated, and `pendingSeat` is null) that nothing it did lost its place, and that the creator can send a new invite. A later ask for a held seat is no contest: the seats belong to others. `reseat` refuses with NOT_SEAT_CREATOR for anyone but the creator and with CANNOT_RESEAT when no seat is contested with `voided` 0.",
-    why: "Nothing but the creator's copy may decide who plays, so when it sees two asks at once it decides nothing and asks the creator; an application that treated the contest as an error would leave both people stuck.",
+      "An open seat nobody has been confirmed in, asked for by two or more different copies, is contested — the invite reached two devices and both asks reached the creator's copy before it seated anyone — and nobody holds it (IDENTITY-SEAT-CONFIRMED). So is a seat the creator's copy confirmed to two copies, or confirmed to a copy that then signed twice. Read both from `_dai_contested` (`voided` 0 and 1). No seat is reseated: the repair is a new game. On the creator's copy the kit does it by itself: it closes the contested session, starts a new one, says so (or calls `daiKit.onContested(fn)` with the old session, the new one and the sentence), and fires `dai:kit-new-session` with `{ session, replaces }`. Listen for it, switch to the new session and offer its invite. On a copy that asked, the old session shows closed: tell it that nothing it did lost its place, and that the creator will send a new invite. A later ask for a held seat is no contest: the seats belong to others.",
+    why: "Nothing but the creator's copy may decide who plays, so when it sees two asks at once it seats nobody; a seat given a fresh value was a second statement about one seat, and every rule that let one count had to choose between the two by seq. An application that treated the contest as an error would leave both people stuck.",
     enforced: ["runtime", "prose"],
     anchors: [
-      { file: "src/runtime/bootloader.ts", contains: 'throw new Error("CANNOT_RESEAT")' },
+      { file: "src/kit.ts", contains: "function startAfresh(old)" },
       { file: "src/runtime/bootloader.ts", contains: 'throw new Error("NOT_SEAT_CREATOR")' },
       { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_contested AS" },
     ],
@@ -758,7 +758,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — after which the closer's later rows are not admitted. It binds only the closer, so offer no one a write in a closed session, as on a read-only mount (IDENTITY-BOOT-WRITES). Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), never the close table: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
+      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — and it is final for the closer: any row the closer writes in that session after it is the closer signing twice, and every copy then admits none of the closer's rows anywhere in the document. It binds only the closer, so offer no one a write in a closed session, as on a read-only mount (IDENTITY-BOOT-WRITES), and above all not the person who closed it. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), never the close table: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
     why: "A close binds its author by their own rows, never a clock, so no close removes another person's rows. Folding it into \"resign\" would end a session the other person had not finished with.",
     enforced: ["runtime", "prose"],
     anchors: [
@@ -1036,7 +1036,7 @@ export const SURFACE: readonly SurfaceEntry[] = [
     call: "window.dai.replicated.session.create()",
     does: "The runtime's session writer, which the kit wraps: call window.daiKit.newSession() instead (IDENTITY-KIT-SEATS). Starts a session whose id commits to this copy's author: this copy's own seat and one open seat. Returns { session, seat } as hex.",
     shapes: SESSION,
-    anchor: { file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string } =>" },
+    anchor: { file: "src/runtime/bootloader.ts", contains: "create: (): { session: string; seat: string; seats: string[] } =>" },
   },
   {
     call: "window.dai.replicated.session.join(session, seat)",
@@ -1055,13 +1055,6 @@ export const SURFACE: readonly SurfaceEntry[] = [
     does: "Closes a session at what this copy has seen. Throws CLOSE_NOT_PERMITTED for a non-creator under close=creator.",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: "close: (sessionHex: string): void =>" },
-  },
-  {
-    call: "window.dai.replicated.session.reseat(session)",
-    does:
-      "The runtime's seat writer, which the kit wraps: call window.daiKit.reseat(session) instead (IDENTITY-KIT-SEATS). The creator's repair for a contested seat: replaces the open seat so a fresh invite can be taken. Throws NOT_SEAT_CREATOR for anyone else and CANNOT_RESEAT when no seat is contested.",
-    shapes: SESSION,
-    anchor: { file: "src/runtime/bootloader.ts", contains: "reseat: (sessionHex: string): void =>" },
   },
   {
     call: 'window.addEventListener("dai:merged", fn)',
@@ -1084,7 +1077,7 @@ export const SURFACE: readonly SurfaceEntry[] = [
   },
   {
     call: "window.daiKit.newSession(options?)",
-    does: "Starts a session: this copy's seat and one open seat. { solo: true } also takes the open seat, for a board one copy plays alone. Returns the session, hex.",
+    does: "Starts a session: one row declaring this copy's seat, an open seat for every other party the session profile allows, and the close rule. { solo: true } also takes the first open seat, for a board one copy plays alone. Returns the session, hex.",
     shapes: ["session"],
     anchor: { file: "src/kit.ts", contains: "function newSession(options)" },
   },
@@ -1101,10 +1094,16 @@ export const SURFACE: readonly SurfaceEntry[] = [
     anchor: { file: "src/kit.ts", contains: "function mySeat(session)" },
   },
   {
-    call: "window.daiKit.reseat(session)",
-    does: "The creator's repair for a contested seat: a fresh open seat, for a new invite. Refused on a seat anyone has been seated in.",
+    call: "window.daiKit.onContested(fn)",
+    does: "Takes the kit's sentence for a contested session: on the creator's copy, when two copies asked for one open seat, the kit closes that session and starts a new one, and calls fn(old, new, sentence) instead of showing its own line. It also fires dai:kit-new-session with { session, replaces }.",
     shapes: ["session"],
-    anchor: { file: "src/kit.ts", contains: "function reseat(session)" },
+    anchor: { file: "src/kit.ts", contains: "function onContested(fn)" },
+  },
+  {
+    call: 'window.addEventListener("dai:kit-new-session", fn)',
+    does: "Fired by the kit when it starts a session in place of one: a contested one (event.detail.replaces is the old session) or a void one. event.detail.session is the new session: switch to it and offer its invite.",
+    shapes: ["session"],
+    anchor: { file: "src/kit.ts", contains: "new CustomEvent('dai:kit-new-session', { detail: { session: made, replaces: old } })" },
   },
   {
     call: "window.daiKit.seatBytes(hex)",
@@ -1242,8 +1241,8 @@ export const VIEWS: readonly ViewEntry[] = [
   {
     name: "_dai_contested",
     shapes: SESSION,
-    holds: "session, seat, voided: seats nobody holds until repaired; voided 1: confirmed to two copies.",
-    read: "Contested seats; reseat repairs voided 0.",
+    holds: "session, seat, voided: open seats nobody holds that two copies asked for (voided 0); voided 1: confirmed to two copies, or to a copy that signed twice.",
+    read: "Contested seats; a new session repairs either, and the kit starts it on the creator's copy.",
     anchor: { file: "src/replicated.ts", contains: "CREATE VIEW IF NOT EXISTS _dai_contested AS" },
   },
   {
@@ -1371,17 +1370,10 @@ export const APP_REFUSALS: readonly AppRefusal[] = [
   },
   {
     code: "NOT_SEAT_CREATOR",
-    when: "Someone other than the session's creator called session.reseat or session.confirm.",
-    then: "Offer the fresh-invite repair only to the creator (SESSION-CONTESTED-SEAT).",
+    when: "Someone other than the session's creator called session.confirm.",
+    then: "Leave seating to the kit, which confirms on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED).",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: 'throw new Error("NOT_SEAT_CREATOR")' },
-  },
-  {
-    code: "CANNOT_RESEAT",
-    when: "session.reseat was called on a session with no contested seat: none that nobody holds and more than one copy asked for.",
-    then: "Offer the repair only when a seat is contested (SESSION-CONTESTED-SEAT).",
-    shapes: SESSION,
-    anchor: { file: "src/runtime/bootloader.ts", contains: 'throw new Error("CANNOT_RESEAT")' },
   },
   {
     code: "CANNOT_CONFIRM",

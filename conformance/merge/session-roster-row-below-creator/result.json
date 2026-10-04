@@ -1,5 +1,5 @@
 {
-  "what": "Ada skips two seqs before her creator's seat row, so the session id is hers to compute before the row exists. Bo is confirmed in the open seat and moves. Then she signs, at the two skipped seqs below her creator's seat row, a seat row in the session naming a third seat and a confirm of Cy in the open seat. A session exists from its creator's seat row: a creator's roster row below it counts for nothing in that session, and minted seats are counted in seq order from it. The open seat stays minted, Bo holds it, his move is admitted, nothing is voided and nothing is reported (R13). Counted from below, the third seat came first and the open seat fell past max_parties=2, so Bo's hold went to nobody with nothing reported (the R10 and R11 handoff's finding).",
+  "what": "Ada skips two seqs before her creator's seat row, so the session id is hers to compute before the row exists. Bo is confirmed in the open seat and moves (B). Then she signs, at the two skipped seqs below her creator's seat row, a seat row in the session naming a third seat and a confirm of Cy in the open seat (A). No rule of the roster reads a seq (R14): the seat row counts for nothing, as every seat row but the creator's does, and the confirm is a confirm like any other, so the open seat's confirms name two holders and it is void (D165): nobody holds it, Bo's move is not admitted, and the merge into B, which takes the confirm, reports Ada AUTHOR_EQUIVOCATED. Under R13 the rows below counted for nothing; under R11 alone the third seat came first and the open seat fell past max_parties=2, so Bo's hold went to nobody with nothing reported (the R10 and R11 handoff's finding).",
   "cites": [
     "6",
     "T1-D29"
@@ -9,16 +9,21 @@
   "stable": true,
   "ab": {
     "applied": 0,
-    "duplicate": 5,
+    "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []
   },
   "ba": {
     "applied": 2,
-    "duplicate": 5,
+    "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
-    "refusedBatches": []
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
   }
 }

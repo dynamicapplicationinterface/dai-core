@@ -60,8 +60,8 @@ export const REFUSALS = {
     recoverable: false,
     means:
       "An open seat two or more copies asked for before the creator's copy seated anyone — two " +
-      "parties opened the same invite. Nobody holds it; the creator can replace it and issue a new " +
-      "invite. A seat the creator's copy has seated someone in is theirs for good (identity step 5).",
+      "parties opened the same invite. Nobody holds it, and no seat is replaced: the creator starts a " +
+      "new session and issues its invite. A seat the creator's copy has seated someone in is theirs for good (identity step 5).",
   },
   SEATS_EXCEED_CAP: {
     recoverable: false,
@@ -90,14 +90,6 @@ export const REFUSALS = {
       "it: the creator wrote a joiner-only table, or the joiner a creator-only one. The message names " +
       "which, and the table. Refused at the write rather than written as a row every copy would drop " +
       "(D15).",
-  },
-  CANNOT_RESEAT: {
-    recoverable: false,
-    means:
-      "A reseat was asked for on a session with no contested seat. Reseating replaces a seat's " +
-      "value, dropping every binding to the old one — a repair for a seat two parties opened, and " +
-      "damage to a healthy one. Refused unless an open seat nobody has been confirmed in is " +
-      "asked for by more than one author (identity step 5).",
   },
   CANNOT_CONFIRM: {
     recoverable: false,
@@ -179,6 +171,13 @@ export const REFUSALS = {
     means:
       "The other copy's shared tables are not the same tables with the same columns as this " +
       "one's, so its rows cannot be merged in.",
+  },
+  SIGNED_VIEW_MISMATCH: {
+    recoverable: false,
+    means:
+      "The other copy was built from another signed manifest of this document (its signed view hashes " +
+      "differently), so it may declare another bound on the parties or other tables. Its rows are not " +
+      "merged under rules it was not built with: nothing is taken (R16).",
   },
   UNSUPPORTED_LEVEL: {
     recoverable: false,

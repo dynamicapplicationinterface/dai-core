@@ -49,10 +49,9 @@ export class Store {
   *
   * Called only when this copy *opens an invite over a carrier* — a fresh arrival,
   * or a file/link merged into a copy it already holds — never on a background
-  * mailbox merge. That is the whole of why a reseated invite can be rejoined
-  * (opening the new invite is a carrier event) while the same fresh seat arriving
-  * over the mailbox at an ejected copy does not silently re-seat it and contest
-  * it again. So there is no "have I been here before" guard here: the caller,
+  * mailbox merge. That is the whole of why a fresh invite can be joined
+  * (opening it is a carrier event) while a session arriving over the mailbox at
+  * a copy that never opened its invite does not silently seat it. So there is no "have I been here before" guard here: the caller,
   * gating on the carrier, is the guard.
   */
  joinIfNeeded(session){
@@ -71,9 +70,11 @@ export class Store {
   * otherwise take the newest game this copy did not start and is not in —
   * never sat in, or sat in and lost the seat to a contest the creator then
   * repaired, which is exactly the copy a fresh invite exists to bring back.
+  * Never a closed game: the repair of a contest is a new session, and the one
+  * it replaces is closed, so the fresh invite's game is the one to join (R14).
   */
  joinActive(){
-  const joinable=g=>{if(!g||g.is_demo)return false;const s=this.seatState(g.session);return s.notIn||s.mineOut;};
+  const joinable=g=>{if(!g||g.is_demo||this.isClosed(g.session))return false;const s=this.seatState(g.session);return s.notIn||s.mineOut;};
   const active=this.game();
   const target=joinable(active)?active:[...this.games()].reverse().find(joinable);
   if(!target)return;
@@ -100,9 +101,9 @@ export class Store {
   const member=!!window.daiKit.mySeat(session);
   // Asked for the open seat, and the creator's copy has not seated anyone in it yet.
   const pending=!member&&!!window.daiKit.pendingSeat(session);
-  // Asked once, not seated: the creator's copy seated another device, or the
-  // seat was retired in a reseat. Either way this copy's place is gone until it
-  // opens a fresh invite. One state, one message — a dead-end message is the hang.
+  // Asked once, not seated: the creator's copy seated another device, or set the
+  // game aside when two devices asked. Either way this copy's place is gone until
+  // it opens a fresh invite. One state, one message — a dead-end message is the hang.
   // notIn: holds the game's rows but never joined it — membership is joined, not
   // inherited (T1-D34), so a forwarded document leaves you holding a game you are
   // not in, and the app must say so rather than show an empty board.
@@ -136,7 +137,7 @@ export class Store {
  }
  /** Which side each of a game's seats plays, read once per replay: seat hex -> 'w' | 'b'. */
  sides(g){
-  // Every value each seat has had: moves made before a reseat act for that seat too.
+  // Each seat's value: no seat is reseated, so it has one (R14).
   const out=new Map(),all=window.daiKit.seats(g.session);
   const mine=all.find(s=>s.creator)||all[0],theirs=all.find(s=>s!==mine);
   for(const v of mine?.values||[])out.set(v,g.creator_color);
@@ -167,16 +168,20 @@ export class Store {
  /** Keep one version of the names; a change names every current head as its parent, which settles them. */
  keepNames(white,black){const g=this.game();if(!g)return;this.w.change('games',g.id,{white_name:white,black_name:black,creator_color:g.creator_color,initial_fen:g.initial_fen},g.session);}
  /**
-  * The creator's half of the repair (T1-D29): mint a fresh open seat for a game
-  * whose invite was opened by two people. The old open seat is superseded, so the
-  * contesting bindings drop; the person then shares again and the one they meant
-  * to play opens the new invite and binds the fresh seat. Only the creator can.
+  * The creator's half of the repair (R14): when two people opened one invite,
+  * the kit on this, the creator's, copy closed that game's session and started
+  * a new one in its place, since no seat is reseated. The game moves there:
+  * the same names, colors and starting position, under the new session, made
+  * the active game. Returns its key, or null when the old session holds no game.
   */
- newInvite(){
-  const g=this.game();if(!g)throw new Error('Open a game first.');
-  if(g.is_demo)throw new Error('The practice board has no invite to renew.');
-  if(!this.seatState(g.session).amCreator)throw new Error('Only the player who started this game can send a new invite for it.');
-  window.daiKit.reseat(g.session);
+ restartFrom(old,session){
+  const g=this.games().find(x=>x.session===old);if(!g)return null;
+  return this.tx(()=>{
+   const id=this.w.insert('games',{white_name:g.white_name,black_name:g.black_name,creator_color:g.creator_color,initial_fen:g.initial_fen},session);
+   this.exec('INSERT INTO local_games(game_id) VALUES (?)',[id]);
+   this.exec('UPDATE settings SET active_game_id = ? WHERE id = 1',[session+':'+id]);
+   return session+':'+id;
+  });
  }
  gameById(key){return this.games().find(g=>g.key===key)||null;}
  game(){const s=this.settings();return s.active_game_id?this.gameById(s.active_game_id):null;}

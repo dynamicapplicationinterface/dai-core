@@ -38,13 +38,16 @@ writes rows under, `_r_replica` on every row it writes.
 
 ### Session id
 
-<a id="session-id"></a>SHA-256 of the creator's author id (16 bytes) followed
-by the seq of the creator's own seat row as eight bytes, unsigned,
-big-endian; the first 16 bytes.
+<a id="session-id"></a>SHA-256 of the creator's author id (16 bytes), the
+seq of the creator's own seat row as eight bytes, unsigned, big-endian, and
+<a id="session-id-roster"></a>the canonical CBOR ([Canonical CBOR](#cbor)) of
+the array of three `[seat, seats, close]`, that row's own columns as it holds
+them, whatever their type; the first 16 bytes. `_r_session` is not hashed.
 
 <a id="session-id-creator-row"></a>The creator's seat row is exactly the
-`_dai_seat` row whose own author and seq hash to its `_r_session`, so the id
-names one row and nothing else can be it.
+`_dai_seat` row whose own author, seq, `seat`, `seats` and `close` hash to its
+`_r_session`, so the id names one row and the roster it declares, and nothing
+else can be it.
 
 ### Row id
 
@@ -95,6 +98,9 @@ shape; a reader MUST NOT refuse parents for either.
 array, a longer array, an element that is not such a string, a number, a
 nested array, uppercase hex) is **malformed**. A reader MUST check the shape
 before it reads a row's parents for any purpose, not only in a merge.
+<a id="parent-forward"></a>A row whose parents name an id of the row's own
+author at a seq at or above the row's own seq is malformed too, whatever else
+they name.
 
 <a id="parents-not-taken"></a>A merge never takes a malformed row, nor any row
 through a header that signed one (`ROW_MALFORMED`, below).
@@ -237,6 +243,13 @@ kept, and no row is taken through it.
 
 ## Merge
 
+<a id="document-mismatch"></a>Each copy of a document carries its signed
+manifest, and the **signed-view digest** is SHA-256 of that manifest's signed
+bytes. A merge whose sibling's signed-view digest differs from the local
+copy's refuses the sibling whole: it takes no header and no row, reports no
+refused batch, and says `SIGNED_VIEW_MISMATCH`. Two such copies are two builds
+of the document, which may declare a different `max_parties` or other tables.
+
 <a id="merge"></a>A merge takes a sibling copy's headers and rows into a
 local copy, in this order:
 
@@ -349,13 +362,19 @@ every copy that holds both headers, whichever arrived first.
 nothing anywhere: it is not admitted, it hides no row, it seats, confirms and
 closes nobody. <a id="equivocation-headers-kept"></a>Both headers are kept
 and passed on.
-<a id="equivocator"></a>An author with two authentic headers at one
-`(author, seq)` anywhere in the document is an **equivocator** in that
-document, on every copy that holds both. Every `_dai_seat`, `_dai_binding`,
+<a id="equivocator"></a>An author is an **equivocator** in a document, on
+every copy that holds the evidence, when the copy holds two authentic headers
+of his at one `(author, seq)` anywhere in the document, or a close of his that
+counts and a row of his in that session at a higher seq
+([close-monotone](#close-monotone)). Every `_dai_seat`, `_dai_binding`,
 `_dai_confirm` and `_dai_close` row by an equivocator counts for nothing, as a
 row at an equivocated id does: it seats, asks, confirms and closes nobody, and
-it is no head and hides no row. Her rows in author tables count as any
-author's, except at the equivocated ids.
+it is no head and hides no row.
+<a id="equivocator-holds-nothing"></a>An equivocator holds no seat: a seat
+whose counting confirms name him is [void](#void). In a session document none
+of his rows in an author table is admitted, and none of his rows is reported
+but as his signing twice. In a plain document his rows count as any author's,
+except at the equivocated ids.
 
 <a id="equivocation-whole-digest"></a>The comparison is of whole-batch
 digests, so two headers that list one row and differ anywhere, even in
@@ -371,98 +390,101 @@ whatever order they arrived in. Admission MUST NOT read a clock.
 <a id="session-declarations"></a>A reader computes it from the tables and
 headers; the only declarations it needs are which tables are seated and by
 which column (`_dai_seat_rules`), which author tables carry a role
-(`_dai_author_rules`), the session's close rule (below) and its
-`max_parties` ([confirm-minted](#confirm-minted)).
+(`_dai_author_rules`), and the `max_parties` the signed manifest's session
+profile declares (`-- dai:profile session max_parties=N`). Each session's close
+rule is on its creator's seat row ([roster-declared](#roster-declared)).
 
-<a id="session-tables"></a>The tables: `_dai_seat` (seats the creator mints),
-`_dai_binding` (a copy asking for a seat), `_dai_confirm` (the creator
-seating a copy: a `seat` and a `holder`), `_dai_close`, and the author's own
-tables. <a id="session-skip-equivocated"></a>Every rule below skips a row at
+<a id="session-tables"></a>The tables: `_dai_seat` (the creator's seat row,
+which declares the session's seats), `_dai_binding` (a copy asking for a
+seat), `_dai_confirm` (the creator seating a copy: a `seat` and a `holder`),
+`_dai_close`, and the author's own tables. <a id="session-skip-equivocated"></a>Every rule below skips a row at
 an equivocated id. A row that names an equivocated id as a parent is not
 skipped: it is [neither admitted nor reported](#admitted-parent-equivocated).
 
 ### Creator
 
-<a id="creator"></a>The session's creator is the author of its creator's seat
-row: the `_dai_seat` row, not deleted, whose own author and seq hash to its
-`_r_session` ([Session id](#session-id)), when that author is no
-[equivocator](#equivocator). <a id="creator-seat"></a>The
-creator's seat is that row's `seat`, and it is the creator's by definition.
-<a id="session-from-creator-row"></a>A session exists from its creator's seat
-row. A `_dai_seat`, `_dai_binding`, `_dai_confirm` or `_dai_close` row by the
-creator in her session at a seq below her creator's seat row's counts for
-nothing in that session, as a row at an equivocated id does: it seats, asks,
-confirms and closes nobody, it mints nothing, and it is no head and hides no
-row.
+<a id="creator"></a>A session's **creator's seat row** is the `_dai_seat` row,
+deleted or not, whose own author, seq and roster hash to its `_r_session`
+([Session id](#session-id)); a session has at most one. The session's
+**creator** is that row's author, when the row is not deleted, its roster is
+valid and its author is no [equivocator](#equivocator); the session is then
+**live**. <a id="creator-seat"></a>The creator's seat is that row's `seat`,
+and it is the creator's by definition.
 
-<a id="session-void"></a>A session whose creator is an equivocator is
-**void**. Here the creator is the author of that row, not deleted, whether or
-not its rows count. No row in a void session is admitted, nobody holds a seat
-in it, no seat in it is void (its confirms count for nothing), nothing closes
-it, and nothing in it is reported but its creator signing twice
-(`AUTHOR_EQUIVOCATED`, by the merge that reveals it, as for any
-equivocation). Both headers are kept, so a session void on a copy stays void
-on it, whatever arrives later. The repair is a new session.
+<a id="roster-declared"></a>The roster is declared: the creator's seat row
+carries `seat` (hers), `seats` (the open seats: 16-byte values, one after
+another, in one byte string) and `close` (the close rule, the text `any` or
+`creator`). Its roster is **valid** when `seat` is 16 bytes, `seats` is a byte
+string whose length is a multiple of 16, the values it holds are distinct and
+none is `seat`, one plus their number is at most `max_parties`, and `close` is
+`any` or `creator`. The open seats of a session are the values its creator's
+seat row's `seats` holds, and there are no others: a session has the seats its
+creator's seat row lists, no more, and no seat is added, ordered or
+reseated.
+<a id="creator-row-immutable"></a>The creator's seat row is immutable: a later
+version of it counts for nothing, and no other `_dai_seat` row counts for
+anything. Neither is a head, neither hides a row, and neither seats, names or
+declares anything.
+
+<a id="session-void"></a>A session is **void** when its creator's seat row,
+deleted or not, does not declare a valid roster or is by an equivocator. A
+creator's seat row at an equivocated id is by an equivocator, whichever row
+at that id a copy holds. A session that is not live (its creator's seat row
+void, deleted or not held) admits nothing: no row in it is admitted, nobody
+holds a seat in it, no seat in it is void, nothing closes it, and nothing in
+it is reported but its creator signing twice (`AUTHOR_EQUIVOCATED`, by the
+merge that reveals it, as for any equivocation). Both headers are kept, so a
+session void on a copy stays void on it, whatever arrives later. The repair
+is a new session.
 
 ### Confirms
 
-<a id="confirms"></a>A confirm counts when it is a `_dai_confirm` row
-authored by the session's creator, in the creator's session, not below her
-[creator's seat row](#session-from-creator-row), naming a seat that is not the
-creator's own and that she [minted](#confirm-minted); deleted or not,
-superseded or not.
-<a id="seat-is-row"></a>A seat is a seat row (an entity), not its `seat`
-value. Each value the creator's seat rows in her session name belongs to the
-row whose version of hers named it first, in her seq order; a confirm naming a
-value is a confirm of that row, and binds to it. A version of a seat row
-naming a value another row named first mints nothing.
-<a id="held-row-frozen"></a>Once a seat row has a counting confirm it is
-**held**. Every later version of a held row mints nothing and moves nothing:
-the seat stays at the values its counting confirms name, and a confirm naming
-the value a later version gives it is a confirm of the same seat, so one
-naming another holder voids it ([void](#void)). A version of a
-seat row nobody holds is a reseat: the same seat under a fresh value.
+<a id="confirms"></a>A confirm **counts** when it is a `_dai_confirm` row
+authored by the session's creator, in her live session, naming in `seat` a
+value her creator's seat row's `seats` holds; at any seq, deleted or not,
+superseded or not. A confirm naming any other value, her own seat included,
+counts for nothing.
 <a id="confirm-versions-count"></a>A later version or a delete of a confirm is
 another confirm naming a holder, and counts as one.
 
 ### Void
 
-<a id="void"></a>When the counting confirms of one seat name two or more
-different holders, the seat is **void**: held by nobody, on every copy
-holding both, whatever their seqs and whichever arrived first, under every
-value of its row. The repair is a new session.
+<a id="void"></a>An open seat is **void** when its counting confirms name two
+or more different holders, or name a holder who is an
+[equivocator](#equivocator-holds-nothing): held by nobody, on every copy
+holding the rows and headers that make it so, whatever their seqs and
+whichever arrived first. The repair is a new session.
 
 ### Holders
 
-<a id="holders"></a>The creator holds the creator's seat. Every other seat
-with counting confirms that is not void is held by the one holder they name,
-under the values they name: a row whose seat column names a value of the
-seat's row that no counting confirm names (a reseat's old value) acts for
-nothing.
+<a id="holders"></a>The creator holds the creator's seat. Every open seat with
+counting confirms that is not void is held by the one holder they name. One
+holder may hold several seats.
 <a id="members"></a>The members of a session are its holders.
-<a id="confirm-minted"></a>A confirm counts only for a seat the creator
-minted. Her seat rows in the session are her `_dai_seat` entities there, each
-at the lowest seq of hers in it at or above her creator's seat row's, deleted
-or not, superseded or not; only the first `max_parties` of them in that seq
-order, counted from the creator's seat row, mint (the bound the signed
-manifest's session profile declares, `max_parties=N`), and each mints the
-values that are [its own](#seat-is-row) (a fresh open seat is a version of the
-open seat's row). A value no minting row named first is not minted: nobody
-holds it, and a row for it is waiting on nothing.
 
 ### Close
 
-<a id="close-counts"></a>A `_dai_close` row is a close that counts when it is
-not deleted and its author is permitted by the session's close rule: under
-`close=any`, a member of the close's own session; under `close=creator`, the
-session's creator. <a id="close-rule"></a>The rule is declared in the signed
-manifest's session profile (`-- dai:profile session ... close=any|creator`)
-and is not in the database. <a id="closed"></a>A session is **closed** when a
-close that counts names it. <a id="late"></a>A close binds only its author: a
-row is **late** when its author has a close that counts in the same session
-at a lower seq. <a id="close-first"></a>Only the author's first close matters
-(later ones are later seqs), and a delete of a close revokes nothing: a
-deleted close row does not count, and the first close still does.
+<a id="close-counts"></a>A `_dai_close` row is a close that **counts** when it
+is not deleted, in a live session, and its author is permitted by the close
+rule the session's creator's seat row declares: under `close=any`, the
+creator or a holder of a seat in the close's own session; under
+`close=creator`, the creator. Whether its author is an equivocator is not read
+here: an author whose close counts and who is then found an equivocator is
+one ([close-monotone](#close-monotone)), and an equivocator's close counts for
+nothing.
+<a id="close-rule"></a>The kit writes the rule on the creator's seat row from
+the signed manifest's session profile (`-- dai:profile session ...
+close=any|creator`); a reader reads it from the row. <a id="closed"></a>A
+session is **closed** when a close that counts, by an author who is no
+equivocator, names it.
+<a id="close-monotone"></a>A close is final for its author: a close of his
+that counts and any row of his, in any table, in that session at a higher seq
+are equivocation. He is an equivocator ([equivocator](#equivocator)), and the
+merge that makes it true reports him `AUTHOR_EQUIVOCATED`. A close binds only
+its author, and only in its own session.
+<a id="close-first"></a>A delete of a close revokes nothing: a deleted close
+row does not count, and, at a higher seq than the close it deletes, it is a
+row of his in that session after his close.
 <a id="close-row"></a>A close is one row carrying its session and no author
 columns.
 
@@ -478,15 +500,14 @@ these hold:
   nor hides;
 - <a id="admitted-seat"></a>**seated table:** its author holds the seat its
   seat column names, in the row's own session (a seat is the pair of session
-  and seat row, and the column names the row by a [value](#seat-is-row) of
-  it). <a id="admitted-member"></a>**Otherwise:** its author is a
+  and value, and only a [seat value](#seat-value-shape) names one).
+  <a id="admitted-member"></a>**Otherwise:** its author is a
   member of the row's session;
 - <a id="admitted-no-other-session"></a>it names as a parent no row of its
   own entity from another session;
 - <a id="admitted-no-other-seat"></a>in a seated table, it names as a parent
   no row of its own entity, in its session, whose seat column differs from
   its own;
-- <a id="admitted-not-late"></a>it is not late;
 - <a id="admitted-role"></a>where the table carries a role (`author=creator`
   or `author=joiner`), its author is, or is not, the session's creator.
 
@@ -512,16 +533,19 @@ parent, and a head may be a delete (the tombstone is the head, with its flag):
   `_dai_binding`, `_dai_confirm`, `_dai_close`): among rows by authors who
   are no [equivocator](#equivocator), partitioned by **session, entity and
   author**. Only a row's
-  own author's later row in the same session replaces it.
+  own author's later row in the same session replaces it. In `_dai_seat`
+  only creators' seat rows count ([creator-row-immutable](#creator-row-immutable)),
+  so its heads are exactly those by authors who are no equivocator.
 - <a id="heads-plain"></a>**a plain document's tables:** among rows at ids
   not equivocated, partitioned by entity.
 
 ### Waiting
 
 <a id="waiting"></a>A row whose author asked for an open seat nobody holds
-yet, and which names that seat, is waiting: neither admitted nor reported,
-and admitted if the author is later confirmed. <a id="void-row"></a>A row for
-a void seat is neither admitted nor reported.
+yet and that is not void (his current binding in the session names it), and
+which names that seat, is waiting: neither admitted nor reported, and
+admitted if the author is later confirmed. <a id="void-row"></a>A row for a
+void seat is neither admitted nor reported.
 
 ## Reports
 
@@ -543,48 +567,64 @@ author id in hex.
 | <a id="code-author-equivocated"></a>`AUTHOR_EQUIVOCATED` | the author who signed twice | the lowest of that author's revealing headers, or no id |
 
 <a id="report-made-true"></a>`SEAT_NOT_HELD` and `ENTITY_OTHER_SESSION`
-report what this merge made true. <a id="seat-not-held"></a>A row this merge
-took, in a seated table, that names no seat (a seat column that is not 16
-bytes), or a seat someone else holds, or that names a parent of its entity
-and session acting for another seat, is `SEAT_NOT_HELD`.
+report what this merge made true, and only about a row in a live session.
+<a id="seat-value-shape"></a>A **seat value** is a byte string of exactly 16
+bytes. Any other value (text, whatever its length, NULL, a number, a byte
+string of another length) is not one: it names no seat, a confirm naming it
+counts for nothing, and no reader may fail on it.
+<a id="seat-not-held"></a>A row this merge took, in a seated table, is
+`SEAT_NOT_HELD` when its seat column holds no seat value; or names a seat its
+author does not hold, unless it is waiting in that seat or the seat is void
+(a seat someone else holds, and a value no counting confirm names, are both
+such seats); or names a parent of its entity and session acting for another
+seat.
 <a id="entity-other-session"></a>A row in a session author table naming a
 parent of its entity from another session is `ENTITY_OTHER_SESSION`.
 <a id="report-crossing"></a>For the two crossings, the report is made
 whichever of the two rows this merge took, the child or the parent, and is
 the child's. <a id="report-silent"></a>A row waiting on a confirmation, a row
-for a void seat, a late row, and a row naming an equivocated id as a parent
+for a void seat, and a row naming an equivocated id as a parent
 ([whatever else it meets](#admitted-parent-equivocated)) are reported
-nowhere; a row at an equivocated id is reported nowhere but as its author
-signing twice (`AUTHOR_EQUIVOCATED`), whatever else it meets; and a row of a
-[void session](#session-void) is reported nowhere. That covers the
+nowhere; a row by an [equivocator](#equivocator-holds-nothing), at an
+equivocated id or not, is reported nowhere but as its author signing twice
+(`AUTHOR_EQUIVOCATED`), whatever else it meets; and a row of a session that is
+not live ([session-void](#session-void)) is reported nowhere. That covers the
 reports made from the row set after placing; a refusal made before placing, in
 steps 1 and 2 of a [merge](#merge), stands.
 
 <a id="equivocated-report"></a>`AUTHOR_EQUIVOCATED` is reported once per
-author per merge, for [equivocation](#equivocation) and [void
-seats](#void) together, when this merge revealed that author signing twice.
-A **revealing header** is:
+author per merge, for [equivocation](#equivocation), for a close followed by a
+row ([close-monotone](#close-monotone)) and for [void seats](#void) whose
+confirms name two holders, together, when this merge revealed that author
+signing twice. A seat void because its holder is an equivocator is revealed as
+his equivocation is, and accuses nobody else. A **revealing header** is:
 
 - <a id="revealing-two-headers"></a>for two headers at one id: a header this
   merge kept that the local copy did not hold before, which lists, in any
   table, a seq of its author whose id is equivocated after the merge and was
   not before it;
+- <a id="revealing-close"></a>for a close followed by a row: the header named
+  (`_r_batch`) by a row of that author in that session that this merge took,
+  being one of his closes there or above the lowest of them in his seq, when
+  he has a close that counts and a row above it in the session after the merge
+  and did not before it;
 - <a id="revealing-two-confirms"></a>for two confirms of one seat: the header
   named (`_r_batch`) by a row this merge took that the void rests on, for a
-  seat void after the merge and not before it.
+  seat whose counting confirms name two holders after the merge and did not
+  before it.
   <a id="void-rests-on"></a>A void rests only on the
   [counting confirms](#confirms) of its seat and on the session's creator's
-  seat row that is not deleted and not at an equivocated id; only those
-  reveal. A confirm of the seat at an equivocated id reveals nothing.
+  seat row of a live session; only those reveal. A confirm of the seat at an
+  equivocated id reveals nothing.
 
 <a id="equivocated-filed"></a>It is filed under the lowest of that author's
-revealing headers. <a id="equivocated-filed-no-id"></a>A void report with no
-taken row it rests on is filed under no id; while a void rests only on what
-[void-rests-on](#void-rests-on) names, no merge reaches this, since a void
-newly true needs a counting confirm or the creator's seat row that the merge
-took. <a id="equivocated-third"></a>A merge that brings a third
-conflicting header for an id already equivocated reveals nothing new and
-reports nothing.
+revealing headers. <a id="equivocated-filed-no-id"></a>A report with no taken
+row it rests on is filed under no id: a void newly true needs a counting
+confirm or the creator's seat row that the merge took, but a close followed by
+a row can be made true by a row of another author (a confirm that makes the
+closer a holder, under `close=any`). <a id="equivocated-third"></a>A merge
+that brings a third conflicting header for an id already equivocated reveals
+nothing new and reports nothing.
 
 ## Canonical CBOR
 
@@ -659,6 +699,33 @@ version, never a refactor (identity.md, binding rule 10).
   mint nothing and move nothing.
 - Version 2: a session exists from its creator's seat row; her roster rows
   below it count for nothing there.
+- Version 2: the roster is declared: the creator's seat row carries `seat`,
+  `seats` and `close`, a roster that is not valid voids its session, and the
+  row is immutable; no other `_dai_seat` row counts.
+- Version 2: the session id hashes the creator's seat row's roster after its
+  author and seq.
+- Version 2: `confirm-minted` retired: no seat is minted, and none is counted
+  in seq order; a confirm counts for a value the creator's seat row lists.
+- Version 2: `seat-is-row` retired: a seat is a value the creator's seat row
+  lists, not a seat row.
+- Version 2: `held-row-frozen` retired: no seat row but the creator's counts,
+  and no seat is reseated.
+- Version 2: `session-from-creator-row` retired: no rule of the roster reads a
+  seq; a confirm counts at any seq.
+- Version 2: `late` retired: a close and a row of its author in that session
+  at a higher seq are equivocation.
+- Version 2: `admitted-not-late` retired with `late`.
+- Version 2: a merge refuses whole a sibling whose signed-view digest differs
+  from the local copy's (`SIGNED_VIEW_MISMATCH`).
+- Version 2: an equivocator holds no seat, the seat he was confirmed in is
+  void, and none of his rows is admitted or reported.
+- Version 2: a parent naming the row's own author at a seq at or above the
+  row's own is malformed.
+- Version 2: a session whose creator's seat row is at an equivocated id is
+  void whichever row the copy holds there, and one holding only a tombstone
+  there admits nothing.
+- Version 2: a seat value is 16 bytes; a row naming a value no counting
+  confirm names is `SEAT_NOT_HELD`.
 
 ## Conformance
 
@@ -667,8 +734,13 @@ The bytes a signature covers are held byte for byte by
 its values are derived outside the runtime (node:crypto and CBOR assembled
 by hand). The session id is held by `tests/session-id.spec.ts`. What a merge
 does is held by the fixtures in `conformance/merge`; the session fixtures
-also carry what the document admits after the merge, and all of them are
-`max_parties=2` and `close=any`. <a id="fixtures-verdicts"></a>The fixtures carry each header's
+also carry what the document admits after the merge.
+<a id="fixtures-manifest"></a>Each fixture carries, in `manifest.json`, what
+each copy's signed manifest gives a reader: the signed-view digest (`view`)
+and, in a session document, the session profile's `max_parties` and close
+rule (`session`). A reader takes `max_parties` from it, and refuses a merge
+whose two copies' `view` differ ([document-mismatch](#document-mismatch)).
+<a id="fixtures-verdicts"></a>The fixtures carry each header's
 verdict in `verdicts.json` (`ok`, `incomplete`, or a refusal code), made
 against the rows of the copy that holds it, and in `lists.json` the list
 that made a header authentic where it is not the one the header stores, so a

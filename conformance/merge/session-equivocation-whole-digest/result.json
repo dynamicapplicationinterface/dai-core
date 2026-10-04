@@ -1,5 +1,5 @@
 {
-  "what": "Bo signs one header over two moves on B, and from a second copy of his store a header over the first of them alone, the same row, on A. The comparison is of whole-batch digests: the two headers list one seq with different digests, so that id is equivocated though the row is the same, and each merge reports AUTHOR_EQUIVOCATED. His second move, listed once, is admitted: he is the joiner, so the session stands (R10). Each copy keeps its own pointer on the shared row (D160).",
+  "what": "Bo signs one header over two moves on B, and from a second copy of his store a header over the first of them alone, the same row, on A. The comparison is of whole-batch digests: the two headers list one seq with different digests, so that id is equivocated though the row is the same, and each merge reports AUTHOR_EQUIVOCATED. He is the joiner, so the session stands (R10), but he holds no seat and none of his moves is admitted, the one listed once included (R17). Each copy keeps its own pointer on the shared row (D160).",
   "cites": [
     "6",
     "T1-D13"
@@ -9,7 +9,7 @@
   "stable": true,
   "ab": {
     "applied": 1,
-    "duplicate": 5,
+    "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
@@ -21,7 +21,7 @@
   },
   "ba": {
     "applied": 0,
-    "duplicate": 5,
+    "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [

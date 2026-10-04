@@ -7,6 +7,6 @@ import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
  * runtime opens registers. One without it fails on the first roster read.
  */
 export function withSessionId<T extends DatabaseSync>(db: T): T {
-  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, nonce) => sessionIdOf(author, nonce));
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, nonce, seat, seats, close) => sessionIdOf(author, nonce, seat, seats, close));
   return db;
 }

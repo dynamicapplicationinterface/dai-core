@@ -1,5 +1,5 @@
 {
-  "what": "An unseated session author table: a row is admitted when its author is a member. Bo writes a note, Ada, a member, an edit of it naming it, and both are admitted; Bo closes the session; then from a second copy of his store Bo signs a move at the note's seq. After either merge the note's id is equivocated: the note counts for nothing and Ada's edit names an equivocated id, so neither is admitted, and the note is gone (admitted-parent-equivocated). Bo is an equivocator, so his close counts for nothing and the session is not closed; his hold stands, since it is Ada's confirm (R10; review 8, A5, for the record).",
+  "what": "An unseated session author table: a row is admitted when its author is a member. Bo writes a note, Ada, a member, an edit of it naming it, and both are admitted; Bo closes the session; then from a second copy of his store Bo signs a move at the note's seq. After either merge the note's id is equivocated: the note counts for nothing and Ada's edit names an equivocated id, so neither is admitted, and the note is gone (admitted-parent-equivocated). Bo is an equivocator, so his close counts for nothing and the session is not closed, and he holds no seat: the open seat is void (R10, R17; review 8, A5).",
   "cites": [
     "6",
     "T1-D29"
@@ -9,7 +9,7 @@
   "stable": true,
   "ab": {
     "applied": 2,
-    "duplicate": 6,
+    "duplicate": 5,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
@@ -21,7 +21,7 @@
   },
   "ba": {
     "applied": 0,
-    "duplicate": 6,
+    "duplicate": 5,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []

@@ -1,0 +1,24 @@
+{
+  "what": "A document declared max_parties=3. Ada's creator's seat row lists two open seats; she confirms Bo in one and Cy in the other, and both move (Bo's move on B only, Cy's on A only). Three parties hold seats and both moves are admitted, and nothing is reported (R14). A reader must take max_parties from the manifest (manifest.json): one that assumes 2 finds the creator's seat row lists too many seats and the session void (review 9, A04).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

@@ -742,7 +742,7 @@ async function writeContainer(
  * would seal into the next copy. The loader hands this object over by
  * `postMessage` and sets it locally instead.
  */
-function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, seq: unknown) => Uint8Array | null }): void {
+function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: unknown, seq: unknown, seat: unknown, seats: unknown, close: unknown) => Uint8Array | null }): void {
   /*
    * The SHA-256 of the merge module this runtime was built against.
    *
@@ -830,8 +830,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    */
   const newDatabase = (api2: Any): Any => {
     const db = new api2.oo1.DB() as Any;
-    db.createFunction(sessionId.name, (_ctx: number, author: unknown, seq: unknown) => sessionId.of(author, seq), {
-      arity: 2,
+    db.createFunction(sessionId.name, (_ctx: number, author: unknown, seq: unknown, seat: unknown, seats: unknown, close: unknown) => sessionId.of(author, seq, seat, seats, close), {
+      arity: 5,
       deterministic: true,
     });
     return db;
@@ -1163,6 +1163,99 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * argument". Both forms are accepted on every read helper, because the
    * shape of an argument is not a thing to lose somebody's app over.
    */
+  /*
+   * The read helpers keep what they compiled.
+   *
+   * selectObjects and selectArrays go through exec, which prepares the SQL on
+   * every call, and preparing is most of what a read costs: a session
+   * document's views read the roster from many places, and SQLite compiles it
+   * once for each (a click on a chess board made about 330 reads, and nearly
+   * all their time was compiling). An application redraws with the same reads
+   * each time, so each read-only statement is prepared once, kept (the 64 most
+   * recent), and reset after use. SQLite re-prepares a kept statement itself if
+   * the schema changes. Rows come back as exec returns them, bound as exec
+   * binds (only a statement with parameters takes the bind). Anything else
+   * (several statements, a statement that writes, a statement with no result
+   * columns, another argument, a statement already running) goes to exec as
+   * before, so a write through a read helper is still seen and saved.
+   */
+  const keepReads = (db: Any): void => {
+    if (typeof db.prepare !== "function") return;
+    const kept = new Map<string, Any>();
+    const notKept = new Set<string>();
+    const running = new Set<Any>();
+    const single = (sql: string): boolean => {
+      const text = sql.trim().replace(/;\s*$/, "");
+      return text.length > 0 && !text.includes(";");
+    };
+    const statementFor = (sql: string): Any | null => {
+      const held = kept.get(sql);
+      if (held) {
+        kept.delete(sql);
+        kept.set(sql, held);
+        return held;
+      }
+      if (notKept.has(sql)) return null;
+      const statement = db.prepare(sql);
+      if (!statement.isReadOnly() || statement.columnCount === 0) {
+        statement.finalize();
+        notKept.add(sql);
+        return null;
+      }
+      kept.set(sql, statement);
+      if (kept.size > 64) {
+        const [oldest, stale] = kept.entries().next().value as [string, Any];
+        kept.delete(oldest);
+        try {
+          stale.finalize();
+        } catch {
+          /* Already finalized with its database. */
+        }
+      }
+      return statement;
+    };
+    for (const [name, mode] of [["selectObjects", "object"], ["selectArrays", "array"]] as const) {
+      if (typeof db[name] !== "function") continue;
+      const original = db[name].bind(db);
+      db[name] = (sql: Any, bind?: Any, ...rest: Any[]): Any => {
+        if (typeof sql !== "string" || rest.length > 0 || !single(sql)) return original(sql, bind, ...rest);
+        const statement = statementFor(sql);
+        if (!statement || running.has(statement)) return original(sql, bind);
+        running.add(statement);
+        try {
+          if (bind && statement.parameterCount) statement.bind(bind);
+          const rows: Any[] = [];
+          let names: string[] | undefined;
+          while (statement.step()) {
+            const row = statement.get([]);
+            if (mode === "array") {
+              rows.push(row);
+              continue;
+            }
+            names ??= statement.getColumnNames([]) as string[];
+            const object = Object.create(null);
+            for (const i in names) object[names[i]!] = row[i];
+            rows.push(object);
+          }
+          return rows;
+        } finally {
+          running.delete(statement);
+          try {
+            statement.reset(true);
+          } catch {
+            // A statement that failed is not kept: the next read prepares afresh.
+            kept.delete(sql);
+            try {
+              statement.finalize();
+            } catch {
+              /* Nothing more to release. */
+            }
+          }
+        }
+      };
+    }
+  };
+
   const lenient = (db: Any): void => {
     for (const name of ["selectObjects", "selectArrays", "selectValues", "selectValue", "selectArray", "selectObject"]) {
       if (typeof db[name] !== "function") continue;
@@ -1231,6 +1324,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
 
   const watched = (db: Any): Any => {
     liveDb = db;
+    keepReads(db);
     lenient(db);
     if (autosaves && typeof db.exec === "function") {
       const exec = db.exec.bind(db);
@@ -2139,23 +2233,25 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
        * a binding is always this copy's own key.
        */
       session: {
-        // A new session: the creator's seat and the invitee's open seat, plus the
-        // creator's binding to its own seat. Returns the session id and the open
-        // seat, which the host carries in the invite (T1-D30). The three rows are
-        // one transaction, so a failure leaves no half-formed roster.
-        // The session id commits to this copy's author's own seat row, by its
-        // (author, seq) (D158), and the creator's seat is hers by definition,
-        // so she binds nothing.
-        create: (): { session: string; seat: string } => {
+        // A new session: one row, the creator's seat row, declaring the roster
+        // (R14): her seat, an open seat for every other party the document's
+        // session profile allows (max_parties - 1), and the close rule the
+        // manifest declares. Returns the session id, the first open seat, which
+        // the host carries in the invite (T1-D30), and every open seat. The
+        // session id commits to that row and its roster (D158, R15), and the
+        // creator's seat is hers by definition, so she binds nothing.
+        create: (): { session: string; seat: string; seats: string[] } => {
           settleReplica(rows);
-          const openSeat = entity();
+          const bound = Number(rows.all("SELECT max_parties AS n FROM _dai_session_rules")[0]?.["n"] ?? 2);
+          const openSeats = Array.from({ length: Math.max(bound - 1, 0) }, () => entity());
           rows.run("SAVEPOINT dai_session_create");
           let sid: Uint8Array;
           try {
             sid = rules().startSession(rows, {
               creatorSeat: entity(),
-              openSeat,
-              entities: [entity(), entity()],
+              openSeats,
+              close: closePolicy === "creator" ? "creator" : "any",
+              entity: entity(),
             });
             rows.run("RELEASE dai_session_create");
           } catch (error) {
@@ -2163,7 +2259,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
             throw error;
           }
           nudgeAuthored();
-          return { session: hex(sid), seat: hex(openSeat) };
+          return { session: hex(sid), seat: openSeats[0] ? hex(openSeats[0]) : "", seats: openSeats.map(hex) };
         },
         // The creator seats whoever asked for an open seat (identity step 5):
         // the only thing that seats anyone there. Refused for anyone but the
@@ -2189,21 +2285,27 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           nudgeAuthored();
         },
         // Close a session: no more rows, and it becomes eligible for compaction
-        // (T1-D31). Not a resignation — that is a game row and leaves the board
-        // readable; a close is the heavier, separate act. It binds only its
-        // author: the closer's own later rows are late (D151, never a clock).
+        // (T1-D31). Not a resignation (that is a game row and leaves the board
+        // readable); a close is the heavier, separate act. It binds only its
+        // author: a row of the closer's in that session at a higher seq is the
+        // closer signing twice (R18), so a close is final for whoever writes it.
         // One `_dai_close` row, carrying its session and nothing else: the
         // frontier it once listed retired at batch format version 2 (D151).
         close: (sessionHex: string): void => {
           settleReplica(rows);
           const sid = fromHex(sessionHex);
           const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
-          // T1-D32: under close=creator only the replica that authored the seats
-          // may close. Refused by name at write time; the admission views are the
-          // convergent net for a close a misbehaving copy authored anyway. The
-          // check is on the author, so it cannot be forged — the seat rows say
-          // who the creator is, and the key is the author.
-          if (closePolicy === "creator") {
+          // T1-D32, R14: the rule is the one the session's creator's seat row
+          // declares. Under close=creator only its creator may close. Refused
+          // by name at write time; the admission views are the convergent net
+          // for a close a misbehaving copy authored anyway. The check is on the
+          // author, so it cannot be forged: the seat row says who the creator
+          // is, and the key is the author.
+          const declared = rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_creator'").length > 0
+            ? rows.all("SELECT close FROM _dai_creator WHERE session = ?", [sid])[0]?.["close"]
+            : undefined;
+          const rule = typeof declared === "string" ? declared : closePolicy;
+          if (rule === "creator") {
             const isCreator = creatorIs(sid, me);
             if (!isCreator) throw new Error("CLOSE_NOT_PERMITTED");
           } else if (
@@ -2222,40 +2324,6 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
             rows.run("ROLLBACK TO dai_session_close");
             throw error;
           }
-          nudgeAuthored();
-        },
-        // Repair a contested seat (T1-D29): the creator gives the invite's open
-        // seat a fresh value. The old value is superseded, so the bindings that
-        // contested it now name an unminted seat and drop out of the roster; the
-        // fresh value is open for one new binding, from whoever opens the new
-        // invite. Seats stay at max_parties — this replaces the open seat, it does
-        // not add one — so nothing goes over the signed cap.
-        reseat: (sessionHex: string): void => {
-          settleReplica(rows);
-          const sid = fromHex(sessionHex);
-          const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
-          // Only the creator — the author of the seats — may reseat; a non-creator
-          // authoring a seat change would itself contest the roster.
-          const isCreator = creatorIs(sid, me);
-          if (!isCreator) throw new Error("NOT_SEAT_CREATOR");
-          // The seat to replace is the CONTESTED one — a seat two or more replicas
-          // bound. Reseating drops every binding to the old value, so on a healthy
-          // seat (one honest joiner) it would eject that joiner and vanish their
-          // moves; picking "a seat the creator didn't bind" also depended on
-          // SQLite's row order with more than two seats. So it is refused unless a
-          // seat is actually contested (T1-D29) — a repair, never a boot.
-          // Contested, as `_dai_contested` says: a current open seat nobody
-          // has been confirmed in, asked for by more than one author. A
-          // confirmed seat is never reseated, so a hold, once made, never moves
-          // (identity step 5); nor is a seat the creator confirmed twice, whose
-          // repair is a new session (D165).
-          const contested = rows.all(
-            "SELECT s.entity AS ent FROM _dai_open_seat s JOIN _dai_contested c ON c.session = s.session AND c.seat = s.seat " +
-              "WHERE s.session = ? AND c.voided = 0 LIMIT 1",
-            [sid],
-          );
-          if (contested.length === 0) throw new Error("CANNOT_RESEAT");
-          rules().changeEntity(rows, "_dai_seat", (contested[0] as Any)["ent"] as Uint8Array, { seat: entity() }, sid);
           nudgeAuthored();
         },
       },

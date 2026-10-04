@@ -277,7 +277,7 @@ const SHARED_CHECKS = {
       "reads are built on the host's author id, never on a row. A seat written around the kit is a seat " +
       "nothing vouches for. See IDENTITY-KIT-SEATS.",
     fix:
-      "Use window.daiKit.newSession(), .claimSeat(session), .reseat(session), and read with .mySeat(session), " +
+      "Use window.daiKit.newSession(), .claimSeat(session), and read with .mySeat(session), " +
       ".amCreator(session) and .seats(session).",
   },
   "shared-table-constraint": {

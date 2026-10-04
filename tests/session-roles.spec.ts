@@ -60,10 +60,10 @@ const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
 const ADA = await person();
 const BO = await person();
 const C = ADA.author; // the creator: the session id commits to it
-const S = sessionIdOf(C, 1)!;
 const J = BO.author; // the joiner: it binds the open seat
 const SEATC = bytes(0xa1);
 const SEATJ = bytes(0xa2);
+const S = sessionIdOf(C, 1, SEATC, SEATJ, "any")!;
 
 let counter = 0;
 const nextEntity = (): Uint8Array => bytes(0x30 + counter++);
@@ -93,12 +93,13 @@ function put(
 }
 
 /**
- * The roster both copies share: the creator's own seat, the row the session
- * id names by its seq (1), the open seat, the joiner's ask for it, and the
- * creator's confirmation. The creator's seqs 1–3, the joiner's seq 1.
+ * The roster both copies share: the creator's seat row, the row the session
+ * id names by its seq (1), declaring her seat and the open seat (R14); the
+ * joiner's ask for it, and the creator's confirmation. Her seq 2 is a seat row
+ * that counts for nothing. The creator's seqs 1–3, the joiner's seq 1.
  */
 function seat(db: Rows): void {
-  put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+  put(db, "_dai_seat", C, 1, 1, { seat: SEATC, seats: SEATJ, close: "any" });
   put(db, "_dai_seat", C, 2, 2, { seat: SEATJ });
   put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
   put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });

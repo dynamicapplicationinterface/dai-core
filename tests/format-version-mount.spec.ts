@@ -60,7 +60,7 @@ async function chessWith(
   const dir = mkdtempSync(join(tmpdir(), "dai-step6-"));
   const path = join(dir, "document.sqlite");
   const sqlite = new DatabaseSync(path);
-  sqlite.function(SESSION_ID_FUNCTION, { deterministic: true }, (a, n) => sessionIdOf(a, n));
+  sqlite.function(SESSION_ID_FUNCTION, { deterministic: true }, (a, n, seat, seats, close) => sessionIdOf(a, n, seat, seats, close));
   sqlite.exec(rewriteReplicated(readFileSync(join(repo, "tests", "fixture", "chess", "schema.sql"), "utf8")).sql);
   const db: Rows = {
     all: (sql, params = []) => sqlite.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -85,7 +85,7 @@ async function adasGame(db: Rows, document: string): Promise<{ author: Uint8Arra
   const keys = await mintPersonKey();
   const author = await authorIdOf(await rawPublicKey(keys.publicKey));
   ensureReplica(db, author);
-  const session = startSession(db, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const session = startSession(db, { creatorSeat: rnd(), openSeats: [rnd()], close: "any", entity: rnd() });
   // A real starting position, so the board opens and the screen reads as a person would see it.
   const start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   createEntity(db, "games", rnd(), { white_name: "Ada", black_name: "", creator_color: "w", initial_fen: start }, session);

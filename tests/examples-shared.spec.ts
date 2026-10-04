@@ -378,7 +378,7 @@ test.describe("tic-tac-toe, a session document", () => {
     await expect(appA.locator("#status")).toContainText("Your move, Ada.", { timeout: 60_000 });
     await expect(cell(appA, 4)).toHaveText("O");
     await expect(appA.locator("#seat-text")).not.toContainText("Two people opened this invite");
-    await expect(appA.locator("#reseat")).toBeHidden();
+    await expect(appA.locator("#fresh-invite")).toBeHidden();
 
     for (const context of contexts) await context.close();
   });

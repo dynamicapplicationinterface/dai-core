@@ -1,5 +1,5 @@
 {
-  "what": "Ada moves in her session S, then starts a session S2 and writes a version of that move's entity in S2 naming it. B holds S2 and the S2 version, not the move it names; Bo moves in S2 for the seat he holds in S. A into B takes only the parent: the S2 version is reported ENTITY_OTHER_SESSION in Ada's name under its own batch, after the SEAT_NOT_HELD of a header whose id sorts between the parent's and its own. B into A makes no crossing true and reports none. Neither the S2 version nor Bo's S2 move is admitted: an entity belongs to its session, and a seat is the pair of session and seat.",
+  "what": "Ada moves in her session S, then starts a session S2 and writes a version of that move's entity in S2 naming it. B holds S2 and the S2 version, not the move it names; Bo moves in S2 for the seat he holds in S. A into B takes only the parent: the S2 version is reported ENTITY_OTHER_SESSION in Ada's name under its own batch, after the SEAT_NOT_HELD of a header whose id sorts between the parent's and its own. B into A makes no crossing true, and reports Bo's S2 move SEAT_NOT_HELD: in S2 nobody holds the seat it names and he never asked for it, so it names a value no counting confirm names (A03). Neither the S2 version nor Bo's S2 move is admitted: an entity belongs to its session, and a seat is the pair of session and seat.",
   "cites": [
     "6",
     "T1-D29"
@@ -9,14 +9,19 @@
   "stable": true,
   "ab": {
     "applied": 1,
-    "duplicate": 7,
+    "duplicate": 5,
     "rejected": [],
     "newReplicas": 0,
-    "refusedBatches": []
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
   },
   "ba": {
     "applied": 2,
-    "duplicate": 7,
+    "duplicate": 5,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [

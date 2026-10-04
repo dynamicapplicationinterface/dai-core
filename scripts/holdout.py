@@ -78,6 +78,23 @@ HEADERONLY = "session-creator-equivocates-header-only"
 MAXP = "session-seat-beyond-max-parties"
 UNSEATED = "session-equivocated-parent-unseated"
 HOLDS = [f"session-seal-hold-{order}-{at}" for order in ("one-batch", "two-batch") for at in ("first", "last")]
+# The ninth attack review (3 October) and its rulings, R14 to R20, A03, A09.
+GAP1 = "session-gap-seat-row"
+GAP2 = "session-gap-creator-row-version"
+UNASKED = "session-seat-value-unasked"
+OTHERROW = "session-seat-value-other-row"
+CVERSION = "session-seat-value-creator-version"
+THREE = "session-three-parties"
+THREEQ = "session-three-parties-equivocator"
+MISMATCH = "merge-signed-view-mismatch"
+JOINERCLOSE = "session-joiner-equivocator-close"
+TOMB = "session-void-creator-row-tombstone"
+TEXTSEAT = "session-seat-value-text"
+SHORTSEAT = "session-seat-value-short"
+CLOSESKIP = "session-close-skipped-seq"
+CLOSEDEL = "session-close-deleted"
+FORWARD = "session-parent-forward"
+INVALID = [f"session-roster-invalid-{shape}" for shape in ("own-seat", "too-many", "close-rule")]
 
 SORT = "for key in sorted(refusals)\n"
 
@@ -92,50 +109,44 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     # R10 (2 October) took this rule's place: an equivocated creator's seat row
     # is an equivocator's, so the session is void; the witness is the same.
     "creator-equivocated": (
-        "session-void", "a session whose creator is an equivocator is not void: her seat row seats her, and her confirms count", [ECREATOR, RECONF, UNDONE, HEADERONLY],
-        [('                if bytes(s["_r_replica"]) in self.equivocators:\n', "                if False:\n")],
+        "session-void", "a session whose creator is an equivocator is not void: her seat row seats her, and her confirms count", [ECREATOR, "session-creator-equivocates-reconfirm", "session-creator-equivocates-void-undone", "session-creator-equivocates-header-only"],
+        [('            if s["_r_deleted"] == 0 and valid[session] and bytes(s["_r_replica"]) not in signed_twice\n', '            if s["_r_deleted"] == 0 and valid[session]\n'),
+         ('        self.live = {session: s for session, s in live0.items() if bytes(s["_r_replica"]) not in self.equivocators}', '        self.live = dict(live0)')],
     ),
     "creator-deleted": (
         "creator", "a deleted creator's seat row counts", [CREATOR],
-        [('if s["_r_deleted"] == 0 and session_id', 'if session_id')],
+        [('            if s["_r_deleted"] == 0 and valid[session] and', '            if valid[session] and')],
     ),
     "confirm-any-creator": (
         "confirms", "a confirm counts by the creator of any session", [CREATOR],
-        [("if self.unequivocal(f) and self.of_creator_session(f) and row is not None",
-          'if self.unequivocal(f) and bytes(f["_r_replica"]) in {c[1] for c in self.creator_of} and row is not None')],
+        [('            if row is None or bytes(f["_r_replica"]) != bytes(row["_r_replica"]):', '            if row is None or bytes(f["_r_replica"]) not in {bytes(c["_r_replica"]) for c in live.values()}:')],
     ),
     "close-deleted-counts": (
         "close-counts", "a close row written deleted counts", [CLOSE],
-        [('if x["_r_deleted"] == 0\n            and (bytes(x["_r_session"])', 'if (bytes(x["_r_session"])')],
+        [('            if x["_r_deleted"] == 0\n            and bytes(x["_r_session"]) in live0', '            if bytes(x["_r_session"]) in live0')],
     ),
     "close-revoked-by-delete": (
-        "close-first", "a delete of a close revokes it", [CLOSE],
-        [("        self.closed = {bytes(x[\"_r_session\"]) for x in self.closes}",
+        "close-first", "a delete of a close revokes it: the deleted close counts for nothing, and nothing after it is a row after a close", [CLOSEDEL],
+        [("        # A close that counts and a row of its author in that session at a\n",
           "        revoked = {p for y in self.rows.get('_dai_close', []) if y['_r_deleted'] == 1 for p in parents_of(y['_r_parents'])}\n"
-          "        self.closes = [x for x in self.closes if rid_of(x) not in revoked]\n"
-          "        self.closed = {bytes(x[\"_r_session\"]) for x in self.closes}")],
+          "        self.closes0 = [x for x in self.closes0 if rid_of(x) not in revoked]\n"
+          "        # A close that counts and a row of its author in that session at a\n")],
     ),
     "close-member-any-session": (
         "close-counts", "a member of any session may close", [CLOSE],
-        [('and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in self.members',
-          'and bytes(x["_r_replica"]) in {m[1] for m in self.members}')],
+        [('and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in members0)', 'and bytes(x["_r_replica"]) in {m[1] for m in members0})')],
     ),
-    "close-equivocated": (
-        "equivocated-counts-nothing", "a close at an equivocated id counts", [SILENT],
-        [("            and self.counts(x)\n        ]", "        ]")],
-    ),
-    "late-any-session": (
-        "late", "a close makes its author late in every session", [CLOSE],
-        [('bytes(x["_r_session"]) == bytes(row["_r_session"])\n            and bytes(x["_r_replica"])', 'bytes(x["_r_replica"])')],
-    ),
+    # close-equivocated folded into equivocator-close-counts (R17): a close at an
+    # equivocated id is an equivocator's.
+    # late-any-session retired with `late` (R18).
     "seat-not-pair": (
         "admitted-seat", "holding a seat's bytes in any session holds it", [EOS],
-        [('return isinstance(seat, bytes) and (bytes(row["_r_session"]), seat, bytes(row["_r_replica"])) in self.holders',
-          'return isinstance(seat, bytes) and any(h[1] == seat and h[2] == bytes(row["_r_replica"]) for h in self.holders)')],
+        [('return seat_value(seat) and (bytes(row["_r_session"]), bytes(seat), bytes(row["_r_replica"])) in self.holders',
+          'return seat_value(seat) and any(h[1] == bytes(seat) and h[2] == bytes(row["_r_replica"]) for h in self.holders)')],
     ),
     "admit-other-session": (
         "admitted-no-other-session", "a row naming another session's version of its entity is admitted", [EOS],
-        [("not self.foreign(table, row)\n            and self.not_late(row)", "self.not_late(row)")],
+        [("return not self.foreign(table, row) and self.unequivocal(row)", "return self.unequivocal(row)")],
     ),
     "admit-other-seat": (
         "admitted-no-other-seat", "a row naming another seat's version is admitted", [OSEAT],
@@ -145,12 +156,12 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     # equivocator's roster row hiding one is out of reach since R10: the row it
     # would hide is hers, and no head already. roster-equivocated-hides retired.
     "roster-equivocated-head": (
-        "heads-roster", "a roster row is a head when its own id is not equivocated, whoever wrote it", [SEATV],
-        [("                counts = self.counts if table in ROSTER else self.unequivocal\n", "                counts = self.unequivocal\n")],
+        "heads-roster", "a seat row is a head when its own id is not equivocated, whoever wrote it", [SEATV],
+        [("                    self.counts(r)\n                    and self.creator_rows.get", "                    self.unequivocal(r)\n                    and self.creator_rows.get")],
     ),
     "equivocator-close-counts": (
-        "equivocator", "an equivocator's close at an id not equivocated counts", [UNSEATED],
-        [("            and self.counts(x)\n        ]", "            and self.unequivocal(x)\n        ]")],
+        "equivocator", "an equivocator's close counts, at an equivocated id or not", [CLOSESKIP, CLOSEDEL],
+        [('            if bytes(x["_r_session"]) in self.live and bytes(x["_r_replica"]) not in self.equivocators\n', '            if bytes(x["_r_session"]) in self.live\n')],
     ),
     "plain-equivocated-hides": (
         "heads-plain", "a plain row at an equivocated id hides the row it names", [PLAIN],
@@ -162,53 +173,15 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     # ------------------------------------------------ R10, R11: the eighth attack review (2 October)
     "void-session-reported": (
-        "report-silent", "a row of a void session is reported as any row is", [X3],
-        [("if self.names_equivocated(row) or not self.unequivocal(row) or self.void(row):\n            return False",
-          "if self.names_equivocated(row) or not self.unequivocal(row):\n            return False"),
-         ("if self.names_equivocated(r) or not self.unequivocal(r) or self.void(r):\n                continue",
-          "if self.names_equivocated(r) or not self.unequivocal(r):\n                continue")],
+        "report-silent", "a row of a session that is not live is reported as any row is", [TOMB, CREATOR, INVALID[0]],
+        [('            row["_r_session"] is not None\n            and bytes(row["_r_session"]) in self.live\n', '            row["_r_session"] is not None\n')],
     ),
-    "confirm-unminted-counts": (
-        "confirm-minted", "a confirm of a seat the creator did not mint counts", [MAXP],
-        [("for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}", "for key, (_seq, entity) in named_first.items()}")],
-    ),
-    "minted-last-first": (
-        "confirm-minted", "the seats minted are the last max_parties in the creator's seq order", [MAXP],
-        [("if other == session and at < seq) < MAX_PARTIES", "if other == session and at > seq) < MAX_PARTIES")],
-    ),
-    "minted-by-value": (
-        "confirm-minted", "the seats minted are the first max_parties seat values, not seat rows: a reseat's fresh seat is past the bound", ["session-reseat-minted"],
-        [("            key = (bytes(s[\"_r_session\"]), bytes(s[\"_r_entity\"]))\n", "            key = (bytes(s[\"_r_session\"]), bytes(s[\"seat\"]))\n"),
-         ("for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}", "for key, (_seq, entity) in named_first.items() if key in minting}")],
-    ),
+    # confirm-unminted-counts, minted-last-first and minted-by-value retired
+    # with confirm-minted (R14): nothing is minted.
     # ------------------------------------------------ R12, R13 (2 October)
-    "seat-by-value": (
-        "seat-is-row", "a seat is its value: a confirm binds to the value it names, and a hold and a void are the value's", ["session-held-seat-versioned"],
-        [("        self.seat_row = {key: entity for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}",
-          "        self.seat_row = {key: (entity if entity == creator_entity[key[0]] else key[1]) for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}")],
-    ),
-    "held-row-versions-mint": (
-        "held-row-frozen", "a version of a held seat row, written after its first counting confirm, is a seat of its own", ["session-held-seat-versioned"],
-        [("        self.counting_confirms = ",
-          "        held_at: dict = {}\n"
-          "        for c in confirmed:\n"
-          "            held_at[(c[0], c[1])] = min(held_at.get((c[0], c[1]), c[4]), c[4])\n"
-          "        for (session, value), (seq, entity) in named_first.items():\n"
-          "            if (session, value) in self.seat_row and (session, entity) in held_at and seq > held_at[(session, entity)]:\n"
-          "                self.seat_row[(session, value)] = value\n"
-          "        confirmed = [(c[0], self.seat_row[(c[0], c[5])], c[2], c[3], c[4], c[5]) for c in confirmed]\n"
-          "        self.counting_confirms = ")],
-    ),
-    "seat-row-below-mints": (
-        "session-from-creator-row", "a creator's seat row below her creator's seat row counts toward the bound, first in her seq order", ["session-roster-row-below-creator"],
-        [('        mine = [s for s in self.rows.get("_dai_seat", []) if self.of_creator_session(s)]',
-          '        mine = [s for s in self.rows.get("_dai_seat", []) if (bytes(s["_r_session"]), bytes(s["_r_replica"])) in self.creator_seq]')],
-    ),
-    "confirm-below-counts": (
-        "session-from-creator-row", "a creator's confirm below her creator's seat row counts", ["session-roster-row-below-creator"],
-        [("if self.unequivocal(f) and self.of_creator_session(f) and row is not None",
-          "if self.unequivocal(f) and (session, bytes(f[\"_r_replica\"])) in self.creator_seq and row is not None")],
-    ),
+    # seat-by-value, held-row-versions-mint, seat-row-below-mints and
+    # confirm-below-counts retired with seat-is-row, held-row-frozen and
+    # session-from-creator-row (R14).
     # ------------------------------------------------ witness pass 1: Equivocation
     # A reader comparing the row at the id rather than the whole batch cannot
     # be written from the headers alone (a copy holds one row at an id in a
@@ -276,20 +249,29 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "report-crossing", "a version of another seat reported only when the merge took the child", [OSEAT],
         [("if rid_of(child) in came or rid_of(parent) in came:", "if rid_of(child) in came or (reason == 'ENTITY_OTHER_SESSION' and rid_of(parent) in came):")],
     ),
-    "seat-any-length": (
-        "seat-not-held", "any byte string is a seat", [AFTER],
-        [('if not isinstance(seat, bytes) or len(seat) != 16:\n            return True', 'if not isinstance(seat, bytes):\n            return True')],
+    # seat-any-length retired (A03): every row for a value nobody holds is
+    # SEAT_NOT_HELD, so whether a byte string of another length is a seat value
+    # changes nothing a fixture shows; seat-text keeps the anchor witnessed.
+    "seat-text": (
+        "seat-value-shape", "a 16-character text is a seat value, the same as the bytes of its UTF-8", [TEXTSEAT],
+        [("    return isinstance(value, (bytes, bytearray)) and len(value) == 16",
+          "    return (isinstance(value, (bytes, bytearray)) or isinstance(value, str)) and len(value) == 16"),
+         ('            if seat_value(f["seat"]) and bytes(f["seat"]) in self.open_seats[session]:',
+          '            if seat_value(f["seat"]) and (f["seat"].encode() if isinstance(f["seat"], str) else bytes(f["seat"])) in self.open_seats[session]:'),
+         ('        return seat_value(seat) and (bytes(row["_r_session"]), bytes(seat), bytes(row["_r_replica"])) in self.holders',
+          '        return seat_value(seat) and (bytes(row["_r_session"]), seat.encode() if isinstance(seat, str) else bytes(seat), bytes(row["_r_replica"])) in self.holders')],
     ),
     "other-seat-not-reported": (
         "seat-not-held", "a version of another seat not reported", [OSEAT],
-        [("return (held and not self.holds(table, row)) or self.other_seat(table, row)", "return held and not self.holds(table, row)"),
+        [("        if not seat_value(seat) or self.other_seat(table, row):\n            return True", "        if not seat_value(seat):\n            return True"),
          ('found.append(("SEAT_NOT_HELD", r, p))', "pass")],
     ),
-    "late-reported": (
-        "report-silent", "a late row taken is reported SEAT_NOT_HELD", [CLOSE],
-        [('        seat = row[self.seated[table]]\n        if not isinstance(seat, bytes) or len(seat) != 16:',
-          '        if not self.not_late(row):\n            return True\n        seat = row[self.seated[table]]\n        if not isinstance(seat, bytes) or len(seat) != 16:')],
+    "unheld-value-silent": (
+        "seat-not-held", "a row for a value nobody holds is reported only when someone else holds it", [UNASKED, OTHERROW, CVERSION, GAP1, "session-seat-beyond-max-parties"],
+        [('        return (bytes(row["_r_session"]), bytes(seat)) not in self.void_seats',
+          '        return any(h[0] == bytes(row["_r_session"]) and h[1] == bytes(seat) for h in self.holders)')],
     ),
+    # late-reported retired with `late` (R18).
     # reveal-kinds-apart retired with R10: an author who signs two headers at
     # one id is an equivocator, so every session she created is void and no
     # seat of hers is voided; one merge can no longer reveal her both ways.
@@ -300,7 +282,7 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "void-confirms-only": (
         "revealing-two-confirms", "only confirms reveal a void seat, not the creator's seat row", [SEATROW],
-        [('table == "_dai_seat"\n                        and row["_r_deleted"] == 0', 'False\n                        and row["_r_deleted"] == 0')],
+        [('or (table == "_dai_seat" and row["_r_seq"] == creator_row["_r_seq"])', "or False")],
     ),
     # void-equivocated-confirm-reveals retired with R10: a confirm at an
     # equivocated id is an equivocator's, so its session is void, and no seat
@@ -325,12 +307,12 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "parents-ordered": (
         "parents-order-unchecked", "parents out of order, or naming one id twice, are malformed", [SHAPE],
-        [("    return all(\n        isinstance(item, str) and PARENT_ID",
-          "    if value != sorted(set(value)):\n        return False\n    return all(\n        isinstance(item, str) and PARENT_ID")],
+        [("    own = bytes(replica).hex() if isinstance(replica, (bytes, bytearray)) else None\n",
+          "    if value != sorted(set(value)):\n        return False\n    own = bytes(replica).hex() if isinstance(replica, (bytes, bytearray)) else None\n")],
     ),
     "parents-own-read": (
         "parents-own-malformed", "a copy's own malformed row's parents are read as they stand, outside a merge", [SHAPE],
-        [("    if not well_formed_parents(text):\n        return []\n    try:", "    try:")],
+        [("    if not well_formed_parents(text, replica, seq):\n        return []\n    try:", "    try:")],
     ),
     # ------------------------------------------------ witness pass 2: Merge
     "malformed-incomplete-refused": (
@@ -383,20 +365,13 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
           "                if not counts(r) or self.names_equivocated(r):\n                    continue\n")],
     ),
     # ------------------------------------------------ R9: a row at an equivocated id
-    "equivocated-unseated-reported": (
-        "report-silent", "a row at an equivocated id naming no seat is reported SEAT_NOT_HELD", [SILENT],
-        [("if self.names_equivocated(row) or not self.unequivocal(row) or self.void(row):\n            return False",
-          "if self.names_equivocated(row) or self.void(row):\n            return False")],
-    ),
-    "equivocated-foreign-reported": (
-        "report-silent", "a row at an equivocated id naming another session's version is reported ENTITY_OTHER_SESSION", [SILENT],
-        [("if self.names_equivocated(r) or not self.unequivocal(r) or self.void(r):\n                continue", "if self.names_equivocated(r) or self.void(r):\n                continue"),
-         ('and p[column] != r[column]:', 'and p[column] != r[column] and self.unequivocal(r):')],
-    ),
-    "equivocated-other-seat-reported": (
-        "report-silent", "a row at an equivocated id naming another seat's version is reported SEAT_NOT_HELD", [SILENT],
-        [("if self.names_equivocated(r) or not self.unequivocal(r) or self.void(r):\n                continue", "if self.names_equivocated(r) or self.void(r):\n                continue"),
-         ('if bytes(p["_r_session"]) != bytes(r["_r_session"]):', 'if bytes(p["_r_session"]) != bytes(r["_r_session"]) and self.unequivocal(r):')],
+    # equivocated-unseated-reported, -foreign-reported and -other-seat-reported
+    # (R9) folded into equivocator-rows-reported (R17): a row at an equivocated
+    # id is an equivocator's.
+    "equivocator-rows-reported": (
+        "equivocator-holds-nothing", "an equivocator's rows are reported as any author's", [JOINERCLOSE],
+        [('            and bytes(row["_r_replica"]) not in self.equivocators\n            and not self.names_equivocated(row)\n',
+          '            and self.unequivocal(row)\n            and not self.names_equivocated(row)\n')],
     ),
     # ------------------------------------------------ the step 6 re-review's fix-up (1 October)
     "held-row-pending": (
@@ -439,10 +414,11 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "revealing-two-headers", "an incomplete kept header reveals nothing", [HEADERONLY, X3],
         [("            if new:\n                arrived.append(header)\n", "            if new and verdict == \"ok\":\n                arrived.append(header)\n")],
     ),
-    "creator-seat-row-any-seq": (
-        "session-id-creator-row", "the creator's seat row is any seat row whose author has some seq hashing to its session", ["session-creator-by-seq"],
-        [('if s["_r_deleted"] == 0 and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):',
-          'if s["_r_deleted"] == 0 and any(session_id(s["_r_replica"], q["_r_seq"]) == bytes(s["_r_session"]) for q in self.rows.get("_dai_seat", []) if bytes(q["_r_replica"]) == bytes(s["_r_replica"])):')],
+    # creator-seat-row-any-seq retired: under R15 the id hashes the roster, so
+    # session-id-no-roster holds the same anchor out.
+    "session-id-no-roster": (
+        "session-id-roster", "the session id hashes the author and the seq alone", [GAP1, CREATOR],
+        [("    roster = cbor_head(4, 3) + b\"\".join(parts)  # type: ignore[arg-type]\n", "    roster = b\"\"\n")],
     ),
     "parent-any-table": (
         "parent-other-entity", "a row of another table at the id a parent names is a version of its entity", [OTHERTABLE],
@@ -450,8 +426,9 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
           'return [p for t in self.rows for p in self.rows[t] if bytes(p["_r_entity"]) == bytes(row["_r_entity"]) and rid_of(p) in wanted]')],
     ),
     "parent-equivocated-admitted": (
-        "admitted-parent-equivocated", "a row naming an equivocated id as a parent is admitted when it otherwise would be", [OWNSEAT, UNSEATED],
-        [("            and self.unequivocal(row)\n            and not self.names_equivocated(row)\n", "            and self.unequivocal(row)\n")],
+        "admitted-parent-equivocated", "a row naming an equivocated id as a parent is admitted when it otherwise would be", ["session-equivocated-parent-unseated"],
+        [("return not self.foreign(table, row) and self.unequivocal(row) and not self.names_equivocated(row)",
+          "return not self.foreign(table, row) and self.unequivocal(row)")],
     ),
     "row-batch-always-lowest": (
         "merge-row-batch", "a signed row's _r_batch is the lowest complete kept header listing it, whatever it names", [NAMEDHIGH],
@@ -459,12 +436,61 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "confirm-names-equivocated": (
         "parent-equivocated-outside", "a confirm naming an equivocated id as a parent counts for nothing", [ROSTERNAMES],
-        [("if self.unequivocal(f) and self.of_creator_session(f)",
-          "if self.unequivocal(f) and not self.names_equivocated(f) and self.of_creator_session(f)")],
+        [('            if seat_value(f["seat"]) and bytes(f["seat"]) in self.open_seats[session]:',
+          '            if seat_value(f["seat"]) and bytes(f["seat"]) in self.open_seats[session] and not self.names_equivocated(f):')],
     ),
     "close-names-equivocated": (
         "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing", [ROSTERNAMES],
-        [("            and self.counts(x)\n        ]", "            and self.counts(x)\n            and not self.names_equivocated(x)\n        ]")],
+        [('            if x["_r_deleted"] == 0\n            and bytes(x["_r_session"]) in live0',
+          '            if x["_r_deleted"] == 0 and not self.names_equivocated(x)\n            and bytes(x["_r_session"]) in live0')],
+    ),
+    # ------------------------------------------------ R14 to R20, A03, A09: the ninth attack review (3 October)
+    "roster-any-valid": (
+        "roster-declared", "a creator's seat row's roster is valid whatever it holds", INVALID,
+        [("            valid[session] = (\n", "            valid[session] = True or (\n")],
+    ),
+    "roster-unbounded": (
+        "roster-declared", "a roster may list more seats than max_parties allows", ["session-roster-invalid-too-many"],
+        [("                and 1 + len(values) <= max_parties\n", "")],
+    ),
+    "seat-rows-declare": (
+        "creator-row-immutable", "every seat row of the creator's in her session, a version of her creator's seat row included, declares its seat an open one", [GAP1, GAP2, "session-seat-beyond-max-parties"],
+        [('            if seat_value(f["seat"]) and bytes(f["seat"]) in self.open_seats[session]:',
+          '            if seat_value(f["seat"]) and (bytes(f["seat"]) in self.open_seats[session] or any(seat_value(o["seat"]) and bytes(o["seat"]) == bytes(f["seat"]) for o in self.rows.get("_dai_seat", []) if bytes(o["_r_session"]) == session and bytes(o["_r_replica"]) == bytes(row["_r_replica"]) and bytes(o["seat"]) != bytes(row["seat"]))):')],
+    ),
+    "seat-rows-heads": (
+        "creator-row-immutable", "every seat row by an author who is no equivocator is a head", [GAP1, GAP2],
+        [("                hidden = not (\n                    self.counts(r)\n", "                hidden = not (\n                    self.counts(r) or True\n")],
+    ),
+    "views-not-compared": (
+        "document-mismatch", "a merge takes a sibling whose signed-view digest differs", [MISMATCH],
+        [("    if views is not None and views[0] != views[1]:", "    if False:")],
+    ),
+    "bound-two": (
+        "fixtures-manifest", "max_parties is 2, whatever the manifest says", [THREE, THREEQ],
+        [('        bound = manifest[mine].get("session", {}).get("max_parties", MAX_PARTIES)', "        bound = MAX_PARTIES")],
+    ),
+    "equivocator-holds": (
+        "equivocator-holds-nothing", "an equivocator keeps the seat he was confirmed in, and his rows count as any author's", [THREEQ, JOINERCLOSE, CLOSESKIP, CLOSEDEL],
+        [("            if len(holders) > 1 or holders & self.equivocators\n", "            if len(holders) > 1\n")],
+    ),
+    "close-not-monotone": (
+        "close-monotone", "a close followed by a row of its author in that session is no equivocation", [CLOSESKIP, CLOSEDEL],
+        [("        self.equivocators = signed_twice | {author for _session, author in self.close_equivocated}",
+          "        self.equivocators = set(signed_twice)")],
+    ),
+    "parent-forward-shaped": (
+        "parent-forward", "a parent naming the row's own author at a seq at or above its own is the shape", [FORWARD],
+        [("        and not (own is not None and isinstance(seq, int) and item[:32] == own and int(item[33:]) >= seq)\n", "")],
+    ),
+    "void-reads-delete": (
+        "session-void", "a session whose creator's seat row this copy holds as a tombstone has a creator to report under", [TOMB],
+        [('            and bytes(row["_r_session"]) in self.live\n',
+          '            and (bytes(row["_r_session"]) in self.live or (bytes(row["_r_session"]) in self.creator_rows and self.creator_rows[bytes(row["_r_session"])]["_r_deleted"] == 1))\n')],
+    ),
+    "close-reveals-nothing": (
+        "revealing-close", "a close followed by a row reveals nothing", [CLOSESKIP, CLOSEDEL],
+        [("        for s, author in admission.close_equivocated:\n", "        for s, author in []:\n")],
     ),
 }
 
@@ -541,21 +567,21 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         [(r'if \(!isNew\) local\.run\("UPDATE _dai_batch SET covers', 'if (false) local.run("UPDATE _dai_batch SET covers')],
     ),
     "parent-equivocated-admitted-rt": (
-        "admitted-parent-equivocated", "admitted and waiting rows may name an equivocated id as a parent", [OWNSEAT],
-        [(r" AND NOT \$\{namesEquivocated\d*\(row\)\}", "")],
+        "admitted-parent-equivocated", "admitted and waiting rows may name an equivocated id as a parent", ["session-equivocated-parent-unseated"],
+        [(r"(\$\{byRole\(row\)\}) AND NOT \$\{namesEquivocated\d*\(row\)\}", r"\1")],
     ),
     "row-batch-always-lowest-rt": (
         "merge-row-batch", "a signed row's _r_batch is the lowest complete kept header listing it, whatever it names", [NAMEDHIGH],
         [(r"const keep = named && covers\.has\(`\$\{named\}\|\$\{key\}`\) \? named : cover;", "const keep = cover;")],
     ),
     "confirm-names-equivocated-rt": (
-        "parent-equivocated-outside", "a confirm naming an equivocated id as a parent counts for nothing (_dai_confirmed)", [ROSTERNAMES],
-        [(r'WHERE \$\{(unequivocal\d*)\("f"\)\}', r'WHERE ${\1("f")} AND NOT ${namesEquivocated("f")}')],
+        "parent-equivocated-outside", "a confirm naming an equivocated id as a parent counts for nothing (_dai_confirmed0)", [ROSTERNAMES],
+        [(r"WHERE \(f\._r_session, f\.seat\) IN \(SELECT session, seat FROM roster_value\)\),",
+          r'WHERE (f._r_session, f.seat) IN (SELECT session, seat FROM roster_value) AND NOT ${namesEquivocated("f")}),')],
     ),
     "close-names-equivocated-rt": (
-        "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing (_dai_closed, and late rows)", [ROSTERNAMES],
-        [(r'\$\{(closedBy\d*)\("x", closeCreator\)\} AND \$\{(notEquivocator\d*)\("x"\)\}',
-          r'${\1("x", closeCreator)} AND ${\2("x")} AND NOT ${namesEquivocated("x")}')],
+        "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing (_dai_close0)", [ROSTERNAMES],
+        [(r"(FROM _dai_close x\n\s+JOIN creator0 c ON c\.session = x\._r_session\n\s+WHERE x\._r_deleted = 0)", r'\1 AND NOT ${namesEquivocated("x")}')],
     ),
     "outside-names-equivocated-rt": (
         "parent-equivocated-outside", "a roster, close or plain row naming an equivocated id as a parent is no head", [EPARENT, ROSTERNAMES],
@@ -564,39 +590,73 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     # ------------------------------------------------ R10, R11: the eighth attack review (2 October)
     "session-not-void-rt": (
-        "session-void", "a session whose creator is an equivocator keeps her as its creator (_dai_creator)", [ECREATOR, RECONF, UNDONE, HEADERONLY],
-        [(r's\._r_deleted = 0 AND \$\{(notEquivocator\d*)\("s"\)\}', "s._r_deleted = 0 AND 1")],
+        "session-void", "a session whose creator is an equivocator keeps her as its creator (_dai_creator0, _dai_creator)", [ECREATOR, "session-creator-equivocates-reconfirm", "session-creator-equivocates-void-undone", "session-creator-equivocates-header-only"],
+        [(r"\n\s+AND r\.replica NOT IN \(SELECT author FROM equivocated\)\),", "),"),
+         (r"FROM creator0\n\s+WHERE replica NOT IN \(SELECT author FROM equivocator\)\),", "FROM creator0),")],
     ),
     "void-reported-rt": (
-        "report-silent", "a row of a void session is reported as any row is (_unseated, _other_seat, _foreign)", [X3],
-        [(r'\s+AND NOT \$\{inVoidSession\d*\("r"\)\}', "")],
+        "report-silent", "a row of a session that is not live is reported as any row is (_unseated, _other_seat, _foreign)", [TOMB],
+        [(r"\$\{inLiveSession\d*\(row\)\} AND ", "")],
     ),
     "equivocator-roster-rt": (
-        "equivocator", "an equivocator's roster and close rows count, but at an equivocated id (heads)", [SEATV],
-        [(r"const (counts\d*) = session \? \(row\) => `\$\{notEquivocator\d*\(row\)\} AND \$\{(fromSession\d*)\(row\)\}` : (unequivocal\d*);",
-          r"const \1 = session ? (row) => `${\3(row)} AND ${\2(row)}` : \3;")],
+        "equivocator", "an equivocator's binding, confirm and close rows count, but at an equivocated id (heads)", [JOINERCLOSE],
+        [(r"const (counts\d*) = session \? (notEquivocator\d*) : (unequivocal\d*);", r"const \1 = \3;")],
     ),
     "equivocator-close-rt": (
-        "equivocator", "an equivocator's close at an id not equivocated counts (_dai_closed, and late rows)", [UNSEATED],
-        [(r'\$\{(closedBy\d*)\("x", closeCreator\)\} AND \$\{notEquivocator\d*\("x"\)\}', r'${\1("x", closeCreator)} AND ${unequivocal("x")}')],
+        "equivocator", "an equivocator's close closes its session (_dai_closed)", [CLOSESKIP, CLOSEDEL],
+        [(r"\n\s+AND k\.replica NOT IN \(SELECT author FROM equivocator\)\)", ")")],
     ),
-    "confirm-unminted-rt": (
-        "confirm-minted", "a confirm of a seat the creator did not mint counts (_dai_seat_value: every seat row mints)", [MAXP],
-        [(r"WHERE seq = value_first AND place <= \$\{maxParties\};", "WHERE seq = value_first;")],
-    ),
+    # confirm-unminted-rt retired with confirm-minted (R14).
     # R12, R13 (2 October).
-    "void-by-value-rt": (
-        "seat-is-row", "two confirms void a seat only when they name one value (_dai_voided)", ["session-held-seat-versioned"],
-        [(r"o\.session = f\.session AND o\.entity = f\.entity AND o\.holder <> f\.holder", "o.session = f.session AND o.seat = f.seat AND o.holder <> f.holder")],
+    # void-by-value-rt and session-before-creator-rt retired with seat-is-row and
+    # session-from-creator-row (R14).
+    # ------------------------------------------------ R14 to R20, A03, A09 (3 October)
+    "roster-valid-rt": (
+        "roster-declared", "a roster with too many seats, or a close rule other than any or creator, is valid (_dai_roster_invalid)", ["session-roster-invalid-too-many", "session-roster-invalid-close-rule"],
+        [(r"WHERE NOT \(typeof\(r\.seat\) = 'blob'", "WHERE 0 AND NOT (typeof(r.seat) = 'blob'")],
     ),
-    "session-before-creator-rt": (
-        "session-from-creator-row", "a creator's seat rows and confirms below her creator's seat row count (_dai_seat_value, _dai_confirmed)", ["session-roster-row-below-creator"],
-        [(r"\n\s+WHERE s\._r_seq >= c\.seq\)\)", "))"),
-         (r" AND f\._r_seq >= v\.since AND v\.entity <> v\.creator_entity;", " AND v.entity <> v.creator_entity;")],
+    "seat-rows-heads-rt": (
+        "creator-row-immutable", "every seat row by an author who is no equivocator is a head (_dai_seat_heads)", [GAP1, GAP2],
+        [(r"\n\s+AND \(r\._r_replica, r\._r_seq, r\._r_session\) IN \(SELECT replica, seq, session FROM _dai_creator_row\);", ";")],
+    ),
+    "seat-rows-declare-rt": (
+        "creator-row-immutable", "a confirm counts for any seat a seat row of the creator's names (_dai_confirmed0)", [GAP1, GAP2, "session-seat-beyond-max-parties"],
+        [(r"WHERE \(f\._r_session, f\.seat\) IN \(SELECT session, seat FROM roster_value\)\),",
+          "WHERE ((f._r_session, f.seat) IN (SELECT session, seat FROM roster_value)"
+          " OR EXISTS (SELECT 1 FROM _dai_seat o WHERE o._r_session = f._r_session AND o._r_replica = f._r_replica AND o.seat = f.seat AND o.seat <> c.seat))),")],
+    ),
+    "views-not-compared-rt": (
+        "document-mismatch", "a merge takes a sibling whose signed-view digest differs", [MISMATCH],
+        [(r"if \(options\.views && options\.views\.local !== options\.views\.sibling\) return", "if (false) return")],
+    ),
+    "equivocator-holds-rt": (
+        "equivocator-holds-nothing", "a seat confirmed to an equivocator is held by him (_dai_voided, _dai_holder)", [THREEQ, CLOSESKIP, CLOSEDEL],
+        [(r" OR min\(f\.holder\) IN \(SELECT author FROM equivocator\)\)", ")"),
+         (r" AND min\(f\.holder\) NOT IN \(SELECT author FROM equivocator\)\)", ")")],
+    ),
+    "close-not-monotone-rt": (
+        "close-monotone", "a close followed by a row of its author in that session is no equivocation (_dai_close_equivocated)", [CLOSESKIP, CLOSEDEL],
+        [(r'WHERE \$\{writesAfter\d*\("k"\)\}\),', "WHERE 0),")],
+    ),
+    "parent-forward-shaped-rt": (
+        "parent-forward", "a parent naming the row's own author at a seq at or above its own is the shape (wellFormedParents)", [FORWARD],
+        [(r"!\(own !== null && seq !== void 0 && p\.slice\(0, 32\) === own && Number\(p\.slice\(33\)\) >= Number\(seq\)\)", "true")],
+    ),
+    "unheld-value-silent-rt": (
+        "seat-not-held", "a row for a value nobody holds is reported only when someone else holds it (_unseated)", [UNASKED, OTHERROW, CVERSION],
+        [(r"OR \(NOT \(\$\{holds\(\"r\"\)\}\) AND NOT \$\{waiting\(\"r\"\)\}",
+          'OR (EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = r._r_session AND h.seat = r."${seatColumn}") AND NOT (${holds("r")}) AND NOT ${waiting("r")}')],
+    ),
+    "session-id-no-roster-rt": (
+        "session-id-roster", "the session id hashes the author and the seq alone (sessionIdOf)", [GAP1],
+        [(r"joined\.set\(roster, BYTES \+ 8\);", "")],
     ),
     # A10, the seal orders (D178): what a seal records is the runtime's alone.
     "seal-takes-later-rows-rt": (
-        "batch-seal", "a seal sets its header on the author's pending rows from the listed seq on, not on the rows it lists", HOLDS,
+        # session-seal-hold-two-batch-last no longer witnesses it: with one seat row
+        # per session (R14) its batches sign in another order, and the row written
+        # during the hold is in the other session.
+        "batch-seal", "a seal sets its header on the author's pending rows from the listed seq on, not on the rows it lists", HOLDS[:3],
         [(r"SET _r_batch = \? WHERE _r_replica = \? AND _r_seq = \? AND _r_batch IS NULL`", "SET _r_batch = ? WHERE _r_replica = ? AND _r_seq >= ? AND _r_batch IS NULL`")],
     ),
 }

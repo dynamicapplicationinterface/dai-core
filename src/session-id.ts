@@ -1,17 +1,19 @@
 /**
  * A session id commits to its creator's seat row (identity step 5, ruled 24
- * September; batch format version 2, D158, ruled 27 September).
+ * September; batch format version 2, D158, ruled 27 September; R15, 3
+ * October).
  *
- * `session = SHA-256(creator author id ‖ seq)`, first 16 bytes, the seq being
- * the creator's seat row's own, as eight bytes, unsigned, big-endian. So the
- * id names one row, `(author, seq)`, and nothing else is the creator's seat
- * row: a second seat row from the creator, or one backfilled at a skipped seq,
- * sits at another seq and hashes to another session. At step 5 the id
- * committed to a nonce the row carried, and any row carrying it counted, so
- * the creator could mint another and take a confirmed seat (D158). Anyone can
- * check it from the rows, and nobody but the creator can produce a row that
- * passes. So who created a session is a fact about the rows, not a race on a
- * clock.
+ * `session = SHA-256(creator author id ‖ seq ‖ CBOR([seat, seats, close]))`,
+ * first 16 bytes: the seq being the creator's seat row's own, as eight bytes,
+ * unsigned, big-endian, and the array the canonical CBOR of the row's own
+ * `seat`, `seats` and `close` columns as it holds them. So the id names one
+ * row, `(author, seq)`, and the roster that row declares (R14): nothing else
+ * is the creator's seat row, and a row at that id declaring another roster
+ * names another session. At step 5 the id committed to a nonce the row
+ * carried, and any row carrying it counted, so the creator could mint another
+ * and take a confirmed seat (D158). Anyone can check it from the rows, and
+ * nobody but the creator can produce a row that passes. So who created a
+ * session is a fact about the rows, not a race on a clock.
  *
  * The check runs inside SQL, in the views that decide who the creator is, so
  * it holds over every row a copy holds however it got there. SQL functions are
@@ -19,7 +21,7 @@
  * held to WebCrypto's answer by tests/session-id.spec.ts.
  */
 
-/** The SQL function the roster views call: `dai_session_id(author, seq)`. */
+/** The SQL function the roster views call: `dai_session_id(author, seq, seat, seats, close)`. */
 export const SESSION_ID_FUNCTION = "dai_session_id";
 
 /** Bytes in an author id and a session id. */
@@ -36,7 +38,7 @@ export const SESSION_ID_BYTES = 16;
  */
 export function sessionIdTools(): {
   sha256: (message: Uint8Array) => Uint8Array;
-  sessionIdOf: (author: unknown, seq: unknown) => Uint8Array | null;
+  sessionIdOf: (author: unknown, seq: unknown, seat: unknown, seats: unknown, close: unknown) => Uint8Array | null;
 } {
   const K = Uint32Array.from([
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -114,20 +116,66 @@ export function sessionIdTools(): {
     return out;
   }
 
+  /** A CBOR head, major type and argument, in the shortest form (RFC 8949 §4.2.1). */
+  function head(major: number, n: bigint): number[] {
+    const top = major << 5;
+    if (n < BigInt(24)) return [top | Number(n)];
+    const width = n < BigInt(0x100) ? 1 : n < BigInt(0x10000) ? 2 : n < BigInt(0x100000000) ? 4 : 8;
+    const out = [top | { 1: 24, 2: 25, 4: 26, 8: 27 }[width]!];
+    for (let i = width - 1; i >= 0; i -= 1) out.push(Number((n >> BigInt(8 * i)) & BigInt(0xff)));
+    return out;
+  }
+
   /**
-   * The session id a creator and the seq of their seat row make: SHA-256 of
-   * the author id then the seq as eight bytes, unsigned, big-endian, first 16
-   * bytes. A seq arrives as a number or, from some engines, a BigInt. Null when
-   * the author is not 16 bytes or the seq is not a positive whole number, so a
-   * malformed row names no session rather than throwing inside a view.
+   * One column value as canonical CBOR (docs/format.md#cbor): bytes, text,
+   * null, an integer in the shortest form to ±2^64, a fraction as a float64.
+   * Null for what no signed row can hold (an unsafe whole number, NaN,
+   * Infinity), so such a row names no session.
    */
-  function sessionIdOf(author: unknown, seq: unknown): Uint8Array | null {
+  function value(v: unknown): number[] | null {
+    if (v === null || v === undefined) return [0xf6];
+    if (v instanceof Uint8Array) return [...head(2, BigInt(v.length)), ...v];
+    if (typeof v === "string") {
+      const bytes = new TextEncoder().encode(v);
+      return [...head(3, BigInt(bytes.length)), ...bytes];
+    }
+    if (typeof v === "bigint" || (typeof v === "number" && Number.isInteger(v))) {
+      if (typeof v === "number" && !Number.isSafeInteger(v)) return null;
+      const n = BigInt(v);
+      const limit = BigInt(2) ** BigInt(64);
+      if (n >= limit || n < -limit) return null;
+      return n >= BigInt(0) ? head(0, n) : head(1, -BigInt(1) - n);
+    }
+    if (typeof v === "number" && Number.isFinite(v)) {
+      const out = new Uint8Array(9);
+      out[0] = 0xfb;
+      new DataView(out.buffer).setFloat64(1, v);
+      return [...out];
+    }
+    return null;
+  }
+
+  /**
+   * The session id a creator's seat row makes (R15): SHA-256 of the author id,
+   * the seq as eight bytes, unsigned, big-endian, and the canonical CBOR of
+   * [seat, seats, close] as the row holds them, first 16 bytes. Whatever the
+   * columns hold, so a row whose roster is not a valid one still names its
+   * session, and that session is void (R14). A seq arrives as a number or,
+   * from some engines, a BigInt. Null when the author is not 16 bytes, the seq
+   * is not a positive whole number, or a column holds what no signed row can,
+   * so a malformed row names no session rather than throwing inside a view.
+   */
+  function sessionIdOf(author: unknown, seq: unknown, seat: unknown, seats: unknown, close: unknown): Uint8Array | null {
     if (!(author instanceof Uint8Array) || author.length !== BYTES) return null;
     const whole = typeof seq === "bigint" ? seq : typeof seq === "number" && Number.isSafeInteger(seq) ? BigInt(seq) : null;
     if (whole === null || whole < BigInt(1) || whole >= BigInt(2) ** BigInt(64)) return null;
-    const joined = new Uint8Array(BYTES + 8);
+    const columns = [value(seat), value(seats), value(close)];
+    if (columns.some((c) => c === null)) return null;
+    const roster = [0x83, ...columns.flatMap((c) => c!)];
+    const joined = new Uint8Array(BYTES + 8 + roster.length);
     joined.set(author, 0);
     new DataView(joined.buffer).setBigUint64(BYTES, whole);
+    joined.set(roster, BYTES + 8);
     return sha256(joined).slice(0, BYTES);
   }
 

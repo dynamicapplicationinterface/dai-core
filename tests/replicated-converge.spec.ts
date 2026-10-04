@@ -888,7 +888,7 @@ CREATE TABLE moves (
     ensureReplica(db, A);
     // A session A created, so A writes in it: a writer versions only heads of a
     // session it is a member of or waits in (D135).
-    const s = startSession(db, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    const s = startSession(db, { creatorSeat: bytes(0x62), openSeats: [bytes(0x63)], close: "any", entity: bytes(0x64) });
     createEntity(db, "moves", E1, { ply: 1, san: "e4" }, s);
     // Change and delete name the session with the entity (D134): a row is
     // (session, entity), and the version stays in it.
@@ -1043,7 +1043,7 @@ CREATE TABLE prefs (
     const a = openFilter();
     ensureReplica(a, ada.author);
     // A game A created, so A's change finds its head there (D135).
-    const s1 = startSession(a, { creatorSeat: bytes(0x62), openSeat: bytes(0x63), entities: [bytes(0x64), bytes(0x65)] });
+    const s1 = startSession(a, { creatorSeat: bytes(0x62), openSeats: [bytes(0x63)], close: "any", entity: bytes(0x64) });
     createEntity(a, "moves", E1, { ply: 1, san: "e4" }, s1);
     changeEntity(a, "moves", E1, { ply: 1, san: "e4!" }, s1);
     createEntity(a, "moves", E2, { ply: 1, san: "d4" }, S2);
@@ -1109,12 +1109,12 @@ CREATE TABLE moves (
 `;
   const open3 = (): Rows & { close(): void } => openWith(SCHEMA);
   const C = bytes(0xc0); // creator
-  const S = sessionIdOf(C, 1)!; // the session commits to its creator
   const O = bytes(0x0b); // opener
   const N = bytes(0x0e); // never invited
   const F = bytes(0xff); // forwarded copy
   const SEATC = bytes(0xa1);
   const SEATO = bytes(0xa2);
+  const S = sessionIdOf(C, 1, SEATC, SEATO, "any")!; // the session commits to its creator and her roster
   let e = 0;
   const ent = (): Uint8Array => bytes(0xe0 + e++);
 
@@ -1144,12 +1144,14 @@ CREATE TABLE moves (
     db.all(`SELECT san FROM moves_current ORDER BY san`).map((r) => String(r["san"]));
 
   /**
-   * The creator's session with the opener seated: her own seat, the row the
-   * session id names by its seq (1), the open seat, the opener's ask for it,
-   * and her confirmation. The creator's rows are seqs 1–3, the opener's seq 1.
+   * The creator's session with the opener seated: her creator's seat row, the
+   * row the session id names by its seq (1), declaring her seat and the open
+   * seat (R14); the opener's ask for it, and her confirmation. Her seq 2 is a
+   * seat row that counts for nothing. The creator's rows are seqs 1–3, the
+   * opener's seq 1.
    */
   function seated(db: Rows): void {
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, seats: SEATO, close: "any" });
     put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
     put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
     put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
@@ -1247,7 +1249,7 @@ CREATE TABLE moves (
     e = 0;
     const a = open3();
     ensureReplica(a, ada.author);
-    const session = startSession(a, { creatorSeat: SEATC, openSeat: SEATO, entities: [ent(), ent()] });
+    const session = startSession(a, { creatorSeat: SEATC, openSeats: [SEATO], close: "any", entity: ent() });
     await sealAs(a, ada);
     const boCopy = open3();
     ensureReplica(boCopy, bo.author);
@@ -1275,12 +1277,12 @@ CREATE TABLE moves (
     b.close();
   });
 
-  test("session-closed-drops-late-rows: the closer's own row after their close is dropped, one before it kept", () => {
-    // The member plays, closes, and plays again. The row after the close is
-    // late and drops; the one before stays. Late is the closer's own seq, not a
-    // clock (T1-D31, amended by D151), and the close's frontier columns are not
-    // read: this one names O at seq 0, which under the frontier would have
-    // dropped both.
+  test("session-closed-drops-late-rows: a row of the closer's after their close is the closer signing twice, and drops every row of theirs (R18)", () => {
+    // The member plays, closes, and plays again. A close is final for its
+    // author, so the row after it is the author signing twice: an equivocator
+    // holds no seat and none of his rows is admitted, the one before the close
+    // included (R17, R18). Before R18 the row after was late and the one before
+    // stayed, which let a close at a skipped seq take back an answered move.
     const db = open3();
     e = 0;
     seated(db);
@@ -1288,7 +1290,8 @@ CREATE TABLE moves (
     put(db, "_dai_close", O, 3, 6, {}); // seq 3
     put(db, "moves", O, 4, 7, { ply: 2, san: "Nf3" }); // seq 4
     // Recomputed on read: the drop is a fact about the rows, whatever order they came in.
-    expect(currentMoves(db)).toEqual(["e5"]);
+    expect(currentMoves(db)).toEqual([]);
+    expect(db.all("SELECT lower(hex(author)) AS a FROM _dai_equivocator").map((r) => r["a"])).toEqual([Buffer.from(O).toString("hex")]);
     db.close();
   });
 
@@ -1301,10 +1304,11 @@ CREATE TABLE moves (
     seated(db);
     put(db, "moves", C, 4, 5, { ply: 1, san: "e4" });
     put(db, "moves", O, 2, 6, { ply: 1, san: "e5" });
-    put(db, "_dai_close", C, 5, 7, {}); // names only C
-    put(db, "moves", O, 3, 8, { ply: 2, san: "Nf3" });
+    put(db, "_dai_close", O, 3, 7, {}); // names only O
+    put(db, "moves", C, 5, 8, { ply: 2, san: "Nf3" });
     put(db, "moves", C, 6, 9, { ply: 2, san: "Nc3" });
-    expect(currentMoves(db), "O's rows stay; C's after her close is late").toEqual(["Nf3", "e4", "e5"]);
+    expect(currentMoves(db), "C's rows stay, after O's close as before it; so do O's, all before it").toEqual(["Nc3", "Nf3", "e4", "e5"]);
+    expect(db.all("SELECT 1 FROM _dai_closed").length, "and the session is closed").toBe(1);
     db.close();
   });
 });
@@ -1319,10 +1323,11 @@ CREATE TABLE moves (
 `;
   const open = (): Rows & { close(): void } => openWith(SCHEMA);
   const C = bytes(0xc0); // creator — the session id commits to her
-  const S = sessionIdOf(C, 1)!;
   const O = bytes(0x0b); // opener — a member, not the creator
   const SEATC = bytes(0xa1);
   const SEATO = bytes(0xa2);
+  // The close rule is the one her creator's seat row declares (R14).
+  const S = sessionIdOf(C, 1, SEATC, SEATO, "creator")!;
   let e = 0;
   const put = (db: Rows, table: string, replica: Uint8Array, seq: number, lc: number, columns: Record<string, unknown>): void =>
     applyRow(db, table, {
@@ -1331,12 +1336,12 @@ CREATE TABLE moves (
     });
   const moves = (db: Rows): string[] => db.all(`SELECT san FROM moves_current`).map((r) => String(r["san"]));
 
-  test("a non-creator's close is ignored; the creator's closes and drops her own late row", () => {
+  test("a non-creator's close is ignored; the creator's closes, and a row of hers after it is her signing twice", () => {
     const db = open();
     e = 0;
     const closed = (): number => db.all("SELECT 1 FROM _dai_closed").length;
     // The session id commits to C, so C is the creator; C seats O. Both are members.
-    put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
+    put(db, "_dai_seat", C, 1, 1, { seat: SEATC, seats: SEATO, close: "creator" });
     put(db, "_dai_seat", C, 2, 2, { seat: SEATO });
     put(db, "_dai_binding", O, 1, 3, { seat: SEATO });
     put(db, "_dai_confirm", C, 3, 4, { seat: SEATO, holder: O });
@@ -1351,12 +1356,17 @@ CREATE TABLE moves (
     expect(moves(db).sort()).toEqual(["Nf3", "e5"]);
     expect(closed()).toBe(0);
 
-    // C, the creator, closes. Honored: the session is closed and her own later
-    // row is late. It binds only her (D151): O's moves stay.
+    // C, the creator, closes. Honored: the session is closed. It binds only her
+    // (D151): O's moves stay.
     put(db, "_dai_close", C, 4, 8, {});
-    put(db, "moves", C, 5, 9, { ply: 3, san: "Nc3" });
     expect(moves(db).sort()).toEqual(["Nf3", "e5"]);
     expect(closed()).toBe(1);
+    // A row of hers in the session after her close is her signing twice (R18):
+    // she is an equivocator, and a session whose creator is one is void.
+    put(db, "moves", C, 5, 9, { ply: 3, san: "Nc3" });
+    expect(moves(db)).toEqual([]);
+    expect(closed()).toBe(0);
+    expect(db.all("SELECT 1 FROM _dai_void_session").length).toBe(1);
     db.close();
   });
 });

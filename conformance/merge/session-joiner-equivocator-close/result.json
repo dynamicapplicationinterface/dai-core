@@ -1,0 +1,29 @@
+{
+  "what": "close=any. Bo, seated, plays e5, closes the session and plays Nf6 after his close (A, Ada's copy, holds all of it). From a second copy of his store he then starts a session of his own in each copy at one seq, and writes a move for Ada's seat (B). Bo is an equivocator twice over: a close that counts and a row of his in that session at a higher seq (R18), and two headers at one seq. An equivocator holds no seat and none of his rows is admitted: the open seat is void, neither e5 nor Nf6 is admitted, his close closes nothing, and Ada's e4 stands; his move for her seat, taken by the merge into A, is reported nowhere but as his signing twice (R17). Before, his close stopped counting once he equivocated, the session reopened and his move after it was admitted (review 9, A05).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

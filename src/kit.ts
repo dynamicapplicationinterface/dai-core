@@ -594,10 +594,10 @@ function amCreator(session) {
   return !!id && hasRoster() && !!first('SELECT 1 AS x FROM _dai_creator WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?', [session, id]);
 }
 /*
- * A session's seats: the creator's own first, then the open seat at its current
- * value. Each with its holder (hex, or null while nobody is confirmed in it),
- * whether it is the creator's, and every value it has had (a reseat gives an
- * open seat a new value; rows made for an old one still act for that seat).
+ * A session's seats: the creator's own first, then the open seats her
+ * creator's seat row declares (R14). Each with its holder (hex, or null while
+ * nobody is confirmed in it), whether it is the creator's, and its values: the
+ * one value it has, since no seat is reseated.
  */
 function seats(session) {
   if (!hasRoster()) return [];
@@ -605,23 +605,17 @@ function seats(session) {
     'SELECT DISTINCT lower(hex(seat)) AS seat, lower(hex(replica)) AS holder FROM _dai_creator WHERE lower(hex(session)) = ?', [session]
   ).map(function (r) { return { seat: r.seat, holder: r.holder, creator: true, values: [r.seat] }; });
   const open = db.selectObjects(
-    'SELECT lower(hex(s.seat)) AS seat, s.entity AS entity, lower(hex(h.replica)) AS holder FROM _dai_open_seat s ' +
+    'SELECT lower(hex(s.seat)) AS seat, lower(hex(h.replica)) AS holder FROM _dai_open_seat s ' +
     'LEFT JOIN _dai_holder h ON h.session = s.session AND h.seat = s.seat WHERE lower(hex(s.session)) = ?', [session]
-  ).map(function (r) {
-    // The values of this seat row, in this session (R12): a seat is its row,
-    // and a row of another session that reuses the seat row's id gives it no
-    // value here (D131), nor does a value another row named first.
-    const values = db.selectObjects(
-      'SELECT DISTINCT lower(hex(seat)) AS v FROM _dai_seat_value WHERE entity = ? AND lower(hex(session)) = ?', [r.entity, session]
-    ).map(function (x) { return x.v; });
-    return { seat: r.seat, holder: r.holder || null, creator: false, values: values };
-  });
+  ).map(function (r) { return { seat: r.seat, holder: r.holder || null, creator: false, values: [r.seat] }; });
   return own.concat(open);
 }
 /**
  * The open seat this copy asked for and is waiting to be confirmed in, or null.
  * A move written while waiting is neither shown nor refused: it is admitted
- * once the creator's copy confirms this one.
+ * once the creator's copy confirms this one. Not in a session its creator has
+ * closed: a confirm of hers after her close would be her signing twice (R18),
+ * so nothing there is waiting on anything.
  */
 function pendingSeat(session) {
   const id = me();
@@ -630,16 +624,24 @@ function pendingSeat(session) {
     'SELECT lower(hex(b.seat)) AS seat FROM _dai_binding_current b JOIN _dai_open_seat s ON s.session = b._r_session AND s.seat = b.seat ' +
     'WHERE lower(hex(b._r_session)) = ? AND lower(hex(b._r_replica)) = ? ' +
     'AND NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) ' +
-    'AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) LIMIT 1', [session, id]
+    'AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) ' +
+    'AND NOT EXISTS (SELECT 1 FROM _dai_close0 x JOIN _dai_creator c ON c.session = x.session AND c.replica = x.replica ' +
+    'WHERE x.session = s.session) LIMIT 1', [session, id]
   );
   return r ? r.seat : null;
 }
 /**
  * On the creator's copy, seat whoever asked: an open seat nobody holds, asked
- * for by exactly one author, is confirmed to them. Asked for by two, it is left
- * contested for the creator to repair (reseat). A seat she confirmed twice is
- * void (D165) and never confirmed again. Runs as the kit loads, when rows
- * arrive, and after a solo session takes its own open seat.
+ * for by exactly one author, is confirmed to them. Asked for by two, it is
+ * contested, and a contested seat is never confirmed: no seat is reseated, and
+ * the repair is a new session (R14). So the kit closes the contested session
+ * (this copy writes nothing there again) and starts a new one, says so, and
+ * fires dai:kit-new-session with the new session and the one it replaces, for
+ * the application to switch to and share. A seat she confirmed twice is void
+ * (D165) and never confirmed again. A session this copy closed is left alone:
+ * a row of its own there after its close would be its author signing twice
+ * (R18). Runs as the kit loads, when rows arrive, and after a solo session
+ * takes its own open seat.
  */
 function confirmSeats() {
   const id = me();
@@ -651,11 +653,39 @@ function confirmSeats() {
     'JOIN _dai_binding_current b ON b._r_session = s.session AND b.seat = s.seat ' +
     'WHERE NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat) ' +
     'AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat) ' +
-    'GROUP BY s.session, s.seat', [id]
+    'AND NOT EXISTS (SELECT 1 FROM _dai_close0 x WHERE x.session = s.session AND lower(hex(x.replica)) = ?) ' +
+    'GROUP BY s.session, s.seat ORDER BY 1, 2', [id, id]
   );
-  asked.forEach(function (r) { if (Number(r.n) === 1) shared().session.confirm(r.session, r.seat, r.who); });
+  const contested = [];
+  asked.forEach(function (r) {
+    if (Number(r.n) === 1) shared().session.confirm(r.session, r.seat, r.who);
+    else if (contested.indexOf(r.session) < 0) contested.push(r.session);
+  });
+  contested.forEach(startAfresh);
 }
-/** A new session: this copy's seat and one open seat. solo also takes the open seat (a board one copy plays alone). */
+/*
+ * A contested session, set aside for a new one (R14): closed by this copy, the
+ * creator, then a new session started in its place. Said once, in the kit's
+ * words unless the application takes the hook. onContested(fn) takes it: fn
+ * gets the old session, the new one and the sentence.
+ */
+const CONTESTED = 'Two devices answered this invite, so nobody could take the seat. A new game has been started in its place; share its invite with the one person who should play.';
+let contestedHandler = null;
+function startAfresh(old) {
+  shared().session.close(old);
+  const made = newSession();
+  window.dispatchEvent(new CustomEvent('dai:kit-new-session', { detail: { session: made, replaces: old } }));
+  if (contestedHandler) { contestedHandler(old, made, CONTESTED); return; }
+  const line = document.createElement('p');
+  line.setAttribute('role', 'status');
+  line.setAttribute('data-dai-contested', old);
+  line.textContent = CONTESTED;
+  line.style.cssText = 'margin:0;padding:.5em 1em;font:inherit;background:Canvas;color:CanvasText;border-bottom:1px solid GrayText';
+  line.addEventListener('click', function () { line.remove(); });
+  document.body.prepend(line);
+}
+function onContested(fn) { contestedHandler = fn; }
+/** A new session: this copy's seat and the open seats the profile allows. solo also takes the first open seat (a board one copy plays alone). */
 function newSession(options) {
   const made = shared().session.create();
   if (options && options.solo) {
@@ -665,8 +695,8 @@ function newSession(options) {
   return made.session;
 }
 /**
- * Ask for the session's open seat, once. Returns the seat this copy holds, or
- * null: none open, or asked for and waiting on the creator (pendingSeat).
+ * Ask for an open seat of the session, once. Returns the seat this copy holds,
+ * or null: none open, or asked for and waiting on the creator (pendingSeat).
  */
 function claimSeat(session) {
   const held = mySeat(session);
@@ -677,8 +707,6 @@ function claimSeat(session) {
   shared().session.join(session, open.seat);
   return mySeat(session);
 }
-/** The creator's repair for a contested seat: a fresh open seat, for a new invite. */
-function reseat(session) { shared().session.reseat(session); }
 /** Seat hex as the bytes a seat column holds. */
 function seatBytes(hex) {
   const out = new Uint8Array(hex.length / 2);
@@ -815,9 +843,9 @@ if (window.dai.newPlayer) setTimeout(sayNewPlayer, 0);
 // still there. This is a shortcut, not a framework.
 window.daiKit = {
   db: db, run: run, refresh: refresh,
-  newSession: newSession, claimSeat: claimSeat, reseat: reseat, mySeat: mySeat, amCreator: amCreator,
+  newSession: newSession, claimSeat: claimSeat, mySeat: mySeat, amCreator: amCreator,
   pendingSeat: pendingSeat, seats: seats, seatBytes: seatBytes, whenWritable: whenWritable, onNewPlayer: onNewPlayer,
-  onSessionVoid: onSessionVoid, author: me,
+  onSessionVoid: onSessionVoid, onContested: onContested, author: me,
 };
 `;
 

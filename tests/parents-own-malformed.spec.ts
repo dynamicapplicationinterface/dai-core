@@ -20,7 +20,7 @@ import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
 
 function openWith(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
-  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, seq) => sessionIdOf(author, seq));
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, seq, seat, seats, close) => sessionIdOf(author, seq, seat, seats, close));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -111,7 +111,7 @@ for (const [what, text] of [
 }
 
 test("a session document: a member's malformed rows, in an author table, a seated one and the roster, stop no view", () => {
-  const S = sessionIdOf(A, 1)!; // Ada's seat row is her seq 1
+  const S = sessionIdOf(A, 1, bytes(0xa1), bytes(0xa2), "any")!; // Ada's seat row is her seq 1, declaring the open seat
   const db = openWith(`-- dai:profile session max_parties=2
 -- dai:replicated
 CREATE TABLE notes (
@@ -124,15 +124,15 @@ CREATE TABLE moves (
 );
 `);
   db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-  put(db, "_dai_seat", A, 1, bytes(0x11), { seat: bytes(0xa1) }, "[]", S);
-  put(db, "_dai_seat", A, 2, bytes(0x12), { seat: bytes(0xa2) }, "[]", S);
+  put(db, "_dai_seat", A, 1, bytes(0x11), { seat: bytes(0xa1), seats: bytes(0xa2), close: "any" }, "[]", S);
+  put(db, "_dai_seat", A, 2, bytes(0x12), { seat: bytes(0xa2) }, "[]", S); // a seat row that counts for nothing (R14)
   put(db, "_dai_binding", B, 1, bytes(0x14), { seat: bytes(0xa2) }, "[]", S);
   put(db, "_dai_confirm", A, 3, bytes(0x13), { seat: bytes(0xa2), holder: B }, "[]", S);
   put(db, "notes", A, 4, E, { body: "first" }, "[]", S);
   put(db, "moves", A, 5, bytes(0x21), { san: "e4", seat: bytes(0xa1) }, "[]", S);
   const before = readsEveryView(db);
 
-  // Ada's own malformed rows: a note, a move, and a version of her open seat.
+  // Ada's own malformed rows: a note, a move, and a version of a seat row of hers.
   put(db, "notes", A, 6, E, { body: "malformed" }, NOT_JSON, S);
   put(db, "moves", A, 7, bytes(0x21), { san: "d4", seat: bytes(0xa1) }, TOO_DEEP, S);
   put(db, "_dai_seat", A, 8, bytes(0x12), { seat: bytes(0xa2) }, NOT_JSON, S);

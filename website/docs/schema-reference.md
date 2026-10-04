@@ -107,9 +107,9 @@ Who is waiting on which open seat.
 
 ### `_dai_contested`
 
-**Applies to** session. session, seat, voided: seats nobody holds until repaired; voided 1: confirmed to two copies.
+**Applies to** session. session, seat, voided: open seats nobody holds that two copies asked for (voided 0); voided 1: confirmed to two copies, or to a copy that signed twice.
 
-Contested seats; reseat repairs voided 0.
+Contested seats; a new session repairs either, and the kit starts it on the creator's copy.
 
 ### `_dai_member`
 

@@ -1,0 +1,29 @@
+{
+  "what": "close=any. Bo, seated, plays e5 and closes the session (A holds both), then writes a delete of his close (B). A delete of a close revokes nothing: it is a row of his in that session after his close, so he is an equivocator, reported by the merge into A, which takes the delete; he holds no seat and e5 is admitted nowhere, his close closes nothing, and Ada's e4 stands (D153, R18, R17).",
+  "cites": [
+    "6",
+    "T1-D31"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 6,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 6,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

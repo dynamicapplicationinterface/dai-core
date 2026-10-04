@@ -154,8 +154,8 @@ export const rowId = (replica: Uint8Array, seq: number): string => `${hex(replic
  * in the views (docs/format.md, `parents-own-malformed`): the shape is checked
  * before parents are read for any purpose, not only in a merge.
  */
-export function parentsOf(row: { _r_parents: string }): string[] {
-  if (!wellFormedParents(row._r_parents)) return [];
+export function parentsOf(row: { _r_parents: string; _r_replica?: Uint8Array; _r_seq?: number }): string[] {
+  if (!wellFormedParents(row._r_parents, row._r_replica, row._r_seq)) return [];
   return JSON.parse(row._r_parents) as string[];
 }
 
@@ -166,9 +166,13 @@ const PARENT_ID = /^[0-9a-f]{32}:[1-9][0-9]{0,15}$/;
  * (D159): a flat JSON array of at most `PARENTS_CAP` row ids, each 32
  * lowercase hex characters, a colon and a seq. JavaScript's JSON.parse takes
  * nesting SQLite's json_each refuses (depth over 1000), and a row one reader
- * parses and another throws on stops every read that walks it.
+ * parses and another throws on stops every read that walks it. Given the row's
+ * own author and seq, a parent naming that author at a seq at or above the
+ * row's own is malformed too (R19): an honest writer names only rows it wrote
+ * before, and a parent named ahead of its row let the row's author take back an
+ * admitted row later by writing at that id.
  */
-export function wellFormedParents(text: unknown): boolean {
+export function wellFormedParents(text: unknown, author?: Uint8Array, seq?: number): boolean {
   if (typeof text !== "string") return false;
   let parsed: unknown;
   try {
@@ -177,7 +181,14 @@ export function wellFormedParents(text: unknown): boolean {
     return false;
   }
   if (!Array.isArray(parsed) || parsed.length > PARENTS_CAP) return false;
-  return parsed.every((p) => typeof p === "string" && PARENT_ID.test(p) && Number.isSafeInteger(Number(p.slice(33))));
+  const own = author instanceof Uint8Array ? hex(author) : null;
+  return parsed.every(
+    (p) =>
+      typeof p === "string" &&
+      PARENT_ID.test(p) &&
+      Number.isSafeInteger(Number(p.slice(33))) &&
+      !(own !== null && seq !== undefined && p.slice(0, 32) === own && Number(p.slice(33)) >= Number(seq)),
+  );
 }
 
 /** The author's columns of a table, in declared order. */
@@ -504,7 +515,9 @@ export function writeTargetOf(db: Rows, table: string, entity: Uint8Array, sessi
     // An admitted head this copy's own waiting row already versions is not a
     // head of its next write: seated, the waiting row would be admitted and the
     // head behind it. So a waiting write names what the same write names seated.
-    const named = new Set(rows.flatMap((r) => parentsOf({ _r_parents: String(r["_r_parents"] ?? "[]") })));
+    const named = new Set(
+      rows.flatMap((r) => parentsOf({ _r_parents: String(r["_r_parents"] ?? "[]"), _r_replica: r["_r_replica"] as Uint8Array, _r_seq: Number(r["_r_seq"]) })),
+    );
     rows = rows.filter((r) => !named.has(rowIdOf(r)));
   } else {
     const t = quoted(table);
@@ -622,28 +635,49 @@ export function deleteEntity(db: Rows, table: string, entity: Uint8Array, sessio
 
 /* ------------------------------------------------------- the seat writers */
 
-/** What a new session is made from: all fresh random bytes, 16 each. */
+/** What a new session is made from: fresh random bytes, 16 each, and the close rule. */
 export interface NewSession {
+  /** The creator's own seat. */
   creatorSeat: Uint8Array;
-  openSeat: Uint8Array;
-  /** The entities of the creator's seat row and the open seat's row. */
-  entities: readonly [Uint8Array, Uint8Array];
+  /** The open seats, distinct and none the creator's: at most max_parties - 1 of them (R14). */
+  openSeats: readonly Uint8Array[];
+  /** The close rule the session keeps, from the manifest's session profile. */
+  close: "any" | "creator";
+  /** The entity of the creator's seat row. */
+  entity: Uint8Array;
 }
 
 /**
- * A new session under this copy's author: its id commits to the creator's own
- * seat row, `SHA-256(author ‖ seq)` first 16 bytes, the seq the one that row is
- * about to be stamped with (D158), which is what makes the creator checkable
- * from the rows. Then one open seat. Returns the session id.
+ * A new session under this copy's author: one row, the creator's seat row,
+ * declaring the roster (R14): her seat, the open seats as one run of 16-byte
+ * values, and the close rule. Its id commits to that row,
+ * `SHA-256(author ‖ seq ‖ CBOR([seat, seats, close]))` first 16 bytes, the seq
+ * the one the row is about to be stamped with (D158, R15), which is what makes
+ * the creator and her roster checkable from the rows. A roster that is not
+ * valid is refused here, since every copy would read its session as void.
+ * Returns the session id.
  */
 export function startSession(db: Rows, ids: NewSession): Uint8Array {
+  const bound = Number(db.all("SELECT max_parties AS n FROM _dai_session_rules")[0]?.["n"] ?? 0);
+  const values = [ids.creatorSeat, ...ids.openSeats].map(hex);
+  if (
+    [ids.creatorSeat, ...ids.openSeats].some((v) => !(v instanceof Uint8Array) || v.length !== 16) ||
+    new Set(values).size !== values.length ||
+    values.length > bound ||
+    (ids.close !== "any" && ids.close !== "creator")
+  ) {
+    throw new RowRejected(
+      `A session's roster is the creator's seat and up to ${Math.max(bound - 1, 0)} open seats, each 16 bytes and all different, and a close rule of any or creator.`,
+    );
+  }
+  const seats = new Uint8Array(16 * ids.openSeats.length);
+  ids.openSeats.forEach((v, i) => seats.set(v, 16 * i));
   const state = replicaState(db);
-  const session = sessionIdOf(state.id, state.seq + 1);
+  const session = sessionIdOf(state.id, state.seq + 1, ids.creatorSeat, seats, ids.close);
   if (!session) throw new RowRejected("A session id needs a 16-byte author id and the seq of the creator's seat row.");
-  const row = createEntity(db, "_dai_seat", ids.entities[0], { seat: ids.creatorSeat }, session);
+  const row = createEntity(db, "_dai_seat", ids.entity, { seat: ids.creatorSeat, seats, close: ids.close }, session);
   // The id names this row; a row stamped at any other seq would name nothing.
   if (row._r_seq !== state.seq + 1) throw new RowRejected("The creator's seat row was not stamped at the seq its session names.");
-  createEntity(db, "_dai_seat", ids.entities[1], { seat: ids.openSeat }, session);
   return session;
 }
 
@@ -1053,6 +1087,22 @@ export interface MergeResult {
    * reused, and not `refused`, which means the merge did not run.
    */
   refusedBatches: RefusedBatch[];
+  /**
+   * Set when the merge did not run: the two copies' signed views differ
+   * (`SIGNED_VIEW_MISMATCH`, R16), so nothing was taken. Absent otherwise.
+   */
+  refused?: string;
+}
+
+/** What a merge is told beside the two copies. */
+export interface MergeOptions {
+  /**
+   * Each copy's signed-view digest (the manifest's signed bytes, hashed): two
+   * that differ are two builds of the document, which may declare a different
+   * bound or tables, and the merge refuses the sibling whole (R16). A caller
+   * that knows neither passes none, and nothing is compared.
+   */
+  views?: { local: string; sibling: string };
 }
 
 /**
@@ -1079,27 +1129,43 @@ export function mergeFrom(
    * once it has been checked (identity ruling #3).
    */
   verdicts: ReadonlyMap<string, BatchVerdict> = new Map(),
+  options: MergeOptions = {},
 ): MergeResult {
   const result: MergeResult = { applied: 0, duplicate: 0, rejected: [], newReplicas: 0, refusedBatches: [] };
+  /*
+   * Two builds of one document are two sets of rules over the same rows: one
+   * declaring max_parties=2 and one 3 seat different holders for the same rows
+   * (the ninth attack review, A04). Which one is right is not the merge's to
+   * choose, so it takes nothing (R16).
+   */
+  if (options.views && options.views.local !== options.views.sibling) return { ...result, refused: "SIGNED_VIEW_MISMATCH" };
   const refusals = new Map<string, { id: string; author: Uint8Array; reason: BatchRefusal }>();
   const refuseBatch = (id: string, who: Uint8Array, reason: BatchRefusal): void => {
     refusals.set(`${id}|${reason}|${hex(who)}`, { id, author: who, reason });
   };
   // The seats a creator confirmed to two copies (D165), keyed by session and
-  // seat row (R12: a seat is its row, so one void seat is one key whatever
-  // values its versions name). A view built before R12 has no row: its seat.
+  // seat: the creator signing twice. Not a seat void because its holder is an
+  // equivocator (R17), which accuses the holder, not her, and is revealed as
+  // his equivocation is.
+  const hasView = (name: string): boolean => local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = ?", [name]).length > 0;
   const voidedSeats = (): Map<string, Uint8Array> =>
-    local.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_voided'").length === 0
+    !hasView("_dai_voided")
       ? new Map()
       : new Map(
           local
             .all("SELECT * FROM _dai_voided")
-            .map((r) => [
-              `${hex(r["session"] as Uint8Array)}|${hex((r["entity"] ?? r["seat"]) as Uint8Array)}|${"entity" in r ? "entity" : "seat"}`,
-              r["creator"] as Uint8Array,
-            ]),
+            .filter((r) => !("holders" in r) || Number(r["holders"]) > 1)
+            .map((r) => [`${hex(r["session"] as Uint8Array)}|${hex(r["seat"] as Uint8Array)}`, r["creator"] as Uint8Array]),
         );
   const voidedBefore = voidedSeats();
+  // The authors who wrote in a session after a close of theirs there that
+  // counts (R18), by session: equivocation, revealed by the merge that makes
+  // it true.
+  const closeEquivocated = (): Set<string> =>
+    !hasView("_dai_close_equivocated")
+      ? new Set()
+      : new Set(local.all("SELECT session, replica FROM _dai_close_equivocated").map((r) => `${hex(r["session"] as Uint8Array)}|${hex(r["replica"] as Uint8Array)}`));
+  const closeEquivocatedBefore = closeEquivocated();
 
   /*
    * The clock first, and durably before any local write that follows.
@@ -1148,7 +1214,7 @@ export function mergeFrom(
   const malformed = new Set<string>(); // "table|author:seq"
   for (const table of tables) {
     for (const r of sibling.all(`SELECT _r_replica, _r_seq, _r_parents FROM "${table}"`)) {
-      if (!wellFormedParents(r["_r_parents"])) malformed.add(`${table}|${rowId(r["_r_replica"] as Uint8Array, Number(r["_r_seq"]))}`);
+      if (!wellFormedParents(r["_r_parents"], r["_r_replica"] as Uint8Array, Number(r["_r_seq"]))) malformed.add(`${table}|${rowId(r["_r_replica"] as Uint8Array, Number(r["_r_seq"]))}`);
     }
   }
   const tainted = new Set<string>(); // "table|author:seq" listed by a header that signed a malformed row
@@ -1386,7 +1452,7 @@ export function mergeFrom(
     local.run(`DELETE FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
     // What the removed row superseded is a head again unless something else of
     // its entity names it (T1-D2, T1-D35).
-    for (const parent of parentsOf({ _r_parents: String(gone?.["_r_parents"] ?? "[]") })) {
+    for (const parent of parentsOf({ _r_parents: String(gone?.["_r_parents"] ?? "[]"), _r_replica: row._r_replica, _r_seq: row._r_seq })) {
       local.run(
         `UPDATE "${table}" SET _r_superseded = 0
           WHERE lower(hex(_r_replica)) || ':' || _r_seq = ?
@@ -1525,31 +1591,51 @@ export function mergeFrom(
    * equivocated id) and the session's creator's seat row that counts
    * (`_dai_creator`, so not deleted and not equivocated), and nothing else
    * (batch format version 2, the step 6 review, X3). With no taken row it
-   * rests on, the report is filed under no id. The seat is its row (R12): its
-   * counting confirms are those naming any value of the row.
+   * rests on, the report is filed under no id.
    */
   for (const [key, creator] of voidedSeats()) {
     if (voidedBefore.has(key)) continue;
-    const [session, seat, by] = key.split("|");
+    const [session, seat] = key.split("|");
     const counting = new Set(
       local
-        .all(`SELECT seq FROM _dai_confirmed WHERE lower(hex(session)) = ? AND lower(hex(${by === "entity" ? "entity" : "seat"})) = ? AND creator = ?`, [session, seat, creator])
+        .all("SELECT seq FROM _dai_confirmed WHERE lower(hex(session)) = ? AND lower(hex(seat)) = ? AND creator = ?", [session, seat, creator])
         .map((r) => Number(r["seq"])),
     );
-    const seatRow = local.all("SELECT 1 FROM _dai_creator WHERE lower(hex(session)) = ? AND replica = ?", [session, creator]).length > 0;
+    const seatRow = local.all("SELECT seq FROM _dai_creator WHERE lower(hex(session)) = ? AND replica = ?", [session, creator])[0];
     const resting = added.filter(
       ({ table, row }) =>
         row._r_session instanceof Uint8Array &&
         hex(row._r_session) === session &&
         hex(row._r_replica) === hex(creator) &&
-        ((table === "_dai_confirm" && counting.has(row._r_seq)) ||
-          (table === "_dai_seat" &&
-            seatRow &&
-            row._r_deleted === 0 &&
-            hex(sessionIdOf(row._r_replica, row._r_seq) ?? new Uint8Array()) === session)),
+        ((table === "_dai_confirm" && counting.has(row._r_seq)) || (table === "_dai_seat" && seatRow && Number(seatRow["seq"]) === row._r_seq)),
     );
     for (const { row } of resting) reveal(creator, row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "");
     if (resting.length === 0) reveal(creator, "");
+  }
+  /*
+   * Equivocation by a close (R18): an author who wrote in a session after a
+   * close of his there that counts. The merge that makes it true reports it,
+   * in his name, filed under the lowest header of a row it took that it rests
+   * on: the close, or a row of his in that session above it; under no id when
+   * it took none of them (a row it took made the close count).
+   */
+  for (const key of closeEquivocated()) {
+    if (closeEquivocatedBefore.has(key)) continue;
+    const [session = "", author = ""] = key.split("|");
+    const closes = local
+      .all("SELECT seq FROM _dai_close0 WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?", [session, author])
+      .map((r) => Number(r["seq"]));
+    const first = Math.min(...closes);
+    const resting = added.filter(
+      ({ table, row }) =>
+        row._r_session instanceof Uint8Array &&
+        hex(row._r_session) === session &&
+        hex(row._r_replica) === author &&
+        ((table === "_dai_close" && closes.includes(row._r_seq)) || row._r_seq > first),
+    );
+    const who = Uint8Array.from(author.match(/../g) ?? [], (pair) => parseInt(pair, 16));
+    for (const { row } of resting) reveal(who, row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "");
+    if (resting.length === 0) reveal(who, "");
   }
   for (const { author: who, ids } of revealed.values()) {
     refuseBatch([...ids].sort(plainOrder)[0]!, who, "AUTHOR_EQUIVOCATED");

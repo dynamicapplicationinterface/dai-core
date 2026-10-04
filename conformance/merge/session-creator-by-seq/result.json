@@ -9,14 +9,14 @@
   "stable": true,
   "ab": {
     "applied": 1,
-    "duplicate": 5,
+    "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []
   },
   "ba": {
     "applied": 2,
-    "duplicate": 5,
+    "duplicate": 4,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [

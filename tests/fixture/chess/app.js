@@ -95,36 +95,37 @@ function renderConflict(st){
  * the copy finds itself in when a second binding merges in, not an error after a
  * tap (T1-D29). A copy whose seat is contested is told its moves are not lost by
  * its own mistake and that the repair is the creator's to make; the creator is
- * shown the repair itself. Returns whether this copy's own play is blocked.
+ * told the kit made it: the game was set aside and a new one started in its
+ * place (R14). Returns whether this copy's own play is blocked.
  */
 function renderContested(st){
- const banner=$('contested-banner'),invite=$('new-invite'),g=st.game;
- if(!g||g.is_demo){banner.hidden=true;invite.hidden=true;return false;}
+ const banner=$('contested-banner'),g=st.game;
+ if(!g||g.is_demo){banner.hidden=true;return false;}
  const s=store.seatState(g.session);
  // The creator whose invite is contested is shown the repair; a copy whose own
  // place is gone is told so and where the fix comes from. Nothing to say to a
  // creator whose invite is fine, or a member playing normally.
  if(s.amCreator&&s.contested){
-  banner.hidden=false;invite.hidden=false;
+  banner.hidden=false;
   $('contested-title').textContent='Two people opened this invite.';
-  $('contested-detail').textContent='The invite reached more than one device, so neither has the seat yet. Send a fresh invite to the person you meant to play, and share the game again.';
-  return false; // the creator's own seat is fine
+  $('contested-detail').textContent='The invite reached more than one device, so this game was set aside and a new one started in its place. Share the new game with the person you meant to play.';
+  return true; // set aside: the creator writes nothing in it again
  }
- if(!s.amCreator&&s.mineOut){
-  banner.hidden=false;invite.hidden=true;
+ if(!s.amCreator&&(s.mineOut||(s.contested&&s.pending))){
+  banner.hidden=false;
   $('contested-title').textContent='This invite was used on another device.';
   $('contested-detail').textContent='Your seat here has been taken or replaced, so this board is set aside — nothing you did lost your place. '+(playerName(g,g.creator_color)||'Whoever started the game')+' can send a fresh invite; open that to take a seat again.';
   return true; // not a member: this copy's moves would drop, so it cannot play
  }
  if(!s.amCreator&&s.notIn){
-  banner.hidden=false;invite.hidden=true;
+  banner.hidden=false;
   // True for both people this copy could be: someone the game was forwarded to, or
   // a player (the creator included) on a new device or browser. It cannot tell which.
   $('contested-title').textContent='Both seats belong to other devices.';
   $('contested-detail').textContent='This copy has the game but isn’t one of its players, so it can’t move. If you played this game on another device or in another browser, keep playing there.';
   return true; // not a member: cannot play until invited in
  }
- banner.hidden=true;invite.hidden=true;return false;
+ banner.hidden=true;return false;
 }
 /**
  * Whose move it is, said out loud and left standing — never a dialog with a
@@ -331,7 +332,6 @@ function wire(){
  bind('decline-draw',()=>store.declineDraw());
  bind('resign',()=>{const st=store.state(),me=store.myColor(st.game)||st.turn;ask('Resign as '+playerName(st.game,me)+'?','This ends the game and discards any tentative move. '+playerName(st.game,opposite(me))+' wins unless no checkmate is possible.',()=>store.resign(),{danger:true,label:'Resign game'});});
  bind('close-match',()=>{ask('Close this match?','No more moves can be added on either copy, and the match can be tidied away later. The final board stays readable. This does not delete anything.',()=>{store.closeMatch();notify('Match closed. The board stays; no new moves can be added.');},{label:'Close match'});});
- bind('new-invite',()=>{ask('Send a fresh invite?','This mints a new seat for the game and retires the old invite. Share the game again afterward, and the person you send it to takes the new seat.',()=>{store.newInvite();notify('A fresh invite is ready. Share the game again to send it.');},{label:'Send a new invite'});});
  bind('claim-draw',()=>{const e=store.claimEligibility();if(!e)return;ask('Claim a draw?',e.reason+(e.where==='draft'?' applies to your tentative move. It will be played and the draw claimed.':' applies to the current position. This ends the game.'),()=>store.claimDraw(),{label:'Claim draw'});});
  bind('cancel-promotion',()=>{store.cancelPromotion();closeDialog($('promotion-dialog'));});
  $('promotion-dialog').addEventListener('cancel',run(event=>{event.preventDefault();store.cancelPromotion();closeDialog($('promotion-dialog'));}));
@@ -361,6 +361,10 @@ async function boot(){
  const writer=window.dai.replicated;
  if(!writer)throw new Error('This document needs the replicated-tables runtime. Open it in a newer DAI opener.');
  store=new Store(window.daiKit.db,writer);store.bootstrap();
+ // Two people opened an invite: the kit, on this (the creator's) copy, set that
+ // game's session aside and started a new one (R14). The game moves there, and
+ // the person is told to share it.
+ window.daiKit.onContested((old,made,sentence)=>{try{store.restartFrom(old,made);}catch(e){notify(e.message);return;}store.faceMover();refresh();notify(sentence);});
  // The shared boot writes (the practice board; the open seat of a game somebody
  // shared, taken once after the mount adopted this copy's own identity,
  // T1-D22/D29) go through the kit, which runs them only on a mount that can

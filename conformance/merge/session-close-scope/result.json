@@ -1,5 +1,5 @@
 {
-  "what": "Ada closes S and then deletes her close; she starts S2 and moves there, then moves in S. Bo writes a close of S that is itself a delete, then moves in S, and closes S2, where he holds no seat. A delete of a close revokes nothing and a deleted close row counts for nothing: S is closed, and Bo's move is admitted. A close binds its author in its own session only: Ada's S2 move is admitted and her later S move is late, reported nowhere by the merge that takes it. A close counts only by a member of its own session: S2 is not closed (D151, D152, D153).",
+  "what": "Ada closes S, then starts S2 and moves there. Bo writes a close of S that is itself a delete, then moves in S; and closes S2, where he holds no seat, then asks for a seat in S2. A close binds its author in its own session only: Ada's S2 move is admitted. A deleted close row counts for nothing, so Bo's S move, after it, is admitted and no equivocation (R18). A close counts only by a member of its own session, so S2 is not closed and Bo's ask after his close there is no equivocation either. S is closed by Ada's close, and nothing is reported (D151, D152, D153, R18).",
   "cites": [
     "6",
     "T1-D31"
@@ -8,15 +8,15 @@
   "admitted": true,
   "stable": true,
   "ab": {
-    "applied": 3,
-    "duplicate": 4,
+    "applied": 4,
+    "duplicate": 3,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []
   },
   "ba": {
-    "applied": 6,
-    "duplicate": 4,
+    "applied": 3,
+    "duplicate": 3,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []

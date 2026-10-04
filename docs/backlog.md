@@ -4448,6 +4448,71 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D187 — A first merge into a copy that arrived put its library record behind the tab
+
+*Status: closed 4 October. Found and fixed in the R14 to R20 step.*
+
+The merge card's merge (`onMerge` in `apps/runner/src/main.ts`) recorded the
+standing choice by writing back `heldHere`, the library record as it was read
+before the merge. The merge saved in between, so the write put the record's
+revision back by one, and every later save in that tab was refused as another
+tab's ("This document was saved from another tab since it was opened here").
+Seen when a copy that arrived (Cy opened Ada's invite) took in another copy
+(Bo's): Cy's ask and everything after it stayed unsaved, and Save a copy
+refused. It depended on the merge's save landing before that write, so most
+merges got away with it. The cold-launch path had been fixed the same way
+before (it re-reads; see its comment). **Fix:** the record is re-read under
+the library lock (`amendLibraryRecord`) and only `mergeStanding` is changed.
+`tests/session-contested.spec.ts` failed on it before the fix, on Chromium.
+
+#### D186 — The request example's inline link is 85 characters under the cap
+
+*Status: open. Filed 4 October, from the R14 to R20 step.*
+
+Every document carries its rewritten schema, and the session schema grew with
+the declared roster and the roster chain's views; the request example grew with
+the kit's contest repair. Signed, as `arrival-link-state` builds it, its inline
+link went to 36,607 characters against the 32,768 cap. The roster block's
+comments are no longer emitted, each roster view holds only the steps it reads
+with its whitespace collapsed, and the request app's new text was cut: 32,683
+now (31,584 at the step before). The next growth of the request app or the
+session schema pushes it over, and the link falls back to a reference link.
+**Want:** room that does not depend on cutting app text, e.g. the session
+schema's views emitted from a shorter form, or the inline dictionary taught
+the session schema.
+
+#### D185 — A close signed at a skipped seq takes back the closer's answered move
+
+*Status: closed 3 October by R18. Filed 3 October, from the ninth attack review
+(A10, rated LOW).*
+
+A member played e5, skipped a seq, played Nf6, and after the opponent had
+answered both, signed his first close at the skipped seq: Nf6 became late on
+every copy, after the fact, and nothing was reported. `late` ranked two seqs of
+one author, which a client that fills a skipped seq reorders. **Fix (R18):** a
+close that counts and any row of its author in that session at a higher seq are
+equivocation, reported `AUTHOR_EQUIVOCATED`; the author holds no seat and none
+of his rows is admitted (R17). `late` and `admitted-not-late` retired. Vectors
+`session-close-skipped-seq`, `session-close-deleted`. The runtime's refusal of
+an author's own writes in a session after his close, so an honest app never
+makes its user an equivocator, is the host session's (not built).
+
+#### D184 — The session profile is in no row, header or file a reader reads
+
+*Status: closed 3 October by R16. Filed 3 October, from the ninth attack review
+(A04, rated HIGH).*
+
+`max_parties` and the close rule were signed in the manifest and read by no
+reader: both reference readers hard-coded 2 and `close=any`, and the merge did
+not compare manifests, so the same rows merged into copies of two builds gave
+two states. **Fix:** the close rule moved onto the creator's seat row (R14);
+each fixture carries `manifest.json` beside it, per copy, with the signed-view
+digest and the session profile, and the Python reader reads it (the Rust
+reader's blind level is next); a merge refuses whole
+a sibling whose signed-view digest differs (`SIGNED_VIEW_MISMATCH`, R16).
+Vectors `session-three-parties`, `merge-signed-view-mismatch`. What the host
+hands the frame's merge as the two digests is the host session's (not built).
+
 #### D181 — The document's code obtains two signatures over one seq above the floor
 
 *Status: open, a design question, after the merge. Filed 2 October, from the

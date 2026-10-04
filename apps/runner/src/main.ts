@@ -2322,8 +2322,15 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
                * a choice anybody made knowingly, and it would silence the very
                * refusal they need to see next time.
                */
+              /*
+               * Re-read under the lock, never written back from `heldHere`:
+               * that was read before the merge, and the merge saved since, so
+               * writing it back put the library's revision behind this tab's
+               * and every later save here was refused as another tab's. Only
+               * the flag this write owns is changed.
+               */
               if (!report.refused && heldHere) {
-                await saveCartridgeToLibrary({ ...heldHere, mergeStanding: true });
+                await amendLibraryRecord(heldHere.documentUuid, (held) => ({ ...held, mergeStanding: true }));
               }
             }
           : undefined,
@@ -3789,6 +3796,8 @@ export function describeMerge(report: MergeReport): string {
     switch (report.refused) {
       case "SCHEMA_MISMATCH":
         return "These two copies were built from different versions of the app, so their rows cannot be lined up. Open the newer one first.";
+      case "SIGNED_VIEW_MISMATCH":
+        return "These two copies come from different releases of this app, so their games cannot be combined. Nothing was merged, and your copy is untouched.";
       case "NOT_REPLICATED":
         return "This document is replaced as a whole rather than merged.";
       case "UNSUPPORTED_LEVEL":

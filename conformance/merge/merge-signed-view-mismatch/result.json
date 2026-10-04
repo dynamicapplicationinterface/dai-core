@@ -1,0 +1,26 @@
+{
+  "what": "One document's rows on two copies built from two manifests: A under max_parties=2, B under max_parties=3 (manifest.json gives each copy's signed-view digest). Ada and Bo are seated on both; Ada's move is on A only and Bo's on B only. A merge refuses, whole, a sibling whose signed-view digest differs from its own (SIGNED_VIEW_MISMATCH): nothing is taken in either direction (R16). Before, the merge took everything and the two copies could seat differently for the same rows (review 9, A04).",
+  "cites": [
+    "6",
+    "T1-D14"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [],
+    "refused": "SIGNED_VIEW_MISMATCH"
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [],
+    "refused": "SIGNED_VIEW_MISMATCH"
+  }
+}

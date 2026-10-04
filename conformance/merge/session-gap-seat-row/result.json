@@ -1,0 +1,29 @@
+{
+  "what": "Ada's creator's seat row declares her seat and one open seat, and she leaves the seq after it unused. Bo is confirmed in the open seat and moves (B). Then she signs, at the unused seq, a seat row in the session naming a third value, confirms Cy in it, and Cy moves for it (A). The roster is declared: no _dai_seat row but the creator's counts for anything, and a confirm counts only for a value her creator's seat row lists. Bo holds the open seat, his move is admitted, Cy holds nothing, and the merge that takes Cy's move reports it SEAT_NOT_HELD (R14, A03). Minted by seq order, the row at the unused seq came second and the open seat's row fell past max_parties=2: Bo's hold went to nobody and Cy took the second seat, with nothing reported (review 9, A01).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

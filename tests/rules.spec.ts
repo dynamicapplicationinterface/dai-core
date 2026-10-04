@@ -151,7 +151,6 @@ test.describe("the model file carries every constraint", () => {
       "session.create()",
       "session.join(session, seat)",
       "session.close(session)",
-      "session.reseat(session)",
       "contested",
     ]) {
       expect(RECIPE, needle).toContain(needle);

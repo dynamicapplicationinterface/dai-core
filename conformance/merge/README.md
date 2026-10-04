@@ -14,6 +14,7 @@ Per vector:
 | `result.json` | the counts, refused ids and refused batches the merge reports |
 | `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok`, `incomplete`, or a refusal code |
 | `lists.json` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |
+| `manifest.json` | per copy (`a`, `b`), what its signed manifest gives a reader: the signed-view digest (`view`) and, in a session document, the session profile's `max_parties` and close rule (`session`) |
 | `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors, and `merge-equivocated-plain-heads`: what the document admits after each merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
@@ -108,8 +109,8 @@ author id shown as base64url. Which batch id each reason is filed under is in
 docs/format.md#refused-batches.
 
 **What a session document admits.** The `session-` vectors are session
-documents (one seated table, `moves`, seated by its `seat` column; the close
-rule `any`), and their `result.json` says `admitted: true`, as does
+documents (one seated table, `moves`, seated by its `seat` column), and
+their `result.json` says `admitted: true`, as does
 `merge-equivocated-plain-heads`'s, a plain document, whose roster sections
 are empty. Each ships
 `expected-admitted-ab.txt` and `expected-admitted-ba.txt`: after the merge,
@@ -120,7 +121,8 @@ each table a kept header lists an equivocated id in, the id being the author
 and the seq) and `# closed`, each sorted, ids in lowercase hex. Batch format version 2 changed mostly what a
 document admits, which the stored rows alone cannot show, so these are what a
 reader without one of those changes disagrees with. A reader computes them from
-the tables and headers alone. It reads no view but `_dai_seat_rules` and
+the tables and headers alone, and `max_parties` from `manifest.json` (most
+vectors 2, the three-party ones 3). It reads no view but `_dai_seat_rules` and
 `_dai_author_rules`, which are declarations; the rest are computations, and a
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
@@ -128,40 +130,56 @@ in docs/identity.md and docs/format.md:
 - a row id one author signed twice (two headers listing its seq, in any
   tables, with different digests) counts nowhere (D160, and the step 6
   review), and a row naming such an id as a parent is neither admitted nor
-  reported;
-- the creator's seat row is the one whose own author and seq hash to its
-  session (D158); her seat is hers, and an open seat is held by whoever her
-  confirms name, unless she confirmed it to two copies, when it is void and
-  held by nobody (D165). A confirm counts deleted or not, superseded or not
-  (D171), and only for a seat she minted: the first `max_parties` (2 in
-  every vector) seats her seat rows in the session name, in her seq order (R11);
-- an author with two headers at one id anywhere in the document is an
-  equivocator: her seat, binding, confirm and close rows count for nothing,
-  and a session she created is void: nothing in it is admitted, held, voided
-  or closed, and nothing in it is reported but `AUTHOR_EQUIVOCATED` (R10);
+  reported; a parent naming the row's own author at a seq at or above its own
+  is malformed (R19);
+- the creator's seat row is the one whose own author, seq and roster (`seat`,
+  `seats`, `close`) hash to its session (D158, R15). It declares the
+  roster: her seat, the open seats (16-byte values, one after another, in
+  `seats`) and the close rule; a roster that is not valid (values not 16
+  bytes or repeated, hers among them, more than `max_parties` in all, a close
+  rule other than `any` or `creator`) makes the session void. It is
+  immutable, and no other seat row counts (R14). Her seat is hers, and an open
+  seat is held by whoever her confirms of it name, unless they name two copies
+  or an equivocator, when it is void and held by nobody (D165, R17). A confirm
+  counts deleted or not, superseded or not, at any seq (D171), and only for a
+  value her creator's seat row lists (R14);
+- an author with two headers at one id anywhere in the document, or with a
+  close that counts and a row in that session at a higher seq (R18), is an
+  equivocator: his seat, binding, confirm and close rows count for nothing, he
+  holds no seat, none of his rows is admitted or reported, and a session he
+  created is void: nothing in it is admitted, held, voided or closed, and
+  nothing in it is reported but `AUTHOR_EQUIVOCATED` (R10, R17). A session
+  whose creator's seat row is at an equivocated id is void whichever row a
+  copy holds there, and one holding only a tombstone there admits nothing
+  (R20);
 - a merge that reveals an author signing twice, a header it did not hold
-  making an id equivocated that was not, or a row it took that a seat newly
-  void rests on (a counting confirm, or the creator's seat row that counts),
+  making an id equivocated that was not, a row it took that makes a close of
+  his followed by a row true, or a row it took that a seat newly confirmed to
+  two copies rests on (a counting confirm, or the creator's seat row),
   reports `AUTHOR_EQUIVOCATED` in that author's name, once per merge, filed
-  under the lowest revealing header, or under no id when it took no row the
-  void rests on (docs/format.md#equivocated-filed); a third conflicting header
+  under the lowest revealing header, or under no id when it took no row it
+  rests on (docs/format.md#equivocated-filed); a third conflicting header
   reveals nothing new;
 - the heads of the roster tables and the close (`_dai_seat`,
   `_dai_binding`, `_dai_confirm`, `_dai_close`) partition by session,
   entity and author: only an author's own later row in the same session
-  replaces one (D171);
-- a close by a member binds only its author: their rows after it, by their
-  own seq, are late (D151, and no frontier at version 2);
-- a seated row is admitted when its author holds the seat it names, it names
-  no version from another session or another seat, and it is not late. Of
-  the rows a merge takes and does not admit, one naming no seat, a seat
-  someone else holds, or another seat's version is reported
-  `SEAT_NOT_HELD`, and one naming another session's version
-  `ENTITY_OTHER_SESSION`; one waiting on a confirmation, one for a void
-  seat, and a late one are reported nowhere;
+  replaces one (D171), and in `_dai_seat` only creators' seat rows are heads;
+- a close counts, by the rule its session's creator's seat row declares,
+  when it is not deleted; it binds only its author (D151), and closes the
+  session when its author is no equivocator;
+- a seated row is admitted when its author holds the seat it names and it
+  names no version from another session or another seat. Of the rows a merge
+  takes in a live session and does not admit, one naming no seat value (16
+  bytes), a seat its author does not hold and does not wait in that is not
+  void, or another seat's version is reported `SEAT_NOT_HELD` (A03, A09),
+  and one naming another session's version `ENTITY_OTHER_SESSION`; one
+  waiting on a confirmation and one for a void seat are reported nowhere;
 - a row whose parents are not the one shape (D159) is never taken, nor any
   row of a complete batch that signed one, and the batch is refused
-  `ROW_MALFORMED`.
+  `ROW_MALFORMED`;
+- a merge between two copies whose `manifest.json` gives different signed-view
+  digests (`view`) is refused whole: `refused` is `SIGNED_VIEW_MISMATCH` and
+  nothing is taken (R16).
 
 Each `session-` vector was run against both readers with its change held
 out, and failed; the step 6 review's (`session-equivocated-parent`,

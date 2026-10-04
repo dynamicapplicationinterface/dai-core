@@ -54,15 +54,16 @@ function openWith(schema: string): Rows & { close(): void } {
 
 const bytes = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
 const C = bytes(0xc0); // Ada, the creator: she mints the seats
-const S = sessionIdOf(C, 1)!; // the session, which names Ada's seat row, her seq 1
+const SEATC = bytes(0xa1); // Ada's seat
+const SEATJ = bytes(0xa2); // the open seat
+// The session, which names Ada's seat row (her seq 1) and the roster it declares (R15).
+const S = sessionIdOf(C, 1, SEATC, SEATJ, "any")!;
 const OTHER = bytes(0x5f); // another session
 // Bo, the joiner: a key, not sixteen chosen bytes, because his moves cross a
 // merge, and at batch format version 2 a row crosses a merge only signed.
 const BO = await person();
 const J = BO.author;
 const K = bytes(0x20); // Cy, a second opener of the same invite
-const SEATC = bytes(0xa1); // Ada's seat
-const SEATJ = bytes(0xa2); // the open seat
 const FOREIGN = bytes(0xa9); // a seat of another session
 
 let counter = 0;
@@ -110,12 +111,9 @@ function signedBy(db: Rows, author: Uint8Array, id: number): Uint8Array {
   return batch;
 }
 
-/** Ada's session: her own seat, the row its id names by its seq (1), and the open one. Returns the open seat's entity. */
+/** Ada's session: her creator's seat row, the row its id names by its seq (1), declaring her seat and the open one (R14). Returns its entity. */
 function roster(db: Rows): Uint8Array {
-  const openSeat = nextEntity();
-  put(db, "_dai_seat", C, 1, 1, { seat: SEATC });
-  put(db, "_dai_seat", C, 2, 2, { seat: SEATJ }, { entity: openSeat });
-  return openSeat;
+  return put(db, "_dai_seat", C, 1, 1, { seat: SEATC, seats: SEATJ, close: "any" });
 }
 /** Bo asks for the open seat (his seq 1) and Ada seats him in it (her seq 3). */
 function seatBo(db: Rows): void {
@@ -221,21 +219,22 @@ test.describe("a row is admitted only when its author holds the seat it names", 
     db.close();
   });
 
-  test("a reseated seat: moves for the old value, never confirmed, stay refused; the new value's holder plays", () => {
+  test("no seat is reseated: a seat row naming a fresh value, and a confirm in it, seat nobody (R14)", () => {
     const db = openWith(SCHEMA);
-    const openSeat = roster(db);
+    roster(db);
     // Cy and Bo both open the invite before Ada's copy confirms anyone: a contest.
     put(db, "_dai_binding", K, 1, 4, { seat: SEATJ });
     put(db, "_dai_binding", J, 1, 5, { seat: SEATJ });
     put(db, "moves", J, 2, 6, { seat: SEATJ, san: "old" });
-    // Ada repairs it with a fresh value, and seats Bo in that.
+    // A seat row of Ada's naming a fresh value, and a confirm of Bo in that.
     const SEATJ2 = bytes(0xa3);
-    put(db, "_dai_seat", C, 3, 7, { seat: SEATJ2 }, { entity: openSeat, parents: JSON.stringify([`${hex(C)}:2`]) });
+    put(db, "_dai_seat", C, 3, 7, { seat: SEATJ2 });
     put(db, "_dai_binding", J, 3, 8, { seat: SEATJ2 });
     put(db, "_dai_confirm", C, 4, 9, { seat: SEATJ2, holder: J });
     put(db, "moves", J, 4, 10, { seat: SEATJ2, san: "new" });
-    expect(members(db)).toEqual([hex(J), hex(C)].sort());
-    expect(admitted(db)).toEqual(["new"]);
+    expect(members(db), "only the creator's seat row declares seats").toEqual([hex(C)]);
+    expect(admitted(db)).toEqual([]);
+    expect(db.all("SELECT voided FROM _dai_contested WHERE session = ?", [S]).map((r) => Number(r["voided"])), "the open seat is still contested").toEqual([0]);
     db.close();
   });
 
@@ -260,14 +259,15 @@ test.describe("a row is admitted only when its author holds the seat it names", 
     db.close();
   });
 
-  test("a member's version of the open seat's row changes nothing: the seat stays the one the creator minted", () => {
+  test("a version of the creator's seat row changes nothing, by anyone: the open seats are the ones it declares (R14)", () => {
     const db = openWith(SCHEMA);
-    const openSeat = roster(db);
-    // Bo writes a new version of the open seat's row, naming Ada's as its parent,
-    // with a value of his own: a reseat only the creator may make.
-    put(db, "_dai_seat", J, 1, 3, { seat: bytes(0xb9) }, { entity: openSeat, parents: JSON.stringify([`${hex(C)}:2`]) });
+    const row = roster(db);
+    const parents = JSON.stringify([`${hex(C)}:1`]);
+    // Bo, and then Ada herself, write versions of her creator's seat row with values of their own.
+    put(db, "_dai_seat", J, 1, 3, { seat: bytes(0xb9), seats: bytes(0xb9), close: "any" }, { entity: row, parents });
+    put(db, "_dai_seat", C, 2, 4, { seat: SEATC, seats: bytes(0xba), close: "any" }, { entity: row, parents });
     const open = db.all("SELECT lower(hex(seat)) AS s FROM _dai_open_seat WHERE session = ?", [S]).map((r) => r["s"]);
-    expect(open, "the open seat is still the one Ada minted").toEqual([hex(SEATJ)]);
+    expect(open, "the open seat is still the one her creator's seat row declares").toEqual([hex(SEATJ)]);
     db.close();
   });
 

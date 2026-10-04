@@ -69,7 +69,7 @@ const entity = (): Uint8Array => {
 /** The creator's copy, with a new session: her seat is SEAT1, the open seat SEAT2. */
 async function creatorsCopy(): Promise<{ db: Copy; session: Uint8Array }> {
   const db = copy(CREATOR);
-  const session = startSession(db, { creatorSeat: SEAT1, openSeat: SEAT2, entities: [entity(), entity()] });
+  const session = startSession(db, { creatorSeat: SEAT1, openSeats: [SEAT2], close: "any", entity: entity() });
   await sealAs(db, CREATOR);
   return { db, session };
 }

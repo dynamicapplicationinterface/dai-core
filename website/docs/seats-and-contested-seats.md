@@ -11,29 +11,26 @@ application. The rules themselves are under
 
 ## Seats and bindings
 
-The creator mints the seats: one for itself and one open seat. A person joins
-by **binding** the open seat from their own copy. Both are ordinary shared rows,
-so they travel and merge like everything else.
+The creator declares the seats once, in the row that starts the session: one
+for itself and `max_parties - 1` open seats, with the session's close rule. The
+session's id is a hash of that row, so no seat is added, reordered or replaced
+later. A person asks for an open seat by **binding** it from their own copy,
+and the creator's copy **confirms** them in it. All of these are ordinary shared
+rows, so they travel and merge like everything else.
 
-Today that is the whole roster: `session.create()` mints exactly two seats, and
-no call mints another, so a session seats two people whatever `max_parties`
-declares. The profile's number is enforced as a ceiling — a document holding
-more seats than it is refused — but nothing yet fills seats beyond the second.
-A group of three or more cannot be a session until that exists (backlog D6).
+A copy is a **member** of a session when the creator's copy has confirmed it in
+a seat and in no way that makes the seat void. Only members' rows are read: the
+`_current` views of a session document show admitted rows and nothing else.
 
-A copy is a **member** of a session when it binds a seat the creator minted and
-no other copy binds the same seat. Only members' rows are read: the `_current`
-views of a session document show admitted rows and nothing else.
-
-## Why a seat two copies bind admits neither
+## Why a seat two copies ask for admits neither
 
 An invite is a link, and a link can be forwarded or opened on two devices. If
-two copies bind the same seat, something has to decide which one is in — and
-with no server, the only thing that could decide is which bound first, which
-means trusting clocks that two phones do not share. So neither is admitted. The
-seat is **contested**: both copies can see that it is, the creator can repair
-it by minting a fresh open seat (`reseat`) and sending a new invite, and the
-person they meant to play opens that one.
+two copies ask for the same seat, something has to decide which one is in — and
+with no server, the only thing that could decide is which asked first, which
+means trusting clocks that two phones do not share. So neither is seated. The
+seat is **contested**, and since no seat is ever replaced, the repair is a new
+session: the creator's copy closes the contested one, starts another, and says
+so, and the person they meant to play opens the new invite.
 
 That is why an application shows the contested state rather than treating it as
 an error: it is the honest answer to a question the protocol refuses to guess
@@ -42,9 +39,9 @@ at.
 ## Joining is an act, not an arrival
 
 A copy binds a seat when a person opens an invite — a file or a link — never
-because rows arrived in the background. Otherwise a copy whose seat was
-contested and replaced would quietly take the fresh seat the moment it arrived
-by mailbox, and contest it again. `dai:merged` says which kind of arrival it was
+because rows arrived in the background. Otherwise a copy that lost a contest
+would quietly ask for a seat in the new session the moment it arrived by
+mailbox, and contest it again. `dai:merged` says which kind of arrival it was
 (`via`), and the application joins only on `"carrier"`.
 
 ## Closing on what was seen

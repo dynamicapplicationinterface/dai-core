@@ -18,7 +18,7 @@ import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
 
 function openWith(schema: string): Rows & { close(): void } {
   const db = new DatabaseSync(":memory:");
-  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, seq) => sessionIdOf(author, seq));
+  db.function(SESSION_ID_FUNCTION, { deterministic: true }, (author, seq, seat, seats, close) => sessionIdOf(author, seq, seat, seats, close));
   db.exec(rewriteReplicated(schema).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -76,7 +76,7 @@ CREATE TABLE notes (
 });
 
 test("a session table: an admitted row naming another entity's admitted row hides nothing", () => {
-  const S = sessionIdOf(A, 1)!; // Ada's seat row is her seq 1
+  const S = sessionIdOf(A, 1, bytes(0xa1), bytes(0xa2), "any")!; // Ada's seat row is her seq 1, declaring the open seat
   const db = openWith(`-- dai:profile session max_parties=2
 -- dai:replicated
 CREATE TABLE moves (
@@ -85,8 +85,7 @@ CREATE TABLE moves (
 `);
   // Ada's session, on her copy; Bo asked for the open seat and she confirmed him.
   db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [A]);
-  put(db, "_dai_seat", A, 1, 1, bytes(0x11), { seat: bytes(0xa1) }, [], S);
-  put(db, "_dai_seat", A, 2, 2, bytes(0x12), { seat: bytes(0xa2) }, [], S);
+  put(db, "_dai_seat", A, 1, 1, bytes(0x11), { seat: bytes(0xa1), seats: bytes(0xa2), close: "any" }, [], S);
   put(db, "_dai_binding", B, 1, 3, bytes(0x14), { seat: bytes(0xa2) }, [], S);
   put(db, "_dai_confirm", A, 3, 4, bytes(0x13), { seat: bytes(0xa2), holder: B }, [], S);
   put(db, "moves", A, 4, 5, bytes(0x21), { san: "e4" }, [], S);

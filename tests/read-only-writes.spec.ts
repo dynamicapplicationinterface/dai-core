@@ -71,7 +71,6 @@ const EXAMPLES: Example[] = [
       "#offer-draw",
       "#claim-draw",
       "#resign",
-      "#new-invite",
       "#conflict-choices button",
       "#names-choices button",
       "#rename-form button[type=submit]",
@@ -92,7 +91,7 @@ const EXAMPLES: Example[] = [
       "#rename",
       "#rename-form button[type=submit]",
       "#close-match",
-      "#reseat",
+      "#fresh-invite",
       "#collision-choices button",
       "#name-versions button",
     ],
@@ -111,7 +110,7 @@ const EXAMPLES: Example[] = [
       "#add-question button[type=submit]",
       "#submit",
       "#close",
-      "#reseat",
+      "#fresh-invite",
       "#questions button",
     ],
     offered: "#compose, #new-request button[type=submit]",
@@ -138,7 +137,7 @@ async function documentWith(example: Example, version: number): Promise<{ file: 
   const dir = mkdtempSync(join(tmpdir(), "dai-read-only-"));
   const path = join(dir, "document.sqlite");
   const sqlite = new DatabaseSync(path);
-  sqlite.function(SESSION_ID_FUNCTION, { deterministic: true }, (a, n) => sessionIdOf(a, n));
+  sqlite.function(SESSION_ID_FUNCTION, { deterministic: true }, (a, n, seat, seats, close) => sessionIdOf(a, n, seat, seats, close));
   sqlite.exec(rewriteReplicated(readFileSync(join(repo, example.dir, "schema.sql"), "utf8")).sql);
   const db: Rows = {
     all: (sql, params = []) => sqlite.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -149,7 +148,7 @@ async function documentWith(example: Example, version: number): Promise<{ file: 
   const keys = await mintPersonKey();
   const author = await authorIdOf(await rawPublicKey(keys.publicKey));
   ensureReplica(db, author);
-  const session = startSession(db, { creatorSeat: rnd(), openSeat: rnd(), entities: [rnd(), rnd()] });
+  const session = startSession(db, { creatorSeat: rnd(), openSeats: [rnd()], close: "any", entity: rnd() });
   example.fill(db, session);
   for (const batch of pendingBatches(db, author, mergeTablesOf(db))) {
     recordSeal(db, await signBatch(batch, { document: built.manifest.documentUuid, keys }));

@@ -176,6 +176,11 @@ CREATE VIEW T_current AS
        LIMIT 1);
 ```
 
+In a session document the view is the same with its heads read once, as
+`WITH heads AS MATERIALIZED (SELECT * FROM T_heads)` and `heads` in place of
+`T_heads`: there the heads read the roster, and compiling it three times was
+most of what a read cost.
+
 The `_r_seq` tiebreak beyond `_r_replica` is T1-D6: two heads from the same
 replica for the same entity are possible after a merge of a copy that forked
 from itself, and the 2.1.1 rule stops one step short of total order.

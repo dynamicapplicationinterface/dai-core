@@ -89,6 +89,7 @@ function seats(session) {
     answererJoined, closed, contested, openSeat, pending,
     seatLost: bound && !member && !pending,
     notIn: !isWriter && !bound,
+    replaced: replaced.has(session) && !answererJoined,
   };
 }
 
@@ -185,10 +186,12 @@ function drawList() {
 
 function drawSeat(s) {
   let text = "";
-  $("reseat").hidden = true;
-  if (s.contested && s.isWriter) {
-    text = "Two people opened this link, so neither can answer. Send a fresh link to the one person you meant.";
-    $("reseat").hidden = false;
+  $("fresh-invite").hidden = true;
+  if (s.replaced && s.isWriter) {
+    text = "Two people opened your link, so this request starts over. Send its new link to the one person you meant.";
+    $("fresh-invite").hidden = false;
+  } else if (s.contested && !s.isWriter) {
+    text = "Two people opened this link, so neither could answer. Nothing you did lost your place: ask the sender for a fresh link.";
   } else if (s.seatLost) {
     text = "Your place in this request was taken on another device or replaced. Ask the sender for a fresh link.";
   } else if (s.notIn) {
@@ -554,11 +557,37 @@ $("invite").addEventListener("click", () => {
   if (request) window.dai.requestShare(request.session);
 });
 
-$("reseat").addEventListener("click", () => {
+$("fresh-invite").addEventListener("click", () => {
   const request = activeRequest();
-  if (request && write(() => kit.reseat(request.session))) window.dai.requestShare(request.session);
-  draw();
+  if (request) window.dai.requestShare(request.session);
 });
+
+// A request two people opened moves, with its questions, to the session the
+// kit starts in its place (maybe as it loads: listened for before import).
+const replaced = new Set();
+function onNewSession(event) {
+  const { session, replaces } = event.detail ?? {};
+  const k = window.daiKit;
+  if (!replaces || !k) return;
+  const old = k.db.selectObjects(
+    "SELECT lower(hex(_r_entity)) AS id, from_name, title, note, due_on FROM requests_current WHERE lower(hex(_r_session)) = ? LIMIT 1",
+    [replaces],
+  )[0];
+  if (!old) return;
+  const asked = k.db.selectObjects(
+    "SELECT position, prompt FROM questions_current WHERE request_id = ? AND lower(hex(_r_session)) = ? ORDER BY position, _r_lc",
+    [old.id, replaces],
+  );
+  const id = write(() => {
+    const made = shared.insert("requests", { from_name: old.from_name, title: old.title, note: old.note, due_on: old.due_on }, session);
+    for (const q of asked) shared.insert("questions", { request_id: made, position: q.position, prompt: q.prompt }, session);
+    return made;
+  });
+  if (!id) return;
+  k.db.exec({ sql: "UPDATE settings SET active_request = ? WHERE id = 1", bind: [id] });
+  replaced.add(session);
+  if (kit) draw();
+}
 
 // Saves every unsaved answer first, and sends only if all of them saved: a
 // send that went ahead past a failed save would be the silent loss this button
@@ -629,6 +658,7 @@ const onMerged = (event) => whenPointerLifts(() => {
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
   window.addEventListener("dai:kit-merged", onMerged);
+  window.addEventListener("dai:kit-new-session", onNewSession);
   // The kit opens the database: one handle for the page, since a second
   // openDatabase() would be a second copy of it.
   await import("./dai-kit.js");

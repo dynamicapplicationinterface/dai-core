@@ -1,0 +1,29 @@
+{
+  "what": "For the record (review 9, A07; D180). A is Ada's stored copy after a lost save: her confirm of Bo pending, the header H that sealed it not held. B, Bo's copy, holds H without the confirm, as a relay holds it. Merging B into A keeps H and leaves the confirm pending, and reports nothing; the merge is not a fixed point, since a second merge finds H held and adopts it for the confirm (D180, open).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": false,
+  "ab": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_UNSIGNED"
+      }
+    ]
+  }
+}

@@ -192,10 +192,12 @@ function drawSeat(game, st) {
   const panel = $("seat");
   const s = st.seats;
   let text = "";
-  $("reseat").hidden = true;
-  if (s.contested && s.amCreator) {
-    text = "Two people opened this invite, so neither can play. Send a fresh invite to the one person you meant.";
-    $("reseat").hidden = false;
+  $("fresh-invite").hidden = true;
+  if (replaced.has(game.session) && !s.opponent) {
+    text = "Two people opened your invite, so that game was set aside and this one started in its place. Send its invite to the one person you meant.";
+    $("fresh-invite").hidden = false;
+  } else if (s.contested && !s.amCreator) {
+    text = `Two people opened this invite, so neither could play. Nothing you did lost your place — ${game.x_name} can send you a fresh invite.`;
   } else if (s.seatLost) {
     text = `Your seat in this game was taken on another device or replaced. Nothing you did lost it — ${game.x_name} can send you a fresh invite.`;
   } else if (s.notIn) {
@@ -406,11 +408,32 @@ $("invite").addEventListener("click", () => {
   if (game) window.dai.requestShare(game.session);
 });
 
-$("reseat").addEventListener("click", () => {
+$("fresh-invite").addEventListener("click", () => {
   const game = activeGame();
-  if (game && write(() => kit.reseat(game.session))) window.dai.requestShare(game.session);
-  draw();
+  if (game) window.dai.requestShare(game.session);
 });
+
+// On the creator's copy the kit sets a game whose invite two people opened
+// aside, and starts a new session in its place: no seat is ever given to
+// someone else. The game moves there under the same names, and its invite goes
+// to the one person meant. The kit may do it as it loads, so this listens from
+// before the kit is imported.
+const replaced = new Set();
+function onNewSession(event) {
+  const { session, replaces } = event.detail ?? {};
+  const k = window.daiKit;
+  if (!replaces || !k) return;
+  const old = k.db.selectObjects(
+    "SELECT x_name, o_name FROM games_current WHERE lower(hex(_r_session)) = ? LIMIT 1",
+    [replaces],
+  )[0];
+  if (!old) return;
+  const id = write(() => shared.insert("games", { x_name: old.x_name, o_name: old.o_name }, session));
+  if (!id) return;
+  k.db.exec({ sql: "UPDATE settings SET active_game = ? WHERE id = 1", bind: [id] });
+  replaced.add(session);
+  if (kit) draw();
+}
 
 // An inline form, not prompt(): the application runs in a sandboxed frame,
 // where the browser's own dialogs are not available.
@@ -460,6 +483,7 @@ function onMerged(event) {
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
   window.addEventListener("dai:kit-merged", onMerged);
+  window.addEventListener("dai:kit-new-session", onNewSession);
   // The kit opens the database: one handle for the page, since a second
   // openDatabase() would be a second copy of it.
   await import("./dai-kit.js");

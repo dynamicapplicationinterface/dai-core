@@ -182,7 +182,7 @@ export function replicatedSchemaOf(rows: Rows, tables?: readonly string[]): stri
 export async function mergeSibling(
   local: Rows,
   sibling: Rows,
-  options: number | { level?: number; document?: string; author?: Uint8Array } = 1,
+  options: number | { level?: number; document?: string; author?: Uint8Array; views?: { local: string; sibling: string } } = 1,
 ): Promise<MergeReport> {
   // Two functions on purpose, not to be folded: verify outside, merge inside, so nothing awaits while a transaction is open.
   const document = typeof options === "number" ? "" : (options.document ?? "");
@@ -199,7 +199,14 @@ export async function mergeSibling(
 export function mergeVerified(
   local: Rows,
   sibling: Rows,
-  options: { level?: number; document?: string; author?: Uint8Array; verdicts: ReadonlyMap<string, BatchVerdict> },
+  options: {
+    level?: number;
+    document?: string;
+    author?: Uint8Array;
+    verdicts: ReadonlyMap<string, BatchVerdict>;
+    /** Each copy's signed-view digest, when the caller knows both: two builds are refused whole (R16). */
+    views?: { local: string; sibling: string };
+  },
 ): MergeReport {
   /*
    * A level, as every caller has passed it, or the options the identity sitting
@@ -258,7 +265,8 @@ export function mergeVerified(
    * sibling holds, against the sibling's own rows. The merge takes only what a
    * verified header covers, and says what it refused.
    */
-  const result = mergeFrom(local, sibling, tables, options.author, options.verdicts);
+  const result = mergeFrom(local, sibling, tables, options.author, options.verdicts, options.views ? { views: options.views } : {});
+  if (result.refused) return { ...result, conflicts: 0 };
   return { ...result, conflicts: conflictsIn(local, replicatedTablesOf(local)) };
 }
 

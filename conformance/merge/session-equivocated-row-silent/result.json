@@ -9,7 +9,7 @@
   "stable": true,
   "ab": {
     "applied": 3,
-    "duplicate": 8,
+    "duplicate": 6,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
@@ -21,7 +21,7 @@
   },
   "ba": {
     "applied": 3,
-    "duplicate": 8,
+    "duplicate": 6,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [

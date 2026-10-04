@@ -28,12 +28,12 @@ async function openChess(page: Page): Promise<void> {
   await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
 }
 
-test("cold review 4: a move for a retired seat this copy asked for is refused by the gate, not written and dropped", async ({ page }) => {
+test("cold review 4: a move for a seat the session does not declare is refused by the gate, not written and dropped", async ({ page }) => {
   test.slow();
   await openChess(page);
-  // In one synchronous turn, so the kit's own confirmation cannot run between
-  // the steps: a session, this copy's ask for its open seat, a second ask that
-  // makes the seat contested, the reseat that retires it, and a move for it.
+  // A session, this copy's ask for its open seat, and a move for a value its
+  // creator's seat row does not declare: no seat is reseated (R14), so a value
+  // outside the roster is no seat anyone can hold or wait in.
   const out = await app(page)
     .locator("#app")
     .evaluate(() => {
@@ -41,20 +41,16 @@ test("cold review 4: a move for a retired seat this copy asked for is refused by
       const db = w.daiKit.db;
       const r = w.dai.replicated;
       const bytes = (h: string) => w.daiKit.seatBytes(h);
-      const rnd = () => crypto.getRandomValues(new Uint8Array(16));
+      const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
       const made = r.session.create();
       r.session.join(made.session, made.seat);
-      db.exec({
-        sql: "INSERT INTO _dai_binding (seat, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) VALUES (?, ?, 1, 1, ?, '[]', 0, ?)",
-        bind: [bytes(made.seat), rnd(), rnd(), bytes(made.session)],
-      });
-      r.session.reseat(made.session);
+      const other = hex(crypto.getRandomValues(new Uint8Array(16)));
       const open = db.selectObjects("SELECT lower(hex(seat)) AS s FROM _dai_open_seat WHERE lower(hex(session)) = ?", [made.session]);
       let error = "";
       try {
         r.insert(
           "moves",
-          { seat: bytes(made.seat), game_id: "g", ply: 1, color: "b", from_sq: "e7", to_sq: "e5", promotion: null, san: "RETIRED", draw_offer: 0 },
+          { seat: bytes(other), game_id: "g", ply: 1, color: "b", from_sq: "e7", to_sq: "e5", promotion: null, san: "UNDECLARED", draw_offer: 0 },
           made.session,
         );
       } catch (e) {
@@ -62,12 +58,15 @@ test("cold review 4: a move for a retired seat this copy asked for is refused by
       }
       const n = (sql: string) => db.selectObjects(sql).length;
       return {
-        retired: !open.some((s: { s: string }) => s.s === made.seat),
+        declared: open.map((s: { s: string }) => s.s),
+        seat: made.seat,
+        other,
         error,
-        stored: n("SELECT 1 FROM moves WHERE san = 'RETIRED'"),
+        stored: n("SELECT 1 FROM moves WHERE san = 'UNDECLARED'"),
       };
     });
-  expect(out.retired, "the reseat retired the seat this copy asked for").toBe(true);
+  expect(out.declared, "the open seats are the ones the creator's seat row declares").toEqual([out.seat]);
+  expect(out.declared).not.toContain(out.other);
   expect(out.error, "the gate refuses the move, by name").toMatch(/SEAT_NOT_HELD/);
   expect(out.stored, "and nothing is written").toBe(0);
 });

@@ -27,6 +27,40 @@ identity step 6 (27 to 29 September), and then stated as format when two
 independent readers, built from the page, disagreed where it was silent
 (D171, 29 September).
 
+The properties the seat rules are derived from
+---------------------------------------------
+
+*3 October, the ninth attack review.* Rule: the
+[session admission](format.md#session-admission) block.
+
+**Problem.** Nine attack reviews of the seat model each closed the shape the
+last one found. Each ruling (R11, R12, R13) was right about its attack and
+left the next: a rule that decides which of one author's statements count by
+their order in that author's seqs gives that author a retroactive edit, since
+a dishonest client can sign at any seq the honest host never used. Leave a
+seq unused, fill it later, and the filled row ranks above statements that
+already granted holds.
+
+**Rule.** The seat rules are derived from three properties, and a rule that
+breaks one is a defect whatever attack it was written for:
+
+- **P0.** The same rows and headers give the same state in any arrival order.
+- **P1.** Adding any signed row, at any seq, by anyone, never removes an
+  admitted row or a hold unless that merge reports `AUTHOR_EQUIVOCATED`. Void
+  is the only way down.
+- **P2.** Equivocation never lets the equivocator choose which of his
+  statements survive.
+
+The defect class is any rule that ranks two seqs of one author. Each such rule
+is removed or shown harmless: the rules that remain compare a row's seq only
+against the creator's seat row's (none in the roster since R14), or against
+a close whose consequence is to accuse that author (R18), never to choose
+between two of his statements.
+
+**Rejected.** Ruling attack by attack: R11 to R13 each closed the shape the
+review showed and not the class it belonged to, so the next review found the
+next shape.
+
 The header signs its list
 -------------------------
 
@@ -179,7 +213,8 @@ hold never moves.
 A close binds only its author
 -----------------------------
 
-*27 September, D151, D152, D153.* Rule: [late](format.md#late),
+*27 September, D151, D152, D153; amended 3 October, R18.* Rule:
+[close-monotone](format.md#close-monotone),
 [the close row](format.md#close-row), [first close](format.md#close-first).
 
 **Problem.** At version 1 a close listed, per author, the highest seq its
@@ -190,7 +225,8 @@ a close naming only themselves erased the other member's moves in every copy.
 **Rule.** A close makes only its author's own later rows late, ordered by
 that author's own seq, which the author cannot reorder. The list's columns
 retired with version 2. A deleted close row does not count, so a delete
-revokes nothing (D153).
+revokes nothing (D153). "Late" itself retired with R18 (below): the author
+can reorder his own seqs after all, by signing at one he skipped.
 
 **Rejected.** The frontier list. [replicated-tables.md](replicated-tables.md)
 T1-D31 keeps it, marked superseded, as the record of what was replaced.
@@ -548,8 +584,8 @@ non-deterministic across copies.
 A confirm counts only for a seat the creator minted
 ---------------------------------------------------
 
-*2 October, the eighth attack review, R11.* Rule:
-[confirms](format.md#confirms), [minted](format.md#confirm-minted).
+*2 October, the eighth attack review, R11; retired 3 October by R14.* Rule:
+[confirms](format.md#confirms), then `confirm-minted`, retired.
 
 **Problem.** A confirm was not checked against the seats the creator minted,
 and no reader read `max_parties`, which the manifest signs as the bound a
@@ -571,8 +607,8 @@ a session declared for two holds as many parties as its creator confirms.
 A seat is a seat row
 --------------------
 
-*2 October, R12.* Rule: [seat is a row](format.md#seat-is-row),
-[a held row is frozen](format.md#held-row-frozen).
+*2 October, R12; retired 3 October by R14.* Rule: then `seat-is-row` and
+`held-row-frozen`, both retired.
 
 **Problem.** Under R11 a minting row minted every value its versions named,
 and a hold was a value's. After the creator confirmed one copy in the open
@@ -599,9 +635,8 @@ both fall to a version of a row.
 A session exists from its creator's seat row
 --------------------------------------------
 
-*2 October, R13.* Rule:
-[session from the creator's row](format.md#session-from-creator-row),
-[minted](format.md#confirm-minted).
+*2 October, R13; retired 3 October by R14.* Rule: then
+`session-from-creator-row` and `confirm-minted`, both retired.
 
 **Problem.** The session id is computable before the creator's seat row
 exists. A creator could skip a seq, write her creator's seat row above it,
@@ -614,6 +649,223 @@ reported.
 of the creator's in her session below that row's seq counts for nothing
 there, and the seats she mints are counted in seq order from it. An honest
 writer never writes in a session before it exists.
+
+The roster is declared
+----------------------
+
+*3 October, the ninth attack review, R14.* Rule:
+[roster-declared](format.md#roster-declared),
+[creator-row-immutable](format.md#creator-row-immutable),
+[confirms](format.md#confirms).
+
+**Problem.** A session's seats were minted: every seat row of the creator's
+in the session, each counted once at its lowest seq, the first `max_parties`
+of them in her seq order (R11), each value belonging to the row that named it
+first (R12), counted from her creator's seat row (R13). Every one of those is
+a rule that ranks two seqs of one author. A creator who never signed twice
+left the seq after her creator's seat row unused, let a joiner be confirmed in
+the open seat, and then filled the seq: with a seat row, so the open seat's
+row fell past the bound; or with a version of her own seat row naming the open
+seat's value, so the value became hers (review 9, A01, A02). Either way the
+joiner's confirm stopped counting and the hold went to nobody, or to anyone
+she confirmed next, with nothing reported, on every copy and in both readers.
+It broke P1.
+
+**Rule.** The creator's seat row, the one row the session id names, declares
+the roster: her seat, the open seats as one run of 16-byte values, and the
+close rule. Its roster is valid or the session is void. The row is immutable:
+its later versions count for nothing, and no other `_dai_seat` row counts for
+anything. A confirm counts only for a value the row lists. One holder may hold
+several seats, so solo play seats the creator in an open seat. Nothing is
+minted, nothing is ordered and nothing is reseated: a contested seat is never
+confirmed, and the repair is a new session, which the kit starts by itself on
+the creator's copy (closing the contested one). With no rule that reads a seq,
+no seq a client fills later can move anything.
+
+**Rejected.** Minting by seq order, and the whole gap family: R11 counted the
+creator's seat rows in her seq order, R12 gave each value to the row that
+named it first in that order, and R13 cut the order off below her creator's
+seat row; each closed the gap the last review found and left one above it.
+Forbidding gaps (a roster row counts only if her roster seqs run contiguously
+from the creator's seat row): contiguity is a property of the set a copy
+holds, so a copy that lacks one row sees a gap and stops counting honest rows
+until it arrives, which is arrival order by another name. Reseat as the repair
+of a contested seat: it is a second statement about a seat, and every rule
+that let a second statement about a seat count had to decide between the two
+by seq.
+
+The session id hashes the roster
+--------------------------------
+
+*3 October, R15.* Rule: [session id](format.md#session-id),
+[the roster hashed](format.md#session-id-roster).
+
+**Problem.** Under R14 the creator's seat row carries the whole roster. Hashed
+by its author and seq alone, two rows at that id declaring two rosters (the
+creator signing twice) name the same session, and which roster a copy reads
+depends on which row it holds.
+
+**Rule.** The session id is SHA-256 of the author id, the seq, and the
+canonical CBOR of `[seat, seats, close]` as the row holds them, whatever their
+type, first 16 bytes. A row declaring another roster names another session, so
+a session's roster is a fact of its id. `_r_session` is not hashed (it is the
+hash). The frozen vectors of `tests/session-id.spec.ts` changed with it.
+
+**Rejected.** Author and seq alone (D158): the roster would be whatever row a
+copy holds at that id. Hashing only a valid roster: a row whose roster is not
+valid would name no session, and its session would not be void but empty,
+which a later row could not tell from one never started.
+
+Two builds do not merge
+-----------------------
+
+*3 October, R16.* Rule: [document-mismatch](format.md#document-mismatch),
+[`manifest.json`](format.md#fixtures-manifest).
+
+**Problem.** `max_parties` and the close rule were in the signed manifest and
+in no row or header, and the merge compared only tables and columns. The same
+rows merged into a copy built under `max_parties=2` and one under 3 seated
+different holders, and a copy under `close=any` and one under `close=creator`
+disagreed on whether a session was closed (review 9, A04). Neither reader saw
+the bound at all, and both assumed 2.
+
+**Rule.** A merge refuses, whole, a sibling whose signed-view digest differs
+from its own (`SIGNED_VIEW_MISMATCH`, with a sentence), so one copy's rules
+are the only rules its rows are read under. Each fixture carries each copy's
+digest and session profile in `manifest.json`, and both readers read it. The
+close rule moved onto the creator's seat row (R14), so it is read from the
+rows.
+
+**Rejected.** Merging and reading each copy's own bound: the same rows give
+two states, against P0. Carrying the bound in a header: every header would
+repeat a declaration the manifest signs once.
+
+An equivocator holds nothing
+----------------------------
+
+*3 October, R17, amending R10.* Rule:
+[equivocator-holds-nothing](format.md#equivocator-holds-nothing),
+[void](format.md#void).
+
+**Problem.** Under R10 an equivocator's roster rows counted for nothing but
+his hold, made by the creator's confirm, stood, and his rows in author tables
+counted except at the equivocated ids. A joiner who resigned (a close), moved
+anyway, and then signed two headers at one seq anywhere in the document had
+his close stop counting, the session reopen, and his move after the close
+admitted (review 9, A05): he chose which of his statements survived, against
+P2.
+
+**Rule.** An equivocator holds no seat: the seat he was confirmed in is void.
+None of his rows is admitted, and none is reported but as his signing twice.
+The equivocation that voids his seat is his, so it accuses him and not the
+creator.
+
+**Rejected.** Counting his close against him and never for him: it keeps his
+other rows and his hold, and lets him choose again by which statements he
+signs twice. Keeping the hold and dropping only his rows: a seat held by
+someone none of whose rows count is a seat nobody can play, and is void in
+all but name.
+
+A close is monotone
+-------------------
+
+*3 October, R18.* Rule: [close-monotone](format.md#close-monotone),
+[equivocator](format.md#equivocator).
+
+**Problem.** A close made its author's rows at higher seqs late. A member who
+played e5, skipped a seq, played Nf6, and later signed his first close at the
+skipped seq made Nf6 late after the opponent had answered it, with nothing
+reported (review 9, A10): a rule that ranks two seqs of one author, which a
+client that fills a skipped seq reorders. It broke P1 for the author's own
+admitted row.
+
+**Rule.** A close that counts and any row of its author in that session at a
+higher seq are equivocation: he is an equivocator (R17 applies), and the merge
+that makes it true reports him `AUTHOR_EQUIVOCATED`. The rule still compares
+two seqs of one author, but its only consequence is to accuse him: it never
+chooses between his statements (P2), and every row it removes is his, in a
+merge that reports him (P1). An honest writer never writes after his own
+close: the runtime is to refuse his writes in a session after his close (the
+host session's rule; until it is built the kit writes nothing in a session it
+closed).
+
+**Rejected.** `late`, and `admitted-not-late` with it: the author decides
+which of his rows are late by where he signs his close.
+
+A parent ahead of its row is malformed
+--------------------------------------
+
+*3 October, R19.* Rule: [parent-forward](format.md#parent-forward).
+
+**Problem.** A row may name as a parent an id that does not exist yet. A
+member's admitted move naming his own id at a higher seq, which he then fills
+with a row of the same entity in another session, becomes a crossing
+(`ENTITY_OTHER_SESSION`) after the fact: his own admitted row taken back,
+through `foreign`, after the opponent answered it.
+
+**Rule.** A parent naming an id of the row's own author at a seq at or above
+the row's own is malformed (`ROW_MALFORMED`): an honest writer names only rows
+it wrote before. A copy's own such row names nothing.
+
+**Rejected.** Reading such a parent as naming nothing everywhere: the row
+would be taken and its parents would mean different things on a copy that
+holds the id and one that does not.
+
+A void session does not depend on the row held at the creator's id
+------------------------------------------------------------------
+
+*3 October, R20.* Rule: [session-void](format.md#session-void).
+
+**Problem.** A session was void when the author of its creator's seat row,
+"not deleted", was an equivocator. A creator who signed, at her creator's seat
+row's id, the row and a tombstone of it split copies for good: one table holds
+one row per id, so a copy that met the row first was void and one that met
+the tombstone first had no creator and was not void, and they reported
+differently (review 9, A08). It read the row a copy holds at an equivocated
+id, which the step 6 review (X1) had ruled must decide nothing.
+
+**Rule.** A session whose creator's seat row is at an equivocated id is void,
+deleted or not, and a copy holding only a tombstone there has no live
+session: both admit nothing and report nothing but `AUTHOR_EQUIVOCATED`.
+
+**Rejected.** The delete flag of the row held at that id, for the split above.
+
+A seat someone else holds, and a value nobody holds
+---------------------------------------------------
+
+*3 October, A03.* Rule: [seat-not-held](format.md#seat-not-held).
+
+**Problem.** A row for a value of a held seat row that no counting confirm
+named (a reseat's old value) was reported `SEAT_NOT_HELD` by one reader and
+nothing by the runtime and the other: the page did not say whether "a seat
+someone else holds" was the row or the value.
+
+**Rule.** A row naming a value no counting confirm names, by an author not
+waiting in it, is `SEAT_NOT_HELD`. With the roster declared that covers a
+value the creator's seat row does not list, a later version's value, and an
+open seat nobody has asked for.
+
+**Rejected.** Silence: a row that no confirm can ever seat is a row for a
+seat its author does not hold.
+
+A seat value is 16 bytes
+------------------------
+
+*3 October, A09.* Rule: [seat-value-shape](format.md#seat-value-shape).
+
+**Problem.** The roster's `CHECK (length(seat) = 16)` counts characters for
+text, and canonical CBOR signs text as text. With seat values typed as text,
+the runtime seated both players and in the same merge reported one of them
+`SEAT_NOT_HELD`, one reader seated nobody, and the other threw (review 9,
+A09).
+
+**Rule.** A seat value is a byte string of exactly 16 bytes; text of any
+length, NULL, a number or a byte string of another length is not one. A
+confirm naming one counts for nothing, a row naming one is `SEAT_NOT_HELD`,
+and no reader fails on it.
+
+**Rejected.** Comparing values whatever their type: text and bytes of the
+same length then seat and fail to seat by turns.
 
 Reasons given inline
 --------------------

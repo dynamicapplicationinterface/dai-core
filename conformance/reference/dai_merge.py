@@ -26,6 +26,7 @@ import json
 import math
 import re
 import sqlite3
+import struct
 import sys
 from pathlib import Path
 
@@ -40,8 +41,8 @@ ROSTER = ("_dai_binding", "_dai_close", "_dai_confirm", "_dai_seat")
 # ids, each 32 lowercase hex digits, a colon and a seq from 1, a safe integer.
 PARENTS_CAP = 256
 
-# The session profile's bound on seats (docs/format.md#confirm-minted): every
-# session fixture declares max_parties=2, as every one declares close=any.
+# The session profile's bound on parties, where a fixture's manifest.json
+# gives none (docs/format.md#fixtures-manifest).
 MAX_PARTIES = 2
 PARENT_ID = re.compile(r"[0-9a-f]{32}:[1-9][0-9]{0,15}")
 SAFE_INTEGER = 2**53 - 1
@@ -181,11 +182,11 @@ def row_id(replica: bytes, seq: int) -> str:
     return f"{bytes(replica).hex()}:{seq}"
 
 
-def parents_of(text: str) -> list[str]:
+def parents_of(text: str, replica: object = None, seq: object = None) -> list[str]:
     """The ids a row names as parents; a row not the one shape names nothing,
     in every read, a copy's own included (docs/format.md#parents-malformed,
-    #parents-own-malformed)."""
-    if not well_formed_parents(text):
+    #parents-own-malformed, #parent-forward)."""
+    if not well_formed_parents(text, replica, seq):
         return []
     try:
         value = json.loads(text)
@@ -194,8 +195,10 @@ def parents_of(text: str) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
 
 
-def well_formed_parents(text: object) -> bool:
-    """Whether a row's parents are the one shape (D159)."""
+def well_formed_parents(text: object, replica: object = None, seq: object = None) -> bool:
+    """Whether a row's parents are the one shape (D159), and, given the row's
+    own author and seq, name none of the author's own ids at or above its seq
+    (docs/format.md#parent-forward)."""
     if not isinstance(text, str):
         return False
     try:
@@ -204,8 +207,12 @@ def well_formed_parents(text: object) -> bool:
         return False
     if not isinstance(value, list) or len(value) > PARENTS_CAP:
         return False
+    own = bytes(replica).hex() if isinstance(replica, (bytes, bytearray)) else None
     return all(
-        isinstance(item, str) and PARENT_ID.fullmatch(item) is not None and int(item[33:]) <= SAFE_INTEGER
+        isinstance(item, str)
+        and PARENT_ID.fullmatch(item) is not None
+        and int(item[33:]) <= SAFE_INTEGER
+        and not (own is not None and isinstance(seq, int) and item[:32] == own and int(item[33:]) >= seq)
         for item in value
     )
 
@@ -214,13 +221,55 @@ def rid_of(row: dict) -> str:
     return row_id(row["_r_replica"], row["_r_seq"])
 
 
-def session_id(author: object, seq: object) -> bytes | None:
-    """SHA-256 of the author id and the seq as eight bytes big-endian, first 16 bytes (D158)."""
+def cbor_head(major: int, n: int) -> bytes:
+    """A CBOR head in the shortest form (RFC 8949 §4.2.1)."""
+    if n < 24:
+        return bytes([(major << 5) | n])
+    for width, code in ((1, 24), (2, 25), (4, 26), (8, 27)):
+        if n < 1 << (8 * width):
+            return bytes([(major << 5) | code]) + n.to_bytes(width, "big")
+    raise ValueError("too large for CBOR")
+
+
+def cbor_value(value: object) -> bytes | None:
+    """A column value as canonical CBOR (docs/format.md#cbor); None for what no
+    signed row can hold."""
+    if value is None:
+        return b"\xf6"
+    if isinstance(value, (bytes, bytearray)):
+        return cbor_head(2, len(value)) + bytes(value)
+    if isinstance(value, str):
+        data = value.encode("utf-8")
+        return cbor_head(3, len(data)) + data
+    if isinstance(value, float) and value.is_integer() and abs(value) <= SAFE_INTEGER:
+        value = int(value)
+    if isinstance(value, int) and not isinstance(value, bool):
+        if not -(2**64) <= value < 2**64:
+            return None
+        return cbor_head(0, value) if value >= 0 else cbor_head(1, -1 - value)
+    if isinstance(value, float) and math.isfinite(value):
+        return b"\xfb" + struct.pack(">d", value)
+    return None
+
+
+def session_id(author: object, seq: object, seat: object, seats: object, close: object) -> bytes | None:
+    """SHA-256 of the author id, the seq as eight bytes big-endian, and the
+    canonical CBOR of [seat, seats, close] as the row holds them, first 16
+    bytes (docs/format.md#session-id, #session-id-roster)."""
     if not isinstance(author, (bytes, bytearray)) or len(author) != 16:
         return None
-    if not isinstance(seq, int) or seq < 0 or seq >= 2**64:
+    if not isinstance(seq, int) or seq < 1 or seq >= 2**64:
         return None
-    return hashlib.sha256(bytes(author) + seq.to_bytes(8, "big")).digest()[:16]
+    parts = [cbor_value(seat), cbor_value(seats), cbor_value(close)]
+    if any(part is None for part in parts):
+        return None
+    roster = cbor_head(4, 3) + b"".join(parts)  # type: ignore[arg-type]
+    return hashlib.sha256(bytes(author) + seq.to_bytes(8, "big") + roster).digest()[:16]
+
+
+def seat_value(value: object) -> bool:
+    """A seat value is a byte string of exactly 16 bytes (docs/format.md#seat-value-shape)."""
+    return isinstance(value, (bytes, bytearray)) and len(value) == 16
 
 
 def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
@@ -259,11 +308,11 @@ class Admission:
     the runtime's views would be the runtime agreeing with itself. The two
     views it reads are declarations the schema carries, not computations: which
     table is seated and by which column, and which tables have an author role.
-    The close rule is `any` in every vector (D171), and the bound
-    `max_parties=2` (MAX_PARTIES).
+    `max_parties` is the manifest's (manifest.json); each session's close rule
+    is on its creator's seat row (docs/format.md#roster-declared).
     """
 
-    def __init__(self, db: sqlite3.Connection, tables: list[str]):
+    def __init__(self, db: sqlite3.Connection, tables: list[str], max_parties: int):
         self.tables = tables
         self.rows: dict[str, list[dict]] = {}
         self.sessioned: set[str] = set()
@@ -279,134 +328,169 @@ class Admission:
         self.equivocated = equivocated_ids(db)
         self.equivocated_at = ids_of(self.equivocated)
         self.equivocated_text = {f"{author.hex()}:{seq}" for author, seq in self.equivocated_at}
+        signed_twice = {author for author, _seq in self.equivocated_at}
 
-        # An equivocator: an author with two authentic headers at one (author,
-        # seq) anywhere in the document. Her seat, binding, confirm and close
-        # rows count for nothing (docs/format.md#equivocator).
-        self.equivocators = {author for author, _seq in self.equivocated_at}
-
-        # The creator's seat row: the one row whose own (author, seq) hashes to
-        # its session (D158). A session whose creator is an equivocator has no
-        # creator, and is void (docs/format.md#session-void).
-        self.creators: set[tuple[bytes, bytes, bytes, bytes]] = set()
-        self.void_sessions: set[bytes] = set()
-        # The seq of each session's creator's seat row: the session exists from
-        # it (docs/format.md#session-from-creator-row).
-        self.creator_seq: dict[tuple[bytes, bytes], int] = {}
+        # Each session's creator's seat row: the _dai_seat row, deleted or not,
+        # whose own author, seq and roster hash to its session (#creator).
+        self.creator_rows: dict[bytes, dict] = {}
         for s in self.rows.get("_dai_seat", []):
-            if s["_r_deleted"] == 0 and session_id(s["_r_replica"], s["_r_seq"]) == bytes(s["_r_session"]):
-                if bytes(s["_r_replica"]) in self.equivocators:
-                    self.void_sessions.add(bytes(s["_r_session"]))
-                else:
-                    self.creators.add((bytes(s["_r_session"]), bytes(s["_r_replica"]), bytes(s["seat"]), bytes(s["_r_entity"])))
-                    self.creator_seq[(bytes(s["_r_session"]), bytes(s["_r_replica"]))] = s["_r_seq"]
-        creator_entity = {session: entity for session, _replica, _seat, entity in self.creators}
-        self.creator_of = {(session, replica) for session, replica, _seat, _entity in self.creators}
+            if session_id(s["_r_replica"], s["_r_seq"], s.get("seat"), s.get("seats"), s.get("close")) == bytes(s["_r_session"]):
+                self.creator_rows[bytes(s["_r_session"])] = s
+        # Its roster: the open seats, and whether it is valid (#roster-declared).
+        self.open_seats: dict[bytes, list[bytes]] = {}
+        valid: dict[bytes, bool] = {}
+        for session, s in self.creator_rows.items():
+            seats = s.get("seats")
+            values = [bytes(seats[i : i + 16]) for i in range(0, len(seats), 16)] if isinstance(seats, (bytes, bytearray)) else []
+            self.open_seats[session] = values
+            valid[session] = (
+                seat_value(s.get("seat"))
+                and isinstance(seats, (bytes, bytearray))
+                and len(seats) % 16 == 0
+                and len(set(values)) == len(values)
+                and bytes(s["seat"]) not in values
+                and 1 + len(values) <= max_parties
+                and s.get("close") in ("any", "creator")
+            )
 
-        # Her seat rows: her seat entities in her session, each at the lowest
-        # seq of hers in it at or above her creator's seat row, deleted or not;
-        # the first MAX_PARTIES in that order mint (docs/format.md#confirm-minted).
-        # A seat is a seat row (docs/format.md#seat-is-row): each value belongs
-        # to the row whose version named it first, in her seq order, and is a
-        # seat when that row mints.
-        first: dict[tuple[bytes, bytes], int] = {}
-        mine = [s for s in self.rows.get("_dai_seat", []) if self.of_creator_session(s)]
-        for s in mine:
-            key = (bytes(s["_r_session"]), bytes(s["_r_entity"]))
-            first[key] = min(first.get(key, s["_r_seq"]), s["_r_seq"])
-        minting = {
-            (session, entity)
-            for (session, entity), seq in first.items()
-            if sum(1 for (other, _entity), at in first.items() if other == session and at < seq) < MAX_PARTIES
+        # The first pass, from the headers' equivocators alone: what a close
+        # that counts is decided over (#close-counts), so equivocation by a
+        # close never reads itself.
+        live0 = {
+            session: s
+            for session, s in self.creator_rows.items()
+            if s["_r_deleted"] == 0 and valid[session] and bytes(s["_r_replica"]) not in signed_twice
         }
-        named_first: dict[tuple[bytes, bytes], tuple[int, bytes]] = {}
-        for s in mine:
-            key = (bytes(s["_r_session"]), bytes(s["seat"]))
-            if key not in named_first or s["_r_seq"] < named_first[key][0]:
-                named_first[key] = (s["_r_seq"], bytes(s["_r_entity"]))
-        # (session, value) -> the seat row it is a seat of.
-        self.seat_row = {key: entity for key, (_seq, entity) in named_first.items() if (key[0], entity) in minting}
-
-        # Her confirms of an open seat she minted, each bound to its seat row;
-        # one holder per row, or the seat is void (D165). Deleted or not,
-        # superseded or not: a hold never moves once made, so a delete of a
-        # confirm is another confirm (D171).
-        confirmed = []
-        for f in self.rows.get("_dai_confirm", []):
-            session = bytes(f["_r_session"])
-            row = self.seat_row.get((session, bytes(f["seat"])))
-            if self.unequivocal(f) and self.of_creator_session(f) and row is not None and row != creator_entity[session]:
-                confirmed.append((session, row, bytes(f["holder"]), bytes(f["_r_replica"]), f["_r_seq"], bytes(f["seat"])))
-        self.counting_confirms = {(session, creator, seq): row for session, row, _holder, creator, seq, _value in confirmed}
-        self.voided_rows = {
-            (session, row, creator)
-            for session, row, holder, creator, _seq, _value in confirmed
-            if any(o[0] == session and o[1] == row and o[2] != holder for o in confirmed)
-        }
-        void_rows = {(session, row) for session, row, _creator in self.voided_rows}
-        values_of: dict[tuple[bytes, bytes], set[bytes]] = {}
-        for (session, value), row in self.seat_row.items():
-            values_of.setdefault((session, row), set()).add(value)
-        self.voided = {(session, value, creator) for session, row, creator in self.voided_rows for value in values_of[(session, row)]}
-        self.holders = {(session, seat, replica) for session, replica, seat, _entity in self.creators}
-        # The holder holds the seat under the values its confirms name: a later
-        # version of a held row moves nothing (docs/format.md#held-row-frozen).
-        self.holders |= {(session, value, holder) for session, row, holder, _c, _seq, value in confirmed if (session, row) not in void_rows}
-        self.members = {(session, replica) for session, _seat, replica in self.holders}
-
-        # A close counts when a member wrote it and it is not a delete (the
-        # rule `any`, D146, D153); it binds only its author (D151).
-        self.closes = [
+        confirms0 = self.confirms_in(live0)
+        holders0 = self.holders_in(live0, confirms0, signed_twice)
+        members0 = {(session, replica) for session, _seat, replica in holders0}
+        self.closes0 = [
             x
             for x in self.rows.get("_dai_close", [])
             if x["_r_deleted"] == 0
-            and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in self.members
-            and self.counts(x)
+            and bytes(x["_r_session"]) in live0
+            and (
+                bytes(x["_r_replica"]) == bytes(live0[bytes(x["_r_session"])]["_r_replica"])
+                or (live0[bytes(x["_r_session"])]["close"] == "any" and (bytes(x["_r_session"]), bytes(x["_r_replica"])) in members0)
+            )
         ]
-        self.closed = {bytes(x["_r_session"]) for x in self.closes}
+        # A close that counts and a row of its author in that session at a
+        # higher seq, in any table, are equivocation (#close-monotone).
+        self.close_equivocated = {
+            (bytes(x["_r_session"]), bytes(x["_r_replica"]))
+            for x in self.closes0
+            if any(
+                r["_r_session"] is not None
+                and bytes(r["_r_session"]) == bytes(x["_r_session"])
+                and bytes(r["_r_replica"]) == bytes(x["_r_replica"])
+                and r["_r_seq"] > x["_r_seq"]
+                for table in tables
+                if table in self.sessioned
+                for r in self.rows[table]
+            )
+        }
+        # The equivocators (#equivocator): two headers at one id, or a close
+        # followed by a row.
+        self.equivocators = signed_twice | {author for _session, author in self.close_equivocated}
+
+        # Void and live sessions (#session-void).
+        self.void_sessions = {
+            session
+            for session, s in self.creator_rows.items()
+            if not valid[session] or bytes(s["_r_replica"]) in self.equivocators
+        }
+        self.live = {session: s for session, s in live0.items() if bytes(s["_r_replica"]) not in self.equivocators}
+        self.creator_of = {(session, bytes(s["_r_replica"])) for session, s in self.live.items()}
+
+        # The confirms that count (#confirms), the void seats (#void) and who
+        # holds what (#holders).
+        self.confirms = self.confirms_in(self.live)
+        by_seat: dict[tuple[bytes, bytes], set[bytes]] = {}
+        for session, seat, holder, _seq, _creator in self.confirms:
+            by_seat.setdefault((session, seat), set()).add(holder)
+        # (session, seat, creator), for a seat whose confirms name two holders:
+        # the creator signing twice, which a merge reveals (#revealing-two-confirms).
+        self.split = {
+            (session, seat, bytes(self.live[session]["_r_replica"]))
+            for (session, seat), holders in by_seat.items()
+            if len(holders) > 1
+        }
+        self.voided = {
+            (session, seat, bytes(self.live[session]["_r_replica"]))
+            for (session, seat), holders in by_seat.items()
+            if len(holders) > 1 or holders & self.equivocators
+        }
+        void_seats = {(session, seat) for session, seat, _creator in self.voided}
+        self.holders = {(session, bytes(s["seat"]), bytes(s["_r_replica"])) for session, s in self.live.items()}
+        self.holders |= {
+            (session, seat, next(iter(holders)))
+            for (session, seat), holders in by_seat.items()
+            if (session, seat) not in void_seats
+        }
+        self.members = {(session, replica) for session, _seat, replica in self.holders}
+        self.void_seats = void_seats
+
+        # The closed sessions (#closed).
+        self.closed = {
+            bytes(x["_r_session"])
+            for x in self.closes0
+            if bytes(x["_r_session"]) in self.live and bytes(x["_r_replica"]) not in self.equivocators
+        }
+
+    def confirms_in(self, live: dict[bytes, dict]) -> list[tuple[bytes, bytes, bytes, int, bytes]]:
+        """(session, seat, holder, seq, creator) for every confirm that counts in
+        the live sessions given: by the creator, in her session, naming a value
+        her creator's seat row lists; deleted or not, superseded or not, at any
+        seq (#confirms, #confirm-versions-count)."""
+        found = []
+        for f in self.rows.get("_dai_confirm", []):
+            session = bytes(f["_r_session"])
+            row = live.get(session)
+            if row is None or bytes(f["_r_replica"]) != bytes(row["_r_replica"]):
+                continue
+            if seat_value(f["seat"]) and bytes(f["seat"]) in self.open_seats[session]:
+                found.append((session, bytes(f["seat"]), f["holder"], f["_r_seq"], bytes(f["_r_replica"])))
+        return found
+
+    def holders_in(self, live: dict[bytes, dict], confirms: list, equivocators: set[bytes]) -> set[tuple[bytes, bytes, bytes]]:
+        holders = {(session, bytes(s["seat"]), bytes(s["_r_replica"])) for session, s in live.items()}
+        by_seat: dict[tuple[bytes, bytes], set] = {}
+        for session, seat, holder, _seq, _creator in confirms:
+            by_seat.setdefault((session, seat), set()).add(holder)
+        for (session, seat), named in by_seat.items():
+            if len(named) == 1 and not (named & equivocators):
+                holders.add((session, seat, next(iter(named))))
+        return holders
 
     def unequivocal(self, row: dict) -> bool:
         return (bytes(row["_r_replica"]), row["_r_seq"]) not in self.equivocated_at
 
-    def before_session(self, row: dict) -> bool:
-        """A creator's row in her session below her creator's seat row: it counts for
-        nothing there (docs/format.md#session-from-creator-row)."""
-        at = self.creator_seq.get((bytes(row["_r_session"]), bytes(row["_r_replica"])))
-        return at is not None and row["_r_seq"] < at
-
-    def of_creator_session(self, row: dict) -> bool:
-        """A row of the session's creator in her session, from her creator's seat row on."""
-        return (bytes(row["_r_session"]), bytes(row["_r_replica"])) in self.creator_seq and not self.before_session(row)
-
     def counts(self, row: dict) -> bool:
-        """A roster or close row counts for something: its author is no equivocator,
-        and it is not a creator's row below her creator's seat row."""
-        return bytes(row["_r_replica"]) not in self.equivocators and not self.before_session(row)
+        """A roster or close row counts for something: its author is no equivocator."""
+        return bytes(row["_r_replica"]) not in self.equivocators
 
-    def void(self, row: dict) -> bool:
-        """A row of a void session: neither admitted nor reported."""
-        return bytes(row["_r_session"]) in self.void_sessions
+    def reportable(self, row: dict) -> bool:
+        """A row a merge may report: in a live session, by no equivocator, naming
+        no equivocated id (#report-silent)."""
+        return (
+            row["_r_session"] is not None
+            and bytes(row["_r_session"]) in self.live
+            and bytes(row["_r_replica"]) not in self.equivocators
+            and not self.names_equivocated(row)
+        )
 
     def names_equivocated(self, row: dict) -> bool:
         """It names an equivocated id as a parent (docs/format.md#admitted-parent-equivocated):
         not admitted and not reported, whatever that id holds here."""
-        return any(parent in self.equivocated_text for parent in parents_of(row["_r_parents"]))
+        return any(parent in self.equivocated_text for parent in parents_of(row["_r_parents"], row["_r_replica"], row["_r_seq"]))
 
     def filtered(self, table: str) -> bool:
         """An author table of a session document: its heads are over admitted rows (T1-D29)."""
         return table not in ROSTER and table in self.sessioned
 
-    def not_late(self, row: dict) -> bool:
-        return not any(
-            bytes(x["_r_session"]) == bytes(row["_r_session"])
-            and bytes(x["_r_replica"]) == bytes(row["_r_replica"])
-            and x["_r_seq"] < row["_r_seq"]
-            for x in self.closes
-        )
-
     def named(self, table: str, row: dict) -> list[dict]:
         """The rows of its own entity that this row names as earlier versions."""
-        wanted = set(parents_of(row["_r_parents"]))
+        wanted = set(parents_of(row["_r_parents"], row["_r_replica"], row["_r_seq"]))
         return [p for p in self.rows[table] if bytes(p["_r_entity"]) == bytes(row["_r_entity"]) and rid_of(p) in wanted]
 
     def foreign(self, table: str, row: dict) -> bool:
@@ -420,7 +504,25 @@ class Admission:
 
     def holds(self, table: str, row: dict) -> bool:
         seat = row[self.seated[table]]
-        return isinstance(seat, bytes) and (bytes(row["_r_session"]), seat, bytes(row["_r_replica"])) in self.holders
+        return seat_value(seat) and (bytes(row["_r_session"]), bytes(seat), bytes(row["_r_replica"])) in self.holders
+
+    def waiting(self, table: str, row: dict) -> bool:
+        """Its author's current ask in its session names the open seat the row
+        names, which nobody holds and is not void (#waiting)."""
+        seat = row[self.seated[table]]
+        session = bytes(row["_r_session"])
+        if not seat_value(seat) or session not in self.live or bytes(seat) not in self.open_seats[session]:
+            return False
+        if any(h[0] == session and h[1] == bytes(seat) for h in self.holders) or (session, bytes(seat)) in self.void_seats:
+            return False
+        return any(
+            b["_r_deleted"] == 0
+            and bytes(b["_r_session"]) == session
+            and bytes(b["_r_replica"]) == bytes(row["_r_replica"])
+            and seat_value(b["seat"])
+            and bytes(b["seat"]) == bytes(seat)
+            for b in self.heads("_dai_binding")
+        )
 
     def admitted(self, table: str, row: dict) -> bool:
         session, replica = bytes(row["_r_session"]), bytes(row["_r_replica"])
@@ -434,12 +536,7 @@ class Admission:
                 return False
         elif (session, replica) not in self.members:
             return False
-        return (
-            not self.foreign(table, row)
-            and self.not_late(row)
-            and self.unequivocal(row)
-            and not self.names_equivocated(row)
-        )
+        return not self.foreign(table, row) and self.unequivocal(row) and not self.names_equivocated(row)
 
     def heads(self, table: str) -> list[dict]:
         rows = self.rows[table]
@@ -456,8 +553,16 @@ class Admission:
                     and bytes(c["_r_session"]) == bytes(r["_r_session"])
                     and (column is None or (c[column] is not None and c[column] == r[column]))
                     and self.admitted(table, c)
-                    and me in parents_of(c["_r_parents"])
+                    and me in parents_of(c["_r_parents"], c["_r_replica"], c["_r_seq"])
                     for c in rows
+                )
+            elif table == "_dai_seat":
+                # Only creators' seat rows count, and nothing hides one
+                # (#creator-row-immutable).
+                hidden = not (
+                    self.counts(r)
+                    and self.creator_rows.get(bytes(r["_r_session"])) is not None
+                    and rid_of(self.creator_rows[bytes(r["_r_session"])]) == me
                 )
             else:
                 # A roster or close row by an equivocator neither shows nor
@@ -469,7 +574,7 @@ class Admission:
                     bytes(c["_r_entity"]) == bytes(r["_r_entity"])
                     and (not session or (bytes(c["_r_session"]) == bytes(r["_r_session"]) and bytes(c["_r_replica"]) == bytes(r["_r_replica"])))
                     and counts(c)
-                    and me in parents_of(c["_r_parents"])
+                    and me in parents_of(c["_r_parents"], c["_r_replica"], c["_r_seq"])
                     for c in rows
                 )
             if not hidden:
@@ -477,24 +582,23 @@ class Admission:
         return sorted(found, key=lambda r: (bytes(r["_r_replica"]).hex(), r["_r_seq"]))
 
     def unseated(self, table: str, row: dict) -> bool:
-        """What a merge reports as SEAT_NOT_HELD: no seat, a seat someone else holds, or another seat's row named.
-
-        Never a row naming an equivocated id, nor a row at one: that is
-        reported only as its author signing twice (R9), nor a row of a void
-        session (R10)."""
-        if self.names_equivocated(row) or not self.unequivocal(row) or self.void(row):
+        """What a merge reports as SEAT_NOT_HELD (#seat-not-held): a reportable
+        row naming no seat value, or a seat its author does not hold and does
+        not wait in that is not void, or another seat's row."""
+        if not self.reportable(row):
             return False
         seat = row[self.seated[table]]
-        if not isinstance(seat, bytes) or len(seat) != 16:
+        if not seat_value(seat) or self.other_seat(table, row):
             return True
-        held = any(h[0] == bytes(row["_r_session"]) and h[1] == seat for h in self.holders)
-        return (held and not self.holds(table, row)) or self.other_seat(table, row)
+        if self.holds(table, row) or self.waiting(table, row):
+            return False
+        return (bytes(row["_r_session"]), bytes(seat)) not in self.void_seats
 
     def crossings(self, table: str) -> list[tuple[str, dict, dict]]:
-        """(reason, row, the row it names) for every row naming another session's or another seat's version."""
+        """(reason, row, the row it names) for every reportable row naming another session's or another seat's version."""
         found = []
         for r in self.rows[table]:
-            if self.names_equivocated(r) or not self.unequivocal(r) or self.void(r):
+            if not self.reportable(r):
                 continue
             for p in self.named(table, r):
                 if bytes(p["_r_session"]) != bytes(r["_r_session"]):
@@ -510,16 +614,18 @@ def is_session(db: sqlite3.Connection) -> bool:
     return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_seat'").fetchone() is not None
 
 
-def admitted_dump(db: sqlite3.Connection) -> str:
+def admitted_dump(db: sqlite3.Connection, max_parties: int) -> str:
     """The admitted state in the text expected-admitted-*.txt holds (backlog D171)."""
     tables = replicated_tables(db)
-    admission = Admission(db, tables)
+    admission = Admission(db, tables, max_parties)
     lines: list[str] = []
     for table in tables:
         lines.append(f"# {table}")
         lines.extend(f"{rid_of(r)}\t{r['_r_deleted']}" for r in admission.heads(table))
     lines.append("# holders")
-    lines.extend("\t".join(part.hex() for part in h) for h in sorted(admission.holders, key=lambda h: tuple(p.hex() for p in h)))
+    # A holder is whatever the confirm names; a text one is shown as its UTF-8, as SQLite's hex() shows it.
+    hexed = lambda part: part.hex() if isinstance(part, (bytes, bytearray)) else str(part).encode("utf-8").hex()
+    lines.extend("\t".join(hexed(part) for part in h) for h in sorted(admission.holders, key=lambda h: tuple(hexed(p) for p in h)))
     lines.append("# voided")
     lines.extend("\t".join(part.hex() for part in v) for v in sorted(admission.voided, key=lambda v: tuple(p.hex() for p in v)))
     lines.append("# equivocated")
@@ -614,6 +720,8 @@ def merge(
     lists: dict[str, str] | None = None,
     own_verdicts: dict[str, str] | None = None,
     own_lists: dict[str, str] | None = None,
+    max_parties: int = MAX_PARTIES,
+    views: tuple[str, str] | None = None,
 ) -> dict:
     """Union merge, taking only what a verified header lists (docs/format.md).
 
@@ -624,13 +732,18 @@ def merge(
     that list: what it lists and is kept under (#merge-headers-kept-list).
     `own_verdicts` and `own_lists` are the same for the local copy's own
     headers, against its own rows: which of them are complete here, and what
-    they list (#merge-row-held-signed).
+    they list (#merge-row-held-signed). `max_parties` is the local copy's
+    manifest's bound, and `views` the two copies' signed-view digests, local
+    first: a sibling whose digest differs is refused whole
+    (#document-mismatch).
     """
     lists = lists or {}
     own_verdicts = own_verdicts or {}
     own_lists = own_lists or {}
     tables = replicated_tables(local)
     result = {"applied": 0, "duplicate": 0, "rejected": [], "newReplicas": 0, "refusedBatches": []}
+    if views is not None and views[0] != views[1]:
+        return {**result, "refused": "SIGNED_VIEW_MISMATCH"}
     refusals: dict[tuple[str, str, str], bytes] = {}  # (id, reason, author hex) -> author
 
     def refuse_batch(hid: str, author: bytes, reason: str) -> None:
@@ -645,10 +758,13 @@ def merge(
 
     equivocated_before = ids_of(equivocated_ids(local))
 
-    # The seats void before anything arrives: a merge reports only the seats it
-    # makes void (D165).
+    # The seats confirmed to two holders, and the closes followed by a row,
+    # before anything arrives: a merge reports only what it makes true (D165,
+    # #revealing-close).
     session = is_session(local)
-    voided_before = {(s, row) for s, row, _c in Admission(local, tables).voided_rows} if session else set()
+    first = Admission(local, tables, max_parties) if session else None
+    split_before = {(s, seat) for s, seat, _c in first.split} if first else set()
+    close_before = set(first.close_equivocated) if first else set()
 
     # The clock first, and before any row: a local row written afterwards must
     # outrank what arrived, or it loses to its own ancestors under the
@@ -700,7 +816,7 @@ def merge(
         f"{table}|{row_id(r_replica, r_seq)}"
         for table in tables
         for r_replica, r_seq, r_parents in sibling.execute(f'SELECT _r_replica, _r_seq, _r_parents FROM "{table}"')
-        if not well_formed_parents(r_parents)
+        if not well_formed_parents(r_parents, r_replica, r_seq)
     }
     tainted: set[str] = set()
     # The headers this copy held before the merge: its own.
@@ -865,7 +981,7 @@ def merge(
             f'DELETE FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?',
             (row["_r_replica"], row["_r_seq"]),
         )
-        for parent in parents_of(parents):
+        for parent in parents_of(parents, row["_r_replica"], row["_r_seq"]):
             local.execute(
                 f'UPDATE "{table}" SET _r_superseded = 0'
                 " WHERE lower(hex(_r_replica)) || ':' || _r_seq = ? AND _r_superseded = 1"
@@ -921,7 +1037,7 @@ def merge(
         # version of another seat's (identity step 5, D132), and a row naming
         # another session's version of its entity, whichever of the two
         # arrived (D131).
-        admission = Admission(local, tables)
+        admission = Admission(local, tables, max_parties)
         for table, row in added:
             stored = next(r for r in admission.rows[table] if rid_of(r) == rid_of(row))
             if table in admission.seated and admission.unseated(table, stored):
@@ -935,36 +1051,51 @@ def merge(
                     batch = child["_r_batch"]
                     refuse_batch(bytes(batch).hex() if batch is not None else "", child["_r_replica"], reason)
         # A seat the creator confirmed to two copies, void once both are held:
-        # the merge that made it void says so, in her name (D165), revealed by
+        # the merge that made it so says so, in her name (D165), revealed by
         # the rows it took that the void rests on: the seat's counting confirms
-        # and the session's creator's seat row, not deleted and not at an
-        # equivocated id (docs/format.md#revealing-two-confirms). None taken:
-        # filed under no id.
-        # The seat is its row (docs/format.md#seat-is-row): its counting confirms
-        # are those bound to the row, whatever value each names.
-        for s, seat_row, creator in admission.voided_rows:
-            if (s, seat_row) in voided_before:
+        # and the creator's seat row of the live session
+        # (docs/format.md#revealing-two-confirms). None taken: filed under no
+        # id. A seat void because its holder is an equivocator accuses only him.
+        for s, seat, creator in admission.split:
+            if (s, seat) in split_before:
                 continue
+            counting = {seq for cs, cseat, _holder, seq, _c in admission.confirms if cs == s and cseat == seat}
+            creator_row = admission.live[s]
             resting = [
                 row
                 for table, row in added
                 if row.get("_r_session") is not None
                 and bytes(row["_r_session"]) == s
                 and bytes(row["_r_replica"]) == creator
-                and (bytes(row["_r_replica"]), row["_r_seq"]) not in admission.equivocated_at
                 and (
-                    (table == "_dai_confirm" and admission.counting_confirms.get((s, creator, row["_r_seq"])) == seat_row)
-                    or (
-                        table == "_dai_seat"
-                        and row["_r_deleted"] == 0
-                        and session_id(bytes(row["_r_replica"]), row["_r_seq"]) == s
-                    )
+                    (table == "_dai_confirm" and row["_r_seq"] in counting)
+                    or (table == "_dai_seat" and row["_r_seq"] == creator_row["_r_seq"])
                 )
             ]
             for row in resting:
                 reveal(creator, bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else "")
             if not resting:
                 reveal(creator, "")
+        # A close that counts followed by a row of its author in that session
+        # (#close-monotone): the merge that makes it true reports him, revealed
+        # by the rows it took that it rests on, his closes there or his rows
+        # above the lowest of them (#revealing-close). None taken: no id.
+        for s, author in admission.close_equivocated:
+            if (s, author) in close_before:
+                continue
+            closes = [x["_r_seq"] for x in admission.closes0 if bytes(x["_r_session"]) == s and bytes(x["_r_replica"]) == author]
+            resting = [
+                row
+                for table, row in added
+                if row.get("_r_session") is not None
+                and bytes(row["_r_session"]) == s
+                and bytes(row["_r_replica"]) == author
+                and ((table == "_dai_close" and row["_r_seq"] in closes) or row["_r_seq"] > min(closes))
+            ]
+            for row in resting:
+                reveal(author, bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else "")
+            if not resting:
+                reveal(author, "")
 
     for author, ids in revealed.values():
         refuse_batch(min(ids), author, "AUTHOR_EQUIVOCATED")
@@ -1044,12 +1175,29 @@ def check(name: str) -> list[str]:
     # vector has one.
     lists_path = directory / "lists.json"
     lists = json.loads(lists_path.read_text(encoding="utf-8")) if lists_path.exists() else {}
+    # What each copy's signed manifest gives a reader (docs/format.md#fixtures-manifest):
+    # its signed-view digest and its session profile. Required: the bound is
+    # read from nowhere else.
+    manifest_path = directory / "manifest.json"
+    if not manifest_path.exists():
+        return failures + [f"{name}: manifest.json is missing"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)
         sibling = load(directory / other)
         copy, mine = other.split(".")[0], into.split(".")[0]
-        result = merge(local, sibling, verdicts.get(copy, {}), lists.get(copy, {}), verdicts.get(mine, {}), lists.get(mine, {}))
+        bound = manifest[mine].get("session", {}).get("max_parties", MAX_PARTIES)
+        result = merge(
+            local,
+            sibling,
+            verdicts.get(copy, {}),
+            lists.get(copy, {}),
+            verdicts.get(mine, {}),
+            lists.get(mine, {}),
+            bound,
+            (manifest[mine]["view"], manifest[copy]["view"]),
+        )
         dump = canonical_dump(local, replicated_tables(local))
         wanted = (directory / f"expected-{direction}.txt").read_text(encoding="utf-8")
 
@@ -1062,8 +1210,10 @@ def check(name: str) -> list[str]:
             admitted_path = directory / f"expected-admitted-{direction}.txt"
             if not admitted_path.exists():
                 failures.append(f"{name} [{direction}]: result.json says admitted and expected-admitted-{direction}.txt is missing")
-            elif admitted_dump(local) != admitted_path.read_text(encoding="utf-8"):
+            elif admitted_dump(local, bound) != admitted_path.read_text(encoding="utf-8"):
                 failures.append(f"{name} [{direction}]: what the document admits differs from expected-admitted-{direction}.txt")
+        if result.get("refused") != expected[direction].get("refused"):
+            failures.append(f"{name} [{direction}]: refused was {result.get('refused')!r}, expected {expected[direction].get('refused')!r}")
         for field in ("applied", "duplicate", "rejected", "newReplicas", "refusedBatches"):
             if result[field] != expected[direction][field]:
                 failures.append(

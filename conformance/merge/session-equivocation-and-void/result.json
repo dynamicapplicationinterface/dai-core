@@ -8,10 +8,10 @@
   "admitted": true,
   "stable": true,
   "ab": {
-    "applied": 4,
-    "duplicate": 4,
+    "applied": 3,
+    "duplicate": 3,
     "rejected": [
-      "2bad0fd610d99eae443e932a26142bca:4"
+      "2bad0fd610d99eae443e932a26142bca:3"
     ],
     "newReplicas": 0,
     "refusedBatches": [
@@ -27,9 +27,9 @@
   },
   "ba": {
     "applied": 0,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [
-      "2bad0fd610d99eae443e932a26142bca:4"
+      "2bad0fd610d99eae443e932a26142bca:3"
     ],
     "newReplicas": 0,
     "refusedBatches": [

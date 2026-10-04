@@ -1,5 +1,5 @@
 {
-  "what": "Ada writes a version of her open seat row on A, and from a second copy of her store a move at the same seq on B. The id is equivocated on both copies after either merge, and Ada is an equivocator: every seat row of hers counts for nothing, so none is a head of the roster, and her session is void; each merge reports AUTHOR_EQUIVOCATED (D160, D171, R10). Before R10 the version alone was no head and her two earlier seat rows stayed heads.",
+  "what": "Ada writes a version of her creator's seat row on A, and from a second copy of her store a move at the same seq on B. The id is equivocated on both copies after either merge, and Ada is an equivocator: every seat row of hers counts for nothing, so none is a head of the roster, and her session is void; each merge reports AUTHOR_EQUIVOCATED (D160, D171, R10). Before R10 the version alone was no head and her earlier seat rows stayed heads.",
   "cites": [
     "6",
     "T1-D13"
@@ -9,7 +9,7 @@
   "stable": true,
   "ab": {
     "applied": 1,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [
@@ -21,7 +21,7 @@
   },
   "ba": {
     "applied": 1,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": [

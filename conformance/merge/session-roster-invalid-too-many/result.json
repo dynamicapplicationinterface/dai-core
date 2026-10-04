@@ -1,0 +1,24 @@
+{
+  "what": "Ada's creator's seat row lists two open seats in a document declared max_parties=2. Bo asks for the open seat, Ada confirms him and he moves. A creator's seat row whose roster is not valid makes its session void: nobody holds a seat in it, nothing in it is admitted, and nothing is reported, since nobody signed twice (R14).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

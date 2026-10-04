@@ -1096,18 +1096,19 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * devices open one invite and both ask for the open seat before the creator's
    * copy has seen either ask. Nobody is seated by a clock or an author id: the
    * seat is held by whoever the creator's copy confirms, and it confirms only a
-   * seat exactly one device asked for. So neither is seated, the creator is
-   * shown the contest and the repair, and the repair (a fresh seat) retires the
-   * value both asked for, so both copies are told their place is gone. The
-   * intended player opens the fresh invite and is seated; the move it wrote
-   * while waiting for the old seat never stands. One outcome, whatever the ids.
+   * seat exactly one device asked for. So neither is seated, and since no seat is
+   * reseated (R14) the kit on the creator's copy closes the contested game's
+   * session and starts a new one in its place, so both copies are told their
+   * place is gone. The intended player opens the new game's invite and is
+   * seated; the move it wrote while waiting in the old game never stands. One
+   * outcome, whatever the ids.
    *
    * The creator's copy is kept from reading its mailbox while the two open, so
    * both asks are there when it next looks. A creator whose copy sees one ask
    * first seats that one, and a later ask is not a contest (a hold never moves);
    * that case is "reopening the invite" and the seat tests, not this one.
    */
-  test("a forwarded invite contests the seat, nobody is seated, both are told, and the creator repairs", async ({ browser }) => {
+  test("a forwarded invite contests the seat, nobody is seated, both are told, and the game starts again in a new session", async ({ browser }) => {
     /*
      * A's worker is blocked, because A's reads are refused by a context route
      * below and on WebKit a route never sees a request from a page the worker
@@ -1178,30 +1179,39 @@ test.describe("a game continues over a shared link (the key path)", () => {
     await expect(appA.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageA);
 
-    // Both asks reached A's copy together. It seats neither: the creator is
-    // shown the contest and offered the repair.
+    // Both asks reached A's copy together. It seats neither: no seat is ever
+    // reseated (R14), so the kit closes the contested game's session and starts
+    // a new one in its place, and the game moves there.
     expect(await askersOn(pageA), "A's copy holds both asks").toBe(2);
-    await expect(appA.locator("#new-invite")).toBeVisible({ timeout: 30_000 });
-    const member = (page: Page) =>
-      appFrame(page).evaluate(() => {
-        const kit = (window as any).daiKit;
-        const session = kit.db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0]?.s;
-        return session ? kit.mySeat(session) !== null : false;
+    const sessions = (page: Page) =>
+      app(page).locator("body").evaluate(() => {
+        const db = (window as any).daiKit.db;
+        const of = (sql: string) => db.selectObjects(sql).map((r: { s: string }) => r.s);
+        return {
+          games: of("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada' ORDER BY _r_lc"),
+          closed: of("SELECT lower(hex(session)) s FROM _dai_closed"),
+          active: String(db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g).split(":")[0],
+        };
       });
+    await expect(async () => {
+      const seen = await sessions(pageA);
+      expect(seen.games.length, "the game was started again in a new session").toBe(2);
+      expect(seen.closed, "the contested session is closed").toEqual([seen.games[0]]);
+      expect(seen.active, "and the new game is the one showing").toBe(seen.games[1]);
+    }).toPass({ timeout: 30_000 });
+    const [contested, fresh] = (await sessions(pageA)).games;
+    const member = (page: Page, session: string) =>
+      appFrame(page).evaluate((s) => (window as any).daiKit.mySeat(s) !== null, session);
     await pull(pageB);
     await pull(pageC);
-    expect(await member(pageB), "B is not seated").toBe(false);
-    expect(await member(pageC), "C is not seated").toBe(false);
+    expect(await member(pageB, contested!), "B is not seated").toBe(false);
+    expect(await member(pageC, contested!), "C is not seated").toBe(false);
     await expect(appA.locator("#move-history"), "B's e5 does not stand on A's copy").not.toContainText("e5");
-
-    // A mints a fresh seat, then shares a new invite — a fresh snapshot carrying
-    // the new open seat, so the opener does not depend on mailbox timing.
-    await appA.locator("#new-invite").click();
-    await appA.locator("#confirm-yes").click();
     await deviceA.unroute(`${relayBase}/**`, blockReads);
 
-    // The seat both asked for is retired, so both are told their place is gone,
-    // that nothing they did lost it, and that the creator can send a new invite.
+    // The game both asked for is closed by its creator, so both are told their
+    // place is gone, that nothing they did lost it, and that the creator can send
+    // a new invite.
     for (const [page, frame] of [[pageB, appB], [pageC, appC]] as const) {
       await expect(async () => {
         await pull(page);
@@ -1211,21 +1221,11 @@ test.describe("a game continues over a shared link (the key path)", () => {
       await expect(frame.locator("#play-move")).toBeDisabled();
     }
 
-    // Safe default (T1-D34): an untagged dai:merged must NOT join. C now holds the
-    // fresh open seat over the mailbox and is not a member — the exact state where
-    // an unsafe default would auto-bind it. A source-less merge event must leave it
-    // out, so a future dispatch site that forgets the `via` tag cannot silently
-    // reintroduce auto-rebinding. (The carrier positive is proven by B, below.)
-    await expect(async () => {
-      await pull(pageC);
-      const openForC = await appFrame(pageC).evaluate(() =>
-        (window as any).daiKit.db.selectObjects(
-          "SELECT 1 FROM _dai_open_seat s WHERE lower(hex(s.seat)) NOT IN " +
-            "(SELECT lower(hex(b.seat)) FROM _dai_binding_current b WHERE b._r_session = s.session) LIMIT 1",
-        ).length > 0,
-      );
-      expect(openForC, "the fresh open seat reached C").toBe(true);
-    }).toPass({ timeout: 30_000 });
+    // Safe default (T1-D34): an untagged dai:merged must NOT join. C holds the
+    // closed game and asked in it, and is in no other: a source-less merge event
+    // must leave it out of every session, so a future dispatch site that forgets
+    // the `via` tag cannot silently reintroduce auto-binding. (The carrier
+    // positive is proven by B, below.)
     const cMemberAfterUntagged = await appFrame(pageC).evaluate((mergedType) => {
       const db = (window as any).daiKit.db;
       window.dispatchEvent(new CustomEvent(mergedType, { detail: { applied: 1 } })); // no `via`
@@ -1234,6 +1234,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     }, FRAME_PUBLIC.MERGED);
     expect(cMemberAfterUntagged, "an untagged merge event must not join").toBe(false);
 
+    // A shares the new game: an invite into its session alone.
     await pageA.evaluate(() => {
       (window as any).__copied = undefined;
       navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
@@ -1247,42 +1248,31 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const link2 = await pageA.evaluate(() => (window as any).__copied as string);
 
     // B opens the new invite on a fresh page — a deliberate open, so join runs on
-    // init and B takes the fresh seat. The same rows arriving by mailbox alone
-    // (as C gets them) never re-seat anyone (T1-D34).
+    // init and B takes the new game's open seat. C, which never opens it, never
+    // enters the new game (T1-D34).
     const pageB2 = await deviceB.newPage();
     await pageB2.goto(link2);
     // The new invite is a newer copy of a document this device holds, so it
-    // arrives as a sibling merge: the person accepts it, which merges the fresh
-    // seat into B's own copy (its replica kept) and re-runs join on mount.
+    // arrives as a sibling merge: the person accepts it, which merges the new
+    // game into B's own copy (its replica kept) and re-runs join on mount.
     await pageB2.locator("#card-open").click({ timeout: 60_000 });
     const appB2 = app(pageB2);
     await expect(appB2.locator("#app")).toBeVisible({ timeout: 60_000 });
     await useRelay(pageB2);
-    // B asked for the fresh seat; A's copy, seeing one ask, seats B.
+    // B asked for the new game's open seat; A's copy, seeing one ask, seats B.
     await letIn(pageA, pageB2);
+    expect(await member(pageB2, fresh!), "B is seated in the new game on opening its invite").toBe(true);
+    // B's e5 was written for the game that was set aside, where nobody was ever
+    // seated: it never stands, on B's copy or A's.
     await expect(appB2.locator("#contested-banner")).toBeHidden({ timeout: 30_000 });
-    const bIsMember = await appFrame(pageB2).evaluate(() => {
-      const db = (window as any).daiKit.db;
-      const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
-      return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
-    });
-    expect(bIsMember, "B is seated in the fresh seat on opening the new invite").toBe(true);
-    // B's e5 was written for the seat the repair retired, which nobody was ever
-    // seated in: it never stands, on B's copy or A's.
-    await expect(appB2.locator("#move-history")).toContainText("e4");
     await expect(appB2.locator("#move-history")).not.toContainText("e5");
     await expect(appA.locator("#move-history")).not.toContainText("e5");
 
-    // C, which only receives the reseat over the mailbox and never opens the new
-    // invite, does not silently re-enter: it stays out, and stays told so.
+    // C, which never opens the new invite, does not enter: it stays out, and
+    // stays told so.
     await pull(pageC);
     await expect(appC.locator("#contested-banner")).toBeVisible();
-    const cIsMember = await appFrame(pageC).evaluate(() => {
-      const db = (window as any).daiKit.db;
-      const me = db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica")[0].id;
-      return db.selectObjects("SELECT 1 FROM _dai_member WHERE lower(hex(replica)) = ?", [me]).length > 0;
-    });
-    expect(cIsMember, "C does not re-enter on a merge").toBe(false);
+    expect(await member(pageC, fresh!), "C is not in the new game").toBe(false);
 
     await deviceA.close();
     await deviceB.close();
@@ -1290,15 +1280,13 @@ test.describe("a game continues over a shared link (the key path)", () => {
   });
 
   /**
-   * Reseat refuses on a healthy session and the honest joiner keeps their moves.
+   * A healthy session is never set aside.
    *
-   * Reseating replaces the open seat's value, dropping every binding to the old
-   * one — a repair for a seat two parties opened, and damage to a seat one honest
-   * joiner holds (T1-D29). So it must refuse unless a seat is actually contested.
-   * Here the game has exactly one honest binding; a reseat is refused by name and
-   * the joiner's move stays admitted.
+   * One honest ask is seated by the creator's copy, and a later ask for the held
+   * seat is no contest: the seat belongs to its holder, and the kit starts no
+   * new session. The joiner keeps the seat and its move.
    */
-  test("reseat refuses on a healthy session, so an honest joiner is not ejected", async ({ browser }) => {
+  test("a healthy session is never set aside: the joiner keeps the seat, and no new game is started", async ({ browser }) => {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
@@ -1310,34 +1298,25 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const appB = await openLink(pageB, link);
     await expect(appB.locator("#move-history")).toContainText("e4", { timeout: 30_000 });
     await play(appB, "e7", "e5");
-    // A pulls B's move and binding: the game is now healthy — A's creator seat and
-    // B's seat, one binder each, no contest.
+    // A pulls B's move and ask: the game is now healthy — A's creator seat and
+    // B's seat, one asker, no contest.
     await expect(async () => {
       await pageA.evaluate(() => (window as any).__runner.pullMailbox());
       await expect(appA.locator("#move-history")).toContainText("e5", { timeout: 2_000 });
     }).toPass({ timeout: 30_000 });
 
-    // Call reseat directly on this healthy session. It must refuse by name rather
-    // than pick a seat by row order and eject the joiner.
-    const outcome = await appFrame(pageA).evaluate(() => {
+    const state = await appFrame(pageA).evaluate(() => {
       const db = (window as any).daiKit.db;
-      const active = db.selectObjects("SELECT active_game_id AS g FROM settings WHERE id = 1")[0].g;
-      const sess = String(active).split(":")[0];
-      try {
-        (window as any).dai.replicated.session.reseat(sess);
-        return "did-not-refuse";
-      } catch (e: any) {
-        return String((e && e.message) || e);
-      }
+      return {
+        games: db.selectObjects("SELECT 1 FROM games_current WHERE white_name = 'Ada'").length,
+        closed: db.selectObjects("SELECT 1 FROM _dai_closed").length,
+        members: Number(db.selectObjects("SELECT count(*) AS n FROM _dai_member")[0].n),
+      };
     });
-    expect(outcome, "reseat on a healthy session is refused by name").toContain("CANNOT_RESEAT");
-
-    // The joiner keeps their seat and their move: nothing was dropped.
+    expect(state.games, "no second game").toBe(1);
+    expect(state.closed, "and nothing closed").toBe(0);
+    expect(state.members, "both players are members").toBeGreaterThanOrEqual(2);
     await expect(appA.locator("#move-history")).toContainText("e5");
-    const bStillMember = await appFrame(pageA).evaluate(() =>
-      (window as any).daiKit.db.selectObjects("SELECT count(*) AS n FROM _dai_member")[0].n,
-    );
-    expect(Number(bStillMember), "both players are still members").toBeGreaterThanOrEqual(2);
 
     await deviceA.close();
     await deviceB.close();

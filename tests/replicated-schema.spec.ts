@@ -390,7 +390,7 @@ CREATE TABLE visits (
           .map((r) => String((r as { name: unknown }).name))
           .filter((name) => !name.startsWith("_r_"));
       expect(authored("_dai_close"), "the frontier columns are retired").toEqual([]);
-      expect(authored("_dai_seat"), "the creator's seat row is the one the session id names, by (author, seq)").toEqual(["seat"]);
+      expect(authored("_dai_seat"), "the creator's seat row declares the roster: her seat, the open seats and the close rule (R14)").toEqual(["seat", "seats", "close"]);
     } finally {
       db.close();
     }

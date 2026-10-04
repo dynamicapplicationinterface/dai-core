@@ -9,7 +9,7 @@
   "stable": true,
   "ab": {
     "applied": 0,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [
       "6fc66a90486171ca69b512be185d66a7:2"
     ],
@@ -23,7 +23,7 @@
   },
   "ba": {
     "applied": 0,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [
       "6fc66a90486171ca69b512be185d66a7:2"
     ],

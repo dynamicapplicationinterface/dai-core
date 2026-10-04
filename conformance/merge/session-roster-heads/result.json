@@ -1,5 +1,5 @@
 {
-  "what": "Bo writes a version of Ada's open seat row, Ada writes a version of that row in another session, and a row of another entity naming it. Roster heads partition by session, entity and author, so all four rows are heads (D171, T1-D35). A reader partitioning by entity alone, by entity and author, by entity and session, or by session and author hides Ada's row.",
+  "what": "Ada writes a version of Bo's binding in its session, Bo writes a version of it in another session, and Ada a row of another entity naming it. Roster heads partition by session, entity and author, so all four bindings are heads (D171, T1-D35). A reader partitioning by entity alone, by entity and author, by entity and session, or by session and author hides Bo's binding.",
   "cites": [
     "6",
     "T1-D29"
@@ -9,14 +9,14 @@
   "stable": true,
   "ab": {
     "applied": 1,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []
   },
   "ba": {
     "applied": 2,
-    "duplicate": 4,
+    "duplicate": 3,
     "rejected": [],
     "newReplicas": 0,
     "refusedBatches": []
