@@ -684,6 +684,7 @@ def runtime_copy(name: str, edits: list[tuple[str, str]], wanted: list[str]) -> 
         (root / "dist" / file).write_text(text, encoding="utf-8")
     (root / "scripts").mkdir()
     shutil.copy(REPO / "scripts" / "build-merge-fixtures.mjs", root / "scripts")
+    shutil.copy(REPO / "scripts" / "sealer.mjs", root / "scripts")
     (root / "docs").mkdir()
     shutil.copy(REPO / "docs" / "replicated-tables.md", root / "docs")
     suite = root / "conformance" / "merge"

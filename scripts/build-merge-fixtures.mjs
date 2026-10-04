@@ -40,9 +40,28 @@ import {
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
 import { adoptReplica, headerOf, mergeTablesOf, pendingBatches, recordSeal, signBatch, stageBatch, verifyBatches } from "../dist/dai-merge.js";
 import { confirmSeat, coversText, startSession } from "../dist/replicated-rows.js";
-import { authorIdOf, signBytes } from "../dist/identity.js";
+import { signBytes } from "../dist/identity.js";
 import { signedBytes, signedViewOf } from "../dist/core.js";
-import { createECDH, createHash, webcrypto } from "node:crypto";
+import { createHash } from "node:crypto";
+import {
+  ADA,
+  BO,
+  CY,
+  DOC,
+  admittedDump,
+  carry,
+  carryHeaderOnly,
+  columnsOf,
+  forge,
+  headersListing,
+  holdHeader,
+  raw,
+  rawAt,
+  seal,
+  sealHolding as sealHoldingWith,
+  sessionIdOf,
+  withoutTriggers,
+} from "./sealer.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(repo, "conformance", "merge");
@@ -95,90 +114,11 @@ CREATE TABLE notes (
 /** The session document of the three-party vectors: the same tables, max_parties=3. */
 const SESSION_SCHEMA_3 = SESSION_SCHEMA.replace("max_parties=2", "max_parties=3");
 
-/** A CBOR head: major type and argument, in the shortest form (RFC 8949 §4.2.1). */
-function cborHead(major, n) {
-  const v = BigInt(n);
-  if (v < 24n) return Buffer.from([(major << 5) | Number(v)]);
-  if (v < 0x100n) return Buffer.from([(major << 5) | 24, Number(v)]);
-  if (v < 0x10000n) {
-    const b = Buffer.alloc(3);
-    b[0] = (major << 5) | 25;
-    b.writeUInt16BE(Number(v), 1);
-    return b;
-  }
-  if (v < 0x100000000n) {
-    const b = Buffer.alloc(5);
-    b[0] = (major << 5) | 26;
-    b.writeUInt32BE(Number(v), 1);
-    return b;
-  }
-  const b = Buffer.alloc(9);
-  b[0] = (major << 5) | 27;
-  b.writeBigUInt64BE(v, 1);
-  return b;
-}
-
-/** One column value as canonical CBOR (docs/format.md#cbor), written from the page. */
-function cborValue(value) {
-  if (value === null || value === undefined) return Buffer.from([0xf6]);
-  if (value instanceof Uint8Array) return Buffer.concat([cborHead(2, value.length), Buffer.from(value)]);
-  if (typeof value === "string") {
-    const bytes = Buffer.from(value, "utf8");
-    return Buffer.concat([cborHead(3, bytes.length), bytes]);
-  }
-  if (typeof value === "bigint" || Number.isInteger(value)) {
-    const n = BigInt(value);
-    return n >= 0n ? cborHead(0, n) : cborHead(1, -1n - n);
-  }
-  const b = Buffer.alloc(9);
-  b[0] = 0xfb;
-  b.writeDoubleBE(value, 1);
-  return b;
-}
-
-/**
- * `dai_session_id(author, seq, seat, seats, close)`: SHA-256 of the author id,
- * the seq as eight bytes, unsigned, big-endian, and the canonical CBOR of the
- * array [seat, seats, close] as the row holds them, first 16 bytes
- * (docs/format.md#session-id, R15). Written here from the page with
- * node:crypto, not imported: the roster views call it, and a fixture should not
- * take the runtime's own hash on trust.
- */
-function sessionIdOf(author, seq, seat, seats, close) {
-  if (!(author instanceof Uint8Array) || author.length !== 16) return null;
-  const n = typeof seq === "bigint" ? seq : BigInt(seq);
-  if (n < 1n || n >= 1n << 64n) return null;
-  const be = Buffer.alloc(8);
-  be.writeBigUInt64BE(n);
-  const roster = Buffer.concat([cborHead(4, 3), cborValue(seat), cborValue(seats), cborValue(close)]);
-  return new Uint8Array(createHash("sha256").update(author).update(be).update(roster).digest().subarray(0, 16));
-}
 const id = (byte) => new Uint8Array(16).fill(byte);
 const E1 = id(0x11);
 const E2 = id(0x22);
 /** A row id's author part as `_r_parents` spells it: lowercase hex. */
 const hexOf = (bytes) => Buffer.from(bytes).toString("hex");
-
-/*
- * The two authors of the sealed vectors: fixed private scalars, so the keys,
- * the author ids and every header are the same on every run.
- */
-const DOC = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
-async function fixedPerson(scalarHex) {
-  const ecdh = createECDH("prime256v1");
-  ecdh.setPrivateKey(Buffer.from(scalarHex, "hex"));
-  const pub = new Uint8Array(ecdh.getPublicKey());
-  const b64 = (bytes) => Buffer.from(bytes).toString("base64url");
-  const jwk = { kty: "EC", crv: "P-256", x: b64(pub.subarray(1, 33)), y: b64(pub.subarray(33)), ext: true };
-  const curve = { name: "ECDSA", namedCurve: "P-256" };
-  const privateKey = await webcrypto.subtle.importKey("jwk", { ...jwk, d: b64(Buffer.from(scalarHex, "hex")) }, curve, true, ["sign"]);
-  const publicKey = await webcrypto.subtle.importKey("jwk", jwk, curve, true, ["verify"]);
-  return { keys: { privateKey, publicKey }, pub, author: await authorIdOf(pub) };
-}
-const ADA = await fixedPerson("1111111111111111111111111111111111111111111111111111111111111111");
-const BO = await fixedPerson("2222222222222222222222222222222222222222222222222222222222222222");
-/** A third author, for the vectors where the creator confirms someone else: a copy that never held the seat. */
-const CY = await fixedPerson("3333333333333333333333333333333333333333333333333333333333333333");
 
 const SIGNATURES = join(repo, "conformance", "merge", "signatures.json");
 const signatures = existsSync(SIGNATURES) ? JSON.parse(readFileSync(SIGNATURES, "utf8")) : {};
@@ -198,9 +138,7 @@ const keptSigner = (person) => async (header) => {
 
 /** Seals everything an author has pending, as a leave does (docs/identity.md, step 3). */
 async function sealAll(db, person) {
-  for (const batch of pendingBatches(db, person.author, db.tables)) {
-    recordSeal(db, await signBatch(batch, { document: DOC, sign: keptSigner(person) }));
-  }
+  await seal(db, person, keptSigner(person));
 }
 
 /**
@@ -264,35 +202,6 @@ function manifestOf(schema) {
     integrityPolicy: "enforce",
   });
   return { view: createHash("sha256").update(signedBytes(view)).digest("hex"), ...(session ? { session } : {}) };
-}
-
-/*
- * What a session document admits after a merge (backlog D171), from the
- * runtime's own views: the admitted heads of every table the merge covers, by
- * id with the deleted flag, then who holds each seat, the seats voided, the ids
- * signed twice and the sessions closed. A reader computes the same from the
- * tables alone.
- */
-function admittedDump(db) {
-  const hexId = "lower(hex(_r_replica)) || ':' || _r_seq";
-  const lines = [];
-  for (const table of [...db.tables].sort()) {
-    lines.push(`# ${table}`);
-    for (const r of db.all(`SELECT ${hexId} AS id, _r_deleted AS d FROM "${table}_heads" ORDER BY hex(_r_replica), _r_seq`))
-      lines.push(`${r.id}\t${r.d}`);
-  }
-  // A plain document has no roster: its holders, voided and closed are empty.
-  const views = new Set(db.all("SELECT name FROM sqlite_schema WHERE type = 'view'").map((r) => r.name));
-  const section = (title, sql) => {
-    lines.push(`# ${title}`);
-    if (!views.has(/FROM (\w+)/.exec(sql)[1])) return;
-    for (const r of db.all(sql)) lines.push(Object.values(r).join("\t"));
-  };
-  section("holders", "SELECT lower(hex(session)), lower(hex(seat)), lower(hex(replica)) FROM _dai_holder ORDER BY 1, 2, 3");
-  section("voided", "SELECT lower(hex(session)), lower(hex(seat)), lower(hex(creator)) FROM _dai_voided ORDER BY 1, 2, 3");
-  section("equivocated", "SELECT lower(hex(author)), tbl, seq FROM _dai_equivocated ORDER BY 1, 2, 3");
-  section("closed", "SELECT lower(hex(session)) FROM _dai_closed ORDER BY 1");
-  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -2623,8 +2532,6 @@ CREATE TABLE cards (
   },
 ];
 
-/** A row's author columns, as a version of it carries them. */
-const columnsOf = (row) => Object.fromEntries(Object.entries(row).filter(([name]) => !name.startsWith("_r_")));
 /** A seat value spelled as a 16-character TEXT, and the 16 bytes of the same UTF-8 (A09). */
 const TEXT_SEAT = "OPENSEAT-OPENSEA";
 const TEXT_SEAT_BYTES = new Uint8Array(Buffer.from(TEXT_SEAT, "utf8"));
@@ -2643,21 +2550,6 @@ function voidAnswer(runs, reports) {
     if (sectionOf(run.admitted, "voided").length > 0) return `${direction}: voided is [${sectionOf(run.admitted, "voided").join(" | ")}] in a void session`;
     if (sectionOf(run.admitted, "moves").length > 0) return `${direction}: admitted moves are [${sectionOf(run.admitted, "moves").join(" | ")}] in a void session`;
   }
-}
-
-/**
- * A write the triggers would stop, made with those triggers dropped and put
- * back as they were: how a copy that skips the writers holds a row they refuse.
- */
-function withoutTriggers(db, names, write) {
-  const kept = names.map((name) => {
-    const [trigger] = db.all("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?", [name]);
-    if (!trigger) throw new Error(`no trigger ${name}`);
-    db.run(`DROP TRIGGER "${name}"`);
-    return trigger.sql;
-  });
-  write();
-  for (const sql of kept) db.run(sql);
 }
 
 /** An author id as `refusedBatches` spells it. */
@@ -2782,62 +2674,8 @@ function copyFor(person, schema = SESSION_SCHEMA) {
   return copy;
 }
 
-/**
- * `raw` at a seq this copy has issued already, as a hostile client signs at
- * any seq it likes; the counter is left where it stood, or at `seq` if higher.
- */
-function rawAt(db, seq, table, entity, columns, session, parentsText = "[]") {
-  const state = db.all("SELECT seq FROM _dai_replica")[0];
-  db.run("UPDATE _dai_replica SET seq = ?", [seq - 1]);
-  const row = raw(db, table, entity, columns, session, parentsText);
-  db.run("UPDATE _dai_replica SET seq = ?", [Math.max(state.seq, seq)]);
-  return row;
-}
-
-/** A header put into a copy without any row it lists, as a forwarder holds one. */
-function carryHeaderOnly(to, from, hid) {
-  const header = from.all("SELECT * FROM _dai_batch WHERE lower(hex(id)) = ?", [hid])[0];
-  if (!header) throw new Error(`no header ${hid}`);
-  const names = Object.keys(header);
-  to.run(`INSERT INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => header[n]));
-  to.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [header.author]);
-}
-
-/**
- * A seal with one signature held while `during` runs (D178): the batches are
- * listed once, then each is signed and recorded in turn, as a leave does.
- */
-async function sealHolding(db, person, holdAt, during) {
-  const batches = pendingBatches(db, person.author, db.tables);
-  const index = holdAt === "first" ? 0 : batches.length - 1;
-  const signer = keptSigner(person);
-  for (const [i, batch] of batches.entries()) {
-    const sign = async (header) => {
-      if (i === index) await during();
-      return signer(header);
-    };
-    recordSeal(db, await signBatch(batch, { document: DOC, sign }));
-  }
-  return batches.length;
-}
-
-/** A row at this copy's next seq and clock with the parents text given, as a copy that skips the writers can write it; the row written. */
-function raw(db, table, entity, columns, session, parentsText, deleted = 0) {
-  const state = db.all("SELECT id, seq, lc FROM _dai_replica")[0];
-  db.run("UPDATE _dai_replica SET seq = ?, lc = ?", [state.seq + 1, state.lc + 1]);
-  const row = {
-    _r_replica: state.id,
-    _r_seq: state.seq + 1,
-    _r_lc: state.lc + 1,
-    _r_entity: entity,
-    _r_parents: parentsText,
-    _r_deleted: deleted,
-    _r_session: session,
-    columns,
-  };
-  applyRow(db, table, row);
-  return row;
-}
+/** A seal with one signature held while `during` runs (D178), each signature a kept one. */
+const sealHolding = (db, person, holdAt, during) => sealHoldingWith(db, person, holdAt, during, keptSigner(person));
 
 /**
  * The id of the header `write` would seal on a copy standing where `from`
@@ -2858,34 +2696,6 @@ async function probe(from, person, ...writes) {
   }
   copy.done();
   return found;
-}
-
-/** The ids of the headers of `author` that list `seq` in `table`, lowest first. */
-function headersListing(db, author, table, seq) {
-  return db
-    .all("SELECT lower(hex(b.id)) AS id FROM _dai_batch b, json_each(b.covers) c WHERE b.author = ? AND json_extract(c.value, '$[0]') = ? AND json_extract(c.value, '$[1]') = ?", [author, table, seq])
-    .map((r) => r.id)
-    .sort();
-}
-
-/**
- * Headers carried from one copy into another by hand, with every row they
- * list, as a copy that received those batches and not the others holds them;
- * with `pointers: false`, each row's `_r_batch` left unset, as a lost save leaves it.
- */
-function carry(to, from, ids, { pointers = true } = {}) {
-  for (const hid of ids) {
-    const header = from.all("SELECT * FROM _dai_batch WHERE lower(hex(id)) = ?", [hid])[0];
-    const names = Object.keys(header);
-    to.run(`INSERT OR IGNORE INTO _dai_batch (${names.join(", ")}) VALUES (${names.map(() => "?").join(", ")})`, names.map((n) => header[n]));
-    for (const [table, seq] of JSON.parse(header.covers)) {
-      const row = from.all(`SELECT * FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?`, [header.author, seq])[0];
-      if (!pointers) row._r_batch = null;
-      const columns = Object.keys(row);
-      to.run(`INSERT OR IGNORE INTO "${table}" (${columns.map((n) => `"${n}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`, columns.map((n) => row[n]));
-    }
-    to.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [header.author]);
-  }
 }
 
 /** Merges a fresh copy of `from` into a fresh copy of `into` and reports both. */
@@ -2966,23 +2776,6 @@ async function writeInputs(vector) {
   if (Object.keys(lists).length > 0) compare(join(dir, "lists.json"), `${JSON.stringify(lists, null, 2)}\n`);
   a.close();
   b.close();
-}
-
-/** A row written into a copy by hand under someone else's author id and seq, with no batch. */
-function forge(db, table, author, seq, columns) {
-  const names = Object.keys(columns);
-  db.run(
-    `INSERT INTO "${table}" (${names.join(", ")}, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted) VALUES (${names.map(() => "?").join(", ")}, ?, ?, ?, ?, '[]', 0)`,
-    [...names.map((n) => columns[n]), author, seq, seq, id(0x66)],
-  );
-}
-
-/** A header put into a copy by hand, as a copy holds one whose rows' pointers a lost save never wrote. */
-function holdHeader(db, sealed) {
-  db.run(
-    "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, coversText(sealed.entries)],
-  );
 }
 
 /** Both copies as the vector says: its authors, its rows, and a received file when it has one. */

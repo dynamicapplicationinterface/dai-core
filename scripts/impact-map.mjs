@@ -124,7 +124,7 @@ const OTHER_CHECKS = [
   },
   {
     run: "npm run fixtures:check",
-    claims: ["scripts/build-merge-fixtures.mjs", "conformance/merge/"],
+    claims: ["scripts/build-merge-fixtures.mjs", "scripts/sealer.mjs", "conformance/merge/"],
   },
   {
     run: "python3 conformance/reference/dai_merge.py",
