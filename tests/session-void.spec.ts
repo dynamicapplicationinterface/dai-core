@@ -1,10 +1,12 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type FrameLocator, type Page } from "@playwright/test";
 import { test } from "./fixtures.js";
 import { compileDirectory } from "../src/compile.js";
+import { resealContainer, verifyContainer } from "../src/container.js";
 import { FRAME } from "../src/frame.js";
 import { leftFloorKey } from "../src/keys.js";
 import { BATCH_FORMAT_VERSION, batchIdOf, canonicalHeader } from "../src/replicated-batch.js";
@@ -21,9 +23,10 @@ import { BATCH_FORMAT_VERSION, batchIdOf, canonicalHeader } from "../src/replica
  * Ada starts a chess game; Bo opens her file and asks for the open seat. Then
  * the document's own code on Ada's copy asks her host for two headers over
  * one seq above her left floor, with two digests (what the eighth review's A9
- * showed a document can do, D181), and writes both into her copy. Bo opens
- * the file she sends next: his copy now holds both, so her game is void there,
- * the kit says why, and its button starts him a new game of his own.
+ * showed a document can do). Her host lets no leave carry both (D181), so they
+ * reach Bo in a copy of her file the test writes them into, as a second copy
+ * of her store would send it. His copy now holds both, so her game is void
+ * there, the kit says why, and its button starts him a new game of his own.
  */
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -118,12 +121,19 @@ test("a session whose creator signed twice is void, and the copy that took part 
   const said = appB.locator("[data-dai-session-void]");
   await expect(said, "a session nobody signed twice in is not void").toHaveCount(0);
 
-  // The document's code on Ada's copy: two headers of hers over one seq above
-  // her left floor, two digests, each signed by her host, both written in.
+  // Two headers of Ada's over one seq above her left floor, two digests, each
+  // signed by her host. Her host lets no leave carry both (D181), so they come
+  // to Bo in a copy of her file carrying both, as a second copy of her store
+  // (a device restored from a backup) or a client that is not her host would
+  // send it.
   const n = (await kept(pageA!, leftFloorKey(uuid))) + 1;
   const author = new Uint8Array(Buffer.from((await pageA!.evaluate(() => (window as any).__runner.authorId())) as string, "base64url"));
   const headerOf = (fill: number): Uint8Array =>
     canonicalHeader({ version: BATCH_FORMAT_VERSION, document: uuid, author, lc: n, digest: new Uint8Array(32).fill(fill), covers: [["moves", n]] });
+  const verified = await verifyContainer(readFileSync(a1, "utf8"));
+  const dbFile = join(scratch, "a2.sqlite");
+  writeFileSync(dbFile, verified.archive["document.sqlite"]!);
+  const sqlite = new DatabaseSync(dbFile);
   for (const fill of [1, 2]) {
     const header = headerOf(fill);
     const signed = (await appA.locator("#app").evaluate(
@@ -140,18 +150,13 @@ test("a session whose creator signed twice is void, and the copy that took part 
       { bytes: [...header], names: { sign: FRAME.SIGN, signed: FRAME.SIGNED }, seq: n },
     )) as { sig?: number[]; pub?: number[]; error?: string };
     expect(signed.error, "the host signs a header over a seq above the left floor").toBeUndefined();
-    const id = [...(await batchIdOf(header))];
-    await appA.locator("#app").evaluate(
-      (_app, { id, author, n, sig, pub, version, fill }) => {
-        (window as any).daiKit.db.exec({
-          sql: "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
-          bind: [Uint8Array.from(id), Uint8Array.from(author), n, Uint8Array.from(sig), Uint8Array.from(pub), version, new Uint8Array(32).fill(fill), JSON.stringify([["moves", n]])],
-        });
-      },
-      { id, author: [...author], n, sig: signed.sig!, pub: signed.pub!, version: BATCH_FORMAT_VERSION, fill },
-    );
+    sqlite
+      .prepare("INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)")
+      .run(await batchIdOf(header), author, n, Uint8Array.from(signed.sig!), Uint8Array.from(signed.pub!), BATCH_FORMAT_VERSION, new Uint8Array(32).fill(fill), JSON.stringify([["moves", n]]));
   }
-  const a2 = await saveOut(pageA!, join(scratch, "a2.dai.html"));
+  sqlite.close();
+  const a2 = join(scratch, "a2.dai.html");
+  writeFileSync(a2, (await resealContainer(verified, new Uint8Array(readFileSync(dbFile)))).html, "utf8");
 
   // Bo's copy takes Ada's file in: her game is void there, and the kit says why.
   await pageB!.setInputFiles("#file", a2);

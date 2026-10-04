@@ -4515,8 +4515,18 @@ hands the frame's merge as the two digests is the host session's (not built).
 
 #### D181 — The document's code obtains two signatures over one seq above the floor
 
-*Status: open, a design question, after the merge. Filed 2 October, from the
-eighth attack review (A9, rated MEDIUM).*
+*Status: closed 4 October by the egress rule (`floor-egress`). Filed 2
+October, from the eighth attack review (A9, rated MEDIUM).*
+
+Closed: the host records the id of every header of the person's that leaves
+(a landed save, a publish, a file it writes), in the transaction that moves
+the left floor. A header over a seq at or below the floor leaves only if that
+header left before, and no leave carries two of the person's headers over one
+seq; a save checks before it writes and records once landed. Signing is
+unchanged. `tests/left-floor.spec.ts` holds the three cases (a header held
+while the floor passed, two over one seq, a re-seal after a lost save);
+`tests/session-void.spec.ts` now carries the two headers to the other copy in
+a file the test writes, as a second copy of the creator's store would.
 
 The host signs no header listing a seq at or below the left floor
 (`floor-honest-reseal`), and nothing else stops two of the person's headers

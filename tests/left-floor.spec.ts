@@ -10,7 +10,7 @@ import { play } from "./chess-play.js";
 import { TO_HOST } from "../src/bridge.js";
 import { FRAME } from "../src/frame.js";
 import { leftFloorKey, seqFloorKey } from "../src/keys.js";
-import { BATCH_FORMAT_VERSION, canonicalHeader } from "../src/replicated-batch.js";
+import { BATCH_FORMAT_VERSION, batchIdOf, canonicalHeader } from "../src/replicated-batch.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const RUNNER_URL = "http://localhost:5175/";
@@ -392,6 +392,189 @@ test.describe("the floor a sign is held to", () => {
     expect(await ask(page, await headerOver(page, [["moves", signed]]), signed), "a seq in the written file").toMatch(
       /^refused: .*already sent/,
     );
+
+    await context.close();
+  });
+
+  /*
+   * What leaves (D181). The host keeps the id of every header of the person's
+   * that has left, beside the left floor: a header over a seq at or below the
+   * floor leaves only if that very header left before, and no leave carries
+   * two of the person's headers over one seq. The document's code asks for
+   * the signatures here the way any document's code can, and writes the
+   * headers into its own copy.
+   */
+
+  /** The host's signature over `header`, asked from the document's own code, or why it would not sign. */
+  const signOver = (page: Page, header: Uint8Array): Promise<{ sig?: number[]; pub?: number[]; error?: string }> =>
+    app(page)
+      .locator("#app")
+      .evaluate(
+        (_app, { bytes, names }) =>
+          new Promise((done) => {
+            const id = `leave-${Math.random().toString(36).slice(2)}`;
+            window.addEventListener("message", (event) => {
+              const data = (event.data ?? {}) as any;
+              if (data.type !== names.signed || data.id !== id) return;
+              done(data.sig ? { sig: [...data.sig], pub: [...data.pub] } : { error: String(data.error ?? "") });
+            });
+            window.parent.postMessage({ type: names.sign, id, header: Uint8Array.from(bytes), seq: 1 }, "*");
+          }),
+        { bytes: [...header], names: { sign: FRAME.SIGN, signed: FRAME.SIGNED } },
+      );
+
+  type Held = { id: number[]; hex: string; author: number[]; seq: number; fill: number; sig: number[]; pub: number[] };
+
+  /** A header of this device's over `seq` with its own digest, signed by the host while `seq` is above the left floor, and held. */
+  async function signedHeader(page: Page, seq: number, fill: number): Promise<Held> {
+    const author = new Uint8Array(Buffer.from((await page.evaluate(() => (window as any).__runner.authorId())) as string, "base64url"));
+    const header = canonicalHeader({ version: BATCH_FORMAT_VERSION, document: await uuidOf(page), author, lc: seq, digest: new Uint8Array(32).fill(fill), covers: [["moves", seq]] });
+    const signed = await signOver(page, header);
+    expect(signed.error, `the host signs a header over ${seq}, above the left floor`).toBeUndefined();
+    const id = [...(await batchIdOf(header))];
+    return { id, hex: Buffer.from(id).toString("hex"), author: [...author], seq, fill, sig: signed.sig!, pub: signed.pub! };
+  }
+
+  /** Writes a held header into the open copy, as the document's code can. */
+  const insertHeader = (page: Page, held: Held): Promise<void> =>
+    app(page)
+      .locator("#app")
+      .evaluate(
+        (_app, { held, version }) => {
+          (window as any).daiKit.db.exec({
+            sql: "INSERT INTO _dai_batch (id, author, lc, sig, pub, att, version, digest, covers) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+            bind: [
+              Uint8Array.from(held.id),
+              Uint8Array.from(held.author),
+              held.seq,
+              Uint8Array.from(held.sig),
+              Uint8Array.from(held.pub),
+              version,
+              new Uint8Array(32).fill(held.fill),
+              JSON.stringify([["moves", held.seq]]),
+            ],
+          });
+        },
+        { held, version: BATCH_FORMAT_VERSION },
+      );
+
+  /** The open copy written to a file by the shell itself (the host's LEAVE_CHECK first): "written", or why not. */
+  const writeFile = (page: Page): Promise<string> =>
+    app(page)
+      .locator("#app")
+      .evaluate(async () => {
+        const win = window as any;
+        try {
+          const result = await win.dai.saveDatabase(win.daiKit.db, { method: "download" });
+          return result?.saved ? "written" : `refused: ${String(result?.error ?? JSON.stringify(result))}`;
+        } catch (error) {
+          return `refused: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      });
+
+  /** The ids of the headers of this device's the stored copy holds, hex. */
+  async function storedHeaders(page: Page, uuid: string): Promise<string[]> {
+    const bytes = await page.evaluate(async (id) => {
+      const stored: Uint8Array | null = await (window as any).__runner.loadStored(id);
+      return stored ? [...stored] : null;
+    }, uuid);
+    if (!bytes) return [];
+    const file = join(mkdtempSync(join(tmpdir(), "dai-left-stored-")), "document.sqlite");
+    writeFileSync(file, Uint8Array.from(bytes));
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const me = (db.prepare("SELECT id FROM _dai_replica").get() as { id?: Uint8Array } | undefined)?.id;
+      if (!me) return [];
+      return (db.prepare("SELECT lower(hex(id)) AS h FROM _dai_batch WHERE author = ?").all(me) as { h: string }[]).map((r) => r.h);
+    } finally {
+      db.close();
+    }
+  }
+
+  /** A game of Ada's, every row signed, saved and counted: the left floor where it stands. */
+  async function countedGame(page: Page): Promise<number> {
+    const ui = await openWith(page, container);
+    await newGame(ui, "Ada", "Bo");
+    const uuid = await uuidOf(page);
+    await expect
+      .poll(
+        async () => {
+          const seqs = Object.entries((await own(page)).rows);
+          return (
+            seqs.length > 0 &&
+            seqs.every(([, r]) => r.batch) &&
+            (await kept(page, leftFloorKey(uuid))) === Math.max(...seqs.map(([s]) => Number(s)))
+          );
+        },
+        { timeout: 30_000, message: "the game is signed, saved and counted" },
+      )
+      .toBe(true);
+    return kept(page, leftFloorKey(uuid));
+  }
+
+  test("a header held while the floor passed its seq does not leave", async ({ browser }) => {
+    const context = await browser.newContext({ acceptDownloads: true });
+    const page = await context.newPage();
+    const floor = await countedGame(page);
+    const uuid = await uuidOf(page);
+    const n = floor + 1;
+
+    // Signed over n while n was above the floor, and held.
+    const held = await signedHeader(page, n, 1);
+    // Another header, over n + 1, leaves in a file: the floor passes n.
+    await insertHeader(page, await signedHeader(page, n + 1, 2));
+    expect(await writeFile(page), "a header over a seq above the floor leaves").toBe("written");
+    expect(await kept(page, leftFloorKey(uuid)), "the file counted what it carried").toBe(n + 1);
+
+    // The held header, written into the copy: over a seq at or below the
+    // floor, and never left. A save does not land it in this device's store
+    // (a save is asked by the export's flush), and a file does not carry it.
+    await insertHeader(page, held);
+    await page.evaluate(() => (window as any).__runner.exportContainer());
+    expect(await storedHeaders(page, uuid), "the stored copy does not hold it").not.toContain(held.hex);
+    expect(await writeFile(page), "a header over a seq that left, which itself never left").toMatch(/^refused: .*already sent/);
+    expect(await kept(page, leftFloorKey(uuid)), "a refused leave counts nothing").toBe(n + 1);
+
+    await context.close();
+  });
+
+  test("two of the person's headers over one seq do not leave together, by save or by file", async ({ browser }) => {
+    const context = await browser.newContext({ acceptDownloads: true });
+    const page = await context.newPage();
+    const floor = await countedGame(page);
+    const uuid = await uuidOf(page);
+    const n = floor + 1;
+
+    const first = await signedHeader(page, n, 1);
+    const second = await signedHeader(page, n, 2);
+    await insertHeader(page, first);
+    await insertHeader(page, second);
+    await page.evaluate(() => (window as any).__runner.exportContainer());
+    const stored = await storedHeaders(page, uuid);
+    expect([first.hex, second.hex].filter((id) => stored.includes(id)), "a save does not land them in this device's store").toEqual([]);
+    expect(await writeFile(page), "a file carrying two headers of the person's over one seq").toMatch(/^refused: .*two different changes/);
+    expect(await kept(page, leftFloorKey(uuid)), "a refused leave counts nothing").toBe(floor);
+
+    await context.close();
+  });
+
+  test("a re-seal after a lost save leaves, and so does every file after it", async ({ browser }) => {
+    const context = await browser.newContext({ acceptDownloads: true });
+    const page = await context.newPage();
+    const floor = await countedGame(page);
+    const uuid = await uuidOf(page);
+    const n = floor + 1;
+
+    // The first seal over n never left (its save was lost), so a second header
+    // over n is an honest re-seal (floor-honest-reseal).
+    await signedHeader(page, n, 1);
+    const resealed = await signedHeader(page, n, 2);
+    await insertHeader(page, resealed);
+    await page.evaluate(() => (window as any).__runner.exportContainer());
+    expect(await storedHeaders(page, uuid), "a save lands the re-seal").toContain(resealed.hex);
+    expect(await kept(page, leftFloorKey(uuid)), "and counts it").toBe(n);
+    // Over a seq at the floor now, and it left: it leaves again, in a file.
+    expect(await writeFile(page), "a header that left leaves again").toBe("written");
 
     await context.close();
   });

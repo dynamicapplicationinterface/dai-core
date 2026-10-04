@@ -524,7 +524,16 @@ export function startMailboxSession(config: {
       const head = Number(answer["head"] ?? lane.state.watermark.seq);
       const replica = String(answer["replica"] ?? lane.state.watermark.replica);
       if (batchBytes instanceof Uint8Array && batchBytes.byteLength > 0) {
-        await config.beforePublish?.(head, batchBytes);
+        // A batch the host will not let leave (D181) sends nothing and moves
+        // nothing, and is said, as a failed seal is.
+        try {
+          await config.beforePublish?.(head, batchBytes);
+        } catch (error) {
+          const why = error instanceof Error ? error.message : String(error);
+          note(`publish refused at ${lane.address.slice(0, 12)}: ${why}`);
+          config.onNote?.(why);
+          return;
+        }
         const sealed = await sealBatch(batchBytes, await lane.key());
         // Persisted before the send, so a kill mid-publish resumes it.
         lane.state = { ...lane.state, pending: { sealed, head, replica } };

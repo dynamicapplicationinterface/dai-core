@@ -531,6 +531,33 @@ rows a save held pending while a signature was on its way lists seqs at or
 below it; so does a re-seal after a lost save. Either row would stay pending
 for good, and a pending row refuses every later leave.
 
+What leaves
+-----------
+
+*4 October, D181.* Rule: [the egress rule](format.md#floor-egress).
+
+**Problem.** The floor holds the signer: no header over a seq at or below it
+is signed. It held nothing that leaves. The document's code could ask for a
+header over seq n above the floor, keep it, let the floor pass n, and then
+write it into a file; or ask for two headers over one seq above the floor and
+write both. Either reaches a copy as the person signing twice, and in a
+session the person created it voids the session: the document's code makes
+its own creator an equivocator.
+
+**Rule.** The host records the id of every header of the person's that has
+left, in the transaction that moves the floor. A header over a seq at or
+below the floor leaves only if that very header left before, and no leave
+carries two of the person's headers over one seq. A save checks before it
+writes and records once it lands; a file and a publish check and record in
+one step, since they leave on the answer. The seqs a header is held to are
+read by the host from the bytes, the stored list and the person's rows naming
+the header, since either can make it authentic.
+
+**Rejected.** A sign-time record of every seq signed above the floor. It
+refuses the second sign, but not the first header held while the floor
+passes, and it refuses an honest re-seal after a lost save, which lists seqs
+whose first header never left.
+
 A list names each seq once
 --------------------------
 

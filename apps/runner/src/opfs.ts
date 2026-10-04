@@ -20,7 +20,7 @@ import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
 import type { SigstoreRoot } from "../../../src/publisher-identity.js";
 import type { KeptPersonKey } from "../../../src/identity.js";
-import { KEYS, leftFloorKey, seqFloorKey } from "../../../src/keys.js";
+import { KEYS, leftFloorKey, leftHeaderKey, seqFloorKey } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
 
@@ -850,19 +850,66 @@ export async function claimSignFloor(documentUuid: string, seen: number, covered
 }
 
 /**
- * Raises the left floor to `seq`, never lowers it, in one transaction. Called
- * only with a seq the host read itself, in its own engine, from bytes it saw
- * land in this device's store or is about to publish.
+ * The egress rule (D181), what a leave of the person's headers may carry:
+ * `left` when it may, `twice` with the seq when it carries two of the person's
+ * headers over one seq, `reused` with the left floor when it carries a header
+ * over a seq at or below the floor that has not itself left before.
  */
-export async function raiseLeftFloor(documentUuid: string, seq: number): Promise<void> {
-  if (!Number.isSafeInteger(seq) || seq <= 0) return;
+export type LeaveClaim = { left: true } | { twice: number } | { reused: number };
+
+/**
+ * The person's headers in bytes leaving this device, held to what has left,
+ * in one transaction on the key store, so the left floor and the ids of the
+ * headers that left move together (docs/format.md, `floor`). Each header comes
+ * with every seq it could be signed over, read by the host from the bytes
+ * themselves (`leavingIn`, `publishedLeaving`), never from the frame's word.
+ *
+ * - `check`: refused or not, nothing written: a save asks before it writes.
+ * - `record`: nothing refused; the ids kept and the floor raised to `top`:
+ *   bytes that already landed (a save, the stored copy at mount).
+ * - `claim`: both, in the one transaction: bytes that leave the moment the
+ *   answer is yes (a file the shell writes, a publish).
+ */
+export async function claimLeave(
+  documentUuid: string,
+  headers: readonly { id: string; seqs: readonly number[] }[],
+  top: number,
+  mode: "check" | "record" | "claim",
+): Promise<LeaveClaim> {
+  if (mode !== "record") {
+    const over = new Map<number, string>();
+    for (const { id, seqs } of headers) {
+      for (const seq of seqs) {
+        const other = over.get(seq);
+        if (other !== undefined && other !== id) return { twice: seq };
+        over.set(seq, id);
+      }
+    }
+  }
+  let answer: LeaveClaim | null = null;
+  const prefix = leftHeaderKey(documentUuid, "");
   await inKeyStore("The left floor", (store) => {
-    const read = store.get(leftFloorKey(documentUuid));
-    read.onsuccess = () => {
-      const held = typeof read.result === "number" ? read.result : 0;
-      if (seq > held) store.put(seq, leftFloorKey(documentUuid));
+    const floor = store.get(leftFloorKey(documentUuid));
+    const kept = store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`));
+    kept.onsuccess = () => {
+      const sent = typeof floor.result === "number" ? floor.result : 0;
+      const left = new Set((kept.result as IDBValidKey[]).map((key) => String(key).slice(prefix.length)));
+      if (mode !== "record") {
+        const reused = headers.some(({ id, seqs }) => seqs.some((seq) => seq <= sent) && !left.has(id));
+        if (reused) {
+          answer = { reused: sent };
+          return;
+        }
+      }
+      if (mode !== "check") {
+        for (const { id } of headers) if (!left.has(id)) store.put(1, leftHeaderKey(documentUuid, id));
+        if (Number.isSafeInteger(top) && top > sent) store.put(top, leftFloorKey(documentUuid));
+      }
+      answer = { left: true };
     };
   });
+  if (!answer) throw new Error("The left floor was not read.");
+  return answer;
 }
 
 /** The left floor as kept, 0 when none is: for a test that asserts what has left. */

@@ -125,6 +125,11 @@ covers rows whose first header never left.
 and are not equivocation, since no header listing them has left: a seal of
 rows a save held pending while a signature was on its way, and a re-seal after
 a lost save.
+<a id="floor-egress"></a>The host keeps, beside the floor, the id of every
+header of the author's that has left (a landed save, a publish, a file it
+wrote). A header over a seq at or below the floor leaves only if that header
+has left before, and no leave carries two of the author's headers over one
+seq: bytes that would are not saved, published or written.
 
 <a id="publish-after-save"></a>A batch MUST NOT leave by the mailbox until a
 save holding its seal has landed, meaning the host has confirmed the write to
@@ -726,6 +731,8 @@ version, never a refactor (identity.md, binding rule 10).
   there admits nothing.
 - Version 2: a seat value is 16 bytes; a row naming a value no counting
   confirm names is `SEAT_NOT_HELD`.
+- Version 2: a header over a seq at or below the floor leaves only if it left
+  before, and no leave carries two of the author's headers over one seq.
 
 ## Conformance
 

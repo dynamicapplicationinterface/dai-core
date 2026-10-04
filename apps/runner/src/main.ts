@@ -59,14 +59,14 @@ import { httpMailbox } from "../../../src/mailbox-http.js";
 import { startMailboxSession, type MailboxSession } from "./mailbox-session.js";
 import { askForPush, clearNotices, pushSender, releasePush, setPushKey, sweepPush, wantPush } from "./push.js";
 import { listMailboxes } from "./opfs.js";
-import { batchVersionsIn, inviteFor, sealedTopIn, unsealedOwnRows } from "./invite.js";
+import { batchVersionsIn, inviteFor, leavingIn, type LeavingHeader, unsealedOwnRows } from "./invite.js";
 import { checkTrust, forgetTrust, pinTrust, trustVerdict } from "../../../src/trust.js";
 import {
   deleteCartridgeFromLibrary,
   raiseSeqFloor,
   claimSeqFloor,
   claimSignFloor,
-  raiseLeftFloor,
+  claimLeave,
   keptLeftFloor,
   seqFloorWithin,
   deleteDatabaseFromOpfs,
@@ -3064,7 +3064,7 @@ window.addEventListener("message", (event) => {
          */
         const stored = writing.archive["document.sqlite"];
         if (!arrivedDatabases.has(writing) && stored && stored.byteLength > 0) {
-          const counted = await raiseLeftFrom(writingUuid, stored, me.id).then(
+          const counted = await leaveFrom(writingUuid, stored, me.id, "record").then(
             () => true,
             () => false,
           );
@@ -3332,7 +3332,7 @@ window.addEventListener("message", (event) => {
       const uuid = asking.writes?.documentUuid;
       const writes = asking.writes ? await asking.writes.decided : null;
       if (!bytes || !uuid || !writes || "refused" in writes || !declaresReplication(asking.cartridge.manifest)) return;
-      await withLibraryLock(uuid, () => raiseLeftFrom(uuid, bytes, writes.me.id));
+      await withLibraryLock(uuid, () => leaveFrom(uuid, bytes, writes.me.id, "claim"));
     };
     void leaving().then(
       () => answer(true),
@@ -3481,6 +3481,12 @@ window.addEventListener("message", (event) => {
               "To keep these changes, use Save a copy; to see the other tab's, reopen it.",
           );
         }
+        // A save is a leave (docs/format.md, `floor`): bytes carrying a header
+        // the egress rule refuses are not written (D181). Checked here and
+        // recorded once landed, below: a save lost between the two leaves its
+        // headers uncounted, so a re-seal of its rows may still leave.
+        const egress = mount && writes && !("refused" in writes) ? await leavingIn(bytes, writes.me.id) : null;
+        if (egress) await leaveWith(documentUuid, egress, "check");
         // The floor first, then the save: a save that fails after this has
         // still counted its seqs, and one that fails before it wrote nothing.
         // Claimed from where this mount saw it, so a tab another tab has
@@ -3536,10 +3542,11 @@ window.addEventListener("message", (event) => {
         }
         knownRevision.set(documentUuid, next);
         // Landed: the headers these bytes hold may leave from here on, so the
-        // left floor counts them before the frame hears the save landed and
-        // publishes (docs/format.md, `floor`). A crash before this line leaves
-        // them uncounted until the next mount reads the stored copy.
-        if (mount && writes && !("refused" in writes)) await raiseLeftFrom(documentUuid, bytes, writes.me.id);
+        // left floor and the ids that left count them before the frame hears
+        // the save landed and publishes (docs/format.md, `floor`). A crash
+        // before this line leaves them uncounted until the next mount reads
+        // the stored copy.
+        if (egress) await leaveWith(documentUuid, egress, "record");
       })
         .then(async () => {
           console.info(`dai: save ${saveNumber} written`);
@@ -5166,7 +5173,7 @@ async function startMailboxIfPossible(): Promise<void> {
         await raiseSeqFloor(uuid, head);
         const author = mount?.writes ? await mount.writes.decided : null;
         if (author && !("refused" in author)) {
-          await withLibraryLock(uuid, () => raiseLeftFloor(uuid, publishedTop(batch, author.me.id)));
+          await withLibraryLock(uuid, () => leaveWith(uuid, publishedLeaving(batch, author.me.id), "claim"));
         }
       },
       // This person's own move reached the relay: whatever the icon said is
@@ -5751,35 +5758,71 @@ function coveredSeqs(covers: unknown): number[] | null {
   return new Set(seqs).size === seqs.length ? seqs : null;
 }
 
+/** What a save, file or publish carrying two of the person's headers over one seq is told (D181). */
+const SIGNED_TWICE =
+  "This copy holds two different changes this device signed for the same place in the document, so it was not saved or sent. " +
+  "Reopen the document to go on.";
+
+/** What one carrying a header over a seq at or below the left floor, which itself never left, is told (D181). */
+const LEFT_BEFORE =
+  "This copy holds a change for a place in the document that this device has already sent, and that change never left, " +
+  "so it was not saved or sent. Reopen the document to go on.";
+
 /**
- * Raises the left floor from bytes that landed in this device's store or are
- * about to be published, read in the host's own engine (`sealedTopIn`), under
- * the document's library lock, as the sequence floor is (D41).
+ * The egress rule (docs/format.md, `floor`; D181), for the person's headers
+ * read by the host from bytes leaving this device: refused with its sentence,
+ * or the left floor and the ids that left moved together (`claimLeave`). A
+ * save checks before it writes and records once it landed; a file and a
+ * publish claim, since they leave the moment the answer is yes; the stored
+ * copy at mount only records. Under the document's library lock, as the
+ * sequence floor is (D41), except at mount, which a save holds that lock
+ * against.
  */
-async function raiseLeftFrom(documentUuid: string, bytes: Uint8Array, author: Uint8Array): Promise<void> {
-  await raiseLeftFloor(documentUuid, await sealedTopIn(bytes, author));
+async function leaveWith(
+  documentUuid: string,
+  leaving: { top: number; headers: LeavingHeader[] },
+  mode: "check" | "record" | "claim",
+): Promise<void> {
+  const answer = await claimLeave(documentUuid, leaving.headers, leaving.top, mode);
+  if ("twice" in answer) {
+    console.info(`dai: two headers of this device's over seq ${answer.twice} were not let leave`);
+    throw new Error(SIGNED_TWICE);
+  }
+  if ("reused" in answer) {
+    console.info(`dai: a header over a seq at or below ${answer.reused}, which never left, was not let leave`);
+    throw new Error(LEFT_BEFORE);
+  }
+}
+
+/** `leaveWith` for database bytes, read in the host's own engine (`leavingIn`). */
+async function leaveFrom(documentUuid: string, bytes: Uint8Array, author: Uint8Array, mode: "check" | "record" | "claim"): Promise<void> {
+  await leaveWith(documentUuid, await leavingIn(bytes, author), mode);
 }
 
 /**
- * The highest seq of `author`'s rows in a batch about to be published, decoded
- * by the host: a recipient verifies the header against these rows, so they
- * are what it covers. 0 for bytes that are not a batch, which no recipient
- * takes either.
+ * The person's header in a batch about to be published, and the seqs of the
+ * person's rows in it, decoded by the host: a recipient verifies the header
+ * against these rows, so they are what it covers. Nothing for bytes that are
+ * not a batch, or carry no seal of the person's, which no recipient takes
+ * as the person's either.
  */
-function publishedTop(batch: Uint8Array, author: Uint8Array): number {
+function publishedLeaving(batch: Uint8Array, author: Uint8Array): { top: number; headers: LeavingHeader[] } {
   let decoded: ReturnType<typeof decodeBatch>;
   try {
     decoded = decodeBatch(batch);
   } catch {
-    return 0;
+    return { top: 0, headers: [] };
   }
   const mine = showAuthorId(author);
-  let top = 0;
+  const seqs: number[] = [];
   for (const { row } of decoded.entries) {
     const seq = Number(row._r_seq);
-    if (row._r_replica instanceof Uint8Array && showAuthorId(row._r_replica) === mine && Number.isSafeInteger(seq) && seq > top) top = seq;
+    if (row._r_replica instanceof Uint8Array && showAuthorId(row._r_replica) === mine && Number.isSafeInteger(seq) && seq > 0) seqs.push(seq);
   }
-  return top;
+  const top = Math.max(0, ...seqs);
+  if (!("id" in decoded) || !(decoded.replica instanceof Uint8Array) || showAuthorId(decoded.replica) !== mine) return { top, headers: [] };
+  const id = Array.from(decoded.id, (b) => b.toString(16).padStart(2, "0")).join("");
+  return { top, headers: [{ id, seqs }] };
 }
 
 function requestReplicaId(): Promise<string | null> {

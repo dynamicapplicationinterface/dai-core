@@ -68,5 +68,15 @@ export const seqFloorKey = (documentUuid: string): string => `dai:seq-floor:${do
  */
 export const leftFloorKey = (documentUuid: string): string => `dai:left-floor:${documentUuid}`;
 
+/**
+ * IndexedDB, beside the left floor and written in its transactions: one key
+ * per header of this device's that has left it for a document (a landed save,
+ * a publish, a file the shell wrote), by the header's id in lowercase hex. A
+ * header over a seq at or below the left floor leaves only if its own id is
+ * here (D181). With an empty id, the prefix every such key of the document
+ * starts with. Kept, and dying, as the floors are.
+ */
+export const leftHeaderKey = (documentUuid: string, headerId: string): string => `dai:left-header:${documentUuid}:${headerId}`;
+
 /** Every key-making function here, for a check that wants to see them all. */
-export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey, leftFloorKey } as const;
+export const KEY_MAKERS = { groundKey, installAskedKey, opensKey, libraryLock, seqFloorKey, leftFloorKey, leftHeaderKey } as const;
