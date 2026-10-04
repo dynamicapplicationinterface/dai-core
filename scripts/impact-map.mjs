@@ -135,6 +135,14 @@ const OTHER_CHECKS = [
     claims: ["scripts/holdout.py"],
   },
   {
+    run: "node scripts/properties.mjs",
+    claims: ["scripts/properties.mjs", "scripts/properties-known.json", "scripts/sealer.mjs"],
+  },
+  {
+    run: "python3 scripts/properties.py",
+    claims: ["scripts/properties.py", "scripts/properties-known.json"],
+  },
+  {
     run: "cargo run --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge",
     claims: ["conformance/readers/rust-merge/", "conformance/merge/"],
   },

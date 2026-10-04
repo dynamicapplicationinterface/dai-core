@@ -4448,6 +4448,51 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D190 — Which reports a merge makes depends on arrival order
+
+*Status: open, needs a ruling. Filed 4 October, from the property pass (P0).*
+
+`scripts/properties.mjs` takes each vector's headers one merge at a time into
+an empty copy, in every order (all orders up to six headers, fifty sampled
+beyond). In 44 session vectors every order admits the same rows and gives the
+same holders, voided seats, equivocated ids and closed sessions, but the set
+of reports made along the way differs: a row that arrives before what seats
+or waits its author (his binding, the creator's confirm) is reported
+`SEAT_NOT_HELD` by the merge that takes it, and the same row arriving after
+is not reported at all. Once, `ENTITY_OTHER_SESSION` as well
+(`session-void-creator-row-tombstone`). Runtime and Python reader agree. A
+report describes the merge that made it, not the state, so this follows from
+"reported by the merge that takes it" (A03 and `refused-batches`). Changing it
+is a rule change, so it is not fixed here. **Ruling wanted:** either P0
+compares only the admitted state (reports describe merges, and a copy can
+learn about a row before it learns what seats its author), or a report is
+made only when nothing can arrive later to change its answer. Each vector is
+filed in `scripts/properties-known.json` as `P0 <vector> reports`.
+
+#### D189 — A crossing child admitted before its parent is removed when the parent arrives
+
+*Status: open, needs a ruling. Filed 4 October, from the property pass (P1);
+listed as found, not fixed, in the R14 to R20 step.*
+
+P1 says an added signed row removes an admitted row or a hold only in a merge
+that reports `AUTHOR_EQUIVOCATED`. The property pass finds 8 removals at HEAD
+that break it, all of one class: a row names a parent the copy does not hold
+yet (a row of its entity in another session, a version for another seat, or
+a row at an id that the parent's arrival shows equivocated), so it is
+admitted; the parent arrives and the row becomes a crossing (or names an
+equivocated id), and it is no longer admitted. The merge reports
+`SEAT_NOT_HELD` or `ENTITY_OTHER_SESSION`. Vectors and additions:
+`session-entity-other-session`, `session-equivocated-parent` (two of Bo's
+headers), `session-equivocated-row-silent`, `session-other-seat` (a held
+header, and a row of Ada's whose parent names Bo's or Cy's next id),
+`session-void-creator-row-tombstone`, each a header held back and released
+after the rest unless named. Only a writer that names a parent it does not
+hold (or a forward one, of another author) makes such a child; an honest
+writer names what it holds. Changing it is a rule change (a crossing child
+waits until its parent is known, or a crossing is an accusation), so it is
+not fixed here. R19 refuses only a forward parent of the row's own author.
+Filed in `scripts/properties-known.json` by vector and addition.
+
 #### D188 — The contested-invite e2e test fails half its runs on Chromium locally
 
 *Status: the test fixed 4 October (the cause below); one product question open

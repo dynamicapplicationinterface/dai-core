@@ -58,6 +58,17 @@ jobs:
       # Every witness has teeth: each hold-out (the Python reader with one rule
       # of docs/format.md removed) still fails the fixtures named for it.
       - run: python3 scripts/holdout.py
+      # The properties the seat rules are derived from (P0 to P2,
+      # docs/format-design.md), over every vector, its arrival orders and an
+      # adversarial sealer's additions: by the runtime, then by the Python
+      # reader over the scenarios the first writes. On Node 24, whose
+      # node:sqlite copies a database in memory; the script falls back to
+      # files without it, at about half the speed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/properties.mjs
+      - run: python3 scripts/properties.py
       - run: cargo run --release --quiet --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge
 
       # The host's in-place writer, and its own unit tests. Compiling the
