@@ -83,6 +83,13 @@ export const REFUSALS = {
       "Only the creator may end this session; the close is refused rather than written as a row " +
       "that closes nothing (T1-D32).",
   },
+  SESSION_CLOSED: {
+    recoverable: false,
+    means:
+      "A write in a session this copy has closed. A close is final for its author: a row of his in that " +
+      "session after his close is him signing twice, and every copy would then admit none of his rows. " +
+      "Refused at the write, so the application can say the session is over, rather than written (R18).",
+  },
   ROLE_NOT_PERMITTED: {
     recoverable: false,
     means:

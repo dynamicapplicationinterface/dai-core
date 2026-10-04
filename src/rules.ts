@@ -758,12 +758,13 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: SESSION,
     topic: "session",
     rule:
-      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — and it is final for the closer: any row the closer writes in that session after it is the closer signing twice, and every copy then admits none of the closer's rows anywhere in the document. It binds only the closer, so offer no one a write in a closed session, as on a read-only mount (IDENTITY-BOOT-WRITES), and above all not the person who closed it. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), never the close table: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
+      "Ending the activity is an ordinary row: a resignation, a final mark, a signature. Closing the session is a separate, heavier act — `window.dai.replicated.session.close(session)` — and it is final for the closer: any row the closer writes in that session after it is the closer signing twice, and every copy then admits none of the closer's rows anywhere in the document. It binds only the closer, so offer no one a write in a closed session, as on a read-only mount (IDENTITY-BOOT-WRITES), and above all not the person who closed it: the runtime refuses the closer's own writes there with SESSION_CLOSED. Offer it only on a finished session, never as the way to end a live one. Closing as part of an act whose point is finality — sealing an agreement once both have accepted it — is exactly what close is for: write the act as a row, then close. Read closedness in `_dai_closed` (a row per session), never the close table: a close counts only from an author the session's rule permits. Under close=creator a non-creator's close is refused with CLOSE_NOT_PERMITTED; hide or disable the control for them.",
     why: "A close binds its author by their own rows, never a clock, so no close removes another person's rows. Folding it into \"resign\" would end a session the other person had not finished with.",
     enforced: ["runtime", "prose"],
     anchors: [
       { file: "src/runtime/bootloader.ts", contains: "close: (sessionHex: string): void =>" },
       { file: "src/runtime/bootloader.ts", contains: 'throw new Error("CLOSE_NOT_PERMITTED")' },
+      { file: "src/runtime/bootloader.ts", contains: "const closedGate = (session: Uint8Array | undefined): void =>" },
     ],
   },
   {
@@ -1360,6 +1361,13 @@ export const APP_REFUSALS: readonly AppRefusal[] = [
     then: "Offer the close control only to the creator (SESSION-CLOSE).",
     shapes: SESSION,
     anchor: { file: "src/runtime/bootloader.ts", contains: 'throw new Error("CLOSE_NOT_PERMITTED")' },
+  },
+  {
+    code: "SESSION_CLOSED",
+    when: "A copy wrote in a session it had closed (insert, change, remove, join, confirm or a second close).",
+    then: "Offer no write in a session this copy closed; read _dai_closed (SESSION-CLOSE).",
+    shapes: SESSION,
+    anchor: { file: "src/runtime/bootloader.ts", contains: "SESSION_CLOSED (this copy closed this session" },
   },
   {
     code: "ROLE_NOT_PERMITTED",

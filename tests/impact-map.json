@@ -310,6 +310,16 @@
       "tests/cli.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/closed-writes.spec.ts": [
+      "apps/runner/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/closed-writes.spec.ts",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tsup.config.ts"
+    ],
     "tests/cold-open.spec.ts": [
       "src/bridge.ts",
       "tests/cold-open.spec.ts",

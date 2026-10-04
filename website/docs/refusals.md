@@ -47,6 +47,12 @@ bridge](/docs/host-bridge#refusal-reasons-glossary).
 
 **Do instead:** Offer the close control only to the creator (SESSION-CLOSE).
 
+### `SESSION_CLOSED` {#SESSION_CLOSED}
+
+**Applies to** session. **When:** A copy wrote in a session it had closed (insert, change, remove, join, confirm or a second close).
+
+**Do instead:** Offer no write in a session this copy closed; read \_dai\_closed (SESSION-CLOSE).
+
 ### `ROLE_NOT_PERMITTED` {#ROLE_NOT_PERMITTED}
 
 **Applies to** session. **When:** A copy wrote a table whose marker names the other party (author=creator or author=joiner), or wrote a role table with no session.

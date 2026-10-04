@@ -2154,6 +2154,24 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       }
     };
 
+    /*
+     * A close is final for its author (R18, docs/format.md#close-monotone): a
+     * close of this copy's that counts, and any row of its in that session at
+     * a higher seq, are this copy signing twice, and every copy then admits
+     * none of its rows. Every row it writes now is at a higher seq, so after
+     * its own counting close nothing of its is written in that session, by
+     * any writer here: refused by name, so the application can say so, and no
+     * honest application can make its person an equivocator.
+     */
+    const closedGate = (session: Uint8Array | undefined): void => {
+      if (!session) return;
+      if (rows.all("SELECT 1 FROM sqlite_schema WHERE type = 'view' AND name = '_dai_close0'").length === 0) return;
+      const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
+      if (rows.all("SELECT 1 FROM _dai_close0 WHERE session = ? AND lower(hex(replica)) = ? LIMIT 1", [session, me]).length > 0) {
+        throw new Error("SESSION_CLOSED (this copy closed this session, so nothing more of its is written there)");
+      }
+    };
+
     // Every write settles the identity first; it does the work once.
     return {
       /*
@@ -2190,6 +2208,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       insert: (table: string, values: Any, sessionHex?: string): string => {
         const id = entity();
         settleReplica(rows);
+        closedGate(sessionHex ? fromHex(sessionHex) : undefined);
         authorGate(table, () => (sessionHex ? fromHex(sessionHex) : undefined));
         seatGate(table, values, () => (sessionHex ? fromHex(sessionHex) : undefined));
         // A session document threads the session onto every row (T1-D26); the
@@ -2211,6 +2230,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         settleReplica(rows);
         // An id alone in a session table is refused with its own sentence, before a gate names another reason.
         if (!session) rules().writeTargetOf(rows, table, id);
+        closedGate(session);
         authorGate(table, () => session);
         seatGate(table, values, () => session);
         rules().changeEntity(rows, table, id, values, session);
@@ -2221,6 +2241,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         const session = sessionHex ? fromHex(sessionHex) : undefined;
         settleReplica(rows);
         if (!session) rules().writeTargetOf(rows, table, fromHex(entityHex));
+        closedGate(session);
         authorGate(table, () => session);
         rules().deleteEntity(rows, table, fromHex(entityHex), session);
         nudgeAuthored();
@@ -2267,6 +2288,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         confirm: (sessionHex: string, seatHex: string, holderHex: string): void => {
           settleReplica(rows);
           const sid = fromHex(sessionHex);
+          closedGate(sid);
           const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
           if (!creatorIs(sid, me)) throw new Error("NOT_SEAT_CREATOR");
           const seat = fromHex(seatHex);
@@ -2281,6 +2303,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // (T1-D29) rather than joining; the app renders that state.
         join: (sessionHex: string, seatHex: string): void => {
           settleReplica(rows);
+          closedGate(fromHex(sessionHex));
           rules().createEntity(rows, "_dai_binding", entity(), { seat: fromHex(seatHex) }, fromHex(sessionHex));
           nudgeAuthored();
         },
@@ -2294,6 +2317,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         close: (sessionHex: string): void => {
           settleReplica(rows);
           const sid = fromHex(sessionHex);
+          // A second close is a row after the first (close-first).
+          closedGate(sid);
           const me = String(rows.all("SELECT lower(hex(id)) AS h FROM _dai_replica")[0]?.["h"] ?? "");
           // T1-D32, R14: the rule is the one the session's creator's seat row
           // declares. Under close=creator only its creator may close. Refused
