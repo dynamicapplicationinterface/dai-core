@@ -465,7 +465,8 @@ fixture to learn the shape of the file:
   line `# <table>`.
 - Then one section `# _dai_replicas`, always last.
 - Table sections: one line per row, values tab-separated, columns in the order
-  `PRAGMA table_info` reports them, rows ordered by `(_r_replica, _r_seq)`.
+  `PRAGMA table_info` reports them less `_r_superseded` (T1-D15), rows ordered
+  by `(_r_replica, _r_seq)`.
 - The `_dai_replicas` section: one bare replica id per line, lowercase hex,
   ascending. Not tab-separated, because there is one field (T1-D12).
 - The file ends with a newline after the final line.
@@ -543,10 +544,13 @@ Three consequences, and the third is the one that would be found late:
   than as a design error. Draft 1 §7 already lists the signed fields and this
   column is not among them; this says why it must stay that way.
 
-It is in the canonical dump of T1-D9 all the same, and that is not a
-contradiction. The dump is what proves two copies converged, and the flag is a
-function of the row set — so if two hosts hold the same rows and disagree about
-the flag, they have not converged and the dump must say so.
+It was in the canonical dump of T1-D9 until 5 October, on the argument that
+the flag is a function of the row set, so two hosts holding the same rows and
+disagreeing about it have not converged. The conformance dump now leaves it out
+(T1-D15): the page defines it as a display cache no rule reads, the contract
+compares only what the page defines, and the heads it caches are compared in
+the admitted dumps. The runtime's own `canonicalDump` keeps the column, so the
+convergence tests that compare two of its copies still hold the flag to it.
 
 **T1-D10 — the update trigger is column-scoped, and the flag only rises.**
 Draft 1's blanket `BEFORE UPDATE` would forbid the very write D5 requires. The
@@ -579,6 +583,15 @@ specification. They are:
 and `_r_deleted`. `_r_superseded` is excluded (T1-D11), and that exclusion is
 what makes `duplicate` rather than `rejected` the answer on almost every real
 exchange: a sender's flag legitimately differs from ours.
+
+The conformance dump leaves `_r_superseded` out too (5 October; format.md,
+merge-dump). It is a display cache ([row-superseded](format.md#row-superseded)),
+derived and never read by a rule on the page, and a conformance vector compares
+only what the page defines; `expected-admitted-*.txt` already holds the derived
+heads. A vector that compared it pinned a cache rather than a rule: in
+`session-parent-forward`, B's dump kept a3 superseded by a row whose parents
+had become malformed, the flag written before the forward rule read them as
+naming nothing.
 
 A rejected id is written in the `_r_parents` text form — lowercase hex, colon,
 sequence number. The `T_conflicts` view uses SQLite's uppercase `hex()` for the

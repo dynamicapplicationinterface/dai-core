@@ -342,7 +342,8 @@ a signed row outranked; `newReplicas` is how many author ids it added to
 <a id="merge-dump"></a>The canonical dump, which two copies compare, is a
 section per replicated table in UTF-8 order of name (a line `# <table>`, then
 a line per row ordered by author id and seq, its values tab-separated in the
-table's column order), then `# _dai_replicas` (an author id per line,
+table's column order, leaving out [`_r_superseded`](#row-superseded), a
+display cache no rule here reads), then `# _dai_replicas` (an author id per line,
 ascending), then, when the copy has it, `# _dai_batch` (a stored header per
 line, every column, ordered by id), each value written `nil`, as a decimal
 integer, as lowercase hex for bytes, as text with tab, newline and backslash

@@ -113,10 +113,12 @@ def columns_of(db: sqlite3.Connection, table: str) -> list[str]:
 def canonical_dump(db: sqlite3.Connection, tables: list[str]) -> str:
     lines: list[str] = []
     for table in sorted(tables):
-        names = columns_of(db, table)
+        # Less _r_superseded: a display cache no rule reads (format.md#merge-dump).
+        names = [name for name in columns_of(db, table) if name != "_r_superseded"]
         lines.append(f"# {table}")
+        select = ", ".join(f'"{name}"' for name in names)
         rows = db.execute(
-            f'SELECT * FROM "{table}" ORDER BY hex(_r_replica) ASC, _r_seq ASC'
+            f'SELECT {select} FROM "{table}" ORDER BY hex(_r_replica) ASC, _r_seq ASC'
         ).fetchall()
         for row in rows:
             lines.append("\t".join(encode(value) for value in row))

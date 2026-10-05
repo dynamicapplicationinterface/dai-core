@@ -35,6 +35,7 @@ import {
   changeEntity,
   createEntity,
   deleteEntity,
+  encodeValue,
   mergeFrom,
 } from "../dist/dai-merge.js";
 import { replicatedSchemaOf } from "../dist/replicated-frame.js";
@@ -1510,7 +1511,7 @@ const VECTORS = [
     expect: ({ ba }) => {
       if (ba.result.rejected.join() !== `${hexOf(ADA.author)}:1`) return `A into B: rejected [${ba.result.rejected.join(", ")}], not U`;
       if (ba.result.duplicate !== 0) return `A into B: ${ba.result.duplicate} duplicate, so the unsigned note was placed before the signed case`;
-      const p = ba.dump.split("\n").find((line) => line.startsWith("P\t"));
+      const p = ba.full.split("\n").find((line) => line.startsWith("P\t"));
       if (!p || p.split("\t")[7] !== "1") return `A into B: P is [${p}], not superseded`;
     },
   },
@@ -2909,6 +2910,29 @@ async function probe(from, person, ...writes) {
   return found;
 }
 
+/**
+ * The canonical dump a vector compares (format.md#merge-dump): the runtime's,
+ * less `_r_superseded`. That column is a display cache no rule on the page reads
+ * (#row-superseded), and the heads it caches are in the admitted dumps. The
+ * runtime's own dump keeps it, and the fixed-point check reads that one.
+ */
+function vectorDump(db, tables) {
+  const lines = [];
+  for (const table of [...tables].sort()) {
+    const columns = db
+      .all("SELECT name FROM pragma_table_info(?)", [table])
+      .map((r) => String(r.name))
+      .filter((name) => name !== "_r_superseded");
+    lines.push(`# ${table}`);
+    for (const row of db.all(`SELECT * FROM "${table}" ORDER BY hex(_r_replica) ASC, _r_seq ASC`)) {
+      lines.push(columns.map((name) => encodeValue(row[name])).join("\t"));
+    }
+  }
+  // `_dai_replicas` and `_dai_batch` as the runtime writes them; the last such header is the real one.
+  const full = canonicalDump(db, tables);
+  return `${lines.join("\n")}\n${full.slice(full.lastIndexOf("# _dai_replicas\n"))}`;
+}
+
 /** Merges a fresh copy of `from` into a fresh copy of `into` and reports both. */
 async function run(vector, direction) {
   const a = openFor(vector, join(out, vector.name, "scratch-a.db"), vector.localOnA, "a");
@@ -2924,7 +2948,8 @@ async function run(vector, direction) {
   // What the copy merged into admits before the merge (`before`, R21).
   const before = vector.session || vector.admits ? admittedDump(left) : null;
   const result = mergeFrom(left, right, left.tables, undefined, verdicts, { views });
-  const dump = canonicalDump(left, left.tables);
+  const full = canonicalDump(left, left.tables);
+  const dump = vectorDump(left, left.tables);
   const admitted = vector.session || vector.admits ? admittedDump(left) : null;
 
   /*
@@ -2939,11 +2964,11 @@ async function run(vector, direction) {
   const again = mergeFrom(left, right, left.tables, undefined, verdicts, { views });
   const settled = canonicalDump(left, left.tables);
   // A vector that records a merge which is not a fixed point (D180) says so (`stable: false`).
-  if (settled !== dump && vector.stable !== false) {
+  if (settled !== full && vector.stable !== false) {
     console.error(`${vector.name} [${direction}]: merging twice changed the table`);
     process.exit(1);
   }
-  if (settled === dump && vector.stable === false && direction === "ab") {
+  if (settled === full && vector.stable === false && direction === "ab") {
     console.error(`${vector.name} [${direction}]: said not to be a fixed point, and merging twice changed nothing`);
     process.exit(1);
   }
@@ -2955,7 +2980,7 @@ async function run(vector, direction) {
   b.close();
   rmSync(join(out, vector.name, "scratch-a.db"));
   rmSync(join(out, vector.name, "scratch-b.db"));
-  return { dump, result, admitted, before };
+  return { dump, full, result, admitted, before };
 }
 
 /** The inputs, written as they stand before any merge, and the verdict on every header in them. */
@@ -3035,6 +3060,13 @@ library version and on page layout, so two engines that agree perfectly produce
 different files. Nothing may compare \`.db\` bytes — the comparison is always the
 dump. Adding a byte comparison "for completeness" would make the suite fail on a
 correct implementation.
+
+**The dump leaves out \`_r_superseded\`** ([merge-dump](../../docs/format.md#merge-dump)).
+That column is a display cache, derived and never read by any rule on the page
+([row-superseded](../../docs/format.md#row-superseded)), and the conformance
+contract compares only what the page defines. The heads it would cache are in
+\`expected-admitted-*.txt\`. A reader may keep the column however it likes; it
+does not print it.
 
 **\`expected-ab.txt\` and \`expected-ba.txt\` are identical wherever
 \`result.json\` says \`converges: true\`, and both are checked in anyway.** Union

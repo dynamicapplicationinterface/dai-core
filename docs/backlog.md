@@ -4556,6 +4556,26 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D192 — A row's superseded flag goes stale after its own author's malformed child
+
+*Status: open, low (display only). Filed 5 October, from the blind Rust level
+(`session-parent-forward`).*
+
+`_r_superseded` is a display cache ([row-superseded](format.md#row-superseded)):
+derived, and read by no rule. The runtime marks a row superseded when a child
+naming it is written or merged, and does not re-derive it later. In
+`session-parent-forward`, B holds its own move e5 whose parents name a3, its
+own author at a higher seq. The flag on a3 was written while e5's parents were
+still read as naming it; under the forward rule they are malformed and name
+nothing ([parents-own-malformed](format.md#parents-own-malformed)), so a3 is
+not superseded, yet B's copy keeps the flag at 1 and no merge touches it. The
+admitted dump (heads read through `parentsSql`) is right; a board reading the
+flag instead could show a3 as superseded when it is not. No rule reads the
+flag, so the conformance dump leaves it out (T1-D15, 5 October). **Fix, when
+picked up:** re-derive the flag for a held row whose child's parents become
+malformed (or for every row a merge's rule changes reach), or have the board
+read heads through the views rather than the flag.
+
 #### D191 — Protocol actions through typed host paths, and H6 at the host's sign boundary
 
 *Status: ruled — not built (V1.1). Filed 4 October, from the V1.0 product

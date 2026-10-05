@@ -24,6 +24,13 @@ different files. Nothing may compare `.db` bytes — the comparison is always th
 dump. Adding a byte comparison "for completeness" would make the suite fail on a
 correct implementation.
 
+**The dump leaves out `_r_superseded`** ([merge-dump](../../docs/format.md#merge-dump)).
+That column is a display cache, derived and never read by any rule on the page
+([row-superseded](../../docs/format.md#row-superseded)), and the conformance
+contract compares only what the page defines. The heads it would cache are in
+`expected-admitted-*.txt`. A reader may keep the column however it likes; it
+does not print it.
+
 **`expected-ab.txt` and `expected-ba.txt` are identical wherever
 `result.json` says `converges: true`, and both are checked in anyway.** Union
 merge is commutative, so they must be; a fixture asserting it is worth more than
