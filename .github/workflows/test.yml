@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     # The property pass alone is about six minutes, and the hold-outs grow with
     # every rule: 15 ran out at the property pass on R21's commit.
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - uses: actions/checkout@v4
