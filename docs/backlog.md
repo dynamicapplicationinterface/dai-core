@@ -213,7 +213,7 @@ principle beside them.
    share, modestly improve, for one person. Two-person correspondence (chess)
    is V1.1 behind its own gate; its code stays in the repo and in CI and off
    the public surface. *Rejected:* shipping three polished app categories at
-   once. *Principle:* P3 (the person's task before our architecture).
+   once. *Principle:* P3.
 2. **Object-first routing.** A delivery (link, file open, hand-off) names the
    exact document; the host opens that document's app directly, creating or
    finding the person's working copy for it on the way. The library is
@@ -228,8 +228,7 @@ principle beside them.
    are portable and independently verifiable in compatible hosts."
    User-facing: "an app you can keep, change, and send." *Rejected:* one
    sentence promising authenticity, human identity, availability and
-   collaboration. *Principle:* P0 (verifiable by anyone from the same
-   evidence).
+   collaboration. *Principle:* P0.
 4. **A person key is a signing context.** A signing context is one browser
    store on one device. Safari and a Home Screen install on the same phone are
    two contexts; a name is a label, not proof two contexts are one person.
@@ -237,8 +236,7 @@ principle beside them.
    `README.md:379` (the key generated extractable so it can be backed up) is
    the line that changes when the key work lands (Phase 3.1). *Rejected:*
    extractable keys kept for an export V1 does not ship; a person-level
-   identity system. *Principle:* P2 (no two live copies of one signing
-   identity).
+   identity system. *Principle:* P2.
 5. **A linked successor on loss.** A backup restored into a new context keeps
    the old history under its original signatures and continues as a successor
    document under the new key, the successor naming its predecessor (the
@@ -254,8 +252,7 @@ principle beside them.
    normally "Saved in this browser"; "ready offline" is claimed only after a
    tested reopen; the last export date stays discoverable, with one quiet note
    when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
-   backups; a storage dashboard; repeated prompts. *Principle:* P3 (no claim
-   without evidence).
+   backups; a storage dashboard; repeated prompts. *Principle:* P3.
 7. **Three share meanings, owned by the host.** An app requests an intent and
    never chooses a destination.
    - **Send the app:** the clean release this working copy currently runs.
@@ -270,7 +267,7 @@ principle beside them.
 
    *Rejected:* always sending the original publisher build after an
    improvement; a "clean copy" made from a used file; apps with their own
-   sharing plumbing. *Principle:* P1 (nothing travels silently) and P3.
+   sharing plumbing. *Principle:* P3.
 8. **Two update classes, preservation proven by fixtures.** Both are staged
    against a copy of the person's data with a preview, and accepted as a
    linked successor revision with the old release retained: *same-schema*
@@ -292,7 +289,7 @@ principle beside them.
    own writes after own close) is enforced at the host's sign boundary as well
    as in the frame: V1.1, filed as D191. *Rejected:* a host card on every
    write; a generic "sign these bytes" capability for the app. *Principle:*
-   P2 (authority is the host's) and P3.
+   P2 and P3.
 10. **The trust claim, and the dark-session boundary as a V1.0 gate.** The host
     signs what its user's app writes, in that user's name only, within the
     floors, egress and document-mismatch checks the host enforces itself. A
