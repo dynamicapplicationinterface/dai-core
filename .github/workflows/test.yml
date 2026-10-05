@@ -17,7 +17,9 @@ jobs:
   # Playwright.
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The property pass alone is about six minutes, and the hold-outs grow with
+    # every rule: 15 ran out at the property pass on R21's commit.
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
