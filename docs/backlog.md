@@ -203,6 +203,117 @@ direction; the walk these serve is `docs/v1-walk.md`)
   ids in the diff, and the six tests that broke reach that sheet through a
   helper naming none of them.
 
+### The V1.0 product rulings (4 October)
+
+Eleven rulings, each made 4 October. P0 to P2 are the properties in
+[format-design.md](format-design.md); P3 is the eleventh ruling, a product
+principle beside them.
+
+1. **Scope.** V1.0 is the personal-app experience: receive, use, return, keep,
+   share, modestly improve, for one person. Two-person correspondence (chess)
+   is V1.1 behind its own gate; its code stays in the repo and in CI and off
+   the public surface. *Rejected:* shipping three polished app categories at
+   once. *Principle:* P3 (the person's task before our architecture).
+2. **Object-first routing.** A delivery (link, file open, hand-off) names the
+   exact document; the host opens that document's app directly, creating or
+   finding the person's working copy for it on the way. The library is
+   "Recent apps" under More, never the destination. The interaction for each
+   transition of the walk (message → useful app content → first action →
+   saved work → close → same message → continued work) is written in
+   [walk.md](walk.md) before that flow is built, and tested with uncoached
+   people as soon as it is usable. *Rejected:* the opener or library as the
+   landing page; importing, verifying or indexing as screens; designing the
+   interaction in the craft phase. *Principle:* P3.
+3. **The guarantee sentence.** "A .dai file's packaged app and recorded history
+   are portable and independently verifiable in compatible hosts."
+   User-facing: "an app you can keep, change, and send." *Rejected:* one
+   sentence promising authenticity, human identity, availability and
+   collaboration. *Principle:* P0 (verifiable by anyone from the same
+   evidence).
+4. **A person key is a signing context.** A signing context is one browser
+   store on one device. Safari and a Home Screen install on the same phone are
+   two contexts; a name is a label, not proof two contexts are one person.
+   Keys are non-extractable; no key export and no recovery phrase in V1.
+   `README.md:379` (the key generated extractable so it can be backed up) is
+   the line that changes when the key work lands (Phase 3.1). *Rejected:*
+   extractable keys kept for an export V1 does not ship; a person-level
+   identity system. *Principle:* P2 (no two live copies of one signing
+   identity).
+5. **A linked successor on loss.** A backup restored into a new context keeps
+   the old history under its original signatures and continues as a successor
+   document under the new key, the successor naming its predecessor (the
+   succession contract, `supersedes`). Old signatures are never rewritten; a
+   shared seat is never inherited by the new context. *Rejected:* silently
+   re-keying or reassigning the old author to the new context. *Principle:*
+   P1 and P2.
+6. **Four storage states, as host evidence, one status shown.** Four facts the
+   host tracks: *remembered here* (indexed in this browser), *saved here* (the
+   latest acknowledged change reached local storage), *ready offline* (a
+   tested offline reopen path exists), *kept outside the browser* (an export
+   the person made, with its date). The person sees one status at a time,
+   normally "Saved in this browser"; "ready offline" is claimed only after a
+   tested reopen; the last export date stays discoverable, with one quiet note
+   when newer work is local-only. *Rejected:* calling OPFS plus IndexedDB two
+   backups; a storage dashboard; repeated prompts. *Principle:* P3 (no claim
+   without evidence).
+7. **Three share meanings, owned by the host.** An app requests an intent and
+   never chooses a destination.
+   - **Send the app:** the clean release this working copy currently runs.
+     Accepted modifications and deliberately included starter content are in;
+     private records, tombstones, caches and retained private history are
+     out. It is kept as its own artifact beside the working state, never
+     produced by deleting rows from a used file. Original authorship is
+     preserved, and a modification is attributed to its modifier.
+   - **Send this copy:** a sealed snapshot of the working copy, behind one host
+     sheet that says the records travel.
+   - **Invite:** V1.1.
+
+   *Rejected:* always sending the original publisher build after an
+   improvement; a "clean copy" made from a used file; apps with their own
+   sharing plumbing. *Principle:* P1 (nothing travels silently) and P3.
+8. **Two update classes, preservation proven by fixtures.** Both are staged
+   against a copy of the person's data with a preview, and accepted as a
+   linked successor revision with the old release retained: *same-schema*
+   (presentation or behavior, data untouched) and *reviewed additive* (a new
+   optional field with a declared default). Preservation is proven by
+   fixtures: existing values intact and accessible, the new field's default,
+   the original evidence still verifying, correction after recovery through
+   the successor, failure leaving the app untouched. Host-derived counts are
+   supporting evidence only. This sits beside "What an update may touch"
+   (21 September, above) and narrows it for V1.0; it does not supersede it.
+   *Rejected:* general migrations, AI-supplied migration SQL, counts as proof
+   of meaning. *Principle:* P1.
+9. **Host authority.** Ordinary writes within the app's own tables proceed
+   under standing authority once the app is open. Actions that cross a
+   boundary get a host-owned sheet: sharing private history, activating
+   another release, continuing under a new key, removing the app from this
+   device, exporting to an AI workflow. Protocol actions (close, confirm,
+   roster) go through typed host paths with a host-owned sheet, and H6 (no
+   own writes after own close) is enforced at the host's sign boundary as well
+   as in the frame: V1.1, filed as D191. *Rejected:* a host card on every
+   write; a generic "sign these bytes" capability for the app. *Principle:*
+   P2 (authority is the host's) and P3.
+10. **The trust claim, and the dark-session boundary as a V1.0 gate.** The host
+    signs what its user's app writes, in that user's name only, within the
+    floors, egress and document-mismatch checks the host enforces itself. A
+    hostile app can hurt its own user, as any software the user runs can; it
+    cannot forge another author, move another copy's seat, or bypass another
+    copy's verification. For V1.0, ordinary app-writing authority must not
+    reach any host-owned operation (export private history, activate another
+    release, replace the signing context, delete protected evidence),
+    directly or through a session path that is off the public surface. The
+    eleventh attack review inspects the implementation for this; a reachable
+    path gets the smallest adequate fix as a V1.0 gate, never the full
+    correspondence feature. The limitations box says this plainly.
+    *Rejected:* "verified" as a safety badge; "dark" meaning hidden buttons.
+    *Principle:* P2 and P0.
+11. **P3, recovery with dignity.** A safe refusal preserves the last available
+    durable work and offers an understandable next action; it does not invent
+    missing data or authorize a replacement participant. Every exposed refusal
+    code names its next action before release. Recorded in format-design.md's
+    properties as a product principle, not a format rule. *Rejected:*
+    technically safe dead ends; promising data survives deletion everywhere.
+
 ### manifestVersion 3
 
 Decided 5 September, one deliberate bump before any second implementer exists.
@@ -4448,6 +4559,20 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D191 — Protocol actions through typed host paths, and H6 at the host's sign boundary
+
+*Status: ruled — not built (V1.1). Filed 4 October, from the V1.0 product
+rulings (part 2, ruling 9).*
+
+**Ruled:** protocol actions (close, confirm, roster) go through typed host
+paths, each behind a host-owned sheet, not through the app's ordinary write
+surface. H6 (an author's own writes refused after their own close counts,
+`SESSION_CLOSED`) is enforced at the host's sign boundary as well as in the
+frame, where H6 built it (`612a9005`, the frame's `_dai_close0` gate). Until
+then the frame's gate is the only one, and the host signs any seq above the
+floor. Rejected: a host card on every write; a generic "sign these bytes"
+capability for the app.
+
 #### D190 — Which reports a merge makes depends on arrival order
 
 *Status: closed 4 October, no rule change. Filed 4 October, from the property
@@ -4929,6 +5054,11 @@ these 36 are rules with none:
   `waiting`, `void-row`.
 - Reports: `equivocated-filed-no-id`, which no merge reaches while a void
   rests only on what `void-rests-on` names, so it can have no fixture witness.
+  And `seat-not-held`'s released path (added 4 October, R21): a row released
+  from [waiting on a parent](format.md#waiting-on-parent) and reported
+  `SEAT_NOT_HELD` for its own seat, not as a crossing. Every released row in
+  the nine `session-waits-*` vectors is a crossing, so no vector fails without
+  the released half of the rule.
 - Canonical CBOR, TypeScript specs only (`tests/identity-vectors.spec.ts`,
   `tests/cbor.spec.ts`), no recorded hold-out: `cbor-integer`, `cbor-unsafe`,
   `cbor-float`, `cbor-infinity`.

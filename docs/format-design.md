@@ -75,6 +75,18 @@ fixtures still hold each merge's reports, so two readers must agree on them.
 review showed and not the class it belonged to, so the next review found the
 next shape.
 
+*4 October, the V1.0 product rulings.* A fourth property, about the product
+and not the format: no reader is held to it, and no batch rule derives from
+it.
+
+- **P3 (product).** Recovery with dignity. A safe refusal preserves the last
+  available durable work and offers an understandable next action; it does
+  not invent missing data or authorize a replacement participant. Every
+  exposed refusal code names its next action before release.
+
+Rejected: technically safe dead ends; promising data survives deletion
+everywhere. The ruling is in [backlog.md](backlog.md), part 2.
+
 The header signs its list
 -------------------------
 
