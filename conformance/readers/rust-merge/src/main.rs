@@ -206,6 +206,29 @@ fn parents_well_formed(v: &V) -> bool {
     })
 }
 
+// A row's parents are well formed when they are the one shape and name no id
+// of the row's own author at a seq at or above the row's own
+// (docs/format.md#parents-shape, #parent-forward).
+fn parents_ok(t: &Table, r: &Row) -> bool {
+    if !parents_well_formed(&r.vals[t.i_parents]) {
+        return false;
+    }
+    let own = match &r.vals[t.i_replica] {
+        V::Blob(b) => hexlc(b),
+        _ => return true,
+    };
+    let seq = match &r.vals[t.i_seq] {
+        V::Int(i) => *i,
+        _ => return true,
+    };
+    let V::Text(p) = &r.vals[t.i_parents] else { return false };
+    let a: Vec<String> = serde_json::from_str(p).unwrap_or_default();
+    !a.iter().any(|x| match x.split_once(':') {
+        Some((h, s)) => h == own && s.parse::<i64>().map(|n| n >= seq).unwrap_or(true),
+        None => true,
+    })
+}
+
 fn rowid(t: &Table, r: &Row) -> String {
     let rep = match &r.vals[t.i_replica] {
         V::Blob(b) => hexlc(b),
@@ -225,6 +248,8 @@ struct Counts {
     new_replicas: i64,
     // (author shown, reason), one per batch and reason, ordered by batch id.
     refused: Vec<(String, String)>,
+    // The whole sibling refused (SIGNED_VIEW_MISMATCH), or None.
+    refused_whole: Option<String>,
 }
 
 // Union merge, taking only what a verified header lists (docs/format.md).
@@ -244,6 +269,8 @@ fn merge(
     signed_lists: &BTreeMap<String, String>,
     own_verdicts: &BTreeMap<String, String>,
     own_lists: &BTreeMap<String, String>,
+    max_parties: usize,
+    view_mismatch: bool,
 ) -> (Counts, String, String) {
     let c = Connection::open(work).unwrap();
     c.execute_batch(&format!(
@@ -258,7 +285,17 @@ fn merge(
         rejected: vec![],
         new_replicas: 0,
         refused: vec![],
+        refused_whole: None,
     };
+    let tables = replicated_tables(&c, "main");
+    // A sibling whose signed-view digest differs from the local copy's is
+    // refused whole: no header, no row, no refused batch
+    // (docs/format.md#document-mismatch).
+    if view_mismatch {
+        counts.refused_whole = Some("SIGNED_VIEW_MISMATCH".to_string());
+        let admitted = admit::render(&admit::admit(&c, &tables, max_parties));
+        return (counts, dump(&c, &tables), admitted);
+    }
     let mut refusals: BTreeMap<(String, String, String), Vec<u8>> = BTreeMap::new();
 
     let local_lc: i64 = c
@@ -269,7 +306,6 @@ fn merge(
         .unwrap_or(0);
     let mut lc_max = local_lc.max(s_lc);
 
-    let tables = replicated_tables(&c, "main");
     let s_tables = replicated_tables(&c, "S");
 
     c.execute_batch("BEGIN").unwrap();
@@ -290,7 +326,7 @@ fn merge(
     // What this copy admitted and held equivocated before the merge, so the
     // merge reports only what it brings (D160, D165).
     let eq_before = admit::equivocated(&c, "main");
-    let voided_before = admit::admit(&c, &tables).voided;
+    let before = admit::admit(&c, &tables, max_parties);
 
     let mut held: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut covering: BTreeMap<String, String> = BTreeMap::new(); // "table|author:seq" -> lowest ok id
@@ -381,7 +417,7 @@ fn merge(
                 continue;
             }
             for r in load(&c, "S", t) {
-                if parents_well_formed(&r.vals[t.i_parents]) {
+                if parents_ok(t, &r) {
                     continue;
                 }
                 let key = format!("{}|{}", t.name, rowid(t, &r));
@@ -480,7 +516,7 @@ fn merge(
                 continue;
             }
             // Malformed and signed by nobody: refused in the name it carries.
-            if !parents_well_formed(&r.vals[t.i_parents]) {
+            if !parents_ok(t, &r) {
                 let author = match &r.vals[t.i_replica] {
                     V::Blob(x) => x.clone(),
                     _ => vec![],
@@ -695,7 +731,7 @@ fn merge(
         let mut parented: BTreeSet<(String, String)> = BTreeSet::new();
         for r in &all {
             let entity = r.vals[t.i_entity].enc();
-            for s in admit::parents_of(&r.vals[t.i_parents]) {
+            for s in admit::parents_of(t, r) {
                 parented.insert((entity.clone(), s));
             }
         }
@@ -717,7 +753,7 @@ fn merge(
 
     // After the rows are placed: what the document now admits, and what this
     // merge made of it.
-    let admitted = admit::admit(&c, &tables);
+    let admitted = admit::admit(&c, &tables, max_parties);
     let batch_of = |t: &Table, id: &str| -> String {
         c.query_row(
             &format!(
@@ -738,6 +774,18 @@ fn merge(
     // merge took, the child or the parent, and is the child's";
     // docs/format.md#report-crossing; docs/identity.md binding rule 5).
     let taken_keys: BTreeSet<String> = taken.iter().map(|(ti, id)| format!("{}|{}", tables[*ti].name, id)).collect();
+    // A row the copy held waiting on a parent before the merge and no longer
+    // waits after it is decided by this merge, once, and reported as a row it
+    // took (docs/format.md#waiting-on-parent, #seat-not-held).
+    let released: BTreeSet<String> = before
+        .verdicts
+        .iter()
+        .filter(|(k, v)| {
+            **v == admit::Verdict::WaitingParent
+                && admitted.verdicts.get(*k).map(|x| *x != admit::Verdict::WaitingParent).unwrap_or(false)
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
     for (key, v) in &admitted.verdicts {
         let reason = match v {
             admit::Verdict::NotHeld => "SEAT_NOT_HELD",
@@ -750,7 +798,7 @@ fn merge(
             .get(key)
             .map(|ps| ps.iter().any(|p| taken_keys.contains(&format!("{}|{}", tname, p))))
             .unwrap_or(false);
-        if !taken_keys.contains(key) && !by_parent {
+        if !taken_keys.contains(key) && !by_parent && !released.contains(key) {
             continue;
         }
         let Some(t) = tables.iter().find(|t| t.name == tname) else { continue };
@@ -763,11 +811,13 @@ fn merge(
     // AUTHOR_EQUIVOCATED, once per author per merge, when this merge revealed
     // that author signing twice, filed under the lowest of that author's
     // revealing headers (docs/format.md#equivocated-filed, D171):
-    let mut accused: BTreeMap<String, String> = BTreeMap::new(); // author hex -> batch id
+    // author hex -> the revealing headers; an author revealed with none is
+    // filed under no id (docs/format.md#equivocated-filed-no-id).
+    let mut accused: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut accuse = |author: String, batch: String| {
-        let e = accused.entry(author).or_insert_with(|| batch.clone());
-        if batch < *e {
-            *e = batch;
+        let e = accused.entry(author).or_default();
+        if !batch.is_empty() {
+            e.insert(batch);
         }
     };
     // D160: a header this merge kept that the local copy did not hold before,
@@ -788,19 +838,63 @@ fn merge(
     // D165: the header named (_r_batch) by a row this merge took that the void
     // rests on, a counting confirm of that seat or the session's creator's seat
     // row, for a seat void after the merge and not before it.
-    for (sess, seat, cr) in admitted.voided.difference(&voided_before) {
+    // Two confirms of one seat: a seat whose counting confirms name two
+    // holders after the merge and did not before
+    // (docs/format.md#revealing-two-confirms). The creator is the one who
+    // confirmed twice.
+    for (sess, seat) in admitted.void_two.difference(&before.void_two) {
+        let cr = admitted
+            .voided
+            .iter()
+            .find(|(s, v, _)| s == sess && v == seat)
+            .map(|(_, _, c)| c.clone())
+            .unwrap_or_default();
+        accuse(cr.clone(), String::new());
         for (tname, id) in admitted.void_rests.get(&(sess.clone(), seat.clone())).into_iter().flatten() {
             if !taken_keys.contains(&format!("{}|{}", tname, id)) {
                 continue;
             }
             let Some(t) = tables.iter().find(|t| &t.name == tname) else { continue };
-            let b = batch_of(t, id);
-            if !b.is_empty() {
-                accuse(cr.clone(), b);
+            accuse(cr.clone(), batch_of(t, id));
+        }
+    }
+    // A close followed by a row: an author with a close that counts and a row
+    // of his in that session at a higher seq after the merge and not before.
+    // The revealing header is the one named by a row of his in that session
+    // this merge took, being one of his closes there or above the lowest of
+    // them (docs/format.md#revealing-close).
+    for (author, sessions) in &admitted.close_after {
+        for (sess, lowest) in sessions {
+            if before.close_after.get(author).map(|m| m.contains_key(sess)).unwrap_or(false) {
+                continue;
+            }
+            accuse(author.clone(), String::new());
+            for (ti, id) in &taken {
+                let t = &tables[*ti];
+                let Some(is) = t.i_session else { continue };
+                let Some((a, s)) = id.split_once(':') else { continue };
+                if a != author {
+                    continue;
+                }
+                let seq: i64 = s.parse().unwrap_or(0);
+                let in_sess: bool = c
+                    .query_row(
+                        &format!(
+                            "SELECT lower(hex(\"{}\")) = ?2 FROM main.\"{}\" WHERE lower(hex(_r_replica))||':'||_r_seq = ?1",
+                            t.cols[is], t.name
+                        ),
+                        rusqlite::params![id, sess],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(false);
+                if in_sess && (t.name == "_dai_close" || seq > *lowest) {
+                    accuse(author.clone(), batch_of(t, id));
+                }
             }
         }
     }
-    for (author, batch) in accused {
+    for (author, batches) in accused {
+        let batch = batches.into_iter().next().unwrap_or_default();
         let raw: Vec<u8> = (0..author.len() / 2)
             .map(|i| u8::from_str_radix(&author[2 * i..2 * i + 2], 16).unwrap_or(0))
             .collect();
@@ -837,9 +931,13 @@ fn merge(
         .into_iter()
         .map(|((_, reason, _), author)| (shown(&author), reason))
         .collect();
+    (counts, dump(&c, &tables), admitted_text)
+}
 
+// The canonical dump (docs/format.md#merge-dump).
+fn dump(c: &Connection, tables: &[Table]) -> String {
     let mut out = String::new();
-    for t in &tables {
+    for t in tables {
         out.push_str(&format!("# {}\n", t.name));
         let sel = t
             .cols
@@ -909,7 +1007,7 @@ fn merge(
             out.push('\n');
         }
     }
-    (counts, out, admitted_text)
+    out
 }
 
 // The expected refusedBatches as (author, reason) pairs; None when misshapen, which fails.
@@ -1009,6 +1107,49 @@ fn main() {
             Err(_) => BTreeMap::new(),
             Ok(text) => serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(&text).unwrap(),
         };
+        // What each copy's signed manifest gives a reader: the signed-view
+        // digest and, in a session document, max_parties
+        // (docs/format.md#fixtures-manifest). Required, as verdicts are.
+        let manifest: serde_json::Value = match std::fs::read_to_string(f.join("manifest.json")) {
+            Err(_) => {
+                problems.push("manifest.json is missing".to_string());
+                serde_json::Value::Null
+            }
+            Ok(text) => serde_json::from_str(&text).unwrap(),
+        };
+        let view = |copy: &str| manifest[copy]["view"].as_str().map(|s| s.to_string());
+        let max_parties = |copy: &str| {
+            manifest[copy]["session"]["max_parties"].as_u64().map(|n| n as usize).unwrap_or(usize::MAX)
+        };
+        if view("a").is_none() || view("b").is_none() {
+            problems.push("manifest.json gives no view for a copy".to_string());
+        }
+        let view_mismatch = view("a") != view("b");
+        // What each copy admits before any merge, where result.json says
+        // before: true (conformance/merge/README.md).
+        match expect.get("before") {
+            None => {}
+            Some(serde_json::Value::Bool(true)) => {
+                for copy in ["a", "b"] {
+                    let work = tmp.join(format!("{}-{}-before.db", name, copy));
+                    std::fs::copy(f.join(format!("{}.db", copy)), &work).unwrap();
+                    let c = Connection::open(&work).unwrap();
+                    let tables = replicated_tables(&c, "main");
+                    let got = admit::render(&admit::admit(&c, &tables, max_parties(copy)));
+                    let file = format!("expected-admitted-{}.txt", copy);
+                    match std::fs::read_to_string(f.join(&file)) {
+                        Err(_) => problems.push(format!("{} is missing, and result.json says before", file)),
+                        Ok(text) => {
+                            let want = text.replace("\r\n", "\n");
+                            if got != want {
+                                problems.push(format!("{}: admitted before mismatch\n--- got\n{}--- want\n{}", copy, got, want));
+                            }
+                        }
+                    }
+                }
+            }
+            Some(_) => problems.push("result.json's before is not true".to_string()),
+        }
         for (dirn, base, sib, exp) in [
             ("ab", "a.db", "b.db", "expected-ab.txt"),
             ("ba", "b.db", "a.db", "expected-ba.txt"),
@@ -1019,7 +1160,16 @@ fn main() {
             let their_lists = lists.get(sib.trim_end_matches(".db")).cloned().unwrap_or_default();
             let ours = verdicts.get(base.trim_end_matches(".db")).cloned().unwrap_or_default();
             let our_lists = lists.get(base.trim_end_matches(".db")).cloned().unwrap_or_default();
-            let (c, dump, admitted) = merge(&work, &f.join(sib), &theirs, &their_lists, &ours, &our_lists);
+            let (c, dump, admitted) = merge(
+                &work,
+                &f.join(sib),
+                &theirs,
+                &their_lists,
+                &ours,
+                &our_lists,
+                max_parties(base.trim_end_matches(".db")),
+                view_mismatch,
+            );
             let want = std::fs::read_to_string(f.join(exp))
                 .unwrap()
                 .replace("\r\n", "\n");
@@ -1063,10 +1213,11 @@ fn main() {
                 || e["newReplicas"].as_i64() != Some(c.new_replicas)
                 || er != c.rejected
                 || refused_of(&e["refusedBatches"]) != Some(c.refused.clone())
+                || e["refused"].as_str().map(|s| s.to_string()) != c.refused_whole
             {
                 problems.push(format!(
-                    "{}: counts got applied={} duplicate={} newReplicas={} rejected={:?} refusedBatches={:?}, want {}",
-                    dirn, c.applied, c.duplicate, c.new_replicas, c.rejected, c.refused, e
+                    "{}: counts got applied={} duplicate={} newReplicas={} rejected={:?} refusedBatches={:?} refused={:?}, want {}",
+                    dirn, c.applied, c.duplicate, c.new_replicas, c.rejected, c.refused, c.refused_whole, e
                 ));
             }
         }
