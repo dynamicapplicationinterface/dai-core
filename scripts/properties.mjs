@@ -18,7 +18,11 @@
  * - P0. Every arrival order of a vector's items (all orders up to six items;
  *   beyond that, fifty orders drawn from a generator seeded by the vector's
  *   name) gives the same admitted state, holders, voided seats, equivocated
- *   ids, closed sessions, and the same set of reports.
+ *   ids and closed sessions. Not the same reports: a report says what one
+ *   merge made true, and the same row arriving in another merge may be
+ *   reported differently (D190, docs/format.md#report-made-true). Each
+ *   order's reports are kept in the scenario all the same, and the Python
+ *   reader must make the same ones.
  * - P1. Over three bases (copy A as it stands, copy B, and both), every
  *   addition from the mutation library leaves the admitted rows and the holds
  *   a superset of what they were, unless the merge that takes it reports
@@ -343,11 +347,17 @@ function replay(local, items, view) {
 /**
  * Whether the row `rid` of `table` is admitted in `copy`, though no head: a
  * head is a row nothing of its partition names, so a row a later version names
- * is admitted and hidden. Asked with every row that names it, directly or
- * through another, taken out (in a trial): if it is admitted, it is a head then.
+ * is admitted and hidden. Asked with every row of its entity that names it,
+ * directly or through another, taken out (in a trial): if it is admitted, it is
+ * a head then. Only a version hides a row, and a row of another entity taken
+ * out could be one this row names, leaving it waiting on a parent (R21).
  */
 function admittedThough(copy, table, rid) {
-  const rows = copy.all(`SELECT lower(hex(_r_replica)) || ':' || _r_seq AS id, _r_parents AS p FROM "${table}"`);
+  const [author, seq] = rid.split(":");
+  const rows = copy.all(
+    `SELECT lower(hex(_r_replica)) || ':' || _r_seq AS id, _r_parents AS p FROM "${table}" WHERE _r_entity = (SELECT _r_entity FROM "${table}" WHERE _r_replica = ? AND _r_seq = ?)`,
+    [Buffer.from(author, "hex"), Number(seq)],
+  );
   const named = new Set([rid]);
   for (let grew = true; grew; ) {
     grew = false;
@@ -670,13 +680,15 @@ for (const name of names) {
   // P0: every order (or the sample), each prefix taken once, in a savepoint the orders sharing it roll back to.
   {
     const orders = ordersFor(name, items.length);
+    // Every distinct state and its reports, for the Python reader; and every distinct admitted state, for P0.
     const seen = new Map();
-    const finals = [];
+    const admitted = new Map();
     const local = fromBytes(observer);
     const finish = (order, reports) => {
       const text = signature(local, reports);
-      finals.push(text);
       if (!seen.has(text)) seen.set(text, order);
+      const state = text.split("# reports\n")[0];
+      if (!admitted.has(state)) admitted.set(state, order);
       counted.orders += 1;
     };
     if (items.length <= EXHAUSTIVE) {
@@ -694,11 +706,9 @@ for (const name of names) {
     local.close();
     scenario.p0.orders = items.length <= EXHAUSTIVE ? "all" : orders;
     scenario.p0.states = [...seen.keys()];
-    if (seen.size > 1) {
-      const [[first, o1], [second, o2]] = [...seen];
-      // "reports" when every order admits the same and only the reports made differ; "state" when what is admitted differs.
-      const kind = new Set([...seen.keys()].map((s) => s.split("# reports\n")[0])).size === 1 ? "reports" : "state";
-      violation({ property: "P0", vector: name, at: kind, states: seen.size, orders: [o1.map((i) => items[i].id.slice(0, 8)), o2.map((i) => items[i].id.slice(0, 8))], difference: firstDifference(first, second) });
+    if (admitted.size > 1) {
+      const [[first, o1], [second, o2]] = [...admitted];
+      violation({ property: "P0", vector: name, at: "state", states: admitted.size, orders: [o1.map((i) => items[i].id.slice(0, 8)), o2.map((i) => items[i].id.slice(0, 8))], difference: firstDifference(first, second) });
     }
   }
 

@@ -4,7 +4,8 @@
     python scripts/properties.py       # the same scenarios, the Python reader
     python scripts/properties.py --all # every violation, filed ones too
 
-P0, P1 and P2 as scripts/properties.mjs states them, checked here over the
+P0, P1 and P2 as scripts/properties.mjs states them (P0 over what is
+admitted, not the reports, D190), checked here over the
 scenarios it wrote (node_modules/.cache/properties/<vector>.json): each
 vector's items (a header and the rows it covers, with the verifier's verdict),
 the orders, the mutations (each sealed by the runtime's own seal and verified
@@ -192,8 +193,12 @@ class Vector:
         return sorted(lines)
 
     def admitted_though(self, local: sqlite3.Connection, table: str, rid: str) -> bool:
-        """As the runtime's check: the row asked about with every row naming it taken out."""
-        rows = local.execute(f'SELECT lower(hex(_r_replica)) || \':\' || _r_seq, _r_parents FROM "{table}"').fetchall()
+        """As the runtime's check: the row asked about with every row of its entity naming it taken out."""
+        author, seq = rid.split(":")
+        rows = local.execute(
+            f'SELECT lower(hex(_r_replica)) || \':\' || _r_seq, _r_parents FROM "{table}" WHERE _r_entity = (SELECT _r_entity FROM "{table}" WHERE _r_replica = ? AND _r_seq = ?)',
+            (bytes.fromhex(author), int(seq)),
+        ).fetchall()
         named = {rid}
         grew = True
         while grew:
@@ -249,11 +254,15 @@ def check(scenario: dict, violations: list[dict], disagreements: list[str]) -> N
             with Trial(local):
                 finish(order, v.replay(local, [items[i] for i in order]))
     local.close()
-    if len(states) > 1:
-        (first, o1), (second, o2) = list(states.items())[:2]
+    # P0 compares what is admitted, not the reports: a report says what one
+    # merge made true (D190). The reports are still held to the runtime's, below.
+    admitted: dict[str, list[int]] = {}
+    for text, order in states.items():
+        admitted.setdefault(text.split("# reports\n")[0], order)
+    if len(admitted) > 1:
+        (first, o1), (second, o2) = list(admitted.items())[:2]
         a, b = first.split("\n"), second.split("\n")
-        kind = "reports" if len({s.split("# reports\n")[0] for s in states}) == 1 else "state"
-        violations.append({"key": f"P0 {name} {kind}", "orders": [[items[i]["id"][:8] for i in o1], [items[i]["id"][:8] for i in o2]],
+        violations.append({"key": f"P0 {name} state", "orders": [[items[i]["id"][:8] for i in o1], [items[i]["id"][:8] for i in o2]],
                            "difference": {"only_first": [x for x in a if x not in b][:6], "only_second": [x for x in b if x not in a][:6]}})
     if set(states) != set(scenario["p0"]["states"]):
         disagreements.append(f"{name} P0: {len(states)} state(s) here, {len(scenario['p0']['states'])} in the runtime, not the same")

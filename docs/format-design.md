@@ -57,6 +57,20 @@ against the creator's seat row's (none in the roster since R14), or against
 a close whose consequence is to accuse that author (R18), never to choose
 between two of his statements.
 
+*4 October, D190.* Reports are outside P0. P0 compares what a copy admits
+(the admitted rows, the holders, the voided seats, the equivocated ids and the
+closed sessions), not the reports its merges made on the way. A report says
+what one merge made true ([report-made-true](format.md#report-made-true)), and
+which merge makes a thing true depends on what arrived before it: a row that
+arrives before the confirm that seats its author is reported `SEAT_NOT_HELD`
+by the merge that takes it, and the same row arriving after it is admitted and
+reported by nobody. Reports free of order would have to wait until nothing
+arriving later could change their answer, and in a session nearly any row can
+be changed by a later one (a confirm, a binding, a close, a second header), so
+a copy would report almost nothing until every copy had met. A report tells a
+person about one merge; the state is what the copies converge on. The
+fixtures still hold each merge's reports, so two readers must agree on them.
+
 **Rejected.** Ruling attack by attack: R11 to R13 each closed the shape the
 review showed and not the class it belonged to, so the next review found the
 next shape.
@@ -893,6 +907,45 @@ and no reader fails on it.
 
 **Rejected.** Comparing values whatever their type: text and bytes of the
 same length then seat and fail to seat by turns.
+
+A row waits on a parent it does not hold
+----------------------------------------
+
+*4 October, R21, D189.* Rule:
+[waiting-on-parent](format.md#waiting-on-parent),
+[admitted-parents-held](format.md#admitted-parents-held).
+
+**Problem.** Parents name rows by author and seq, never by entity, session or
+seat, so whether a row crosses a session or a seat through a parent is known
+only on a copy that holds the parent. A copy that held a row and not its
+parent admitted it; the parent's arrival made it a crossing, and that merge
+took it back with only `SEAT_NOT_HELD` or `ENTITY_OTHER_SESSION` reported. The
+property pass found eight such removals against P1: a version for another
+seat, a version of another session's row, and a version naming an id that its
+parent's arrival showed equivocated. Only a writer that names a parent it does
+not hold makes such a row, but anyone can sign one, and whoever holds the
+parent chooses when it arrives. R19 refused only a forward parent of the row's
+own author.
+
+**Rule.** A row of a session author table naming as a parent an id at which
+the copy holds no row, in any table, waits on it: neither admitted nor
+reported. Once every parent it names is held, the existing rules decide it,
+once, and the merge that brought the last of them reports a refusal as it
+reports a row it took. Whether a parent is held is a fact of the row set, and
+an id once held stays held, so a row leaves waiting once and never returns:
+no added row takes it back (P1), and every order of arrival ends in the same
+state (P0). An honest reply that arrives before the move it names waits, and
+is admitted when the move arrives.
+
+**Rejected.** Admitting the row now and removing it later if its parent
+crosses: that is the removal P1 forbids, made by a row its holder may release
+whenever he likes. A crossing as an accusation (`AUTHOR_EQUIVOCATED` of the
+child's author): the child's author does not choose when the parent arrives,
+and an honest child naming another author's row would accuse its writer of
+the other's timing. Refusing a parent of another author that the copy does not
+hold, as R19 refuses a forward one of the row's own author: R19's test reads
+the row alone and is the same on every copy, and this one would depend on
+what a copy holds when the row arrives.
 
 Reasons given inline
 --------------------

@@ -1,0 +1,34 @@
+{
+  "what": "A holds the game and Ada's Nc3, a version naming Bo's e5 as its parent, and neither of the two rows Bo signed at that id; B holds the game and one of them, e5. On A, Nc3 waits on its parent. The merge into A brings e5, a row of another seat: Nc3 is reported SEAT_NOT_HELD, once (R21), beside Bo's e5, which names the seat he holds nowhere once his signing twice voids it on neither copy. Before, A admitted Nc3 and e5's arrival removed it (D189).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

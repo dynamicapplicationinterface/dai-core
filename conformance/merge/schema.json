@@ -23,7 +23,8 @@
   },
   "optional": {
     "shrinksAt": "string — when a stated limitation stops applying",
-    "pairedWith": "string — the runtime test holding the other half of this property, so deleting either half is visible from the one that remains"
+    "pairedWith": "string — the runtime test holding the other half of this property, so deleting either half is visible from the one that remains",
+    "before": "true — the vector also ships expected-admitted-a.txt and expected-admitted-b.txt, what each copy admits before any merge, which a reader computes from the tables alone"
   },
   "note": "A reader that finds a missing or misshapen field must fail rather than skip: a vector it cannot understand is a vector it is not checking, and a silent skip is indistinguishable from a pass."
 }

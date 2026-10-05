@@ -4450,7 +4450,18 @@ finds no write control on screen.
 
 #### D190 — Which reports a merge makes depends on arrival order
 
-*Status: open, needs a ruling. Filed 4 October, from the property pass (P0).*
+*Status: closed 4 October, no rule change. Filed 4 October, from the property
+pass (P0).*
+
+**Ruled:** P0 compares the admitted state, the holders and the closed set (the
+admitted dump: heads, holders, voided seats, equivocated ids, closed
+sessions); reports describe a merge, not a document. `scripts/properties.mjs`
+and `.py` narrowed to that, the 44 entries removed from
+`scripts/properties-known.json`; each order's reports are still kept in the
+scenario, and the Python reader must make the same ones, as the fixtures hold
+each merge's reports. format.md, `report-made-true`: "A report says what this
+merge made true; the same row arriving in another merge may be reported
+differently." format-design.md: why reports are outside P0.
 
 `scripts/properties.mjs` takes each vector's headers one merge at a time into
 an empty copy, in every order (all orders up to six headers, fifty sampled
@@ -4471,8 +4482,22 @@ filed in `scripts/properties-known.json` as `P0 <vector> reports`.
 
 #### D189 — A crossing child admitted before its parent is removed when the parent arrives
 
-*Status: open, needs a ruling. Filed 4 October, from the property pass (P1);
-listed as found, not fixed, in the R14 to R20 step.*
+*Status: closed 4 October by R21. Filed 4 October, from the property pass
+(P1); listed as found, not fixed, in the R14 to R20 step.*
+
+**Ruled (R21):** a session author-table row naming as a parent a row the copy
+does not hold is waiting, neither admitted nor reported, until that parent is
+held; then it is admitted or refused, once, by the existing rules. "Held" is a
+row at that id in any table (a parent in another table is held, and is no
+version: `session-parent-in-another-table`). The merge that releases a row
+reports it as a row it took. format.md `waiting-on-parent` and
+`admitted-parents-held`, a version line; format-design.md, "A row waits on a
+parent it does not hold" (rejected: admit now and remove later, which breaks
+P1). The eight removals are vectors (`session-waits-*`, each shipping what A
+admits before the merge), red against the runtime before R21 (admitted, then
+removed), with `session-waits-reply-first`, an honest reply that arrives
+before the move it names (waiting, then admitted). The eight entries removed
+from `scripts/properties-known.json`.
 
 P1 says an added signed row removes an admitted row or a hold only in a merge
 that reports `AUTHOR_EQUIVOCATED`. The property pass finds 8 removals at HEAD
@@ -4583,6 +4608,12 @@ session schema pushes it over, and the link falls back to a reference link.
 **Want:** room that does not depend on cutting app text, e.g. the session
 schema's views emitted from a shorter form, or the inline dictionary taught
 the session schema.
+
+*4 October, R21.* R21's view and lookups put the link at 33,024, 256 over.
+A session document's per-table objects (triggers and views) no longer carry
+their `--` comments into the schema, as the roster block's do not; a plain
+document's schema is unchanged. With R21, 31,534: 1,234 under. The want
+stands: the next growth eats into that.
 
 #### D185 — A close signed at a skipped seq takes back the closer's answered move
 

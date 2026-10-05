@@ -574,6 +574,35 @@ function namesEquivocated(row: string): string {
 }
 
 /**
+ * Raw row `row` names as a parent an id this copy holds no row at, in any
+ * table (R21, D189): it waits on that parent. Which row the id is, and so
+ * whether the row crosses a session or a seat through it, is not known until
+ * the parent is held, so the row is neither admitted nor reported until then;
+ * once it is held, the existing rules decide, once. `held` is every row id the
+ * copy holds (`waitingParentView`).
+ */
+function awaitsParent(row: string): string {
+  return `EXISTS (SELECT 1 FROM json_each(${parentsSql(`${row}._r_parents`)}) wp WHERE wp.value NOT IN held)`;
+}
+
+/**
+ * The rows of a session document's author tables waiting on a parent (R21),
+ * by id: one view for the document, since its schema travels in every copy
+ * and an inline link has a length cap. `held` is every row id it holds, in
+ * every replicated table, spelled as `_r_parents` spells it: one id per
+ * `(author, seq)` across tables for signed rows (row-one-id), so a parent held
+ * in another table is held, and is no version of the row that names it. A row
+ * at an id two tables hold is at an equivocated id, and admitted nowhere.
+ */
+function waitingParentView(tables: readonly string[], authorTables: readonly string[]): string {
+  const held = tables.map((t) => `SELECT lower(hex(_r_replica))||':'||_r_seq FROM "${t}"`).join(" UNION ALL ");
+  const rows = authorTables.map((t) => `SELECT r._r_replica, r._r_seq FROM "${t}" r WHERE ${awaitsParent("r")}`).join(" UNION ALL ");
+  return `
+CREATE VIEW IF NOT EXISTS _dai_waiting_parent AS WITH held(id) AS (${held}) ${rows};
+`;
+}
+
+/**
  * The closed sessions, as lowercase hex, for a document whose schema predates
  * `_dai_closed` (D154): the view's own rule, so the host calls a session closed
  * exactly when admission does. Needs the seat views (24 September); a document
@@ -711,10 +740,16 @@ function headsView(
     `EXISTS (SELECT 1 FROM ${q} sp, json_each(${parentsSql(`${row}._r_parents`)}) sj` +
     ` WHERE sp._r_entity = ${row}._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq` +
     ` AND sp._r_session = ${row}._r_session AND sp."${seatColumn}" IS NOT ${row}."${seatColumn}")`;
+  // A row waiting on a parent this copy does not hold (R21) is not admitted,
+  // whatever else it meets: what its parent is decides whether it crosses.
+  // Read from `_dai_waiting_parent` by id, an uncorrelated IN computed once per
+  // statement, and short: the schema travels in every document, inline links
+  // included.
+  const waitsOnParent = (row: string): string => `(${row}._r_replica, ${row}._r_seq) IN _dai_waiting_parent`;
   const admitted = (row: string): string =>
     seatColumn
-      ? `(${holds(row)}) AND NOT ${foreign(row)} AND NOT ${otherSeat(row)}${byRole(row)} AND NOT ${namesEquivocated(row)}`
-      : `(${member(row)}) AND NOT ${foreign(row)}${byRole(row)} AND NOT ${namesEquivocated(row)}`;
+      ? `(${holds(row)}) AND NOT ${foreign(row)} AND NOT ${otherSeat(row)}${byRole(row)} AND NOT ${namesEquivocated(row)} AND NOT ${waitsOnParent(row)}`
+      : `(${member(row)}) AND NOT ${foreign(row)}${byRole(row)} AND NOT ${namesEquivocated(row)} AND NOT ${waitsOnParent(row)}`;
   /*
    * Waiting on a confirmation (identity step 5, finding 6): the author asked for
    * an open seat nobody holds yet and that is not void, in the row's session,
@@ -746,7 +781,10 @@ function headsView(
   // equivocator, naming no equivocated id as a parent. A row of a void
   // session, or of one with no live creator's seat row, is reported nowhere
   // (R14, R20), nor is an equivocator's (R17), whose signing twice is the one
-  // thing reported of him, nor a row naming an equivocated id (X1).
+  // thing reported of him, nor a row naming an equivocated id (X1). Nor a row
+  // waiting on a parent this copy does not hold (R21), which the merge, the
+  // one reader of these views, leaves out by `_dai_waiting_parent`: the schema
+  // travels in every document, so the test is stated once.
   const reportable = (row: string): string =>
     `${inLiveSession(row)} AND ${notEquivocator(row)} AND NOT ${namesEquivocated(row)}`;
   // A waiting row is superseded within its own partition, never by the stored
@@ -857,7 +895,11 @@ function tableObjects(
    * document's `_current` is the text it always was.
    */
   const heads = session ? "heads" : `${q}_heads`;
-  return `
+  // In a session document the comments below are read here and not stored, as
+  // the roster's are (D186): its schema is longer, and an inline link has a
+  // length cap. A plain document's schema is the text it always was.
+  const emitted = (sql: string): string => (session ? `\n${stripSqlComments(sql)}\n` : sql);
+  return emitted(`
 CREATE INDEX IF NOT EXISTS ${q}__r_entity ON ${q}(_r_entity, _r_lc);
 
 CREATE TRIGGER IF NOT EXISTS ${q}__no_update BEFORE UPDATE OF
@@ -920,7 +962,7 @@ CREATE VIEW IF NOT EXISTS ${q}_current AS${heads === `${q}_heads` ? "" : `\n  WI
        WHERE ${samePart("y", "h")} AND y._r_deleted = 0
        ORDER BY y._r_lc DESC, hex(y._r_replica) ASC, y._r_seq ASC
        LIMIT 1);
-`;
+`);
 }
 
 /**
@@ -1590,7 +1632,8 @@ export function rewriteReplicated(sql: string): RewrittenSchema {
       documentTables(session !== null, session?.maxParties ?? 0, declared.map((span) => span.name)) +
       out +
       authorRulesView(authors) +
-      seatRulesView(seats),
+      seatRulesView(seats) +
+      (session ? waitingParentView([...SESSION_SYSTEM_TABLES, ...declared.map((span) => span.name)], declared.map((span) => span.name)) : ""),
     // Author tables only — the manifest's `replication.tables` surface, and what
     // the sibling test reads. The roster tables (`SESSION_SYSTEM_TABLES`) are in
     // the schema and the digest but not this list; they are implicit in a session

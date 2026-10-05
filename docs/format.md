@@ -514,7 +514,9 @@ these hold:
   no row of its own entity, in its session, whose seat column differs from
   its own;
 - <a id="admitted-role"></a>where the table carries a role (`author=creator`
-  or `author=joiner`), its author is, or is not, the session's creator.
+  or `author=joiner`), its author is, or is not, the session's creator;
+- <a id="admitted-parents-held"></a>the copy holds a row at every id it names
+  as a parent ([waiting-on-parent](#waiting-on-parent)).
 
 <a id="parent-other-entity"></a>Parents name rows by `(author, seq)`, never
 entities, and a version of a row is a row of its own table and entity: a
@@ -552,6 +554,16 @@ which names that seat, is waiting: neither admitted nor reported, and
 admitted if the author is later confirmed. <a id="void-row"></a>A row for a
 void seat is neither admitted nor reported.
 
+<a id="waiting-on-parent"></a>A row of a session author table that names as a
+parent an id at which the copy holds no row, in any table, is waiting on that
+parent: neither admitted nor reported, whatever else it meets, since which row
+the id is decides whether the row crosses a session or a seat. Once the copy
+holds a row at every id it names, the rules above decide it, once: the merge
+that brings the last of its parents admits it or refuses it, and reports a
+refusal as it reports a row it took ([reports](#report-made-true)). A parent
+once held stays held: a merge removes a row only where a signed row takes its
+id ([merge-signed-outranks](#merge-signed-outranks)).
+
 ## Reports
 
 <a id="refused-batches"></a>`refusedBatches` is one entry `{author, reason}`
@@ -573,11 +585,14 @@ author id in hex.
 
 <a id="report-made-true"></a>`SEAT_NOT_HELD` and `ENTITY_OTHER_SESSION`
 report what this merge made true, and only about a row in a live session.
+A report says what this merge made true; the same row arriving in another
+merge may be reported differently.
 <a id="seat-value-shape"></a>A **seat value** is a byte string of exactly 16
 bytes. Any other value (text, whatever its length, NULL, a number, a byte
 string of another length) is not one: it names no seat, a confirm naming it
 counts for nothing, and no reader may fail on it.
-<a id="seat-not-held"></a>A row this merge took, in a seated table, is
+<a id="seat-not-held"></a>A row this merge took, or released from
+[waiting on a parent](#waiting-on-parent), in a seated table, is
 `SEAT_NOT_HELD` when its seat column holds no seat value; or names a seat its
 author does not hold, unless it is waiting in that seat or the seat is void
 (a seat someone else holds, and a value no counting confirm names, are both
@@ -586,9 +601,11 @@ seat.
 <a id="entity-other-session"></a>A row in a session author table naming a
 parent of its entity from another session is `ENTITY_OTHER_SESSION`.
 <a id="report-crossing"></a>For the two crossings, the report is made
-whichever of the two rows this merge took, the child or the parent, and is
-the child's. <a id="report-silent"></a>A row waiting on a confirmation, a row
-for a void seat, and a row naming an equivocated id as a parent
+whichever of the two rows this merge took, the child or the parent, or when
+it released the child from waiting on a parent, and is the child's.
+<a id="report-silent"></a>A row waiting on a confirmation, a row
+[waiting on a parent](#waiting-on-parent), a row for a void seat, and a row
+naming an equivocated id as a parent
 ([whatever else it meets](#admitted-parent-equivocated)) are reported
 nowhere; a row by an [equivocator](#equivocator-holds-nothing), at an
 equivocated id or not, is reported nowhere but as its author signing twice
@@ -733,6 +750,8 @@ version, never a refactor (identity.md, binding rule 10).
   confirm names is `SEAT_NOT_HELD`.
 - Version 2: a header over a seq at or below the floor leaves only if it left
   before, and no leave carries two of the author's headers over one seq.
+- Version 2: a row naming as a parent an id the copy holds no row at waits on
+  it, neither admitted nor reported, and is decided once when it is held.
 
 ## Conformance
 

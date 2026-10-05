@@ -1463,6 +1463,16 @@ export function mergeFrom(
     }
     reject(rowId(row._r_replica, row._r_seq));
   };
+  /*
+   * The rows waiting on a parent this copy does not hold (R21), by id, before
+   * anything is placed. One this merge stops waiting is decided now, once, and
+   * reported as a row it took is: what this merge made true.
+   */
+  const waitingParent = (): Set<string> =>
+    !hasView("_dai_waiting_parent")
+      ? new Set()
+      : new Set(local.all("SELECT _r_replica, _r_seq FROM _dai_waiting_parent").map((r) => rowId(r["_r_replica"] as Uint8Array, Number(r["_r_seq"]))));
+  const waitingBefore = waitingParent();
   const added: { table: string; row: ReplicatedRow }[] = [];
   const place = (table: string, row: ReplicatedRow, signed: boolean): void => {
     for (const other of tables) {
@@ -1538,11 +1548,24 @@ export function mergeFrom(
       ? local.all("SELECT tbl FROM _dai_seat_rules").map((r) => String(r["tbl"]))
       : [],
   );
+  // The rows waiting on a parent after the merge (R21), reported nowhere, and
+  // those this merge released from waiting, reported as taken.
+  const waitingAfter = waitingParent();
+  const waits = (id: string): boolean => waitingAfter.has(id);
   for (const { table, row } of added) {
-    if (!seated.has(table)) continue;
+    if (!seated.has(table) || waits(rowId(row._r_replica, row._r_seq))) continue;
     const unseated = local.all(`SELECT 1 FROM "${table}_unseated" WHERE _r_replica = ? AND _r_seq = ?`, [row._r_replica, row._r_seq]);
     if (unseated.length > 0) {
       refuseBatch(row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "", row._r_replica, "SEAT_NOT_HELD");
+    }
+  }
+  const released = new Set([...waitingBefore].filter((id) => !waits(id)));
+  for (const table of seated) {
+    for (const id of released) {
+      const [author = "", seq = "0"] = id.split(":");
+      for (const r of local.all(`SELECT _r_replica, _r_batch FROM "${table}_unseated" WHERE lower(hex(_r_replica)) = ? AND _r_seq = ?`, [author, Number(seq)])) {
+        refuseBatch(r["_r_batch"] instanceof Uint8Array ? hex(r["_r_batch"]) : "", r["_r_replica"] as Uint8Array, "SEAT_NOT_HELD");
+      }
     }
   }
 
@@ -1560,14 +1583,14 @@ export function mergeFrom(
     ["_other_seat", "SEAT_NOT_HELD"],
   ] as const;
   for (const table of tables) {
-    const arrived = new Set(added.filter((a) => a.table === table).map((a) => rowId(a.row._r_replica, a.row._r_seq)));
+    const arrived = new Set([...added.filter((a) => a.table === table).map((a) => rowId(a.row._r_replica, a.row._r_seq)), ...released]);
     if (arrived.size === 0) continue;
     for (const [suffix, reason] of crossings) {
       if (!views.has(`${table}${suffix}`)) continue;
       for (const f of local.all(`SELECT _r_replica, _r_seq, _r_batch, parent_replica, parent_seq FROM "${table}${suffix}"`)) {
         const child = rowId(f["_r_replica"] as Uint8Array, Number(f["_r_seq"]));
         const parent = rowId(f["parent_replica"] as Uint8Array, Number(f["parent_seq"]));
-        if (!arrived.has(child) && !arrived.has(parent)) continue;
+        if ((!arrived.has(child) && !arrived.has(parent)) || waits(child)) continue;
         refuseBatch(f["_r_batch"] instanceof Uint8Array ? hex(f["_r_batch"]) : "", f["_r_replica"] as Uint8Array, reason);
       }
     }

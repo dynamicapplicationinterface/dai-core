@@ -78,6 +78,17 @@ HEADERONLY = "session-creator-equivocates-header-only"
 MAXP = "session-seat-beyond-max-parties"
 UNSEATED = "session-equivocated-parent-unseated"
 HOLDS = [f"session-seal-hold-{order}-{at}" for order in ("one-batch", "two-batch") for at in ("first", "last")]
+WAITS = [
+    "session-waits-entity-other-session",
+    "session-waits-equivocated-parent-d5",
+    "session-waits-equivocated-parent-e5",
+    "session-waits-equivocated-row-silent",
+    "session-waits-other-seat",
+    "session-waits-other-seat-forward-bo",
+    "session-waits-other-seat-forward-cy",
+    "session-waits-reply-first",
+    "session-waits-void-creator-row-tombstone",
+]
 # The ninth attack review (3 October) and its rulings, R14 to R20, A03, A09.
 GAP1 = "session-gap-seat-row"
 GAP2 = "session-gap-creator-row-version"
@@ -241,13 +252,20 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "report-made-true", "a crossing reported by every merge that holds it", [EOS],
         [("if rid_of(child) in came or rid_of(parent) in came:", "if True:")],
     ),
+    # Since R21 a merge that brings a crossing's parent brings the child too or
+    # releases it from waiting on that parent, so the parent clause and the
+    # release each cover the other: a hold-out removes both, or neither shows.
     "crossing-child-only": (
-        "report-crossing", "a crossing reported only when the merge took the child", [EOS],
-        [("if rid_of(child) in came or rid_of(parent) in came:", "if rid_of(child) in came:")],
+        "report-crossing", "a crossing reported only when the merge took the child, not when it took the parent or released the child", [EOS],
+        [("if rid_of(child) in came or rid_of(parent) in came:", "if rid_of(child) in came:"),
+         (" | {rid for t, rid in released if t == table}", "")],
     ),
     "seat-crossing-child-only": (
-        "report-crossing", "a version of another seat reported only when the merge took the child", [OSEAT],
-        [("if rid_of(child) in came or rid_of(parent) in came:", "if rid_of(child) in came or (reason == 'ENTITY_OTHER_SESSION' and rid_of(parent) in came):")],
+        "report-crossing", "a version of another seat reported only when the merge took the child, not when it took the parent or released the child", [OSEAT],
+        [("if rid_of(child) in came or rid_of(parent) in came:", "if rid_of(child) in came or (reason == 'ENTITY_OTHER_SESSION' and rid_of(parent) in came):"),
+         (" | {rid for t, rid in released if t == table}", ""),
+         # A released row is SEAT_NOT_HELD through `unseated` too, which counts another seat's version.
+         ("for r in admission.rows[t] if (t, rid_of(r)) in released):", "for r in admission.rows[t] if False):")],
     ),
     # seat-any-length retired (A03): every row for a value nobody holds is
     # SEAT_NOT_HELD, so whether a byte string of another length is a seat value
@@ -444,6 +462,12 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         [('            if x["_r_deleted"] == 0\n            and bytes(x["_r_session"]) in live0',
           '            if x["_r_deleted"] == 0 and not self.names_equivocated(x)\n            and bytes(x["_r_session"]) in live0')],
     ),
+    # ------------------------------------------------ R21: a row waits on a parent it names (4 October, D189)
+    "parent-not-waited": (
+        "waiting-on-parent", "a row naming an id the copy holds no row at is decided as if the id named nothing", WAITS,
+        [('        return any(parent not in self.held for parent in parents_of(row["_r_parents"], row["_r_replica"], row["_r_seq"]))',
+          "        return False")],
+    ),
     # ------------------------------------------------ R14 to R20, A03, A09: the ninth attack review (3 October)
     "roster-any-valid": (
         "roster-declared", "a creator's seat row's roster is valid whatever it holds", INVALID,
@@ -565,6 +589,10 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     "held-header-kept-relabeled-rt": (
         "merge-headers-rewritten", "a header the copy held already keeps the list it held it under", [HELDLIST],
         [(r'if \(!isNew\) local\.run\("UPDATE _dai_batch SET covers', 'if (false) local.run("UPDATE _dai_batch SET covers')],
+    ),
+    "parent-not-waited-rt": (
+        "waiting-on-parent", "a row naming an id the copy holds no row at is decided as if the id named nothing (awaitsParent)", WAITS,
+        [(r"(function awaitsParent\d*\(row\) \{\s+return )`EXISTS", r'\1"0";\n  `EXISTS')],
     ),
     "parent-equivocated-admitted-rt": (
         "admitted-parent-equivocated", "admitted and waiting rows may name an equivocated id as a parent", ["session-equivocated-parent-unseated"],

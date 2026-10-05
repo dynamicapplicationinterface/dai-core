@@ -53,6 +53,7 @@ import {
   carryHeaderOnly,
   columnsOf,
   forge,
+  forwardParentAt,
   headersListing,
   holdHeader,
   raw,
@@ -2530,7 +2531,217 @@ CREATE TABLE cards (
         ba: { reports: ["Cy AUTHOR_EQUIVOCATED"] },
       }),
   },
+
+  /*
+   * R21 (D189, 4 October): a row of an author table naming as a parent an id
+   * the copy holds no row at waits on it, neither admitted nor reported, until
+   * the parent is held. The eight removals the property pass found
+   * (scripts/properties.mjs, P1), each as a vector: A holds the set of headers
+   * the pass found it from, B that set and the header released. Each ships
+   * what A admits before the merge (`before`), and each was red against the
+   * runtime before R21: the child admitted on A, then removed by the merge that
+   * brings its parent. And one honest order: a reply that arrives before the
+   * move it names.
+   */
+  waitsOn("session-waits-entity-other-session", "session-entity-other-session", {
+    what:
+      "A holds Ada's session S2: her creator's seat row and a version, in S2, of the entity of a move she made in S, naming that move, which A does not hold. B holds the move as well. On A the version waits on its parent, neither admitted nor reported; the merge into A brings the parent, the version names another session's row of its entity, and it is reported ENTITY_OTHER_SESSION, once (R21). Before, A admitted the version and the parent's arrival removed it (D189).",
+    holding: ["70635438"],
+    release: ["5765697a"],
+    child: () => `${hexOf(ADA.author)}:5`,
+    reports: ["Ada ENTITY_OTHER_SESSION"],
+  }),
+  waitsOn("session-waits-equivocated-parent-e5", "session-equivocated-parent", {
+    what:
+      "A holds the game and Ada's Nc3, a version naming Bo's e5 as its parent, and neither of the two rows Bo signed at that id; B holds the game and one of them, e5. On A, Nc3 waits on its parent. The merge into A brings e5, a row of another seat: Nc3 is reported SEAT_NOT_HELD, once (R21), beside Bo's e5, which names the seat he holds nowhere once his signing twice voids it on neither copy. Before, A admitted Nc3 and e5's arrival removed it (D189).",
+    holding: ["5449fafc", "92f17227"],
+    release: ["00e0276a"],
+    child: () => `${hexOf(ADA.author)}:3`,
+    reports: ["Ada SEAT_NOT_HELD", "Bo SEAT_NOT_HELD"],
+  }),
+  waitsOn("session-waits-equivocated-parent-d5", "session-equivocated-parent", {
+    what:
+      "As session-waits-equivocated-parent-e5, B holding the other of Bo's two rows at the id Ada's Nc3 names, d5. On A, Nc3 waits on its parent; the merge into A brings d5, a row of another seat, and Nc3 is reported SEAT_NOT_HELD, once (R21). Before, A admitted Nc3 and d5's arrival removed it (D189).",
+    holding: ["5449fafc", "92f17227"],
+    release: ["ccaf8838"],
+    child: () => `${hexOf(ADA.author)}:3`,
+    reports: ["Ada SEAT_NOT_HELD", "Bo SEAT_NOT_HELD"],
+  }),
+  waitsOn("session-waits-equivocated-row-silent", "session-equivocated-row-silent", {
+    what:
+      "A holds the game and Bo's d5, a version for his own seat of Ada's e4, and not e4; B holds e4 as well. On A, d5 waits on its parent. The merge into A brings e4, a row of another seat: d5 is reported SEAT_NOT_HELD, once (R21). Before, A admitted d5 and e4's arrival removed it (D189).",
+    holding: ["39f7929d", "440d5e4a", "5c253e8b", "667ef6ee", "92f17227"],
+    release: ["ff4d4d6c"],
+    child: () => `${hexOf(BO.author)}:4`,
+    reports: ["Bo SEAT_NOT_HELD"],
+  }),
+  waitsOn("session-waits-other-seat", "session-other-seat", {
+    what:
+      "A holds the game and Bo's e5, a version for his seat naming Ada's e4, and not e4; B holds e4 as well. On A, e5 waits on its parent, and so does Bo's Nc6, another entity naming the same. The merge into A brings e4: e5 acts for another seat's row and is reported SEAT_NOT_HELD, once, and Nc6, which crosses nothing, is admitted (R21). Before, A admitted e5 and e4's arrival removed it (D189).",
+    holding: ["3cefa035", "5c253e8b", "92f17227"],
+    release: ["679ea05c"],
+    child: () => `${hexOf(BO.author)}:2`,
+    reports: ["Bo SEAT_NOT_HELD"],
+  }),
+  waitsOn("session-waits-other-seat-forward-bo", "session-other-seat", {
+    what:
+      "A is session-other-seat's B: Bo's e5 and Nc6 name Ada's e4, which A does not hold. B holds that and, at e4's id, a row of Ada's written by a client that skips the writers: her move's entity for her seat, naming as its parent Bo's next id, which does not exist. On A, e5 and Nc6 wait on their parent. The merge into A brings Ada's row: e5 acts for another seat's row and is reported SEAT_NOT_HELD, once, Nc6 is admitted, and Ada's row waits on the id it names (R21). Before, A admitted e5 and Ada's row removed it (D189).",
+    from: "b",
+    forward: () => BO,
+    child: () => `${hexOf(BO.author)}:2`,
+    reports: ["Bo SEAT_NOT_HELD"],
+  }),
+  waitsOn("session-waits-other-seat-forward-cy", "session-other-seat", {
+    what:
+      "As session-waits-other-seat-forward-bo, Ada's row naming as its parent the first id of Cy, who writes nothing. On A, e5 and Nc6 wait on their parent; the merge into A brings Ada's row, e5 is reported SEAT_NOT_HELD, once, Nc6 is admitted, and Ada's row waits (R21). Before, A admitted e5 and Ada's row removed it (D189).",
+    from: "b",
+    forward: () => CY,
+    child: () => `${hexOf(BO.author)}:2`,
+    reports: ["Bo SEAT_NOT_HELD"],
+  }),
+  waitsOn("session-waits-void-creator-row-tombstone", "session-void-creator-row-tombstone", {
+    what:
+      "A holds Ada's game, Bo seated, and Bo's a4 in it, a version naming his a3, which A does not hold; B holds Bo's own session and a3 as well. On A, a4 waits on its parent. The merge into A brings a3, a row of a4's entity from another session: a4 is reported ENTITY_OTHER_SESSION, once (R21). Before, A admitted a4 and a3's arrival removed it (D189).",
+    holding: ["589dc821", "847083bc", "92f17227"],
+    release: ["7292ac62"],
+    child: () => `${hexOf(BO.author)}:5`,
+    reports: ["Bo ENTITY_OTHER_SESSION"],
+  }),
+  {
+    name: "session-waits-reply-first",
+    session: true,
+    before: true,
+    cites: ["6", "T1-D29"],
+    what:
+      "Ada plays e4, and Bo answers with e5, a move of another entity naming e4 as its parent. A copy of the game (A) receives Bo's batch before Ada's; B holds both. On A, e5 waits on the move it names, neither admitted nor reported. The merge into A brings e4: it names nothing that crosses, so e5 is admitted beside it, and nothing is reported (R21). A parent of another entity hides nothing (T1-D35).",
+    fill: async (a, b) => {
+      const ada = copyFor(ADA);
+      const bo = copyFor(BO);
+      await seated(ada, bo);
+      const session = ada.all("SELECT _r_session AS s FROM _dai_seat LIMIT 1")[0].s;
+      const e4 = createEntity(ada, "moves", id(0x81), { seat: SEAT_W, san: "e4" }, session);
+      await exchange(bo, ada, ADA);
+      const e5 = raw(bo, "moves", id(0x82), { seat: SEAT_OPEN, san: "e5" }, session, JSON.stringify([idOf(e4)]));
+      await sealAll(bo, BO);
+      const moveOf = (copy, row) => headersListing(copy, row._r_replica, "moves", row._r_seq);
+      const game = ada.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => r.id).filter((hid) => !moveOf(ada, e4).includes(hid));
+      carry(a, ada, game);
+      carry(a, bo, moveOf(bo, e5));
+      settled(a);
+      await exchange(b, ada, ADA);
+      await exchange(b, bo, BO);
+      ada.done();
+      bo.done();
+      marks["session-waits-reply-first"] = [idOf(e4), idOf(e5)];
+    },
+    expect: ({ ab, ba }) => {
+      const [e4, e5] = marks["session-waits-reply-first"];
+      const moves = (dump) => sectionOf(dump, "moves").map((line) => line.split("\t")[0]);
+      if (moves(ab.before).length > 0) return `A, before the merge: admitted moves are [${moves(ab.before).join(" | ")}], though e5 names a move A does not hold`;
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        if (reported(run).length > 0) return `${direction}: reported [${reported(run).join(", ")}]`;
+        if (moves(run.admitted).join() !== [e4, e5].join()) return `${direction}: admitted moves are [${moves(run.admitted).join(" | ")}], not e4 and e5`;
+      }
+    },
+  },
 ];
+
+/**
+ * A vector's scenario built again in two scratch copies, as that vector's own
+ * are (`populate`): where R21's vectors take their headers from.
+ */
+async function scenarioOf(name) {
+  const source = VECTORS.find((vector) => vector.name === name);
+  const paths = ["a", "b"].map((which) => join(out, `scratch-scenario-${copies++}-${which}.db`));
+  const [a, b] = paths.map((path, i) => open(path, undefined, schemaFor(source, i === 0 ? "a" : "b")));
+  await populate(source, a, b);
+  return {
+    a,
+    b,
+    done: () => {
+      a.close();
+      b.close();
+      for (const path of paths) rmSync(path);
+    },
+  };
+}
+
+/** Carries into `to` each header named by an id prefix, from whichever of `copies` holds it complete. */
+async function carriedFrom(to, copies, prefixes) {
+  for (const prefix of prefixes) {
+    let found = null;
+    for (const copy of copies) {
+      for (const [hid, verdict] of await verifyBatches(copy, copy.tables, DOC)) {
+        if (hid.startsWith(prefix) && verdict.ok && verdict.complete) found = { copy, hid };
+      }
+      if (found) break;
+    }
+    if (!found) throw new Error(`no copy holds a header ${prefix}... complete`);
+    carry(to, found.copy, [found.hid]);
+  }
+}
+
+/**
+ * `carry` copies the display cache as the source copy kept it; a copy that
+ * took the same rows by merge keeps it true of its own rows (T1-D2).
+ */
+function settled(to) {
+  for (const table of to.tables) {
+    to.run(
+      `UPDATE "${table}" SET _r_superseded = EXISTS (SELECT 1 FROM "${table}" c, json_each(CASE WHEN json_valid(c._r_parents) THEN c._r_parents ELSE '[]' END) p
+         WHERE c._r_entity = "${table}"._r_entity AND p.value = lower(hex("${table}"._r_replica)) || ':' || "${table}"._r_seq)`,
+    );
+  }
+}
+
+/**
+ * One of R21's vectors from the property pass: A holds the headers `holding`
+ * names (or, with `from`, every header of that copy of the source), B holds
+ * those and the headers `release` names (or, with `forward`, a row of Ada's at
+ * her parent move's id naming that person's next id as its parent, as a
+ * client that skips the writers signs it). The child is not admitted on A
+ * before the merge, nor on either copy after it, and the merge into A reports
+ * `reports`; the merge into B, nothing.
+ */
+function waitsOn(name, source, { what, holding, release, from, forward, child, reports }) {
+  return {
+    name,
+    session: true,
+    before: true,
+    cites: ["6", "T1-D29"],
+    what,
+    fill: async (a, b) => {
+      const scenario = await scenarioOf(source);
+      const copies = [scenario.a, scenario.b];
+      const held = holding ?? scenario[from].all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => r.id);
+      await carriedFrom(a, copies, held);
+      await carriedFrom(b, copies, held);
+      if (release) await carriedFrom(b, copies, release);
+      if (forward) {
+        // Ada's move, which the child names, and the next id of the person named.
+        const [move] = scenario.a.all("SELECT * FROM moves WHERE _r_replica = ? ORDER BY _r_seq", [ADA.author]);
+        const next = 1 + Math.max(0, ...copies.flatMap((c) => c.tables.flatMap((t) => c.all(`SELECT _r_seq AS s FROM "${t}" WHERE _r_replica = ?`, [forward().author]).map((r) => Number(r.s)))));
+        const ada = copyFor(ADA);
+        forwardParentAt(ada, move._r_seq, "moves", move._r_entity, columnsOf(move), move._r_session, { author: forward().author, seq: next });
+        await sealAll(ada, ADA);
+        carry(b, ada, ada.all("SELECT lower(hex(id)) AS id FROM _dai_batch").map((r) => r.id));
+        ada.done();
+      }
+      scenario.done();
+      settled(a);
+      settled(b);
+    },
+    expect: ({ ab, ba }) => {
+      const admits = (dump) => sectionOf(dump, "moves").some((line) => line.split("\t")[0] === child());
+      if (admits(ab.before)) return `A, before the merge: ${child()} is admitted, though a parent it names is not held`;
+      for (const [direction, run] of [["ab", ab], ["ba", ba]]) {
+        if (admits(run.admitted)) return `${direction}: ${child()} is admitted`;
+      }
+      if ([...reported(ab)].sort().join() !== [...reports].sort().join()) return `ab: reported [${reported(ab).join(", ")}], not [${reports.join(", ")}]`;
+      if (reported(ba).length > 0) return `ba: reported [${reported(ba).join(", ")}]`;
+    },
+  };
+}
 
 /** A seat value spelled as a 16-character TEXT, and the 16 bytes of the same UTF-8 (A09). */
 const TEXT_SEAT = "OPENSEAT-OPENSEA";
@@ -2710,6 +2921,8 @@ async function run(vector, direction) {
   // And each copy's signed view (manifest.json): two builds are refused whole (R16).
   const [own, theirs] = direction === "ab" ? ["a", "b"] : ["b", "a"];
   const views = { local: manifestOf(schemaFor(vector, own)).view, sibling: manifestOf(schemaFor(vector, theirs)).view };
+  // What the copy merged into admits before the merge (`before`, R21).
+  const before = vector.session || vector.admits ? admittedDump(left) : null;
   const result = mergeFrom(left, right, left.tables, undefined, verdicts, { views });
   const dump = canonicalDump(left, left.tables);
   const admitted = vector.session || vector.admits ? admittedDump(left) : null;
@@ -2742,7 +2955,7 @@ async function run(vector, direction) {
   b.close();
   rmSync(join(out, vector.name, "scratch-a.db"));
   rmSync(join(out, vector.name, "scratch-b.db"));
-  return { dump, result, admitted };
+  return { dump, result, admitted, before };
 }
 
 /** The inputs, written as they stand before any merge, and the verdict on every header in them. */
@@ -2815,6 +3028,7 @@ Per vector:
 | \`lists.json\` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |
 | \`manifest.json\` | per copy (\`a\`, \`b\`), what its signed manifest gives a reader: the signed-view digest (\`view\`) and, in a session document, the session profile's \`max_parties\` and close rule (\`session\`) |
 | \`expected-admitted-ab.txt\`, \`expected-admitted-ba.txt\` | session vectors, and \`merge-equivocated-plain-heads\`: what the document admits after each merge (below) |
+| \`expected-admitted-a.txt\`, \`expected-admitted-b.txt\` | only where \`result.json\` says \`before: true\`: what each copy admits before any merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -2921,7 +3135,11 @@ and the seq) and \`# closed\`, each sorted, ids in lowercase hex. Batch format v
 document admits, which the stored rows alone cannot show, so these are what a
 reader without one of those changes disagrees with. A reader computes them from
 the tables and headers alone, and \`max_parties\` from \`manifest.json\` (most
-vectors 2, the three-party ones 3). It reads no view but \`_dai_seat_rules\` and
+vectors 2, the three-party ones 3). A vector whose \`result.json\` says
+\`before: true\` also ships \`expected-admitted-a.txt\` and
+\`expected-admitted-b.txt\`, what each copy admits before any merge, in the
+same text: where what a copy admits changes with what arrives, the state
+before the merge is half of what the vector rules. It reads no view but \`_dai_seat_rules\` and
 \`_dai_author_rules\`, which are declarations; the rest are computations, and a
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
@@ -2973,6 +3191,10 @@ in docs/identity.md and docs/format.md:
   void, or another seat's version is reported \`SEAT_NOT_HELD\` (A03, A09),
   and one naming another session's version \`ENTITY_OTHER_SESSION\`; one
   waiting on a confirmation and one for a void seat are reported nowhere;
+- a row of an author table naming as a parent an id at which the copy holds
+  no row, in any table, waits on it: neither admitted nor reported. The merge
+  that brings the parent decides it by the rules above, once, and reports it
+  as a row it took (R21);
 - a row whose parents are not the one shape (D159) is never taken, nor any
   row of a complete batch that signed one, and the batch is refused
   \`ROW_MALFORMED\`;
@@ -3081,6 +3303,10 @@ for (const vector of chosen) {
     compare(join(dir, "expected-admitted-ab.txt"), ab.admitted);
     compare(join(dir, "expected-admitted-ba.txt"), ba.admitted);
   }
+  if (vector.before) {
+    compare(join(dir, "expected-admitted-a.txt"), ab.before);
+    compare(join(dir, "expected-admitted-b.txt"), ba.before);
+  }
   compare(
     join(dir, "result.json"),
     `${JSON.stringify(
@@ -3102,6 +3328,9 @@ for (const vector of chosen) {
         // backlog D171); a reader that finds this and does not compute
         // admission fails rather than skipping.
         admitted: Boolean(vector.session || vector.admits),
+        // And what each copy admits before any merge (expected-admitted-a.txt,
+        // expected-admitted-b.txt), where the vector rules that too (R21).
+        ...(vector.before ? { before: true } : {}),
         ...(vector.shrinksAt ? { shrinksAt: vector.shrinksAt } : {}),
         // Each copy is a fixed point whether or not the two agree: run()
         // merges a second time and requires nothing to move, except in a

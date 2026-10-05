@@ -1,0 +1,25 @@
+{
+  "what": "Ada plays e4, and Bo answers with e5, a move of another entity naming e4 as its parent. A copy of the game (A) receives Bo's batch before Ada's; B holds both. On A, e5 waits on the move it names, neither admitted nor reported. The merge into A brings e4: it names nothing that crosses, so e5 is admitted beside it, and nothing is reported (R21). A parent of another entity hides nothing (T1-D35).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

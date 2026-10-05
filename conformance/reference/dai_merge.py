@@ -328,6 +328,9 @@ class Admission:
         self.equivocated = equivocated_ids(db)
         self.equivocated_at = ids_of(self.equivocated)
         self.equivocated_text = {f"{author.hex()}:{seq}" for author, seq in self.equivocated_at}
+        # Every row id this copy holds, in any table: what a parent is held
+        # against (docs/format.md#waiting-on-parent).
+        self.held = {rid_of(r) for table in tables for r in self.rows[table]}
         signed_twice = {author for author, _seq in self.equivocated_at}
 
         # Each session's creator's seat row: the _dai_seat row, deleted or not,
@@ -477,7 +480,14 @@ class Admission:
             and bytes(row["_r_session"]) in self.live
             and bytes(row["_r_replica"]) not in self.equivocators
             and not self.names_equivocated(row)
+            and not self.awaits_parent(row)
         )
+
+    def awaits_parent(self, row: dict) -> bool:
+        """It names as a parent an id this copy holds no row at, in any table
+        (docs/format.md#waiting-on-parent): neither admitted nor reported until
+        that parent is held."""
+        return any(parent not in self.held for parent in parents_of(row["_r_parents"], row["_r_replica"], row["_r_seq"]))
 
     def names_equivocated(self, row: dict) -> bool:
         """It names an equivocated id as a parent (docs/format.md#admitted-parent-equivocated):
@@ -536,7 +546,7 @@ class Admission:
                 return False
         elif (session, replica) not in self.members:
             return False
-        return not self.foreign(table, row) and self.unequivocal(row) and not self.names_equivocated(row)
+        return not self.foreign(table, row) and self.unequivocal(row) and not self.names_equivocated(row) and not self.awaits_parent(row)
 
     def heads(self, table: str) -> list[dict]:
         rows = self.rows[table]
@@ -612,6 +622,22 @@ class Admission:
 
 def is_session(db: sqlite3.Connection) -> bool:
     return db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_dai_seat'").fetchone() is not None
+
+
+def waiting_on_parent(db: sqlite3.Connection, tables: list[str]) -> set[tuple[str, str]]:
+    """(table, row id) for every row of a session author table naming as a
+    parent an id this copy holds no row at, in any table
+    (docs/format.md#waiting-on-parent)."""
+    held: set[str] = set()
+    named: list[tuple[str, str, list[str]]] = []
+    for table in tables:
+        sessioned = "_r_session" in columns_of(db, table)
+        for replica, seq, parents in db.execute(f'SELECT _r_replica, _r_seq, _r_parents FROM "{table}"'):
+            rid = row_id(replica, seq)
+            held.add(rid)
+            if sessioned and table not in ROSTER:
+                named.append((table, rid, parents_of(parents, replica, seq)))
+    return {(table, rid) for table, rid, parents in named if any(p not in held for p in parents)}
 
 
 def admitted_dump(db: sqlite3.Connection, max_parties: int) -> str:
@@ -1020,6 +1046,10 @@ def merge(
         if outcome == "added":
             added.append((table, row))
 
+    # The rows waiting on a parent this copy does not hold, before anything is
+    # placed (docs/format.md#waiting-on-parent): one this merge releases is
+    # decided now, once, and reported as a row it took.
+    waiting_before = waiting_on_parent(local, tables) if session else set()
     added: list[tuple[str, dict]] = []
     for rows, signed in ((signed_rows, True), (unsigned_rows, False)):
         for table, row in rows:
@@ -1042,10 +1072,20 @@ def merge(
             stored = next(r for r in admission.rows[table] if rid_of(r) == rid_of(row))
             if table in admission.seated and admission.unseated(table, stored):
                 refuse_batch(bytes(row["_r_batch"]).hex() if row["_r_batch"] is not None else "", row["_r_replica"], "SEAT_NOT_HELD")
+        # The rows this merge released from waiting on a parent, as taken.
+        released = {
+            (table, rid_of(r))
+            for table in tables
+            for r in admission.rows[table]
+            if (table, rid_of(r)) in waiting_before and not admission.awaits_parent(r)
+        }
+        for table, r in ((t, r) for t in tables for r in admission.rows[t] if (t, rid_of(r)) in released):
+            if table in admission.seated and admission.unseated(table, r):
+                refuse_batch(bytes(r["_r_batch"]).hex() if r["_r_batch"] is not None else "", r["_r_replica"], "SEAT_NOT_HELD")
         for table in tables:
             if not admission.filtered(table):
                 continue
-            came = {rid_of(row) for t, row in added if t == table}
+            came = {rid_of(row) for t, row in added if t == table} | {rid for t, rid in released if t == table}
             for reason, child, parent in admission.crossings(table):
                 if rid_of(child) in came or rid_of(parent) in came:
                     batch = child["_r_batch"]
@@ -1182,6 +1222,20 @@ def check(name: str) -> list[str]:
     if not manifest_path.exists():
         return failures + [f"{name}: manifest.json is missing"]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # What each copy admits before any merge, where the vector rules that too
+    # (R21): a row waiting on a parent is admitted on neither copy until it is held.
+    if expected.get("before") is True:
+        for mine in ("a", "b"):
+            before_path = directory / f"expected-admitted-{mine}.txt"
+            if not before_path.exists():
+                failures.append(f"{name}: result.json says before and expected-admitted-{mine}.txt is missing")
+                continue
+            local = load(directory / f"{mine}.db")
+            parties = manifest[mine].get("session", {}).get("max_parties", MAX_PARTIES)
+            if admitted_dump(local, parties) != before_path.read_text(encoding="utf-8"):
+                failures.append(f"{name} [{mine}]: what the copy admits before any merge differs from expected-admitted-{mine}.txt")
+            local.close()
 
     for direction, (into, other) in (("ab", ("a.db", "b.db")), ("ba", ("b.db", "a.db"))):
         local = load(directory / into)

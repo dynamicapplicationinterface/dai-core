@@ -16,6 +16,7 @@ Per vector:
 | `lists.json` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |
 | `manifest.json` | per copy (`a`, `b`), what its signed manifest gives a reader: the signed-view digest (`view`) and, in a session document, the session profile's `max_parties` and close rule (`session`) |
 | `expected-admitted-ab.txt`, `expected-admitted-ba.txt` | session vectors, and `merge-equivocated-plain-heads`: what the document admits after each merge (below) |
+| `expected-admitted-a.txt`, `expected-admitted-b.txt` | only where `result.json` says `before: true`: what each copy admits before any merge (below) |
 
 **The databases are inputs, never oracles.** SQLite file bytes depend on the
 library version and on page layout, so two engines that agree perfectly produce
@@ -122,7 +123,11 @@ and the seq) and `# closed`, each sorted, ids in lowercase hex. Batch format ver
 document admits, which the stored rows alone cannot show, so these are what a
 reader without one of those changes disagrees with. A reader computes them from
 the tables and headers alone, and `max_parties` from `manifest.json` (most
-vectors 2, the three-party ones 3). It reads no view but `_dai_seat_rules` and
+vectors 2, the three-party ones 3). A vector whose `result.json` says
+`before: true` also ships `expected-admitted-a.txt` and
+`expected-admitted-b.txt`, what each copy admits before any merge, in the
+same text: where what a copy admits changes with what arrives, the state
+before the merge is half of what the vector rules. It reads no view but `_dai_seat_rules` and
 `_dai_author_rules`, which are declarations; the rest are computations, and a
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
@@ -174,6 +179,10 @@ in docs/identity.md and docs/format.md:
   void, or another seat's version is reported `SEAT_NOT_HELD` (A03, A09),
   and one naming another session's version `ENTITY_OTHER_SESSION`; one
   waiting on a confirmation and one for a void seat are reported nowhere;
+- a row of an author table naming as a parent an id at which the copy holds
+  no row, in any table, waits on it: neither admitted nor reported. The merge
+  that brings the parent decides it by the rules above, once, and reports it
+  as a row it took (R21);
 - a row whose parents are not the one shape (D159) is never taken, nor any
   row of a complete batch that signed one, and the batch is refused
   `ROW_MALFORMED`;
