@@ -939,8 +939,16 @@ fn dump(c: &Connection, tables: &[Table]) -> String {
     let mut out = String::new();
     for t in tables {
         out.push_str(&format!("# {}\n", t.name));
-        let sel = t
+        // The table's column order, leaving out _r_superseded, a display cache
+        // no rule reads (docs/format.md#merge-dump, #row-superseded).
+        let cols: Vec<&String> = t
             .cols
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != t.i_superseded)
+            .map(|(_, x)| x)
+            .collect();
+        let sel = cols
             .iter()
             .map(|x| format!("\"{}\"", x))
             .collect::<Vec<_>>()
@@ -951,7 +959,7 @@ fn dump(c: &Connection, tables: &[Table]) -> String {
                 sel, t.name
             ))
             .unwrap();
-        let n = t.cols.len();
+        let n = cols.len();
         let rows: Vec<Vec<String>> = st
             .query_map([], |r| {
                 Ok((0..n)
