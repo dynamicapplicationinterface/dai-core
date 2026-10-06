@@ -1,4 +1,4 @@
-"""The Level 1 union merge, implemented from docs/replicated-tables.md.
+"""The reference reader of batch format version 2 (docs/format.md).
 
     python conformance/reference/dai_merge.py            # every fixture
     python conformance/reference/dai_merge.py <name>     # one of them
@@ -9,18 +9,20 @@ reads the TypeScript generator's output at run time: the point of a second
 implementation is that it agrees about the answer, and a gate where one side
 produces what the other checks is a gate against nothing.
 
-Written from the specification rather than translated from the other reader.
-That is the whole exercise — the parts of a spec that are unclear are exactly
-the parts two implementations get differently, and translating would hide them.
-The independence is real but limited while one person writes both; the fixtures
-are checked in so a third implementation can be held to the same text.
+Built with the runtime, not apart from it: it is leveled in the commits that
+change the runtime's merge, and mirrors its structure in places, so it is a
+second implementation of one reading of the page, not independent evidence of
+the page (conformance/reference/README.md; branch review pass A, M2). The
+independent reader is conformance/readers/rust-merge, built from the page.
 
-Level 1: no signatures, no keys. A replica id is a claim.
+It does not check signatures: each header's verdict is read from the vector's
+verdicts.json (docs/format.md#fixtures-verdicts).
 """
 
 from __future__ import annotations
 
 import base64
+import decimal
 import hashlib
 import json
 import math
@@ -51,6 +53,31 @@ SAFE_INTEGER = 2**53 - 1
 # ----------------------------------------------------------------- the dump
 
 
+def real_text(value: float) -> str:
+    """A finite REAL other than -0.0 as the dump writes it (docs/format.md#dump-real).
+
+    The digits are the fewest that read back as the same double, which `repr`
+    gives; where they go is the page's rule, not `repr`'s, which turns to an
+    exponent at other magnitudes (`1e-06`, `1e+16`).
+    """
+    sign = "-" if value < 0 else ""
+    shortest = decimal.Decimal(repr(abs(value))).as_tuple()
+    digits = "".join(map(str, shortest.digits)).rstrip("0") or "0"
+    # The value is 0.<digits> times ten to the n.
+    n = len(shortest.digits) + shortest.exponent if digits != "0" else 1
+    k = len(digits)
+    if k <= n <= 21:
+        text = digits + "0" * (n - k) + ".0"
+    elif 0 < n <= 21:
+        text = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        text = "0." + "0" * -n + digits
+    else:
+        exponent = n - 1
+        text = digits[0] + ("." + digits[1:] if k > 1 else "") + "e" + ("+" if exponent >= 0 else "-") + str(abs(exponent))
+    return sign + text
+
+
 def encode(value: object) -> str:
     """One value, in the encoding T1-D9 fixes.
 
@@ -76,11 +103,7 @@ def encode(value: object) -> str:
             return "-inf"
         if value == 0.0 and math.copysign(1.0, value) < 0:
             return "-0.0"
-        # repr gives the shortest string that round-trips, which is what the
-        # spec asks for; it may omit the point on a whole number, and a REAL
-        # that prints as an INTEGER is a difference nobody can see in a diff.
-        text = repr(value)
-        return text if ("." in text or "e" in text or "E" in text) else text + ".0"
+        return real_text(value)
     text = str(value)
     return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
 
@@ -445,16 +468,21 @@ class Admission:
     def confirms_in(self, live: dict[bytes, dict]) -> list[tuple[bytes, bytes, bytes, int, bytes]]:
         """(session, seat, holder, seq, creator) for every confirm that counts in
         the live sessions given: by the creator, in her session, naming a value
-        her creator's seat row lists; deleted or not, superseded or not, at any
-        seq (#confirms, #confirm-versions-count)."""
+        her creator's seat row lists, and a holder that is an author id; deleted
+        or not, superseded or not, at any seq (#confirms,
+        #confirm-versions-count)."""
         found = []
         for f in self.rows.get("_dai_confirm", []):
             session = bytes(f["_r_session"])
             row = live.get(session)
             if row is None or bytes(f["_r_replica"]) != bytes(row["_r_replica"]):
                 continue
+            # A holder is an author id, 16 bytes, as a seat value is; a confirm
+            # naming anything else names nobody and counts for nothing.
+            if not seat_value(f["holder"]):
+                continue
             if seat_value(f["seat"]) and bytes(f["seat"]) in self.open_seats[session]:
-                found.append((session, bytes(f["seat"]), f["holder"], f["_r_seq"], bytes(f["_r_replica"])))
+                found.append((session, bytes(f["seat"]), bytes(f["holder"]), f["_r_seq"], bytes(f["_r_replica"])))
         return found
 
     def holders_in(self, live: dict[bytes, dict], confirms: list, equivocators: set[bytes]) -> set[tuple[bytes, bytes, bytes]]:
@@ -651,7 +679,7 @@ def admitted_dump(db: sqlite3.Connection, max_parties: int) -> str:
         lines.append(f"# {table}")
         lines.extend(f"{rid_of(r)}\t{r['_r_deleted']}" for r in admission.heads(table))
     lines.append("# holders")
-    # A holder is whatever the confirm names; a text one is shown as its UTF-8, as SQLite's hex() shows it.
+    # A holder is an author id (#confirms); a text part is shown as its UTF-8, as SQLite's hex() shows it.
     hexed = lambda part: part.hex() if isinstance(part, (bytes, bytearray)) else str(part).encode("utf-8").hex()
     lines.extend("\t".join(hexed(part) for part in h) for h in sorted(admission.holders, key=lambda h: tuple(hexed(p) for p in h)))
     lines.append("# voided")
@@ -1139,8 +1167,10 @@ def merge(
             if not resting:
                 reveal(author, "")
 
+    # Under the lowest revealing header of any kind; under no id only for an
+    # author revealed with none (#equivocated-filed, #equivocated-filed-no-id).
     for author, ids in revealed.values():
-        refuse_batch(min(ids), author, "AUTHOR_EQUIVOCATED")
+        refuse_batch(min((i for i in ids if i), default=""), author, "AUTHOR_EQUIVOCATED")
 
     result["refusedBatches"] = [
         {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)

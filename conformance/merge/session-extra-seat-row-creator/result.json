@@ -1,0 +1,29 @@
+{
+  "what": "Bo holds the open seat. Ada signs a second _dai_seat row in the session, at a fresh entity, shaped as a creator's: her seat, and seats listing a third value. She confirms Cy in the third value, and Cy moves for it (A; B holds the confirm, not the move). Only the creator's seat row, the one that hashes to its session, declares the roster, and no other seat row is a head: the third value is no open seat, Cy holds nothing, his move is admitted nowhere and the merge into B, which takes it, reports it SEAT_NOT_HELD (R14, creator-row-immutable; review 10, A10).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

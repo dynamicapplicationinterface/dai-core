@@ -3,6 +3,11 @@
     node scripts/properties.mjs        # first: checks the runtime, writes the scenarios
     python scripts/properties.py       # the same scenarios, the Python reader
     python scripts/properties.py --all # every violation, filed ones too
+    python scripts/properties.py <name> ...  # these vectors only; the cache must hold each
+
+With no names, the cache must hold a scenario for every vector in the suite
+(`--suite`, conformance/merge by default) and nothing else, or the run fails
+before checking anything: a partial cache is a properties.mjs run that died.
 
 P0, P1 and P2 as scripts/properties.mjs states them (P0 over what is
 admitted, not the reports, D190), checked here over the
@@ -32,6 +37,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 OUT = Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else REPO / "node_modules" / ".cache" / "properties"
 KNOWN = REPO / "scripts" / "properties-known.json"
+SUITE = Path(sys.argv[sys.argv.index("--suite") + 1]).resolve() if "--suite" in sys.argv else REPO / "conformance" / "merge"
 spec = importlib.util.spec_from_file_location("dai_merge", REPO / "conformance" / "reference" / "dai_merge.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
@@ -359,12 +365,31 @@ def check(scenario: dict, violations: list[dict], disagreements: list[str]) -> N
 def main() -> int:
     show_all = "--all" in sys.argv
     args = sys.argv[1:]
-    wanted = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] != "--out")]
+    wanted = [a for i, a in enumerate(args) if not a.startswith("--") and (i == 0 or args[i - 1] not in ("--out", "--suite"))]
     if not OUT.exists():
         print("no scenarios; run `node scripts/properties.mjs` first")
         return 1
     known = json.loads(KNOWN.read_text(encoding="utf-8")) if KNOWN.exists() else {}
     files = sorted(OUT.glob("*.json"))
+    # The cache against the vector list: every vector the suite holds (or every
+    # one named) must have its scenario, and the cache nothing else. A run of
+    # properties.mjs that died part way leaves a partial cache, and checking
+    # whatever is there passed 87 of 99 without a word (branch review pass A, L2).
+    vectors = sorted(d.name for d in SUITE.iterdir() if d.is_dir() and (d / "a.db").exists())
+    expected = wanted or vectors
+    cached = {f.stem for f in files}
+    missing = [n for n in expected if n not in cached]
+    extra = [] if wanted else sorted(cached - set(vectors))
+    unknown = [n for n in wanted if n not in vectors]
+    if missing or extra or unknown:
+        for n in unknown:
+            print(f"  {n}: no such vector in {SUITE}")
+        for n in missing:
+            print(f"  {n}: no scenario in {OUT}")
+        for n in extra:
+            print(f"  {n}: a scenario for no vector in {SUITE}")
+        print(f"\nthe cache does not match the vector list ({len(missing)} missing, {len(extra)} extra); run `node scripts/properties.mjs` to the end first")
+        return 1
     if wanted:
         files = [f for f in files if f.stem in wanted]
     violations: list[dict] = []

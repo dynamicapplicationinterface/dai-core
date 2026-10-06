@@ -959,6 +959,120 @@ hold, as R19 refuses a forward one of the row's own author: R19's test reads
 the row alone and is the same on every copy, and this one would depend on
 what a copy holds when the row arrives.
 
+A roster value is never a store failure
+---------------------------------------
+
+*5 October, branch review pass A, H1.* Rule:
+[seat-value-taken](format.md#seat-value-taken), [confirms](format.md#confirms).
+
+**Problem.** The roster tables carried `seat BLOB NOT NULL CHECK (length(seat)
+= 16)`, and `_dai_confirm` the same on `holder`. A CHECK failure is not a row
+refused: it threw inside the merge, which took nothing. Ada's signed batch
+holding a confirm with a 15-byte seat and her move e4 cost Bo's copy e4 as
+well, though the page said no reader may fail on such a value and T1-D13 says
+one row refused, the rest still merged. P1's library had the mutation and
+counted it "not writable", since the CHECK refused it in the scratch copy too.
+
+**Rule.** No constraint on a roster value. A signed row holding a value that
+is not 16 bytes is taken and names nothing: a seat value names no seat, and a
+confirm's holder that is not an author id names nobody, so the confirm counts
+for nothing (it neither seats nor voids). The property library writes the bad
+value past any CHECK, beside a row that counts, and a merge that throws is a
+P1 violation.
+
+**Rejected.** Keeping the CHECK and catching its error per row: the store's
+constraint would still decide what a format rule decides, and a reader built
+on another store meets other constraints. Reading a short holder as a holder:
+it can never act (no author id is 15 bytes), and a second confirm would void
+the seat, letting a value nobody holds take a seat from the one who holds it.
+
+The dump and the counts on the page
+-----------------------------------
+
+*5 October, branch review pass A, H2, L1.* Rule:
+[merge-dump](format.md#merge-dump), [dump-real](format.md#dump-real),
+[merge-counts](format.md#merge-counts).
+
+**Problem.** The page deferred the dump's float rule and the counts to
+replicated-tables.md (T1-D9, T1-D15), and the runtime broke the deferred rule:
+SQLite hands a REAL 2.0 to JavaScript as the number 2, the same as an INTEGER
+2, so the runtime wrote it `2`. Both readers wrote `2.0`, and no vector held a
+whole REAL. "Shortest round-trip decimal" also left where the digits go to the
+language: Python writes `1e-06` and `1e+16`, JavaScript `0.000001` and
+`10000000000000000`.
+
+**Rule.** Everything a reader must implement for the dump and the counts is on
+the page. A value is written by its storage class, read with the value, so a
+REAL is never written as an integer. The digits are the shortest that read
+back, placed by one stated rule (the one ECMAScript's `Number::toString`
+uses, so the runtime's existing spelling of every REAL that is not whole is
+unchanged, and no committed vector moved). The Python reader places them by
+the rule, not by `repr`; it agrees with the runtime on 399,932 doubles.
+
+**Rejected.** Writing every REAL with an exponent: one rule, but every vector
+holding a float would change its expected text for no reader's benefit.
+Leaving the placement to "shortest round-trip": two readers each right by
+their language, and different.
+
+Where `AUTHOR_EQUIVOCATED` is filed, when one merge reveals two ways
+--------------------------------------------------------------------
+
+*5 October, branch review pass A, M1.* Rule:
+[equivocated-filed](format.md#equivocated-filed).
+
+**Problem.** The runtime and the Python reader collected an author's revealing
+headers and added "no id" for each way the merge revealed him with no row
+taken, then took the lowest, and no id sorts first; the Rust reader dropped
+the empty one. One merge can reveal one author both ways: Bo's own move after
+his close in one session (a revealing header) and a confirm of Ada's that
+makes his close count in another (no row of his taken). The runtime filed it
+under no id, Rust under the move's header.
+
+**Rule.** Filed under the lowest revealing header of any kind; under no id
+only when there is none. "No id" records that nothing taken shows him signing
+twice, which is false once something does.
+
+**Rejected.** No id whenever any way of being revealed has none: it hides the
+header that shows it, for the accident of a second, unrelated way.
+
+Rules the runtime kept that the page did not state
+---------------------------------------------------
+
+*5 October, branch review pass A, M7.* Rule:
+[merge-whole-refusals](format.md#merge-whole-refusals),
+[stored-header-integers](format.md#stored-header-integers),
+[att-not-read](format.md#att-not-read),
+[cbor-encoded-only](format.md#cbor-encoded-only).
+
+**Problem.** The runtime refused four kinds of merge before the view check
+(`UNSUPPORTED_LEVEL`, `MERGE_COVERAGE`, `NOT_REPLICATED`, `SCHEMA_MISMATCH`),
+read a stored header's `version` and `lc` through `Number()` and accepted a
+non-empty `att`, and its CBOR decoder accepts non-shortest integers and
+unsorted map keys. None was on the page.
+
+**Rule.** Each decided one way:
+
+- The four refusals are stated, in their order. Two copies of one build meet
+  none of them, so they change no vector, but a reader handed bytes that are
+  not a copy of the build must say so the same way.
+- `Number()` is removed. It read a one-byte blob 02 as version 2 and as a
+  clock: an integer column is read as stored, and a header holding anything
+  else is not authentic (`merge-header-integers`).
+- `att` is stated as not read. It sits outside the signature, so a rule that
+  refused a header for it would let any forwarder have an honest header
+  refused in its author's name.
+- The decoder's leniency is stated as reaching nothing. No rule decodes CBOR:
+  the header and rows a reader verifies are the canonical bytes it rebuilds,
+  and the only decoded bytes, a mailbox's envelope, are staged as a sibling
+  copy and verified like any. A strict decoder would refuse more envelopes and
+  change no verdict.
+
+**Rejected.** Removing the four refusals: without `SCHEMA_MISMATCH` a merge
+handed another build's rows would union rows of other shapes, and the view
+digest is not passed by every caller (tests merge without one). A strict
+decoder: it is the mailbox's concern, and making it strict proves nothing
+about the format.
+
 Reasons given inline
 --------------------
 

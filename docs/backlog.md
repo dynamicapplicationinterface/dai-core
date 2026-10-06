@@ -4556,6 +4556,43 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D194 — A copy admits an unsigned roster row it holds under another author's id
+
+*Status: open, ruling wanted. Filed 5 October, from promoting attack review
+10's a06 (`session-unsigned-confirm`).*
+
+B holds, written straight into `_dai_confirm` under Ada's id and with no header,
+a confirm seating Bo. Merged into A it is refused `BATCH_UNSIGNED` and seats
+nobody there. On B itself, both the runtime and the Python reader admit it: B's
+admitted state has Bo holding the open seat, before and after the merge. The
+review's handoff said the admitted state converges with "nobody seated"; that
+is true of A only. The page says a copy's unsigned rows can only be its own
+pending ones ([merge-signed-outranks](format.md#merge-signed-outranks)), and is
+silent on what a copy's own admission makes of an unsigned row under another
+author's id, which no honest writer makes. The vector checks A's holders and
+the reports, and not B's holders. **Ruling wanted:** whether admission counts
+an unsigned row whose author is not the copy's own (proposed: it does not; a
+copy's pending rows are its own author's, and a row under another id with no
+header covering it is a forgery that seats, admits and closes nothing on any
+copy), then the page's clause, both readers, and B's holders in the vector.
+
+#### D193 — Hold-outs for the nine Level 1 vectors from main
+
+*Status: open, low. Filed 5 October, from branch review pass A, M3.*
+
+`scripts/holdout.py` now fails a full run when a vector is named by no
+hold-out, except these nine, which predate it and are listed in
+`UNNAMED_FROM_MAIN`: `heads-via-superseded-flag`, `merge-conflict`,
+`merge-idempotent`, `merge-resolve`, `merge-row-id-reused`, `merge-tombstone`,
+`merge-tombstone-conflict`, `receive-then-write-both-sides`,
+`schema-digest-replicated-only`. The only existing rule that fails most of them
+(`new-replicas-uncounted`) does so through the counts, not the rule each is
+for. **Fix:** a hold-out per rule each witnesses (conflict heads, tombstone as
+head, a second row at an id, idempotence, a received file's identity, local
+tables outside the schema digest), each HOLDS, and the list emptied. Where a
+vector rules only `_r_superseded` (heads-via-superseded-flag), ship its heads
+(`admits`), as was done for `merge-cross-entity-parent` on 5 October.
+
 #### D192 — A row's superseded flag goes stale after its own author's malformed child
 
 *Status: open, low (display only). Filed 5 October, from the blind Rust level

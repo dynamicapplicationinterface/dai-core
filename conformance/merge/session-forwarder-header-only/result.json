@@ -1,0 +1,30 @@
+{
+  "what": "Bo holds the open seat; Ada plays e4 (A, B). From a second copy of her store she signs a second header over e4's seq, a different move, and a forwarder (Cy) carries that header alone, without its row, into B. The digests travel in the header, so two authentic headers of hers over one seq with different digests make her an equivocator though the second's row never arrived, and a session whose creator is an equivocator is void: nothing in it is admitted, nobody holds a seat, and only the merge into A reports Ada AUTHOR_EQUIVOCATED (equivocation-whole-digest, R10, R20; review 10, A08).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

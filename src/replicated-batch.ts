@@ -50,6 +50,14 @@ export interface Batch {
 
 const hex = (bytes: Uint8Array): string => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
+/** A stored header's integer column as an integer, or null when it holds anything else (a blob, a text, a float). */
+const storedInteger = (value: unknown): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : typeof value === "bigint" && value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value)
+      : null;
+
 /* ------------------------------------------------ signed batches (identity) */
 
 /**
@@ -313,7 +321,10 @@ export async function verifyBatches(
     const author = header["author"] as Uint8Array;
     const digest = header["digest"] as Uint8Array;
     const pub = header["pub"] as Uint8Array;
-    const version = Number(header["version"]);
+    // Integers as stored, never converted: `Number()` read a one-byte blob 0x02
+    // as version 2 (docs/format.md#stored-header-integers; branch review pass A, M7).
+    const version = storedInteger(header["version"]);
+    const lc = storedInteger(header["lc"]);
 
     // The lists to try: the stored one, then the rows naming this header.
     const lists: [string, number][][] = [];
@@ -331,10 +342,10 @@ export async function verifyBatches(
     }
 
     let covers: [string, number][] | null = null;
-    const keyed = version === BATCH_FORMAT_VERSION && pub instanceof Uint8Array && digest instanceof Uint8Array && hex(await authorIdOf(pub)) === hex(author);
+    const keyed = version === BATCH_FORMAT_VERSION && lc !== null && pub instanceof Uint8Array && digest instanceof Uint8Array && hex(await authorIdOf(pub)) === hex(author);
     for (const list of keyed ? lists : []) {
       if (list.some(([table]) => !carried.has(table))) continue;
-      const canonical = canonicalHeader({ version, document, author, lc: Number(header["lc"]), digest, covers: list });
+      const canonical = canonicalHeader({ version: version!, document, author, lc: lc!, digest, covers: list });
       if (hex(await batchIdOf(canonical)) !== hex(id)) continue;
       if (!(await verifySignature(pub, canonical, header["sig"] as Uint8Array))) continue;
       covers = list;

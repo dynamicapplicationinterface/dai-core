@@ -61,6 +61,7 @@ import {
   PEOPLE,
   SEAT_VALUES,
   admittedDump,
+  badSeatValueAt,
   carryHeaderOnly,
   closeAt,
   columnsOf,
@@ -516,6 +517,18 @@ function mutationsFor(union) {
             }
           }
         }
+        // A bad seat value, as a confirm's seat and as its holder, signed in one
+        // batch beside a row of an author table: it costs nothing but its own
+        // row, and a merge that throws on it is a violation (H1).
+        if (isSession && where === "next") {
+          const table = authorTables.find((t) => templateOf(t, session));
+          for (const [kind, v] of Object.entries(SEAT_VALUES).filter(([kind]) => kind !== "bytes")) {
+            if (!table) break;
+            const beside = { table, entity: MUTANT(6), columns: columnsOf(templateOf(table, session)) };
+            at(`bad-seat-${kind}`, (c) => badSeatValueAt(c, seq, session, { seat: v, holder: others[0].author }, beside));
+            at(`bad-holder-${kind}`, (c) => badSeatValueAt(c, seq, session, { seat: values[0] ?? FRESH_SEAT, holder: v }, beside));
+          }
+        }
       }
     }
   }
@@ -717,7 +730,15 @@ for (const name of names) {
     /** The addition taken into `local` (in a trial): what it removed, and a violation if nothing excuses it. */
     const check = (local, before, label, mutationName, sibling, author) =>
       trying(local, () => {
-        const reports = arrive(local, sibling, view);
+        let reports;
+        try {
+          reports = arrive(local, sibling, view);
+        } catch (error) {
+          // A merge that throws takes nothing, the rows that count beside the bad one included.
+          const threw = String(error?.message ?? error).split("\n")[0];
+          violation({ property: "P1", vector: name, at: `${label} ${mutationName}`, author, removed: [`the merge threw: ${threw}`], reports: [] });
+          return { after: before, reports: [], removed: [], threw };
+        }
         counted.merges += 1;
         const after = admittedDump(local);
         const now = new Set(admittedAndHeld(after));

@@ -862,31 +862,46 @@ export function filterToSession(db: Rows, session: Uint8Array): void {
  *
  * The rows are the easy part. Two languages agree on which rows are present
  * and disagree on how to write a float, and then the merge takes the blame.
+ *
+ * `storage` is the value's SQLite storage class (`typeof()`), which a dump
+ * must pass: SQLite hands a REAL 2.0 to JavaScript as the number 2, the same
+ * as an INTEGER 2, so the value alone cannot say which it was, and a whole
+ * REAL written as `2` is the bug the dump's float rule exists to prevent
+ * (docs/format.md#merge-dump; branch review pass A, H2). Without it a whole
+ * number is written as an integer.
  */
-export function encodeValue(value: unknown): string {
+export function encodeValue(value: unknown, storage?: unknown): string {
   if (value === null || value === undefined) return "nil";
   if (value instanceof Uint8Array) return hex(value);
   if (typeof value === "bigint") return value.toString(10);
   if (typeof value === "number") {
-    if (Number.isInteger(value) && Object.is(value, Math.trunc(value)) && !Object.is(value, -0)) {
-      // An integer column and a float column holding a whole number are
-      // different storage classes, and SQLite reports them apart; this is only
-      // reached for INTEGER, where a plain decimal is right.
-      return String(value);
-    }
+    if (storage !== "real" && Number.isInteger(value) && !Object.is(value, -0)) return String(value);
     if (Number.isNaN(value)) return "nan";
     if (value === Number.POSITIVE_INFINITY) return "inf";
     if (value === Number.NEGATIVE_INFINITY) return "-inf";
     if (Object.is(value, -0)) return "-0.0";
+    // The shortest digits that read back as the same double, placed as
+    // docs/format.md#dump-real says (which is how String() places them), and
+    // always readable as a float: a REAL holding 2 is `2.0`, never `2`.
     const text = String(value);
-    // Always readable as a float, so a REAL holding 2 is never mistaken for
-    // an INTEGER 2 in a diff.
     return /[.e]/.test(text) ? text : `${text}.0`;
   }
   return String(value)
     .replace(/\\/g, "\\\\")
     .replace(/\t/g, "\\t")
     .replace(/\n/g, "\\n");
+}
+
+/**
+ * A replicated table's rows as the dump writes them, one line each, ordered by
+ * author id and seq, the `columns` given in that order, each value written
+ * with its storage class (`encodeValue`).
+ */
+export function dumpRows(db: Rows, table: string, columns: readonly string[]): string[] {
+  const picked = columns.map((name, i) => `"${name}" AS "v${i}", typeof("${name}") AS "s${i}"`).join(", ");
+  return db
+    .all(`SELECT ${picked} FROM "${table}" ORDER BY hex(_r_replica) ASC, _r_seq ASC`)
+    .map((row) => columns.map((_, i) => encodeValue(row[`v${i}`], row[`s${i}`])).join("\t"));
 }
 
 /**
@@ -900,10 +915,7 @@ export function canonicalDump(db: Rows, tables: readonly string[]): string {
   for (const table of [...tables].sort()) {
     const columns = db.all(`SELECT name FROM pragma_table_info(?)`, [table]).map((r) => String(r["name"]));
     lines.push(`# ${table}`);
-    const rows = db.all(
-      `SELECT * FROM "${table}" ORDER BY hex(_r_replica) ASC, _r_seq ASC`,
-    );
-    for (const row of rows) lines.push(columns.map((name) => encodeValue(row[name])).join("\t"));
+    lines.push(...dumpRows(db, table, columns));
   }
   /*
    * The replicas this copy knows of — the ids, and only the ids (T1-D12).
@@ -1660,8 +1672,11 @@ export function mergeFrom(
     for (const { row } of resting) reveal(who, row._r_batch instanceof Uint8Array ? hex(row._r_batch) : "");
     if (resting.length === 0) reveal(who, "");
   }
+  // Under the lowest revealing header of any of the three kinds; under no id
+  // only for an author this merge revealed with none (equivocated-filed,
+  // equivocated-filed-no-id; branch review pass A, M1).
   for (const { author: who, ids } of revealed.values()) {
-    refuseBatch([...ids].sort(plainOrder)[0]!, who, "AUTHOR_EQUIVOCATED");
+    refuseBatch([...ids].filter((id) => id !== "").sort(plainOrder)[0] ?? "", who, "AUTHOR_EQUIVOCATED");
   }
 
   result.refusedBatches = [...refusals.values()]

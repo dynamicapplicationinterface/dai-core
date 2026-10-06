@@ -197,11 +197,13 @@ in docs/identity.md and docs/format.md:
   digests (`view`) is refused whole: `refused` is `SIGNED_VIEW_MISMATCH` and
   nothing is taken (R16).
 
-Each `session-` vector was run against both readers with its change held
-out, and failed; the step 6 review's (`session-equivocated-parent`,
-`session-void-equivocated-confirm`, `session-equivocation-two-tables`)
-against the Python reader before it was leveled. The witness pass's (30
-September, from the step 6 review's Pass 2) were each run against a Python
-reader with one rule removed, and failed; what the verifier or the signer
-decides, against the runtime with one rule removed. Every such hold-out is
-in `scripts/holdout.py`, which CI runs.
+Every vector but nine from Level 1 (D193) is named by at least one hold-out
+in `scripts/holdout.py`, which CI runs: the Python reader, or for what the
+verifier, the signer or the runtime's views decide, the runtime, with one rule
+removed, and the vector fails. A full run fails when a vector is named by none,
+or when a hold-out no longer fails every vector it names.
+
+The three readers: the runtime is the implementation; the Python reader
+(`conformance/reference`) is the reference reader, built with the runtime and
+leveled in its commits; the Rust reader (`conformance/readers/rust-merge`) is
+the independent one, built from docs/format.md and these vectors alone.

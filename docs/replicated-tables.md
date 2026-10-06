@@ -435,6 +435,13 @@ recompute and nobody can attest.
 is specified here.** SQLite file bytes depend on page allocation and insertion
 order, so two hosts that converge correctly can hold different files.
 
+*Since 5 October the dump, the REAL's placement and the counts (T1-D15) are
+stated in full in [format.md](format.md#merge-dump), which governs where the
+two differ; this entry keeps the reasons. The rule below was broken by the
+runtime until then: SQLite hands a REAL 2.0 to JavaScript as 2, and the dump
+wrote it `2` (branch review pass A, H2). "Shortest round-trip decimal" also
+left where the digits go to each language; format.md#dump-real places them.*
+
 The comparison is a text dump of every replicated table plus `_dai_replicas`:
 rows ordered by `(hex(_r_replica), _r_seq)`, columns in declared order, one row
 per line, values tab-separated.

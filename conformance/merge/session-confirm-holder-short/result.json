@@ -1,0 +1,24 @@
+{
+  "what": "Bo asks for the open seat. Ada signs one batch holding a confirm of the open seat whose holder is 15 bytes, a confirm of Bo in it, and her move e4 (A). A holder is an author id, 16 bytes, and a confirm naming anything else names nobody and counts for nothing: Bo holds the open seat, the seat is not void, e4 is admitted, and nothing is reported (confirms). Before, a schema CHECK threw on the short holder inside the merge; read as a holder, it would have voided the seat as a second holder and reported Ada AUTHOR_EQUIVOCATED.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "what": "Bo holds the open seat; Ada plays e4 (A). From a second copy of her store she signs a second header over e4's seq, a different move, d4, which B takes, header and row, before e4 arrives there; then B takes e4's header, and not its row, since B holds a row at that id. Two authentic headers of hers over one seq with different digests make her an equivocator, and a session whose creator is an equivocator is void: B admits nothing before the merge, and after either merge nothing in the session is admitted and nobody holds a seat. The merge into A reports Ada AUTHOR_EQUIVOCATED; the merge into B, which holds both headers already, reports nothing. Each copy keeps its own row at the id and refuses the other's, which is where union merge stops (R10, R20; review 10, A07).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": false,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:3"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:3"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

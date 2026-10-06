@@ -195,6 +195,12 @@ covers.
 
 <a id="stored-header"></a>A stored header (`_dai_batch`) holds `id`,
 `author`, `lc`, `sig`, `pub`, `att`, `version`, `digest` and `covers`.
+<a id="stored-header-integers"></a>Its `version` and `lc` are integers as
+stored (SQLite's INTEGER storage class) and are read as stored, never
+converted: a header holding anything else in either (a blob, a text, a REAL)
+makes no canonical header and is not authentic.
+<a id="att-not-read"></a>A reader does not read `att`: a header is authentic
+or not whatever `att` holds.
 
 ## Signature
 
@@ -254,6 +260,26 @@ bytes. A merge whose sibling's signed-view digest differs from the local
 copy's refuses the sibling whole: it takes no header and no row, reports no
 refused batch, and says `SIGNED_VIEW_MISMATCH`. Two such copies are two builds
 of the document, which may declare a different `max_parties` or other tables.
+
+<a id="merge-whole-refusals"></a>Before it compares signed views, a merge
+refuses the sibling whole in the same way, taking nothing and reporting no
+refused batch, and says why, in this order:
+
+1. `UNSUPPORTED_LEVEL`: the replication level the signed manifest declares
+   (`replication.level`) is not 1.
+2. `MERGE_COVERAGE`: either copy holds a table carrying `_r_replica` and
+   `_r_seq` that is not one a merge takes. The tables a merge takes are the
+   ones the document declares replicated and, in a session document,
+   `_dai_seat`, `_dai_binding`, `_dai_confirm` and `_dai_close`.
+3. `NOT_REPLICATED`: neither copy holds a table a merge takes.
+4. `SCHEMA_MISMATCH`: the two copies' tables a merge takes differ in their
+   names, or one such table's author columns (every column but the `_r_`
+   ones, in the order the table declares them) differ in name, in declared
+   type (whitespace runs collapsed to one space, trimmed, uppercased), in
+   `NOT NULL`, or in default (as declared, verbatim).
+
+Two copies of one build meet none of these; each says the bytes handed to the
+merge are not a copy of this document's build.
 
 <a id="merge"></a>A merge takes a sibling copy's headers and rows into a
 local copy, in this order:
@@ -332,25 +358,60 @@ local copy, in this order:
 <a id="merge-no-adopt"></a>A merge MUST NOT adopt a seal nobody verified onto
 a row a copy holds pending; a header the copy held before the merge and that
 is complete over its rows is its own, and is
-[adopted](#merge-row-held-signed). <a id="merge-counts"></a>Of the rows it places, a
-merge counts as `applied` those the copy did not hold, as `duplicate` those it
+[adopted](#merge-row-held-signed).
+
+<a id="merge-counts"></a>A merge reports four counts. Of the rows it places,
+it counts as `applied` those the copy did not hold, and as `duplicate` those it
 held already the same in `_r_lc`, `_r_entity`, `_r_parents`, `_r_deleted`,
-`_r_session` and every author column, and lists in `rejected` the
-[ids](#conv-row-id) of those refused as a second row at an id and of the rows
-a signed row outranked; `newReplicas` is how many author ids it added to
-`_dai_replicas`, from the sibling's own and those it lists.
-<a id="merge-dump"></a>The canonical dump, which two copies compare, is a
-section per replicated table in UTF-8 order of name (a line `# <table>`, then
-a line per row ordered by author id and seq, its values tab-separated in the
-table's column order, leaving out [`_r_superseded`](#row-superseded), a
-display cache no rule here reads), then `# _dai_replicas` (an author id per line,
-ascending), then, when the copy has it, `# _dai_batch` (a stored header per
-line, every column, ordered by id), each value written `nil`, as a decimal
-integer, as lowercase hex for bytes, as text with tab, newline and backslash
-escaped, or as a float's shortest round-trip decimal.
-Both are decided in [replicated-tables.md](replicated-tables.md), section 8
-(T1-D9 for the dump, with the floats' special cases, and T1-D15 for the
-counts).
+`_r_session` and every author column (`_r_batch` and `_r_superseded` are not
+compared); it lists in `rejected` the [ids](#conv-row-id) (lowercase hex) of
+the rows refused as a second row at an id and of the rows a signed row
+outranked; and `newReplicas` is how many author ids it added to
+`_dai_replicas` that the copy did not hold there, from the sibling's own and
+those the sibling's `_dai_replicas` lists.
+
+<a id="merge-dump"></a>The **canonical dump**, which two copies compare, is
+text: lines, each ending in a newline (`\n`), the last included.
+
+- <a id="dump-tables"></a>For each table a merge takes, in UTF-8 order of
+  name: a line `# <table>`, then a line per row, ordered by author id
+  (bytewise) and then seq, holding the row's values tab-separated, every
+  column in the order the table declares it except
+  [`_r_superseded`](#row-superseded), a display cache no rule here reads.
+- <a id="dump-replicas"></a>Then a line `# _dai_replicas`, then a line per
+  author id the copy's `_dai_replicas` holds (its `id` column alone),
+  ascending.
+- <a id="dump-batch"></a>Then, when the copy holds `_dai_batch`, a line
+  `# _dai_batch`, then a line per stored header, ordered by id, holding its
+  `id`, `author`, `lc`, `sig`, `pub`, `att`, `version`, `digest` and `covers`,
+  in that order, tab-separated.
+
+<a id="dump-value"></a>A value is written by its SQLite storage class: NULL as
+`nil`; INTEGER in decimal, `-` before a negative one; BLOB as lowercase hex,
+the empty blob as nothing; TEXT as its UTF-8, with backslash written `\\`, tab
+`\t` and newline `\n`; REAL as below. The storage class is the value's, not
+the column's declared type.
+
+<a id="dump-real"></a>A REAL is written `nan`, `inf`, `-inf` or `-0.0` for
+those values. Any other is written with `-` before it if it is negative, then
+its magnitude from its **shortest digits**: the fewest decimal digits
+d<sub>1</sub>…d<sub>k</sub>, the last not 0, and the integer n, such that
+0.d<sub>1</sub>…d<sub>k</sub> × 10<sup>n</sup> reads back as the same double;
+where several such digit strings exist, the one nearest the value, and of two
+equally near, the one whose last digit is even. Zero is the one digit 0 with
+n = 1. Then:
+
+- k ≤ n ≤ 21: the digits, n − k zeros, and `.0` (`2.0`, `1000000000000000.0`);
+- 0 < n < k: the first n digits, `.`, and the rest (`1.5`, `123.456`);
+- −6 < n ≤ 0: `0.`, −n zeros, and the digits (`0.5`, `0.000001`);
+- otherwise: d<sub>1</sub>; then `.` and d<sub>2</sub>…d<sub>k</sub> when
+  k > 1; then `e`, `+` when n − 1 ≥ 0 or `-` when it is negative, and
+  |n − 1| in decimal (`1e+21`, `1e-7`, `1.5e-10`).
+
+<a id="dump-real-whole"></a>So a REAL is never written as an integer: a REAL
+2.0 is `2.0`, and an INTEGER 2 is `2`. A column declared REAL stores −0.0 as
+0.0 (SQLite converts it), so it is written `0.0`; a column with no declared
+type keeps −0.0.
 
 ### Equivocation
 
@@ -447,9 +508,11 @@ is a new session.
 
 <a id="confirms"></a>A confirm **counts** when it is a `_dai_confirm` row
 authored by the session's creator, in her live session, naming in `seat` a
-value her creator's seat row's `seats` holds; at any seq, deleted or not,
-superseded or not. A confirm naming any other value, her own seat included,
-counts for nothing.
+value her creator's seat row's `seats` holds and in `holder` an author id (a
+byte string of exactly 16 bytes); at any seq, deleted or not, superseded or
+not. A confirm naming any other value, her own seat included, or any other
+holder (text, NULL, a number, a byte string of another length), counts for
+nothing: it names nobody, and seats and voids nothing.
 <a id="confirm-versions-count"></a>A later version or a delete of a confirm is
 another confirm naming a holder, and counts as one.
 
@@ -582,7 +645,7 @@ author id in hex.
 | <a id="code-unsigned"></a>`BATCH_UNSIGNED` | the author id the row carries | no id |
 | <a id="code-seat-not-held"></a>`SEAT_NOT_HELD` | the row's author | the row's own `_r_batch` after the merge |
 | <a id="code-entity-other-session"></a>`ENTITY_OTHER_SESSION` | the row's author | the row's own `_r_batch` after the merge |
-| <a id="code-author-equivocated"></a>`AUTHOR_EQUIVOCATED` | the author who signed twice | the lowest of that author's revealing headers, or no id |
+| <a id="code-author-equivocated"></a>`AUTHOR_EQUIVOCATED` | the author who signed twice | the lowest of that author's revealing headers; no id only when there is none |
 
 <a id="report-made-true"></a>`SEAT_NOT_HELD` and `ENTITY_OTHER_SESSION`
 report what this merge made true, and only about a row in a live session.
@@ -592,6 +655,11 @@ merge may be reported differently.
 bytes. Any other value (text, whatever its length, NULL, a number, a byte
 string of another length) is not one: it names no seat, a confirm naming it
 counts for nothing, and no reader may fail on it.
+<a id="seat-value-taken"></a>A signed row holding such a value, in any table,
+the roster tables included, is taken as any signed row is, and costs nothing
+but its own standing: a reader MUST NOT refuse the row, its batch or the merge
+for it, and a store's roster tables carry no constraint on `seat` or `holder`
+that could.
 <a id="seat-not-held"></a>A row this merge took, or released from
 [waiting on a parent](#waiting-on-parent), in a seated table, is
 `SEAT_NOT_HELD` when its seat column holds no seat value; or names a seat its
@@ -641,11 +709,15 @@ his equivocation is, and accuses nobody else. A **revealing header** is:
   equivocated id reveals nothing.
 
 <a id="equivocated-filed"></a>It is filed under the lowest of that author's
-revealing headers. <a id="equivocated-filed-no-id"></a>A report with no taken
-row it rests on is filed under no id: a void newly true needs a counting
+revealing headers, of all three kinds together, from every way this merge
+revealed him. <a id="equivocated-filed-no-id"></a>Only a report with no
+revealing header at all is filed under no id: one whose every way of being
+made true rests on no row this merge took. A void newly true needs a counting
 confirm or the creator's seat row that the merge took, but a close followed by
 a row can be made true by a row of another author (a confirm that makes the
-closer a holder, under `close=any`). <a id="equivocated-third"></a>A merge
+closer a holder, under `close=any`); when the same merge also reveals him with
+a revealing header, in another session or another way, the report is filed
+under that header. <a id="equivocated-third"></a>A merge
 that brings a third conflicting header for an id already equivocated reveals
 nothing new and reports nothing.
 
@@ -665,6 +737,14 @@ what a row's columns can hold:
   is.
 - <a id="cbor-other"></a>Text is UTF-8; bytes are a byte string; NULL is CBOR
   null.
+
+<a id="cbor-encoded-only"></a>A reader encodes canonical CBOR and never
+decodes it for a rule on this page: what it hashes and verifies is the
+canonical header and rows it builds from the headers and rows it holds. Bytes
+that carry a batch to it (a mailbox's envelope) are decoded into a header and
+rows, held as a [sibling copy](#arriving-sibling) and verified as any is, so
+how strictly the envelope is decoded (shortest integers, sorted map keys)
+changes nothing that verifies.
 
 ## Versions
 
@@ -740,8 +820,11 @@ version, never a refactor (identity.md, binding rule 10).
 - Version 2: `admitted-not-late` retired with `late`.
 - Version 2: a merge refuses whole a sibling whose signed-view digest differs
   from the local copy's (`SIGNED_VIEW_MISMATCH`).
-- Version 2: an equivocator holds no seat, the seat he was confirmed in is
-  void, and none of his rows is admitted or reported.
+- Version 2: an equivocator holds no seat, and the seat he was confirmed in
+  is void; in a session document none of his rows in a session author table
+  is admitted, and none of his rows is reported but as his signing twice
+  (`AUTHOR_EQUIVOCATED`); in a plain document his rows count as any author's,
+  but at the equivocated ids.
 - Version 2: a parent naming the row's own author at a seq at or above the
   row's own is malformed.
 - Version 2: a session whose creator's seat row is at an equivocated id is
@@ -751,8 +834,26 @@ version, never a refactor (identity.md, binding rule 10).
   confirm names is `SEAT_NOT_HELD`.
 - Version 2: a header over a seq at or below the floor leaves only if it left
   before, and no leave carries two of the author's headers over one seq.
-- Version 2: a row naming as a parent an id the copy holds no row at waits on
-  it, neither admitted nor reported, and is decided once when it is held.
+- Version 2: a row of a session author table naming as a parent an id the
+  copy holds no row at waits on it, neither admitted nor reported, and is
+  decided once when it is held.
+- Version 2: a report says what one merge made true; the same row arriving in
+  another merge may be reported differently.
+- Version 2: the canonical dump leaves out `_r_superseded`.
+- Version 2: the canonical dump and the counts are stated on this page; the
+  dump writes a value by its storage class, a REAL always with a decimal point
+  or an exponent, placed as [dump-real](#dump-real) says.
+- Version 2: a seat value or a holder that is not 16 bytes is taken in a
+  signed row like any value and names nothing; a confirm counts only naming an
+  author id as its holder.
+- Version 2: a stored header's `version` and `lc` are integers as stored;
+  `att` is not read.
+- Version 2: `AUTHOR_EQUIVOCATED` is filed under the lowest revealing header
+  of any kind, and under no id only when there is none.
+- Version 2: a merge refuses whole, before comparing signed views,
+  `UNSUPPORTED_LEVEL`, `MERGE_COVERAGE`, `NOT_REPLICATED` and
+  `SCHEMA_MISMATCH`.
+- Version 2: a reader decodes no CBOR for a rule on this page.
 
 ## Conformance
 

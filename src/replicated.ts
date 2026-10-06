@@ -1092,7 +1092,7 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * binds. A seat two replicas bind is contested and appears for neither.
    */
   const rosterTable = (name: string, extra = "", authored = ["seat"]): string =>
-    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB NOT NULL CHECK (length(seat) = 16),\n${extra}${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
+    `CREATE TABLE IF NOT EXISTS ${name} (\n  seat BLOB,\n${extra}${replicationColumns(true)}\n) WITHOUT ROWID;\n` +
     tableObjects(name, authored, true, false);
 
   /*
@@ -1176,9 +1176,10 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
   -- The first pass: the live sessions as the headers alone leave them, before
   -- any close is read (R18 reads these, so no step reads itself). A creator's
   -- seat row not deleted, valid, by an author who signed no two headers at one
-  -- seq. The confirms of hers that count, of a value her row lists. And who
-  -- holds what, a seat whose confirms name two holders, or a holder who signed
-  -- twice, holding nobody.
+  -- seq. The confirms of hers that count, of a value her row lists, naming a
+  -- holder that is an author id (16 bytes; any other value names nobody, and
+  -- the confirm counts for nothing). And who holds what, a seat whose confirms
+  -- name two holders, or a holder who signed twice, holding nobody.
   creator0 AS MATERIALIZED (
     SELECT r.session AS session, r.replica AS replica, r.seat AS seat, r.entity AS entity, r.seq AS seq, r.close AS close
       FROM creator_row r
@@ -1188,6 +1189,7 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
     SELECT f._r_session AS session, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
       FROM _dai_confirm f
       JOIN creator0 c ON c.session = f._r_session AND c.replica = f._r_replica
+       AND typeof(f.holder) = 'blob' AND length(f.holder) = 16
      WHERE (f._r_session, f.seat) IN (SELECT session, seat FROM roster_value)),
   holder0 AS MATERIALIZED (
     SELECT session, seat, replica FROM creator0
@@ -1384,11 +1386,14 @@ CREATE VIEW IF NOT EXISTS _dai_session_rules AS
     base +
     // The creator's seat row declares the roster (R14): her seat, the open
     // seats (16-byte values, one after another) and the close rule. No CHECK
-    // on either: a signed row is taken whatever it holds, and a roster that is
-    // not valid makes its session void rather than its row refused.
+    // on any roster value, `seat` and `holder` included: a signed row is taken
+    // whatever it holds, a value that is not 16 bytes names no seat and no
+    // holder, and a roster that is not valid makes its session void rather
+    // than its row refused (seat-value-shape: a length CHECK threw inside the
+    // merge and took the rest of the batch with it, branch review pass A, H1).
     rosterTable("_dai_seat", "  seats BLOB,\n  close TEXT,\n", ["seat", "seats", "close"]) +
     rosterTable("_dai_binding") +
-    rosterTable("_dai_confirm", "  holder BLOB NOT NULL CHECK (length(holder) = 16),\n", ["seat", "holder"]) +
+    rosterTable("_dai_confirm", "  holder BLOB,\n", ["seat", "holder"]) +
     close +
     // The roster block's comments are for this file; every document carries
     // its schema, and an inline link has a length cap.

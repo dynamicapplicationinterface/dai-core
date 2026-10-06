@@ -1,0 +1,33 @@
+{
+  "what": "Bo writes two notes and seals each alone (B). Then his copy's stored headers are changed outside the signature's reach: the first's version is stored as the one-byte blob 02, the second's lc as a one-byte blob of its own value. A stored header's version and lc are integers, and are read as stored, never converted: neither header makes a canonical header, so each is refused BATCH_SIGNATURE_INVALID in Bo's name and neither note is taken (stored-header-integers). Before, the runtime read each with Number(), which reads the blob 02 as 2, so both verified and both notes were taken (branch review pass A, M7).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

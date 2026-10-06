@@ -1,0 +1,30 @@
+{
+  "what": "Bo asks for the open seat (A, B). B also holds a _dai_confirm row seating Bo in it, under Ada's author id, that no header covers: written straight into the roster table, unsigned. The merge into A refuses it BATCH_UNSIGNED in the name of the id it carries, under no id, and takes nothing: on A nobody holds the open seat. B keeps the row it holds, which is where union merge stops (merge-row-unsigned; review 10, A06).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_UNSIGNED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

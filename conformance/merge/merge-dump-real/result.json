@@ -1,0 +1,24 @@
+{
+  "what": "Ada writes three readings, 2.0, -0.0 and 1.5, each in a REAL column (weight) and in a column with no declared type (raw); Bo writes 1e15, 1e-6, 1e-7 and 1.5e-10 the same way. The dump writes a REAL as the shortest digits that read back as the same double, placed as dump-real says, and always with a decimal point or an exponent: 2.0 is 2.0, never 2; 1e15 is 1000000000000000.0; 1e-6 is 0.000001; 1e-7 is 1e-7; 1.5e-10 is 1.5e-10. A REAL column holds -0.0 as 0.0 (SQLite stores it so); a column with no type keeps it, and it is written -0.0. Before, the runtime wrote a whole REAL as an integer (branch review pass A, H2).",
+  "cites": [
+    "6",
+    "T1-D9"
+  ],
+  "converges": true,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 4,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

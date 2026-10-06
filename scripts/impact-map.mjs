@@ -182,6 +182,7 @@ const ALLOWED = [
     why: "writes a demo document with a fresh key each run, to two paths that are not committed; there is nothing committed for a check to hold",
   },
   { path: "conformance/README.md", why: "describes the conformance suite; prose" },
+  { path: "conformance/reference/README.md", why: "says what the reference merge reader is and is not evidence of; prose" },
 ];
 
 // ------------------------------------------------------------------ files

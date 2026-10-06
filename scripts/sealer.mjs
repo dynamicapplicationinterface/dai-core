@@ -263,10 +263,9 @@ export function resealed(db, table, row) {
 
 /**
  * Seat values of every type a column can hold: the 16-byte string a seat is,
- * and what is not one (docs/format.md#seat-value-shape). A roster table's
- * CHECK refuses some of them (NULL, a number whose text is not 16 long, a
- * byte string of another length); a client can still sign them in an author
- * table, whose seat column is declared without one.
+ * and what is not one (docs/format.md#seat-value-shape). No table refuses any
+ * of them: the roster tables carry no CHECK on a seat or a holder, so a signed
+ * row holding one is taken and names nobody.
  */
 export const SEAT_VALUES = {
   bytes: new Uint8Array(16).fill(0xe1),
@@ -277,6 +276,25 @@ export const SEAT_VALUES = {
   short: new Uint8Array(15).fill(0xe1),
   long: new Uint8Array(17).fill(0xe1),
 };
+
+/**
+ * A bad seat value in a signed batch beside a row that counts: a confirm at
+ * `seq` with `confirm`'s seat and holder, one of them not 16 bytes, and at
+ * `seq + 1` the row `beside` names (`{ table, entity, columns }`), both
+ * pending, so one seal signs them together. Written past any CHECK a copy's
+ * schema still carries, as a client that skips the writers signs it: the
+ * value must cost nothing but its own row (seat-value-shape, T1-D13), and a
+ * merge that throws on it takes the whole batch (branch review pass A, H1).
+ */
+export function badSeatValueAt(db, seq, session, confirm, beside) {
+  db.run("PRAGMA ignore_check_constraints = ON");
+  try {
+    rawAt(db, seq, "_dai_confirm", new Uint8Array(16).fill(0xe3), { seat: confirm.seat, holder: confirm.holder }, session);
+  } finally {
+    db.run("PRAGMA ignore_check_constraints = OFF");
+  }
+  rawAt(db, seq + 1, beside.table, beside.entity, beside.columns, session);
+}
 
 /** A header put into a copy without any row it lists, as a forwarder holds one. */
 export function carryHeaderOnly(to, from, hid) {

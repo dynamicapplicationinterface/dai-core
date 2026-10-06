@@ -5,7 +5,7 @@
     "T1-D35"
   ],
   "converges": true,
-  "admitted": false,
+  "admitted": true,
   "stable": true,
   "ab": {
     "applied": 2,

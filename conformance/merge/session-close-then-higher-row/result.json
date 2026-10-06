@@ -1,0 +1,30 @@
+{
+  "what": "close=any. Bo, seated, plays e5 (A and B), then closes the session and plays Nf6 above his close, a move of another entity naming e5 (B). A close that counts and a row of its author in that session at a higher seq make him an equivocator: the merge into A, which takes the close and Nf6, reports Bo AUTHOR_EQUIVOCATED; he holds no seat (the open seat is void), neither e5 nor Nf6 is admitted, his close closes nothing, and Ada's e4 stands (R18, R17; review 10, A04). Before the merge A admits e4 and e5.",
+  "cites": [
+    "6",
+    "T1-D31"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}
