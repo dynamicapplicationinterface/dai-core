@@ -95,10 +95,12 @@ async function copyPrompt(): Promise<void> {
     <!-- ----------------------------------------------------------- beats -->
     <section class="beat with-shot">
       <div class="beat-text">
-        <h2>No accounts. No sign-ups. No subscriptions.</h2>
+        <h2>No accounts. No sign-ups.</h2>
         <p>
           The app and everything you put in it live in one file, like a photo or a
-          PDF. Nothing to log into, nothing to renew, nothing to lose.
+          PDF. There is no account to log into. A copy opened on a phone is saved
+          in that browser: clear the site's data and that copy is gone, and a
+          shared document will write as a new author afterward. Keep the file.
         </p>
       </div>
       <figure class="laptop">

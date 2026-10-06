@@ -14,7 +14,10 @@ Here is how, on whatever you are holding.
 ## On a phone
 
 Go to **[opendai.app](https://opendai.app)** and choose your file. That is the
-whole thing: a page, nothing to install, and the file never leaves your device.
+whole thing: a page, nothing to install. Opening a file does not send it
+anywhere. Sharing does: see [what a link reveals](/docs/security#what-a-link-reveals),
+and note that a document you have shared by link also sends each later change,
+signed by your device.
 
 Add it to your home screen and it behaves like any other app, reopening
 whatever you had open last — with no network, on a plane, anywhere.

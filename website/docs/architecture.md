@@ -49,7 +49,7 @@ connect-src 'none'
 
 A cartridge cannot open a network connection, and no future version of the protocol will change that. 
 
-This invariant has a crucial architectural consequence: **a cartridge cannot report on itself.** It cannot phone home, log telemetry to an analytics server, check for remote updates, or transmit user identities. Any capability requiring outbound telemetry belongs exclusively to the **host**, not to the cartridge format.
+This invariant has a crucial architectural consequence: **a cartridge cannot report on itself.** It cannot phone home, log telemetry to an analytics server, or check for remote updates. The host hands it the device's author id (see [Security](/docs/security#what-the-host-hands-a-document-about-identity)), which is a fingerprint of a key and is carried with the document's rows when copies are shared; the cartridge itself cannot send it anywhere. Any capability requiring outbound telemetry belongs exclusively to the **host**, not to the cartridge format.
 
 ---
 

@@ -124,9 +124,10 @@ dai({ signingKey: "dai-signing-key.pem" })
 ```
 
 The private key signs at compile time and never enters a container; the matching
-public key is written into the shell as `<meta name="dai-public-key">`. It lives
-in the shell because the signature covers the shell's own digest — a key inside
-the signed set could not be written before signing.
+public key is written into the shell as `<meta name="dai-public-key">`. From
+manifest version 3, the default, the shell is outside the signed set: it is
+checked against its own digest and the live document, and the key sits there
+because a key inside the signed set could not be written before signing.
 
 **The signature covers the app and runtime, not `document.sqlite`.** Per spec §1
 the application is immutable while its database is not, and a container carries

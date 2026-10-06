@@ -82,6 +82,24 @@ would be a claim about the world this software cannot make.
 What none of this fixes is the first document from a publisher nobody has
 vouched for. It is new, and it says new.
 
+**Rows are signed too, by the device that wrote them.** In a document that
+more than one copy writes to, each batch of rows is signed by a key the
+writing device keeps, and a merge checks the batch against the author id it
+names. A batch whose signature does not check (`BATCH_SIGNATURE_INVALID`),
+whose digest does not match its rows (`BATCH_DIGEST_MISMATCH`), or that
+carries no signature (`BATCH_UNSIGNED`) is refused and reported, not applied.
+An author who has signed two different rows at one position is reported as
+`AUTHOR_EQUIVOCATED`. What this proves is that a row came from one key and
+not another, and that a different device, holding a different key, cannot
+produce it. It does not prove who holds the key: a signature proves a key,
+not a person. A place is reserved for a third party's statement that a key
+belongs to a named person; nothing fills it. It also hides nothing: the
+author id and public key travel with the rows. And an app can still make its
+own user's device sign two rows at one position, which other copies then
+report as `AUTHOR_EQUIVOCATED` for that user. The key lives in the browser's
+storage for the opener; if that storage is cleared, the device becomes a new
+author.
+
 **Not signed at all.** A container built on this website is unsigned, and says
 so on the card. A page has nowhere to keep a key, and one minted for a single
 build and discarded signs nothing anybody can check — worse, it would make your

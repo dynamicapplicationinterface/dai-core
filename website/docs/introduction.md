@@ -46,7 +46,7 @@ Every asset within the container is cataloged in `runtime/manifest.json` with it
 
 ## Core Pillars at a Glance
 
-1. **Air-Gapped by Design:** Zero outbound network traffic. Absolute protection against exfiltration.
+1. **Air-Gapped by Design:** A container declares `connect-src 'none'`, so the browser engine refuses its requests, sockets and beacons. DNS prefetch, speculation rules and WebRTC are not governed by that and are not closed in a browser host ([See it break](/tamper-proof)).
 2. **Immutable Logic:** Application code is sealed at compile time. Only state (`document.sqlite`) evolves across saves.
 3. **Bundled Runtime:** Contains its own database engine and bootloader. No external CDN or package manager required.
 4. **Self-Perpetuating:** Saves rebuild the document from an embedded copy of its own shell, preventing runtime drift.
