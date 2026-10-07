@@ -478,7 +478,8 @@
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
-      "tests/cross-entity-parent.spec.ts"
+      "tests/cross-entity-parent.spec.ts",
+      "tests/held-batch.ts"
     ],
     "tests/d22-reopen.spec.ts": [
       "apps/runner/",
@@ -2901,6 +2902,7 @@
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
+      "tests/held-batch.ts",
       "tests/replicated-converge.spec.ts",
       "tests/session-db.ts",
       "tests/signed-people.ts"
@@ -3219,6 +3221,7 @@
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
+      "tests/held-batch.ts",
       "tests/seat-admission.spec.ts",
       "tests/session-db.ts",
       "tests/signed-people.ts"
@@ -3245,6 +3248,7 @@
       "src/session-id.ts",
       "tests/fixture/chess/engine.js",
       "tests/fixture/chess/store.js",
+      "tests/held-batch.ts",
       "tests/seat-attacks.spec.ts"
     ],
     "tests/seat-gate-page.spec.ts": [
@@ -3550,6 +3554,7 @@
       "src/replicated-rows.ts",
       "src/replicated.ts",
       "src/session-id.ts",
+      "tests/held-batch.ts",
       "tests/session-db.ts",
       "tests/session-roles.spec.ts",
       "tests/signed-people.ts"

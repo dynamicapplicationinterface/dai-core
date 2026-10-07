@@ -595,8 +595,8 @@ function awaitsParent(row: string): string {
  * at an id two tables hold is at an equivocated id, and admitted nowhere.
  */
 function waitingParentView(tables: readonly string[], authorTables: readonly string[]): string {
-  const held = tables.map((t) => `SELECT lower(hex(_r_replica))||':'||_r_seq FROM "${t}"`).join(" UNION ALL ");
-  const rows = authorTables.map((t) => `SELECT r._r_replica, r._r_seq FROM "${t}" r WHERE ${awaitsParent("r")}`).join(" UNION ALL ");
+  const held = tables.map((t) => `SELECT lower(hex(_r_replica))||':'||_r_seq FROM "${t}_rows"`).join(" UNION ALL ");
+  const rows = authorTables.map((t) => `SELECT r._r_replica, r._r_seq FROM "${t}_rows" r WHERE ${awaitsParent("r")}`).join(" UNION ALL ");
   return `
 CREATE VIEW IF NOT EXISTS _dai_waiting_parent AS WITH held(id) AS (${held}) ${rows};
 `;
@@ -654,6 +654,10 @@ function headsView(
   author?: AuthorRole,
   seatColumn?: string,
 ): string {
+  // A session document's views read the rows of the merge (`_rows`, D194),
+  // never the table: a row no header lists, under an id not this copy's own,
+  // shows, hides, seats and admits nothing. A plain document's read the table.
+  const src = session ? `${q}_rows` : q;
   if (!admissionFiltered) {
     /*
      * The roster and the close (session) and a plain document's tables. A
@@ -665,16 +669,16 @@ function headsView(
      */
     if (q === "_dai_seat") {
       return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
-  SELECT r.* FROM ${q} r
+  SELECT r.* FROM ${src} r
    WHERE ${notEquivocator("r")}
      AND (r._r_replica, r._r_seq, r._r_session) IN (SELECT replica, seq, session FROM _dai_creator_row);`;
     }
     const ownAuthor = session ? " AND c._r_session = r._r_session AND c._r_replica = r._r_replica" : "";
     const counts = session ? notEquivocator : unequivocal;
     return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
-  SELECT r.* FROM ${q} r
+  SELECT r.* FROM ${src} r
    WHERE ${counts("r")}
-     AND NOT EXISTS (SELECT 1 FROM ${q} c, json_each(${parentsSql("c._r_parents")}) p
+     AND NOT EXISTS (SELECT 1 FROM ${src} c, json_each(${parentsSql("c._r_parents")}) p
                       WHERE c._r_entity = r._r_entity${ownAuthor} AND ${counts("c")}
                         AND p.value = lower(hex(r._r_replica)) || ':' || r._r_seq);`;
   }
@@ -725,7 +729,7 @@ function headsView(
    * the same bytes in a session of their own for nothing: the seat is the pair.
    */
   const foreign = (row: string): string =>
-    `EXISTS (SELECT 1 FROM ${q} fp, json_each(${parentsSql(`${row}._r_parents`)}) fj` +
+    `EXISTS (SELECT 1 FROM ${src} fp, json_each(${parentsSql(`${row}._r_parents`)}) fj` +
     ` WHERE fp._r_entity = ${row}._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq` +
     ` AND fp._r_session <> ${row}._r_session)`;
   /*
@@ -737,7 +741,7 @@ function headsView(
    * seat honestly, deleted the creator's move by naming it as his row's parent.
    */
   const otherSeat = (row: string): string =>
-    `EXISTS (SELECT 1 FROM ${q} sp, json_each(${parentsSql(`${row}._r_parents`)}) sj` +
+    `EXISTS (SELECT 1 FROM ${src} sp, json_each(${parentsSql(`${row}._r_parents`)}) sj` +
     ` WHERE sp._r_entity = ${row}._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq` +
     ` AND sp._r_session = ${row}._r_session AND sp."${seatColumn}" IS NOT ${row}."${seatColumn}")`;
   // A row waiting on a parent this copy does not hold (R21) is not admitted,
@@ -772,7 +776,7 @@ function headsView(
   // own session (D131), and in a seated table only one of r's own seat (D132).
   const supersededBy = (row: string, gate: string): string =>
     `EXISTS (
-       SELECT 1 FROM ${q} c, json_each(${parentsSql("c._r_parents")}) p
+       SELECT 1 FROM ${src} c, json_each(${parentsSql("c._r_parents")}) p
         WHERE c._r_entity = ${row}._r_entity AND c._r_session = ${row}._r_session${seatColumn ? ` AND c."${seatColumn}" = ${row}."${seatColumn}"` : ""}
           AND ${gate}
           AND p.value = lower(hex(${row}._r_replica)) || ':' || ${row}._r_seq
@@ -795,12 +799,12 @@ function headsView(
   // shows, as `_current` is. A row already admitted is not waiting (D148): a
   // member who also asks for a seat nobody holds sees each row once.
   return `CREATE VIEW IF NOT EXISTS ${q}_heads AS
-  SELECT r.* FROM ${q} r
+  SELECT r.* FROM ${src} r
    WHERE ${admitted("r")}
      AND NOT ${supersededBy("r", admitted("c"))};
 
 CREATE VIEW IF NOT EXISTS ${q}_waiting AS
-  SELECT r.* FROM ${q} r
+  SELECT r.* FROM ${src} r
    WHERE ${pendingRow("r")} AND NOT (${admitted("r")})
      AND NOT ${supersededBy("r", `((${admitted("c")}) OR (c._r_replica = r._r_replica AND ${pendingRow("c")}))`)};
 
@@ -813,7 +817,7 @@ CREATE VIEW IF NOT EXISTS ${q}_pending AS
 -- (R17), naming no equivocated id (X1).
 CREATE VIEW IF NOT EXISTS ${q}_foreign AS
   SELECT r._r_replica, r._r_seq, r._r_batch, fp._r_replica AS parent_replica, fp._r_seq AS parent_seq
-    FROM ${q} r, ${q} fp, json_each(${parentsSql("r._r_parents")}) fj
+    FROM ${src} r, ${src} fp, json_each(${parentsSql("r._r_parents")}) fj
    WHERE fp._r_entity = r._r_entity AND fj.value = lower(hex(fp._r_replica)) || ':' || fp._r_seq
      AND fp._r_session <> r._r_session AND ${reportable("r")};` +
     (seatColumn
@@ -826,7 +830,7 @@ CREATE VIEW IF NOT EXISTS ${q}_foreign AS
 -- row waiting on a confirmation is neither admitted nor reported, nor is a row
 -- for a void seat.
 CREATE VIEW IF NOT EXISTS ${q}_unseated AS
-  SELECT r._r_replica, r._r_seq, r._r_batch FROM ${q} r
+  SELECT r._r_replica, r._r_seq, r._r_batch FROM ${src} r
    WHERE (typeof(r."${seatColumn}") <> 'blob' OR length(r."${seatColumn}") <> 16
       OR (NOT (${holds("r")}) AND NOT ${waiting("r")}
           AND (r._r_session, r."${seatColumn}") NOT IN (SELECT session, seat FROM _dai_voided))
@@ -837,7 +841,7 @@ CREATE VIEW IF NOT EXISTS ${q}_unseated AS
 -- the two arrived (D132), and like it only of a reportable row.
 CREATE VIEW IF NOT EXISTS ${q}_other_seat AS
   SELECT r._r_replica, r._r_seq, r._r_batch, sp._r_replica AS parent_replica, sp._r_seq AS parent_seq
-    FROM ${q} r, ${q} sp, json_each(${parentsSql("r._r_parents")}) sj
+    FROM ${src} r, ${src} sp, json_each(${parentsSql("r._r_parents")}) sj
    WHERE sp._r_entity = r._r_entity AND sj.value = lower(hex(sp._r_replica)) || ':' || sp._r_seq
      AND sp._r_session = r._r_session AND sp."${seatColumn}" IS NOT r."${seatColumn}"
      AND ${reportable("r")};`
@@ -944,6 +948,22 @@ CREATE TRIGGER IF NOT EXISTS ${q}__superseded_monotonic BEFORE UPDATE OF _r_supe
        AND p.value = lower(hex(OLD._r_replica)) || ':' || OLD._r_seq)
   BEGIN SELECT RAISE(ABORT, 'ROW_REJECTED'); END;
 
+${
+  session
+    ? `-- The rows of the merge (D194): a row reached through a header this copy
+-- holds, the one its _r_batch names, listing it (its table, its author, its
+-- seq), as every row a merge takes is; or one under this copy's own id,
+-- pending until it is sealed. Any other row is one no merge took and no honest
+-- writer makes (at an id a held header lists or not): it seats, admits, holds
+-- and closes nothing on any copy, so every view of a session document reads
+-- this.
+CREATE VIEW IF NOT EXISTS ${q}_rows AS
+  SELECT * FROM ${q} r
+   WHERE r._r_replica IN (SELECT id FROM _dai_replica)
+      OR EXISTS (SELECT 1 FROM _dai_covers v WHERE v.tbl = '${q}' AND v.author = r._r_replica AND v.seq = r._r_seq AND v.id = r._r_batch);
+`
+    : ""
+}
 ${headsView(q, session, admissionFiltered, author, seatColumn)}
 
 CREATE VIEW IF NOT EXISTS ${q}_conflicts AS
@@ -1129,14 +1149,14 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
    * views after it.
    */
   const bound = Math.max(maxParties - 1, 0);
-  // Every row of every replicated table, by author, session and seq: what R18
-  // looks for after a close.
+  // Every row of the merge (`_rows`, D194) of every replicated table, by
+  // author, session and seq: what R18 looks for after a close.
   const tablesOfSession = [...authorTables, "_dai_seat", "_dai_binding", "_dai_confirm", "_dai_close"];
   const writesAfter = (close: string): string =>
     tablesOfSession
       .map(
         (t) =>
-          `EXISTS (SELECT 1 FROM "${t}" w WHERE w._r_replica = ${close}.replica AND w._r_session = ${close}.session AND w._r_seq > ${close}.seq)`,
+          `EXISTS (SELECT 1 FROM "${t}_rows" w WHERE w._r_replica = ${close}.replica AND w._r_session = ${close}.session AND w._r_seq > ${close}.seq)`,
       )
       .join(" OR ");
   // The roster's chain (R14, R17, R18, R20), every step a common table
@@ -1187,7 +1207,7 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
        AND r.replica NOT IN (SELECT author FROM equivocated)),
   confirmed0 AS MATERIALIZED (
     SELECT f._r_session AS session, f.seat AS seat, f.holder AS holder, f._r_seq AS seq, f._r_replica AS creator
-      FROM _dai_confirm f
+      FROM _dai_confirm_rows f
       JOIN creator0 c ON c.session = f._r_session AND c.replica = f._r_replica
        AND typeof(f.holder) = 'blob' AND length(f.holder) = 16
      WHERE (f._r_session, f.seat) IN (SELECT session, seat FROM roster_value)),
@@ -1205,7 +1225,7 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
   -- any, a holder of a seat in it, D145).
   close0 AS MATERIALIZED (
     SELECT x._r_session AS session, x._r_replica AS replica, x._r_seq AS seq
-      FROM _dai_close x
+      FROM _dai_close_rows x
       JOIN creator0 c ON c.session = x._r_session
      WHERE x._r_deleted = 0
        AND (x._r_replica = c.replica
@@ -1309,14 +1329,15 @@ CREATE TABLE IF NOT EXISTS _dai_replicas (
     return `WITH RECURSIVE ${steps.filter((step) => need.has(step.name)).map((step) => step.sql).join(", ")}`;
   };
   const member = `
--- The creator's seat row (R15): every _dai_seat row whose own author, seq and
--- roster (seat, seats, close, as the row holds them) hash to its session,
+-- The creator's seat row (R15): every _dai_seat row of the merge (D194) whose
+-- own author, seq and roster (seat, seats, close, as the row holds them) hash
+-- to its session,
 -- deleted or not. The id names one row and the roster it declares, so a
 -- session has at most one, and no other row, nor a later version of it, is it.
 CREATE VIEW IF NOT EXISTS _dai_creator_row AS
   SELECT s._r_session AS session, s._r_replica AS replica, s._r_seq AS seq, s._r_entity AS entity,
          s.seat AS seat, s.seats AS seats, s.close AS close, s._r_deleted AS deleted
-    FROM _dai_seat s
+    FROM _dai_seat_rows s
    WHERE ${SESSION_ID_FUNCTION}(s._r_replica, s._r_seq, s.seat, s.seats, s.close) = s._r_session;
 
 

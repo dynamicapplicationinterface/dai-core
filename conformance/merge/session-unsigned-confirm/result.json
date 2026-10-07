@@ -1,5 +1,5 @@
 {
-  "what": "Bo asks for the open seat (A, B). B also holds a _dai_confirm row seating Bo in it, under Ada's author id, that no header covers: written straight into the roster table, unsigned. The merge into A refuses it BATCH_UNSIGNED in the name of the id it carries, under no id, and takes nothing: on A nobody holds the open seat. B keeps the row it holds, which is where union merge stops (merge-row-unsigned; review 10, A06).",
+  "what": "Bo asks for the open seat (A, B). B also holds a _dai_confirm row seating Bo in it, under Ada's author id, that no header covers: written straight into the roster table, unsigned. The merge into A refuses it BATCH_UNSIGNED in the name of the id it carries, under no id, and takes nothing: on A nobody holds the open seat. B keeps the row it holds, which is where union merge stops, and it seats nobody there either: a row no header covers, under an id not B's own, is not a row of the merge (merge-row-unsigned, uncovered-row; review 10, A06; D194).",
   "cites": [
     "6",
     "T1-D13"

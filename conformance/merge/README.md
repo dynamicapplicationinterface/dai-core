@@ -139,6 +139,12 @@ before the merge is half of what the vector rules. It reads no view but `_dai_se
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
 
+- every rule reads only the rows of the merge: a row whose `_r_batch` names
+  a header the copy holds that lists it (its table, its author, its seq), as
+  every row a merge takes does, or one under the copy's own id
+  (`_dai_replica`), pending until it is sealed. Any other row under another
+  author's id seats, admits, holds and closes nothing, and is no parent held
+  (D194, uncovered-row);
 - a row id one author signed twice (two headers listing its seq, in any
   tables, with different digests) counts nowhere (D160, and the step 6
   review), and a row naming such an id as a parent is neither admitted nor

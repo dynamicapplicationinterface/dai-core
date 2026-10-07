@@ -4579,10 +4579,51 @@ non-extractable one instead and writes from then on as a new author. Its old
 rows keep their signatures, never rewritten (ruling 5); it holds no seat its old
 key held.
 
+#### D196 — A copy's own header table is trusted as it stands
+
+*Status: open, low. Filed 6 October, from D194.*
+
+[uncovered-row](format.md#uncovered-row) counts a row whose `_r_batch` names
+a header the copy holds that lists it. The views cannot check a signature or
+a digest, so "holds" is the copy's own `_dai_batch` as it stands. Two things
+on one copy stay outside the ruling. A header written into `_dai_batch` by
+SQL, never verified (a merge keeps only authentic headers, but application
+SQL can insert one), covers a row as a verified one does, and its `covers`
+also feeds `_dai_equivocated`. And a row written by SQL at an id a held
+header lists, naming that header in `_r_batch`, counts as the signed row
+whatever its content. Neither travels: the merge verifies every header it
+takes and refuses a row the header's digest does not match. Each changes only
+what the one copy whose application wrote it admits, the same class D194
+closed for rows. **Question:** whether the host's mount should verify the
+headers a copy holds (it holds the keys' public halves in the headers), and
+what a copy holding an unverifiable header shows.
+
 #### D194 — A copy admits an unsigned roster row it holds under another author's id
 
-*Status: open, ruling wanted. Filed 5 October, from promoting attack review
+*Status: closed 6 October. Filed 5 October, from promoting attack review
 10's a06 (`session-unsigned-confirm`).*
+
+**Ruled:** a row covered by no verified header is not a row of the merge. It
+seats nothing, admits nothing, holds nothing, on every copy. P0 holds over it:
+the admitted state (holders, closed set) is a function of signed rows and
+headers alone, and a copy holding an uncovered row under another author's id
+reaches the same admitted state as a copy without it. The runtime's own
+unsealed rows under its own id are unchanged by this ruling: they are shown as
+unsealed and are not admitted until sealed, as today. As built and as before,
+no view reads `_r_batch`: a copy's own pending row counts in its own views
+(an own move shows at once), and that is what this ruling leaves unchanged;
+whether "not admitted until sealed" should become true is not decided here.
+Page: [uncovered-row](format.md#uncovered-row). Runtime: every
+view of a session document reads `<table>_rows`, a table's rows reached
+through a held header (the one `_r_batch` names lists the row, in
+`_dai_covers`) or under the copy's own id (`_dai_replica`); a plain document is
+unchanged. "Listed by some held header" was not enough: a copy holding a
+relayed header without its row (a lost save) counted a forged row written at
+that id (`session-relayed-header-lost-save`, 22 property violations, both
+readers). Python leveled (`of_the_merge`). Vector
+`session-confirm-uncovered` (identical admitted dumps, both copies, before and
+after either merge); a06 now rules B's holders. The property pass adds P0's
+uncovered row on every session vector. What the views cannot check is D196.
 
 B holds, written straight into `_dai_confirm` under Ada's id and with no header,
 a confirm seating Bo. Merged into A it is refused `BATCH_UNSIGNED` and seats
@@ -4795,7 +4836,7 @@ before (it re-reads; see its comment). **Fix:** the record is re-read under
 the library lock (`amendLibraryRecord`) and only `mergeStanding` is changed.
 `tests/session-contested.spec.ts` failed on it before the fix, on Chromium.
 
-#### D186 — The request example's inline link is about 1,235 characters under the cap
+#### D186 — The request example's inline link is about 936 characters under the cap
 
 *Status: open. Filed 4 October, from the R14 to R20 step.*
 
@@ -4816,6 +4857,9 @@ A session document's per-table objects (triggers and views) no longer carry
 their `--` comments into the schema, as the roster block's do not; a plain
 document's schema is unchanged. With R21, 31,534: 1,234 under. The want
 stands: the next growth eats into that.
+
+*6 October, D194.* One `_rows` view per session table, which every view of
+the document now reads: 31,832, 936 under.
 
 *6 October.* Measured now on every run of the gate (`npm run drift`, and
 `tests/inline-link-room.spec.ts`), which fails when the link no longer fits:

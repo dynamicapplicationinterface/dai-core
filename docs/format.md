@@ -582,6 +582,14 @@ these hold:
 - <a id="admitted-parents-held"></a>the copy holds a row at every id it names
   as a parent ([waiting-on-parent](#waiting-on-parent)).
 
+<a id="uncovered-row"></a>Every rule in this section reads only the rows of
+the merge: a row reached through a header the copy holds (the header its
+`_r_batch` names lists it: its table, its author, its seq), as every row a
+merge takes is, or a row under the copy's own author id, pending until it is
+sealed; a row covered by no verified header under another author's id is not
+a row of the merge, and seats, admits, holds and closes nothing, on every
+copy, nor is it a parent held.
+
 <a id="parent-other-entity"></a>Parents name rows by `(author, seq)`, never
 entities, and a version of a row is a row of its own table and entity: a
 parent of another entity, or a row of another table at the id a parent names,
@@ -854,6 +862,8 @@ version, never a refactor (identity.md, binding rule 10).
   `UNSUPPORTED_LEVEL`, `MERGE_COVERAGE`, `NOT_REPLICATED` and
   `SCHEMA_MISMATCH`.
 - Version 2: a reader decodes no CBOR for a rule on this page.
+- Version 2: in a session document a row covered by no header the copy
+  holds, under an author id not the copy's own, is not a row of the merge.
 
 ## Conformance
 

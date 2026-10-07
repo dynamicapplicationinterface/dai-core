@@ -22,7 +22,11 @@
  *   merge made true, and the same row arriving in another merge may be
  *   reported differently (D190, docs/format.md#report-made-true). Each
  *   order's reports are kept in the scenario all the same, and the Python
- *   reader must make the same ones.
+ *   reader must make the same ones. And in a session document the admitted
+ *   state is a function of signed rows and headers alone (D194,
+ *   docs/format.md#uncovered-row): each mutation's rows, written into each
+ *   base below under their author's id with no header covering them, leave
+ *   what the base admits as it was.
  * - P1. Over three bases (copy A as it stands, copy B, and both), every
  *   addition from the mutation library leaves the admitted rows and the holds
  *   a superset of what they were, unless the merge that takes it reports
@@ -545,6 +549,8 @@ async function mutantOf(empty, mutation) {
     scratch.close();
     return { unwritable: String(error.message ?? error).split("\n")[0] };
   }
+  // The same rows as no header covers them: what P0's uncovered row holds.
+  const pending = scratch.tables.flatMap((table) => scratch.all(`SELECT * FROM "${table}"`).map((row) => ({ table, row })));
   const ids = await seal(scratch, mutation.author);
   if (ids.length !== 1) throw new Error(`${mutation.name}: sealed ${ids.length} headers`);
   let copy = scratch;
@@ -559,7 +565,15 @@ async function mutantOf(empty, mutation) {
   return {
     copy,
     verdicts,
-    json: { id: ids[0], header: encodeRow(header), rows, verdicts: Object.fromEntries([...verdicts].map(([k, v]) => [k, verdictText(v)])), lists: {} },
+    pending,
+    json: {
+      id: ids[0],
+      header: encodeRow(header),
+      rows,
+      verdicts: Object.fromEntries([...verdicts].map(([k, v]) => [k, verdictText(v)])),
+      lists: {},
+      pending: pending.map(({ table, row }) => ({ table, row: encodeRow(row) })),
+    },
   };
 }
 
@@ -655,7 +669,7 @@ if (only && names.length !== only.size) {
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
-let counted = { orders: 0, mutations: 0, unwritable: 0, merges: 0, subsets: 0 };
+let counted = { orders: 0, uncovered: 0, mutations: 0, unwritable: 0, merges: 0, subsets: 0 };
 const started = Date.now();
 for (const name of names) {
   const dir = join(suite, name);
@@ -760,6 +774,31 @@ for (const name of names) {
       replay(local, list, view);
       bases[label] = { local, dump: admittedDump(local) };
     }
+    /*
+     * P0's uncovered row (D194): the mutation's rows written into the base as
+     * they stand before any seal, under their author's id, no header covering
+     * them and no merge taking them. The base is the observer, whose own id is
+     * no author's, so each is a row under another author's id; what the base
+     * admits must not move. A row at an id the base holds in that table is not
+     * written (a second row at one id is the merge's question).
+     */
+    const isSession = bases.union.local.tables.includes("_dai_seat");
+    const uncovered = (local, before, label, mutationName, pending) =>
+      trying(local, () => {
+        let written = 0;
+        for (const { table, row } of pending) {
+          const columns = Object.keys(row);
+          try {
+            local.run(`INSERT INTO "${table}" (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`, columns.map((c) => row[c]));
+            written += 1;
+          } catch {}
+        }
+        if (written === 0) return { written };
+        counted.uncovered += 1;
+        const after = admittedDump(local);
+        if (after !== before) violation({ property: "P0", vector: name, at: `uncovered ${label} ${mutationName}`, difference: firstDifference(before, after) });
+        return { written, after };
+      });
     for (const mutation of mutationsFor(bases.union.local)) {
       const built = await mutantOf(empty, mutation);
       if (built.unwritable) {
@@ -770,6 +809,10 @@ for (const name of names) {
       const sibling = { copy: built.copy, verdicts: built.verdicts, view };
       const record = { name: mutation.name, ...built.json, results: {} };
       for (const [label, base] of Object.entries(bases)) record.results[label] = check(base.local, base.dump, label, mutation.name, sibling, mutation.author.name);
+      if (isSession && !mutation.headerOnly) {
+        record.uncovered = {};
+        for (const [label, base] of Object.entries(bases)) record.uncovered[label] = uncovered(base.local, base.dump, label, mutation.name, built.pending);
+      } else delete record.pending;
       if (deep) deepSiblings.push({ mutation, sibling });
       else built.copy.close();
       scenario.p1.push(record);
@@ -897,7 +940,7 @@ for (const v of listAll ? violations : unfiled) console.log(show(v));
 if (!listAll && filed.length) console.log(`${filed.length} filed violation(s) occurred, as scripts/properties-known.json says.`);
 for (const key of gone) console.log(`  filed and no longer occurring: ${key}`);
 console.log(
-  `\n${names.length} vectors: P0 ${counted.orders} orders, P1 ${counted.mutations} mutations (${counted.unwritable} not writable), P2 ${counted.subsets} subsets, ${counted.merges} merges, ${((Date.now() - started) / 1000).toFixed(1)} s. ` +
+  `\n${names.length} vectors: P0 ${counted.orders} orders and ${counted.uncovered} uncovered rows, P1 ${counted.mutations} mutations (${counted.unwritable} not writable), P2 ${counted.subsets} subsets, ${counted.merges} merges, ${((Date.now() - started) / 1000).toFixed(1)} s. ` +
     `${violations.length} violation(s), ${unfiled.length} unfiled. Scenarios for the Python reader in ${out}.`,
 );
 process.exit(unfiled.length > 0 || gone.length > 0 ? 1 : 0);

@@ -71,6 +71,18 @@ a copy would report almost nothing until every copy had met. A report tells a
 person about one merge; the state is what the copies converge on. The
 fixtures still hold each merge's reports, so two readers must agree on them.
 
+*6 October, D194.* The rows P0 reads are signed rows and headers, nothing
+else ([uncovered-row](format.md#uncovered-row)). A copy holding a row no
+header covers, under another author's id, reaches the admitted state a copy
+without it reaches: such a row seats, admits, holds and closes nothing. No
+merge takes one (`BATCH_UNSIGNED`), so it never travels, and the only copy
+holding it is the one it was written into, by SQL that skipped every writer.
+Counting it there made the admitted state a function of what one copy's
+application wrote, not of the rows and headers every copy can hold: the copy
+seated a holder its sibling never would, whatever arrived. The copy's own
+pending rows, under its own id, are the exception that keeps writing usable:
+they are its author's, pending until they are sealed.
+
 **Rejected.** Ruling attack by attack: R11 to R13 each closed the shape the
 review showed and not the class it belonged to, so the next review found the
 next shape.

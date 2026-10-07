@@ -2974,7 +2974,7 @@ CREATE TABLE readings (
     converges: false,
     cites: ["6", "T1-D13"],
     what:
-      "Bo asks for the open seat (A, B). B also holds a _dai_confirm row seating Bo in it, under Ada's author id, that no header covers: written straight into the roster table, unsigned. The merge into A refuses it BATCH_UNSIGNED in the name of the id it carries, under no id, and takes nothing: on A nobody holds the open seat. B keeps the row it holds, which is where union merge stops (merge-row-unsigned; review 10, A06).",
+      "Bo asks for the open seat (A, B). B also holds a _dai_confirm row seating Bo in it, under Ada's author id, that no header covers: written straight into the roster table, unsigned. The merge into A refuses it BATCH_UNSIGNED in the name of the id it carries, under no id, and takes nothing: on A nobody holds the open seat. B keeps the row it holds, which is where union merge stops, and it seats nobody there either: a row no header covers, under an id not B's own, is not a row of the merge (merge-row-unsigned, uncovered-row; review 10, A06; D194).",
     fill: async (a, b) => {
       const session = begin(a);
       await exchange(b, a, ADA);
@@ -2988,9 +2988,48 @@ CREATE TABLE readings (
     expect: (runs) =>
       ruled(runs, {
         moves: () => [],
-        ab: { reports: ["Ada BATCH_UNSIGNED"], holders: [[SEAT_W, ADA.author]], voided: [] },
+        holders: [[SEAT_W, ADA.author]],
+        voided: [],
+        ab: { reports: ["Ada BATCH_UNSIGNED"] },
         ba: { reports: [] },
-      }) ?? (runs.ab.result.applied !== 0 ? `B into A: ${runs.ab.result.applied} rows taken` : undefined),
+      }) ??
+      (sectionOf(runs.ba.before, "holders").length !== 1 ? `B, before the merge: holders are [${sectionOf(runs.ba.before, "holders").join(" | ")}]` : undefined) ??
+      (runs.ab.result.applied !== 0 ? `B into A: ${runs.ab.result.applied} rows taken` : undefined),
+  },
+  {
+    name: "session-confirm-uncovered",
+    session: true,
+    before: true,
+    converges: false,
+    cites: ["6", "T1-D13"],
+    what:
+      "Bo asks for the open seat and moves for it, every row signed, on both copies (A, B). B also holds a _dai_confirm row under Ada's id, the creator's, seating Bo in it, that no header covers. A row covered by no verified header is not a row of the merge: it seats, admits and holds nothing, on any copy. So the two copies admit the same before any merge and after either: Ada holds her seat, nobody holds the open seat, Bo's move waits on a confirmation and is not admitted. The merge into A refuses the row BATCH_UNSIGNED under no id; B keeps it, which is where union merge stops (D194, uncovered-row).",
+    fill: async (a, b) => {
+      const session = begin(a);
+      await exchange(b, a, ADA);
+      createEntity(b, "_dai_binding", id(0x61), { seat: SEAT_OPEN }, session);
+      createEntity(b, "moves", id(0x84), { seat: SEAT_OPEN, san: "e5" }, session);
+      await exchange(a, b, BO);
+      b.run(
+        "INSERT INTO _dai_confirm (seat, holder, _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_session) VALUES (?, ?, ?, 7, 7, ?, '[]', 0, ?)",
+        [SEAT_OPEN, BO.author, ADA.author, id(0x72), session],
+      );
+    },
+    expect: (runs) => {
+      // The ruling itself: the copy holding the uncovered row admits what the copy without it admits.
+      if (runs.ab.before !== runs.ba.before) return `B, holding the uncovered confirm, admits other than A before any merge: B's holders are [${sectionOf(runs.ba.before, "holders").join(" | ")}], its moves [${sectionOf(runs.ba.before, "moves").join(" | ")}]`;
+      if (runs.ab.admitted !== runs.ba.admitted) return "the two copies admit differently after the merges";
+      if (runs.ab.admitted !== runs.ab.before) return "B into A changed what A admits";
+      return (
+        ruled(runs, {
+          holders: [[SEAT_W, ADA.author]],
+          voided: [],
+          moves: () => [],
+          ab: { reports: ["Ada BATCH_UNSIGNED"] },
+          ba: { reports: [] },
+        }) ?? (runs.ab.result.applied !== 0 ? `B into A: ${runs.ab.result.applied} rows taken` : undefined)
+      );
+    },
   },
   {
     name: "session-creator-signs-twice",
@@ -3660,6 +3699,12 @@ before the merge is half of what the vector rules. It reads no view but \`_dai_s
 reader that took them would be the generator agreeing with itself. The rules,
 in docs/identity.md and docs/format.md:
 
+- every rule reads only the rows of the merge: a row whose \`_r_batch\` names
+  a header the copy holds that lists it (its table, its author, its seq), as
+  every row a merge takes does, or one under the copy's own id
+  (\`_dai_replica\`), pending until it is sealed. Any other row under another
+  author's id seats, admits, holds and closes nothing, and is no parent held
+  (D194, uncovered-row);
 - a row id one author signed twice (two headers listing its seq, in any
   tables, with different digests) counts nowhere (D160, and the step 6
   review), and a row naming such an id as a parent is neither admitted nor

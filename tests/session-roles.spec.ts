@@ -4,6 +4,7 @@ import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
+import { heldBatch } from "./held-batch.js";
 import { withSessionId } from "./session-db.js";
 import { mergeSigned, person, sealAs } from "./signed-people.js";
 
@@ -68,6 +69,13 @@ const S = sessionIdOf(C, 1, SEATC, SEATJ, "any")!;
 let counter = 0;
 const nextEntity = (): Uint8Array => bytes(0x30 + counter++);
 
+/**
+ * Copies whose rows are written to be sealed and sent (`sealAs`), not rows
+ * that arrived: their rows stay pending as written. Every other copy's rows
+ * stand for rows a merge took, reached through a header it holds (D194).
+ */
+const sending = new WeakSet<Rows>();
+
 /** One row, applied straight through the choke point, with an explicit author. */
 function put(
   db: Rows,
@@ -79,6 +87,7 @@ function put(
   entity = nextEntity(),
   parents = "[]",
 ): Uint8Array {
+  const batch = sending.has(db) ? undefined : heldBatch(db, table, replica, seq);
   applyRow(db, table, {
     _r_replica: replica,
     _r_seq: seq,
@@ -87,6 +96,7 @@ function put(
     _r_parents: parents,
     _r_deleted: 0,
     _r_session: S,
+    ...(batch ? { _r_batch: batch } : {}),
     columns,
   });
   return entity;
@@ -103,6 +113,30 @@ function seat(db: Rows): void {
   put(db, "_dai_seat", C, 2, 2, { seat: SEATJ });
   put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
   put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
+}
+
+/**
+ * The same roster reached by honest exchanges between two sending copies:
+ * the creator signs her seat rows and the joiner's copy takes them; the joiner
+ * asks and the creator's copy takes it; she confirms him and his copy takes
+ * that. Every roster row is then signed on both copies. Each copy is its
+ * author's own, so a row it writes counts there while it is pending.
+ */
+async function seatAcross(creatorCopy: Rows, joinerCopy: Rows): Promise<void> {
+  sending.add(creatorCopy);
+  sending.add(joinerCopy);
+  creatorCopy.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [C]);
+  joinerCopy.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 0)", [J]);
+  put(creatorCopy, "_dai_seat", C, 1, 1, { seat: SEATC, seats: SEATJ, close: "any" });
+  put(creatorCopy, "_dai_seat", C, 2, 2, { seat: SEATJ });
+  await sealAs(creatorCopy, ADA);
+  await mergeSigned(joinerCopy, creatorCopy);
+  put(joinerCopy, "_dai_binding", J, 1, 3, { seat: SEATJ });
+  await sealAs(joinerCopy, BO);
+  await mergeSigned(creatorCopy, joinerCopy);
+  put(creatorCopy, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
+  await sealAs(creatorCopy, ADA);
+  await mergeSigned(joinerCopy, creatorCopy);
 }
 
 const current = (db: Rows, table: string): string[] =>
@@ -164,8 +198,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
-    seat(creatorCopy);
-    seat(joinerCopy);
+    await seatAcross(creatorCopy, joinerCopy);
 
     // The creator's legitimate advice.
     put(creatorCopy, "advice", C, 4, 5, { note: "first note" });
@@ -190,8 +223,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
-    seat(creatorCopy);
-    seat(joinerCopy);
+    await seatAcross(creatorCopy, joinerCopy);
 
     put(joinerCopy, "answers", J, 2, 5, { note: "a reply" });
     put(creatorCopy, "answers", C, 4, 6, { note: "forged by the creator" });
@@ -211,8 +243,7 @@ test.describe("the merge: a row from the wrong party is not admitted, whichever 
     counter = 0;
     const creatorCopy = openWith(SCHEMA);
     const joinerCopy = openWith(SCHEMA);
-    seat(creatorCopy);
-    seat(joinerCopy);
+    await seatAcross(creatorCopy, joinerCopy);
 
     put(creatorCopy, "advice", C, 4, 5, { note: "first note" });
     put(creatorCopy, "notes", C, 5, 6, { note: "from the creator" });

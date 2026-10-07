@@ -317,6 +317,32 @@ def equivocated_ids(db: sqlite3.Connection) -> set[tuple[bytes, str, int]]:
     return {(author, table, seq) for author, table, seq in listings if len(digests[(author, seq)]) > 1}
 
 
+def of_the_merge(db: sqlite3.Connection):
+    """Whether a row of a session document is a row of the merge
+    (docs/format.md#uncovered-row): reached through a header this copy holds,
+    the one its _r_batch names, listing it (its table, its author, its seq);
+    or under this copy's own id, pending until sealed. Any other row seats,
+    admits, holds and closes nothing."""
+    own = {bytes(rid) for (rid,) in db.execute("SELECT id FROM _dai_replica")}
+    covered: set[tuple[str, bytes, object, bytes]] = set()
+    for hid, author, covers in db.execute("SELECT id, author, covers FROM _dai_batch"):
+        try:
+            listed = json.loads(covers)
+        except (ValueError, TypeError):
+            listed = []
+        for entry in listed if isinstance(listed, list) else []:
+            if isinstance(entry, list) and len(entry) == 2:
+                covered.add((entry[0], bytes(author), entry[1], bytes(hid)))
+
+    def counts(table: str, row: dict) -> bool:
+        if bytes(row["_r_replica"]) in own:
+            return True
+        batch = row.get("_r_batch")
+        return isinstance(batch, (bytes, bytearray)) and (table, bytes(row["_r_replica"]), row["_r_seq"], bytes(batch)) in covered
+
+    return counts
+
+
 def ids_of(listings: set[tuple[bytes, str, int]]) -> set[tuple[bytes, int]]:
     """The equivocated ids, (author, seq), whatever tables list them."""
     return {(author, seq) for author, _table, seq in listings}
@@ -341,11 +367,14 @@ class Admission:
         self.tables = tables
         self.rows: dict[str, list[dict]] = {}
         self.sessioned: set[str] = set()
+        # Every rule reads the rows of the merge only (#uncovered-row).
+        counts = of_the_merge(db) if is_session(db) else (lambda _table, _row: True)
         for table in tables:
             names = columns_of(db, table)
             if "_r_session" in names:
                 self.sessioned.add(table)
-            self.rows[table] = [dict(zip(names, raw)) for raw in db.execute(f'SELECT * FROM "{table}"')]
+            rows = (dict(zip(names, raw)) for raw in db.execute(f'SELECT * FROM "{table}"'))
+            self.rows[table] = [r for r in rows if counts(table, r)]
         views = {name for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'view'")}
         self.seated = dict(db.execute("SELECT tbl, col FROM _dai_seat_rules")) if "_dai_seat_rules" in views else {}
         self.roles = dict(db.execute("SELECT tbl, author FROM _dai_author_rules")) if "_dai_author_rules" in views else {}
@@ -660,9 +689,13 @@ def waiting_on_parent(db: sqlite3.Connection, tables: list[str]) -> set[tuple[st
     (docs/format.md#waiting-on-parent)."""
     held: set[str] = set()
     named: list[tuple[str, str, list[str]]] = []
+    # Held means held as a row of the merge (#uncovered-row).
+    counts = of_the_merge(db)
     for table in tables:
         sessioned = "_r_session" in columns_of(db, table)
-        for replica, seq, parents in db.execute(f'SELECT _r_replica, _r_seq, _r_parents FROM "{table}"'):
+        for replica, seq, parents, batch in db.execute(f'SELECT _r_replica, _r_seq, _r_parents, _r_batch FROM "{table}"'):
+            if not counts(table, {"_r_replica": replica, "_r_seq": seq, "_r_batch": batch}):
+                continue
             rid = row_id(replica, seq)
             held.add(rid)
             if sessioned and table not in ROSTER:

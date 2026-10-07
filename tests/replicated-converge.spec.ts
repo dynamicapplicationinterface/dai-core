@@ -9,6 +9,7 @@ import {
 import { mergeCoverageGap, mergeSibling, mergeTablesOf, replicatedSchemaOf } from "../src/replicated-frame.js";
 import { adoptReplica, confirmSeat, ensureReplica, startSession } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
+import { heldBatch } from "./held-batch.js";
 import { withSessionId } from "./session-db.js";
 import { mergeFromSigned, mergeSigned, person, sealAs } from "./signed-people.js";
 import {
@@ -1128,6 +1129,8 @@ CREATE TABLE moves (
     columns: Record<string, unknown>,
     entity = ent(),
   ): void {
+    // A row another copy wrote, as a merge leaves it: reached through a header this copy holds (D194).
+    const batch = heldBatch(db, table, replica, seq);
     applyRow(db, table, {
       _r_replica: replica,
       _r_seq: seq,
@@ -1136,6 +1139,7 @@ CREATE TABLE moves (
       _r_parents: "[]",
       _r_deleted: 0,
       _r_session: S,
+      ...(batch ? { _r_batch: batch } : {}),
       columns,
     });
   }
@@ -1329,10 +1333,11 @@ CREATE TABLE moves (
   // The close rule is the one her creator's seat row declares (R14).
   const S = sessionIdOf(C, 1, SEATC, SEATO, "creator")!;
   let e = 0;
+  // A row another copy wrote, as a merge leaves it: reached through a header this copy holds (D194).
   const put = (db: Rows, table: string, replica: Uint8Array, seq: number, lc: number, columns: Record<string, unknown>): void =>
     applyRow(db, table, {
       _r_replica: replica, _r_seq: seq, _r_lc: lc, _r_entity: bytes(0x70 + e++),
-      _r_parents: "[]", _r_deleted: 0, _r_session: S, columns,
+      _r_parents: "[]", _r_deleted: 0, _r_session: S, _r_batch: heldBatch(db, table, replica, seq), columns,
     });
   const moves = (db: Rows): string[] => db.all(`SELECT san FROM moves_current`).map((r) => String(r["san"]));
 

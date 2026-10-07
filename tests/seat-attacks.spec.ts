@@ -18,6 +18,7 @@ import {
 } from "../src/replicated-rows.js";
 import * as replicatedRows from "../src/replicated-rows.js";
 import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
+import { heldBatch } from "./held-batch.js";
 // @ts-ignore the chess fixture is plain JavaScript, with no types
 import { Store } from "./fixture/chess/store.js";
 
@@ -105,7 +106,8 @@ function put(
     _r_parents: "[]",
     _r_deleted: 0,
     _r_session: sessionOn.get(db) ?? S,
-    ...(o.batch ? { _r_batch: o.batch } : {}),
+    // A signed row is listed by the header it names, as a merge leaves it (D194).
+    ...(o.batch ? { _r_batch: heldBatch(db, table, author, seq, o.batch) } : {}),
     columns,
   });
   return entity;
@@ -570,9 +572,10 @@ test.describe("cold review 2: Q1, schema tricks", () => {
         const confirmSql = db.prepare("SELECT sql FROM sqlite_schema WHERE name = '_dai_confirm'").get() as { sql: string } | undefined;
         const n = (db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE sql LIKE '%CREATE TABLE%_dai_confirm%'").get() as { n: number }).n;
         // The kit's holder reads the kit's confirms, and those read the kit's table (D165 put a step between,
-        // and R18 a first pass that the close rules read). The steps are the roster chain's, inside the view.
+        // and R18 a first pass that the close rules read). The steps are the roster chain's, inside the view,
+        // and the first reads the table's rows of the merge (D194), the kit's view of the kit's table.
         const kits = Boolean(
-          holderSql?.sql.includes("FROM confirmed f") && holderSql.sql.includes("FROM confirmed0 f") && holderSql.sql.includes("FROM _dai_confirm f"),
+          holderSql?.sql.includes("FROM confirmed f") && holderSql.sql.includes("FROM confirmed0 f") && holderSql.sql.includes("FROM _dai_confirm_rows f"),
         );
         outcome = `built; _dai_holder is ${kits ? "the kit's" : "NOT the kit's"}; _dai_confirm tables ${n}; holder NOT NULL CHECK kept: ${/holder BLOB NOT NULL CHECK/.test(confirmSql?.sql ?? "")}`;
       } catch (error) {
@@ -1149,12 +1152,17 @@ test("cold review 4: a change naming a seat other than its head's is refused, no
 const closeSchema = (close: "any" | "creator") => SCHEMA.replace("close=creator", `close=${close}`);
 const CY = bytes(0x20); // a stranger: holds a copy, never a seat
 
-/** Ada and Bo seated, one move each, both admitted, under the given close rule. */
+/** Bo's header on each copy closeGame made: Ada's copy, holding his rows as a merge took them (D194). */
+const boSigned = new WeakMap<Rows, Uint8Array>();
+
+/** Ada and Bo seated, one move each, both admitted, under the given close rule. Ada's copy; Bo's rows signed. */
 function closeGame(close: "any" | "creator") {
   const db = openWith(closeSchema(close));
-  honestRoster(db, ADA, undefined, close);
+  const sign = { ada: signedBy(db, ADA, 0xe1), bo: signedBy(db, BO, 0xe2) };
+  boSigned.set(db, sign.bo);
+  honestRoster(db, ADA, sign, close);
   put(db, "moves", ADA, 4, 5, { seat: ADA_SEAT, san: "e4" });
-  put(db, "moves", BO, 2, 6, { seat: OPEN_SEAT, san: "e5" });
+  put(db, "moves", BO, 2, 6, { seat: OPEN_SEAT, san: "e5" }, { batch: sign.bo });
   return db;
 }
 
@@ -1189,12 +1197,12 @@ test.describe("cold review 5: a close counts only from an author the session's r
 
   test("close=any: a member's close closes the session, and a row of his after it is his signing twice (R18)", () => {
     const db = closeGame("any");
-    put(db, "_dai_close", BO, 3, 9, {});
+    put(db, "_dai_close", BO, 3, 9, {}, { batch: boSigned.get(db) });
     expect(admitted(db), "what the closer had seen stays").toEqual(["e4", "e5"]);
     expect(closedSessions(db)).toEqual([hex(S_ANY)]);
     put(db, "moves", ADA, 5, 10, { seat: ADA_SEAT, san: "Nf3" });
     expect(admitted(db), "the close binds only him (D151)").toEqual(["Nf3", "e4", "e5"]);
-    put(db, "moves", BO, 5, 11, { seat: OPEN_SEAT, san: "Nf6" });
+    put(db, "moves", BO, 5, 11, { seat: OPEN_SEAT, san: "Nf6" }, { batch: boSigned.get(db) });
     expect(admitted(db), "a close is final: none of an equivocator's rows is admitted (R17)").toEqual(["Nf3", "e4"]);
     expect(closedSessions(db), "and his close closes nothing").toEqual([]);
     db.close();
@@ -1202,7 +1210,7 @@ test.describe("cold review 5: a close counts only from an author the session's r
 
   test("close=creator: the joiner's close, which admission ignores, does not close the session for the host or the apps", () => {
     const db = closeGame("creator");
-    put(db, "_dai_close", BO, 3, 9, {});
+    put(db, "_dai_close", BO, 3, 9, {}, { batch: boSigned.get(db) });
     expect(admitted(db), "admission ignores the joiner's close").toEqual(["e4", "e5"]);
     expect(closedSessions(db), "the session is not closed").toEqual([]);
     db.close();

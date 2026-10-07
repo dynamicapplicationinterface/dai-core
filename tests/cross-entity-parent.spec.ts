@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
 import { applyRow, filterToSession, type Rows } from "../src/replicated-rows.js";
 import { SESSION_ID_FUNCTION, sessionIdOf } from "../src/session-id.js";
+import { heldBatch } from "./held-batch.js";
 
 /**
  * A parent outside the row's own entity hides nothing (cold review of identity
@@ -35,6 +36,8 @@ const A = bytes(0xaa);
 const B = bytes(0xbb);
 
 function put(db: Rows, table: string, replica: Uint8Array, seq: number, lc: number, entity: Uint8Array, columns: Record<string, unknown>, parents: string[] = [], session?: Uint8Array) {
+  // A row another copy wrote, as a merge leaves it: reached through a header this copy holds (D194).
+  const batch = heldBatch(db, table, replica, seq);
   applyRow(db, table, {
     _r_replica: replica,
     _r_seq: seq,
@@ -43,6 +46,7 @@ function put(db: Rows, table: string, replica: Uint8Array, seq: number, lc: numb
     _r_parents: JSON.stringify(parents),
     _r_deleted: 0,
     ...(session ? { _r_session: session } : {}),
+    ...(batch ? { _r_batch: batch } : {}),
     columns,
   });
 }

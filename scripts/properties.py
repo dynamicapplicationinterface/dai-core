@@ -10,7 +10,8 @@ With no names, the cache must hold a scenario for every vector in the suite
 before checking anything: a partial cache is a properties.mjs run that died.
 
 P0, P1 and P2 as scripts/properties.mjs states them (P0 over what is
-admitted, not the reports, D190), checked here over the
+admitted, not the reports, D190, and over each mutation's rows written in
+with no header covering them, D194), checked here over the
 scenarios it wrote (node_modules/.cache/properties/<vector>.json): each
 vector's items (a header and the rows it covers, with the verifier's verdict),
 the orders, the mutations (each sealed by the runtime's own seal and verified
@@ -308,6 +309,35 @@ def check(scenario: dict, violations: list[dict], disagreements: list[str]) -> N
         for label, (local, before) in bases.items():
             trial(local, before, label, record["name"], sibling, author, record["results"].get(label))
         sibling["copy"].close()
+        # P0's uncovered row (D194): the mutation's rows written in with no
+        # header covering them leave what the base admits as it was.
+        for label, node in record.get("uncovered", {}).items():
+            local, before = bases[label]
+            with Trial(local):
+                written = 0
+                for entry in record["pending"]:
+                    row = entry["row"]
+                    columns = list(row)
+                    try:
+                        local.execute(
+                            f'INSERT INTO "{entry["table"]}" ({", ".join(f"{chr(34)}{c}{chr(34)}" for c in columns)}) VALUES ({", ".join("?" for _ in columns)})',
+                            [decode(row[c]) for c in columns],
+                        )
+                        written += 1
+                    except sqlite3.Error:
+                        pass
+                if written != node["written"]:
+                    disagreements.append(f"{name} P0 uncovered {label} {record['name']}: {written} row(s) written here, {node['written']} in the runtime")
+                    continue
+                if written == 0:
+                    continue
+                after = v.dump(local)
+            if after != before:
+                a, b = before.split("\n"), after.split("\n")
+                violations.append({"key": f"P0 {name} uncovered {label} {record['name']}",
+                                   "difference": {"only_first": [x for x in a if x not in b][:6], "only_second": [x for x in b if x not in a][:6]}})
+            if after != node["after"]:
+                disagreements.append(f"{name} P0 uncovered {label} {record['name']}: the state differs from the runtime's")
     for local, _ in bases.values():
         local.close()
     local = from_bytes(v.observer)

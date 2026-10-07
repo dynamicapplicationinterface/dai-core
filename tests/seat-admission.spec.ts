@@ -5,6 +5,7 @@ import { ReplicationError, rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 import { applyRow, type Rows } from "../src/replicated-rows.js";
 import { sessionIdOf } from "../src/session-id.js";
+import { heldBatch } from "./held-batch.js";
 import { withSessionId } from "./session-db.js";
 import { mergeSigned, person, sealAs } from "./signed-people.js";
 
@@ -76,6 +77,13 @@ const nextEntity = (): Uint8Array => {
   return e;
 };
 
+/**
+ * Copies whose rows are written to be sealed and sent (`sealAs`), not rows
+ * that arrived: their rows stay pending as written. Every other copy's rows
+ * stand for rows a merge took, reached through a header it holds (D194).
+ */
+const sending = new WeakSet<Rows>();
+
 /** One row, applied straight through the choke point, with an explicit author. */
 function put(
   db: Rows,
@@ -87,6 +95,7 @@ function put(
   options: { entity?: Uint8Array; parents?: string; session?: Uint8Array; batch?: Uint8Array } = {},
 ): Uint8Array {
   const entity = options.entity ?? nextEntity();
+  const batch = sending.has(db) && !options.batch ? undefined : heldBatch(db, table, replica, seq, options.batch);
   applyRow(db, table, {
     _r_replica: replica,
     _r_seq: seq,
@@ -95,7 +104,7 @@ function put(
     _r_parents: options.parents ?? "[]",
     _r_deleted: 0,
     _r_session: options.session ?? S,
-    ...(options.batch ? { _r_batch: options.batch } : {}),
+    ...(batch ? { _r_batch: batch } : {}),
     columns,
   });
   return entity;
@@ -119,6 +128,13 @@ function roster(db: Rows): Uint8Array {
 function seatBo(db: Rows): void {
   put(db, "_dai_binding", J, 1, 3, { seat: SEATJ });
   put(db, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
+}
+
+/** Bo asks for the open seat on his sending copy, signs it, and Ada's copy takes it, as an honest exchange does. */
+async function askAcross(ada: Rows, bo: Rows): Promise<void> {
+  put(bo, "_dai_binding", J, 1, 3, { seat: SEATJ });
+  await sealAs(bo, BO);
+  await mergeSigned(ada, bo);
 }
 
 const admitted = (db: Rows): string[] => db.all("SELECT san FROM moves_current ORDER BY san").map((r) => String(r["san"]));
@@ -328,10 +344,11 @@ test.describe("the merge says what it took and did not admit", () => {
   test("a forged move for someone else's seat is reported as SEAT_NOT_HELD with its author, and kept", async () => {
     const ada = openWith(SCHEMA);
     roster(ada);
-    seatBo(ada);
     const bo = openWith(SCHEMA);
+    sending.add(bo);
     roster(bo);
-    seatBo(bo);
+    await askAcross(ada, bo);
+    put(ada, "_dai_confirm", C, 3, 4, { seat: SEATJ, holder: J });
     put(bo, "moves", J, 2, 7, { seat: SEATC, san: "d4" });
     await sealAs(bo, BO);
 
@@ -348,9 +365,10 @@ test.describe("the merge says what it took and did not admit", () => {
     const ada = openWith(SCHEMA);
     roster(ada);
     const bo = openWith(SCHEMA);
+    sending.add(bo);
     roster(bo);
-    // Bo's ask reached Ada's copy before (a merge refuses an unsigned one, D133).
-    put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ }, { entity: put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ }) });
+    // Bo's ask reached Ada's copy before, signed (a merge refuses an unsigned one, D133).
+    await askAcross(ada, bo);
     put(bo, "moves", J, 2, 5, { seat: null, san: "d4" });
     await sealAs(bo, BO);
     const report = await mergeSigned(ada, bo);
@@ -363,9 +381,10 @@ test.describe("the merge says what it took and did not admit", () => {
     const ada = openWith(SCHEMA);
     roster(ada);
     const bo = openWith(SCHEMA);
+    sending.add(bo);
     roster(bo);
-    // Bo's ask reached Ada's copy before (a merge refuses an unsigned one, D133).
-    put(ada, "_dai_binding", J, 1, 4, { seat: SEATJ }, { entity: put(bo, "_dai_binding", J, 1, 4, { seat: SEATJ }) });
+    // Bo's ask reached Ada's copy before, signed (a merge refuses an unsigned one, D133).
+    await askAcross(ada, bo);
     put(bo, "moves", J, 2, 5, { seat: SEATJ, san: "e5" });
     await sealAs(bo, BO);
     const report = await mergeSigned(ada, bo);

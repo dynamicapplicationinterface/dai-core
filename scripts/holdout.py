@@ -137,6 +137,7 @@ CLOSEHIGHER = "session-close-then-higher-row"
 NEVER = "session-parent-never-arrives"
 WITHHELD = "session-header-withheld"
 UNSIGNEDCONFIRM = "session-unsigned-confirm"
+UNCOVERED = "session-confirm-uncovered"
 SIGNSTWICE = "session-creator-signs-twice"
 FORWARDER = "session-forwarder-header-only"
 HALVES = "session-two-halves"
@@ -618,6 +619,12 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
         "merge-row-unsigned", "an unsigned row new to the copy is taken, as an unsigned row it holds already is placed", [UNSIGNEDCONFIRM],
         [('                refuse_batch("", row["_r_replica"], "BATCH_UNSIGNED")\n', "                unsigned_rows.append((table, row))\n")],
     ),
+    # D194, 6 October.
+    "uncovered-counted": (
+        "uncovered-row", "a row no header covers, under an id not the copy's own, is a row of the merge: it seats, admits and holds", [UNCOVERED, UNSIGNEDCONFIRM],
+        [("        counts = of_the_merge(db) if is_session(db) else (lambda _table, _row: True)\n", "        counts = lambda _table, _row: True\n"),
+         ("    counts = of_the_merge(db)\n", "    counts = lambda _table, _row: True\n")],
+    ),
     # ------------------------------------------------ Branch review pass A, M3: the branch-new vectors without a hold-out (5 October).
     # merge-cross-entity-parent and merge-seal-outranks-cross-entity rule heads
     # in a plain document, which only _r_superseded showed until both shipped
@@ -799,11 +806,11 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     ),
     "close-names-equivocated-rt": (
         "parent-equivocated-outside", "a close naming an equivocated id as a parent counts for nothing (_dai_close0)", [ROSTERNAMES],
-        [(r"(FROM _dai_close x\n\s+JOIN creator0 c ON c\.session = x\._r_session\n\s+WHERE x\._r_deleted = 0)", r'\1 AND NOT ${namesEquivocated("x")}')],
+        [(r"(FROM _dai_close_rows x\n\s+JOIN creator0 c ON c\.session = x\._r_session\n\s+WHERE x\._r_deleted = 0)", r'\1 AND NOT ${namesEquivocated("x")}')],
     ),
     "outside-names-equivocated-rt": (
         "parent-equivocated-outside", "a roster, close or plain row naming an equivocated id as a parent is no head", [EPARENT, ROSTERNAMES],
-        [(r'WHERE \$\{(counts\d*)\("r"\)\}(\s+AND NOT EXISTS \(SELECT 1 FROM \$\{q\} c,)',
+        [(r'WHERE \$\{(counts\d*)\("r"\)\}(\s+AND NOT EXISTS \(SELECT 1 FROM \$\{src\} c,)',
           r'WHERE ${\1("r")} AND NOT ${namesEquivocated("r")}\2')],
     ),
     # ------------------------------------------------ R10, R11: the eighth attack review (2 October)
@@ -890,6 +897,11 @@ RUNTIME: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     "filed-no-id-first-rt": (
         "equivocated-filed", "an author revealed both with a revealing header and without one is filed under no id", [FILEDNONE],
         [(r'\[\.\.\.ids\]\.filter\(\((\w+)\) => \1 !== ""\)\.sort\((plainOrder\d*)\)\[0\] \?\? ""', r"[...ids].sort(\2)[0]")],
+    ),
+    # D194, 6 October.
+    "uncovered-counted-rt": (
+        "uncovered-row", "every view of a session document reads the whole table, so a row no header covers under another author's id seats, admits and holds (`_rows`)", [UNCOVERED, UNSIGNEDCONFIRM],
+        [(r"\n\s+WHERE r\._r_replica IN \(SELECT id FROM _dai_replica\)\n\s+OR EXISTS \(SELECT 1 FROM _dai_covers v WHERE v\.tbl = '\$\{q\}' AND v\.author = r\._r_replica AND v\.seq = r\._r_seq AND v\.id = r\._r_batch\);", ";")],
     ),
     "holder-any-rt": (
         "confirms", "a confirm's holder is whatever it names, an author id or not (_dai_confirmed0)", [HOLDERSHORT],
