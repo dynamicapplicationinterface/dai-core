@@ -1,11 +1,11 @@
 {
-  "chromium": 803,
-  "firefox": 792,
-  "webkit": 798,
-  "node": 618,
+  "chromium": 805,
+  "firefox": 794,
+  "webkit": 800,
+  "node": 635,
   "_from": {
-    "run": 37261370749,
-    "sha": "67acae59ea56d53e2d73aaeea7453a6db5c8c251",
-    "at": "2026-10-04T23:55:46-04:00"
+    "run": 37557361645,
+    "sha": "26e12b32b54f1b9243630694d1e07bed4aad52c7",
+    "at": "2026-10-06T21:29:27-04:00"
   }
 }
