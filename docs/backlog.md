@@ -4598,6 +4598,37 @@ closed for rows. **Question:** whether the host's mount should verify the
 headers a copy holds (it holds the keys' public halves in the headers), and
 what a copy holding an unverifiable header shows.
 
+#### D197 — The page does not say what `expected-schema.txt` is
+
+*Status: open. Filed 7 October, from the blind Rust rebuild (H3,
+`conformance/readers/rust-merge/QUESTIONS.md` question 1).*
+
+Every one of the 122 merge vectors ships `expected-schema.txt`, and the
+README's per-vector table does not list it or say what a reader compares it
+with. The page is silent where a fixture needs it, on four points:
+
+- whether the file is T1-D21's schema text, and so whether a reader checks it
+  at all;
+- which tables it covers: the author tables only (T1-D21, and T1-D26's system
+  tables "implied by the profile, never enumerated"), or every table a merge
+  takes, which in a session document includes `_dai_seat`, `_dai_binding`,
+  `_dai_confirm` and `_dai_close` ([merge-whole-refusals](format.md#merge-whole-refusals),
+  `SCHEMA_MISMATCH`);
+- which copy it describes (each, `a.db` only, or the schema the two share);
+- how the `NOT NULL` field and an absent default are spelled; T1-D21 names
+  the fields but not their spelling.
+
+The fixtures show the author tables only, roster tables left out, in the form
+`table`, `column`, `TYPE`, `NOT NULL` or empty, default or empty, tab-separated;
+both copies give the same text, including `schema-digest-replicated-only`,
+where one side holds a local table that is left out. If the scope is
+format.md's "every table a merge takes", the fixtures disagree with the page.
+The rebuilt reader checks the file in the fixtures' form meanwhile; that check
+can only add failures, and is deleted if the answer is that the file is not
+part of a reader's contract. **Question:** state on the page (README's
+per-vector table and the section the file follows) what the file is, its
+scope and its spelling.
+
 #### D194 — A copy admits an unsigned roster row it holds under another author's id
 
 *Status: closed 6 October. Filed 5 October, from promoting attack review
