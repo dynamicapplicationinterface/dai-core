@@ -277,6 +277,10 @@ refused batch, and says why, in this order:
    ones, in the order the table declares them) differ in name, in declared
    type (whitespace runs collapsed to one space, trimmed, uppercased), in
    `NOT NULL`, or in default (as declared, verbatim).
+   This refusal compares the two copies' schemas over every table a merge
+   takes; a fixture's `expected-schema.txt`
+   ([fixture-schema](#fixture-schema)) describes one copy over its
+   replicated tables only, and checking it is not the same comparison.
 
 Two copies of one build meet none of these; each says the bytes handed to the
 merge are not a copy of this document's build.
@@ -729,6 +733,12 @@ under that header. <a id="equivocated-third"></a>A merge
 that brings a third conflicting header for an id already equivocated reveals
 nothing new and reports nothing.
 
+<a id="report-set"></a>A merge's reports are a set: a thing made true twice
+in one merge is reported once. `rejected` holds each id once, ordered by id
+(lowercase hex); `refusedBatches` holds one entry per code and id (with the
+author, where entries under no id name several), ordered as
+[report-order](#report-order) says.
+
 ## Canonical CBOR
 
 <a id="cbor"></a>Deterministic CBOR (RFC 8949 §4.2.1), with these rules for
@@ -864,6 +874,9 @@ version, never a refactor (identity.md, binding rule 10).
 - Version 2: a reader decodes no CBOR for a rule on this page.
 - Version 2: in a session document a row covered by no header the copy
   holds, under an author id not the copy's own, is not a row of the merge.
+- Version 2: a merge's reports are a set, `rejected` ordered by id.
+- Version 2: the fixtures' `expected-schema.txt` is stated: copy A's
+  replicated tables, roster tables left out.
 
 ## Conformance
 
@@ -882,6 +895,18 @@ whose two copies' `view` differ ([document-mismatch](#document-mismatch)).
 verdict in `verdicts.json` (`ok`, `incomplete`, or a refusal code), made
 against the rows of the copy that holds it, and in `lists.json` the list
 that made a header authentic where it is not the one the header stores, so a
-reader can do the rest of the merge without its own signature check. The
-reference readers, `conformance/reference/dai_merge.py` and
+reader can do the rest of the merge without its own signature check.
+<a id="fixture-schema"></a>Each fixture carries, in `expected-schema.txt`,
+the schema of copy A as built (`a.db`; a merge changes no schema), over the
+tables the document declares replicated only. In a session document
+`_dai_seat`, `_dai_binding`, `_dai_confirm` and `_dai_close` are left out, and
+so is any table without `_r_replica` and `_r_seq` (a local table). It is one
+line per author column (every column but the `_r_` ones), tables in name
+order and columns in the order the table declares them, each line ending in a
+newline, the last included. A line is five fields joined by a tab: the table;
+the column; the declared type, whitespace runs collapsed to one space,
+trimmed, uppercased; `NOT NULL` when the column is declared so and nothing
+otherwise; and the default as declared, verbatim, or nothing when the column
+declares none. A reader MAY check a copy against it; the comparison a merge
+makes is [SCHEMA_MISMATCH](#merge-whole-refusals)'s. The reference readers, `conformance/reference/dai_merge.py` and
 `conformance/readers/rust-merge`, are checked against this page.

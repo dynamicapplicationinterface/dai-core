@@ -4600,8 +4600,23 @@ what a copy holding an unverifiable header shows.
 
 #### D197 — The page does not say what `expected-schema.txt` is
 
-*Status: open. Filed 7 October, from the blind Rust rebuild (H3,
+*Status: closed 7 October. Filed 7 October, from the blind Rust rebuild (H3,
 `conformance/readers/rust-merge/QUESTIONS.md` question 1).*
+
+**Answered** from the generator (`scripts/build-merge-fixtures.mjs`, which
+writes the file from `replicatedSchemaOf` over a fresh copy built from A's
+schema): the file is copy A's schema as built, over the tables the document
+declares replicated only (roster tables and local tables left out), in
+T1-D21's form, `NOT NULL` or nothing, the default verbatim or nothing. The
+generator decides; the page records it at
+[fixture-schema](format.md#fixture-schema), and
+[merge-whole-refusals](format.md#merge-whole-refusals) says `SCHEMA_MISMATCH`
+compares every table a merge takes, which is not the same comparison. Also
+stated: [report-set](format.md#report-set). Not done: the README's per-vector
+table still does not list the file (the README is written by the generator;
+a row there is a regeneration). The runtime and the Python reader emit
+`rejected` in the order they meet ids, not sorted; no vector has two, so no
+fixture shows the difference.
 
 Every one of the 122 merge vectors ships `expected-schema.txt`, and the
 README's per-vector table does not list it or say what a reader compares it
