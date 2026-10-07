@@ -304,6 +304,10 @@
       "tests/session-db.ts",
       "tsup.config.ts"
     ],
+    "tests/ci-verdict.spec.ts": [
+      "scripts/ci-verdict.mjs",
+      "tests/ci-verdict.spec.ts"
+    ],
     "tests/cli.spec.ts": [
       "scripts/retain-host.mjs",
       "src/",
@@ -418,6 +422,10 @@
       "src/cbor.ts",
       "src/cose.ts",
       "tests/cose.spec.ts"
+    ],
+    "tests/count-floor.spec.ts": [
+      "scripts/count-floor.mjs",
+      "tests/count-floor.spec.ts"
     ],
     "tests/countersignature.spec.ts": [
       "conformance/signing-key.pem",
@@ -1113,6 +1121,15 @@
       "tests/inline-carrier.spec.ts",
       "tsup.config.ts"
     ],
+    "tests/inline-link-room.spec.ts": [
+      "apps/runner/",
+      "conformance/signing-key.pem",
+      "examples/request/",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/inline-link-room.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/inline-link.spec.ts": [
       "apps/runner/",
       "examples/chore-chart/",
@@ -1493,8 +1510,7 @@
       "tsup.config.ts"
     ],
     "tests/library-record.spec.ts": [
-      "apps/runner/src/main.ts",
-      "apps/runner/src/opfs.ts",
+      "apps/runner/src/",
       "tests/library-record.spec.ts"
     ],
     "tests/link-into-open-tab.spec.ts": [
@@ -2290,6 +2306,17 @@
       "src/x509.ts",
       "tests/opener-updates.spec.ts"
     ],
+    "tests/other-tab-copy.spec.ts": [
+      "apps/runner/",
+      "examples/packing-list/",
+      "scripts/generate-key.mjs",
+      "scripts/retain-host.mjs",
+      "src/",
+      "tests/fixture/",
+      "tests/fixtures.ts",
+      "tests/other-tab-copy.spec.ts",
+      "tsup.config.ts"
+    ],
     "tests/packaging.spec.ts": [
       "scripts/retain-host.mjs",
       "src/",
@@ -2314,6 +2341,21 @@
       "tests/fixtures.ts",
       "tests/person-key-read.spec.ts",
       "tsup.config.ts"
+    ],
+    "tests/person-words.spec.ts": [
+      "apps/runner/src/",
+      "src/container.ts",
+      "src/core.ts",
+      "src/fragment.ts",
+      "src/frame.ts",
+      "src/handoff-tab.ts",
+      "src/handoff.ts",
+      "src/kit.ts",
+      "src/link.ts",
+      "src/replicated-frame.ts",
+      "src/runtime/",
+      "src/worker.ts",
+      "tests/person-words.spec.ts"
     ],
     "tests/presign.spec.ts": [
       "apps/runner/api/",
@@ -2412,6 +2454,11 @@
       "tests/fixtures.ts",
       "tests/publish-after-landed.spec.ts",
       "tsup.config.ts"
+    ],
+    "tests/publish-floor.spec.ts": [
+      "apps/runner/src/mailbox-session.ts",
+      "apps/runner/src/main.ts",
+      "tests/publish-floor.spec.ts"
     ],
     "tests/published-recipe.spec.ts": [
       "examples/chore-chart/app.css",

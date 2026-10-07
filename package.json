@@ -83,6 +83,7 @@
     "conformance": "node scripts/build-conformance.mjs",
     "fixtures": "node scripts/build-merge-fixtures.mjs",
     "fixtures:check": "node scripts/build-merge-fixtures.mjs --check",
+    "drift": "node scripts/drift.mjs",
     "try": "node scripts/try-container.mjs",
     "evaluate": "node scripts/evaluate.mjs",
     "deploys": "node scripts/check-deploys.mjs",

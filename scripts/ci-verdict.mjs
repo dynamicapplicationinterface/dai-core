@@ -17,6 +17,7 @@
  * Requires the `gh` CLI, authenticated.
  */
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -60,12 +61,24 @@ function resolveRun(arg) {
  * take the LAST occurrence of each, because the numbers only mean the final
  * tally when they are the ones the run printed as it exited.
  */
-function tallyFrom(log) {
+export function tallyFrom(log) {
   const last = (word) => {
     const matches = [...log.matchAll(new RegExp(`(\\d+)\\s+${word}\\b`, "g"))];
     return matches.length ? Number(matches[matches.length - 1][1]) : null;
   };
   return { passed: last("passed"), failed: last("failed"), flaky: last("flaky") };
+}
+
+/**
+ * Whether a finished job is a failure, from its conclusion and its tally.
+ * `job` is `{ conclusion }` as GitHub reports it; `tally` is `tallyFrom`'s.
+ */
+export function jobFailed(job, tally) {
+  const hasTally = tally.passed !== null || tally.failed !== null;
+  // Anything but success is a failure, whatever the log printed: a job cancelled
+  // at its wall or timed out never reached its own summary, and an earlier
+  // "N passed" in its log is not one (pass C's H2).
+  return !hasTally || (tally.failed ?? 0) > 0 || job.conclusion !== "success";
 }
 
 function main(argv) {
@@ -115,7 +128,7 @@ function main(argv) {
     const cells = hasTally
       ? `${t.passed ?? 0} passed, ${t.failed ?? 0} failed` + (t.flaky ? `, ${t.flaky} flaky` : "")
       : "NO TALLY (cancelled / timed out / crashed before summary)";
-    const failed = !hasTally || (t.failed ?? 0) > 0 || job.conclusion === "failure";
+    const failed = jobFailed(job, t);
     const mark = !job.conclusion
       ? (job.status ?? "?").toUpperCase()
       : failed ? (hasTally ? "FAIL" : job.conclusion.toUpperCase()) : "PASS";
@@ -216,9 +229,11 @@ function artifactsOf(runId) {
     .map((line) => JSON.parse(line));
 }
 
-try {
-  main(process.argv.slice(2));
-} catch (error) {
-  process.stderr.write(`${error?.message ?? error}\n`);
-  process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error?.message ?? error}\n`);
+    process.exit(1);
+  }
 }

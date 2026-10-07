@@ -43,6 +43,9 @@ function playwright(args, env = {}) {
   return run.status ?? 1;
 }
 
+/** An argument as a person reads it: a path under the repository, relative to it. */
+const relativeTo = (arg) => (arg.startsWith(repo) ? arg.slice(repo.length + 1).split("\\").join("/") : arg);
+
 const floorNotChecked = () =>
   console.log("\ntest-tier: a subset ran, so the count floor was NOT checked. `npm run test:push` checks it.");
 
@@ -73,17 +76,30 @@ if (tier === "commit") {
   })
     .split(/\r?\n/)
     .filter(Boolean);
+  const selectedChecks = picked.filter((line) => line.startsWith("check:")).map((line) => line.slice("check:".length));
+  const specs = picked.filter((line) => !line.startsWith("check:"));
   if (picked.includes("ALL")) {
     console.log("test-tier commit: the change reaches everything; running the push tier.");
     process.argv = [process.argv[0], process.argv[1], "push"];
-  } else if (picked.length === 0) {
+  } else if (specs.length === 0 && selectedChecks.length === 0) {
     console.log("test-tier commit: no spec reaches what changed.");
     floorNotChecked();
     process.exit(0);
   } else {
-    const status = playwright(picked);
+    let failed = false;
+    if (selectedChecks.includes("build-conformance")) {
+      // It reads dist/, so the library is built first.
+      const ok =
+        spawnSync("npm", ["run", "build:lib"], { cwd: repo, stdio: "inherit", shell: process.platform === "win32" }).status === 0 &&
+        spawnSync(process.execPath, [join(repo, "scripts", "build-conformance.mjs"), "--check"], { cwd: repo, stdio: "inherit" }).status === 0;
+      if (!ok) {
+        console.error("test-tier commit: build-conformance --check failed (a change under docs/ selects it).");
+        failed = true;
+      }
+    }
+    const status = specs.length > 0 ? playwright(specs) : 0;
     floorNotChecked();
-    process.exit(status);
+    process.exit(failed && status === 0 ? 1 : status);
   }
 }
 
@@ -112,18 +128,18 @@ if (tier === "push" || process.argv[2] === "push") {
    * these reads dist/.
    */
   const checks = [
-    // The library only: a test run never keeps a host (D77). CI runs the
-    // deliberate `npm run build` here; locally that would keep a host on every
-    // push run, which is the one thing D77 exists to stop.
-    ["npm", ["run", "build:lib"]],
+    // Every committed product rebuilt and compared, first, as in CI's checks
+    // job: the library (only: a test run never keeps a host, D77), the site's
+    // runtime, the conformance cases, the merge fixtures, the impact map, the
+    // hosted request, the model-file budget, the inline-link cap and the count
+    // floor, which it regenerates from the last green CI run (scripts/drift.mjs).
+    ["npm", ["run", "drift"]],
     // Everything the typecheck chain carries: tsc twice, the symbol, route,
     // caller and name checks, and the impact map. Left out once, and CI caught
     // a stale impact map that this tier had just run green over.
     ["npm", ["run", "typecheck"]],
-    [process.execPath, [join(repo, "scripts", "build-conformance.mjs"), "--check"]],
     [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"]],
     [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"]],
-    ["npm", ["run", "fixtures:check"]],
   ];
   /*
    * The readers CI runs on the conformance suite, when this machine has what
@@ -131,27 +147,46 @@ if (tier === "push" || process.argv[2] === "push") {
    * machine without python3 or cargo is told which of them CI will run instead
    * — silence here would read as "checked".
    */
+  /*
+   * And the rest of what CI's checks job runs (pass C's M5): the hold-outs, the
+   * properties by the runtime and then by the Python reader over the scenarios
+   * the first writes, and the host's in-place writer's own tests. About twenty
+   * minutes that only CI ran, so a change to the sealer, a vector or a hold-out
+   * reached CI unchecked.
+   */
+  checks.push([process.execPath, [join(repo, "scripts", "properties.mjs")]]);
   for (const [tool, args, what] of [
     ["python3", [join(repo, "conformance", "reference", "run.py")], "the Python reference reader"],
     ["python3", [join(repo, "conformance", "reference", "dai_merge.py")], "the Python merge reader"],
+    ["python3", [join(repo, "scripts", "holdout.py")], "the hold-outs"],
+    ["python3", [join(repo, "scripts", "properties.py")], "the properties by the Python reader"],
     [
       "cargo",
       ["run", "--release", "--quiet", "--manifest-path", join(repo, "conformance", "readers", "rust-merge", "Cargo.toml"), "--", join(repo, "conformance", "merge")],
       "the Rust merge reader",
     ],
+    ["cargo", ["test", "--manifest-path", join(repo, "crates", "sectioned", "Cargo.toml")], "cargo test of crates/sectioned"],
   ]) {
     const have = spawnSync(tool, ["--version"], { cwd: repo, stdio: "ignore", shell: process.platform === "win32" });
     if (have.status === 0) checks.push([tool, args]);
     else console.log(`test-tier push: no ${tool} here, so ${what} is left to CI.`);
   }
+  /*
+   * Every check runs, and the suite after them, whatever failed: CI reports its
+   * checks job and its browser jobs side by side, and a gate that stops at the
+   * first red check says nothing about the rest. The tier still fails if any
+   * check did.
+   */
+  const checksFailed = [];
   for (const [command, args] of checks) {
     // A shell only for npm, which is npm.cmd on Windows. Node itself is spawned
     // directly: through a shell its path ("C:\Program Files\...") is split at
     // the space, node never starts, and every tree is refused.
     const run = spawnSync(command, args, { cwd: repo, stdio: "inherit", shell: command === "npm" && process.platform === "win32" });
     if (run.status !== 0) {
-      console.error(`test-tier push: ${[command, ...args].join(" ")} failed — CI's checks job would refuse this too.`);
-      process.exit(1);
+      const line = [command, ...args.map((arg) => relativeTo(arg))].join(" ");
+      console.error(`test-tier push: ${line} failed — CI's checks job would refuse this too.`);
+      checksFailed.push(line);
     }
   }
 
@@ -169,7 +204,10 @@ if (tier === "push" || process.argv[2] === "push") {
    * nothing when Playwright passed and the count gate refused (review of
    * 454858c..7abb896, item 4).
    */
-  const reasons = whyFailed({ status, report, projects: ["chromium", "node"] });
+  const reasons = [
+    ...checksFailed.map((line) => `a check failed: ${line}`),
+    ...whyFailed({ status, report, projects: ["chromium", "node"] }),
+  ];
   if (reasons.length > 0) {
     /*
      * A failure's evidence, kept before anything else can run (D47). The next

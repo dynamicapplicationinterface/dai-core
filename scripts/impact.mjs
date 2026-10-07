@@ -6,7 +6,8 @@
  *     node scripts/impact.mjs --explain src/link.ts
  *
  * Prints the spec files to run, one per line, or `ALL` when only a full run
- * will do. `--explain` also says which changed file pulled each one in.
+ * will do. `--explain` also says which changed file pulled each one in. A
+ * check that is not a spec prints as `check:<name>` (CHECKS below).
  *
  * The map is computed here from the specs as they are now (scripts/impact-map.mjs),
  * never read from the checked-in copy, so a stale map cannot under-select.
@@ -34,6 +35,14 @@ changed = [...new Set(changed.map((file) => file.trim().replace(/\\/g, "/")).fil
 /** Where source lives; kept in step with SCOPE in impact-map.mjs. */
 const SOURCE = ["src/", "apps/", "website/", "examples/", "scripts/", "conformance/", "crates/", "eval/", "tests/"];
 
+/**
+ * Checks that are not specs, chosen by path (pass C's M6). A change under
+ * docs/ selected no test: docs/spec-v0.2.md and docs/cddl.md are read by
+ * `build-conformance.mjs --check`, and docs/format.md and
+ * docs/replicated-tables.md are what the readers are written from.
+ */
+const CHECKS = [{ name: "build-conformance", when: (file) => file.startsWith("docs/") }];
+
 const map = build();
 const picked = new Map();
 const all = [];
@@ -58,9 +67,15 @@ if (all.length > 0) {
   console.log("ALL");
   if (explain) for (const reason of all) console.error(`full run: ${reason}`);
 } else {
+  for (const check of CHECKS) {
+    const because = changed.filter(check.when);
+    if (because.length === 0) continue;
+    console.log(`check:${check.name}`);
+    if (explain) console.error(`  check ${check.name} <- ${because.join(", ")}`);
+  }
   for (const [spec, because] of [...picked].sort(([a], [b]) => a.localeCompare(b))) {
     console.log(spec);
     if (explain) console.error(`  ${spec} <- ${because.join(", ")}`);
   }
-  if (explain && picked.size === 0) console.error("nothing a spec reaches changed");
+  if (explain && picked.size === 0 && !CHECKS.some((check) => changed.some(check.when))) console.error("nothing a spec reaches changed");
 }

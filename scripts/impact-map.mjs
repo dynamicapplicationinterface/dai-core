@@ -111,6 +111,12 @@ const OTHER_CHECKS = [
     claims: ["crates/sectioned/"],
   },
   {
+    // The first step of the checks job; it runs build-conformance --check and
+    // fixtures:check below, among the rest.
+    run: "npm run drift",
+    claims: ["scripts/drift.mjs"],
+  },
+  {
     run: "node scripts/build-conformance.mjs --check",
     claims: ["scripts/build-conformance.mjs"],
   },
@@ -170,7 +176,6 @@ const ALLOWED = [
   { path: "eval/candidates/", why: "the output of past evaluation runs, kept as the record of what they produced" },
   { path: "eval/prompts.json", why: "the prompts past evaluation runs were given, kept with their output" },
   // Operator tools: run by a person against live systems or on demand.
-  { path: "scripts/ci-verdict.mjs", why: "reads a CI run's result for a person; talks to GitHub" },
   { path: "scripts/measure.mjs", why: "a timing measurement a person runs; its output is a number, not a verdict" },
   { path: "scripts/check-deploys.mjs", why: "checks the live deploys; needs the network and the production hosts" },
   { path: "scripts/check-store.mjs", why: "checks a live store bucket; needs the network and a real bucket" },

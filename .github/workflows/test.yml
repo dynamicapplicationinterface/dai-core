@@ -10,6 +10,9 @@ on:
 # repository is a wider grant than a test run has any use for.
 permissions:
   contents: read
+  # The count floor is regenerated from the last green run of this workflow
+  # (scripts/count-floor.mjs, in the drift step), which reads runs and their logs.
+  actions: read
 
 jobs:
   # The non-browser checks, on their own so a compile or reference-reader
@@ -22,7 +25,11 @@ jobs:
     timeout-minutes: 35
 
     steps:
+      # The whole history: the count floor is checked against the newest spec
+      # file the last completed run held, which a one-commit clone cannot date.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -31,20 +38,24 @@ jobs:
 
       - run: npm ci
 
+      # Every committed product, rebuilt and compared, first (scripts/drift.mjs):
+      # the library, the site's runtime, the conformance cases, the merge
+      # fixtures (their inputs hashed before and after), the impact map, the
+      # hosted request, the model-file budget, the inline-link cap and the count
+      # floor. The same step opens the local gate (`npm run test:push`).
+      - run: npm run drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - run: npm run typecheck
 
-      # Every generated file that is committed, held to what generates it. A
-      # generator whose output is committed and never compared drifts in
-      # silence: the conformance suite had carried an older shell than the
-      # build makes, and nothing said so. Each builds from dist/, so the
-      # library is built first. The inline dictionary is the exception by
+      # The whole build, for the readers below, and the two generated files
+      # drift does not rebuild. The inline dictionary is the exception by
       # design — a link names the dictionary it was made against — so its
       # check holds that it is whole, not that it matches today's corpus.
       - run: npm run build
-      - run: node scripts/build-conformance.mjs --check
       - run: node scripts/build-dictionary.mjs --check
       - run: node scripts/build-confusables.mjs --check
-      - run: npm run fixtures:check
 
       # A second reader, sharing no code with the one that wrote the cases.
       # This is what tests the specification rather than the implementation: it
