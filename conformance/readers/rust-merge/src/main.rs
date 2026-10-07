@@ -951,22 +951,6 @@ fn admission(c: &Connection, tables: &[Table], max_parties: usize) -> admit::Adm
             }
         }
     }
-    // A confirm counts only naming in `holder` an author id, a byte string of
-    // exactly 16 bytes; one naming anything else names nobody, and seats and
-    // voids nothing (docs/format.md#confirms). admit.rs takes any byte string
-    // as a holder, so a confirm whose holder is no author id is handed to it
-    // naming no seat value, which it already reads as counting for nothing
-    // (#seat-value-shape). Nothing else there reads a confirm's `seat`: the
-    // roster heads partition by session, entity and author (#heads-roster).
-    if let Some(t) = tables.iter().find(|t| t.name == "_dai_confirm") {
-        if t.cols.iter().any(|x| x == "seat") && t.cols.iter().any(|x| x == "holder") {
-            c.execute(
-                "UPDATE main._dai_confirm SET seat = NULL WHERE NOT (typeof(holder) = 'blob' AND length(holder) = 16)",
-                [],
-            )
-            .unwrap();
-        }
-    }
     let adm = admit::admit(c, tables, max_parties);
     c.execute("ROLLBACK TO admission", []).unwrap();
     c.execute("RELEASE admission", []).unwrap();
@@ -1333,11 +1317,16 @@ fn check(dir: &Path) -> Vec<String> {
             if tables.iter().any(|t| t.i_session.is_some()) && parties[side].is_none() {
                 why.push(format!("manifest.json: {} is a session document with no session profile", side));
             }
-            // expected-schema.txt: the author tables' columns, in the
-            // T1-D21 form.
-            if let Some(w) = &schema_want {
-                if let Some(d) = diff(&format!("schema of {}.db", side), w, &schema_lines(&c, "main", &tables, false)) {
-                    why.push(d);
+            // expected-schema.txt: the schema of copy A as built, over the
+            // replicated tables only, the roster tables and the close left out
+            // in a session document; a reader MAY check it
+            // (docs/format.md#fixture-schema).
+            if side == "a" {
+                if let Some(w) = &schema_want {
+                    let session = tables.iter().any(|t| t.i_session.is_some());
+                    if let Some(d) = diff("expected-schema.txt", w, &schema_lines(&c, "main", &tables, !session)) {
+                        why.push(d);
+                    }
                 }
             }
             // What each copy admits before any merge.

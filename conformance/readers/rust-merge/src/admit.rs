@@ -395,8 +395,10 @@ pub fn admit(c: &Connection, tables: &[Table], max_parties: usize) -> Admission 
             .map(|(s, _)| s.clone())
             .collect();
         // Counting confirms: by the session's creator, in her live session,
-        // naming a value her creator's seat row's `seats` holds; at any seq,
-        // deleted or not, superseded or not (docs/format.md#confirms). Every
+        // naming a value her creator's seat row's `seats` holds and in
+        // `holder` an author id, a byte string of exactly 16 bytes; at any
+        // seq, deleted or not, superseded or not (docs/format.md#confirms).
+        // Any other holder names nobody, and seats and voids nothing. Every
         // rule skips a row at an equivocated id.
         let mut named: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
         let mut rests: BTreeMap<(String, String), Vec<(String, String)>> = BTreeMap::new();
@@ -418,8 +420,11 @@ pub fn admit(c: &Connection, tables: &[Table], max_parties: usize) -> Admission 
                     if !cr.seats.contains(&value) {
                         continue;
                     }
+                    let Some(holder) = blob(&r.vals[ih]).filter(|b| b.len() == 16).map(|b| hexlc(&b)) else {
+                        continue;
+                    };
                     let k = (sess.clone(), value);
-                    named.entry(k.clone()).or_default().insert(hx(&r.vals[ih]));
+                    named.entry(k.clone()).or_default().insert(holder);
                     let rs = rests.entry(k).or_default();
                     if rs.is_empty() {
                         rs.push(("_dai_seat".to_string(), cr.id.clone()));
