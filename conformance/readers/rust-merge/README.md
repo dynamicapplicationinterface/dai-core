@@ -41,9 +41,18 @@ changed the runtime changed this reader in the same commit (`8536dc84`,
 `f3dbd52a`, `95aa4c53`, `aaed42c3`, `873fadd3`, `1fbcd944`, `436a9725`), and
 its placement, coverage and incomplete-header code came from them. Every level
 since 29 September was blind, but each audited that code rather than rebuilding
-it (branch review pass A, H3, 5 October). It is rebuilt blind from the page in
-the session after that review; until then, what it says about those three
-areas is not independent.
+it (branch review pass A, H3, 5 October). The paragraph above is kept as a
+dated record of that.
+
+On 7 October it was rebuilt from the page and the fixtures. The functions
+written in those seven commits were gutted (`21337efe`), and the reader was
+rebuilt blind (`f40d6c6e`, 122 of 122) and finished blind (`0529d43b`, 122
+of 122, after the page answered the rebuild's one question, D197). Each
+session was given only `docs/format.md`, `docs/replicated-tables.md`,
+`conformance/merge/` and this crate, and was barred from the runtime, the
+Python reader, the scripts, the other docs and git history. The function
+signatures and doc comments were kept from the gutted version, so they are
+not independent evidence; the bodies are.
 
 ## The one rule for changing it
 
