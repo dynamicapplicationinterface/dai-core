@@ -4556,6 +4556,29 @@ write control behind `whenWritable`, and the rule's text says a read-only
 mount beside a closed session; a page test opens a batch format 3 copy and
 finds no write control on screen.
 
+#### D195 — Person keys minted non-extractable, at Phase 3.1
+
+*Status: open, for Phase 3.1. Filed 6 October, from pass B of the branch review
+(B15).*
+
+V1.0 ruling 4 makes a person key non-extractable. Today `mintPersonKey`
+generates the pair extractable (`src/identity.ts`), and its comment, the "Key
+durability" section of [identity.md](identity.md) and `README.md` argue for it.
+**Change:** `generateKey` with `extractable: false`; the comment, identity.md
+and the README line change with it. Nothing else moves: the public key is
+always exportable, so `rawPublicKey` is unchanged, and the pair is kept in
+IndexedDB by structured clone, which a non-extractable key survives. Nothing in
+the host reads private key material today; its one use is `signBytes`.
+
+**Existing keys are re-keyed, not migrated.** The flag is fixed when a key is
+made, so a key already kept on a device stays extractable. Making it
+non-extractable in place means exporting it and importing it again under the
+same name, and that migration would be the only code that ever reads private
+key material. So a device holding an extractable key mints a new,
+non-extractable one instead and writes from then on as a new author. Its old
+rows keep their signatures, never rewritten (ruling 5); it holds no seat its old
+key held.
+
 #### D194 — A copy admits an unsigned roster row it holds under another author's id
 
 *Status: open, ruling wanted. Filed 5 October, from promoting attack review
@@ -4772,7 +4795,7 @@ before (it re-reads; see its comment). **Fix:** the record is re-read under
 the library lock (`amendLibraryRecord`) and only `mergeStanding` is changed.
 `tests/session-contested.spec.ts` failed on it before the fix, on Chromium.
 
-#### D186 — The request example's inline link is 85 characters under the cap
+#### D186 — The request example's inline link is about 1,235 characters under the cap
 
 *Status: open. Filed 4 October, from the R14 to R20 step.*
 
@@ -4793,6 +4816,11 @@ A session document's per-table objects (triggers and views) no longer carry
 their `--` comments into the schema, as the roster block's do not; a plain
 document's schema is unchanged. With R21, 31,534: 1,234 under. The want
 stands: the next growth eats into that.
+
+*6 October.* Measured now on every run of the gate (`npm run drift`, and
+`tests/inline-link-room.spec.ts`), which fails when the link no longer fits:
+31,531 to 31,534 characters (a signature's length varies by a few), 1,234 to
+1,237 under.
 
 #### D185 — A close signed at a skipped seq takes back the closer's answered move
 
@@ -5288,7 +5316,7 @@ cannot read `#out` either, and every route to it is the frame tree that went
 stale. Options for whoever takes it: report it upstream with this repro, or
 skip this one test on Firefox by name (the playwright#34450 pattern in
 `tests/offline.ts`), leaving it on Chromium and WebKit where it discriminates.
-Which is Chris's call. Firefox is a reading (D32), so the gate is not red
+Not yet ruled. Firefox is a reading (D32), so the gate is not red
 from it. The trace and the probe's output are kept outside the repo.
 
 #### D171 — The reference readers compute none of what batch format version 2 changed after the signature
