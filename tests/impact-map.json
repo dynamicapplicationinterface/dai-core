@@ -629,6 +629,11 @@
       "tests/fixture/",
       "tsup.config.ts"
     ],
+    "tests/drift-content.spec.ts": [
+      "conformance/merge/merge-conflict/a.db",
+      "scripts/drift.mjs",
+      "tests/drift-content.spec.ts"
+    ],
     "tests/early-refusal.spec.ts": [
       "apps/runner/",
       "scripts/generate-key.mjs",

@@ -21,14 +21,15 @@
  *
  * The products: the library (built first; the rest read dist/), the site's
  * runtime (website/public/runtime), the conformance cases, the merge fixtures
- * (their inputs hashed before the check and after), the impact map, the hosted
+ * (their inputs compared by content with what is committed, and the committed
+ * bytes put back for every reader after), the impact map, the hosted
  * request (apps/runner/public/request.dai.html; signed, so compared by its
  * application entries, not its bytes), the model file's budget, the request
  * example's inline link against the cap (D186), and the count floor.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -82,13 +83,56 @@ step("conformance cases", () =>
   run(node, [join(repo, "scripts", "build-conformance.mjs"), "--check"]) ? [] : ["build-conformance --check failed"],
 );
 
-step("merge fixtures", () => {
-  const inputs = (rel) => /\/(a|b)\.db$/.test(rel);
-  const before = hashes("conformance/merge", inputs);
+/**
+ * A database's content as text: its schema and every row of every table, in a
+ * fixed order, each value with its storage class. Not its bytes: a file's
+ * header records the SQLite library that wrote it (3.53 under Node 24 here,
+ * another under CI's Node 22), so two writes of the same rows by two libraries
+ * differ in bytes and agree here.
+ */
+export async function contentOf(path) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    const value = (v) =>
+      v === null ? "null" : v instanceof Uint8Array ? `x'${Buffer.from(v).toString("hex")}'` : `${typeof v}:${String(v)}`;
+    const lines = [];
+    const objects = db.prepare("SELECT type, name, sql FROM sqlite_schema ORDER BY type, name").all();
+    for (const object of objects) lines.push(`${object.type} ${object.name}: ${object.sql ?? ""}`);
+    for (const { name } of objects.filter((o) => o.type === "table" && !String(o.name).startsWith("sqlite_"))) {
+      const rows = db
+        .prepare(`SELECT * FROM "${String(name).replace(/"/g, '""')}"`)
+        .all()
+        .map((row) => Object.entries(row).map(([column, v]) => `${column}=${value(v)}`).join(" "))
+        .sort();
+      for (const row of rows) lines.push(`${name} ${row}`);
+    }
+    return lines.join("\n");
+  } finally {
+    db.close();
+  }
+}
+
+step("merge fixtures", async () => {
+  /*
+   * The check regenerates a.db and b.db in place, and every reader after it
+   * would read what it wrote, not what is committed (pass A's M4). So the
+   * committed bytes are kept, the regenerated content is compared with theirs,
+   * and the committed bytes go back, whatever the check found.
+   */
+  const inputs = [...hashes("conformance/merge", (rel) => /\/(a|b)\.db$/.test(rel)).keys()];
+  const committed = new Map(inputs.map((rel) => [rel, readFileSync(resolve(repo, rel))]));
+  const committedContent = new Map();
+  for (const rel of inputs) committedContent.set(rel, await contentOf(resolve(repo, rel)));
   const failed = run("npm", ["run", "fixtures:check"]) ? [] : ["fixtures:check failed"];
-  const changed = moved(before, hashes("conformance/merge", inputs)).map(
-    (path) => `${path} was regenerated with different bytes: the committed input is not what the generator makes`,
-  );
+  const changed = [];
+  for (const rel of inputs) {
+    const path = resolve(repo, rel);
+    if (!existsSync(path) || (await contentOf(path)) !== committedContent.get(rel)) {
+      changed.push(`${rel}: the generator writes different rows or schema than are committed`);
+    }
+    writeFileSync(path, committed.get(rel));
+  }
   return [...failed, ...changed];
 });
 
@@ -154,22 +198,24 @@ step("count floor", () => {
   );
 });
 
-const drifted = [];
-for (const { name, work } of steps) {
-  console.log(`\ndrift: ${name}`);
-  let problems;
-  try {
-    problems = await work();
-  } catch (error) {
-    problems = [`${name} could not be checked: ${error?.message ?? error}`];
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const drifted = [];
+  for (const { name, work } of steps) {
+    console.log(`\ndrift: ${name}`);
+    let problems;
+    try {
+      problems = await work();
+    } catch (error) {
+      problems = [`${name} could not be checked: ${error?.message ?? error}`];
+    }
+    for (const problem of problems) drifted.push(`${name}: ${problem}`);
   }
-  for (const problem of problems) drifted.push(`${name}: ${problem}`);
-}
 
-console.log("");
-if (drifted.length === 0) {
-  console.log(`drift: none; ${steps.length} products rebuilt and compared.`);
-  process.exit(0);
+  console.log("");
+  if (drifted.length === 0) {
+    console.log(`drift: none; ${steps.length} products rebuilt and compared.`);
+    process.exit(0);
+  }
+  for (const line of drifted) console.error(`drift: ${line}`);
+  process.exit(1);
 }
-for (const line of drifted) console.error(`drift: ${line}`);
-process.exit(1);
