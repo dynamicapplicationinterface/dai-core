@@ -539,7 +539,7 @@ test.describe("verifyContainer", () => {
       'content="advisory"',
     );
 
-    await expect(verifyContainer(html)).rejects.toThrow(/does not match the sealed copy/);
+    await expect(verifyContainer(html)).rejects.toThrow(/does not match the signed copy/);
   });
 
   test("rejects a payload re-sealed by someone without the private key", async () => {

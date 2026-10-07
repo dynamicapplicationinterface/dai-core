@@ -581,7 +581,7 @@ function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void
 
   if (stripped !== new TextDecoder().decode(sealed)) {
     throw new ContainerError("SHELL_MISMATCH",
-      "This container's bootloader does not match the sealed copy inside it. " +
+      "This container's bootloader does not match the signed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
   }
@@ -990,7 +990,7 @@ export async function verifyContainer(
     if (onlyTheDatabase) {
       throw new ContainerError("DATA_DAMAGED",
         "This document's data is damaged and it will not be opened.\n" +
-          "The application inside it is intact and correctly sealed — it is the database " +
+          "The application inside it is intact and correctly signed — it is the database " +
           "that does not match the record kept of it, which is what an interrupted save " +
           "looks like. An earlier copy of the file, if you have one, will still open.",
       );
@@ -1023,8 +1023,8 @@ export async function verifyContainer(
   if (parsed.absent.length > 0) {
     throw new ContainerError(
       "RUNTIME_UNAVAILABLE",
-      `This document was published without its engine, for a host that already has ` +
-        `that exact copy — and this one does not have ${parsed.absent.join(" or ")}. ` +
+      `This document was published without its engine, to open only where that exact ` +
+        `copy is already held — and this device does not have ${parsed.absent.join(" or ")}. ` +
         `Ask whoever sent it for the complete file.`,
     );
   }
@@ -1051,7 +1051,7 @@ export async function verifyContainer(
   }
   if (report.shell.status === "mismatch") {
     throw new ContainerError("SHELL_MISMATCH",
-      "This container's bootloader does not match the sealed copy inside it. " +
+      "This container's bootloader does not match the signed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
   }

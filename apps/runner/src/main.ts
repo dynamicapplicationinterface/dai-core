@@ -2692,17 +2692,47 @@ async function exportContainer(): Promise<void> {
    * `currentHtml` has always flushed first. This path did not, which is the
    * cost of two functions packaging the same document.
    */
-  let leaving: Awaited<ReturnType<typeof leavingBytes>>;
-  try {
-    leaving = await leavingBytes();
-  } catch (error) {
-    tellOverDocument((error as Error).message, true);
-    return;
+  let activeCartridge: Cartridge;
+  const here = mountNow;
+  if (here?.elsewhere && here.cartridge.manifest.documentUuid === loaded.manifest.documentUuid) {
+    /*
+     * Another tab won this document (pass B's B1). The stored copy is that
+     * tab's, and a flush here is refused as every save here is, so the copy is
+     * this tab's own bytes, asked of the frame that holds them. They leave on
+     * the same check as any bytes (docs/identity.md, rule 3): a change of this
+     * device's that was never signed does not. Not settled into the mount and
+     * not recorded as sent: these are not the stored copy.
+     */
+    const doc = loaded;
+    const bytes = await frameBytes();
+    if (!bytes) {
+      tellOverDocument(NO_COPY_ELSEWHERE, true);
+      return;
+    }
+    try {
+      await mayLeave(bytes, here);
+    } catch {
+      tellOverDocument(UNSIGNED_ELSEWHERE, true);
+      return;
+    }
+    if (mountNow !== here || loaded !== doc) {
+      tellOverDocument(MOUNT_MOVED, true);
+      return;
+    }
+    activeCartridge = await resealCartridge(doc, bytes);
+  } else {
+    let leaving: Awaited<ReturnType<typeof leavingBytes>>;
+    try {
+      leaving = await leavingBytes();
+    } catch (error) {
+      tellOverDocument((error as Error).message, true);
+      return;
+    }
+    const { doc, mount, db: opfsDb } = leaving;
+    activeCartridge = opfsDb ? await resealCartridge(doc, opfsDb) : doc;
+    if (mount) settleInto(mount, activeCartridge);
+    if (opfsDb) await noteSentOut(activeCartridge, opfsDb);
   }
-  const { doc, mount, db: opfsDb } = leaving;
-  const activeCartridge = opfsDb ? await resealCartridge(doc, opfsDb) : doc;
-  if (mount) settleInto(mount, activeCartridge);
-  if (opfsDb) await noteSentOut(activeCartridge, opfsDb);
 
   const name = activeCartridge.manifest.appName ?? "container";
   const fileName = `${name}.dai.html`;
@@ -3284,7 +3314,9 @@ window.addEventListener("message", (event) => {
      */
     window.clearTimeout(savedFor);
     if (state === "saved") savedFor = window.setTimeout(() => { el.hidden = true; }, 3000);
-    if (state === "failed") {
+    if (state === "failed" && wonElsewhere(data.error)) {
+      tellOverDocument(elsewhereSentence(data.error), true);
+    } else if (state === "failed") {
       tellOverDocument(
         `This document could not be saved on this device${typeof data.error === "string" ? ` (${data.error})` : ""}. ` +
           `Your changes are still here; save a copy from the menu to keep them.`,
@@ -3384,7 +3416,7 @@ window.addEventListener("message", (event) => {
       // the bytes being signed: the frame's own count is not relied on
       // (docs/identity.md, binding rule 3).
       const covered = coveredSeqs((fields as unknown[])[5]);
-      if (!covered) return reply({ error: "A batch names no sequence this device can record." });
+      if (!covered) return reply({ error: "This change names nothing this device can record, so it was not signed. Reload the page to try again." });
       if (mountNow !== asking) return;
       try {
         /*
@@ -3401,7 +3433,10 @@ window.addEventListener("message", (event) => {
           await claimSign(mount, writes.seqFloor, covered);
         });
       } catch (error) {
-        if (error instanceof Error && error.message === FLOOR_MOVED) return reply({ error: FLOOR_MOVED });
+        if (error instanceof Error && error.message === FLOOR_MOVED) {
+          asking.elsewhere = true;
+          return reply({ error: FLOOR_MOVED });
+        }
         if (error instanceof Error && error.message === ALREADY_LEFT) return reply({ error: ALREADY_LEFT });
         return reply({ error: "This device could not record how far it has written, so the change was not signed." });
       }
@@ -3476,10 +3511,7 @@ window.addEventListener("message", (event) => {
         const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
         const current = held?.revision ?? 0;
         if (knownRevision.has(documentUuid) && knownRevision.get(documentUuid) !== current) {
-          throw new Error(
-            "This document was saved from another tab since it was opened here. " +
-              "To keep these changes, use Save a copy; to see the other tab's, reopen it.",
-          );
+          throw new Error(SAVED_ELSEWHERE);
         }
         // A save is a leave (docs/format.md, `floor`): bytes carrying a header
         // the egress rule refuses are not written (D181). Checked here and
@@ -3566,6 +3598,7 @@ window.addEventListener("message", (event) => {
         })
         .catch((error: unknown) => {
           console.info(`dai: save ${saveNumber} refused: ${String(error)}`);
+          if (wonElsewhere(error)) asking.elsewhere = true;
           answerMount(asking, event.source, { type: TO_DOCUMENT.SAVE_ACK, status: "error", error: String(error), requestId });
         });
     }
@@ -3758,6 +3791,32 @@ async function flushBeforeLeaving(): Promise<void> {
       "The latest changes here could not be signed and saved, so this was not sent. Try again in a moment.",
     );
   }
+}
+
+/**
+ * The database as the mounted frame holds it, saved or not; null when the frame
+ * does not answer in time or its runtime does not hand bytes over (pass B's B1).
+ */
+function frameBytes(): Promise<Uint8Array | null> {
+  const target = cartridgeFrame.contentWindow;
+  if (!target || !mountedNonce) return Promise.resolve(null);
+  const id = Math.random().toString(36).slice(2);
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", onFlushed);
+      resolve(null);
+    }, 10_000);
+    const onFlushed = (event: MessageEvent): void => {
+      const data = event.data as { type?: string; id?: string; sessionNonce?: string; databaseBytes?: unknown } | null;
+      if (!data || data.type !== TO_HOST.FLUSHED || data.id !== id) return;
+      if (!fromMountedContainer(event, data)) return;
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onFlushed);
+      resolve(data.databaseBytes instanceof Uint8Array && data.databaseBytes.byteLength > 0 ? data.databaseBytes : null);
+    };
+    window.addEventListener("message", onFlushed);
+    target.postMessage({ type: TO_DOCUMENT.FLUSH, id, bytes: true }, "*");
+  });
 }
 
 /** Resolves true once the frame confirms its pending writes are stored, false if it did not say so in time. */
@@ -4005,13 +4064,7 @@ async function applyPendingMerge(): Promise<void> {
          * between — the game's key from the invite that caused this very merge
          * (D37) among it. Only the flag this write owns is changed.
          */
-        const held = await getCartridgeFromLibrary(job.heldItem.documentUuid).catch(() => null);
-        // Named before it is spread: `library-record.spec` reads the shape of
-        // every write here, and a spread of a parenthesised expression is not a
-        // shape it can see. The rule it enforces is the one this write depends
-        // on, so it is met literally rather than argued with.
-        const record = held ?? job.heldItem;
-        await saveCartridgeToLibrary({ ...record, mergeStanding: true }).catch(() => undefined);
+        await amendLibraryRecord(job.heldItem.documentUuid, (held) => ({ ...held, mergeStanding: true }));
       }
       await finishMerge(!report.refused);
       return;
@@ -4298,15 +4351,12 @@ async function linkToSend(
   throw new Error("This opener has no store, so a document this large can only be sent as a file.");
 }
 
+/** Files a share on the library record, read and written under the lock (D41); a document not kept here has nowhere to remember it. */
 async function rememberShare(documentUuid: string, share: Share): Promise<void> {
-  try {
-    const held = await getCartridgeFromLibrary(documentUuid);
-    if (!held) return;
-    const shares = [...(held.shares ?? []).filter((s) => s.hash !== share.hash), share].slice(-20);
-    await saveCartridgeToLibrary({ ...held, shares });
-  } catch {
-    /* Not kept on this device; there is nowhere to remember it. */
-  }
+  await amendLibraryRecord(documentUuid, (held) => ({
+    ...held,
+    shares: [...(held.shares ?? []).filter((s) => s.hash !== share.hash), share].slice(-20),
+  }));
 }
 
 /**
@@ -4323,7 +4373,7 @@ async function retireShares(documentUuid: string): Promise<{ retired: number; fa
   let failed = 0;
   // How many of those retired were cards only: the link still opens.
   let cards = 0;
-  const remaining: Share[] = [];
+  const kept = new Set<string>();
   for (const share of shares) {
     try {
       const response = await fetch(new URL("/api/forget", location.origin).href, {
@@ -4336,14 +4386,24 @@ async function retireShares(documentUuid: string): Promise<{ retired: number; fa
         if (share.card) cards += 1;
       } else {
         failed += 1;
-        remaining.push(share);
+        kept.add(share.hash);
       }
     } catch {
       failed += 1;
-      remaining.push(share);
+      kept.add(share.hash);
     }
   }
-  if (held) await saveCartridgeToLibrary({ ...held, shares: remaining }).catch(() => undefined);
+  /*
+   * Only this field, from the record as it is now (B2, D41). The network calls
+   * take seconds, and a save landing meanwhile moves `revision`: writing back
+   * the record read above would rewind it, and every later save in that tab
+   * would be refused as another tab's. A share filed meanwhile is kept too.
+   */
+  const gone = new Set(shares.map((share) => share.hash).filter((hash) => !kept.has(hash)));
+  await amendLibraryRecord(documentUuid, (now) => ({
+    ...now,
+    shares: (now.shares ?? []).filter((share) => !gone.has(share.hash)),
+  }));
   return { retired, failed, cards };
 }
 
@@ -4411,7 +4471,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
   if (url) icon.src = url;
   titleEl.textContent = invite ? "Invite someone into this game" : `Share ${name}`;
   sub.textContent = viaStore
-    ? "Sealed with a key that only the link holds, then put in the store, which cannot read it."
+    ? "Locked with a key that only the link holds, then put in the store, which cannot read it."
     : "The whole app travels inside the link. Nothing is uploaded.";
   /*
    * What the toggle starts on, ruled 21 September.
@@ -4531,7 +4591,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
     if (canShare) {
       try {
         await navigator.share({ title: name, url: made.link });
-        tellOverDocument(made.uploaded ? "Shared. The store holds a sealed copy only the link can open." : "Shared.");
+        tellOverDocument(made.uploaded ? "Shared. The store holds a locked copy only the link can open." : "Shared.");
         return;
       } catch (error) {
         // Dismissed is not failed. Anything else falls through to the clipboard.
@@ -4542,7 +4602,7 @@ async function sendDocument(inviteSession?: string): Promise<void> {
       await navigator.clipboard.writeText(made.link);
       tellOverDocument(
         made.uploaded
-          ? "Link copied. The store holds a sealed copy only the link can open."
+          ? "Link copied. The store holds a locked copy only the link can open."
           : `Link copied — ${(made.link.length / 1024).toFixed(1)} KB. Anyone who opens it gets this document.`,
       );
     } catch {
@@ -5194,12 +5254,21 @@ async function startMailboxIfPossible(): Promise<void> {
       // review, #1), so a save lost after this publish cannot reissue them.
       // And the left floor counts the header it carries, read here from the
       // bytes about to leave, not from the frame's word (docs/format.md, `floor`).
-      beforePublish: async (head, batch) => {
-        await raiseSeqFloor(uuid, head);
-        const author = mount?.writes ? await mount.writes.decided : null;
-        if (author && !("refused" in author)) {
-          await withLibraryLock(uuid, () => leaveWith(uuid, publishedLeaving(batch, author.me.id), "claim"));
-        }
+      // Both from the batch, under the lock, the floor claimed from where this
+      // mount saw it as a sign and a save claim it (D105, pass B's B4): the
+      // frame's own count of how far it wrote is not read.
+      beforePublish: async (batch) => {
+        const writes = mount?.writes ?? null;
+        const author = writes ? await writes.decided : null;
+        if (!writes || !author || "refused" in author) return;
+        await withLibraryLock(uuid, async () => {
+          const leaving = publishedLeaving(batch, author.me.id);
+          await claimFloor(writes, author.seqFloor, leaving.top);
+          await leaveWith(uuid, leaving, "claim");
+        }).catch((error: unknown) => {
+          if (mount && wonElsewhere(error)) mount.elsewhere = true;
+          throw error;
+        });
       },
       // This person's own move reached the relay: whatever the icon said is
       // answered (D34). After the confirmation, never before it, so a move
@@ -5288,7 +5357,7 @@ async function openFromReference(reference: { hash: string; key: string; url?: s
   arrivedInClear = reference.clear === true;
   const store = reference.url ? where : "this project's store";
   await ingest(new File([html], "shared.dai.html", { type: "text/html" }), {
-    from: `From ${store}, sealed so it could not be read there. Nothing is uploaded — it runs on this device.`,
+    from: `From ${store}, locked so it could not be read there. Nothing is uploaded — it runs on this device.`,
   });
 }
 
@@ -5639,6 +5708,12 @@ type Mount = {
   nonce: string;
   cartridge: Cartridge;
   writes: MountWrites | null;
+  /**
+   * Another tab saved or signed this document since this mount saw it, so this
+   * mount saves and signs nothing more (D41, D105). Save a copy then takes the
+   * frame's own bytes, since the stored copy is the other tab's (pass B's B1).
+   */
+  elsewhere?: boolean;
 };
 
 /** The mount whose nonce is `mountedNonce`; null from `mount()` until the new shell handshakes, and after eject. */
@@ -5711,8 +5786,34 @@ async function needsUpdate(cartridge: Cartridge): Promise<boolean> {
 
 /** What a tab that lost the floor to another tab is told (D105). */
 const FLOOR_MOVED =
-  "This document was written from another tab since it was opened here, so this change was not signed. " +
-  "To see the other tab's changes, reopen it.";
+  "This document was written from another tab since it was opened here, so this change was not signed or saved. " +
+  "Close the other tab, then reopen the document here.";
+
+/** What a tab whose save another tab's save refused is told (D41); Save a copy keeps this tab's bytes (pass B's B1). */
+const SAVED_ELSEWHERE =
+  "This document was saved from another tab since it was opened here, so this change was not saved. " +
+  "To keep it, use Save a copy first. Close the other tab, then reopen the document here.";
+
+/** Save a copy in a tab another tab won, when this tab's changes were never signed (docs/identity.md, rule 3). */
+const UNSIGNED_ELSEWHERE =
+  "No copy was made: this tab's latest changes were never signed, because another tab wrote this document " +
+  "after it was opened here. Close the other tab, then reopen the document here.";
+
+/** Save a copy in a tab another tab won, when the frame did not hand over its bytes. */
+const NO_COPY_ELSEWHERE =
+  "No copy was made: another tab saved this document after it was opened here, and this tab's changes could " +
+  "not be read. Close the other tab, then reopen the document here.";
+
+/** Whether an error, or an error's text from a frame, is another tab having won the document. */
+function wonElsewhere(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error ?? "");
+  return text.includes(FLOOR_MOVED) || text.includes(SAVED_ELSEWHERE);
+}
+
+/** The one of the two sentences an error carries. */
+function elsewhereSentence(error: unknown): string {
+  return String(error ?? "").includes(FLOOR_MOVED) ? FLOOR_MOVED : SAVED_ELSEWHERE;
+}
 
 /**
  * Raises the floor for a sign or a save of this mount, only from where this

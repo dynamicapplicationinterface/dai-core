@@ -187,14 +187,14 @@ sender's log, and V1's default is the other one.
 **The person reads**, sending (`main.ts:3317-3332`):
 
 > **Share Velvet Chess**
-> Sealed with a key that only the link holds, then put in the store, which
+> Locked with a key that only the link holds, then put in the store, which
 > cannot read it.
 > Anyone with the link can open it, with what is in it now.
 
 That third line is the default, with the data toggle on. Turned off, it reads
 *"Anyone with the link gets the app as it arrived, with none of your entries."*
 — which is the sentence V1's walk wants to be the default one. After sending:
-*"Shared. The store holds a sealed copy only the link can open."*
+*"Shared. The store holds a locked copy only the link can open."*
 
 The friend reads, under the Open button (`main.ts:4034`, where the store's own
 name is filled in):

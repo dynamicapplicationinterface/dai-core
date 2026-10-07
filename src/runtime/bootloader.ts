@@ -1061,7 +1061,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       .then(
       (result: Any) => {
         saving = null;
-        if (result && result.saved === false) throw new Error(String(result.method || "the host did not save"));
+        if (result && result.saved === false) throw new Error(String(result.method || "this page did not save it"));
         failures = 0;
         tellSaveStatus("saved");
       },
@@ -1783,7 +1783,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const adoptWriteRules = async (source: unknown): Promise<void> => {
     if (mergeModule) return;
     if (typeof source !== "string" || source.length === 0) {
-      refuseWriteRules("NO_SOURCE", `host sent ${typeof source}`);
+      refuseWriteRules("NO_SOURCE", `nothing usable arrived (${typeof source})`);
       return;
     }
     const bytes = new TextEncoder().encode(source);
@@ -1861,7 +1861,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       const id = Math.random().toString(36).slice(2);
       const timer = setTimeout(() => {
         signWaiters.delete(id);
-        reject(new Error("The host did not sign this change in time, so it was not sent or saved."));
+        reject(new Error("This change was not signed in time, so it was not sent or saved. Try again in a moment."));
       }, 15000);
       signWaiters.set(id, {
         resolve: (value) => {
@@ -2563,7 +2563,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       if (!waiter) return;
       signWaiters.delete(String(data.id));
       if (data.sig instanceof Uint8Array && data.pub instanceof Uint8Array) waiter.resolve({ sig: data.sig, pub: data.pub });
-      else waiter.reject(new Error(String(data.error || "The host would not sign this change.")));
+      else waiter.reject(new Error(String(data.error || "This change could not be signed on this device.")));
       return;
     }
     if (data.type === names.FLUSH) {
@@ -2578,12 +2578,24 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       // being signed (an invite writes its game and asks to share at once), so
       // the flush goes round again for it, a few times, before it says no.
       const landed = (): boolean => autosaveDb === null && saveStatus !== "failed" && !hasPendingOwn() && unlanded.size === 0;
+      // Asked with `bytes`, the answer carries the database as this frame holds
+      // it, whether or not it landed: a tab whose saves another tab refuses
+      // makes Save a copy from these, not from the stored copy, which is the
+      // other tab's (pass B's B1). The host checks them before they leave.
       void (async () => {
         for (let pass = 0; pass < 3; pass++) {
           await Promise.resolve(flushAutosave());
           if (landed()) break;
         }
-        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved: landed() }, "*");
+        let databaseBytes: Uint8Array | undefined;
+        if (data.bytes === true && liveDb) {
+          try {
+            databaseBytes = exportDatabase(liveDb);
+          } catch {
+            databaseBytes = undefined;
+          }
+        }
+        window.parent.postMessage({ type: names.FLUSHED, id: data.id, saved: landed(), ...(databaseBytes ? { databaseBytes } : {}) }, "*");
       })();
       return;
     }
@@ -3473,7 +3485,7 @@ async function boot(): Promise<void> {
   const node = document.getElementById("dai-payload");
   const b64 = node?.textContent?.trim() ?? "";
   if (!b64) {
-    refuse("NO_PAYLOAD", "Container is sealed but empty — no DAI payload found.");
+    refuse("NO_PAYLOAD", "This file is signed but holds no document.");
     return;
   }
 
@@ -3506,7 +3518,7 @@ async function boot(): Promise<void> {
     return;
   }
 
-  stage("Checking the seal…");
+  stage("Checking the signature…");
 
   const policy = integrityPolicy();
   const manifestBytes = files[MANIFEST_ENTRY];
@@ -3789,7 +3801,7 @@ async function boot(): Promise<void> {
     if (event.source === window.parent && fromHost?.type === TO_DOCUMENT.FLUSH) {
       // The host is packaging this document to share it and wants what the
       // person sees, not the last autosave. The answer comes back the same way.
-      toFrame({ type: FRAME_INTERNAL.FLUSH, id: fromHost.id });
+      toFrame({ type: FRAME_INTERNAL.FLUSH, id: fromHost.id, ...((event.data as { bytes?: unknown }).bytes === true ? { bytes: true } : {}) });
       return;
     }
     /*
@@ -4042,7 +4054,15 @@ async function boot(): Promise<void> {
     }
     if (event.source === frame.contentWindow && relay?.type === FRAME_INTERNAL.FLUSHED) {
       window.parent.postMessage(
-        { type: TO_HOST.FLUSHED, sessionNonce, id: relay.id, saved: (event.data as { saved?: unknown }).saved !== false },
+        {
+          type: TO_HOST.FLUSHED,
+          sessionNonce,
+          id: relay.id,
+          saved: (event.data as { saved?: unknown }).saved !== false,
+          ...((event.data as { databaseBytes?: unknown }).databaseBytes instanceof Uint8Array
+            ? { databaseBytes: (event.data as { databaseBytes: Uint8Array }).databaseBytes }
+            : {}),
+        },
         "*",
       );
       return;
@@ -4238,7 +4258,7 @@ async function boot(): Promise<void> {
             } else {
               reply({
                 ok: false,
-                error: data.error || "The host could not save this container.",
+                error: data.error || "This page could not save the document.",
                 code: data.code,
               });
             }
@@ -4247,7 +4267,7 @@ async function boot(): Promise<void> {
           // A host that never answers must not leave the app waiting forever.
           const hostTimer = window.setTimeout(() => {
             window.removeEventListener("message", onHostAck);
-            reply({ ok: false, error: "The host did not respond to the save request." });
+            reply({ ok: false, error: "This page did not answer the save." });
           }, 15000);
 
           window.addEventListener("message", onHostAck);
@@ -4290,7 +4310,7 @@ async function boot(): Promise<void> {
             const id = randomHex(16);
             const timer = window.setTimeout(() => {
               window.removeEventListener("message", onChecked);
-              reject(new Error("The host did not check this file in time, so it was not written."));
+              reject(new Error("This file was not checked in time, so it was not written. Try again in a moment."));
             }, 15000);
             const onChecked = (evt: MessageEvent): void => {
               if (evt.source !== window.parent) return;
@@ -4299,7 +4319,7 @@ async function boot(): Promise<void> {
               window.clearTimeout(timer);
               window.removeEventListener("message", onChecked);
               if (data.ok) resolve();
-              else reject(new Error(data.error || "The host would not let this file leave the device."));
+              else reject(new Error(data.error || "This file may not leave the device."));
             };
             window.addEventListener("message", onChecked);
             window.parent.postMessage({ type: TO_HOST.LEAVE_CHECK, sessionNonce, id, sqlite: outgoing }, "*");

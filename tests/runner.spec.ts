@@ -252,7 +252,7 @@ test.describe("cartridge ingestion", () => {
     });
 
     await expect(page.locator("#report")).toHaveClass(/error/);
-    await expect(page.locator("#report")).toContainText("does not match the sealed copy");
+    await expect(page.locator("#report")).toContainText("does not match the signed copy");
     await expect(page.locator("body")).not.toHaveClass(/loaded/);
   });
 

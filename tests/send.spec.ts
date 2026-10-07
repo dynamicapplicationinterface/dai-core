@@ -139,7 +139,7 @@ test.describe("sending a document", () => {
     await page.click("#more");
     await page.click("#send");
     await expect(page.locator("#send-sheet")).toBeVisible();
-    await expect(page.locator("#send-sub")).toContainText("Sealed with a key");
+    await expect(page.locator("#send-sub")).toContainText("Locked with a key");
     await page.click("#send-go");
     await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 30_000 });
     const link = (await copied())!;
@@ -239,7 +239,7 @@ test.describe("sending a document", () => {
     // message shows, the same as for any app a phone shares.
     await page.click("#more");
     await page.click("#send");
-    await expect(page.locator("#send-sub")).toContainText("Sealed with a key");
+    await expect(page.locator("#send-sub")).toContainText("Locked with a key");
     await expect(page.locator("#send-preview")).toHaveCount(0);
     await page.click("#send-go");
     await expect(page.locator("#doc-note")).toContainText(/Link copied/, { timeout: 60_000 });

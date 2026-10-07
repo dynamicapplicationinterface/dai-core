@@ -725,13 +725,13 @@ export async function raiseSeqFloor(documentUuid: string, seq: number): Promise<
           if (seq > held) store.put(seq, key);
         };
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
-        tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
+        tx.onerror = () => reject(tx.error ?? new Error("This device could not record how far it has written."));
+        tx.onabort = () => reject(tx.error ?? new Error("This device stopped recording how far it has written."));
       }),
       // A write that never answers fails, like one that errors, and the save or
       // the seal waiting on it fails closed rather than holding the lock (#4).
       new Promise<void>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("The sequence floor did not answer within 4 seconds.")), 4_000);
+        timer = setTimeout(() => reject(new Error("This device's storage did not answer within 4 seconds.")), 4_000);
       }),
     ]);
   } finally {
@@ -772,17 +772,17 @@ export async function claimSeqFloor(documentUuid: string, seen: number, seq: num
           answer = { claimed: next };
         };
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error("The sequence floor was not written."));
-        tx.onabort = () => reject(tx.error ?? new Error("The sequence floor write was abandoned."));
+        tx.onerror = () => reject(tx.error ?? new Error("This device could not record how far it has written."));
+        tx.onabort = () => reject(tx.error ?? new Error("This device stopped recording how far it has written."));
       }),
       new Promise<void>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("The sequence floor did not answer within 4 seconds.")), 4_000);
+        timer = setTimeout(() => reject(new Error("This device's storage did not answer within 4 seconds.")), 4_000);
       }),
     ]);
   } finally {
     clearTimeout(timer);
   }
-  if (!answer) throw new Error("The sequence floor was not read.");
+  if (!answer) throw new Error("This device could not read how far it has written.");
   return answer;
 }
 
@@ -801,11 +801,11 @@ async function inKeyStore(what: string, work: (store: IDBObjectStore) => void): 
       new Promise<void>((resolve, reject) => {
         work(tx.objectStore(KEY_STORE));
         tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error ?? new Error(`${what} was not written.`));
-        tx.onabort = () => reject(tx.error ?? new Error(`${what} write was abandoned.`));
+        tx.onerror = () => reject(tx.error ?? new Error(`This device could not record ${what}.`));
+        tx.onabort = () => reject(tx.error ?? new Error(`This device stopped recording ${what}.`));
       }),
       new Promise<void>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${what} did not answer within 4 seconds.`)), 4_000);
+        timer = setTimeout(() => reject(new Error(`This device's storage did not answer within 4 seconds.`)), 4_000);
       }),
     ]);
   } finally {
@@ -826,7 +826,7 @@ export type SignFloorClaim = SeqFloorClaim | { left: number };
 
 export async function claimSignFloor(documentUuid: string, seen: number, covered: readonly number[]): Promise<SignFloorClaim> {
   let answer: SignFloorClaim | null = null;
-  await inKeyStore("The sequence floor", (store) => {
+  await inKeyStore("how far it has written", (store) => {
     const floor = store.get(seqFloorKey(documentUuid));
     const left = store.get(leftFloorKey(documentUuid));
     left.onsuccess = () => {
@@ -845,7 +845,7 @@ export async function claimSignFloor(documentUuid: string, seen: number, covered
       answer = { claimed: next };
     };
   });
-  if (!answer) throw new Error("The sequence floor was not read.");
+  if (!answer) throw new Error("This device could not read how far it has written.");
   return answer;
 }
 
@@ -888,7 +888,7 @@ export async function claimLeave(
   }
   let answer: LeaveClaim | null = null;
   const prefix = leftHeaderKey(documentUuid, "");
-  await inKeyStore("The left floor", (store) => {
+  await inKeyStore("what it has already sent", (store) => {
     const floor = store.get(leftFloorKey(documentUuid));
     const kept = store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`));
     kept.onsuccess = () => {
@@ -908,7 +908,7 @@ export async function claimLeave(
       answer = { left: true };
     };
   });
-  if (!answer) throw new Error("The left floor was not read.");
+  if (!answer) throw new Error("This device could not read what it has already sent.");
   return answer;
 }
 
@@ -918,7 +918,7 @@ export async function keptLeftFloor(documentUuid: string): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(leftFloorKey(documentUuid));
     req.onsuccess = () => resolve(typeof req.result === "number" ? req.result : 0);
-    req.onerror = () => reject(req.error ?? new Error("The left floor was not read."));
+    req.onerror = () => reject(req.error ?? new Error("This device could not read what it has already sent."));
   });
 }
 

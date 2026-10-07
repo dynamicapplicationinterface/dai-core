@@ -182,12 +182,12 @@ export function startMailboxSession(config: {
    */
   onPublished?: (address: string) => void;
   /**
-   * About to publish this device's rows up to `head`, in `batch` as the frame
-   * encoded it: awaited before the batch is sealed, so whatever counts how far
+   * About to publish this device's rows in `batch` as the frame encoded it:
+   * awaited before the batch is sealed, so whatever counts how far
    * this device has written, or what has left it, counts them before they can
    * leave. A throw stops the publish, as a failed send does.
    */
-  beforePublish?: (head: number, batch: Uint8Array) => Promise<void>;
+  beforePublish?: (batch: Uint8Array) => Promise<void>;
   onNote?: (message: string) => void;
 }): MailboxSession | null {
   let rootKey: Uint8Array;
@@ -527,7 +527,7 @@ export function startMailboxSession(config: {
         // A batch the host will not let leave (D181) sends nothing and moves
         // nothing, and is said, as a failed seal is.
         try {
-          await config.beforePublish?.(head, batchBytes);
+          await config.beforePublish?.(batchBytes);
         } catch (error) {
           const why = error instanceof Error ? error.message : String(error);
           note(`publish refused at ${lane.address.slice(0, 12)}: ${why}`);
