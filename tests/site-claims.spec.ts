@@ -52,6 +52,14 @@ test.describe("the site describes the system it actually sits on", () => {
     expect(security).toMatch(/known.*new.*conflict/is);
   });
 
+  test("the security page says a lost key has no recovery, until one is built", () => {
+    // Pass C's H4: clearing the site's data loses the key and the device writes
+    // as a new author. Nothing recovers it today. The linked successor on loss
+    // (backlog, V1.0 rulings, 5) is the session that makes this false, and it
+    // has to change this sentence and this test together.
+    expect(page("docs/security.md")).toMatch(/No recovery\s+is built\./);
+  });
+
   test("the playground page names the signed bytes as they are encoded", () => {
     const playground = page("playground.md");
     // The signature has been over deterministic CBOR since the envelope became
