@@ -3,6 +3,16 @@
  *
  *     node scripts/count-floor.mjs           # regenerate tests/count-floor.json, then check it
  *     node scripts/count-floor.mjs --check   # check only
+ *     node scripts/count-floor.mjs --drift   # what drift runs: fails only on a floor above the newest green run
+ *
+ * The floor is a lower bound. Drift fails only when the committed floor is above
+ * what the newest completed green run passes for a project, a floor nobody could
+ * meet; a floor below it is printed and passes. Regenerating is a chore, run when
+ * you choose and never required to get a run green: on 7 October two runs of the
+ * same tests counted WebKit 800 and 801, and a floor that had to equal the newest
+ * run flipped with whichever finished last (a checks rerun puts its own run back
+ * in progress, so it read the other). What protects the count is the gate
+ * (tests/count-gate.ts): a run's actual count at or above the floor.
  *
  * The floor in tests/count-floor.json is what the count gate (tests/count-gate.ts)
  * holds a whole run to. Written by hand, it sat at the figures of 15 September
@@ -103,8 +113,27 @@ function readFloor() {
   }
 }
 
-function regenerate() {
-  const held = readFloor();
+/**
+ * The floor against the newest green run's counts, per project. A floor is a
+ * lower bound: one above what the newest green run passes is a floor nobody
+ * could meet (`above`, drift); one below it is only a floor not yet raised
+ * (`below`, printed, not drift). A project missing from either side is neither.
+ */
+export function floorDrift(floor, newest) {
+  const above = [];
+  const below = [];
+  for (const project of Object.keys(newest)) {
+    const held = floor[project];
+    const count = newest[project];
+    if (typeof held !== "number" || typeof count !== "number") continue;
+    if (held > count) above.push(`${project}: the floor is ${held}, above the ${count} the newest green run passes`);
+    else if (held < count) below.push(`${project}: the floor is ${held}, ${count - held} below the ${count} the newest green run passes`);
+  }
+  return { above, below };
+}
+
+/** Per project, the newest completed run on this branch whose every job carrying it passed, and its count. */
+function newestGreen() {
   const found = {};
   for (const run of completedRuns()) {
     if (PROJECTS.every((p) => found[p])) break;
@@ -124,6 +153,12 @@ function regenerate() {
       found[project] = { count, run: run.databaseId, sha: run.headSha };
     }
   }
+  return found;
+}
+
+function regenerate() {
+  const held = readFloor();
+  const found = newestGreen();
   const floor = {};
   for (const project of PROJECTS) {
     if (found[project]) floor[project] = found[project].count;
@@ -174,6 +209,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(0);
   }
   try {
+    if (process.argv.includes("--drift")) {
+      const found = newestGreen();
+      const newest = Object.fromEntries(Object.entries(found).map(([p, s]) => [p, s.count]));
+      const { above, below } = floorDrift(readFloor(), newest);
+      const runs = [...new Set(Object.values(found).map((s) => s.run))].join(", ") || "(none)";
+      for (const line of below) console.log(`count floor: ${line} (runs ${runs}); not drift, raise it with node scripts/count-floor.mjs when you choose`);
+      for (const line of above) console.error(`count floor: ${line} (runs ${runs})`);
+      if (above.length === 0 && below.length === 0) console.log(`count floor: at the newest green run's counts (runs ${runs}).`);
+      process.exit(above.length === 0 ? 0 : 1);
+    }
     if (!process.argv.includes("--check")) regenerate();
     process.exit(check() ? 0 : 1);
   } catch (error) {

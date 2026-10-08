@@ -191,11 +191,11 @@ step("inline link cap", async () => {
 });
 
 step("count floor", () => {
-  const before = hashes("tests/count-floor.json");
-  if (!run(node, [join(repo, "scripts", "count-floor.mjs")])) return ["the count floor is stale or could not be regenerated"];
-  return moved(before, hashes("tests/count-floor.json")).map(
-    (path) => `${path} moved: the last green CI run passes a different count; commit the regenerated floor`,
-  );
+  // A lower bound: drift only when the floor is above the newest green run (count-floor.mjs --drift).
+  if (!run(node, [join(repo, "scripts", "count-floor.mjs"), "--drift"])) {
+    return ["tests/count-floor.json is above what the newest green CI run passes, or the runs could not be read"];
+  }
+  return [];
 });
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

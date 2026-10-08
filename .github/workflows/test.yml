@@ -10,8 +10,8 @@ on:
 # repository is a wider grant than a test run has any use for.
 permissions:
   contents: read
-  # The count floor is regenerated from the last green run of this workflow
-  # (scripts/count-floor.mjs, in the drift step), which reads runs and their logs.
+  # The count floor is checked against the last green run of this workflow
+  # (scripts/count-floor.mjs --drift, in the drift step), which reads runs and their logs.
   actions: read
 
 jobs:

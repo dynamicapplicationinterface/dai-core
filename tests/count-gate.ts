@@ -21,8 +21,9 @@ export const REPORT = join(repo, "test-results", "count-gate.json");
  * So the count is a gate. It is crude on purpose: it holds a floor, not an
  * exact figure, so adding tests never needs a ceremony and removing them
  * always does. The floor is regenerated from the last green CI run by
- * `node scripts/count-floor.mjs`, which the gate runs (`npm run drift`), so it
- * tracks what CI passes and cannot be left behind by hand (pass C's H1).
+ * `node scripts/count-floor.mjs`, a chore run when you choose (pass C's H1).
+ * The gate's drift step (`npm run drift`) fails only on a floor above what the
+ * newest green run passes, one nobody could meet; a floor below it passes.
  * `DAI_UPDATE_FLOOR=1 npm test` still writes what a local run passed.
  *
  * The floor is what CI passes, because CI is where it gates. A run on Windows

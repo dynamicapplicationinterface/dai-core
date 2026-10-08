@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error a plain ES module with no types
-import { countsFrom, staleFloor } from "../scripts/count-floor.mjs";
+import { countsFrom, floorDrift, staleFloor } from "../scripts/count-floor.mjs";
 
 /**
  * The floor is counted from CI's own lines as the count gate counts a run
@@ -29,5 +29,32 @@ test.describe("counting a CI job's passed tests", () => {
     expect(staleFloor("2026-10-04T23:55:46-04:00", "2026-10-05T09:00:00-04:00")).toBe(true);
     expect(staleFloor("2026-10-05T09:00:00-04:00", "2026-10-04T23:55:46-04:00")).toBe(false);
     expect(staleFloor(undefined, "2026-10-04T23:55:46-04:00"), "a floor with no record is stale").toBe(true);
+  });
+});
+
+/**
+ * The floor is a lower bound. Drift fails only on a floor above what the newest
+ * completed green run passes for a project, a floor nobody could meet; a floor
+ * below it is reported and passes. Regenerating is a chore, never what makes a
+ * run green: the two runs of 7 October counted WebKit 800 and 801 on the same
+ * tests, and a floor that had to equal the newest run flipped with whichever
+ * one finished last.
+ */
+test.describe("the floor against the newest green run", () => {
+  test("a floor above a project's newest count is drift", () => {
+    const { above, below } = floorDrift({ chromium: 805, webkit: 801 }, { chromium: 805, webkit: 800 });
+    expect(above).toEqual(["webkit: the floor is 801, above the 800 the newest green run passes"]);
+    expect(below).toEqual([]);
+  });
+
+  test("a floor below a project's newest count is not drift", () => {
+    const { above, below } = floorDrift({ chromium: 805, webkit: 800 }, { chromium: 805, webkit: 801 });
+    expect(above).toEqual([]);
+    expect(below).toEqual(["webkit: the floor is 800, 1 below the 801 the newest green run passes"]);
+  });
+
+  test("a project with no green run, or no floor, is neither", () => {
+    expect(floorDrift({ firefox: 794 }, {})).toEqual({ above: [], below: [] });
+    expect(floorDrift({}, { firefox: 794 })).toEqual({ above: [], below: [] });
   });
 });
