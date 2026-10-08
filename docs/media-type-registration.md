@@ -1,11 +1,12 @@
 # Media type registration: `application/vnd.dai`
 
-A vendor-tree registration under RFC 6838 §3.2. It is a form, not a standard:
-submit it at <https://www.iana.org/form/media-types>. IANA reviews vendor-tree
-registrations lightly and usually answers within a few weeks. The `.dai.html`
-viewer form is `text/html` by nature and is not registered.
+A vendor-tree registration under RFC 6838 §3.2, registered with IANA on
+5 October 2026: magic number `DAI` and a zero byte (0x44 0x41 0x49 0x00),
+extension `.dai`. It is a form, not a standard. The `.dai.html` viewer form is
+`text/html` by nature and is not registered.
 
-Fill in the two bracketed fields and paste the rest as it stands.
+Below is the template as it was submitted; the contact fields are left
+bracketed here.
 
 ---
 

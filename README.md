@@ -9,6 +9,9 @@ The protocol is specified in [docs/spec-v0.2.md](docs/spec-v0.2.md), which
 documents the container as it actually behaves. v0.1 is superseded and kept
 only as the record of what an earlier review read.
 
+The sectioned form (`.dai`) has the media type `application/vnd.dai`,
+registered with IANA on 5 October 2026; the viewer form (`.dai.html`) is HTML.
+
 ## Installation
 
 ```bash

@@ -45,7 +45,7 @@ Also known as: DAI cartridge, `.dai`
 | `P31` instance of | `Q235557` (file format) | The core classification |
 | `P279` subclass of | `Q188725` (HTML) *or* omit | Defensible either way; a cartridge is a valid HTML document, but "subclass of HTML" overstates the relationship. Prefer omitting until discussed. |
 | `P1195` file extension | `dai` | Without the dot, per convention |
-| `P1163` media type | `application/vnd.dai` | **Only once IANA registration completes.** An unregistered value here will be challenged. |
+| `P1163` media type | `application/vnd.dai` | Registered with IANA on 5 October 2026; cite the registration page. |
 | `P178` developer | Item for the organisation, if one exists | Needs its own notability; a string is not accepted for this property |
 | `P571` inception | `2026` | Precision: year |
 | `P275` copyright license | `Q334661` (MIT License) | For the reference implementation |
@@ -81,7 +81,8 @@ LAST|P348|"0.1.0"
 
 Statements deliberately omitted from the template above, and why:
 
-- **`P1163` media type** — add only after IANA registration, with the
+- **`P1163` media type** — left out of the template, which was written before
+  the registration; registered with IANA on 5 October 2026, so add it with the
   registration page as its reference.
 - **`P178` developer** — requires an item for the developer, which has its own
   notability bar. Creating a thin organisation item purely to satisfy this
