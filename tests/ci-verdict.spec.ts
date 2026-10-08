@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error a plain ES module with no types
-import { jobFailed, tallyFrom } from "../scripts/ci-verdict.mjs";
+import { CHECKS_JOBS, gateLine, jobFailed, missingChecks, tallyFrom } from "../scripts/ci-verdict.mjs";
 
 /**
  * A job that did not finish is not a pass, whatever it printed (pass C's H2).
@@ -27,5 +27,26 @@ test.describe("the verdict on one job", () => {
   test("success with no tally, or a failed count, is FAIL", () => {
     expect(jobFailed({ conclusion: "success" }, tallyFrom("no summary here"))).toBe(true);
     expect(jobFailed({ conclusion: "success" }, tallyFrom("  3 failed\n  800 passed\n"))).toBe(true);
+  });
+});
+
+/**
+ * The summary names the red jobs and only those (pass C's M4). It said "RED on
+ * chromium, webkit and checks" when only checks was red, and the checks job is
+ * four jobs now (8 October), each of which must be in a run that has any.
+ */
+test.describe("the summary line", () => {
+  test("names only the jobs that are red", () => {
+    expect(gateLine("completed", ["checks-properties-python"])).toBe(
+      "gate: RED on checks-properties-python; firefox above is a reading",
+    );
+    expect(gateLine("completed", [])).toBe("gate: green on chromium, webkit and every checks job; firefox above is a reading");
+    expect(gateLine("in_progress", ["checks-fast"])).toBe("gate: not finished (in_progress)");
+  });
+
+  test("a run with some of the four checks jobs must have all four", () => {
+    expect(missingChecks(["checks-fast", "checks-holdout", "checks-properties-node"])).toEqual(["checks-properties-python"]);
+    expect(missingChecks(CHECKS_JOBS)).toEqual([]);
+    expect(missingChecks(["checks"]), "a run from before the split is read as it stands").toEqual([]);
   });
 });

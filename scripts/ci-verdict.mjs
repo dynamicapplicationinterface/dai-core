@@ -81,6 +81,36 @@ export function jobFailed(job, tally) {
   return !hasTally || (tally.failed ?? 0) > 0 || job.conclusion !== "success";
 }
 
+/** The checks jobs of test.yml, split from one on 8 October; a run of that workflow carries all four. */
+export const CHECKS_JOBS = ["checks-fast", "checks-holdout", "checks-properties-node", "checks-properties-python"];
+
+/**
+ * The four checks jobs a run lacks. A run from before the split (one job,
+ * "checks") is read as it stands; a run holding any of the four must hold all.
+ */
+export function missingChecks(names) {
+  if (!names.some((name) => CHECKS_JOBS.includes(name))) return [];
+  return CHECKS_JOBS.filter((name) => !names.includes(name));
+}
+
+/**
+ * The summary line: the gate's red jobs by name, and only those (pass C's M4).
+ * It said "RED on chromium, webkit and checks" whatever was red, so a red
+ * checks job read as three engines down.
+ */
+export function gateLine(status, red) {
+  if (status !== "completed") return `gate: not finished (${status})`;
+  if (red.length === 0) return "gate: green on chromium, webkit and every checks job; firefox above is a reading";
+  return `gate: RED on ${red.join(", ")}; firefox above is a reading`;
+}
+
+/** A finished job's time, start to end, for the row. */
+function wall(job) {
+  if (!job.startedAt || !job.completedAt) return "";
+  const minutes = (Date.parse(job.completedAt) - Date.parse(job.startedAt)) / 60_000;
+  return minutes >= 0 ? `  ${minutes.toFixed(1)} min` : "";
+}
+
 function main(argv) {
   const runId = resolveRun(argv[0]);
 
@@ -137,13 +167,13 @@ function main(argv) {
   };
 
   let anyMissing = false;
-  let gateFailed = false;
-  let gateMissing = false;
+  // The gate's jobs that are not green, by name: the summary names only these.
+  const red = [];
   console.log("  gate (chromium, webkit):");
   for (const job of browserJobs.filter((j) => !isReading(j))) {
     const r = row(job);
-    if (!r.hasTally) anyMissing = gateMissing = true;
-    if (r.failed) gateFailed = true;
+    if (!r.hasTally) anyMissing = true;
+    if (r.failed || (job.conclusion && !r.hasTally)) red.push(job.name);
   }
   const readings = browserJobs.filter(isReading);
   if (readings.length) {
@@ -154,18 +184,20 @@ function main(argv) {
     }
   }
 
+  console.log("  checks:");
   for (const job of otherJobs) {
-    const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? "?").toUpperCase();
-    if (job.conclusion && job.conclusion !== "success") gateFailed = true;
-    console.log(`  ${mark.padEnd(6)} ${job.name}`);
+    const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? job.status ?? "?").toUpperCase();
+    if (job.conclusion && job.conclusion !== "success") red.push(job.name);
+    console.log(`  ${mark.padEnd(6)} ${job.name}${wall(job)}`);
+  }
+  // A run of the four-job workflow lacking one of them gave no verdict on it.
+  for (const name of missingChecks(otherJobs.map((job) => job.name))) {
+    red.push(name);
+    console.log(`  MISSING ${name} (not in this run)`);
   }
 
   console.log("");
-  console.log(
-    run.status !== "completed"
-      ? `gate: not finished (${run.status})`
-      : `gate: ${gateFailed || gateMissing ? "RED" : "green"} on chromium, webkit and checks; firefox above is a reading`,
-  );
+  console.log(gateLine(run.status, red));
 
   if (anyMissing) {
     console.log("");

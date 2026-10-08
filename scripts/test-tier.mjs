@@ -127,49 +127,55 @@ if (tier === "push" || process.argv[2] === "push") {
    * holds the suite to its build. The library is built first, since each of
    * these reads dist/.
    */
-  const checks = [
-    // Every committed product rebuilt and compared, first, as in CI's checks
-    // job: the library (only: a test run never keeps a host, D77), the site's
-    // runtime, the conformance cases, the merge fixtures, the impact map, the
-    // hosted request, the model-file budget, the inline-link cap and the count
-    // floor, which it regenerates from the last green CI run (scripts/drift.mjs).
-    ["npm", ["run", "drift"]],
+  /*
+   * CI's four checks jobs (test.yml: checks-fast, checks-holdout,
+   * checks-properties-node, checks-properties-python), in that order, each
+   * check named by the job that runs it there, so a red one here names the
+   * job that would be red there. One difference, on purpose: CI's checks-fast
+   * runs `npm run build`, which keeps a host, and a test run never keeps one
+   * (D77); the library is built by drift's first step instead.
+   *
+   * The readers and the slow jobs (pass C's M5) need python3 or cargo. A
+   * machine without one is told which checks CI will run instead — silence
+   * here would read as "checked".
+   */
+  const python = (file, what, job) => ["python3", [join(repo, ...file)], what, job];
+  const checks = [];
+  for (const [tool, args, what, job] of [
+    // Every committed product rebuilt and compared, first: the library (only:
+    // a test run never keeps a host, D77), the site's runtime, the conformance
+    // cases, the merge fixtures, the impact map, the hosted request, the
+    // model-file budget, the inline-link cap and the count floor, which it
+    // regenerates from the last green CI run (scripts/drift.mjs).
+    ["npm", ["run", "drift"], "drift", "checks-fast"],
     // Everything the typecheck chain carries: tsc twice, the symbol, route,
     // caller and name checks, and the impact map. Left out once, and CI caught
     // a stale impact map that this tier had just run green over.
-    ["npm", ["run", "typecheck"]],
-    [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"]],
-    [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"]],
-  ];
-  /*
-   * The readers CI runs on the conformance suite, when this machine has what
-   * they need. They are the other implementations the format is held to, and a
-   * machine without python3 or cargo is told which of them CI will run instead
-   * — silence here would read as "checked".
-   */
-  /*
-   * And the rest of what CI's checks job runs (pass C's M5): the hold-outs, the
-   * properties by the runtime and then by the Python reader over the scenarios
-   * the first writes, and the host's in-place writer's own tests. About twenty
-   * minutes that only CI ran, so a change to the sealer, a vector or a hold-out
-   * reached CI unchecked.
-   */
-  checks.push([process.execPath, [join(repo, "scripts", "properties.mjs")]]);
-  for (const [tool, args, what] of [
-    ["python3", [join(repo, "conformance", "reference", "run.py")], "the Python reference reader"],
-    ["python3", [join(repo, "conformance", "reference", "dai_merge.py")], "the Python merge reader"],
-    ["python3", [join(repo, "scripts", "holdout.py")], "the hold-outs"],
-    ["python3", [join(repo, "scripts", "properties.py")], "the properties by the Python reader"],
+    ["npm", ["run", "typecheck"], "the typecheck", "checks-fast"],
+    [process.execPath, [join(repo, "scripts", "build-dictionary.mjs"), "--check"], "the dictionary", "checks-fast"],
+    [process.execPath, [join(repo, "scripts", "build-confusables.mjs"), "--check"], "the confusables", "checks-fast"],
+    python(["conformance", "reference", "run.py"], "the Python reference reader", "checks-fast"),
+    python(["conformance", "reference", "dai_merge.py"], "the Python merge reader", "checks-fast"),
     [
       "cargo",
       ["run", "--release", "--quiet", "--manifest-path", join(repo, "conformance", "readers", "rust-merge", "Cargo.toml"), "--", join(repo, "conformance", "merge")],
       "the Rust merge reader",
+      "checks-fast",
     ],
-    ["cargo", ["test", "--manifest-path", join(repo, "crates", "sectioned", "Cargo.toml")], "cargo test of crates/sectioned"],
+    ["cargo", ["test", "--manifest-path", join(repo, "crates", "sectioned", "Cargo.toml")], "cargo test of crates/sectioned", "checks-fast"],
+    [
+      "cargo",
+      ["build", "--quiet", "--example", "replace-data", "--manifest-path", join(repo, "crates", "sectioned", "Cargo.toml")],
+      "the replace-data example",
+      "checks-fast",
+    ],
+    python(["scripts", "holdout.py"], "the hold-outs", "checks-holdout"),
+    [process.execPath, [join(repo, "scripts", "properties.mjs")], "the properties by the runtime", "checks-properties-node"],
+    python(["scripts", "properties.py"], "the properties by the Python reader", "checks-properties-python"),
   ]) {
-    const have = spawnSync(tool, ["--version"], { cwd: repo, stdio: "ignore", shell: process.platform === "win32" });
-    if (have.status === 0) checks.push([tool, args]);
-    else console.log(`test-tier push: no ${tool} here, so ${what} is left to CI.`);
+    const have = tool === "npm" || tool === process.execPath || spawnSync(tool, ["--version"], { cwd: repo, stdio: "ignore", shell: process.platform === "win32" }).status === 0;
+    if (have) checks.push([tool, args, job]);
+    else console.log(`test-tier push: no ${tool} here, so ${what} (${job}) is left to CI.`);
   }
   /*
    * Every check runs, and the suite after them, whatever failed: CI reports its
@@ -178,14 +184,14 @@ if (tier === "push" || process.argv[2] === "push") {
    * check did.
    */
   const checksFailed = [];
-  for (const [command, args] of checks) {
+  for (const [command, args, job] of checks) {
     // A shell only for npm, which is npm.cmd on Windows. Node itself is spawned
     // directly: through a shell its path ("C:\Program Files\...") is split at
     // the space, node never starts, and every tree is refused.
     const run = spawnSync(command, args, { cwd: repo, stdio: "inherit", shell: command === "npm" && process.platform === "win32" });
     if (run.status !== 0) {
-      const line = [command, ...args.map((arg) => relativeTo(arg))].join(" ");
-      console.error(`test-tier push: ${line} failed — CI's checks job would refuse this too.`);
+      const line = `${job}: ${[command, ...args.map((arg) => relativeTo(arg))].join(" ")}`;
+      console.error(`test-tier push: ${line} failed — CI's ${job} job would refuse this too.`);
       checksFailed.push(line);
     }
   }
