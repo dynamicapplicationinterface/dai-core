@@ -4644,10 +4644,65 @@ part of a reader's contract. **Question:** state on the page (README's
 per-vector table and the section the file follows) what the file is, its
 scope and its spelling.
 
+#### D200 — Firefox's flaky set, and Chromium at its wall once, the week of 5 October
+
+*Status: recorded, no action. Filed 8 October.*
+
+Firefox (a reading, D32) failed these and nothing else this week, each on a
+run where every gating job was green or failed for its own reason:
+`mount-order.spec.ts:194` (D172) on both tries in 37702698607, 37703175275,
+37742424464 and 37745313790; `returning-document.spec.ts:381` in 37702698607
+(once, passed on retry) and 37703175275 (both tries);
+`mailbox-link-e2e.spec.ts:1998` in 37745313790 (once, passed on retry). Not
+investigated here; the list is the baseline the next Firefox red is read
+against.
+
+Chromium reached its 25-minute wall once: run 37742424464 (`344a2be8`), the
+`npm test` step timed out with 1,346 tests passed and none failed (the one ✘
+in its log is `context-cleanup.spec.ts:16`, which is meant to fail), on a
+runner that was slow throughout. The wall is not raised: the rule in test.yml
+is to split a job that brushes it. If it comes back, Chromium is sharded the
+way WebKit was.
+
+#### D199 — The merge digest was stamped before the merge module was built
+
+*Status: closed 8 October. Filed 8 October, seen twice before it.*
+
+`stamp-merge-digest.mjs` reads `dist/dai-merge.js` and `dist/dai-runtime.js`,
+and ran as the runtime config's `onSuccess` in `tsup.config.ts`. tsup builds
+the three configs at once and runs a config's `onSuccess` when that config is
+done, not when all are, so on a slow runner the stamp ran before the merge
+config had written its file: `npm run build:lib` failed with ENOENT and the job
+ran no test. WebKit 1/4 in run 37400386998 (5 October) and WebKit 2/4 in run
+37555780957 (6 October); both passed on a rerun.
+
+**Fixed:** the post-build steps (copy the template, stamp the digest, embed the
+assets) left `onSuccess` and run in `npm run build:lib` after tsup exits;
+`build` and `build:all` call `build:lib`. `npm run dev` (`tsup --watch`) no
+longer stamps or embeds: run `npm run build:lib` for a dist/ the runner can
+use.
+
 #### D198 — The WebKit count moves by one between runs of the same tests
 
-*Status: open, recorded, not fixed. Filed 7 October, from the blind Rust level
-3's CI.*
+*Status: closed 8 October: the test holds the first save and runs every time;
+`countsFrom` strips minute durations. Filed 7 October, from the blind Rust
+level 3's CI.*
+
+**Closed:** a test that decides at runtime whether it is a test is not one.
+The race test now arranges the race: an init script on B's context holds the
+first save between asked and written (from the "save 1 asked" line, every
+request for a `dai:` library lock waits forever, so nothing of the save
+reaches storage), and disarms itself on the reload through sessionStorage. The
+reload then lands in the window every run, and the skip is gone; in its place
+two assertions, that nothing of the save was written before the reload and that
+the first reopen found no stored database. Red first: with the reload moved to
+"save 1 written" (the write winning), the old test reported 3 of 3 skipped and
+the run exited 0. With the hold, 10 of 10 passed on Chromium and on WebKit
+locally, every run reaching the window; with the lock left free (the hold
+armed, the write let through) it failed 2 of 2 at "nothing of it was written",
+rather than skipping. `countsFrom` now strips `(1.0m)` as it strips `(1.2s)`,
+so a retried test that ran for minutes is one test by its last attempt; red
+first in `count-floor.spec.ts` (the key kept "(retry #1) (1.1m)").
 
 Runs 37702698607 (`1addf7fc`) and 37703175275 (`6b316a27`) ran the same specs.
 Their WebKit jobs pass 800 and 801 tests. The one test that differs is
