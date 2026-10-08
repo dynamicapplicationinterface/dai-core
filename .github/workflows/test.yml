@@ -68,6 +68,10 @@ jobs:
       # reader nothing runs agrees with nothing: the Rust reader's README said
       # the conformance gate ran it, and until this step nothing did.
       - run: python3 conformance/reference/dai_merge.py
+      # Before the slow steps below: it takes under a minute, and on 7 October
+      # three checks runs reached the job's wall in holdout and properties
+      # (15-18 min on a slow runner) without ever running it.
+      - run: cargo run --release --quiet --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge
       # Every witness has teeth: each hold-out (the Python reader with one rule
       # of docs/format.md removed) still fails the fixtures named for it.
       - run: python3 scripts/holdout.py
@@ -82,7 +86,6 @@ jobs:
           node-version: 24
       - run: node scripts/properties.mjs
       - run: python3 scripts/properties.py
-      - run: cargo run --release --quiet --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge
 
       # The host's in-place writer, and its own unit tests. Compiling the
       # example binary here means a build failure is reported as a build failure
