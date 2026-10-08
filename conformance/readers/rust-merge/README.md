@@ -54,6 +54,10 @@ Python reader, the scripts, the other docs and git history. The function
 signatures and doc comments were kept from the gutted version, so they are
 not independent evidence; the bodies are.
 
+On 8 October, `rejected` was ordered with the seq as a number, made blind
+from [report-set](../../../docs/format.md#report-set) with the same four
+inputs (`6fb9e1a4`, 123 of 123, D201).
+
 ## The one rule for changing it
 
 **Changes come from docs/format.md and the fixtures. Never from reading the

@@ -4646,7 +4646,8 @@ scope and its spelling.
 
 #### D201 — The Rust reader orders `rejected` as text
 
-*Status: open, for a blind session. Filed 8 October.*
+*Status: closed 8 October: a blind session ordered `rejected` from
+[report-set](format.md#report-set) (`6fb9e1a4`), 123 of 123. Filed 8 October.*
 
 Vector `merge-report-two-rejected`: one merge rejects two ids of one author,
 seq 9 and seq 10. The runtime and the Python reader emitted them as met, the
