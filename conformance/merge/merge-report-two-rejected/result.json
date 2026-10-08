@@ -1,0 +1,31 @@
+{
+  "what": "A holds two rows under Bo's ids that Bo never signed: a case at seq 10 and a note at seq 9. Bo's signed rows take both ids on A, and B refuses both of A's. Each merge rejects the two ids, and `rejected` lists them by id, the seq compared as a number: seq 9 before seq 10, though the case is met first and \"10\" sorts before \"9\" as text (docs/format.md#report-set).",
+  "cites": [
+    "T1-D13",
+    "T1-D15",
+    "T1-D16"
+  ],
+  "converges": true,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [
+      "6fc66a90486171ca69b512be185d66a7:9",
+      "6fc66a90486171ca69b512be185d66a7:10"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [
+      "6fc66a90486171ca69b512be185d66a7:9",
+      "6fc66a90486171ca69b512be185d66a7:10"
+    ],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

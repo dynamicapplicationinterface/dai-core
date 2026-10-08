@@ -1679,6 +1679,9 @@ export function mergeFrom(
     refuseBatch([...ids].filter((id) => id !== "").sort(plainOrder)[0] ?? "", who, "AUTHOR_EQUIVOCATED");
   }
 
+  // A set, ordered by id: the author in hex, then the seq as a number (report-set).
+  const seqOf = (id: string): number => Number(id.slice(id.indexOf(":") + 1));
+  result.rejected.sort((a, b) => plainOrder(a.slice(0, a.indexOf(":")), b.slice(0, b.indexOf(":"))) || seqOf(a) - seqOf(b));
   result.refusedBatches = [...refusals.values()]
     .sort((a, b) => plainOrder(a.id, b.id) || plainOrder(a.reason, b.reason) || plainOrder(hex(a.author), hex(b.author)))
     .map(({ author: who, reason }) => ({ author: showAuthorId(who), reason }));

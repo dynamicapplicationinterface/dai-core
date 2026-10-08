@@ -262,6 +262,8 @@ RULES: dict[str, tuple[str, str, list[str], list[tuple[str, str]]]] = {
     "order-no-id-last": ("report-order", "reports under no id sort last", [ORDER], [(SORT, 'for key in sorted(refusals, key=lambda k: (k[0] == "", k))\n')]),
     "order-author-before-code": ("report-order", "the author key sorts before the code", [ORDER], [(SORT, "for key in sorted(refusals, key=lambda k: (k[0], k[2], k[1]))\n")]),
     "order-author-descending": ("report-order", "authors sort in descending order", [ORDER], [(SORT, "for key in sorted(refusals, key=lambda k: (k[0], k[1], [-ord(c) for c in k[2]]))\n")]),
+    "rejected-as-met": ("report-set", "rejected left in the order the merge met the ids", ["merge-report-two-rejected"], [('    result["rejected"].sort(key=lambda rid: (rid.split(":")[0], int(rid.split(":")[1])))\n', "")]),
+    "rejected-seq-as-text": ("report-set", "rejected sorted with the seq as text", ["merge-report-two-rejected"], [('key=lambda rid: (rid.split(":")[0], int(rid.split(":")[1]))', "key=lambda rid: rid")]),
     "signature-invalid-no-id": ("code-signature-invalid", "BATCH_SIGNATURE_INVALID filed under no id", [ORDER], [("refuse_batch(hid, header[1], verdict)", 'refuse_batch("", header[1], verdict)')]),
     "malformed-header-no-id": ("code-row-malformed", "ROW_MALFORMED for a refused header filed under no id", [ORDER], [('refuse_batch(hid, header[1], "ROW_MALFORMED")', 'refuse_batch("", header[1], "ROW_MALFORMED")')]),
     "malformed-named-no-id": ("code-row-malformed", "ROW_MALFORMED for a row naming a batch filed under no id", [ORDER], [('refuse_batch(named or "", row["_r_replica"], "ROW_MALFORMED")', 'refuse_batch("", row["_r_replica"], "ROW_MALFORMED")')]),

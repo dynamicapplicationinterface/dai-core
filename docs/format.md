@@ -589,8 +589,11 @@ these hold:
 <a id="uncovered-row"></a>Every rule in this section reads only the rows of
 the merge: a row reached through a header the copy holds (the header its
 `_r_batch` names lists it: its table, its author, its seq), as every row a
-merge takes is, or a row under the copy's own author id, pending until it is
-sealed; a row covered by no verified header under another author's id is not
+merge takes is, or a row under the copy's own author id.
+<a id="own-pending"></a>A copy's own pending rows count in the author's own
+views at once; they are not part of the admitted state P0
+([format-design.md](format-design.md)) compares, because they have not left
+the copy. A row covered by no verified header under another author's id is not
 a row of the merge, and seats, admits, holds and closes nothing, on every
 copy, nor is it a parent held.
 
@@ -734,8 +737,9 @@ that brings a third conflicting header for an id already equivocated reveals
 nothing new and reports nothing.
 
 <a id="report-set"></a>A merge's reports are a set: a thing made true twice
-in one merge is reported once. `rejected` holds each id once, ordered by id
-(lowercase hex); `refusedBatches` holds one entry per code and id (with the
+in one merge is reported once. `rejected` holds each id once, ordered by id:
+the author in lowercase hex, then the seq, and the seq compares as a number
+(`…:9` before `…:10`); `refusedBatches` holds one entry per code and id (with the
 author, where entries under no id name several), ordered as
 [report-order](#report-order) says.
 
@@ -877,6 +881,10 @@ version, never a refactor (identity.md, binding rule 10).
 - Version 2: a merge's reports are a set, `rejected` ordered by id.
 - Version 2: the fixtures' `expected-schema.txt` is stated: copy A's
   replicated tables, roster tables left out.
+- Version 2: a copy's own pending rows count in its author's own views at
+  once and are not part of the admitted state P0 compares; "not admitted until
+  sealed" was never true.
+- Version 2: `rejected` orders the seq as a number.
 
 ## Conformance
 

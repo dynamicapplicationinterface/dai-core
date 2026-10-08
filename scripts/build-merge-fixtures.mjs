@@ -340,6 +340,34 @@ const VECTORS = [
     },
   },
   {
+    name: "merge-report-two-rejected",
+    cites: ["T1-D13", "T1-D15", "T1-D16"],
+    what:
+      "A holds two rows under Bo's ids that Bo never signed: a case at seq 10 and a note at seq 9. Bo's signed rows take both ids on A, and B refuses both of A's. Each merge rejects the two ids, and `rejected` lists them by id, the seq compared as a number: seq 9 before seq 10, though the case is met first and \"10\" sorts before \"9\" as text (docs/format.md#report-set).",
+    fill: (a, b) => {
+      b.run("UPDATE _dai_replica SET seq = 8");
+      createEntity(b, "notes", E2, { body: "Bo's note" });
+      createEntity(b, "cases", E1, { title: "Bo's case", status: "open", weight: null });
+      applyRow(a, "notes", { _r_replica: BO.author, _r_seq: 9, _r_lc: 9, _r_entity: E2, _r_parents: "[]", _r_deleted: 0, columns: { body: "not what B wrote" } });
+      applyRow(a, "cases", {
+        _r_replica: BO.author,
+        _r_seq: 10,
+        _r_lc: 10,
+        _r_entity: E1,
+        _r_parents: "[]",
+        _r_deleted: 0,
+        columns: { title: "not what B wrote", status: "open", weight: null },
+      });
+    },
+    expect: ({ ab, ba }) => {
+      const wanted = [`${hexOf(BO.author)}:9`, `${hexOf(BO.author)}:10`].join(", ");
+      for (const [direction, run] of [["B into A", ab], ["A into B", ba]]) {
+        const got = run.result.rejected.join(", ");
+        if (got !== wanted) return `${direction}: rejected [${got}], not [${wanted}]`;
+      }
+    },
+  },
+  {
     name: "receive-then-write-both-sides",
     cites: ["5", "T1-D22"],
     what:
@@ -3571,6 +3599,7 @@ Per vector:
 | \`a.db\`, \`b.db\` | the two copies, before any merge |
 | \`expected-ab.txt\` | the canonical dump of A after merging B into it |
 | \`expected-ba.txt\` | the canonical dump of B after merging A into it |
+| \`expected-schema.txt\` | the schema of copy A as built, over the tables the document declares replicated only (roster tables and local tables left out): one line per author column, tables in name order, columns in declared order ([fixture-schema](../../docs/format.md#fixture-schema)) |
 | \`result.json\` | the counts, refused ids and refused batches the merge reports |
 | \`verdicts.json\` | per copy (\`a\`, \`b\`), the verdict on every signed header it holds: \`ok\`, \`incomplete\`, or a refusal code |
 | \`lists.json\` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |

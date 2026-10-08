@@ -364,9 +364,9 @@ is read and stays in the suite as a regression. What it left open is in part 4:
   built when the pilot produces ten apps that are unusable without it. Print is
   the presumptive first. Attachments (4.5) need none; `<input type="file">`
   works inside the sandbox. Spec §4.7.
-- **Standards path.** Media type now: `application/vnd.dai` is a vendor-tree
-  form, not an RFC; the registration is drafted at
-  `docs/media-type-registration.md` and the desktop no longer declares `.dai`
+- **Standards path.** Media type: `application/vnd.dai`, a vendor-tree
+  registration, not an RFC, registered with IANA on 5 October 2026
+  (`docs/media-type-registration.md`); the desktop no longer declares `.dai`
   as `text/html`. Community Group not until the Python reader also writes and
   there is one participant who is not us. RFC never, unless adoption forces it.
 
@@ -4644,6 +4644,22 @@ part of a reader's contract. **Question:** state on the page (README's
 per-vector table and the section the file follows) what the file is, its
 scope and its spelling.
 
+#### D201 — The Rust reader orders `rejected` as text
+
+*Status: open, for a blind session. Filed 8 October.*
+
+Vector `merge-report-two-rejected`: one merge rejects two ids of one author,
+seq 9 and seq 10. The runtime and the Python reader emitted them as met, the
+seq 10 one first, and neither sorted; both now order by author hex, then seq
+as a number. The Rust reader passes 122 of 123: it gives
+`["…:10", "…:9"]` in both directions, which is the text order of the ids. A
+QUESTIONS-style finding, not a Rust defect: when the reader was rebuilt, the
+page said only "ordered by id (lowercase hex)" at
+[report-set](format.md#report-set), and an id is text. The page now says the
+seq compares as a number. The Rust reader is not changed here (its README's
+one rule); a blind session levels it from the anchor. Until then the Rust step
+of `checks-fast` reads 122 of 123.
+
 #### D200 — Firefox's flaky set, and Chromium at its wall once, the week of 5 October
 
 *Status: recorded, no action. Filed 8 October.*
@@ -4733,11 +4749,13 @@ seats nothing, admits nothing, holds nothing, on every copy. P0 holds over it:
 the admitted state (holders, closed set) is a function of signed rows and
 headers alone, and a copy holding an uncovered row under another author's id
 reaches the same admitted state as a copy without it. The runtime's own
-unsealed rows under its own id are unchanged by this ruling: they are shown as
-unsealed and are not admitted until sealed, as today. As built and as before,
-no view reads `_r_batch`: a copy's own pending row counts in its own views
-(an own move shows at once), and that is what this ruling leaves unchanged;
-whether "not admitted until sealed" should become true is not decided here.
+unsealed rows under its own id are unchanged by this ruling: own pending rows
+count in the author's own views at once; they are not part of the admitted
+state P0 compares, because they have not left the copy. *(8 October: this
+sentence first said own unsealed rows "are not admitted until sealed, as
+today". That was wrong about today: no view reads `_r_batch`, before this
+ruling or after, and an own move shows at once. Corrected on the page,
+[own-pending](format.md#own-pending), with a version line.)*
 Page: [uncovered-row](format.md#uncovered-row). Runtime: every
 view of a session document reads `<table>_rows`, a table's rows reached
 through a held header (the one `_r_batch` names lists the row, in
@@ -9227,9 +9245,9 @@ fail if the opener's bundle does not carry the runtime `dist/` holds.
 Only the maintainer can do these, and they get lost between documents.
 
 - **Publish dai-core 0.2.0.**
-- **Register the media type.** `application/vnd.dai`, drafted at
-  `docs/media-type-registration.md`. Submitted 7 September; IANA asked whether review
-  may go to the public media-types list, answered yes; awaiting the expert.
+- **Register the media type.** Done: `application/vnd.dai` was registered
+  with IANA on 5 October 2026 (`docs/media-type-registration.md`), submitted
+  7 September.
 - **Register the trademark and keep it separate from the company.** A form and a
   fee, and cheap enough not to wait for 1.0.
 

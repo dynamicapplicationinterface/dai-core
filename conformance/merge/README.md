@@ -11,6 +11,7 @@ Per vector:
 | `a.db`, `b.db` | the two copies, before any merge |
 | `expected-ab.txt` | the canonical dump of A after merging B into it |
 | `expected-ba.txt` | the canonical dump of B after merging A into it |
+| `expected-schema.txt` | the schema of copy A as built, over the tables the document declares replicated only (roster tables and local tables left out): one line per author column, tables in name order, columns in declared order ([fixture-schema](../../docs/format.md#fixture-schema)) |
 | `result.json` | the counts, refused ids and refused batches the merge reports |
 | `verdicts.json` | per copy (`a`, `b`), the verdict on every signed header it holds: `ok`, `incomplete`, or a refusal code |
 | `lists.json` | only where a vector has one: per copy, for a header made authentic by a list other than the one it stores, that list, in the one spelling (below) |

@@ -1205,6 +1205,8 @@ def merge(
     for author, ids in revealed.values():
         refuse_batch(min((i for i in ids if i), default=""), author, "AUTHOR_EQUIVOCATED")
 
+    # A set, ordered by id: the author in hex, then the seq as a number (#report-set).
+    result["rejected"].sort(key=lambda rid: (rid.split(":")[0], int(rid.split(":")[1])))
     result["refusedBatches"] = [
         {"author": shown(refusals[key]), "reason": key[1]} for key in sorted(refusals)
     ]
