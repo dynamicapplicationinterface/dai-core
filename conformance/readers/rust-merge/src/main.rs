@@ -601,7 +601,14 @@ fn merge(
             }
         }
     }
-    counts.rejected = rejected.into_iter().collect();
+    // Each id once, ordered by the author in lowercase hex, then the seq
+    // compared as a number, `…:9` before `…:10` (docs/format.md#report-set).
+    let mut rejected: Vec<String> = rejected.into_iter().collect();
+    rejected.sort_by_key(|id| {
+        let (a, s) = id.rsplit_once(':').unwrap_or((id.as_str(), ""));
+        (a.to_string(), s.parse::<i64>().unwrap_or(0))
+    });
+    counts.rejected = rejected;
 
     // The Lamport clock only advances (replicated-tables.md §6).
     {
