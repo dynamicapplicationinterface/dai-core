@@ -27,8 +27,8 @@ const appIn = (page: Page): FrameLocator => page.frameLocator("iframe").frameLoc
  * a reading it did not run: the winner, under the same author, publishes those
  * rows from its own copy. This runs it.
  *
- * Two tabs of one device on one shared game document. B opens second, so its
- * open saves and it holds the document; it starts a game and plays, and its
+ * Two tabs of one device on one shared game document. A shares it and closes;
+ * B opens, so its open saves and it holds the document; it starts a game and plays, and its
  * save seals the rows. B has no relay yet, so nothing of it leaves. Then A is
  * reopened and starts a game of its own: A signs and saves above B's seqs, and
  * B has lost. B is given the relay and its publish is refused. A is given the
@@ -213,7 +213,12 @@ test("a tab's sealed rows reach the relay, signed as it sealed them, when anothe
     }),
   );
 
-  // B: a second tab, with no relay. Its open saves, so it holds the document.
+  // A closes before B opens: an open A with a mailbox writes by itself (a
+  // pull's apply, the kit's confirm) and can take the document from B before
+  // B seals anything (pass B's B3), which is not what this test is about.
+  await a.close();
+
+  // B: the second tab, with no relay. Its open saves, so it holds the document.
   const b = await context.newPage();
   const bNotes: string[] = [];
   b.on("console", (message) => bNotes.push(message.text()));
@@ -238,8 +243,8 @@ test("a tab's sealed rows reach the relay, signed as it sealed them, when anothe
   const sealedByB = await ownRowsIn(b, cy);
   expect(posted.filter((p) => p.tab === "b"), "B has sent nothing").toEqual([]);
 
-  // A reopens the document and writes: it signs and saves above B's seqs, and B has lost.
-  await a.close();
+  // A reopens the document beside B and writes: it signs and saves above B's
+  // seqs, and B has lost.
   a = await context.newPage();
   await a.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
   await expect(a.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
