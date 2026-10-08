@@ -52,13 +52,13 @@ export default defineConfig([
     sourcemap: false,
     target: "es2018",
     platform: "browser",
-    // template.html ships beside the compiled JS; it is read at runtime.
-    // The template must be copied before the assets module embeds it.
-    // The digest is stamped here, between building the runtime and embedding
-    // it. Anything that copies or embeds dai-runtime.js must see the stamped
-    // bytes, or the repository ends up holding two runtimes that differ by
-    // exactly the pin — which is what the staleness checks caught.
-    onSuccess:
-      "node scripts/copy-template.mjs && node scripts/stamp-merge-digest.mjs && node scripts/embed-assets.mjs",
+    //
+    // What follows the build (the template copied, the merge digest stamped,
+    // the assets embedded) is `npm run build:lib`'s, after tsup exits, and not
+    // an onSuccess here. tsup builds these three configs at once and runs a
+    // config's onSuccess when that config is done, so the stamp read
+    // dist/dai-merge.js before the merge config had written it (ENOENT, CI
+    // runs 37400386998 and 37555780957; D199). Anything that copies or embeds
+    // dai-runtime.js must see the stamped bytes, which build:lib's order keeps.
   },
 ]);

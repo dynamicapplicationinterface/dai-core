@@ -7,7 +7,9 @@
  * system rather than an assertion in a test — the frame cannot execute a merge
  * the fixtures did not, whatever it was handed.
  *
- * Run after `tsup`, because it needs both build outputs to exist. A post-build
+ * Run after `tsup` has exited (`npm run build:lib`), because it needs both
+ * build outputs to exist: as tsup's onSuccess it ran beside the merge build and
+ * twice read dist/dai-merge.js before it was written (D199). A post-build
  * patch rather than a `define`, for the same reason: the digest is of the built
  * bytes, and they do not exist while the config is being read.
  *

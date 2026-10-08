@@ -73,13 +73,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && node scripts/retain-host.mjs --keep",
-    "build:lib": "tsup",
+    "build": "npm run build:lib && node scripts/retain-host.mjs --keep",
+    "build:lib": "tsup && node scripts/copy-template.mjs && node scripts/stamp-merge-digest.mjs && node scripts/embed-assets.mjs",
     "prepare": "npm run build:lib",
     "build:runner": "vite build apps/runner",
     "build:studio": "vite build examples/web-studio",
     "build:desktop": "vite build apps/desktop",
-    "build:all": "tsup && node scripts/build-demo-cartridge.js && vite build apps/runner && vite build examples/web-studio && vite build apps/desktop",
+    "build:all": "npm run build:lib && node scripts/build-demo-cartridge.js && vite build apps/runner && vite build examples/web-studio && vite build apps/desktop",
     "conformance": "node scripts/build-conformance.mjs",
     "fixtures": "node scripts/build-merge-fixtures.mjs",
     "fixtures:check": "node scripts/build-merge-fixtures.mjs --check",
