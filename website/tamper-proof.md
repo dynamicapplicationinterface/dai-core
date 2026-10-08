@@ -107,10 +107,12 @@ own next version look like an impersonation, since the key that made the first
 one no longer exists. A publisher who wants to be recognised uses a key they
 keep, through the [command line](/docs/quickstart).
 
-**Not closed, in a browser host.** DNS prefetch, speculation rules and WebRTC
-are not governed by `connect-src`, and a page cannot switch them off for a frame
-it hosts. A native host can and should disable them at the webview layer. We
-would rather name them here than have you find them.
+**Not closed, in a browser host.** WebRTC is not governed by `connect-src`, and
+a page cannot switch it off for a frame it hosts. A native host can and should
+disable it at the webview layer. We would rather name it here than have you
+find it. DNS prefetch and speculation rules, the other two channels
+`connect-src` leaves alone, the container closes itself: prefetch is switched
+off, and the policy refuses a speculation rules script.
 
 **Sent, not stored.** When a document is too large to travel inside a link, it
 can be put in a store — and the store is handed ciphertext under the hash of

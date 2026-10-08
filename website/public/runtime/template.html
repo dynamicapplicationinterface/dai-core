@@ -20,6 +20,16 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-<!--DAI_NONCE-->' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';<!--DAI_TRUSTED_TYPES-->">
 
   <!--
+    The channels connect-src does not govern, closed where a page can close
+    them. DNS prefetch is switched off here and in the application's frame.
+    Speculation rules need 'inline-speculation-rules' or a nonce, and the
+    policy above grants the first to nothing, while the runtime never stamps
+    its nonce on a speculation rules script. WebRTC stays open: no policy a
+    page can set closes it in a browser host.
+  -->
+  <meta http-equiv="x-dns-prefetch-control" content="off">
+
+  <!--
     viewport-fit=cover lets the app paint under the notch and home indicator;
     without it a standalone iOS launch is letterboxed by safe-area insets.
   -->
@@ -53,8 +63,9 @@
 
   <!--
     Publisher's public key (base64 SPKI), empty when the container is unsigned.
-    It sits in the shell because the signature covers the shell's own digest: a
-    key inside the signed set could not be written before signing.
+    From manifest 3 the shell is outside the signed set, checked against its
+    own digest and the live document; the key sits here because a key inside
+    the signed set could not be written before signing.
   -->
   <meta name="dai-public-key" content="<!--DAI_PUBLIC_KEY-->">
 

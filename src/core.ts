@@ -597,9 +597,10 @@ export async function buildContainer(
   if (wasm) archive[wasmEntry] = wasm;
   if (wasm && glue) archive[glueEntry] = glue;
 
-  // The public key lives in the shell, never in the payload it attests to: the
-  // signature covers the shell's own digest, so a key inside the signed set
-  // could not be written before signing.
+  // The public key lives in the shell, never in the payload it attests to. From
+  // manifest 3 the shell is outside the signed set, checked against its own
+  // digest and the live document; a key inside the signed set could not be
+  // written before signing.
   const signing = signingKey ? await readSigningKey(signingKey) : undefined;
   if (signing && !input.allowTestKey && isPublishedTestKey(signing.spki)) {
     throw new Error(

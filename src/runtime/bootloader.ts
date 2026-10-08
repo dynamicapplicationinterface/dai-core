@@ -3278,15 +3278,21 @@ function frameLoader(names: FrameNames): void {
      * and is covered by its digest, while anything introduced afterwards —
      * a task title rendered into the DOM, a row read back out of the database
      * — has no nonce and does not execute.
+     *
+     * A speculation rules script is never stamped: it asks the browser to
+     * fetch, which `connect-src` does not govern, and without the nonce the
+     * policy refuses it. DNS prefetch is switched off in the frame as it is in
+     * the shell (pass C's H11).
      */
     const stamp = nonce ? ' nonce="' + nonce + '"' : "";
     const stamped = nonce
       ? rewritten.replace(/<script(?![^>]*\snonce=)([^>]*)>/gi, (whole: string, attrs: string) =>
-          /\ssrc\s*=/i.test(attrs) ? whole : "<script" + attrs + stamp + ">",
+          /\ssrc\s*=/i.test(attrs) || /\stype\s*=\s*["']?speculationrules\b/i.test(attrs) ? whole : "<script" + attrs + stamp + ">",
         )
       : rewritten;
 
     const head =
+      '<meta http-equiv="x-dns-prefetch-control" content="off">' +
       "<" + "script" + stamp + ' type="importmap">' + JSON.stringify({ imports }) +
       "<" + "/script>" +
       String(data.bridgeSource) +
