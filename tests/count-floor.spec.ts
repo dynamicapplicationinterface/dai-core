@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error a plain ES module with no types
-import { countsFrom, floorDrift, staleFloor } from "../scripts/count-floor.mjs";
+import { attemptsFrom, countsFrom, floorDrift, staleFloor } from "../scripts/count-floor.mjs";
 
 /**
  * The floor is counted from CI's own lines as the count gate counts a run
@@ -23,6 +23,20 @@ test.describe("counting a CI job's passed tests", () => {
 
   test("per project, by the last attempt", () => {
     expect(countsFrom(log)).toEqual({ chromium: 2, node: 1 });
+  });
+
+  // Playwright prints a duration over a minute as "(1.0m)". Unstripped, it
+  // stayed in the title, and so did the retry mark before it, so the two
+  // attempts of one test were two tests (D198).
+  test("a test that ran for minutes is one test, by its last attempt", () => {
+    const slow = [
+      `${job}  ✘     7 [webkit] › tests/d.spec.ts:2:1 › slow one (1.0m)`,
+      `${job}  ✓     8 [webkit] › tests/d.spec.ts:2:1 › slow one (retry #1) (1.1m)`,
+    ].join("\n");
+    expect([...attemptsFrom(slow).values()]).toEqual([
+      { project: "webkit", title: "tests/d.spec.ts:2:1 › slow one", passed: true },
+    ]);
+    expect(countsFrom(slow)).toEqual({ webkit: 1 });
   });
 
   test("a floor taken before a spec CI has run is stale", () => {

@@ -58,17 +58,22 @@ const WEBKIT_JOBS = 5;
  * marked "(retry #k)". A test counts once, by its last attempt.
  */
 export function countsFrom(log) {
+  const counts = {};
+  for (const { project, passed } of attemptsFrom(log).values()) if (passed) counts[project] = (counts[project] ?? 0) + 1;
+  return counts;
+}
+
+/** Each test's last attempt, keyed by project and title: the title without its retry mark or its duration. */
+export function attemptsFrom(log) {
   const last = new Map();
-  const line = /(✓|✘|-)\s+\d+\s+\[([\w-]+)\]\s+›\s+(.*?)(?:\s+\(retry #\d+\))?(?:\s+\(\d[\d.]*m?s\))?\s*$/;
+  const line = /(✓|✘|-)\s+\d+\s+\[([\w-]+)\]\s+›\s+(.*?)(?:\s+\(retry #\d+\))?(?:\s+\(\d[\d.]*(?:ms|s|m)\))?\s*$/;
   for (const raw of log.split("\n")) {
     const match = line.exec(raw);
     if (!match) continue;
     const [, mark, project, title] = match;
-    last.set(`${project}\u0000${title}`, { project, passed: mark === "✓" });
+    last.set(`${project}\u0000${title}`, { project, title, passed: mark === "✓" });
   }
-  const counts = {};
-  for (const { project, passed } of last.values()) if (passed) counts[project] = (counts[project] ?? 0) + 1;
-  return counts;
+  return last;
 }
 
 /** Whether a floor taken at commit time `floorAt` is older than a spec committed at `specAt` (ISO times). */

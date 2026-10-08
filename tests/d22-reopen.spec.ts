@@ -223,21 +223,51 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
     const seed = join(dirname(container), "seed-race.dai.html");
     await saveOut(pageA, seed);
 
-    // Reload B the instant its first save is asked, before it is written.
+    /*
+     * B's first save is held between asked and written, so the reload lands in
+     * the window every run (D198). Reloading on the "asked" line alone was a
+     * race the write often won, and then the test skipped itself: whether it
+     * was a test was decided at runtime. The host writes a save under the
+     * document's library lock, taken on the line after "asked" (main.ts), so
+     * from that line on every request for a `dai:` lock waits forever and
+     * nothing of the save reaches storage. The page that reloads is not held:
+     * the flag survives the reload in sessionStorage and disarms the hold.
+     */
+    await deviceB.addInitScript(() => {
+      if (window !== window.top || sessionStorage.getItem("d22-held")) return;
+      let held = false;
+      const info = console.info.bind(console);
+      console.info = (...args: unknown[]) => {
+        if (!held && typeof args[0] === "string" && /^dai: save 1 asked/.test(args[0])) {
+          held = true;
+          sessionStorage.setItem("d22-held", "1");
+        }
+        info(...args);
+      };
+      const locks = navigator.locks;
+      const request = locks.request.bind(locks) as (...args: unknown[]) => Promise<unknown>;
+      (locks as unknown as { request: unknown }).request = (name: string, ...rest: unknown[]) =>
+        held && name.startsWith("dai:") ? new Promise(() => {}) : request(name, ...rest);
+    });
     const lines: string[] = [];
-    let reloading: Promise<unknown> | undefined;
     pageB.on("console", (m) => {
       const text = m.text();
       if (text.startsWith("dai: ")) lines.push(text);
-      if (!reloading && /^dai: save 1 asked/.test(text)) reloading = pageB.reload();
     });
-    // Opened by hand rather than with openWith: the reload can land during the
-    // mount, before the application is on screen, so there is nothing to wait for.
+    // Opened by hand rather than with openWith: the save is asked during the
+    // mount, and the reload below may land before the application is on screen.
     await pageB.goto(RUNNER_URL);
     await pageB.setInputFiles("#file", seed);
     await pageB.locator("#card-open").click({ timeout: 60_000 });
-    await expect.poll(() => reloading !== undefined, { timeout: 30_000 }).toBe(true);
-    await reloading;
+    await expect
+      .poll(() => pageB.evaluate(() => sessionStorage.getItem("d22-held")), { timeout: 30_000 })
+      .toBe("1");
+    await expect.poll(() => lines.some((l) => /^dai: save 1 asked/.test(l)), { message: "the first save was asked" }).toBe(true);
+    expect(lines, "and held: nothing of it was written before the reload").not.toContainEqual(
+      expect.stringMatching(/^dai: save 1 written/),
+    );
+    const beforeReload = lines.length;
+    await pageB.reload();
     // The id B took at mount, before the reload, from its own line.
     const adopted = lines
       .map((l) => /^dai: replica [^:]*: \S+ -> ([0-9a-f]{32})$/.exec(l)?.[1])
@@ -257,23 +287,18 @@ test.describe("a reopened arrived copy keeps its own replica id (D22)", () => {
     const idB = await replicaId(pageB);
     const trail = lines.filter((l) => /save|stored|reopen|replica|library/.test(l)).join(" | ");
     console.log(`d22 race: A=${idA} B-before=${adopted} B-after=${idB} :: ${trail}`);
-    // The reload is started on "asked", but the write often still lands first
-    // (the old page can unload before it logs "written"). Then the reopen finds
-    // the stored database and this run never reached the window. Say so instead
-    // of passing or failing on a condition it never tested.
-    // Before the fix the reopen came from the library ("reopen mounted the
-    // stored database"); after it, a first arrival has no library record yet and
-    // the file is opened again, which resumes the stored database when the save
-    // landed. Either line means the write beat the reload.
-    // Only the first reopen after the reload decides it: a later one in the same
-    // run (the page settling) reads the database the first one went on to save.
+    // The window was reached, by construction: the first reopen after the
+    // reload found no stored database. A line naming one would mean the held
+    // save was written after all, and the hold no longer holds what it says.
+    // Only the first reopen decides it: a later one in the same run (the page
+    // settling) reads the database the first one went on to save.
     const firstReopen = lines
-      .slice(lines.findIndex((l) => l.startsWith("dai: save 1 asked")) + 1)
+      .slice(beforeReload)
       .find((l) => /^dai: (reopen mounted|resumed this device's own copy)/.test(l));
-    test.skip(
+    expect(
       firstReopen !== undefined && /stored database/.test(firstReopen) && !/no stored database/.test(firstReopen),
-      "the first save landed before the reopen: the window was missed",
-    );
+      `the reopen did not find the held save written (${firstReopen})`,
+    ).toBe(false);
     expect(idB, "the reopened arrived copy is not the sender").not.toBe(idA);
     expect(idB, "and it is the id this device took before the reload").toBe(adopted);
 
