@@ -4673,6 +4673,9 @@ run where every gating job was green or failed for its own reason:
 investigated here; the list is the baseline the next Firefox red is read
 against.
 
+Chromium flaked once: `push-e2e.spec.ts:686` in 37812792285 (`90956090`),
+passed on retry. Not investigated; it is on the same baseline.
+
 Chromium reached its 25-minute wall once: run 37742424464 (`344a2be8`), the
 `npm test` step timed out with 1,346 tests passed and none failed (the one ✘
 in its log is `context-cleanup.spec.ts:16`, which is meant to fail), on a

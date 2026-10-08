@@ -92,9 +92,12 @@ const CHECKS: Check[] = [
      * that for requests, sockets and beacons. It does not enforce it for a
      * speculative fetch the browser makes on the page's behalf: `preconnect`
      * and `dns-prefetch` reach a name server before any policy is consulted,
-     * and `prefetch` and `prerender` fetch the document itself. None of them
-     * carry data on purpose, and all of them tell somebody the file was opened,
-     * which is the one thing a container promises it cannot do.
+     * and `prefetch` and `prerender` fetch the document itself. Speculation
+     * rules ask for the same fetches in JSON, as a `<script
+     * type="speculationrules">` or a `<link rel="speculationrules">`, and both
+     * forms are refused. None of them carry data on purpose, and all of them
+     * tell somebody the file was opened, which is the one thing a container
+     * promises it cannot do.
      *
      * A native host can switch these off at the webview layer. A browser cannot,
      * so the compiler refuses to seal them in the first place.
@@ -105,7 +108,8 @@ const CHECKS: Check[] = [
      * rule that also catches correct code teaches people to ignore the rules.
      */
     id: "speculative-fetch",
-    pattern: /<link[^>]+rel\s*=\s*["']?(?:dns-prefetch|preconnect|prerender|prefetch)\b/i,
+    pattern:
+      /<link[^>]+rel\s*=\s*["']?(?:dns-prefetch|preconnect|prerender|prefetch|speculationrules)\b|<script[^>]+type\s*=\s*["']?speculationrules\b/i,
     what: "It asks the browser to reach a server before the page needs it.",
     why:
       "Preconnect and prefetch are not covered by the container's connection policy, so they " +
