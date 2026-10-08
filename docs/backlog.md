@@ -4644,6 +4644,30 @@ part of a reader's contract. **Question:** state on the page (README's
 per-vector table and the section the file follows) what the file is, its
 scope and its spelling.
 
+#### D198 — The WebKit count moves by one between runs of the same tests
+
+*Status: open, recorded, not fixed. Filed 7 October, from the blind Rust level
+3's CI.*
+
+Runs 37702698607 (`1addf7fc`) and 37703175275 (`6b316a27`) ran the same specs.
+Their WebKit jobs pass 800 and 801 tests. The one test that differs is
+`tests/d22-reopen.spec.ts:209`, "a reload between the first save asked and
+written keeps the copy's own id". The test skips itself when the first save
+lands before the reload (`test.skip(firstReopen … stored database …)`, "the
+window was missed"). It skipped in 37702698607 and passed in 37703175275. So
+the count depends on a race, and a floor equal to the newest run flipped with
+whichever run finished last. That was why drift failed on every checks rerun;
+"gate: the floor is a lower bound" fixes that part.
+
+Also seen while comparing the runs, and not yet the cause of a wrong count:
+`countsFrom` in `scripts/count-floor.mjs` strips a `(1.2s)` duration but not a
+minutes one (`(1.0m)`), and then does not strip `(retry #k)` either. Its key for
+such a test is the title plus the duration. The count is still right, because a
+retry follows only a failure, so at most one attempt passes. But "a test once,
+by its last attempt" is not what the code does for those tests. **Question:**
+whether a conditional skip belongs in a counted project at all, or should be
+counted as run, and whether `countsFrom` should strip minute durations.
+
 #### D194 — A copy admits an unsigned roster row it holds under another author's id
 
 *Status: closed 6 October. Filed 5 October, from promoting attack review
