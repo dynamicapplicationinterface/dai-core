@@ -4612,11 +4612,11 @@ generator decides; the page records it at
 [fixture-schema](format.md#fixture-schema), and
 [merge-whole-refusals](format.md#merge-whole-refusals) says `SCHEMA_MISMATCH`
 compares every table a merge takes, which is not the same comparison. Also
-stated: [report-set](format.md#report-set). Not done: the README's per-vector
-table still does not list the file (the README is written by the generator;
-a row there is a regeneration). The runtime and the Python reader emit
-`rejected` in the order they meet ids, not sorted; no vector has two, so no
-fixture shows the difference.
+stated: [report-set](format.md#report-set). Since `67339ca5` the README's
+per-vector table lists the file, and the runtime and the Python reader sort
+`rejected` by author, then seq as a number (vector
+`merge-report-two-rejected`, D201). *(Corrected 8 October: this said both
+were still not done.)*
 
 Every one of the 122 merge vectors ships `expected-schema.txt`, and the
 README's per-vector table does not list it or say what a reader compares it
@@ -4932,8 +4932,11 @@ review's handoff said the admitted state converges with "nobody seated"; that
 is true of A only. The page says a copy's unsigned rows can only be its own
 pending ones ([merge-signed-outranks](format.md#merge-signed-outranks)), and is
 silent on what a copy's own admission makes of an unsigned row under another
-author's id, which no honest writer makes. The vector checks A's holders and
-the reports, and not B's holders. **Ruling wanted:** whether admission counts
+author's id, which no honest writer makes. The vector already wrote B's
+admitted state, and it listed Bo holding the open seat
+(`expected-admitted-b.txt` at `380c855b`): the fixture pinned the behavior this
+entry rules wrong. *(Corrected 8 October: this sentence said the vector checked
+A's holders and not B's.)* **Ruling wanted:** whether admission counts
 an unsigned row whose author is not the copy's own (proposed: it does not; a
 copy's pending rows are its own author's, and a row under another id with no
 header covering it is a forgery that seats, admits and closes nothing on any

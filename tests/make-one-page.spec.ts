@@ -173,12 +173,14 @@ test.describe("what the site claims", () => {
     });
   }
 
-  test("the security page names the channels it cannot close", async ({ page }) => {
+  test("the security page names the channel it cannot close, and the ones the container closes", async ({ page }) => {
     // A page that lists only strengths is not one a security team can use.
     await page.goto("http://localhost:5176/tamper-proof");
-    const text = await page.locator("body").innerText();
-    expect(text).toContain("WebRTC");
-    expect(text).toContain("DNS prefetch");
+    const text = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    expect(text).toMatch(/Not closed, in a browser host\. WebRTC/);
+    // DNS prefetch is closed now (c4f3cc8b), so the page says so, not that it
+    // is open: the word alone passed either way.
+    expect(text).toMatch(/DNS prefetch and speculation rules, .*the container closes itself/);
     // And the limit of what a signature proves.
     expect(text).toMatch(/not.*who signed it/i);
   });

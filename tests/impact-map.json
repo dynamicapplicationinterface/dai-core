@@ -3684,7 +3684,8 @@
     ],
     "tests/site-claims.spec.ts": [
       "src/refusals.ts",
-      "tests/site-claims.spec.ts"
+      "tests/site-claims.spec.ts",
+      "website/public/"
     ],
     "tests/staged-runtime.spec.ts": [
       "scripts/build-demo-pair.mjs",

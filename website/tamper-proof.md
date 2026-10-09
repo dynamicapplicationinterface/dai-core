@@ -101,11 +101,13 @@ storage for the opener; if that storage is cleared, the device becomes a new
 author.
 
 **Not signed at all.** A container built on this website is unsigned, and says
-so on the card. A page has nowhere to keep a key, and one minted for a single
-build and discarded signs nothing anybody can check — worse, it would make your
-own next version look like an impersonation, since the key that made the first
-one no longer exists. A publisher who wants to be recognised uses a key they
-keep, through the [command line](/docs/quickstart).
+so on the card. The builder keeps no publisher key. The key the opener keeps
+in the browser's storage signs rows as a device, as above; it is not a
+publisher's key and signs no container. A key minted for a single build and
+discarded signs nothing anybody can check — worse, it would make your own next
+version look like an impersonation, since the key that made the first one no
+longer exists. A publisher who wants to be recognized uses a key they keep,
+through the [command line](/docs/quickstart).
 
 **Not closed, in a browser host.** WebRTC is not governed by `connect-src`, and
 a page cannot switch it off for a frame it hosts. A native host can and should

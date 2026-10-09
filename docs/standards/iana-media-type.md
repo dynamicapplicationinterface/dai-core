@@ -174,7 +174,10 @@ Author: Dynamic Application Interface
 Change controller: Dynamic Application Interface
 ```
 
-## Before submitting
+## Before submitting (the pre-submission list, kept as it was)
+
+The type was registered on 5 October 2026 (Status, above); this list was
+written before the submission and is not a list of open items.
 
 - [ ] Decide between `application/vnd.dai` and registering `+html` first.
 - [ ] Fill in a real contact name and address. IANA publishes it.
