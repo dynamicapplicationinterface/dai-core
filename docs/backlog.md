@@ -9394,3 +9394,305 @@ before a push.
 build, so the runtime it bundles is always the one on disk — or have global setup
 fail if the opener's bundle does not carry the runtime `dist/` holds.
 
+
+---
+
+### Branch review residue (filed 8 October)
+
+The findings of the branch review (handoff 5 October, passes A, B and C)
+that no backlog entry, ruling or later handoff named, as the evidence pass of
+8 October counted them: 30. One entry each, with the pass and the id the
+review gave it. Each is held, not fixed: the line is what the review read at
+`58567a03`, and a line number may have moved since.
+
+#### D214 — The page leaves six points to a blind reader's guess
+
+*Status: open, held not fixed. Filed 8 October, from pass A (M6).*
+
+Each is an open silence from the 5 October Rust level, or a term defined only
+in another file. (a) Silence 3: whether "one of his closes there" includes a
+deleted close. (b) Silence 4: "his current binding" is undefined; the runtime
+picks it by the clock (`_r_lc DESC`), though [row-lc](format.md#row-lc) says
+the clock decides no admission. (c) Silence 6: the shape of `holder`. (d)
+Silence 11: what a merge refused whole does to `_dai_replicas`. (e) Whether a
+session voided by its creator's close equivocation is "live" when closes are
+counted. (f) The columns and shapes of `_dai_replicas`, `_dai_seat_rules` and
+`_dai_author_rules`, and the dump's final newline. `docs/format.md:629-633`,
+`:553`, `:405`, `:254`, `:473-480`, `:340-348`, `:398-399`;
+`src/replicated.ts:960-964`, `:1204-1210`. **Change:** state each on the page,
+then a blind level reads it.
+
+#### D215 — A signed number past what a double holds makes `verifyBatches` throw
+
+*Status: open, held not fixed. Filed 8 October, from pass A (M8).*
+
+A signed row holding Infinity, or a whole number at or past 2^53, makes
+`canonicalRows` throw inside `verifyBatches`, which has no `try`
+(`src/replicated-batch.ts:355`, `src/replicated-rows.ts:1029`). The page says
+only "MUST be refused" (`docs/format.md:754-759` at the tip) and names no code
+and no outcome: one batch refused, or the merge. Read, not run. **Change:** a
+vector holding each value, and the page names the outcome.
+
+#### D216 — The Python reader reads parents without the shape check
+
+*Status: open, low, held not fixed. Filed 8 October, from pass A (L3).*
+
+`dai_merge.py` reads `_r_parents` through `json_each` on two paths
+(`conformance/reference/dai_merge.py:766`, `:1077` at the tip), past the shape
+check [parents-malformed](format.md#parents-malformed) requires. Since
+`a6d7f198` this reaches only `_r_superseded`, which the dump leaves out, so no
+vector can see it.
+
+#### D217 — The page names rules in a language's terms
+
+*Status: open, low, held not fixed. Filed 8 October, from pass A (L4).*
+
+"A whole JS number past 2^53" (`docs/format.md:754` at the tip); a rule given
+by citation (`identity.md`, binding rule 10); and the spelling of the document
+uuid in the header is not fixed (`format.md:179-180` at `58567a03`). A reader
+in another language has to translate the first and guess the last.
+
+#### D218 — The generator's dishonest vectors rest on the honest seal never filtering
+
+*Status: open, low, held not fixed. Filed 8 October, from pass A (L5).*
+
+Several dishonest vectors carry no byte-level assertion of the property they
+claim (`session-row-malformed`, `session-equivocation`, `merge-seal-tampered`,
+`merge-seal-stowaway`, `session-creator-by-seq`), unlike `merge-seal-seq-twice`,
+which asserts its covers. `carry` uses `INSERT OR IGNORE`
+(`scripts/sealer.mjs:323` at the tip), so a colliding row would leave a
+header-only carry in silence. `session-waits-equivocated-parent-*`'s
+description reads as if the copies hold an equivocation; neither does.
+**Change:** assert each dishonest property in the generator, and a plain
+`INSERT` in `carry`.
+
+#### D219 — The tab just opened loses to the old one, and nothing says to close it
+
+*Status: open, held not fixed. Filed 8 October, from pass B (B3).*
+
+The arbiter (D105) keeps one signer per seq but picks the first writer, and
+background tabs write by themselves (a pull, then its autosave; the kit's
+confirm). So the tab just opened loses to the old one; "reopen it" does not
+hold while the old tab lives, and no sentence tells the person to close the
+other tab. `main.ts:1305`, `:2606`, `:5713` at `58567a03`. D188's open item is
+this, not an arbiter safety bug. Handoff 6 sends the hand-over to "Phase
+1.4", which no document defines.
+
+#### D220 — Save a copy, share and invite leave without claiming the left floor
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B7).*
+
+They rely on the stored copy's record (`main.ts:2697`, `:4190`, `:4220`,
+`:3731` at `58567a03`). The window: another tab's save read between its OPFS
+write and its record. Closed in practice by the record at every mount.
+
+#### D221 — A save raises the floor from the frame's seq
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B8).*
+
+The save's `seq`, the frame's number, raises the floor, though the host reads
+`leavingIn` lines above (`main.ts:3494`, `:3526-3529`, `:3537`, `:3564` at
+`58567a03`); `setup` decides `wrote`, D36's match bookkeeping and the
+persistence ask. Own data only.
+
+#### D222 — A publish whose writes were refused claims nothing and still sends
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B9). Handoff
+6 names it ("as before"); no entry did.*
+
+`main.ts:5199-5202` at `58567a03`. **Question:** whether a mount whose writes
+were refused should send at all.
+
+#### D223 — `keepReads` decides by `stmt_readonly`
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B10).*
+
+`bootloader.ts:1200`: a `SELECT` that calls an application-defined function
+which writes is kept as a read and no longer schedules a save; `exec`'s
+total-changes check saw it.
+
+#### D224 — `hasPendingOwn` answers false on a throw
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B11).*
+
+`bootloader.ts:1885-1887`. False lets the autosave cancel a queued save
+(D178's condition); answering true on a throw costs nothing.
+
+#### D225 — A tab with no known revision skips the revision check
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B13).*
+
+In sign and in save (`main.ts:3430`, `:3513`); the floor alone holds it.
+
+#### D226 — The frame's gates read "me" from `_dai_replica`
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B14).*
+
+The frame's author, close and confirm gates (`bootloader.ts:2155`, `:2177`,
+`:2300`, `:2330` at `58567a03`) read the author from `_dai_replica`. Correct
+after `settleReplica`; rule 1's "never from a row", spelled the old way.
+
+#### D227 — `unsealedOwnRows` interpolates the table name unescaped
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B16).*
+
+`apps/runner/src/invite.ts:95`; `leavingIn` escapes it (`:152`). A `"` in a
+table name throws, and the leave is refused with an SQL error as its sentence.
+Fails closed.
+
+#### D228 — A sign for a mount that moved gets no reply
+
+*Status: open, low, held not fixed. Filed 8 October, from pass B (B17).*
+
+`main.ts:3420` returns without replying when the mount changed mid-wait; the
+frame waits out its 15 seconds.
+
+#### D229 — `run-a-session.md` names two removed views
+
+*Status: open, held not fixed. Filed 8 October, from pass C (M15).*
+
+`website/docs/run-a-session.md:45-46` names `_dai_seat_current` and
+`_dai_close_current`, both removed; the lint refuses the latter
+(`src/flag-check.ts:14-16`). The views are `_dai_closed`, `_dai_holder`,
+`_dai_creator`.
+
+#### D230 — "A session seats two whatever N says"
+
+*Status: open, held not fixed. Filed 8 October, from pass C (M16).*
+
+`src/rules.ts:661`, and the pages generated from it
+(`website/docs/parts/constraint/SESSION-PROFILE.md:6`, `constraints.md:355`,
+`parts/shapes.md:37`). False: `session.create` mints `max_parties - 1` open
+seats. `seats-and-contested-seats.md` was fixed; these were not. A
+`rules.ts` change regenerates the pages (`scripts/build-docs.mjs`).
+
+#### D231 — Seeding from an SQLite file with shared rows is a compile error, and the docs offer it
+
+*Status: open, held not fixed. Filed 8 October, from pass C (M22).*
+
+`README.md:65`, `website/docs/making-files.md:87`. A seed with rows in a shared
+table is refused (`src/compile.ts`, `refuseUnsignedSeed`).
+
+#### D232 — README describes a save with no host refusal
+
+*Status: open, held not fixed. Filed 8 October, from pass C (M23).*
+
+`README.md:179-184`, `:299-303`: `SaveResult` and the download fallback. A
+replicated document's save or download first goes to the host (`LEAVE_CHECK`,
+15 s) and can be refused; the README gives that no outcome.
+
+#### D233 — README points only to spec-v0.2
+
+*Status: open, held not fixed. Filed 8 October, from pass C (M24).*
+
+`README.md:8-10`. The row, batch, merge and signature format is in
+`docs/format.md` and `docs/identity.md`, which README does not name.
+
+#### D234 — The CSP given in README and specification.md is not the shell's
+
+*Status: open, held not fixed. Filed 8 October, from pass C (M25).*
+
+`README.md:523`, `website/docs/specification.md:36` give
+`script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'`. The shell's is
+`'nonce-…' 'wasm-unsafe-eval' blob:` with img, font, media, frame, worker,
+form-action, base-uri and object-src (`src/template.html:20`).
+`connect-src 'none'` is right in both.
+
+#### D235 — "Fifteen containers"
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (M26).*
+
+`README.md:500`, `conformance/README.md:7`; `cases.json` lists 30.
+
+#### D236 — D192's premise, D140 and the trigger comment
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (M27).*
+
+D192 is accurate on what it describes, and its premise is thin:
+`src/replicated-rows.ts:332-342` sets the flag through `parentsOf`, which
+returns nothing for a forward parent, so the runtime appears unable to produce
+the stale flag; `conformance/merge/session-parent-forward/b.db` holds flag 1 on
+the seq-4 row, and how it got there was not traced. No view reads the flag and
+`scripts/check-flag.mjs` refuses an application that does (D140), which D192
+does not say. The trigger comment at `src/replicated.ts:936` ("a function of
+the row set") conflicts with D192. **Change:** trace the fixture's flag, then
+amend D192.
+
+#### D237 — The pages still offer to repair a contested seat
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L1).*
+
+`website/docs/run-a-session.md:37-39`, `two-player-app.md:19-20`: "repair a
+contested seat", "offered a fresh invite". There is no reseat; the kit starts a
+new session itself (R14-R20).
+
+#### D238 — Stale README lines
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L2).*
+
+`README.md:508-512` (signing and `daiSaveState` "not implemented"), `:92`
+(`manifestVersion: 2`; the default is 3, replicated builds 4), `:165-178` (the
+member table lacks the `signature` states, replicated, session and `daiKit`),
+`:441-449` ("four checks"), and `:139` against
+`website/docs/runtime-api.md:23,39` (two signature states against three; the
+code has two, `bootloader.ts:3565`). Lines at `58567a03`.
+
+#### D239 — The specification page is v0.1, and other counts are stale
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L3).*
+
+`website/docs/specification.md:6,71,101-117` (v0.1, `manifestVersion` 1, the
+`dai-v1` payload); `architecture.md:72` (four bridge messages; there are 21 to
+the host and 13 to the document); `making-files.md:5,145` ("five ways", "all
+four routes"); `security.md:44-47` (the fragment holds more than `h` and `k`:
+`u`, `c`, `s`).
+
+#### D240 — Workflow and tool text out of date
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L4).*
+
+`test.yml:16, 20-21` ("twelve minutes", "about six minutes"); `ci-verdict.mjs`
+labels the Firefox line D32 while its red test is D172 (`mount-order:194`);
+`CONTRIBUTING.md:41` says all three engines without saying Firefox does not
+block; `test-tier.mjs` implies it mirrors CI in full, and the Rust `run:`
+string omits `--release` (`impact-map.mjs:146`); `d32-loop.yml:63` sets
+`DAI_LOOP`, which nothing reads; `release.yml` is not gated on `test.yml` (tag
+trigger, Node 20, no typecheck, a draft release).
+
+#### D241 — First-person and plan-shaped lines in handoffs
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L5).*
+
+The repo records what was decided and why, not who or what is intended.
+First person at `docs/handoff-2026-10-05.md:45`, `handoff-2026-10-01.md:81,
+146`, `handoff-2026-10-02.md:927`, `handoff-2026-10-03.md:109`; plan-shaped
+lines ("the next sitting takes identity", "first thing next session") at
+`handoff-2026-09-23.md:8,95`, `09-27.md:94`, `09-28.md:643`, `10-01.md:329`,
+`10-03.md:310`; since the review, `handoff-2026-10-07.md:35` and
+`handoff-2026-10-08.md:177`. `docs/roadmap.md`'s title and `:202` ("not yet
+scheduled"); `docs/backlog.md:379`, `:3699`, `:3718`, `:4134`, `:4145` ("the
+roadmap's numbered plan"). Lines at `58567a03` unless named.
+
+#### D242 — Backlog drift: orphaned hashes and stale status lines
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L6). D186's
+title was fixed in `32c25a0f`; the rest stands.*
+
+D28 cites `e08d9a5` and `437ecfa` (still at `backlog.md:8952` and `:9037` on
+the evidence pass), which are on no branch; their rebased twins `426af443` and
+`e875d6c9` are on HEAD. D184 still says the Rust blind level is next (done at
+`58567a03`), and D184 and D185 date their closure 3 October for code that
+landed 4 October. D163 says "not built", then "built right after step 6";
+D160 and D161 read "ruled, not built; fixed in step 6". D55 has no status
+line. D182 and D183 are not in the backlog.
+
+#### D243 — Files the impact map leaves unclaimed; SOURCE out of step with SCOPE
+
+*Status: open, low, held not fixed. Filed 8 October, from pass C (L7). C-M6's
+`docs/` case was answered in part by `a3758cac`.*
+
+1,124 of 1,943 tracked files are unclaimed at `58567a03`. About 1,073 reach no
+spec and select every test (conformance 1,012, apps desktop and relay 21,
+scripts 20, eval 19); 51 select nothing (docs 41, root files 6, workflows 2,
+infra 2). `impact.mjs:34-35` says SOURCE is kept in step with SCOPE; it is not
+(`tests/` against `tests/fixture/`), which errs wide.
