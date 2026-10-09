@@ -4798,6 +4798,35 @@ has not come back; a slow runner was the trigger, and nothing checks that
 `build:lib` runs the stamp after every tsup config. **Change:** a check that
 `stamp-merge-digest.mjs` is not reachable from any tsup `onSuccess`.
 
+#### D244 — Whether a deleted binding still asks for a seat
+
+*Status: open, fixture first. Filed 9 October, from the blind Rust level 4
+(handoff 9 October, "Blind Rust level 4", item 2).*
+
+[waiting](format.md#waiting) makes a row waiting when its author asked for an
+open seat "and that is not void (his current binding in the session names
+it)". The page does not say whether a deleted `_dai_binding` row is still his
+current binding. The blind `admit.rs` reads it as a non-deleted head
+`_dai_binding` row; no vector has a deleted binding, so 123 of 123 says
+nothing either way. Related to D214 (b), which asks what "current" means at
+all. **Change:** a vector first (a row in the seat its author's only binding
+named, that binding deleted, the author not confirmed), then the page says
+which it is: waiting, or a row in a seat its author does not hold.
+
+#### D245 — `SEAT_NOT_HELD` or silent: a row naming another seat's version, for a void seat
+
+*Status: open, fixture first. Filed 9 October, from the blind Rust level 4
+(handoff 9 October, "Blind Rust level 4", item 4).*
+
+A row that names a parent of its entity and session acting for another seat,
+and is itself for a void or waited-on seat.
+[seat-not-held](format.md#seat-not-held) makes "names a parent of its entity
+and session acting for another seat" `SEAT_NOT_HELD`, and its void exception
+is on the other clause; [report-silent](format.md#report-silent) says a row
+for a void seat is reported nowhere. The blind `admit.rs` reports
+`SEAT_NOT_HELD`; no vector has the case. **Change:** a vector first, then the
+page says which rule wins.
+
 #### D201 — The Rust reader orders `rejected` as text
 
 *Status: closed 8 October: a blind session ordered `rejected` from
@@ -4827,6 +4856,12 @@ run where every gating job was green or failed for its own reason:
 `mailbox-link-e2e.spec.ts:1998` in 37745313790 (once, passed on retry). Not
 investigated here; the list is the baseline the next Firefox red is read
 against.
+
+Second sighting, added 9 October: `returning-document.spec.ts:511` ("a turn
+sent and answered, with nothing written in between, is taken without a
+question") failed in 37919061871 (`de6f4867`, the blind Rust level 4), on a
+run where every gating job was green. It is the same file as `:381` and a
+different test. Not investigated; on the same baseline.
 
 Chromium flaked once: `push-e2e.spec.ts:686` in 37812792285 (`90956090`),
 passed on retry. Not investigated; it is on the same baseline.
