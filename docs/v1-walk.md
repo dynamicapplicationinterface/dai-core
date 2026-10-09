@@ -1,14 +1,14 @@
 # The V1 walk
 
 V1 is a daily single-user app with author updates, shared friend to friend. The
-control is Chris's workout PWA (Vercel + Supabase). **V1 is done when the `.dai`
+control is a daily-use app the author already runs. **V1 is done when the `.dai`
 version, on the same phone with the same person, is indistinguishable from it —
 and every place it isn't is the V1 list.** Chess and everything peer-shaped is
 V1.1.
 
 Nothing is built from now on unless it is a step on this walk or blocks one.
 Findings are still filed. The naming family is closed. D80 stays proven and
-held; its sitting happens with Chris and returns as a ruling on wire shape only.
+held; its sitting returns as a ruling on wire shape only.
 
 This page is the board, not a plan. Each step says what exists today by name,
 what blocks it, whether a test can see it or only a phone can, and the sentence
