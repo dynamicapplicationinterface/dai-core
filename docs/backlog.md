@@ -4646,8 +4646,10 @@ scope and its spelling.
 
 #### D202 — The Rust reader's blind claim covers `main.rs`, not `admit.rs`
 
-*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass A,
-H3; Contradictions 1).*
+*Status: closed 9 October: `admit.rs` gutted (`3d71fff8`, 0 of 123) and
+rebuilt blind from the page and the fixtures (`a338cd4d`, 123 of 123,
+QUESTIONS.md empty); `c5f1aa4a` added to the README's dated record. Filed 8
+October, from the evidence pass (pass A, H3; Contradictions 1).*
 
 `conformance/readers/rust-merge/README.md:42-55` says every level since 29
 September was blind and that the reader was rebuilt from the page. The gut

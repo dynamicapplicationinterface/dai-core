@@ -58,6 +58,20 @@ On 8 October, `rejected` was ordered with the seq as a number, made blind
 from [report-set](../../../docs/format.md#report-set) with the same four
 inputs (`6fb9e1a4`, 123 of 123, D201).
 
+The 7 October rebuild gutted `main.rs` only. `admit.rs` kept code from
+`c5f1aa4a` (29 September), a commit that changed `src/replicated-rows.ts`,
+`src/replicated.ts`, `admit.rs`, `main.rs` and `dai_merge.py` together, the
+same pattern as the seven above, and missing from that list; it is added to
+the dated record here (D202). On 9 October `admit.rs` was gutted too
+(`3d71fff8`, 0 of 123) and rebuilt blind (`a338cd4d`, 123 of 123, no
+questions), committed unedited. That session was given only
+`docs/format.md`, `docs/replicated-tables.md`, `conformance/merge/` and this
+crate (not `target/`), and was barred from the runtime, the Python reader,
+the scripts, the other docs and git history. As with `main.rs`, the function
+signatures, types and doc comments were kept from the gutted version, so
+they are not independent evidence; the bodies are. With that, every function
+body in the crate has been rebuilt blind.
+
 ## The one rule for changing it
 
 **Changes come from docs/format.md and the fixtures. Never from reading the
