@@ -3,7 +3,7 @@
 ::: info SHARED-KIT-READS
 **The kit reads shared tables; it does not write them**
 
-The kit's write controls — data-run, &lt;dai-form run=…&gt;, &lt;dai-attach run=…&gt; — run plain SQL, so they are for local tables only. On a shared table they fail (SHARED-WRITE-SURFACE), and the kit neither catches the error nor shows it. The kit's reading elements, &lt;dai-rows&gt; and &lt;dai-value&gt;, work over t\_current views; redraw them on a merge with `window.daiKit.refresh()` (SHARED-REDRAW-ON-MERGE). Write shared rows in JavaScript through `window.dai.replicated`.
+The kit's write controls — data-run, &lt;dai-form run=…&gt;, &lt;dai-attach run=…&gt; — run plain SQL, so they are for local tables only (its seat calls are the one shared write it makes, through window.dai.replicated; IDENTITY-KIT-SEATS). On a shared table they fail (SHARED-WRITE-SURFACE), and the kit neither catches the error nor shows it. The kit's reading elements, &lt;dai-rows&gt; and &lt;dai-value&gt;, work over t\_current views; redraw them on a merge with `window.daiKit.refresh()` (SHARED-REDRAW-ON-MERGE). Write shared rows in JavaScript through `window.dai.replicated`.
 
 **Why.** Run against the rewrite: a kit INSERT into a replicated table fails with SQLite's NOT NULL error, and an UPDATE or DELETE with REPLICATED\_TABLE\_IMMUTABLE — uncaught, so the person sees nothing happen.
 

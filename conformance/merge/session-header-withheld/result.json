@@ -1,0 +1,25 @@
+{
+  "what": "Bo holds the open seat. Ada plays e4 and seals it under header H (A). B holds H without the row it lists, as a copy holds one after a lost save or from a forwarder that dropped the row. The authentic, incomplete header is kept and no row is taken through it: before the merge B admits no move. The merge into B brings the row, which H lists, and e4 is admitted on both copies; nothing is reported (verify-incomplete-kept; review 10, A06).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

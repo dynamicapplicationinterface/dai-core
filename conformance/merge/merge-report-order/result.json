@@ -1,0 +1,53 @@
+{
+  "what": "B holds, beside Bo's signed case: an unsigned case under Ada's id and one under Bo's; a malformed row of Ada's naming no batch; a malformed row of Bo's naming his own batch, which does not list it; Ada's header H over a note and a malformed note; a row of Bo's naming H, which does not list it; and Ada's header over one seq listed twice. Merging B into A files each refusal where docs/format.md says and emits them by batch id (no id first), then code, then author id in hex: under no id, BATCH_UNSIGNED for Ada then Bo, then ROW_MALFORMED; under H, BATCH_DIGEST_MISMATCH (Bo) before ROW_MALFORMED (Ada); ROW_MALFORMED under Bo's batch; BATCH_SIGNATURE_INVALID under its own header.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_UNSIGNED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_UNSIGNED"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "ROW_MALFORMED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_DIGEST_MISMATCH"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "ROW_MALFORMED"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

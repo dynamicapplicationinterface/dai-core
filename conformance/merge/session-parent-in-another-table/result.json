@@ -1,0 +1,24 @@
+{
+  "what": "Bo, holding the open seat, writes two moves for it: one of entity 0x51, the entity of Ada's creator's seat row, naming that _dai_seat row (its seat column Ada's seat) as its parent; one of entity 0x61, his binding's entity, naming his binding. Parents name rows by (author, seq), and a version of a row is a row of its own table and entity, so neither named row is a version of a move: neither move crosses a seat or hides anything. Both are admitted, nothing is reported, and the seat row and the binding are still heads.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

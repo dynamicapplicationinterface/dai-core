@@ -1,0 +1,30 @@
+{
+  "what": "Bo asks for the open seat and moves for it, every row signed, on both copies (A, B). B also holds a _dai_confirm row under Ada's id, the creator's, seating Bo in it, that no header covers. A row covered by no verified header is not a row of the merge: it seats, admits and holds nothing, on any copy. So the two copies admit the same before any merge and after either: Ada holds her seat, nobody holds the open seat, Bo's move waits on a confirmation and is not admitted. The merge into A refuses the row BATCH_UNSIGNED under no id; B keeps it, which is where union merge stops (D194, uncovered-row).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_UNSIGNED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

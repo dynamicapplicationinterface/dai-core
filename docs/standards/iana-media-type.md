@@ -1,7 +1,8 @@
-# IANA media type registration — draft
+# IANA media type registration
 
-Status: **draft, not submitted.** Read the blocking issue below before sending
-anything to IANA.
+Status: **registered.** `application/vnd.dai` was registered with IANA on
+5 October 2026 (option 1 below). This page is kept as the record of how the
+name was chosen and why it carries no `+html` suffix.
 
 ---
 
@@ -19,8 +20,8 @@ generic HTML-based syntax and how a parser should treat it.
 
 Three ways forward:
 
-1. **`application/vnd.dai`** — no suffix, valid today, one submission. What this
-   draft uses.
+1. **`application/vnd.dai`** — no suffix, valid today, one submission. What was
+   registered.
 2. **Register `+html` first**, then `application/vnd.dai+html`. Two submissions,
    the first of which is a general-purpose piece of standards work that outlives
    this project and invites scrutiny far beyond it.
@@ -173,7 +174,10 @@ Author: Dynamic Application Interface
 Change controller: Dynamic Application Interface
 ```
 
-## Before submitting
+## Before submitting (the pre-submission list, kept as it was)
+
+The type was registered on 5 October 2026 (Status, above); this list was
+written before the submission and is not a list of open items.
 
 - [ ] Decide between `application/vnd.dai` and registering `+html` first.
 - [ ] Fill in a real contact name and address. IANA publishes it.

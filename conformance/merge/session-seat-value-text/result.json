@@ -1,0 +1,29 @@
+{
+  "what": "The open seat's value is 16 bytes (the UTF-8 of OPENSEAT-OPENSEA). Bo asks for it by the 16-character TEXT of the same bytes, Ada confirms him by that TEXT, and he moves naming it (B). A seat value is 16 bytes, and a TEXT is not one whatever its length: the confirm counts for nothing, Bo holds nothing, and his move is not admitted and is reported SEAT_NOT_HELD by the merge that takes it; no reader throws (A09). Before, a TEXT value matched the TEXT a seat row named, and one merge admitted the move and reported it (review 9, A09).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "what": "Bo holds the open seat. Ada writes a second seat row in the session naming a third value; Cy asks for that value and moves for it (B). Only the creator's seat row declares seats, so the value is no seat: Cy is not waiting in it, his move is not admitted, and the merge that takes it reports it SEAT_NOT_HELD (R14, A03). Before, a value past max_parties was unminted and a row for it was reported nowhere.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

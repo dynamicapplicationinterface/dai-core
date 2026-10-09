@@ -1,0 +1,34 @@
+{
+  "what": "Bo asks for the open seat (B holds his binding's header) and from a second copy of his store signs a move at his binding's seq (A holds that header and not the binding). Ada confirms Bo in the open seat with a confirm naming his binding's id, and writes a close of the session naming the same. After either merge that id is equivocated and Bo is an equivocator, so his binding counts for nothing; the rows naming it, in the roster tables and the close, count like any other row. Ada's confirm counts and is a head, though the seat it confirms is void since its holder is an equivocator (R17), and her close closes the session and is a head, in both directions (R10: an equivocator's own roster rows count for nothing, not those naming them).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

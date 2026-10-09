@@ -1,0 +1,49 @@
+{
+  "what": "B holds five headers under Ada's name, none of them authentic, each for one reason: a header whose signature does not verify, listing a row B does not hold (refused, not kept as incomplete: authenticity is checked first); a real header stored under an id its bytes do not hash to; a header signed at batch format version 3; a header whose only list names a table the document does not replicate; and a header whose stored list is not in the one spelling, whose row names no header. Merging B into A refuses each as BATCH_SIGNATURE_INVALID in Ada's name and takes none of their rows; the rows naming a refused header are not reported again, and the row naming none is BATCH_UNSIGNED.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_UNSIGNED"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "BATCH_SIGNATURE_INVALID"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

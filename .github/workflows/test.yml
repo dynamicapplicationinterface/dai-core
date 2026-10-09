@@ -10,17 +10,45 @@ on:
 # repository is a wider grant than a test run has any use for.
 permissions:
   contents: read
+  # The count floor is checked against the last green run of this workflow
+  # (scripts/count-floor.mjs --drift, in the drift step), which reads runs and their logs.
+  actions: read
 
 jobs:
   # The non-browser checks, on their own so a compile or reference-reader
   # failure is reported as itself and does not sit behind twelve minutes of
   # Playwright.
-  checks:
+  #
+  # Four jobs, not one (8 October). One job ran them in turn under one
+  # 35-minute wall, and once properties.mjs grew to 15-19 minutes on a slow
+  # runner every attempt was cancelled in properties.py: no verdict on the
+  # properties, and none on anything behind them. Split, each has its own wall
+  # and reports itself, and ci-verdict.mjs names the one that is red. The rule
+  # for the browser jobs below holds here too: when one brushes its wall, split
+  # it further, do not raise the number.
+  #
+  # Each job builds for itself (`npm ci` runs `prepare`, the library build)
+  # rather than taking dist/ from checks-fast as an artifact. The three slow
+  # jobs read the merge fixtures, and drift regenerates `a.db` and `b.db` in
+  # place and puts the committed bytes back for every reader after it; a job
+  # that never ran drift reads the committed bytes from its own checkout, so
+  # the rule holds without being carried. properties-python is the exception:
+  # it reads the scenarios properties.mjs writes, so it waits on that job and
+  # takes them as an artifact.
+  #
+  # Timings from the last run that reached every step (37400386998, 5 Oct):
+  # holdout 8.5 min, properties.mjs 13.4, properties.py 6.2; the fast steps
+  # about 7 with drift.
+  checks-fast:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
+      # The whole history: the count floor is checked against the newest spec
+      # file the last completed run held, which a one-commit clone cannot date.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -29,20 +57,27 @@ jobs:
 
       - run: npm ci
 
+      # Every committed product, rebuilt and compared, first (scripts/drift.mjs):
+      # the library, the site's runtime, the conformance cases, the merge
+      # fixtures (fixtures:check, their inputs hashed before and after and the
+      # committed bytes put back), the impact map, the hosted request, the
+      # model-file budget, the inline-link cap and the count floor. The same
+      # step opens the local gate (`npm run test:push`). fixtures:check is not
+      # a step of its own: run outside drift it leaves regenerated inputs in
+      # the tree for every reader after it.
+      - run: npm run drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - run: npm run typecheck
 
-      # Every generated file that is committed, held to what generates it. A
-      # generator whose output is committed and never compared drifts in
-      # silence: the conformance suite had carried an older shell than the
-      # build makes, and nothing said so. Each builds from dist/, so the
-      # library is built first. The inline dictionary is the exception by
+      # The whole build, for the readers below, and the two generated files
+      # drift does not rebuild. The inline dictionary is the exception by
       # design — a link names the dictionary it was made against — so its
       # check holds that it is whole, not that it matches today's corpus.
       - run: npm run build
-      - run: node scripts/build-conformance.mjs --check
       - run: node scripts/build-dictionary.mjs --check
       - run: node scripts/build-confusables.mjs --check
-      - run: npm run fixtures:check
 
       # A second reader, sharing no code with the one that wrote the cases.
       # This is what tests the specification rather than the implementation: it
@@ -64,6 +99,68 @@ jobs:
       - run: cargo test --manifest-path crates/sectioned/Cargo.toml
       - run: cargo build --quiet --example replace-data --manifest-path crates/sectioned/Cargo.toml
 
+  # Every witness has teeth: each hold-out (the Python reader with one rule of
+  # docs/format.md removed) still fails the fixtures named for it. It copies
+  # dist/, which `npm ci` builds.
+  checks-holdout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: python3 scripts/holdout.py
+
+  # The properties the seat rules are derived from (P0 to P2,
+  # docs/format-design.md), over every vector, its arrival orders and an
+  # adversarial sealer's additions, by the runtime. On Node 24, whose
+  # node:sqlite copies a database in memory; the script falls back to files
+  # without it, at about half the speed. The scenarios it writes are kept for
+  # checks-properties-python, whatever this job found.
+  checks-properties-node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/properties.mjs
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: properties-scenarios
+          path: node_modules/.cache/properties/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The same properties by the Python reader, over the scenarios the runtime
+  # wrote. It waits for them; a run whose node job wrote none fails here at the
+  # download, which is no verdict and reads as red.
+  checks-properties-python:
+    needs: checks-properties-node
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: properties-scenarios
+          path: node_modules/.cache/properties/
+      - run: python3 scripts/properties.py
+
   # One browser per job, in parallel. The whole suite on three engines in one
   # job ran past the 20-minute wall and was killed every time — a timeout that
   # masks a real failure as an infrastructure hiccup, so a red suite reads as a
@@ -74,8 +171,9 @@ jobs:
   #
   # The one thing this must never become again is a run that cannot finish: a
   # check that times out is indistinguishable from one nobody looked at, and
-  # neither is a verdict. The budget below is set roughly double a single
-  # engine's time on purpose — headroom, not a target. When a shard starts
+  # neither is a verdict. The budget below (the `npm test` step's) is set
+  # roughly double a single engine's time on purpose — headroom, not a
+  # target. When a shard starts
   # brushing the wall, the fix is to split the shard further (by test group, by
   # directory), NOT to raise this number: raising the ceiling buys a few months
   # and restores the blind spot. If you are here to bump the timeout, shard
@@ -83,14 +181,49 @@ jobs:
   #
   # webkit is that case: it alone ran past 25 minutes and was cancelled every
   # round — a cancelled job is no verdict, so webkit was effectively ungated and
-  # its reds sat unseen. So webkit is split into two `--shard` halves that each
+  # its reds sat unseen. So webkit is split into `--shard` parts that each
   # finish well inside the budget and each report a verdict; chromium and firefox
   # still run whole, one job each. The count gate skips a sharded run (its count
   # is a fraction by intent) and is carried by the two whole engines, which drop
   # the same count when a test stops being collected.
+  #
+  # Two parts became three on 27 September: shard 1 of 2 ran 16 to 24 minutes
+  # against this 25-minute wall and was cancelled at it once (run 36289801499,
+  # 408 passed, none failed), while shard 2 finished in 8. Spec files stay
+  # whole (playwright.config.ts), so the split is by file and uneven; a third
+  # part moves the wall back without raising it.
+  #
+  # Three became four on 30 September: shard 2 of 3 took 24m37s in run
+  # 36741672975 and was cancelled at the wall, with no tally and nothing
+  # failed, in run 36754861434, two new tests in it having tipped it over.
+  # Four parts did not move it (run 36764093142, both attempts): one file,
+  # tests/mailbox-link-e2e.spec.ts, runs over 15 minutes on WebKit on one
+  # worker, and a file stays whole, so whichever part holds it meets the wall.
+  # It runs as a job of its own (D174) until its time comes down.
+  #
+  # Firefox is a reading, not the gate (ruled 25 September). Chromium and the
+  # WebKit parts decide the run; a Firefox red does not. The reason is
+  # D32: `returning-document:511` failed at least once on Firefox in 3 of the
+  # last 4 runs on the identity branch, a frame the automation cannot see and
+  # not a product failure on the walk. The Firefox job still runs whole and
+  # scripts/ci-verdict.mjs prints its tally on its own line, so a real Firefox
+  # red is seen; it just does not block. Undoing this is D32 closing, not a
+  # quiet week.
+  #
+  # Firefox's tests have 40 minutes, not 25 (30 September). Its whole suite
+  # reached the 25-minute wall with no tally on that day's runs (at about
+  # test 638 of 813). Firefox is a reading, so its wall is there only
+  # to stop a hang; no verdict of the gate waits on it, and the rule above
+  # (split, don't raise) is for the engines that gate. Its job has 60, so the
+  # setup keeps the same allowance as the others'.
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The wall is on the tests (the `npm test` step, 25 minutes, Firefox 40),
+    # not on the job: `playwright install --with-deps` took 6 to 11 minutes on runners
+    # whose apt mirror was slow (30 September, D174), and that spent the tests'
+    # budget before they began. This is the setup's allowance, not theirs.
+    timeout-minutes: ${{ matrix.browser == 'firefox' && 60 || 45 }}
+    continue-on-error: ${{ matrix.browser == 'firefox' }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,8 +233,13 @@ jobs:
           # holds them — not once per engine.
           - { browser: chromium, part: whole, extra: "--project=node" }
           - { browser: firefox, part: whole }
-          - { browser: webkit, part: "1", shard: "1/2" }
-          - { browser: webkit, part: "2", shard: "2/2" }
+          # One file runs in a job of its own (D174); the four parts drop it
+          # by its one describe title, and every other file stays in them.
+          - { browser: webkit, part: "1", shard: "1/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "2", shard: "2/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "3", shard: "3/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: "4", shard: "4/4", extra: '--grep-invert "a game continues over a shared link"' }
+          - { browser: webkit, part: mailbox, extra: tests/mailbox-link-e2e.spec.ts }
 
     steps:
       - uses: actions/checkout@v4
@@ -129,6 +267,7 @@ jobs:
       - run: npx playwright install --with-deps ${{ matrix.browser }} chromium
 
       - run: npm test -- --project=${{ matrix.browser }} ${{ matrix.extra }} ${{ matrix.shard && format('--shard={0}', matrix.shard) || '' }}
+        timeout-minutes: ${{ matrix.browser == 'firefox' && 40 || 25 }}
 
       - if: failure()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,24 @@
+{
+  "what": "Ada starts a session S whose creator's seat row is written deleted, and moves for its seat. Bo starts a session T, and Ada, creator of another session of her own, confirms herself in T's open seat. A copy holding only a tombstone at a creator's seat row's id has no live session (R20), so S admits nothing and Ada's move is not admitted; a confirm counts only by the creator of its own session, so nobody holds T's open seat (D158, D165).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 4,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

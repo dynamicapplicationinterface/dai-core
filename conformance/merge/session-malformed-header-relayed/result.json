@@ -1,0 +1,29 @@
+{
+  "what": "For the record (review 9, A06). From a second copy of her store Ada signs a header at her e4's seq over a move whose parents are malformed. A is a relay holding the game and that header without its row; B is Bo's copy. Without its row the header is authentic and incomplete, so it is kept: Ada is an equivocator and her session is void on both copies after either merge, and the merge into B reports Ada AUTHOR_EQUIVOCATED (R10).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

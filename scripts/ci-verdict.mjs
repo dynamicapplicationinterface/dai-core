@@ -17,6 +17,7 @@
  * Requires the `gh` CLI, authenticated.
  */
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
@@ -60,12 +61,54 @@ function resolveRun(arg) {
  * take the LAST occurrence of each, because the numbers only mean the final
  * tally when they are the ones the run printed as it exited.
  */
-function tallyFrom(log) {
+export function tallyFrom(log) {
   const last = (word) => {
     const matches = [...log.matchAll(new RegExp(`(\\d+)\\s+${word}\\b`, "g"))];
     return matches.length ? Number(matches[matches.length - 1][1]) : null;
   };
   return { passed: last("passed"), failed: last("failed"), flaky: last("flaky") };
+}
+
+/**
+ * Whether a finished job is a failure, from its conclusion and its tally.
+ * `job` is `{ conclusion }` as GitHub reports it; `tally` is `tallyFrom`'s.
+ */
+export function jobFailed(job, tally) {
+  const hasTally = tally.passed !== null || tally.failed !== null;
+  // Anything but success is a failure, whatever the log printed: a job cancelled
+  // at its wall or timed out never reached its own summary, and an earlier
+  // "N passed" in its log is not one (pass C's H2).
+  return !hasTally || (tally.failed ?? 0) > 0 || job.conclusion !== "success";
+}
+
+/** The checks jobs of test.yml, split from one on 8 October; a run of that workflow carries all four. */
+export const CHECKS_JOBS = ["checks-fast", "checks-holdout", "checks-properties-node", "checks-properties-python"];
+
+/**
+ * The four checks jobs a run lacks. A run from before the split (one job,
+ * "checks") is read as it stands; a run holding any of the four must hold all.
+ */
+export function missingChecks(names) {
+  if (!names.some((name) => CHECKS_JOBS.includes(name))) return [];
+  return CHECKS_JOBS.filter((name) => !names.includes(name));
+}
+
+/**
+ * The summary line: the gate's red jobs by name, and only those (pass C's M4).
+ * It said "RED on chromium, webkit and checks" whatever was red, so a red
+ * checks job read as three engines down.
+ */
+export function gateLine(status, red) {
+  if (status !== "completed") return `gate: not finished (${status})`;
+  if (red.length === 0) return "gate: green on chromium, webkit and every checks job; firefox above is a reading";
+  return `gate: RED on ${red.join(", ")}; firefox above is a reading`;
+}
+
+/** A finished job's time, start to end, for the row. */
+function wall(job) {
+  if (!job.startedAt || !job.completedAt) return "";
+  const minutes = (Date.parse(job.completedAt) - Date.parse(job.startedAt)) / 60_000;
+  return minutes >= 0 ? `  ${minutes.toFixed(1)} min` : "";
 }
 
 function main(argv) {
@@ -100,23 +143,61 @@ function main(argv) {
   console.log(run.url);
   console.log("");
 
-  let anyMissing = false;
-  for (const job of browserJobs) {
+  /*
+   * Firefox is a reading, not the gate (test.yml, ruled 25 September, D32).
+   * Its job runs with continue-on-error, so the run's own conclusion no longer
+   * says whether Firefox passed. It is printed on its own, marked from its
+   * tally and not from the job's conclusion, so a real Firefox red is still
+   * read; it just does not decide the gate line.
+   */
+  const isReading = (job) => /^browser \(firefox\b/.test(job.name);
+  const row = (job) => {
     const log = (perJob.get(job.name) ?? []).join("\n");
     const t = tallyFrom(log);
     const hasTally = t.passed !== null || t.failed !== null;
-    if (!hasTally) anyMissing = true;
     const cells = hasTally
       ? `${t.passed ?? 0} passed, ${t.failed ?? 0} failed` + (t.flaky ? `, ${t.flaky} flaky` : "")
       : "NO TALLY (cancelled / timed out / crashed before summary)";
-    const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? "?").toUpperCase();
+    const failed = jobFailed(job, t);
+    const mark = !job.conclusion
+      ? (job.status ?? "?").toUpperCase()
+      : failed ? (hasTally ? "FAIL" : job.conclusion.toUpperCase()) : "PASS";
     console.log(`  ${mark.padEnd(6)} ${job.name.padEnd(28)} ${cells}`);
+    return { hasTally, failed: Boolean(job.conclusion) && failed };
+  };
+
+  let anyMissing = false;
+  // The gate's jobs that are not green, by name: the summary names only these.
+  const red = [];
+  console.log("  gate (chromium, webkit):");
+  for (const job of browserJobs.filter((j) => !isReading(j))) {
+    const r = row(job);
+    if (!r.hasTally) anyMissing = true;
+    if (r.failed || (job.conclusion && !r.hasTally)) red.push(job.name);
+  }
+  const readings = browserJobs.filter(isReading);
+  if (readings.length) {
+    console.log("  reading, not blocking (firefox, D32):");
+    for (const job of readings) {
+      const r = row(job);
+      if (!r.hasTally) anyMissing = true;
+    }
   }
 
+  console.log("  checks:");
   for (const job of otherJobs) {
-    const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? "?").toUpperCase();
-    console.log(`  ${mark.padEnd(6)} ${job.name}`);
+    const mark = job.conclusion === "success" ? "PASS" : job.conclusion === "failure" ? "FAIL" : (job.conclusion ?? job.status ?? "?").toUpperCase();
+    if (job.conclusion && job.conclusion !== "success") red.push(job.name);
+    console.log(`  ${mark.padEnd(6)} ${job.name}${wall(job)}`);
   }
+  // A run of the four-job workflow lacking one of them gave no verdict on it.
+  for (const name of missingChecks(otherJobs.map((job) => job.name))) {
+    red.push(name);
+    console.log(`  MISSING ${name} (not in this run)`);
+  }
+
+  console.log("");
+  console.log(gateLine(run.status, red));
 
   if (anyMissing) {
     console.log("");
@@ -180,9 +261,11 @@ function artifactsOf(runId) {
     .map((line) => JSON.parse(line));
 }
 
-try {
-  main(process.argv.slice(2));
-} catch (error) {
-  process.stderr.write(`${error?.message ?? error}\n`);
-  process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error?.message ?? error}\n`);
+    process.exit(1);
+  }
 }

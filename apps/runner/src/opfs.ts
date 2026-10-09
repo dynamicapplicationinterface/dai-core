@@ -13,10 +13,14 @@ const PIN_STORE = "pins";
 const PUB_STORE = "publishers";
 /** A document's mailbox state — its key, and where publish and pull have reached (Track 5). */
 const MAILBOX_STORE = "mailboxes";
+/** This device's keys, by the names src/keys.ts owns: the person key (docs/identity.md). */
+const KEY_STORE = "keys";
 
 import { TrustStorageUnavailable, type PinnedKey, type TrustStore } from "../../../src/trust.js";
 import type { PublisherPin, PublisherStore, RootPublisher } from "../../../src/publisher.js";
-import type { SigstoreRoot } from "../../../src/identity.js";
+import type { SigstoreRoot } from "../../../src/publisher-identity.js";
+import type { KeptPersonKey } from "../../../src/identity.js";
+import { KEYS, leftFloorKey, leftHeaderKey, seqFloorKey } from "../../../src/keys.js";
 import { releasePush } from "./push.js";
 import { standalone } from "./platform.js";
 
@@ -298,7 +302,7 @@ function noteIdbFailure(what: string): void {
 function openIdb(): Promise<IDBDatabase> {
   if (idbConnection) return idbConnection;
   idbConnection = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(IDB_NAME, 6);
+    const request = indexedDB.open(IDB_NAME, 7);
     /*
      * A bound on the open itself. iOS Safari can leave `indexedDB.open`
      * pending with no event ever firing; without this the whole launch waits
@@ -350,6 +354,11 @@ function openIdb(): Promise<IDBDatabase> {
       // lifetime as the library entry it sits beside (Track 5).
       if (!db.objectStoreNames.contains(MAILBOX_STORE)) {
         db.createObjectStore(MAILBOX_STORE, { keyPath: "documentUuid" });
+      }
+      // Version 7: this device's person key (docs/identity.md), out-of-line keys
+      // named by src/keys.ts. Added empty; the key is made on first use.
+      if (!db.objectStoreNames.contains(KEY_STORE)) {
+        db.createObjectStore(KEY_STORE);
       }
     };
     request.onsuccess = () => {
@@ -589,49 +598,328 @@ export async function deleteCartridgeFromLibrary(
   }
   // The mailbox state shares the document's lifetime and goes with it.
   await deleteMailbox(documentUuid);
-  await forgetOwnReplica(documentUuid);
 }
 
 /**
- * The replica id this device writes a document under (d22).
+ * This device's person key (docs/identity.md), kept as the CryptoKey pair
+ * itself: IndexedDB stores a CryptoKey by structured clone, so the key is never
+ * turned into bytes to be kept. One per device, under the name `src/keys.ts`
+ * owns, in a store of its own.
  *
- * Recorded before a copy is first mounted and handed to the frame on every
- * mount after, so the id a copy writes under is this device's, never whatever
- * the mounted file carries. A reopen that fell back to the arrived file used to
- * keep the sender's id, because "own copy" was decided by where the file came
- * from rather than whose id was in it.
- *
- * Kept beside the document's database, under a key of its own, because the
- * database's own key is deleted whenever the database moves to OPFS. A string,
- * so the database reader, which takes only bytes, never mistakes it for one.
+ * Three answers (KeptPersonKey, src/identity.ts): the key, nothing kept, or
+ * nothing readable. A store that throws or errors is unreadable, never "none":
+ * that is the difference between a device with no key and a device that could
+ * not read its key for a moment. This does not mint.
  */
-const replicaKey = (documentUuid: string): string => `replica:${documentUuid}`;
-
-export async function ownReplicaOf(documentUuid: string): Promise<string | null> {
+export async function keptPersonKey(): Promise<KeptPersonKey> {
   try {
     const db = await openIdb();
     return await new Promise((resolve) => {
-      const req = db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(replicaKey(documentUuid));
-      req.onsuccess = () => resolve(typeof req.result === "string" && /^[0-9a-f]{32}$/.test(req.result) ? req.result : null);
-      req.onerror = () => resolve(null);
+      try {
+        const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(KEYS.PERSON_KEY);
+        req.onsuccess = () => {
+          const held = req.result as Partial<CryptoKeyPair> | undefined;
+          resolve(held?.publicKey && held.privateKey ? { kept: "key", keys: held as CryptoKeyPair } : { kept: "none" });
+        };
+        req.onerror = () => resolve({ kept: "unreadable", why: String(req.error?.message ?? "the read failed") });
+      } catch (error) {
+        resolve({ kept: "unreadable", why: String((error as Error)?.message ?? error) });
+      }
     });
-  } catch {
-    return null;
+  } catch (error) {
+    return { kept: "unreadable", why: String((error as Error)?.message ?? error) };
   }
 }
 
-export async function recordOwnReplica(documentUuid: string, replica: string): Promise<void> {
+/**
+ * Keeps the person key, only if none is kept yet.
+ *
+ * `add`, not `put`: two tabs minting at once must not leave each writing under
+ * a key the other then overwrote. The loser's add fails, and it reads back the
+ * winner's key, so both tabs end on one key.
+ */
+export async function keepPersonKey(pair: CryptoKeyPair): Promise<void> {
   const db = await openIdb();
-  await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.put(replica, replicaKey(documentUuid)));
+  await committed(db.transaction(KEY_STORE, "readwrite"), (store) => store.add(pair, KEYS.PERSON_KEY));
 }
 
-async function forgetOwnReplica(documentUuid: string): Promise<void> {
+/**
+ * The highest seq this device has let leave it for a document (cold review of
+ * identity step 2, #1): the floor the frame's counter is held at. 0 when none
+ * is kept. A read that fails is thrown, not read as 0: a floor of 0 on a
+ * device that has written would reissue what it already sent.
+ */
+export type KeptSeqFloor = { kept: "floor"; seq: number } | { kept: "none" } | { kept: "unreadable"; why: string };
+
+/**
+ * One read of the floor, bounded: the three answers the person key has, for
+ * the same reason (cold review of identity step 3, #4). A store that throws,
+ * errors or does not answer within `withinMs` is unreadable, never "none": a
+ * floor read as 0 on a device that has written would reissue what it sent.
+ */
+export async function keptSeqFloor(documentUuid: string, withinMs = 1_000): Promise<KeptSeqFloor> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<KeptSeqFloor>((resolve) => {
+    timer = setTimeout(() => resolve({ kept: "unreadable", why: `no answer within ${withinMs}ms` }), withinMs);
+  });
+  const read = (async (): Promise<KeptSeqFloor> => {
+    try {
+      const db = await openIdb();
+      return await new Promise<KeptSeqFloor>((resolve) => {
+        try {
+          const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(seqFloorKey(documentUuid));
+          req.onsuccess = () =>
+            resolve(typeof req.result === "number" && req.result > 0 ? { kept: "floor", seq: req.result } : { kept: "none" });
+          req.onerror = () => resolve({ kept: "unreadable", why: String(req.error?.message ?? "the read failed") });
+        } catch (error) {
+          resolve({ kept: "unreadable", why: String((error as Error)?.message ?? error) });
+        }
+      });
+    } catch (error) {
+      return { kept: "unreadable", why: String((error as Error)?.message ?? error) };
+    }
+  })();
   try {
-    const db = await openIdb();
-    await committed(db.transaction(DB_STORE, "readwrite"), (store) => store.delete(replicaKey(documentUuid)));
-  } catch {
-    /* Nothing recorded, or no storage: nothing to forget. */
+    return await Promise.race([read, late]);
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/**
+ * The floor, read again while it is unreadable, for up to `deadlineMs`: the
+ * key's deadline. Null when it stays unreadable; the caller refuses writes.
+ */
+export async function seqFloorWithin(documentUuid: string, deadlineMs = 4_000): Promise<number | null> {
+  const until = Date.now() + deadlineMs;
+  for (;;) {
+    const answer = await keptSeqFloor(documentUuid, Math.max(250, Math.min(1_000, until - Date.now())));
+    if (answer.kept === "floor") return answer.seq;
+    if (answer.kept === "none") return 0;
+    if (Date.now() >= until) return null;
+    await new Promise((wait) => setTimeout(wait, 250));
+  }
+}
+
+/**
+ * Raises the floor to `seq`, never lowers it, in one transaction.
+ *
+ * Called before a save is written and before a batch is published, never
+ * after: the floor must already count a seq by the time anything carrying it
+ * can leave, or the one case it exists for, the save that fails, is the one it
+ * misses.
+ */
+export async function raiseSeqFloor(documentUuid: string, seq: number): Promise<void> {
+  if (!Number.isSafeInteger(seq) || seq <= 0) return;
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  const store = tx.objectStore(KEY_STORE);
+  const key = seqFloorKey(documentUuid);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          const held = typeof read.result === "number" ? read.result : 0;
+          if (seq > held) store.put(seq, key);
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error("This device could not record how far it has written."));
+        tx.onabort = () => reject(tx.error ?? new Error("This device stopped recording how far it has written."));
+      }),
+      // A write that never answers fails, like one that errors, and the save or
+      // the seal waiting on it fails closed rather than holding the lock (#4).
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("This device's storage did not answer within 4 seconds.")), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Raises the floor to `seq` only if it still stands where this tab last saw
+ * it, `seen`, in one transaction (D105). Two tabs on one held copy stamp rows
+ * under one author from one counter, so both can reach the same seq with
+ * different rows; the tab that moves the floor first claims what it covers,
+ * and the other finds the floor moved and signs and saves nothing, so a
+ * device never signs two rows at one `(author, seq)`. The answer is the floor
+ * this tab now stands at, or where another tab moved it.
+ */
+export type SeqFloorClaim = { claimed: number } | { moved: number };
+
+export async function claimSeqFloor(documentUuid: string, seen: number, seq: number): Promise<SeqFloorClaim> {
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  const store = tx.objectStore(KEY_STORE);
+  const key = seqFloorKey(documentUuid);
+  let answer: SeqFloorClaim | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        const read = store.get(key);
+        read.onsuccess = () => {
+          const held = typeof read.result === "number" ? read.result : 0;
+          if (held > seen) {
+            answer = { moved: held };
+            return;
+          }
+          const next = Math.max(seen, Number.isSafeInteger(seq) ? seq : 0);
+          if (next > held) store.put(next, key);
+          answer = { claimed: next };
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error("This device could not record how far it has written."));
+        tx.onabort = () => reject(tx.error ?? new Error("This device stopped recording how far it has written."));
+      }),
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("This device's storage did not answer within 4 seconds.")), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!answer) throw new Error("This device could not read how far it has written.");
+  return answer;
+}
+
+/**
+ * One read-write transaction on the key store, bounded as the floor's are: a
+ * write that never answers fails, like one that errors, rather than holding
+ * the lock (#4). `work` runs inside the transaction and only queues requests
+ * on the store; what it records is read after the commit.
+ */
+async function inKeyStore(what: string, work: (store: IDBObjectStore) => void): Promise<void> {
+  const db = await openIdb();
+  const tx = db.transaction(KEY_STORE, "readwrite");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve, reject) => {
+        work(tx.objectStore(KEY_STORE));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error(`This device could not record ${what}.`));
+        tx.onabort = () => reject(tx.error ?? new Error(`This device stopped recording ${what}.`));
+      }),
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`This device's storage did not answer within 4 seconds.`)), 4_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The claim a sign makes: the sequence floor as `claimSeqFloor` claims it,
+ * and the left floor checked, in one transaction (docs/format.md, `floor`).
+ * `covered` is every seq the header lists, read by the host from the header
+ * itself, never a number the frame sent. Refused with `left` when one of them
+ * is at or below the highest seq a header of this device's listed in bytes
+ * that landed or were published: those could have left, and a second header
+ * over one of their seqs is the author signing twice.
+ */
+export type SignFloorClaim = SeqFloorClaim | { left: number };
+
+export async function claimSignFloor(documentUuid: string, seen: number, covered: readonly number[]): Promise<SignFloorClaim> {
+  let answer: SignFloorClaim | null = null;
+  await inKeyStore("how far it has written", (store) => {
+    const floor = store.get(seqFloorKey(documentUuid));
+    const left = store.get(leftFloorKey(documentUuid));
+    left.onsuccess = () => {
+      const held = typeof floor.result === "number" ? floor.result : 0;
+      const sent = typeof left.result === "number" ? left.result : 0;
+      if (held > seen) {
+        answer = { moved: held };
+        return;
+      }
+      if (covered.length === 0 || covered.some((seq) => !Number.isSafeInteger(seq) || seq <= sent)) {
+        answer = { left: sent };
+        return;
+      }
+      const next = Math.max(seen, ...covered);
+      if (next > held) store.put(next, seqFloorKey(documentUuid));
+      answer = { claimed: next };
+    };
+  });
+  if (!answer) throw new Error("This device could not read how far it has written.");
+  return answer;
+}
+
+/**
+ * The egress rule (D181), what a leave of the person's headers may carry:
+ * `left` when it may, `twice` with the seq when it carries two of the person's
+ * headers over one seq, `reused` with the left floor when it carries a header
+ * over a seq at or below the floor that has not itself left before.
+ */
+export type LeaveClaim = { left: true } | { twice: number } | { reused: number };
+
+/**
+ * The person's headers in bytes leaving this device, held to what has left,
+ * in one transaction on the key store, so the left floor and the ids of the
+ * headers that left move together (docs/format.md, `floor`). Each header comes
+ * with every seq it could be signed over, read by the host from the bytes
+ * themselves (`leavingIn`, `publishedLeaving`), never from the frame's word.
+ *
+ * - `check`: refused or not, nothing written: a save asks before it writes.
+ * - `record`: nothing refused; the ids kept and the floor raised to `top`:
+ *   bytes that already landed (a save, the stored copy at mount).
+ * - `claim`: both, in the one transaction: bytes that leave the moment the
+ *   answer is yes (a file the shell writes, a publish).
+ */
+export async function claimLeave(
+  documentUuid: string,
+  headers: readonly { id: string; seqs: readonly number[] }[],
+  top: number,
+  mode: "check" | "record" | "claim",
+): Promise<LeaveClaim> {
+  if (mode !== "record") {
+    const over = new Map<number, string>();
+    for (const { id, seqs } of headers) {
+      for (const seq of seqs) {
+        const other = over.get(seq);
+        if (other !== undefined && other !== id) return { twice: seq };
+        over.set(seq, id);
+      }
+    }
+  }
+  let answer: LeaveClaim | null = null;
+  const prefix = leftHeaderKey(documentUuid, "");
+  await inKeyStore("what it has already sent", (store) => {
+    const floor = store.get(leftFloorKey(documentUuid));
+    const kept = store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`));
+    kept.onsuccess = () => {
+      const sent = typeof floor.result === "number" ? floor.result : 0;
+      const left = new Set((kept.result as IDBValidKey[]).map((key) => String(key).slice(prefix.length)));
+      if (mode !== "record") {
+        const reused = headers.some(({ id, seqs }) => seqs.some((seq) => seq <= sent) && !left.has(id));
+        if (reused) {
+          answer = { reused: sent };
+          return;
+        }
+      }
+      if (mode !== "check") {
+        for (const { id } of headers) if (!left.has(id)) store.put(1, leftHeaderKey(documentUuid, id));
+        if (Number.isSafeInteger(top) && top > sent) store.put(top, leftFloorKey(documentUuid));
+      }
+      answer = { left: true };
+    };
+  });
+  if (!answer) throw new Error("This device could not read what it has already sent.");
+  return answer;
+}
+
+/** The left floor as kept, 0 when none is: for a test that asserts what has left. */
+export async function keptLeftFloor(documentUuid: string): Promise<number> {
+  const db = await openIdb();
+  return new Promise<number>((resolve, reject) => {
+    const req = db.transaction(KEY_STORE, "readonly").objectStore(KEY_STORE).get(leftFloorKey(documentUuid));
+    req.onsuccess = () => resolve(typeof req.result === "number" ? req.result : 0);
+    req.onerror = () => reject(req.error ?? new Error("This device could not read what it has already sent."));
+  });
 }
 
 /**

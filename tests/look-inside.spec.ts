@@ -34,7 +34,7 @@ test.describe("handing this app back to an assistant", () => {
 
     await page.click("#more");
     await page.click("#modify");
-    await expect(page.locator("#report")).toContainText("Copied the source", { timeout: 60_000 });
+    await expect(page.locator("#doc-note")).toContainText("Copied the source", { timeout: 60_000 });
 
     const copied = await page.evaluate(() => navigator.clipboard.readText());
 

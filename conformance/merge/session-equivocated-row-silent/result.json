@@ -1,0 +1,34 @@
+{
+  "what": "Bo writes, on B, a move naming no seat, a version of Ada's move for his own seat, and in Ada's session S2 a version of his move in S, each naming a row at an id not equivocated. A second copy of his signs the same seqs as closes, which A holds. Every one of those ids is equivocated after either merge, so the three rows count for nothing and are reported nowhere but AUTHOR_EQUIVOCATED, in Bo's name, in both directions: no SEAT_NOT_HELD, for no seat or for another seat's version, and no ENTITY_OTHER_SESSION (R9). Bo is no session's creator, so neither session is void (R10).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 3,
+    "duplicate": 6,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 6,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

@@ -82,17 +82,39 @@ would be a claim about the world this software cannot make.
 What none of this fixes is the first document from a publisher nobody has
 vouched for. It is new, and it says new.
 
-**Not signed at all.** A container built on this website is unsigned, and says
-so on the card. A page has nowhere to keep a key, and one minted for a single
-build and discarded signs nothing anybody can check — worse, it would make your
-own next version look like an impersonation, since the key that made the first
-one no longer exists. A publisher who wants to be recognised uses a key they
-keep, through the [command line](/docs/quickstart).
+**Rows are signed too, by the device that wrote them.** In a document that
+more than one copy writes to, each batch of rows is signed by a key the
+writing device keeps, and a merge checks the batch against the author id it
+names. A batch whose signature does not check (`BATCH_SIGNATURE_INVALID`),
+whose digest does not match its rows (`BATCH_DIGEST_MISMATCH`), or that
+carries no signature (`BATCH_UNSIGNED`) is refused and reported, not applied.
+An author who has signed two different rows at one position is reported as
+`AUTHOR_EQUIVOCATED`. What this proves is that a row came from one key and
+not another, and that a different device, holding a different key, cannot
+produce it. It does not prove who holds the key: a signature proves a key,
+not a person. A place is reserved for a third party's statement that a key
+belongs to a named person; nothing fills it. It also hides nothing: the
+author id and public key travel with the rows. And an app can still make its
+own user's device sign two rows at one position, which other copies then
+report as `AUTHOR_EQUIVOCATED` for that user. The key lives in the browser's
+storage for the opener; if that storage is cleared, the device becomes a new
+author.
 
-**Not closed, in a browser host.** DNS prefetch, speculation rules and WebRTC
-are not governed by `connect-src`, and a page cannot switch them off for a frame
-it hosts. A native host can and should disable them at the webview layer. We
-would rather name them here than have you find them.
+**Not signed at all.** A container built on this website is unsigned, and says
+so on the card. The builder keeps no publisher key. The key the opener keeps
+in the browser's storage signs rows as a device, as above; it is not a
+publisher's key and signs no container. A key minted for a single build and
+discarded signs nothing anybody can check — worse, it would make your own next
+version look like an impersonation, since the key that made the first one no
+longer exists. A publisher who wants to be recognized uses a key they keep,
+through the [command line](/docs/quickstart).
+
+**Not closed, in a browser host.** WebRTC is not governed by `connect-src`, and
+a page cannot switch it off for a frame it hosts. A native host can and should
+disable it at the webview layer. We would rather name it here than have you
+find it. DNS prefetch and speculation rules, the other two channels
+`connect-src` leaves alone, the container closes itself: prefetch is switched
+off, and the policy refuses a speculation rules script.
 
 **Sent, not stored.** When a document is too large to travel inside a link, it
 can be put in a store — and the store is handed ciphertext under the hash of

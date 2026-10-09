@@ -112,7 +112,7 @@ CREATE TABLE T (
   _r_parents    TEXT    NOT NULL DEFAULT '[]',   -- JSON array of row ids, sorted
   _r_deleted    INTEGER NOT NULL DEFAULT 0 CHECK (_r_deleted IN (0,1)),
   _r_superseded INTEGER NOT NULL DEFAULT 0 CHECK (_r_superseded IN (0,1)),
-  _r_sig        BLOB,                            -- always NULL at Level 1 (T1-D7)
+  _r_batch      BLOB,                            -- the signed batch it left in; NULL while pending (docs/identity.md)
   PRIMARY KEY (_r_replica, _r_seq)
 ) WITHOUT ROWID;
 
@@ -120,7 +120,11 @@ CREATE INDEX T__r_entity ON T(_r_entity, _r_lc);
 CREATE INDEX T__r_heads  ON T(_r_entity) WHERE _r_superseded = 0;
 
 CREATE TRIGGER T__no_update BEFORE UPDATE OF
-    _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted, _r_sig ON T
+    _r_replica, _r_seq, _r_lc, _r_entity, _r_parents, _r_deleted ON T
+  BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
+
+CREATE TRIGGER T__sealed_once BEFORE UPDATE OF _r_batch ON T
+  WHEN OLD._r_batch IS NOT NULL
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
 CREATE TRIGGER T__no_delete BEFORE DELETE ON T
   BEGIN SELECT RAISE(ABORT, 'REPLICATED_TABLE_IMMUTABLE'); END;
@@ -171,6 +175,11 @@ CREATE VIEW T_current AS
        ORDER BY y._r_lc DESC, hex(y._r_replica) ASC, y._r_seq ASC
        LIMIT 1);
 ```
+
+In a session document the view is the same with its heads read once, as
+`WITH heads AS MATERIALIZED (SELECT * FROM T_heads)` and `heads` in place of
+`T_heads`: there the heads read the roster, and compiling it three times was
+most of what a read cost.
 
 The `_r_seq` tiebreak beyond `_r_replica` is T1-D6: two heads from the same
 replica for the same entity are possible after a merge of a copy that forked
@@ -406,7 +415,14 @@ not the version number moves; T1-D24 records why it did not need to.
 `_r_seq` makes the pick total, and it is deterministic across readers, which
 is what `current-conflict-deterministic-pick` demands.
 
-**T1-D7 — `_r_sig` exists at Level 1 and is always NULL.** Keeping the column
+**T1-D7 — superseded by signed authorship (docs/identity.md, step 3).** A row
+no longer carries a signature of its own: it names the signed batch it left its
+author's device in (`_r_batch`, NULL while pending, set once), and the headers
+live in `_dai_batch`. One place a signature lives, not two. Which rows a batch
+covers is the header's own list, not the rows' pointers: `_r_batch` is a cache,
+and a merge verifies by the signed row set (docs/format.md). The original
+decision, kept for the record: **`_r_sig` exists at Level 1 and is always
+NULL.** Keeping the column
 means Level 2 is a behaviour change rather than a migration over every existing
 replicated row, and §9's migration rules forbid rewriting `_r_*` columns
 anyway. The cost is one always-null column.
@@ -418,6 +434,13 @@ recompute and nobody can attest.
 **T1-D9 — "identical tables" means a canonical dump, and the dump's encoding
 is specified here.** SQLite file bytes depend on page allocation and insertion
 order, so two hosts that converge correctly can hold different files.
+
+*Since 5 October the dump, the REAL's placement and the counts (T1-D15) are
+stated in full in [format.md](format.md#merge-dump), which governs where the
+two differ; this entry keeps the reasons. The rule below was broken by the
+runtime until then: SQLite hands a REAL 2.0 to JavaScript as 2, and the dump
+wrote it `2` (branch review pass A, H2). "Shortest round-trip decimal" also
+left where the digits go to each language; format.md#dump-real places them.*
 
 The comparison is a text dump of every replicated table plus `_dai_replicas`:
 rows ordered by `(hex(_r_replica), _r_seq)`, columns in declared order, one row
@@ -449,7 +472,8 @@ fixture to learn the shape of the file:
   line `# <table>`.
 - Then one section `# _dai_replicas`, always last.
 - Table sections: one line per row, values tab-separated, columns in the order
-  `PRAGMA table_info` reports them, rows ordered by `(_r_replica, _r_seq)`.
+  `PRAGMA table_info` reports them less `_r_superseded` (T1-D15), rows ordered
+  by `(_r_replica, _r_seq)`.
 - The `_dai_replicas` section: one bare replica id per line, lowercase hex,
   ascending. Not tab-separated, because there is one field (T1-D12).
 - The file ends with a newline after the final line.
@@ -527,10 +551,13 @@ Three consequences, and the third is the one that would be found late:
   than as a design error. Draft 1 §7 already lists the signed fields and this
   column is not among them; this says why it must stay that way.
 
-It is in the canonical dump of T1-D9 all the same, and that is not a
-contradiction. The dump is what proves two copies converged, and the flag is a
-function of the row set — so if two hosts hold the same rows and disagree about
-the flag, they have not converged and the dump must say so.
+It was in the canonical dump of T1-D9 until 5 October, on the argument that
+the flag is a function of the row set, so two hosts holding the same rows and
+disagreeing about it have not converged. The conformance dump now leaves it out
+(T1-D15): the page defines it as a display cache no rule reads, the contract
+compares only what the page defines, and the heads it caches are compared in
+the admitted dumps. The runtime's own `canonicalDump` keeps the column, so the
+convergence tests that compare two of its copies still hold the flag to it.
 
 **T1-D10 — the update trigger is column-scoped, and the flag only rises.**
 Draft 1's blanket `BEFORE UPDATE` would forbid the very write D5 requires. The
@@ -563,6 +590,15 @@ specification. They are:
 and `_r_deleted`. `_r_superseded` is excluded (T1-D11), and that exclusion is
 what makes `duplicate` rather than `rejected` the answer on almost every real
 exchange: a sender's flag legitimately differs from ours.
+
+The conformance dump leaves `_r_superseded` out too (5 October; format.md,
+merge-dump). It is a display cache ([row-superseded](format.md#row-superseded)),
+derived and never read by a rule on the page, and a conformance vector compares
+only what the page defines; `expected-admitted-*.txt` already holds the derived
+heads. A vector that compared it pinned a cache rather than a rule: in
+`session-parent-forward`, B's dump kept a3 superseded by a row whose parents
+had become malformed, the flag written before the forward rule read them as
+naming nothing.
 
 A rejected id is written in the `_r_parents` text form — lowercase hex, colon,
 sequence number. The `T_conflicts` view uses SQLite's uppercase `hex()` for the
@@ -1050,6 +1086,21 @@ authors (Step 3).** *The model is recorded here to be validated by the
 implementation, not settled ahead of it — the inferred roster this replaced
 looked sound in prose and was a clock race underneath.*
 
+*Replaced by signed authorship (docs/identity.md, step 5, ruled 24 September).
+A binding no longer seats anyone: it asks. The session id commits to its
+creator (SHA-256 of the creator's author id and a nonce on the creator's own
+seat row, first 16 bytes; **the nonce is superseded**, 27 September, D158, marked
+29 September: the id hashes the seq of the creator's own seat row, so exactly
+one row is the creator's, `docs/format.md#session-id`), so who created a
+session is checked from the rows;
+the creator's seat is the creator's; the open seat is held by whoever the
+creator's copy confirms in `_dai_confirm`, which only the creator's rows count
+in. A seat two copies asked for before the creator's copy seated anyone admits
+neither, as this paragraph first had it, until the creator repairs it. No clock
+decides a seat. An interim rule held a contested seat by the first verified
+signer, clock then author id, and was withdrawn when a backdated binding took
+the creator's seat (`IDENTITY-SEAT-CONFIRMED` in `src/rules.ts`; backlog D114).*
+
 An earlier design inferred the roster from who wrote first, ordered by Lamport
 clock. It was wrong twice over: a Lamport clock does not order events across
 replicas, and at Level 1 it is a **claim** — an integer an attacker chooses — so
@@ -1198,6 +1249,14 @@ same one the roster had: "late" must not be decided by a Lamport clock, which
 does not order events across replicas and which an author can pick. So the close
 **states what it saw** — a fact with an author — and admission reads that fact.
 
+*Superseded, 27 September (D151) and batch format version 2, marked 29
+September: the frontier.* The next two paragraphs, and "a member states the
+frontier" under the Level 1 residual, describe a close that listed what its
+author had seen and made every author's unseen rows late. A close lists
+nothing and binds only its author (the amendment at the end of this decision;
+`docs/format.md#close-counts`). They are kept as the record of what
+was replaced, not as the rule.
+
 *The representation, chosen to be a fact and to be expressible.* Closing a
 session writes rows to `_dai_close`, one per replica the closer had seen in the
 session, each recording that replica's highest seq: `{ replica, seq }`, carrying
@@ -1246,6 +1305,25 @@ Compaction — retiring a closed session's rows to a file so they stop being mer
 and stored — is deferred (profiles D6); the close is what makes it *possible*,
 because a session with a stated end is one whose rows can be retired without
 losing a live game. Vector: `session-closed-drops-late-rows`.
+
+*Amended 27 September (D151): a close binds only its author.* The residual
+above assumed signing would close it. It did not: signing proved who wrote a
+close and could not prove the list. A member who signed one close row naming
+only himself made every other member's moves late in every copy, a signed row
+removing another person's move. The fix was to stop the list mattering. A
+close makes only its author's own later rows late, ordered by the author's own
+seq, which that author cannot reorder: a row `(R, N)` is late when a close the
+session's rule permits, authored by `R` in the same session, has a seq below
+`N`. Only an author's first close counts (D152), and a close cannot be revoked
+by a later version or a delete (D153). The `replica` and `seq` columns retired
+with batch format version 2 (identity step 6): a close is one row carrying its
+session.
+What a session *means* to an application is unchanged: a close still puts the
+session in `_dai_closed`, and a chess game reads that as over. What changes is
+authority. The residual this accepts: a member who keeps writing after seeing
+the other's close is held only by the advisory write gate, and their own copy
+shows the session closed. "Two concurrent closes union" above no longer
+applies: each binds its own author.
 
 **T1-D32 — who may close: a signed profile policy, defaulting to any (Step 5,
 completing T1-D31).** Whether either party may end a session or only its creator
@@ -1480,6 +1558,26 @@ out. Vector: the e2e (`a forwarded invite contests the seat, both copies show it
 and the creator repairs`); like D33 it is a carrier event no local-only vector
 models.
 
+**T1-D35 — a parent outside the row's own entity supersedes nothing.** T1-D2
+says a row supersedes the rows it names as parents, and that is how an edit
+replaces what it edits. A row may only replace its own entity's history. A row
+that names a row of another entity as its parent says nothing about that
+entity, so the named row stays a head. Every place that decides supersession
+applies the same condition: marking parents at insert, superseded-on-arrival,
+the admission-filtered heads view, the monotonic trigger's naming check, and
+the resettle when an unsigned row gives way to a signed one (T1-D13). D4's
+export closure applies it too: a parent of another entity is not history, so it
+cannot make an entity's history cross sessions.
+
+Without it any author could hide any other entity's current row by listing it
+as a parent: in a plain table any row at all, and in a seated session table one
+player's move burying the other's, with the admitted row doing the burying. An
+honest writer never produces such a row (`changeEntity` names its own entity's
+heads), so the rule changes nothing for honest copies. Found by the cold review
+of identity step 5 (finding 5); it predates that step. Tests:
+`tests/cross-entity-parent.spec.ts`. Vectors: `merge-cross-entity-parent` and
+`merge-seal-outranks-cross-entity`.
+
 ## 9. Level 1 conformance vectors
 
 From Draft 1 §13, minus everything that needs a key. `merge-conflict` is
@@ -1500,6 +1598,7 @@ reverses.
 | `merge-schema-ahead` | Sibling one migration ahead. `SCHEMA_AHEAD`. |
 | `canonical-dump-real-edge-cases` | The REAL encoder over `-0.0`, `nan`, `inf`, `-inf` and a value needing 17 digits. **Runs before `merge-commutative`.** Note that SQLite cannot *store* NaN — it becomes NULL on insert — so that case is reachable only by calling the encoder directly, and the vector tests the encoder rather than a round trip. Positive zero prints `0.0`. |
 | `heads-via-superseded-flag` | `T_heads` equals the set a full parents scan would produce, including for rows merged in child-before-parent order (T1-D2). |
+| `merge-cross-entity-parent` | A row naming another entity's row as its parent, in both arrival orders. The named row stays a head (T1-D35). |
 | `current-conflict-deterministic-pick` | Identical `T_current` across both readers for a conflicted entity, including the same-replica tiebreak of T1-D6. |
 
 The Python reader gains a `merge` subcommand implementing §6 from this text

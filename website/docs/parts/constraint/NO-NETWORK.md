@@ -3,7 +3,7 @@
 ::: info NO-NETWORK
 **Nothing is fetched**
 
-Fetch nothing by URL. No CDN script tags: inline the library, or write the code without it. No hosted stylesheets or fonts: write the CSS inline and use system font stacks. No remote images: use inline SVG, a data: URI, or an emoji. No fetch, XMLHttpRequest, WebSocket, EventSource or sendBeacon, and no preconnect, dns-prefetch, prefetch or prerender links.
+Fetch nothing by URL. No CDN script tags: inline the library, or write the code without it. No hosted stylesheets or fonts: write the CSS inline and use system font stacks. No remote images: use inline SVG, a data: URI, or an emoji. No fetch, XMLHttpRequest, WebSocket, EventSource or sendBeacon, no preconnect, dns-prefetch, prefetch or prerender links, and no speculation rules.
 
 **Why.** The container permits no connections and the browser enforces it, so anything fetched fails silently and the application breaks in front of whoever opened it, far from the cause.
 

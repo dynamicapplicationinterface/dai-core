@@ -1,0 +1,24 @@
+{
+  "what": "Bo holds the open seat, and signs a _dai_seat row in the session shaped as a creator's: Ada's seat, and seats listing a third value (A, B). A seat row by anyone but the creator counts for nothing and is no head: the roster is Ada's creator's seat row's, the holders are unchanged, and nothing is reported (R14, creator-row-immutable; review 10, A10).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

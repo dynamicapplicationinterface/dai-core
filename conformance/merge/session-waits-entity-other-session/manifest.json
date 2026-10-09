@@ -1,0 +1,16 @@
+{
+  "a": {
+    "view": "27252e330d0fd6af9a9199121cd22d34fc87eaa658239f370c8ddd895f54b11f",
+    "session": {
+      "max_parties": 2,
+      "close": "any"
+    }
+  },
+  "b": {
+    "view": "27252e330d0fd6af9a9199121cd22d34fc87eaa658239f370c8ddd895f54b11f",
+    "session": {
+      "max_parties": 2,
+      "close": "any"
+    }
+  }
+}

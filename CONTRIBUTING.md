@@ -62,7 +62,9 @@ What that means in practice:
 - **The impact map errs wide.** `scripts/impact-map.mjs` works out which specs
   reach which files, from the specs themselves. A source file no spec is known
   to reach makes the commit tier a full run, and `--check` lists every such
-  file so it gets a check or a stated reason.
+  file so it gets a check or a stated reason. It reads the tracked files only,
+  as CI does from the pushed tree: `git add` a new spec before `--write`, and
+  a file left untracked on disk never enters the map.
 - **Build reuse is the inner loop's only.** The push tier and CI always build
   from scratch.
 

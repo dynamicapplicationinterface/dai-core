@@ -1,0 +1,30 @@
+{
+  "what": "As session-waits-other-seat-forward-bo, Ada's row naming as its parent the first id of Cy, who writes nothing. On A, e5 and Nc6 wait on their parent; the merge into A brings Ada's row, e5 is reported SEAT_NOT_HELD, once, Nc6 is admitted, and Ada's row waits (R21). Before, A admitted e5 and Ada's row removed it (D189).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

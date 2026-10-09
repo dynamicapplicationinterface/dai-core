@@ -1,0 +1,29 @@
+{
+  "what": "B's row was changed after it was signed. B's header is still authentic, and incomplete, since the row it lists no longer digests to it: merging B into A keeps the header and takes no row through it, and refuses the changed row, which names that header, as BATCH_DIGEST_MISMATCH in the name of the row's author. B keeps its own.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_DIGEST_MISMATCH"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  }
+}

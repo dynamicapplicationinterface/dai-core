@@ -1,14 +1,14 @@
 # The V1 walk
 
 V1 is a daily single-user app with author updates, shared friend to friend. The
-control is Chris's workout PWA (Vercel + Supabase). **V1 is done when the `.dai`
+control is a daily-use app the author already runs. **V1 is done when the `.dai`
 version, on the same phone with the same person, is indistinguishable from it —
 and every place it isn't is the V1 list.** Chess and everything peer-shaped is
 V1.1.
 
 Nothing is built from now on unless it is a step on this walk or blocks one.
 Findings are still filed. The naming family is closed. D80 stays proven and
-held; its sitting happens with Chris and returns as a ruling on wire shape only.
+held; its sitting returns as a ruling on wire shape only.
 
 This page is the board, not a plan. Each step says what exists today by name,
 what blocks it, whether a test can see it or only a phone can, and the sentence
@@ -187,14 +187,14 @@ sender's log, and V1's default is the other one.
 **The person reads**, sending (`main.ts:3317-3332`):
 
 > **Share Velvet Chess**
-> Sealed with a key that only the link holds, then put in the store, which
+> Locked with a key that only the link holds, then put in the store, which
 > cannot read it.
 > Anyone with the link can open it, with what is in it now.
 
 That third line is the default, with the data toggle on. Turned off, it reads
 *"Anyone with the link gets the app as it arrived, with none of your entries."*
 — which is the sentence V1's walk wants to be the default one. After sending:
-*"Shared. The store holds a sealed copy only the link can open."*
+*"Shared. The store holds a locked copy only the link can open."*
 
 The friend reads, under the Open button (`main.ts:4034`, where the store's own
 name is filled in):

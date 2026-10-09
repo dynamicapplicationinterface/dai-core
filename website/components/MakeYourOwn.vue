@@ -402,9 +402,9 @@ async function build(): Promise<void> {
           with the wifi off, and you can send it to anyone.
         </p>
         <p class="muted">
-          It was signed with a key created in this tab and then thrown away. That
-          proves the file has not been altered since you built it. It does not
-          prove who built it — for that you need a key you keep, which is what the
+          It is not signed. A file built here carries no signature, so nothing in it
+          shows that it is unchanged since you built it, or who built it. A
+          signature needs a key you keep, which is what the
           <a href="/docs/making-files">command line</a> is for.
         </p>
       </div>

@@ -20,9 +20,11 @@ export const REPORT = join(repo, "test-results", "count-gate.json");
  *
  * So the count is a gate. It is crude on purpose: it holds a floor, not an
  * exact figure, so adding tests never needs a ceremony and removing them
- * always does. Raise the floor when the suite grows —
- * `DAI_UPDATE_FLOOR=1 npm test` writes what actually ran — and lowering it is a
- * deliberate edit somebody has to justify in a diff.
+ * always does. The floor is regenerated from the last green CI run by
+ * `node scripts/count-floor.mjs`, a chore run when you choose (pass C's H1).
+ * The gate's drift step (`npm run drift`) fails only on a floor above what the
+ * newest green run passes, one nobody could meet; a floor below it passes.
+ * `DAI_UPDATE_FLOOR=1 npm test` still writes what a local run passed.
  *
  * The floor is what CI passes, because CI is where it gates. A run on Windows
  * passes more: some tests are Windows-only by design (drive letters, UNC paths,
@@ -113,6 +115,8 @@ export default class CountGate implements Reporter {
       }
     }
     for (const [project, minimum] of Object.entries(held)) {
+      // `_from` records which CI run the floor was taken from; not a project.
+      if (project.startsWith("_") || typeof minimum !== "number") continue;
       // A project that did not run this time is not a project that shrank.
       const ran = this.passed.get(project);
       if (ran === undefined || ran >= minimum) continue;

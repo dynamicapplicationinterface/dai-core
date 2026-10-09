@@ -1,0 +1,29 @@
+{
+  "what": "close=any. Bo plays e5, leaves a seq unused, plays Nf6, and Ada answers both (A). Then he signs a close at the seq he left unused (B). A close that counts and a row by its author in that session at a higher seq are equivocation: Bo is an equivocator, reported AUTHOR_EQUIVOCATED by the merge that takes the close, so he holds no seat (the open seat is void), none of his moves is admitted, and his close closes nothing; Ada's moves stand (R18, R17). Before, his first close made Nf6 late after Ada had answered it, and nothing was reported (review 9, A10).",
+  "cites": [
+    "6",
+    "T1-D31"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

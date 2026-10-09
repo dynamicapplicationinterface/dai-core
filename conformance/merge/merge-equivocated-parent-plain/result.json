@@ -1,0 +1,34 @@
+{
+  "what": "A plain document. Ada edits her note on A, and edits it again, naming the first edit; from a second copy of her store she signs a case at the first edit's seq, which B holds. The first edit's id is equivocated after either merge: it is no head and hides nothing. Admission is only a session author table's, so the second edit, which names it, counts like any other row and is a head; her note, which only the equivocated edit names, is a head again.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

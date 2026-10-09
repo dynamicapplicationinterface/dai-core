@@ -38,6 +38,14 @@ import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
 export const MANIFEST_VERSION = 3;
 
 /**
+ * The versions a reader knows (spec §9.1): the host's and the bootloader's
+ * one list. The bootloader once kept its own bound, at 3, and refused every
+ * signed replicated file the compiler wrote at 4 while the host opened it
+ * (backlog D166).
+ */
+export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3, 4];
+
+/**
  * The level whose rules a declared table follows (§3).
  *
  * One value because there is one level. It is written into the manifest rather
@@ -589,9 +597,10 @@ export async function buildContainer(
   if (wasm) archive[wasmEntry] = wasm;
   if (wasm && glue) archive[glueEntry] = glue;
 
-  // The public key lives in the shell, never in the payload it attests to: the
-  // signature covers the shell's own digest, so a key inside the signed set
-  // could not be written before signing.
+  // The public key lives in the shell, never in the payload it attests to. From
+  // manifest 3 the shell is outside the signed set, checked against its own
+  // digest and the live document; a key inside the signed set could not be
+  // written before signing.
   const signing = signingKey ? await readSigningKey(signingKey) : undefined;
   if (signing && !input.allowTestKey && isPublishedTestKey(signing.spki)) {
     throw new Error(
@@ -659,11 +668,13 @@ export async function buildContainer(
   // The capabilities the document depends on, named so a reader without them
   // refuses rather than opening a document whose writes it cannot make. `session`
   // is paired with the `session` block below, and a reader refuses one without
-  // the other by name (T1-D27).
+  // the other by name (T1-D27). `authorship` (batch format version 2): every
+  // row is signed by its author's key, so a host from before signing, which
+  // would write unsigned rows here, refuses the document instead (D108).
   const requires = replication
     ? session
-      ? ["replicated", "session"]
-      : ["replicated"]
+      ? ["authorship", "replicated", "session"]
+      : ["authorship", "replicated"]
     : undefined;
   // Version 3 (spec §9.2): the shell is an unsigned, self-attesting part and
   // leaves the signed set, so a host with its own shell verifies a signature

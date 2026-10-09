@@ -3,7 +3,7 @@ import { defineConfig } from "tsup";
 export default defineConfig([
   // The Vite plugin itself (Node).
   {
-    entry: ["src/index.ts", "src/core.ts", "src/container.ts", "src/link.ts", "src/inline.ts", "src/p256.ts", "src/kit.ts", "src/store.ts", "src/unfurl.ts", "src/store-fs.ts", "src/store-s3.ts", "src/store-presigned.ts", "src/env.ts", "src/test-keys.ts", "src/x509.ts", "src/identity.ts", "src/sender.ts", "src/compile.ts", "src/replicated.ts", "src/replicated-rows.ts", "src/replicated-frame.ts", "src/cli.ts", "src/bin.ts", "src/browser.ts", "src/lint.ts", "src/recipe.ts", "src/format.ts", "src/cbor.ts", "src/cose.ts", "src/mcp.ts", "src/mcp-bin.ts"],
+    entry: ["src/index.ts", "src/core.ts", "src/container.ts", "src/link.ts", "src/inline.ts", "src/p256.ts", "src/kit.ts", "src/store.ts", "src/unfurl.ts", "src/store-fs.ts", "src/store-s3.ts", "src/store-presigned.ts", "src/env.ts", "src/test-keys.ts", "src/x509.ts", "src/publisher-identity.ts", "src/identity.ts", "src/sender.ts", "src/compile.ts", "src/replicated.ts", "src/replicated-rows.ts", "src/replicated-frame.ts", "src/cli.ts", "src/bin.ts", "src/browser.ts", "src/lint.ts", "src/recipe.ts", "src/format.ts", "src/cbor.ts", "src/cose.ts", "src/mcp.ts", "src/mcp-bin.ts"],
     format: ["esm", "cjs"],
     outExtension: ({ format }) => ({ js: format === "cjs" ? ".cjs" : ".js" }),
     dts: true,
@@ -52,13 +52,13 @@ export default defineConfig([
     sourcemap: false,
     target: "es2018",
     platform: "browser",
-    // template.html ships beside the compiled JS; it is read at runtime.
-    // The template must be copied before the assets module embeds it.
-    // The digest is stamped here, between building the runtime and embedding
-    // it. Anything that copies or embeds dai-runtime.js must see the stamped
-    // bytes, or the repository ends up holding two runtimes that differ by
-    // exactly the pin — which is what the staleness checks caught.
-    onSuccess:
-      "node scripts/copy-template.mjs && node scripts/stamp-merge-digest.mjs && node scripts/embed-assets.mjs",
+    //
+    // What follows the build (the template copied, the merge digest stamped,
+    // the assets embedded) is `npm run build:lib`'s, after tsup exits, and not
+    // an onSuccess here. tsup builds these three configs at once and runs a
+    // config's onSuccess when that config is done, so the stamp read
+    // dist/dai-merge.js before the merge config had written it (ENOENT, CI
+    // runs 37400386998 and 37555780957; D199). Anything that copies or embeds
+    // dai-runtime.js must see the stamped bytes, which build:lib's order keeps.
   },
 ]);

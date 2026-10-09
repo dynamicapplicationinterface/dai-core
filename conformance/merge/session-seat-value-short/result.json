@@ -1,0 +1,29 @@
+{
+  "what": "Bo holds the open seat and writes a move whose seat column is 15 bytes (B). A seat value is 16 bytes, and anything else names no seat: the move is not admitted, the merge that takes it reports it SEAT_NOT_HELD, and no reader throws (A09).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

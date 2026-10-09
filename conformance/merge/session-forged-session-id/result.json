@@ -1,0 +1,24 @@
+{
+  "what": "Ada signs a seat row shaped as a creator's, her seat and one open seat, stored under a session id its own author, seq and roster do not hash to, and moves in that session (A, B). Bo asks for the open seat and moves (B). A creator's seat row is the one that hashes to its session, so this session has no creator: nobody holds a seat, nothing in it is admitted, and the merge into A, which takes Bo's rows, reports nothing (R15, R20; review 10, A03). A reader trusting the stored session id seats Ada under it.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

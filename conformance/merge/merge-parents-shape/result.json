@@ -1,0 +1,42 @@
+{
+  "what": "Bo signs his case and an edit of it, then a third version naming the two out of order and one of them twice, which is the shape. Then, each under a header of its own, a note whose parents are a BLOB, one naming a seq past 2^53 - 1, and one naming a seq with a leading zero: none is the shape. Merging B into A takes the three versions, of which the third is the only head, and refuses the other three headers as ROW_MALFORMED in Bo's name. A holds Ada's note and her own later version of it, pending, naming 257 ids, the note's among them: not the shape, so on A it names nothing, and both are heads; merging A into B refuses it as ROW_MALFORMED under no id.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 3,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "ROW_MALFORMED"
+      }
+    ]
+  }
+}

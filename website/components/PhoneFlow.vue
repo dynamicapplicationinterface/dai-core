@@ -52,7 +52,10 @@ const grid = [0, 1, 2, 3, 4, 5].map((index) => ({
       <p class="kicker">On your phone</p>
       <h2>Three taps.</h2>
       <p class="lede">
-        Your file never leaves your phone. It opens right there, and stays yours.
+        Opening a file does not send it anywhere; your phone reads it. Sharing is
+        what sends: a link carries the document, or a sealed copy that a store
+        holds and cannot read, and a document shared by link also sends each
+        later change, signed by your device.
       </p>
     </header>
 

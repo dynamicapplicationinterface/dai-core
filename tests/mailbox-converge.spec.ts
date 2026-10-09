@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { expect, test } from "@playwright/test";
 import { rewriteReplicated } from "../src/replicated.js";
 import { mergeSibling } from "../src/replicated-frame.js";
@@ -11,9 +12,13 @@ import {
   authoredSince,
   decodeBatch,
   encodeBatch,
+  pendingBatches,
+  recordSeal,
+  signBatch,
   stageBatch,
   type Batch,
 } from "../src/replicated-batch.js";
+import { person } from "./signed-people.js";
 import {
   adoptReplica,
   canonicalDump,
@@ -48,7 +53,7 @@ CREATE TABLE moves (
 `;
 
 function open(): Rows & { close(): void } {
-  const db = new DatabaseSync(":memory:");
+  const db = withSessionId(new DatabaseSync(":memory:"));
   db.exec(rewriteReplicated(SCHEMA).sql);
   return {
     all: (sql, params = []) => db.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -60,9 +65,32 @@ function open(): Rows & { close(): void } {
 }
 
 const bytes = (byte: number) => new Uint8Array(16).fill(byte);
-const A = bytes(0xaa);
-const B = bytes(0xbb);
+/*
+ * Two people with keys. At batch format version 2 a row crosses a merge only
+ * signed, and a pull verifies what it merges, so every batch here is signed by
+ * its author's own key, for this document, as the frame publishes it.
+ */
+const DOC = "mailbox-converge";
+const ADA = await person();
+const BO = await person();
+const A = ADA.author;
+const B = BO.author;
 const tables = ["moves"];
+const keysOf = (author: Uint8Array): CryptoKeyPair => {
+  const who = [ADA, BO].find((p) => Buffer.from(p.author).equals(Buffer.from(author)));
+  if (!who) throw new Error("no key for that author in this spec");
+  return who.keys;
+};
+
+/**
+ * Seals what an author has pending, as the frame does before a publish: the
+ * mailbox sends sealed batches only (docs/identity.md, step 3).
+ */
+async function sealAll(db: Rows, author: Uint8Array): Promise<void> {
+  for (const batch of pendingBatches(db, author, tables)) {
+    recordSeal(db, await signBatch(batch, { document: DOC, keys: keysOf(author) }));
+  }
+}
 
 /** Publish a copy's newly-authored rows to the mailbox, sealed. */
 async function publish(
@@ -77,7 +105,10 @@ async function publish(
   if (entries.length === 0) return watermark;
   const lc = Number(db.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
   const batch: Batch = { replica, lc, entries };
-  await mailbox.append(documentId, await sealBatch(encodeBatch(batch), key));
+  // Signed by its author and recorded, as the frame seals before it publishes.
+  const signed = await signBatch(batch, { document: DOC, keys: keysOf(replica) });
+  recordSeal(db, signed);
+  await mailbox.append(documentId, await sealBatch(encodeBatch(signed), key));
   return authoredHead(db, replica, tables);
 }
 
@@ -96,7 +127,7 @@ async function pull(
     const staged = open();
     try {
       stageBatch(staged, batch, tables);
-      mergeSibling(db, staged, 1);
+      await mergeSibling(db, staged, { document: DOC });
     } finally {
       staged.close();
     }
@@ -192,7 +223,9 @@ test("the watermark advances on ack, not on send: a dropped append still arrives
   let watermark = 0;
   const entries = authoredSince(a, A, watermark, tables);
   const lc = Number(a.all("SELECT lc FROM _dai_replica LIMIT 1")[0]?.["lc"] ?? 0);
-  const sealed = await sealBatch(encodeBatch({ replica: A, lc, entries }), key);
+  const signed = await signBatch({ replica: A, lc, entries }, { document: DOC, keys: ADA.keys });
+  recordSeal(a, signed);
+  const sealed = await sealBatch(encodeBatch(signed), key);
 
   let acked = false;
   let attempts = 0;
@@ -244,7 +277,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
   // B pulls, but stages into a sibling built from B's *own* sqlite_schema —
   // the statements the compiler's rewrite left in the database — rather than
   // from the author schema, which is what the frame has to do.
-  const raw = new DatabaseSync(":memory:");
+  const raw = withSessionId(new DatabaseSync(":memory:"));
   raw.exec(rewriteReplicated(SCHEMA).sql);
   const schemaFromDb = raw
     .prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY rowid")
@@ -254,7 +287,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
 
   const { batches } = await mailbox.since(id, "");
   const batch = decodeBatch(await openBatch(batches[0]!, key));
-  const stagedDb = new DatabaseSync(":memory:");
+  const stagedDb = withSessionId(new DatabaseSync(":memory:"));
   for (const sql of schemaFromDb) stagedDb.exec(sql);
   const staged: Rows = {
     all: (sql, params = []) => stagedDb.prepare(sql).all(...(params as never[])) as Record<string, unknown>[],
@@ -263,7 +296,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
     },
   };
   stageBatch(staged, batch, tables);
-  mergeSibling(b, staged, 1);
+  await mergeSibling(b, staged, { document: DOC });
   stagedDb.close();
 
   expect(b.all("SELECT san FROM moves_current WHERE ply = 1")[0]?.["san"]).toBe("d4");
@@ -272,7 +305,7 @@ test("a batch stages into a schema copied from sqlite_schema, as the frame build
   b.close();
 });
 
-test("a watermark is bound to its replica: a count from a shed identity reads as zero", () => {
+test("a watermark is bound to its replica: a count from a shed identity reads as zero", async () => {
   /*
    * The (replica, seq) watermark, in one function.
    *
@@ -293,7 +326,8 @@ test("a watermark is bound to its replica: a count from a shed identity reads as
   // A authors two moves; its watermark is now (A, 2) and there is nothing above.
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 2, san: "e5" });
-  const settled = authoredBatchAbove(a, { replica: hex(A), seq: 2 }, tables);
+  await sealAll(a, A);
+  const settled = authoredBatchAbove(a, A, { replica: hex(A), seq: 2 }, tables);
   expect(settled.batch).toBeNull();
   expect(settled.head).toBe(2);
   expect(settled.replica).toBe(hex(A));
@@ -302,17 +336,18 @@ test("a watermark is bound to its replica: a count from a shed identity reads as
   // old watermark (A, 2) is now a count in a sequence space it no longer writes.
   adoptReplica(a, B);
   createEntity(a, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 3, san: "Nf3" });
+  await sealAll(a, B);
 
   // Read as a bare number, seq 2 would sit above B's first row and strand it.
   // Scoped to its replica, the stale watermark is zero here and the row is sent.
-  const stale = authoredBatchAbove(a, { replica: hex(A), seq: 2 }, tables);
+  const stale = authoredBatchAbove(a, B, { replica: hex(A), seq: 2 }, tables);
   expect(stale.replica).toBe(hex(B));
   expect(stale.batch).not.toBeNull();
   expect(decodeBatch(stale.batch!).entries.map((e) => e.row.columns["san"])).toEqual(["Nf3"]);
 
   // And a watermark correctly bound to B still suppresses what B has already
   // sent — the scoping floors a foreign seq, it does not discard a real one.
-  const bound = authoredBatchAbove(a, { replica: hex(B), seq: stale.head }, tables);
+  const bound = authoredBatchAbove(a, B, { replica: hex(B), seq: stale.head }, tables);
   expect(bound.batch).toBeNull();
   expect(bound.head).toBe(stale.head);
 

@@ -74,6 +74,115 @@ async function wasmScratch(): Promise<ScratchEngine> {
 }
 
 /**
+ * How many of `author`'s rows in these database bytes would leave unsigned:
+ * pending (`_r_batch` NULL), or naming a batch the bytes hold no header for.
+ *
+ * The host opens the outgoing bytes itself, in its own engine, rather than
+ * taking the frame's word for them (cold review of identity step 3, #2): the
+ * frame belongs to the document. 0 means every row of this author's is sealed.
+ */
+export async function unsealedOwnRows(bytes: Uint8Array, author: Uint8Array): Promise<number> {
+  if (bytes.byteLength === 0) return 0;
+  const scratch = await wasmScratch();
+  try {
+    const rows = scratch.open(bytes);
+    const hasBatches = rows.all("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length > 0;
+    let unsealed = 0;
+    for (const table of rows.all("SELECT name FROM sqlite_schema WHERE type = 'table'").map((r) => String(r["name"]))) {
+      const columns = rows.all(`SELECT name FROM pragma_table_info('${table.replace(/'/g, "''")}')`).map((c) => String(c["name"]));
+      if (!columns.includes("_r_replica") || !columns.includes("_r_batch")) continue;
+      const known = hasBatches ? " OR _r_batch NOT IN (SELECT id FROM _dai_batch)" : "";
+      unsealed += Number(
+        rows.all(`SELECT count(*) AS n FROM "${table}" WHERE _r_replica = ? AND (_r_batch IS NULL${known})`, [author])[0]?.["n"] ?? 0,
+      );
+    }
+    return unsealed;
+  } finally {
+    scratch.close();
+  }
+}
+
+/** One header of the person's in bytes about to leave: its id, lowercase hex, and every seq it could be signed over. */
+export interface LeavingHeader {
+  id: string;
+  seqs: number[];
+}
+
+/**
+ * What `author`'s headers in these database bytes cover, read in the host's
+ * own engine (docs/format.md, `floor`). `headers` is each header of the
+ * author's, with the seqs it lists as stored and the seqs of the author's rows
+ * naming it, since the signed list is the stored one or the rows naming the id
+ * (`verify-lists-tried`): what the egress rule reads. `top` is the highest of
+ * those seqs, and of any row of the author's naming a header the bytes hold:
+ * what the left floor rises to once the bytes have landed or are published.
+ * Higher than the truth only ever refuses; a pending row names no header and
+ * does not count. Empty and 0 when there is none.
+ */
+export async function leavingIn(bytes: Uint8Array, author: Uint8Array): Promise<{ top: number; headers: LeavingHeader[] }> {
+  if (bytes.byteLength === 0) return { top: 0, headers: [] };
+  const scratch = await wasmScratch();
+  try {
+    const rows = scratch.open(bytes);
+    if (rows.all("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length === 0) {
+      return { top: 0, headers: [] };
+    }
+    const seqsOf = new Map<string, Set<number>>();
+    const add = (id: string, seq: unknown): void => {
+      if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq <= 0) return;
+      seqsOf.get(id)?.add(seq);
+    };
+    let top = 0;
+    for (const header of rows.all("SELECT lower(hex(id)) AS id, covers FROM _dai_batch WHERE author = ?", [author])) {
+      const id = String(header["id"]);
+      seqsOf.set(id, seqsOf.get(id) ?? new Set());
+      let listed: unknown = null;
+      try {
+        listed = JSON.parse(String(header["covers"] ?? "[]"));
+      } catch {
+        listed = null;
+      }
+      if (!Array.isArray(listed)) continue;
+      for (const pair of listed) add(id, Array.isArray(pair) ? pair[1] : null);
+    }
+    for (const table of rows.all("SELECT name FROM sqlite_schema WHERE type = 'table'").map((r) => String(r["name"]))) {
+      const columns = rows.all(`SELECT name FROM pragma_table_info('${table.replace(/'/g, "''")}')`).map((c) => String(c["name"]));
+      if (!columns.includes("_r_replica") || !columns.includes("_r_batch") || !columns.includes("_r_seq")) continue;
+      for (const row of rows.all(
+        `SELECT lower(hex(_r_batch)) AS id, _r_seq AS s FROM "${table.replace(/"/g, '""')}" WHERE _r_replica = ? AND _r_batch IN (SELECT id FROM _dai_batch)`,
+        [author],
+      )) {
+        const seq = Number(row["s"]);
+        if (Number.isSafeInteger(seq) && seq > top) top = seq;
+        add(String(row["id"]), seq);
+      }
+    }
+    const headers = [...seqsOf].map(([id, seqs]) => ({ id, seqs: [...seqs] }));
+    for (const { seqs } of headers) for (const seq of seqs) if (seq > top) top = seq;
+    return { top, headers };
+  } finally {
+    scratch.close();
+  }
+}
+
+/**
+ * The batch format versions of the headers these database bytes hold, read in
+ * the host's own engine: what decides whether this host may write the copy
+ * (D108). Empty when the bytes hold no header, or no header table.
+ */
+export async function batchVersionsIn(bytes: Uint8Array): Promise<number[]> {
+  if (bytes.byteLength === 0) return [];
+  const scratch = await wasmScratch();
+  try {
+    const rows = scratch.open(bytes);
+    if (rows.all("SELECT 1 AS x FROM sqlite_schema WHERE type = 'table' AND name = '_dai_batch'").length === 0) return [];
+    return rows.all("SELECT DISTINCT version FROM _dai_batch").map((r) => Number(r["version"]));
+  } finally {
+    scratch.close();
+  }
+}
+
+/**
  * The invite for `sessionHex`: this document with its database filtered to
  * that session's rows, resealed. Not yet re-verified — the caller does that
  * before it hands the document on.

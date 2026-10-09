@@ -1,0 +1,34 @@
+{
+  "what": "Ada starts a session on A and moves for her seat; from a second copy of her store she signs a move at the seq of her creator's seat row, which B holds. The creator's seat row is at an equivocated id, so it seats nobody: the session has no creator on either copy after either merge, and her move is not admitted (D158, D160).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

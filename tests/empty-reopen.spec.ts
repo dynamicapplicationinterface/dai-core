@@ -82,6 +82,36 @@ test.describe("a reopen with the database gone", () => {
       return removed;
     });
 
+  /** Whether the library's row for this copy says something worth keeping was written: "true", "false", "no row" or "unreadable". */
+  const libraryWrote = (page: Page): Promise<string> =>
+    page.evaluate(
+      () =>
+        new Promise<string>((resolve2) => {
+          // Every path settles, including the one where the store is not what
+          // this test thinks it is: an unsettled promise here reads as a
+          // 90-second timeout with nothing said about the cause, which is how
+          // the first version of this read failed.
+          const open = indexedDB.open("dai_runner_storage");
+          open.onsuccess = () => {
+            try {
+              const all = open.result
+                .transaction("cartridges", "readonly")
+                .objectStore("cartridges")
+                .getAll();
+              all.onsuccess = () => {
+                const rows = all.result as { wrote?: boolean }[];
+                resolve2(rows.length === 0 ? "no row" : String(rows.some((row) => row.wrote === true)));
+                open.result.close();
+              };
+              all.onerror = () => resolve2("unreadable");
+            } catch {
+              resolve2("unreadable");
+            }
+          };
+          open.onerror = () => resolve2("unreadable");
+        }),
+    );
+
   async function newGame(inside: FrameLocator): Promise<void> {
     await inside.locator("[data-new-game]:visible").first().click();
     await inside.locator("#setup-you").fill("Ada");
@@ -93,11 +123,6 @@ test.describe("a reopen with the database gone", () => {
   test("says what happened, in words a person can act on", async ({ browser }) => {
     const device = await browser.newContext();
     const page = await device.newPage();
-    const saves: string[] = [];
-    page.on("console", (message) => {
-      if (/^dai: save \d+ written/.test(message.text())) saves.push(message.text());
-    });
-
     await page.goto(RUNNER_URL);
     await page.setInputFiles("#file", container);
     await page.locator("#card-open").click();
@@ -105,11 +130,15 @@ test.describe("a reopen with the database gone", () => {
     await expect(inside.locator("#app")).toBeVisible({ timeout: 60_000 });
 
     // Something worth losing, and written: the sentence is only for a device
-    // that had saved something, so the test must be such a device.
+    // that had saved something, so the test must be such a device. What the
+    // sentence turns on is the library's record of it, which the host sets
+    // after the save is written, and not on the first save: that one can be
+    // the practice board's setup, and a sweep straight after it raced the
+    // record (tests/README.md, "The rule for waiting").
     await newGame(inside);
     await expect
-      .poll(() => saves.length, { timeout: 30_000, message: "this device wrote a save before the sweep" })
-      .toBeGreaterThan(0);
+      .poll(() => libraryWrote(page), { timeout: 30_000, message: "the library records a save worth keeping before the sweep" })
+      .toBe("true");
 
     // The sweep: the database goes, the library row stays.
     expect(await sweepDatabases(page), "there was a stored database to sweep").toBeGreaterThan(0);
@@ -118,7 +147,7 @@ test.describe("a reopen with the database gone", () => {
     await page.reload();
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
 
-    const said = page.locator("#report");
+    const said = page.locator("#doc-note");
     await expect(said, "the person is told, rather than left with an app that looks right").toContainText(
       "opened empty",
       { timeout: 30_000 },
@@ -165,39 +194,12 @@ test.describe("a reopen with the database gone", () => {
      * set by the first save the runtime does not mark as setup.
      */
     await sweepDatabases(page);
-    const wrote = await page.evaluate(
-      () =>
-        new Promise<string>((resolve2) => {
-          // Every path settles, including the one where the store is not what
-          // this test thinks it is: an unsettled promise here reads as a
-          // 90-second timeout with nothing said about the cause, which is how
-          // the first version of this read failed.
-          const open = indexedDB.open("dai_runner_storage");
-          open.onsuccess = () => {
-            try {
-              const all = open.result
-                .transaction("cartridges", "readonly")
-                .objectStore("cartridges")
-                .getAll();
-              all.onsuccess = () => {
-                const rows = all.result as { wrote?: boolean }[];
-                resolve2(rows.length === 0 ? "no row" : String(rows.some((row) => row.wrote === true)));
-                open.result.close();
-              };
-              all.onerror = () => resolve2("unreadable");
-            } catch {
-              resolve2("unreadable");
-            }
-          };
-          open.onerror = () => resolve2("unreadable");
-        }),
-    );
-    expect(wrote, "the library has this copy, and nothing worth keeping written into it").toBe("false");
+    expect(await libraryWrote(page), "the library has this copy, and nothing worth keeping written into it").toBe("false");
 
     await page.reload();
     await expect(app(page).locator("#app")).toBeVisible({ timeout: 60_000 });
     await expect(
-      page.locator("#report"),
+      page.locator("#doc-note"),
       "nothing was lost, so nothing is claimed to be",
     ).not.toContainText("opened empty");
     await device.close();

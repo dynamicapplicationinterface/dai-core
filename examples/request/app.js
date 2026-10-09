@@ -2,10 +2,13 @@
 // two: the creator writes the request and its questions and sends a link; the
 // person who opens it takes the open seat and answers. The schema says which
 // side writes which table (author=creator, author=joiner), and the runtime
-// holds both copies to it; this file only decides what to show each side.
+// holds both copies to it; this file only decides what to show each side. The
+// seats are the kit's: it starts a request's session, asks for the open seat,
+// seats whoever asked on the writer's copy, and says who this copy is.
 
 const $ = (id) => document.getElementById(id);
-let db; // opened by the start-up at the end of this file
+let db; // the kit's, taken by the start-up at the end of this file
+let kit;
 const shared = window.dai.replicated;
 const rows = (sql, bind) => (bind === undefined ? db.selectObjects(sql) : db.selectObjects(sql, bind));
 const one = (sql, bind) => rows(sql, bind)[0] ?? null;
@@ -36,8 +39,8 @@ function write(fn) {
 
 // ---- reading ------------------------------------------------------------
 
-/** This copy's replica id, or null before this copy has written anything. */
-const myReplica = () => one("SELECT lower(hex(id)) AS id FROM _dai_replica")?.id ?? null;
+/** Who this copy is: the host's author id, never a row. */
+const myReplica = () => kit.author();
 
 function requests() {
   return rows(
@@ -55,42 +58,38 @@ function activeRequest() {
 /** Everything about the seats of a session, as this copy sees it. */
 function seats(session) {
   const mine = myReplica();
-  const creator = one(
-    "SELECT lower(hex(_r_replica)) AS r FROM _dai_seat_current WHERE lower(hex(_r_session)) = ? LIMIT 1",
-    [session],
-  )?.r;
-  const member = !!mine &&
-    !!one("SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) = ?", [session, mine]);
+  // The session id commits to its creator; the runtime checks it from the rows.
+  const all = kit.seats(session);
+  const member = !!kit.mySeat(session);
   const bound = !!mine &&
     !!one(
       "SELECT 1 AS x FROM _dai_binding_current WHERE lower(hex(_r_session)) = ? AND lower(hex(_r_replica)) = ?",
       [session, mine],
     );
-  const contested = rows(
-    `SELECT 1 AS x FROM _dai_binding_current b
-      WHERE lower(hex(b._r_session)) = ?
-      GROUP BY b.seat HAVING count(DISTINCT b._r_replica) > 1`,
-    [session],
-  ).length > 0;
+  // An open seat is held by whoever the writer's copy seats in it. Asked for by
+  // two before that, or confirmed twice, it is contested (_dai_contested).
+  const unheld = "NOT EXISTS (SELECT 1 FROM _dai_holder h WHERE h.session = s.session AND h.seat = s.seat)" +
+    " AND NOT EXISTS (SELECT 1 FROM _dai_voided v WHERE v.session = s.session AND v.seat = s.seat)";
+  const contested = !!one("SELECT 1 AS x FROM _dai_contested WHERE lower(hex(session)) = ?", [session]);
   const openSeat = one(
-    `SELECT lower(hex(s.seat)) AS seat FROM _dai_seat_current s
-      WHERE lower(hex(s._r_session)) = ?
-        AND s.seat NOT IN (SELECT b.seat FROM _dai_binding_current b WHERE b._r_session = s._r_session)
+    `SELECT lower(hex(s.seat)) AS seat FROM _dai_open_seat s
+      WHERE lower(hex(s.session)) = ? AND ${unheld}
+        AND s.seat NOT IN (SELECT b.seat FROM _dai_binding_current b WHERE b._r_session = s.session)
       LIMIT 1`,
     [session],
   )?.seat ?? null;
-  const answererJoined = !!one(
-    `SELECT 1 AS x FROM _dai_member WHERE lower(hex(session)) = ? AND lower(hex(replica)) <> ? LIMIT 1`,
-    [session, creator ?? ""],
-  );
-  const closed = !!one("SELECT 1 AS x FROM _dai_close_current WHERE lower(hex(_r_session)) = ? LIMIT 1", [session]);
-  const isWriter = !!mine && mine === creator;
+  // Asked for the open seat, and the writer's copy has not seated anyone yet.
+  const pending = !!kit.pendingSeat(session);
+  const answererJoined = all.some((s) => !s.creator && s.holder);
+  const closed = !!one("SELECT 1 AS x FROM _dai_closed WHERE lower(hex(session)) = ? LIMIT 1", [session]);
+  const isWriter = kit.amCreator(session);
   return {
     isWriter,
-    isAnswerer: member && !isWriter,
-    answererJoined, closed, contested, openSeat,
-    seatLost: bound && !member,
+    isAnswerer: (member || pending) && !isWriter,
+    answererJoined, closed, contested, openSeat, pending,
+    seatLost: bound && !member && !pending,
     notIn: !isWriter && !bound,
+    replaced: replaced.has(session) && !answererJoined,
   };
 }
 
@@ -103,6 +102,18 @@ function questionsOf(request) {
 }
 
 /**
+ * A table's admitted rows, and this copy's own rows still waiting for the
+ * writer's copy to seat it (`_pending`): every copy admits them once it is
+ * seated, and until then only this one shows them. Read as a FROM clause.
+ */
+function shown(table) {
+  const mine = myReplica();
+  if (!mine || !/^[0-9a-f]{32}$/.test(mine)) return `${table}_current`;
+  return `(SELECT * FROM ${table}_current UNION ALL
+    SELECT *, 0 AS _r_conflicted FROM ${table}_pending WHERE lower(hex(_r_replica)) = '${mine}')`;
+}
+
+/**
  * The answers to one question. Usually one row. More than one means the answer
  * was started on two devices before they met, and conflicted means one answer
  * was edited on both: either way the answerer settles it, nothing is dropped.
@@ -110,7 +121,7 @@ function questionsOf(request) {
 function answersTo(question) {
   const current = rows(
     `SELECT lower(hex(_r_entity)) AS id, body, _r_conflicted AS conflicted
-       FROM answers_current WHERE question_id = ? ORDER BY _r_lc`,
+       FROM ${shown("answers")} WHERE question_id = ? ORDER BY _r_lc`,
     [question.id],
   );
   const versions = current.flatMap((a) =>
@@ -124,9 +135,13 @@ function answersTo(question) {
   return { current, versions, unsettled: versions.length > 1 };
 }
 
-const submitted = (request) => !!one("SELECT 1 AS x FROM submissions_current WHERE request_id = ? LIMIT 1", [request.id]);
+const submitted = (request) => !!one(`SELECT 1 AS x FROM ${shown("submissions")} WHERE request_id = ? LIMIT 1`, [request.id]);
 
 // ---- joining ------------------------------------------------------------
+
+// On the writer's copy the kit seats whoever asked, as it loads and as rows
+// arrive: an open seat asked for by exactly one other copy is confirmed to
+// them, and one asked for by two is left contested for the writer's repair.
 
 /**
  * Take the open seat of a request this copy was sent a link to. Called at
@@ -141,7 +156,7 @@ function joinIfInvited() {
   const active = activeRequest();
   const target = active && joinable(active) ? active : [...requests()].reverse().find(joinable);
   if (!target) return;
-  if (write(() => shared.session.join(target.session, seats(target.session).openSeat))) {
+  if (write(() => kit.claimSeat(target.session))) {
     db.exec({ sql: "UPDATE settings SET active_request = ? WHERE id = 1", bind: [target.id] });
   }
 }
@@ -171,10 +186,12 @@ function drawList() {
 
 function drawSeat(s) {
   let text = "";
-  $("reseat").hidden = true;
-  if (s.contested && s.isWriter) {
-    text = "Two people opened this link, so neither can answer. Send a fresh link to the one person you meant.";
-    $("reseat").hidden = false;
+  $("fresh-invite").hidden = true;
+  if (s.replaced && s.isWriter) {
+    text = "Two people opened your link, so this request starts over. Send its new link to the one person you meant.";
+    $("fresh-invite").hidden = false;
+  } else if (s.contested && !s.isWriter) {
+    text = "Two people opened this link, so neither could answer. Nothing you did lost your place: ask the sender for a fresh link.";
   } else if (s.seatLost) {
     text = "Your place in this request was taken on another device or replaced. Ask the sender for a fresh link.";
   } else if (s.notIn) {
@@ -212,6 +229,7 @@ function drawQuestion(question, s, request) {
     for (const version of answers.versions) {
       const b = document.createElement("button");
       b.type = "button";
+      b.dataset.daiWrite = "";
       b.className = "quiet";
       b.textContent = version.body;
       b.disabled = !canAnswer;
@@ -219,8 +237,8 @@ function drawQuestion(question, s, request) {
         write(() => {
           // A change names every current version as its parent, so it settles
           // an edit made on both; any second answer row is removed.
-          shared.change("answers", version.id, { question_id: question.id, body: version.body });
-          for (const other of answers.current) if (other.id !== version.id) shared.remove("answers", other.id);
+          shared.change("answers", version.id, { question_id: question.id, body: version.body }, request.session);
+          for (const other of answers.current) if (other.id !== version.id) shared.remove("answers", other.id, request.session);
         });
         draw();
       });
@@ -236,6 +254,7 @@ function drawQuestion(question, s, request) {
     const box = document.createElement("textarea");
     box.id = `answer-${question.id}`;
     box.rows = 3;
+    box.dataset.daiWrite = "";
     box.maxLength = 2000;
     box.value = drafts.get(question.id) ?? answer?.body ?? "";
     box.setAttribute("aria-label", `Answer to: ${question.prompt}`);
@@ -243,6 +262,7 @@ function drawQuestion(question, s, request) {
     row.className = "choices saving";
     const save = document.createElement("button");
     save.type = "button";
+    save.dataset.daiWrite = "";
     const state = document.createElement("span");
     state.className = "saved";
     // Redrawn on every keystroke without rebuilding the box, so typing is never
@@ -285,11 +305,12 @@ function drawQuestion(question, s, request) {
   if (s.isWriter && !s.closed && !s.answererJoined) {
     const remove = document.createElement("button");
     remove.type = "button";
+    remove.dataset.daiWrite = "";
     remove.className = "link";
     remove.textContent = "Remove";
     remove.setAttribute("aria-label", `Remove question: ${question.prompt}`);
     remove.addEventListener("click", () => {
-      write(() => shared.remove("questions", question.id));
+      write(() => shared.remove("questions", question.id, request.session));
       draw();
     });
     item.append(remove);
@@ -318,7 +339,7 @@ function saveDraft(question, answer, request) {
   const body = drafts.get(question.id).trim();
   const saved = write(() =>
     answer
-      ? shared.change("answers", answer.id, { question_id: question.id, body })
+      ? shared.change("answers", answer.id, { question_id: question.id, body }, request.session)
       : shared.insert("answers", { question_id: question.id, body }, request.session),
   );
   if (saved) drafts.delete(question.id);
@@ -368,7 +389,7 @@ let composing = false;
 /** The newest sending-back of a request, as its row's entity, or null if nothing was sent. */
 function latestSubmission(request) {
   return one(
-    "SELECT lower(hex(_r_entity)) AS id FROM submissions_current WHERE request_id = ? ORDER BY _r_lc DESC LIMIT 1",
+    `SELECT lower(hex(_r_entity)) AS id FROM ${shown("submissions")} WHERE request_id = ? ORDER BY _r_lc DESC LIMIT 1`,
     [request.id],
   )?.id ?? null;
 }
@@ -487,7 +508,7 @@ $("new-request").addEventListener("submit", (event) => {
     db.exec("BEGIN");
     try {
       // A new request is a new session: this copy is seated, one seat is left open.
-      const { session } = shared.session.create();
+      const session = kit.newSession();
       const id = shared.insert(
         "requests",
         { from_name: from, title, note: $("new-note").value.trim(), due_on: $("new-due").value || null },
@@ -536,11 +557,37 @@ $("invite").addEventListener("click", () => {
   if (request) window.dai.requestShare(request.session);
 });
 
-$("reseat").addEventListener("click", () => {
+$("fresh-invite").addEventListener("click", () => {
   const request = activeRequest();
-  if (request && write(() => shared.session.reseat(request.session))) window.dai.requestShare(request.session);
-  draw();
+  if (request) window.dai.requestShare(request.session);
 });
+
+// A request two people opened moves, with its questions, to the session the
+// kit starts in its place (maybe as it loads: listened for before import).
+const replaced = new Set();
+function onNewSession(event) {
+  const { session, replaces } = event.detail ?? {};
+  const k = window.daiKit;
+  if (!replaces || !k) return;
+  const old = k.db.selectObjects(
+    "SELECT lower(hex(_r_entity)) AS id, from_name, title, note, due_on FROM requests_current WHERE lower(hex(_r_session)) = ? LIMIT 1",
+    [replaces],
+  )[0];
+  if (!old) return;
+  const asked = k.db.selectObjects(
+    "SELECT position, prompt FROM questions_current WHERE request_id = ? AND lower(hex(_r_session)) = ? ORDER BY position, _r_lc",
+    [old.id, replaces],
+  );
+  const id = write(() => {
+    const made = shared.insert("requests", { from_name: old.from_name, title: old.title, note: old.note, due_on: old.due_on }, session);
+    for (const q of asked) shared.insert("questions", { request_id: made, position: q.position, prompt: q.prompt }, session);
+    return made;
+  });
+  if (!id) return;
+  k.db.exec({ sql: "UPDATE settings SET active_request = ? WHERE id = 1", bind: [id] });
+  replaced.add(session);
+  if (kit) draw();
+}
 
 // Saves every unsaved answer first, and sends only if all of them saved: a
 // send that went ahead past a failed save would be the silent loss this button
@@ -591,7 +638,12 @@ for (const type of ["pointerup", "pointercancel"]) {
 }
 const whenPointerLifts = (run) => (pointerDown ? afterPointer.push(run) : run());
 
-window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
+// The kit's event, not dai:merged: the kit fires it once it has seated whoever
+// asked, so this draw shows them seated, whenever this listener was added.
+// Before the start-up has drawn, there is nothing to redraw; the first draw
+// reads what arrived.
+const onMerged = (event) => whenPointerLifts(() => {
+  if (!kit) return;
   if (event.detail?.via === "carrier") joinIfInvited();
   const typing = document.activeElement?.id?.startsWith("answer-") ? document.activeElement : null;
   const at = typing ? { id: typing.id, start: typing.selectionStart } : null;
@@ -600,14 +652,23 @@ window.addEventListener("dai:merged", (event) => whenPointerLifts(() => {
     $(at.id).focus();
     $(at.id).setSelectionRange(at.start, at.start);
   }
-}));
+});
 
 // Start-up (NO-INPUT-LOST-WHILE-OPENING): nothing can be pressed until this has
 // finished, and if it fails the person is told, not left at "Opening…".
 try {
-  db = await window.dai.openDatabase();
+  window.addEventListener("dai:kit-merged", onMerged);
+  window.addEventListener("dai:kit-new-session", onNewSession);
+  // The kit opens the database: one handle for the page, since a second
+  // openDatabase() would be a second copy of it.
+  await import("./dai-kit.js");
+  kit = window.daiKit;
+  db = kit.db;
   joinIfInvited();
   draw();
+  // The kit seats whoever asked once this mount can write, after this first
+  // draw; draw again then, so an answerer it seated shows seated.
+  kit.whenWritable(draw);
   $("opening").hidden = true;
   $("app").hidden = false;
   $("app").inert = false;

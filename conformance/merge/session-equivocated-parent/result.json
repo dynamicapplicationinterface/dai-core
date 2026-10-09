@@ -1,0 +1,38 @@
+{
+  "what": "Ada's move for her own seat names, as its earlier version, Bo's move for his seat at an id Bo signed twice. A row naming an equivocated id as a parent is neither admitted nor reported, on either copy, whichever version of the parent it holds: it neither shows nor hides (review X1). A reader skipping the equivocated parent admits Ada's move; one reading the parent it holds reports SEAT_NOT_HELD. The equivocator is the joiner, so the session stands (R10), and he holds no seat: the open seat is void (R17).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [
+      "6fc66a90486171ca69b512be185d66a7:2"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [
+      "6fc66a90486171ca69b512be185d66a7:2"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

@@ -100,15 +100,28 @@ promise:
   the clear. Deleting a document does not delete its `.bak`; if the folder
   matters, delete both.
 - **The opener keeps the documents you opened.** In the browser's own
-  storage for `opendai.app`, on that device, in the clear. Delete them from
-  the library, or clear the site's data, and they are gone.
+  storage for `opendai.app`, on that device, in the clear. This is what the
+  opener means by "saved in this browser". Removing a document from the
+  library removes the document. It does not remove the records the opener
+  keeps about what this device has already sent out for it (the highest
+  position it has signed, and which headers have left); those stay until
+  the site's data is cleared.
+- **Clearing the site's data removes the signing key too.** The opener keeps
+  the device's key in the same storage. Clear it, or lose it to the browser,
+  and the documents are gone and the next one you open gets a new key: the
+  device is a new author. Rows it signed before are still out there under
+  the old key, and this device cannot sign as that author again. No recovery
+  is built.
 
 ## Do Not Host a Document on a Page You Do Not Control
 
 A `.dai.html` file served from a web server runs there as a page, and a page
 can be framed. A hostile page that frames a document it has been given a
 URL for can pretend to be its host — and the container, asked to save,
-hands its document to whoever is listening as the host. The container says
+hands its document to whoever is listening as the host. The host is also
+what chooses the author id and the key a document writes under, and what
+answers the request to sign, so a hostile page standing in for the host
+decides who the document writes as. The container says
 what it can about this in its own source; the practical rule is simpler.
 Send documents as files and as links to an opener you trust. Do not put
 them on a web server you do not run, and do not open one from a page whose
@@ -121,11 +134,20 @@ host. A native host can go further and block them at the network layer; the
 desktop app does not yet, which is why the compiler's refusal is not
 optional.
 
-## Why Organizational Identity Must Never Flow Inward
+## What the Host Hands a Document About Identity
 
-In enterprise environments, hosts often manage user credentials, tenant IDs, employee badges, and organization licenses.
+**One thing: the device's author id.** The host makes a signing key on the
+device the first time a document needs one, and keeps it. The author id is a
+fingerprint of that key. The host hands every document it opens that id,
+which is written into the document's own tables, and every batch of rows
+the device signs carries the author id, the public key and the signature.
+So it travels with every copy of the document: a saved file, a link, an
+invite, a background update to another copy. It names a key, not a person.
 
-**Architectural Rule:** A host must never transmit organizational identity inward to a cartridge over the host bridge.
+**Nothing else.** In enterprise environments, hosts often manage user
+credentials, tenant IDs, employee badges, and organization licenses.
+
+**Architectural Rule:** A host does not hand organizational identity inward to a cartridge over the host bridge.
 
 ### Rationale:
 1. **Air-Gap Preservation:** While a cartridge cannot make outbound network requests, it has full write access to its own embedded SQLite database.

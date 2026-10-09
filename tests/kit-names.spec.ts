@@ -14,3 +14,14 @@ import { KIT_SOURCE } from "../src/kit.js";
 test("the kit posts the frame's public 'used' name, as the owner spells it", () => {
   expect(KIT_SOURCE).toContain(`postMessage({ type: '${FRAME_PUBLIC.USED}' }, '*')`);
 });
+
+test("the kit fires the frame's public kit-merged name after hearing the merged one, as the owner spells them", () => {
+  // Spelled as literals for the reason 'dai:used' is (D69); held to the owner here.
+  expect(KIT_SOURCE).toContain(`window.addEventListener('${FRAME_PUBLIC.MERGED}', function (event) {`);
+  expect(KIT_SOURCE).toContain(`window.dispatchEvent(new CustomEvent('${FRAME_PUBLIC.KIT_MERGED}', { detail: event.detail }));`);
+});
+
+test("the kit listens for the frame's public new-player name, as the owner spells it", () => {
+  // Spelled as a literal for the reason 'dai:used' is (D69); held to the owner here.
+  expect(KIT_SOURCE).toContain(`window.addEventListener('${FRAME_PUBLIC.NEW_PLAYER}',`);
+});

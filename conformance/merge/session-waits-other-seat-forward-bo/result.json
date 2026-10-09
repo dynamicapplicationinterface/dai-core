@@ -1,0 +1,30 @@
+{
+  "what": "A is session-other-seat's B: Bo's e5 and Nc6 name Ada's e4, which A does not hold. B holds that and, at e4's id, a row of Ada's written by a client that skips the writers: her move's entity for her seat, naming as its parent Bo's next id, which does not exist. On A, e5 and Nc6 wait on their parent. The merge into A brings Ada's row: e5 acts for another seat's row and is reported SEAT_NOT_HELD, once, Nc6 is admitted, and Ada's row waits on the id it names (R21). Before, A admitted e5 and Ada's row removed it (D189).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

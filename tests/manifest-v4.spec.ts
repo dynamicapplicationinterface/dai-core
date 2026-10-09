@@ -114,9 +114,12 @@ test.describe("the capability list", () => {
      * it opens and behaves; adding one earlier would have been the silent
      * degradation this gate exists to refuse. `session` joined with Step 6: the
      * frame authors seats and bindings, the views enforce the roster and the
-     * close, and chess plays a game through a real invite.
+     * close, and chess plays a game through a real invite. `authorship` joined
+     * with batch format version 2 (identity step 6, D108): every row this
+     * reader writes is signed, and it merges only signed rows, so a reader from
+     * before signing refuses the document instead of writing unsigned rows.
      */
-    expect(IMPLEMENTED_CAPABILITIES).toEqual(["replicated", "session"]);
+    expect(IMPLEMENTED_CAPABILITIES).toEqual(["authorship", "replicated", "session"]);
     expect(CAPABILITY_REGISTRY).toEqual([
       "session",
       "shared-dataset",
@@ -124,6 +127,7 @@ test.describe("the capability list", () => {
       "passphrase",
       "recipient-bound",
       "relay",
+      "authorship",
     ]);
   });
 

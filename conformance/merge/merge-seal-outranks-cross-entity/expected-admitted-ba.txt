@@ -1,0 +1,9 @@
+# cases
+2bad0fd610d99eae443e932a26142bca:1	0
+6fc66a90486171ca69b512be185d66a7:1	0
+6fc66a90486171ca69b512be185d66a7:2	0
+# notes
+# holders
+# voided
+# equivocated
+# closed

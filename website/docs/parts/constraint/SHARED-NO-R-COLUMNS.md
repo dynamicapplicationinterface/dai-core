@@ -5,7 +5,7 @@
 
 Name no column of your own with the prefix \_r\_.
 
-**Why.** That prefix is replication's; the rewrite adds \_r\_replica, \_r\_seq, \_r\_lc, \_r\_entity, \_r\_parents, \_r\_deleted, \_r\_superseded, \_r\_sig and, in a session document, \_r\_session.
+**Why.** That prefix is replication's; the rewrite adds \_r\_replica, \_r\_seq, \_r\_lc, \_r\_entity, \_r\_parents, \_r\_deleted, \_r\_superseded, \_r\_batch and, in a session document, \_r\_session.
 
 <small>Applies to passable, session · refused at build · [SHARED-NO-R-COLUMNS in Constraints](/docs/constraints#SHARED-NO-R-COLUMNS)</small>
 :::

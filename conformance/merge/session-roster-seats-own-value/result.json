@@ -1,0 +1,24 @@
+{
+  "what": "Ada signs a creator's seat row whose seats lists her own seat, and nothing else (one value, within max_parties=2, so only its being hers is wrong): the row hashes to its session, so it is that session's creator's seat row. Bo asks for the open seat and moves (B); Ada confirms him and moves (A). A creator's seat row whose roster is not valid makes its session void: nobody holds a seat, nothing in it is admitted, nothing closes it, and nothing is reported, since nobody signed twice; no reader throws (R14, R20; review 10, A01).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

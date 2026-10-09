@@ -1,0 +1,29 @@
+{
+  "what": "Bo holds the open seat. Ada writes a later version of her creator's seat row naming a fresh value, and Bo writes a move for that value (B). The creator's seat row is immutable, so the value is no seat: Bo's move for it is not admitted, and the merge that takes it reports it SEAT_NOT_HELD (R14, A03). Before, it was reported nowhere (review 9, A03).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

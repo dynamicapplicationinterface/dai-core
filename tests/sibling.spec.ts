@@ -136,7 +136,7 @@ test.describe("the host works out for itself what is replicated", () => {
     // its capabilities are replicated *and* session. The replicated tables above
     // are still only the three author tables — the roster tables merge but are
     // not the app's, and are not listed here.
-    expect(manifest.requires).toEqual(["replicated", "session"]);
+    expect(manifest.requires).toEqual(["authorship", "replicated", "session"]);
   });
 });
 

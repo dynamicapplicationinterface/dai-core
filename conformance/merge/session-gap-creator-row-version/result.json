@@ -1,0 +1,29 @@
+{
+  "what": "The same unused seq after Ada's creator's seat row, Bo confirmed in the open seat and moved (B). At the unused seq she signs a version of her creator's seat row naming the open seat's value; then a seat row naming a fresh value, a confirm of Cy in it, and Cy's move for it (A). The creator's seat row is immutable and its later versions count for nothing, and no other seat row counts: Bo holds the open seat, his move is admitted, Cy holds nothing and his move is reported SEAT_NOT_HELD by the merge that takes it (R14). Before, the value became the creator's seat row's, since its version named it first in her seq order, Bo's confirm counted for nothing and the reseat seated Cy (review 9, A02).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 4,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

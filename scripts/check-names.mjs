@@ -14,7 +14,7 @@
  *
  * Run: node scripts/check-names.mjs
  */
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -32,7 +32,7 @@ async function load(rel) {
   return import(pathToFileURL(file).href);
 }
 
-const { nameProblems, bridgeValue, frameValue } = await load("src/names-check.ts");
+const { nameProblems, bridgeValue, frameValue, literalProblems } = await load("src/names-check.ts");
 const bridge = await load("src/bridge.ts");
 const frame = await load("src/frame.ts");
 
@@ -62,5 +62,64 @@ for (const o of owners) {
   } else {
     console.log(`names: ${o.name}: ${count} names checked, consistent (${Object.keys(o.exceptions).length} named exception)`);
   }
+}
+
+/*
+ * No message name spelled by hand outside its owner (docs/identity.md, rule 8).
+ *
+ * The tree by default; `--scan <dir>` points it at one folder instead, which is
+ * how the test holds the check itself rather than the tree's state on the day.
+ */
+
+/** Literals that must stay as literals, and why. Checked to still be needed. */
+const worker = await load("src/worker.ts");
+const LITERAL_EXCEPTIONS = {
+  "src/kit.ts: dai:used":
+    "the kit's source travels inside documents and runs there, where src/frame.ts cannot be imported; the value is wire format",
+  // The service worker is a classic script and cannot import src/worker.ts, so
+  // it spells the owner's values; exactly those, and tests/worker-names.spec.ts
+  // holds the two lists to each other in both directions.
+  ...Object.fromEntries(
+    Object.values(worker.WORKER).map((value) => [
+      `apps/runner/public/sw.js: ${value}`,
+      "a classic worker cannot import src/worker.ts; it spells the owner's value",
+    ]),
+  ),
+};
+const OWNERS = new Set(["src/bridge.ts", "src/frame.ts"]);
+
+function sourcesUnder(root, dir) {
+  const found = [];
+  for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const rel = dir ? `${dir}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (entry.name !== "node_modules" && entry.name !== "dist") found.push(...sourcesUnder(root, rel));
+    } else if (/\.(ts|mts|js|mjs)$/.test(entry.name) && !OWNERS.has(rel)) {
+      found.push({ path: rel, text: readFileSync(join(root, rel), "utf8") });
+    }
+  }
+  return found;
+}
+
+const at = process.argv.indexOf("--scan");
+const scanned =
+  at > 0
+    ? { files: sourcesUnder(resolve(process.argv[at + 1]), ""), exceptions: {}, what: process.argv[at + 1] }
+    : {
+        files: [
+          ...["src", "apps/runner/src", "apps/desktop/src"].flatMap((dir) => sourcesUnder(repo, dir)),
+          { path: "apps/runner/public/sw.js", text: readFileSync(join(repo, "apps/runner/public/sw.js"), "utf8") },
+        ],
+        exceptions: LITERAL_EXCEPTIONS,
+        what: "src, apps and the service worker",
+      };
+const literals = literalProblems(scanned.files, scanned.exceptions);
+if (literals.length) {
+  failed = true;
+  for (const p of literals) console.error(`names: ${p}`);
+} else {
+  console.log(
+    `names: ${scanned.files.length} files in ${scanned.what} spell no message name by hand (${Object.keys(scanned.exceptions).length} named exception)`,
+  );
 }
 process.exit(failed ? 1 : 0);

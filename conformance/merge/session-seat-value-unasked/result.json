@@ -1,0 +1,29 @@
+{
+  "what": "Bo never asks for the open seat, and writes a move for it. A row naming a value no counting confirm names, by an author not waiting in it, is SEAT_NOT_HELD: the merge that takes it reports it in Bo's name, and it is not admitted (A03). Before, a row for a seat nobody held was reported nowhere.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 1,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

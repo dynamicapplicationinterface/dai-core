@@ -221,6 +221,11 @@ are the publisher's business.
 A reader MUST treat bytes beginning with the four magic bytes as the sectioned
 form. Anything else is parsed as the viewer form.
 
+The sectioned form's media type is `application/vnd.dai`, registered with IANA
+on 5 October 2026 (vendor tree): magic number `DAI` and a zero byte (0x44 0x41
+0x49 0x00), file extension `.dai`. The viewer form is HTML and is served as
+`text/html`.
+
 ### 2.3 What a reader can establish cheaply
 
 The footer sits at a fixed distance from the end. A reader MAY establish that a

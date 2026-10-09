@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -73,7 +73,7 @@ test.describe("writing a document's record in the library", () => {
     // If this ever reads zero, the calls have been renamed and this test has
     // quietly stopped checking anything.
     expect(calls.length, "no library writes found — has the function been renamed?").toBeGreaterThan(
-      3,
+      2,
     );
 
     const bare = calls
@@ -180,6 +180,52 @@ test.describe("writing a document's record in the library", () => {
         "or a save committing between its read and its write is rewound and every " +
         "later save from that tab is refused",
     ).toEqual([]);
+  });
+
+  /*
+   * Every write, not only the ones that name `revision` (pass B's B2).
+   *
+   * A write that spreads a record read before it carries that record's
+   * `revision` whether it names it or not: `retireShares` read the record,
+   * made one network call per share, and wrote `{ ...held, shares }` back, so a
+   * save landing in those seconds had its counter rewound and every later save
+   * in that tab was refused (D187's symptom). The name a write gives its own
+   * field says nothing about what its spread carries, so the rule is every
+   * write, under the lock, and nothing in the opener calls the library's write
+   * except here.
+   */
+  test("every library-record write runs under the lock", () => {
+    const source = readFileSync(resolve(repo, MAIN), "utf8");
+    const spans: { from: number; to: number }[] = [];
+    const lock = /(?:withLibraryLock|\blocked)\s*\(/g;
+    let opened: RegExpExecArray | null;
+    while ((opened = lock.exec(source)) !== null) {
+      let depth = 0;
+      let index = opened.index + opened[0].length - 1;
+      const from = index;
+      for (; index < source.length; index += 1) {
+        if (source[index] === "(") depth += 1;
+        else if (source[index] === ")" && --depth === 0) break;
+      }
+      spans.push({ from, to: index });
+    }
+    const calls = [...source.matchAll(/saveCartridgeToLibrary\(/g)]
+      .map((m) => m.index!);
+    expect(calls.length, "library writes found").toBeGreaterThan(3);
+    const unlocked = calls
+      .filter((at) => !spans.some((span) => at > span.from && at < span.to))
+      .map((at) => `${MAIN}:${source.slice(0, at).split("\n").length}`);
+    expect(
+      unlocked,
+      "a library write outside the lock writes back whatever its record held when it was read, " +
+        "revision included; use amendLibraryRecord, which reads and writes under the lock",
+    ).toEqual([]);
+
+    // And nothing else in the opener writes a record.
+    const elsewhere = readdirSync(resolve(repo, "apps/runner/src"))
+      .filter((name) => name.endsWith(".ts") && name !== "main.ts" && name !== "opfs.ts")
+      .filter((name) => readFileSync(resolve(repo, "apps/runner/src", name), "utf8").includes("saveCartridgeToLibrary"));
+    expect(elsewhere, "library writes outside main.ts").toEqual([]);
   });
 
   test("the fields that get dropped are the ones nothing else would notice", () => {

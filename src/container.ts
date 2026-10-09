@@ -22,7 +22,7 @@ import {
   verifyContainerFile,
 } from "./format.js";
 import {
-  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES } from "./core.js";
+  wantsTrustedTypes, CONTAINER_ENTRY, MANIFEST_ENTRY, signedBytes, signedViewOf, fromBase64, sha256Hex, toBase64, type ContainerManifest, assembleShell, nonceFor, DEFAULT_FAVICON, ZIP_EPOCH, SUBSTITUTABLE_ENTRIES, SUPPORTED_MANIFEST_VERSIONS } from "./core.js";
 
 /** Captures the payload's base64 for reading. */
 const PAYLOAD_RE = /<script[^>]*id="dai-payload"[^>]*>([\s\S]*?)<\/script>/;
@@ -156,8 +156,8 @@ function fillFromHost(
   return { supplied, absent };
 }
 
-/** The versions this reader knows (spec §9.1). */
-export const SUPPORTED_MANIFEST_VERSIONS: readonly number[] = [2, 3, 4];
+/** The versions this reader knows (spec §9.1), owned by `core.ts`. */
+export { SUPPORTED_MANIFEST_VERSIONS };
 
 /**
  * The capability names version 4 defines (spec 2.1.1 §2.1).
@@ -174,6 +174,9 @@ export const CAPABILITY_REGISTRY: readonly string[] = [
   "passphrase",
   "recipient-bound",
   "relay",
+  // Batch format version 2 (identity step 6, D108): every row signed by its
+  // author's key. Added after the rest, as a new name, never a redefinition.
+  "authorship",
 ];
 
 /**
@@ -196,7 +199,12 @@ export const CAPABILITY_REGISTRY: readonly string[] = [
  * document declaring it opens and behaves, and adding one before the behaviour
  * exists is the silent degradation the field refuses on a reader's behalf.
  */
-export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["replicated", "session"];
+/*
+ * `authorship` joins with batch format version 2 (step 6, D108): this reader
+ * signs every row it writes and merges only signed rows. A reader from before
+ * that, which would write unsigned rows, does not list it and refuses.
+ */
+export const IMPLEMENTED_CAPABILITIES: readonly string[] = ["authorship", "replicated", "session"];
 
 /**
  * Refuses a document that needs something this reader does not have.
@@ -573,7 +581,7 @@ function checkShellSeal(html: string, archive: Record<string, Uint8Array>): void
 
   if (stripped !== new TextDecoder().decode(sealed)) {
     throw new ContainerError("SHELL_MISMATCH",
-      "This container's bootloader does not match the sealed copy inside it. " +
+      "This container's bootloader does not match the signed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
   }
@@ -982,7 +990,7 @@ export async function verifyContainer(
     if (onlyTheDatabase) {
       throw new ContainerError("DATA_DAMAGED",
         "This document's data is damaged and it will not be opened.\n" +
-          "The application inside it is intact and correctly sealed — it is the database " +
+          "The application inside it is intact and correctly signed — it is the database " +
           "that does not match the record kept of it, which is what an interrupted save " +
           "looks like. An earlier copy of the file, if you have one, will still open.",
       );
@@ -1015,8 +1023,8 @@ export async function verifyContainer(
   if (parsed.absent.length > 0) {
     throw new ContainerError(
       "RUNTIME_UNAVAILABLE",
-      `This document was published without its engine, for a host that already has ` +
-        `that exact copy — and this one does not have ${parsed.absent.join(" or ")}. ` +
+      `This document was published without its engine, to open only where that exact ` +
+        `copy is already held — and this device does not have ${parsed.absent.join(" or ")}. ` +
         `Ask whoever sent it for the complete file.`,
     );
   }
@@ -1043,7 +1051,7 @@ export async function verifyContainer(
   }
   if (report.shell.status === "mismatch") {
     throw new ContainerError("SHELL_MISMATCH",
-      "This container's bootloader does not match the sealed copy inside it. " +
+      "This container's bootloader does not match the signed copy inside it. " +
         "The file has been modified outside its own payload and will not be run.",
     );
   }

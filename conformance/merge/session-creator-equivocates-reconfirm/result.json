@@ -1,0 +1,29 @@
+{
+  "what": "Ada confirmed Bo in the open seat (C1) and Bo moved. From a second copy of her store she signs a move at C1's seq, then confirms herself in the open seat and moves for it. Ada is an equivocator in the document, and a session whose creator is an equivocator is void: no row in it is admitted, nobody holds a seat, and only AUTHOR_EQUIVOCATED is reported, by the merge that reveals it (R10). Before the ruling, C1 counted for nothing and her own confirm seated her in Bo's seat (review 8, A1).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

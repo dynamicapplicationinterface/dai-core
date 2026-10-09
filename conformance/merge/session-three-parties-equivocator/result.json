@@ -1,0 +1,29 @@
+{
+  "what": "max_parties=3: Bo holds one open seat and Cy the other, and each moves. Then Cy, from a second copy of his store, signs two moves at one seq (A holds both headers; B, Bo's copy, holds neither). An equivocator holds no seat and none of his rows is admitted: Cy's seat is void and his moves are admitted nowhere, while Bo's hold and his move stand, and the merge into B reports Cy AUTHOR_EQUIVOCATED (R17). Before, Cy's hold stood and his moves at other ids were admitted.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

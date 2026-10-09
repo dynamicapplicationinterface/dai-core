@@ -47,6 +47,12 @@ bridge](/docs/host-bridge#refusal-reasons-glossary).
 
 **Do instead:** Offer the close control only to the creator (SESSION-CLOSE).
 
+### `SESSION_CLOSED` {#SESSION_CLOSED}
+
+**Applies to** session. **When:** A copy wrote in a session it had closed (insert, change, remove, join, confirm or a second close).
+
+**Do instead:** Offer no write in a session this copy closed; read \_dai\_closed (SESSION-CLOSE).
+
 ### `ROLE_NOT_PERMITTED` {#ROLE_NOT_PERMITTED}
 
 **Applies to** session. **When:** A copy wrote a table whose marker names the other party (author=creator or author=joiner), or wrote a role table with no session.
@@ -55,15 +61,15 @@ bridge](/docs/host-bridge#refusal-reasons-glossary).
 
 ### `NOT_SEAT_CREATOR` {#NOT_SEAT_CREATOR}
 
-**Applies to** session. **When:** Someone other than the session's creator called session.reseat.
+**Applies to** session. **When:** Someone other than the session's creator called session.confirm.
 
-**Do instead:** Offer the fresh-invite repair only to the creator (SESSION-CONTESTED-SEAT).
+**Do instead:** Leave seating to the kit, which confirms on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED).
 
-### `CANNOT_RESEAT` {#CANNOT_RESEAT}
+### `CANNOT_CONFIRM` {#CANNOT_CONFIRM}
 
-**Applies to** session. **When:** session.reseat was called on a session with no contested seat.
+**Applies to** session. **When:** session.confirm named a seat that is not a current open seat, or one someone already holds.
 
-**Do instead:** Offer the repair only when a seat is contested (SESSION-CONTESTED-SEAT).
+**Do instead:** Leave seating to the kit, which confirms on the creator's copy by itself (IDENTITY-SEAT-CONFIRMED).
 
 ### `REPLICATION_SCHEMA_INVALID` {#REPLICATION_SCHEMA_INVALID}
 

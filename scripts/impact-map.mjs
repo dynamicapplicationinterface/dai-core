@@ -90,7 +90,7 @@ const ROOTS = ["src", "apps", "website", "examples", "scripts", "conformance", "
 const OTHER_CHECKS = [
   {
     run: "npm run typecheck",
-    claims: ["scripts/check-symbols.mjs", "scripts/check-routes.mjs", "scripts/check-callers.mjs"],
+    claims: ["scripts/check-symbols.mjs", "scripts/check-routes.mjs", "scripts/check-callers.mjs", "scripts/check-flag.mjs"],
   },
   {
     run: "python3 conformance/reference/run.py",
@@ -111,6 +111,12 @@ const OTHER_CHECKS = [
     claims: ["crates/sectioned/"],
   },
   {
+    // The first step of the checks job; it runs build-conformance --check and
+    // fixtures:check below, among the rest.
+    run: "npm run drift",
+    claims: ["scripts/drift.mjs"],
+  },
+  {
     run: "node scripts/build-conformance.mjs --check",
     claims: ["scripts/build-conformance.mjs"],
   },
@@ -124,11 +130,23 @@ const OTHER_CHECKS = [
   },
   {
     run: "npm run fixtures:check",
-    claims: ["scripts/build-merge-fixtures.mjs", "conformance/merge/"],
+    claims: ["scripts/build-merge-fixtures.mjs", "scripts/sealer.mjs", "conformance/merge/"],
   },
   {
     run: "python3 conformance/reference/dai_merge.py",
     claims: ["conformance/reference/dai_merge.py", "conformance/merge/"],
+  },
+  {
+    run: "python3 scripts/holdout.py",
+    claims: ["scripts/holdout.py"],
+  },
+  {
+    run: "node scripts/properties.mjs",
+    claims: ["scripts/properties.mjs", "scripts/properties-known.json", "scripts/sealer.mjs"],
+  },
+  {
+    run: "python3 scripts/properties.py",
+    claims: ["scripts/properties.py", "scripts/properties-known.json"],
   },
   {
     run: "cargo run --manifest-path conformance/readers/rust-merge/Cargo.toml -- conformance/merge",
@@ -158,10 +176,10 @@ const ALLOWED = [
   { path: "eval/candidates/", why: "the output of past evaluation runs, kept as the record of what they produced" },
   { path: "eval/prompts.json", why: "the prompts past evaluation runs were given, kept with their output" },
   // Operator tools: run by a person against live systems or on demand.
-  { path: "scripts/ci-verdict.mjs", why: "reads a CI run's result for a person; talks to GitHub" },
   { path: "scripts/measure.mjs", why: "a timing measurement a person runs; its output is a number, not a verdict" },
   { path: "scripts/check-deploys.mjs", why: "checks the live deploys; needs the network and the production hosts" },
   { path: "scripts/check-store.mjs", why: "checks a live store bucket; needs the network and a real bucket" },
+  { path: "scripts/replay-red.mjs", why: "replays a fix's test on the fix's parent in a worktree, by hand, one fix at a time; a run takes minutes and shares the suite's ports" },
   { path: "scripts/capture-screenshots.mjs", why: "makes the site's screenshots for a person to review" },
   { path: "scripts/make-icons.mjs", why: "generates icon images a person reviews and commits" },
   { path: "scripts/generate-desktop-icons.js", why: "generates the desktop host's icons for the Tauri build" },
@@ -170,12 +188,19 @@ const ALLOWED = [
     why: "writes a demo document with a fresh key each run, to two paths that are not committed; there is nothing committed for a check to hold",
   },
   { path: "conformance/README.md", why: "describes the conformance suite; prose" },
+  { path: "conformance/reference/README.md", why: "says what the reference merge reader is and is not evidence of; prose" },
 ];
 
 // ------------------------------------------------------------------ files
 
+/**
+ * The tracked files only. The map is committed and CI regenerates it from the
+ * pushed tree, so a file on disk that the push will not carry — a probe spec,
+ * a helper not yet added — must not enter it, or the pushed map is stale.
+ * `impact.mjs` still errs wide for such a file: unclaimed means a full run.
+ */
 function listFiles() {
-  const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+  const out = execFileSync("git", ["ls-files", "-z", "--cached"], {
     cwd: repo,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,

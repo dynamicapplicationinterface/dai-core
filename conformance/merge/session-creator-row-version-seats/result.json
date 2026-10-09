@@ -1,0 +1,29 @@
+{
+  "what": "Bo holds the open seat. Ada signs a later version of her creator's seat row naming it, whose seats lists the open seat and a third value; she confirms Cy in the third value, and Cy moves for it (A; B holds the confirm, not the move). The creator's seat row is immutable: the version counts for nothing and is no head, the roster stands as the first row declared it, Cy holds nothing, his move is admitted nowhere and the merge into B, which takes it, reports it SEAT_NOT_HELD (R14, creator-row-immutable; review 10, A03).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

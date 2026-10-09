@@ -38,6 +38,10 @@ test.describe("what the paste page warns about", () => {
     "a preconnect": '<link rel="preconnect" href="https://fonts.gstatic.com">',
     "a DNS prefetch": '<link rel=dns-prefetch href="//cdn.example.com">',
     "a prerender": '<link rel="prerender" href="/next.html">',
+    // Speculation rules, in both forms a page can carry them.
+    "a speculation rules script":
+      '<script type="speculationrules">{"prefetch":[{"source":"list","urls":["/next.html"]}]}</script>',
+    "a speculation rules link": '<link rel="speculationrules" href="./rules.json">',
     "a meta refresh": '<meta http-equiv="refresh" content="0; url=/next">',
     "a link that opens a tab": '<a href="/docs" target="_blank">docs</a>',
     "window.open": 'button.onclick = () => window.open("https://example.com");',
@@ -76,6 +80,7 @@ test.describe("what the paste page warns about", () => {
     "a stylesheet of its own": '<link rel="stylesheet" href="./app.css">',
     "an ordinary link": '<a href="/docs">docs</a>',
     "the word prefetch in prose": "<p>Prefetch hints do not work in a container.</p>",
+    "the word speculationrules in prose": "<p>A container has no speculationrules.</p>",
   };
 
   for (const [what, source] of Object.entries(accepted)) {

@@ -1,0 +1,34 @@
+{
+  "what": "A, Ada's copy, holds her note at seq 1 with _r_batch unset (the save that wrote its pointer was lost) and her header H that lists it, complete on A. B holds, from a second copy of her store, her case at seq 1 under H2. A held row that a complete header the copy holds lists is signed, not pending: merging B into A sets the note's _r_batch to H, and the signed case does not replace it; both rows are kept in both directions, the id is equivocated, and each merge reports AUTHOR_EQUIVOCATED in Ada's name. The copies end the same.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": false,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 0,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "what": "Bo asks for the open seat. Ada signs one batch holding a confirm of Bo whose seat is 15 bytes and her move e4 (A). A seat value is 16 bytes, and a confirm naming anything else counts for nothing: Bo holds no seat, and e4, signed beside it, is taken and admitted on both copies; the merge refuses nothing and no reader fails on it (seat-value-shape, T1-D13). Before, the roster table's length CHECK threw inside the merge, which took nothing, e4 included (branch review pass A, H1).",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 2,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

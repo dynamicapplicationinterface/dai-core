@@ -1,0 +1,25 @@
+{
+  "what": "close=any. Bo, seated, plays e5, then d5 naming as its parent an id of Ada's at a seq she never wrote, then closes the session at his highest seq (A and B hold all of it). d5 waits on a parent no copy will hold: it is neither admitted nor reported, on either copy, before or after either merge. e5 and Ada's e4 are admitted, and Bo's close, with nothing of his above it, counts: the session is closed, and nothing is reported (waiting-on-parent, close-counts; review 10, A05).",
+  "cites": [
+    "6",
+    "T1-D31"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 7,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

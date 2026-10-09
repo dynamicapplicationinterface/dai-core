@@ -1,0 +1,30 @@
+{
+  "what": "A holds the game and Bo's e5, a version for his seat naming Ada's e4, and not e4; B holds e4 as well. On A, e5 waits on its parent, and so does Bo's Nc6, another entity naming the same. The merge into A brings e4: e5 acts for another seat's row and is reported SEAT_NOT_HELD, once, and Nc6, which crosses nothing, is admitted (R21). Before, A admitted e5 and e4's arrival removed it (D189).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

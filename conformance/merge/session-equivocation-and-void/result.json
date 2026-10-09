@@ -1,0 +1,42 @@
+{
+  "what": "Ada moves on A (header Ha). From a second copy of her store she signs a move at the same seq (Fe) and confirms the open seat, already Bo's, to another copy (Fv); B holds both. B into A reveals her signing twice: she is an equivocator, so her session is void and the second confirm voids no seat (R10). AUTHOR_EQUIVOCATED once, under Fe, after the SEAT_NOT_HELD of Bo's move naming no seat in a session of his own, whose header sorts between Ha and Fe. Ha, held before the merge, lists the newly equivocated id and reveals nothing (D160, D165, D171). Before R10 the merge revealed her both ways, under the lower of Fe and Fv.",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 3,
+    "duplicate": 3,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:3"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      },
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:3"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

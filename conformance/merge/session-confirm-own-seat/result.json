@@ -1,0 +1,29 @@
+{
+  "what": "Bo holds the open seat. Ada confirms Cy in her own seat, which is no open seat, and Cy moves for it (A; B holds the confirm, not the move). A confirm counts only for a value the creator's seat row lists: Cy holds nothing, his move is admitted nowhere and the merge into B, which takes it, reports it SEAT_NOT_HELD; Bo's hold and Ada's stand (R14, confirms; review 10, A02).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

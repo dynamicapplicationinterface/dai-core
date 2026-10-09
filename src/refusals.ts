@@ -59,9 +59,9 @@ export const REFUSALS = {
   SEAT_ALREADY_BOUND: {
     recoverable: false,
     means:
-      "A session seat carries bindings from two or more replicas — two parties opened the same " +
-      "invite. The seat is contested and admits neither, order-free and without a clock deciding " +
-      "it. The creator can revoke the seat and issue a new invite (T1-D29).",
+      "An open seat two or more copies asked for before the creator's copy seated anyone — two " +
+      "parties opened the same invite. Nobody holds it, and no seat is replaced: the creator starts a " +
+      "new session and issues its invite. A seat the creator's copy has seated someone in is theirs for good (identity step 5).",
   },
   SEATS_EXCEED_CAP: {
     recoverable: false,
@@ -83,6 +83,13 @@ export const REFUSALS = {
       "Only the creator may end this session; the close is refused rather than written as a row " +
       "that closes nothing (T1-D32).",
   },
+  SESSION_CLOSED: {
+    recoverable: false,
+    means:
+      "A write in a session this copy has closed. A close is final for its author: a row of his in that " +
+      "session after his close is him signing twice, and every copy would then admit none of his rows. " +
+      "Refused at the write, so the application can say the session is over, rather than written (R18).",
+  },
   ROLE_NOT_PERMITTED: {
     recoverable: false,
     means:
@@ -91,12 +98,11 @@ export const REFUSALS = {
       "which, and the table. Refused at the write rather than written as a row every copy would drop " +
       "(D15).",
   },
-  CANNOT_RESEAT: {
+  CANNOT_CONFIRM: {
     recoverable: false,
     means:
-      "A reseat was asked for on a session with no contested seat. Reseating replaces a seat's " +
-      "value, dropping every binding to the old one — a repair for a seat two parties opened, and " +
-      "damage to a healthy one. Refused unless a seat is actually contested (T1-D29).",
+      "The creator's copy was asked to seat someone in a seat that is not a current open seat, or " +
+      "that someone already holds. A hold, once confirmed, never moves (identity step 5).",
   },
 
   // ---- shared tables, while a document is open
@@ -173,6 +179,13 @@ export const REFUSALS = {
       "The other copy's shared tables are not the same tables with the same columns as this " +
       "one's, so its rows cannot be merged in.",
   },
+  SIGNED_VIEW_MISMATCH: {
+    recoverable: false,
+    means:
+      "The other copy was built from another signed manifest of this document (its signed view hashes " +
+      "differently), so it may declare another bound on the parties or other tables. Its rows are not " +
+      "merged under rules it was not built with: nothing is taken (R16).",
+  },
   UNSUPPORTED_LEVEL: {
     recoverable: false,
     means:
@@ -187,6 +200,63 @@ export const REFUSALS = {
   APPLY_FAILED: {
     recoverable: false,
     means: "A batch from the mailbox failed to apply for a reason with no name of its own; the message says what.",
+  },
+
+  // ---- signed batches (docs/identity.md). A merge reports these per batch in
+  // `refusedBatches`, with the author the batch names; the merge itself ran.
+  BATCH_SIGNATURE_INVALID: {
+    recoverable: false,
+    means:
+      "A batch whose signature does not verify, or whose public key does not fingerprint to the " +
+      "author it names: not written by who it says. Its rows are refused; the rest of the merge runs.",
+  },
+  BATCH_DIGEST_MISMATCH: {
+    recoverable: false,
+    means:
+      "A batch whose rows are not the rows it signed: a row changed after signing, a row it lists is " +
+      "missing, or a row claims the batch and is not among the rows it lists. Those rows are refused; " +
+      "the rest of the merge runs.",
+  },
+  SEAT_NOT_HELD: {
+    recoverable: false,
+    means:
+      "A row that names a seat someone else holds, or names no seat, or names as its earlier version a " +
+      "row acting for another seat, in a table whose rows act for a seat: signed by who it says, and " +
+      "not theirs to write. Stored and never admitted; reported with " +
+      "its author. A row for a seat its author asked for and is waiting to be seated in is not this: " +
+      "it is pending, neither admitted nor reported. The rest of the merge runs.",
+  },
+  ENTITY_OTHER_SESSION: {
+    recoverable: false,
+    means:
+      "A row that names as its earlier version a row of another session: an entity belongs to the " +
+      "session it was written in, so nobody replaces or removes a row of one game from a session of " +
+      "their own. Stored and never admitted; reported with its author. The rest of the merge runs (D131).",
+  },
+  BATCH_UNSIGNED: {
+    recoverable: false,
+    means:
+      "A row no valid batch covers, in a table whose rows must be signed: today the seat tables " +
+      "(_dai_seat, _dai_binding, _dai_confirm), where an unsigned row under someone else's id would " +
+      "decide a seat. Refused and reported with the author it names; the rest of the merge runs.",
+  },
+  ROW_MALFORMED: {
+    recoverable: false,
+    means:
+      "A row whose earlier versions (_r_parents) are not a flat JSON array of at most 256 row ids, each " +
+      "32 lowercase hex characters, a colon and a seq. One reader parses what another refuses, and a row " +
+      "no reader can walk stops every read that walks it (D159). Refused with every row of the batch that " +
+      "signed it, and reported with that batch's author; the rest of the merge runs.",
+  },
+  AUTHOR_EQUIVOCATED: {
+    recoverable: false,
+    means:
+      "Two signed batches from one author list the same row id with different contents: the author " +
+      "signed two histories, which an honest copy never does, since a batch leaves only once saved and " +
+      "the host signs only above its sequence floor. Neither row at that id counts, on any copy that holds " +
+      "both batches, whichever arrived first; both are kept and passed on, so every copy learns it. " +
+      "So is a session's creator confirming one seat to two copies: neither confirm counts (D165). " +
+      "Reported once per author; the rest of the merge runs (D160).",
   },
 
   // ---- the mailbox

@@ -1,0 +1,34 @@
+{
+  "what": "As session-waits-equivocated-parent-e5, B holding the other of Bo's two rows at the id Ada's Nc3 names, d5. On A, Nc3 waits on its parent; the merge into A brings d5, a row of another seat, and Nc3 is reported SEAT_NOT_HELD, once (R21). Before, A admitted Nc3 and d5's arrival removed it (D189).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "SEAT_NOT_HELD"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 2,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

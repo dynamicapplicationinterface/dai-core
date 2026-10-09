@@ -1,0 +1,33 @@
+{
+  "what": "close=any. Ada runs two sessions, and Bo asks for the open seat in each; she confirms him in the first. Bo closes the first, then closes the second and moves there, though he holds nothing in it yet. A holds all of that. B also holds Bo's move in the first session above his close there, Ada's confirm of Bo in the second, and an unsigned row of Bo's. B into A reveals Bo signing twice two ways at once: in the first session under the header of his move, a row of his it took, and in the second under no id, since the confirm that made his close count is Ada's. It is filed under the lowest revealing header, and only an author with none is filed under no id, so AUTHOR_EQUIVOCATED comes after the BATCH_UNSIGNED filed under no id (equivocated-filed; branch review pass A, M1). Before, the runtime and the Python reader filed it under no id, before the BATCH_UNSIGNED.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 8,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "BATCH_UNSIGNED"
+      },
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 8,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

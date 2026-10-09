@@ -34,6 +34,20 @@ export const FRAME_PUBLIC = {
   MERGED: "dai:merged",
   /** Posted by the kit when a person first uses a control. */
   USED: "dai:used",
+  /**
+   * Fired on `window` when this device is a new author for a document it wrote
+   * before: its key was lost and made again (docs/identity.md, "Loss"). The kit
+   * says the loss sentence on it; `window.dai.newPlayer` holds it for a kit
+   * that loads after.
+   */
+  NEW_PLAYER: "dai:new-player",
+  /**
+   * Fired on `window` by the kit after it has done its own work on a merge
+   * (seated whoever asked), with the merge's detail. A page that loads the kit
+   * redraws on this rather than on MERGED, so its draw follows the kit's
+   * whatever order the listeners were added in (D177).
+   */
+  KIT_MERGED: "dai:kit-merged",
 } as const;
 
 /** Names between the shell and the runtime's own frame code. Renamable together. */
@@ -72,6 +86,10 @@ export const FRAME_INTERNAL = {
   SCHEMA: "dai:schema",
   SCHEMA_VERDICT: "dai:schema-verdict",
   SESSIONS: "dai:sessions",
+  /** The frame asking the host to sign a batch header (docs/identity.md, step 3). */
+  SIGN: "dai:sign",
+  /** The host's signature, relayed back, or why it would not sign. */
+  SIGNED: "dai:signed",
   SESSIONS_ANSWER: "dai:sessions-answer",
   TIMING: "dai:timing",
   WAITING: "dai:waiting",

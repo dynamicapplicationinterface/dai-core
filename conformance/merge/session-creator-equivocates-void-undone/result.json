@@ -1,0 +1,29 @@
+{
+  "what": "Ada confirmed Bo and then Cy in the open seat, so the seat is void (D165), and Cy moved; B is Bo's copy holding all of that. A, Ada's copy, also holds a close she signed at the first confirm's seq from a second copy of her store. The session is void on both copies after either merge and stays void: Cy holds nothing, his move and Bo's are admitted nowhere, and only AUTHOR_EQUIVOCATED is reported (R10: void is monotone). Before the ruling, the first confirm stopped counting and the seat's void lifted onto Cy (review 8, A2).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 1,
+    "duplicate": 5,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

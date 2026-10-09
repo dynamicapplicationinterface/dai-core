@@ -1,0 +1,29 @@
+{
+  "what": "Bo, seated, writes a move naming as its parent his own id at a seq above its own, which he has not used yet, and seals it alone. Then he starts a session of his own and writes, at exactly that seq, a move of the same entity there (B). A parent naming an id of the row's own author at a seq at or above the row's own is malformed: the merge refuses the first move's batch ROW_MALFORMED and takes the rest; Bo's move in his own session is admitted, and no crossing is reported. B, which holds the malformed row as its own, reads its parents as naming nothing (R19). Before, the move was taken and admitted, and the later row of its entity in another session took it back after the fact, reported ENTITY_OTHER_SESSION.",
+  "cites": [
+    "6",
+    "T1-D13"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "b8ZqkEhhccpptRK-GF1mpw",
+        "reason": "ROW_MALFORMED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}

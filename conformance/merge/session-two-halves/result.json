@@ -1,0 +1,39 @@
+{
+  "what": "Bo holds the open seat. Ada signs two headers over one seq with different moves: e4 on A, d4 from a second copy of her store on B; the two copies never met. Before the merge each sees an honest creator, and admits its own move. Merged either way, the equivocation is revealed and reported, Ada AUTHOR_EQUIVOCATED, and her session is void: nothing admitted, nobody seated. The row at the id is disputed, each copy keeping its own and refusing the other's, which is where union merge stops; she cannot choose which of her statements survives, since neither does (P2, R10, R20; review 10, A09).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": false,
+  "admitted": true,
+  "before": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:3"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:3"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

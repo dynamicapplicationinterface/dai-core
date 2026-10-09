@@ -1,0 +1,29 @@
+{
+  "what": "A session declared max_parties=2, Bo seated in its open seat. Ada writes a second seat row naming a third seat, confirms Cy in it, and Cy moves for it (A). The roster is declared by the creator's seat row alone, and a confirm counts only for a value it lists: nobody holds the third seat, Cy's move is admitted nowhere and the merge into B, which takes it, reports it SEAT_NOT_HELD; Bo's hold stands (R14, A03). Before R11, Cy held the third seat and three parties played (review 8, A8).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 0,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 3,
+    "duplicate": 3,
+    "rejected": [],
+    "newReplicas": 1,
+    "refusedBatches": [
+      {
+        "author": "cnI1iSV13Gih24USh_RT5Q",
+        "reason": "SEAT_NOT_HELD"
+      }
+    ]
+  }
+}

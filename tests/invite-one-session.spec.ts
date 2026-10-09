@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { withSessionId } from "./session-db.js";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -158,7 +159,7 @@ async function databaseOf(page: Page): Promise<DatabaseSync> {
   const html = readFileSync(await (await downloading).path(), "utf8");
   const path = join(mkdtempSync(join(tmpdir(), "dai-invite-db-")), "d.sqlite");
   writeFileSync(path, parseContainer(html).archive["document.sqlite"]!);
-  return new DatabaseSync(path);
+  return withSessionId(new DatabaseSync(path));
 }
 
 const hex = (value: unknown): string =>

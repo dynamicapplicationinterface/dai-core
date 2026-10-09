@@ -1,0 +1,33 @@
+{
+  "what": "Ada signs two rows at her creator's seat row's id, both in _dai_seat: the row (header A) and, from a second copy of her store, a tombstone of it with the same columns (header B). A is a copy that met the tombstone first and then the game (Bo seated, e4, e5), so it keeps the tombstone and both headers; B, Bo's copy, keeps the row and header A, and holds a session of Bo's own with a move, and a move in Ada's session naming it. A session whose creator's seat row is at an equivocated id is void whichever row a copy holds there: nothing in it is admitted or reported on either copy, Bo's move in his own session is admitted, and only the merge into B, which brings header B, reports Ada AUTHOR_EQUIVOCATED (R20). Before, the copy holding the tombstone had no creator and was not void, and reported Bo's crossing ENTITY_OTHER_SESSION (review 9, A08).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": false,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 3,
+    "duplicate": 4,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": []
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [
+      "2bad0fd610d99eae443e932a26142bca:1"
+    ],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  }
+}

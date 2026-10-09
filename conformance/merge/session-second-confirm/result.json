@@ -1,0 +1,29 @@
+{
+  "what": "Ada confirms Bo in the open seat, and from a second copy of her own store confirms the same seat to another copy at a later seq. The seat is void on every copy holding both, whatever the seqs: the merge that brings the second reports AUTHOR_EQUIVOCATED in Ada's name, and Bo's move is admitted nowhere (D165).",
+  "cites": [
+    "6",
+    "T1-D29"
+  ],
+  "converges": true,
+  "admitted": true,
+  "stable": true,
+  "ab": {
+    "applied": 2,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": [
+      {
+        "author": "K60P1hDZnq5EPpMqJhQryg",
+        "reason": "AUTHOR_EQUIVOCATED"
+      }
+    ]
+  },
+  "ba": {
+    "applied": 0,
+    "duplicate": 4,
+    "rejected": [],
+    "newReplicas": 0,
+    "refusedBatches": []
+  }
+}
