@@ -33,6 +33,9 @@ test.describe("the site describes the system it actually sits on", () => {
     expect(page("make-your-own.md")).toMatch(/unsigned/i);
     expect(page("desktop.md")).not.toMatch(/compiles and signs/i);
     expect(page("desktop.md")).toMatch(/unsigned/i);
+    // Pass C's H9 was in the builder itself, not in the page about it.
+    expect(page("components/MakeYourOwn.vue")).not.toMatch(/thrown away/i);
+    expect(page("components/MakeYourOwn.vue")).toMatch(/It is not signed\./);
   });
 
   test("the security pages describe trust as it now works", () => {
@@ -58,6 +61,15 @@ test.describe("the site describes the system it actually sits on", () => {
     // (backlog, V1.0 rulings, 5) is the session that makes this false, and it
     // has to change this sentence and this test together.
     expect(page("docs/security.md")).toMatch(/No recovery\s+is built\./);
+  });
+
+  test("the security page does not say removing a document removes everything", () => {
+    // Pass C's H4, its other half: removing a document from the library keeps
+    // the records of what the device already sent for it (its floors), so
+    // "they are gone" was false for everything but the document.
+    const security = page("docs/security.md");
+    expect(security).not.toMatch(/and they are gone/);
+    expect(security).toMatch(/It does not remove the records/);
   });
 
   test("the playground page names the signed bytes as they are encoded", () => {

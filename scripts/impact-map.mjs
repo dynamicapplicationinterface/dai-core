@@ -179,6 +179,7 @@ const ALLOWED = [
   { path: "scripts/measure.mjs", why: "a timing measurement a person runs; its output is a number, not a verdict" },
   { path: "scripts/check-deploys.mjs", why: "checks the live deploys; needs the network and the production hosts" },
   { path: "scripts/check-store.mjs", why: "checks a live store bucket; needs the network and a real bucket" },
+  { path: "scripts/replay-red.mjs", why: "replays a fix's test on the fix's parent in a worktree, by hand, one fix at a time; a run takes minutes and shares the suite's ports" },
   { path: "scripts/capture-screenshots.mjs", why: "makes the site's screenshots for a person to review" },
   { path: "scripts/make-icons.mjs", why: "generates icon images a person reviews and commits" },
   { path: "scripts/generate-desktop-icons.js", why: "generates the desktop host's icons for the Tauri build" },

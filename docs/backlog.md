@@ -4644,6 +4644,158 @@ part of a reader's contract. **Question:** state on the page (README's
 per-vector table and the section the file follows) what the file is, its
 scope and its spelling.
 
+#### D202 — The Rust reader's blind claim covers `main.rs`, not `admit.rs`
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass A,
+H3; Contradictions 1).*
+
+`conformance/readers/rust-merge/README.md:42-55` says every level since 29
+September was blind and that the reader was rebuilt from the page. The gut
+(`21337efe`) covered `main.rs` only ("admit.rs unchanged"). `admit.rs` keeps
+code from `c5f1aa4a` (29 September), a commit that changed
+`src/replicated-rows.ts`, `src/replicated.ts`, `admit.rs`, `main.rs` and
+`dai_merge.py` together: the pattern H3 named, and not in H3's list of seven.
+`0529d43b` edited 11 lines of `admit.rs` blind. 123 of 123 is met; the claim of
+independence is not. **Change:** a blind rebuild of `admit.rs` from the page,
+or the README states which files were rebuilt blind. Not done here: the
+reader's directory belongs to its own session.
+
+#### D203 — Nothing tests that drift puts the committed fixture bytes back
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass A,
+M4).*
+
+`26e12b32` made drift compare the merge fixtures by content and write the
+committed `a.db` and `b.db` back for every reader after (`scripts/drift.mjs`).
+`tests/drift-content.spec.ts` tests `contentOf` only. Nothing fails if the
+write-back stops, and then CI's readers read the regenerated inputs again,
+which is M4 itself. **Change:** a test that runs the write-back over a fixture
+whose bytes differ and finds the committed bytes after.
+
+#### D204 — Three of M7's four refusals are on the page with no test
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass A,
+M7).*
+
+`merge-header-integers` covers M7's `Number()` part only. Stated on the page
+and held by no vector: (a) the four whole-merge refusals (`UNSUPPORTED_LEVEL`,
+`MERGE_COVERAGE`, `NOT_REPLICATED`, `SCHEMA_MISMATCH`) before the view check,
+and the view check skipped when the caller passes no views; (c) the decoder's
+leniency (non-shortest integers, unsorted map keys) reaching no rule; (d) the
+order of `rejected` and of codes. (d)'s `rejected` half is now held by
+`merge-report-two-rejected` (D201). **Change:** one vector per refusal, and one
+batch encoded non-shortest.
+
+#### D205 — No test drives `properties.py`'s refusal of a partial cache
+
+*Status: open, low, held not fixed. Filed 8 October, from the evidence pass
+(pass A, L2).*
+
+`scripts/properties.py:404-421` refuses a cache that does not hold every
+vector, or holds an extra one. The only red was the fix's own run ("refused,
+101 missing"), a description. CI runs the passing path only, so the refusal
+could stop and nothing would say so. **Change:** a check that runs it over a
+two-vector cache and expects the refusal.
+
+#### D206 — B2's fix is held by the code's shape, not by a save racing a retire
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass B,
+B2 and B12).*
+
+`library-record.spec.ts:197-229` asserts that every library write sits inside
+a lock span. Replayed on `5f81c68f^` it fails, so it does see the old shape.
+But no test runs a save concurrently with `retireShares`, `rememberShare` or
+`applyPendingMerge` and finds the revision kept, which is the defect: a
+write-back that puts `revision` back, so every later save in the tab is
+refused. A shape test passes for a lock taken around the wrong read.
+**Change:** a page test holding a save inside a retire's network wait.
+
+#### D207 — B6's next-action half has no test, and five sentences still have none
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass B,
+B6; Contradictions 6).*
+
+`person-words.spec.ts` checks vocabulary only ("host", "sequence floor",
+"batch"); V1.0 ruling 11 also asks for a next action, which nothing checks.
+Still without one: `main.ts:3396` "This document is not open for writing
+here.", `:3414`, `:3441`, `:3504`, `:1365`; opfs's "…did not answer within 4
+seconds."; `UNSIGNED_LEAVE` (`:3738`), unchanged. Handoff 6 sends B1's
+hand-over to "Phase 1.4" and the registry texts to "Phase 1.7"; no document
+defines either phase, each appears only in a test comment. The expectation
+edits in `5f81c68f` (`core.spec:542`, `runner.spec:255`, `send.spec:142,242`)
+were read: each asserts the same sentence with its reworded term (sealed to
+signed, or to locked), nothing weaker. **Change:** a rule for what counts as a
+next action, then the sentences, then a check.
+
+#### D208 — No gate runs the count floor's `--check`
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass C,
+H1; Contradictions 7).*
+
+`handoff-2026-10-06.md:33` and `tests/count-gate.ts:22-27` say the floor check
+fails when CI has run a spec committed after the floor's commit. `--check` is
+called nowhere since `c824b705`; drift only prints the floors and passes when
+they sit below (in 37859133754, 3 to 7 below), which is the lower-bound ruling.
+`count-floor.spec.ts` drives `floorDrift` both ways and tests `staleFloor`.
+**Change:** drift calls `--check`, or the two sentences say nothing runs it.
+
+#### D209 — `tallyFrom` still takes the last match anywhere in the log
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass C,
+H2).*
+
+H2 had two halves. A cancelled or timed-out job reads FAIL now
+(`jobFailed`; replayed red by hand on `a3758cac^`'s predicate: 5 of 6
+conclusions). The other half stands: `tallyFrom` (`scripts/ci-verdict.mjs`)
+takes the last "N passed" in the whole job log, so any later line of that shape
+(a step after the tests, a tool's own summary) is read as the tally. No test
+holds it. **Change:** take the tally from the reporter's closing block only, and
+a test with a later "N passed" line.
+
+#### D210 — The shell's channel tests check preconditions, not the network
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass C,
+H11).*
+
+`shell-channels.spec.ts:53-66` checks that prefetch is off in the shell and the
+frame, that the CSP has no `inline-speculation-rules`, and that no nonce
+reaches the rules script. No test observes the network: a speculation rule
+that loads, or a DNS prefetch that resolves, would pass if a precondition
+moved without the text. The link form is held by the lint only
+(`website-checks.spec.ts:57`). **Change:** a page test that inserts each form
+and counts requests beside an independent witness.
+
+#### D211 — The verdict knows the checks jobs, not the browser jobs
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass C,
+M4).*
+
+`15694ca1` gave `ci-verdict.mjs` the list of checks jobs
+(`ci-verdict.spec.ts:39-51`). A missing WebKit shard or browser job still reads
+green, and flaky gate tests are left out of the gate line. **Change:** the
+expected browser jobs listed from the workflow, and a job absent from a run
+read FAIL.
+
+#### D212 — A change to `format.md` selects no reader and no hold-out
+
+*Status: open, held not fixed. Filed 8 October, from the evidence pass (pass C,
+M6).*
+
+`a3758cac` made a change under `docs/` select `build-conformance --check`
+(`scripts/impact.mjs:44`). `docs/format.md` is the stated source of the
+readers and the hold-outs, and selects neither; `README.md` is named by
+`runner.spec.ts` and claimed by nothing. No test holds the mapping.
+
+#### D213 — Nothing tests the build order D199 fixed
+
+*Status: open, low, held not fixed. Filed 8 October, from the evidence pass
+(D199).*
+
+`f76e4d51` moved the stamp after tsup. The only evidence is that the ENOENT
+has not come back; a slow runner was the trigger, and nothing checks that
+`build:lib` runs the stamp after every tsup config. **Change:** a check that
+`stamp-merge-digest.mjs` is not reachable from any tsup `onSuccess`.
+
 #### D201 — The Rust reader orders `rejected` as text
 
 *Status: closed 8 October: a blind session ordered `rejected` from
