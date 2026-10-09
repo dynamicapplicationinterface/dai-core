@@ -11,7 +11,7 @@ a browser executes addresses, not files, so the file stays canonical and the lin
 is how a document is met first.
 
 Phases 0 to 5 of the plan that sentence set are done, except 3.5 (iOS: a link
-cannot reach an installed icon), 4.4 (the wedge, under Not engineering) and 5.2
+cannot reach an installed icon), 4.4 (not engineering, kept outside the repo) and 5.2
 (propagation without a beacon). Their records are in git history.
 
 ---
@@ -361,7 +361,7 @@ is read and stays in the suite as a regression. What it left open is in part 4:
 - **The first capability: deferred by rule, not by argument.** The mechanism is
   decided — an unforgeable `MessagePort`, declared in the signed manifest,
   never network — and the pick is made by evidence: the first capability is
-  built when the pilot produces ten apps that are unusable without it. Print is
+  built when ten apps exist that are unusable without it. Print is
   the presumptive first. Attachments (4.5) need none; `<input type="file">`
   works inside the sandbox. Spec §4.7.
 - **Standards path.** Media type: `application/vnd.dai`, a vendor-tree
@@ -4068,7 +4068,7 @@ second host — a native app, its own review, its own release — and the web op
 has to be right first. "Native phone apps as a prerequisite for first use" stays
 in *Not doing*; this is an addition for people who already have one.
 
-**Un-parks when onboarding friction is what blocks a pilot.**
+**Un-parks when onboarding friction is what stops a shared app being used.**
 
 ### Hosts
 
@@ -9242,23 +9242,3 @@ before a push.
 build, so the runtime it bundles is always the one on disk — or have global setup
 fail if the opener's bundle does not carry the runtime `dist/` holds.
 
----
-
-## 5. Not engineering
-
-Only the maintainer can do these, and they get lost between documents.
-
-- **Publish dai-core 0.2.0.**
-- **Register the media type.** Done: `application/vnd.dai` was registered
-  with IANA on 5 October 2026 (`docs/media-type-registration.md`), submitted
-  7 September.
-- **Register the trademark and keep it separate from the company.** A form and a
-  fee, and cheap enough not to wait for 1.0.
-
-#### 4.4 The wedge
-
-One category where an app is useful enough to send to somebody else. Not
-engineering.
-
-**Exit:** ten seed apps in the category, each shared at least once outside
-its maker in a pilot.
