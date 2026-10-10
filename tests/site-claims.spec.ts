@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { REFUSALS } from "../src/refusals.js";
+import { lintSource } from "../src/lint.js";
+import { stampScripts } from "../src/script-tags.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const page = (name: string): string => readFileSync(resolve(repo, "website", name), "utf8");
@@ -91,6 +93,26 @@ test.describe("the site describes the system it actually sits on", () => {
       expect(file, `${name} carries H10's old sentence`).not.toMatch(/the signature covers the shell's own digest/);
       expect(file, `${name} says what the template says now`).toMatch(/From manifest 3 the shell is outside the signed set/);
     }
+  });
+
+  test("the no-network sentences hold against a slash before the attribute", () => {
+    // 3-H1: HTML reads a slash between attributes as whitespace, and the
+    // runtime's stamp and the lint wanted a space. A remote script and a
+    // speculation rules script written that way were stamped and ran, so
+    // each of these sentences was false. They stay only while the slash
+    // forms are refused by both.
+    expect(page("tamper-proof.md")).toMatch(/the policy refuses a speculation rules script/);
+    expect(page("docs/introduction.md")).toMatch(/the browser engine refuses its requests/);
+    expect(page("docs/making-files.md")).toMatch(/Code that reaches for a CDN, a hosted font or an API will fail/);
+    const forms: Record<string, string> = {
+      "cdn-script": "<script/src=//h/x.js></script>",
+      "speculative-fetch": '<script/type="speculationrules">{"prefetch":[{"source":"list","urls":["/x"]}]}</script>',
+    };
+    for (const [id, html] of Object.entries(forms)) {
+      expect(stampScripts(html, "N"), `${html} is stamped`).toBe(html);
+      expect(lintSource(html).map((finding) => finding.id), `${html} passes the lint`).toContain(id);
+    }
+    expect(lintSource('<script src="//h/x.js"></script>').map((finding) => finding.id)).toContain("cdn-script");
   });
 
   test("the playground page names the signed bytes as they are encoded", () => {

@@ -42,6 +42,12 @@ test.describe("what the paste page warns about", () => {
     "a speculation rules script":
       '<script type="speculationrules">{"prefetch":[{"source":"list","urls":["/next.html"]}]}</script>',
     "a speculation rules link": '<link rel="speculationrules" href="./rules.json">',
+    // A slash before an attribute is whitespace to HTML, and a src that
+    // starts with two slashes is another host (3-H1).
+    "a script after a slash, from another host": "<script/src=//h/x.js></script>",
+    "a speculation rules script after a slash":
+      '<script/type="speculationrules">{"prefetch":[{"source":"list","urls":["/next.html"]}]}</script>',
+    "a protocol-relative script": '<script src="//h/x.js"></script>',
     "a meta refresh": '<meta http-equiv="refresh" content="0; url=/next">',
     "a link that opens a tab": '<a href="/docs" target="_blank">docs</a>',
     "window.open": 'button.onclick = () => window.open("https://example.com");',
@@ -64,6 +70,7 @@ test.describe("what the paste page warns about", () => {
   const accepted: Record<string, string> = {
     "inline styles": "<style>body { font-family: system-ui; }</style>",
     "a relative script": '<script type="module" src="./app.js"></script>',
+    "a relative script after a slash": '<script/type="module"/src="./app.js"></script>',
     "an inline SVG": '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>',
     "a data URI image": '<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E">',
     "the database API": "const db = await window.dai.openDatabase();",

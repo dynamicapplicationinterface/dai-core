@@ -20,6 +20,7 @@
 import { FRAME_PUBLIC } from "./frame.js";
 import { rewriteReplicated } from "./replicated.js";
 import { seatWritesIn } from "./seat-check.js";
+import { decodeValue, scriptTags } from "./script-tags.js";
 
 export interface Finding {
   /** Stable identifier, for callers that want to filter or count. */
@@ -38,7 +39,8 @@ export interface Finding {
 
 interface Check {
   id: string;
-  pattern: RegExp;
+  /** What it looks for in the source: a pattern, or a test that reads the tags (src/script-tags.ts). */
+  pattern: RegExp | ((source: string) => boolean);
   what: string;
   why: string;
   fix: string;
@@ -58,7 +60,12 @@ export function advisory<T extends Finding>(findings: T[]): T[] {
 const CHECKS: Check[] = [
   {
     id: "cdn-script",
-    pattern: /<script[^>]+src\s*=\s*["']https?:/i,
+    // By the tokenizer, so `<script/src=…>` is seen, and protocol-relative
+    // (`//host/x.js`) is as remote as `https:` (3-H1). An SVG script loads by href.
+    pattern: (source) =>
+      scriptTags(source).some((tag) =>
+        ["src", "href", "xlink:href"].some((name) => /^(?:https?:|\/\/)/i.test(decodeValue(tag.attributes.get(name) ?? "").trim())),
+      ),
     what: "It loads a script from the internet.",
     why: "A container has no network access, so that script never arrives and the app does nothing.",
     fix: "Inline the library instead of loading it from a CDN, or rewrite the code without it.",
@@ -108,8 +115,10 @@ const CHECKS: Check[] = [
      * rule that also catches correct code teaches people to ignore the rules.
      */
     id: "speculative-fetch",
-    pattern:
-      /<link[^>]+rel\s*=\s*["']?(?:dns-prefetch|preconnect|prerender|prefetch|speculationrules)\b|<script[^>]+type\s*=\s*["']?speculationrules\b/i,
+    // The script form by the tokenizer, so `<script/type="speculationrules">` is seen (3-H1).
+    pattern: (source) =>
+      /<link[^>]+rel\s*=\s*["']?(?:dns-prefetch|preconnect|prerender|prefetch|speculationrules)\b/i.test(source) ||
+      scriptTags(source).some((tag) => /speculationrules/i.test(decodeValue(tag.attributes.get("type") ?? ""))),
     what: "It asks the browser to reach a server before the page needs it.",
     why:
       "Preconnect and prefetch are not covered by the container's connection policy, so they " +
@@ -200,7 +209,7 @@ function usesAwaitInClassicScript(source: string): boolean {
 export function lintSource(source: string): Finding[] {
   if (!source.trim()) return [];
 
-  const findings: Finding[] = CHECKS.filter((check) => check.pattern.test(source)).map(
+  const findings: Finding[] = CHECKS.filter((check) => (typeof check.pattern === "function" ? check.pattern(source) : check.pattern.test(source))).map(
     ({ id, what, why, fix, severity }) => ({ id, what, why, fix, ...(severity ? { severity } : {}) }),
   );
 
