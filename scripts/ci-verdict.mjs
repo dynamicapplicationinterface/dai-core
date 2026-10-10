@@ -85,12 +85,32 @@ export function jobFailed(job, tally) {
 export const CHECKS_JOBS = ["checks-fast", "checks-holdout", "checks-properties-node", "checks-properties-python"];
 
 /**
- * The four checks jobs a run lacks. A run from before the split (one job,
- * "checks") is read as it stands; a run holding any of the four must hold all.
+ * Every job the gate is made of, by the start of the name test.yml gives it:
+ * a browser job's name goes on with its matrix values ("…, 1, 1/4, …)").
+ * Firefox is a reading and is not here.
  */
-export function missingChecks(names) {
-  if (!names.some((name) => CHECKS_JOBS.includes(name))) return [];
-  return CHECKS_JOBS.filter((name) => !names.includes(name));
+export const EXPECTED_JOBS = [
+  "browser (chromium, whole",
+  "browser (webkit, 1",
+  "browser (webkit, 2",
+  "browser (webkit, 3",
+  "browser (webkit, 4",
+  "browser (webkit, mailbox",
+  ...CHECKS_JOBS,
+];
+
+/** Whether a job's name is the expected job `expected`. */
+function isJob(name, expected) {
+  return name === expected || name.startsWith(`${expected},`) || name.startsWith(`${expected})`);
+}
+
+/**
+ * The expected jobs a run lacks. A job that is not in the run gave no verdict,
+ * so it is red: a run with no jobs at all (a workflow that failed to parse
+ * completes with none) is red on every one of them, never green.
+ */
+export function missingJobs(names) {
+  return EXPECTED_JOBS.filter((expected) => !names.some((name) => isJob(name, expected)));
 }
 
 /**
@@ -190,8 +210,8 @@ function main(argv) {
     if (job.conclusion && job.conclusion !== "success") red.push(job.name);
     console.log(`  ${mark.padEnd(6)} ${job.name}${wall(job)}`);
   }
-  // A run of the four-job workflow lacking one of them gave no verdict on it.
-  for (const name of missingChecks(otherJobs.map((job) => job.name))) {
+  // A run lacking an expected job gave no verdict on it.
+  for (const name of missingJobs(run.jobs.map((job) => job.name))) {
     red.push(name);
     console.log(`  MISSING ${name} (not in this run)`);
   }
