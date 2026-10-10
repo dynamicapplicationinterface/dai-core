@@ -63,15 +63,17 @@ test("a save acknowledged while another tab opens the document survives that tab
   // B opens it, and its first request for the document's lock waits.
   const b = await context.newPage();
   await b.addInitScript((lock: string) => {
-    const locks = navigator.locks as unknown as { request: (...args: unknown[]) => Promise<unknown> };
-    const real = locks.request.bind(locks);
+    // On the prototype: CI's WebKit opened past a wrapper set on the instance.
+    type Request = (this: unknown, ...args: unknown[]) => Promise<unknown>;
+    const proto = Object.getPrototypeOf(navigator.locks) as { request: Request };
+    const real = proto.request;
     let held = false;
     const w = window as unknown as { __lockAsked?: boolean; __releaseLock?: () => void };
-    locks.request = (name: unknown, ...rest: unknown[]) => {
-      if (held || name !== lock) return real(name, ...rest);
+    proto.request = function (this: unknown, name: unknown, ...rest: unknown[]) {
+      if (held || name !== lock) return real.call(this, name, ...rest);
       held = true;
       w.__lockAsked = true;
-      return new Promise<void>((go) => (w.__releaseLock = go)).then(() => real(name, ...rest));
+      return new Promise<void>((go) => (w.__releaseLock = go)).then(() => real.call(this, name, ...rest));
     };
   }, `dai:${uuid}`);
   await b.goto(`${RUNNER_URL}#${HINT_KEY}=${uuid}`);
