@@ -99,6 +99,11 @@ export const EXPECTED_JOBS = [
   ...CHECKS_JOBS,
 ];
 
+/** Whether a job is Firefox's, a reading that never decides the gate (test.yml, ruled 25 September, D32). */
+export function isReading(name) {
+  return /^browser \(firefox\b/.test(name);
+}
+
 /** Whether a job's name is the expected job `expected`. */
 function isJob(name, expected) {
   return name === expected || name.startsWith(`${expected},`) || name.startsWith(`${expected})`);
@@ -170,7 +175,6 @@ function main(argv) {
    * tally and not from the job's conclusion, so a real Firefox red is still
    * read; it just does not decide the gate line.
    */
-  const isReading = (job) => /^browser \(firefox\b/.test(job.name);
   const row = (job) => {
     const log = (perJob.get(job.name) ?? []).join("\n");
     const t = tallyFrom(log);
@@ -190,12 +194,12 @@ function main(argv) {
   // The gate's jobs that are not green, by name: the summary names only these.
   const red = [];
   console.log("  gate (chromium, webkit):");
-  for (const job of browserJobs.filter((j) => !isReading(j))) {
+  for (const job of browserJobs.filter((j) => !isReading(j.name))) {
     const r = row(job);
     if (!r.hasTally) anyMissing = true;
     if (r.failed || (job.conclusion && !r.hasTally)) red.push(job.name);
   }
-  const readings = browserJobs.filter(isReading);
+  const readings = browserJobs.filter((j) => isReading(j.name));
   if (readings.length) {
     console.log("  reading, not blocking (firefox, D32):");
     for (const job of readings) {

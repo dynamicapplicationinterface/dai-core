@@ -4827,6 +4827,22 @@ for a void seat is reported nowhere. The blind `admit.rs` reports
 `SEAT_NOT_HELD`; no vector has the case. **Change:** a vector first, then the
 page says which rule wins.
 
+#### D246 — The count floor's measure: this branch's runs, and Firefox decided it
+
+*Status: closed 9 October (review/post-fixup, step 2). Filed 9 October, from
+the post-fix-up review (handoff 9 October, 3-M1).*
+
+`count-floor.mjs --drift` measured each project against the newest run on the
+current branch in which that project's jobs passed. A branch's green run did
+not count once merged, and Firefox, a reading run with `continue-on-error`,
+made a run unusable for its own figure: one flaky Firefox test on main sent
+Firefox back to a September run (728 against a floor of 794), and every push
+to main stayed red at `checks-fast`. **Change, done:** one run measures every
+project, the newest green run whose commit is an ancestor of HEAD, on any
+branch; green is every gating job (`ci-verdict`'s `EXPECTED_JOBS`) present and
+passed. Firefox's figure is read from that run when its job passed and is
+otherwise absent; it never picks the run.
+
 #### D201 — The Rust reader orders `rejected` as text
 
 *Status: closed 8 October: a blind session ordered `rejected` from

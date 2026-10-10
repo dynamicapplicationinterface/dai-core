@@ -424,6 +424,7 @@
       "tests/cose.spec.ts"
     ],
     "tests/count-floor.spec.ts": [
+      "scripts/ci-verdict.mjs",
       "scripts/count-floor.mjs",
       "tests/count-floor.spec.ts"
     ],
