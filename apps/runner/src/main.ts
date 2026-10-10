@@ -635,11 +635,33 @@ async function pastHosts(): Promise<PastHost[]> {
  */
 const knownRevision = new Map<string, number>();
 
-async function learnRevision(documentUuid: string): Promise<number> {
+/**
+ * The record's revision as it stands, to write back unchanged, and what this
+ * tab works from: `readAt` when given, the revision its stored bytes were read
+ * at (`readStored`, 2-H2). A save that landed between that read and this is
+ * another tab's, so this tab's next save is refused rather than written over
+ * it.
+ */
+async function learnRevision(documentUuid: string, readAt?: number): Promise<number> {
   const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
   const revision = held?.revision ?? 0;
-  knownRevision.set(documentUuid, revision);
+  knownRevision.set(documentUuid, readAt ?? revision);
   return revision;
+}
+
+/**
+ * The stored database and the revision it is, read together under the
+ * library lock (2-H2, D41). A save writes both under it, so a read outside it
+ * could take the bytes before a save and learn the revision after: the tab
+ * then mounted the older bytes as the newer revision, its next save passed
+ * the check, and the save it wrote over had already been acknowledged.
+ */
+function readStored(documentUuid: string): Promise<{ db: Uint8Array | null; revision: number }> {
+  return withLibraryLock(documentUuid, async () => {
+    const db = await loadDatabaseFromOpfs(documentUuid);
+    const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+    return { db, revision: held?.revision ?? 0 };
+  });
 }
 
 /**
@@ -1230,7 +1252,8 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
 
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
-    const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    const stored = await readStored(cartridge.manifest.documentUuid);
+    const opfsDb = stored.db;
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
@@ -1302,7 +1325,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
         lastOpened: new Date().toISOString(),
         html: opened.html,
         publicKeyFingerprint: opened.publicKeyFingerprint,
-        revision: await learnRevision(opened.manifest.documentUuid),
+        revision: await learnRevision(opened.manifest.documentUuid, stored.revision),
       });
     });
 
@@ -2413,7 +2436,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     }
 
     markStep("reading stored data (OPFS)");
-    const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    // With the revision it is, under the lock (2-H2).
+    const stored = await readStored(cartridge.manifest.documentUuid);
+    const opfsDb = stored.db;
     const arriving = savedAtOf(cartridge);
     const heldItem = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
@@ -2603,7 +2628,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         link: shortArrivalLink() ?? heldItem?.link,
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
-        revision: await learnRevision(kept.manifest.documentUuid),
+        revision: await learnRevision(
+          kept.manifest.documentUuid,
+          kept.manifest.documentUuid === cartridge.manifest.documentUuid ? stored.revision : undefined,
+        ),
       };
       };
       await withLibraryLock(kept.manifest.documentUuid, async () => {
