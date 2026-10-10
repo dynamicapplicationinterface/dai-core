@@ -201,22 +201,7 @@ fn load(c: &Connection, schema: &str, t: &Table) -> Vec<Row> {
 // Anything else is ROW_MALFORMED at merge.
 const PARENTS_CAP: usize = 256;
 fn parents_well_formed(v: &V) -> bool {
-    let V::Text(p) = v else { return false };
-    let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(p) else { return false };
-    if a.len() > PARENTS_CAP {
-        return false;
-    }
-    a.iter().all(|e| {
-        let Some(s) = e.as_str() else { return false };
-        let Some((hex, seq)) = s.split_once(':') else { return false };
-        hex.len() == 32
-            && hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            && !seq.is_empty()
-            && !seq.starts_with('0')
-            && seq.bytes().all(|b| b.is_ascii_digit())
-            && seq.len() <= 16
-            && seq.parse::<u64>().map(|n| n <= (1u64 << 53) - 1).unwrap_or(false)
-    })
+    todo!()
 }
 
 // A row's parents are well formed when they are the one shape and name no id
