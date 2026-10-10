@@ -650,11 +650,11 @@ export function stageBatch(staged: Rows, batch: Batch | SignedBatch, tables: rea
       [sealed.id, sealed.replica, sealed.lc, sealed.sig, sealed.pub, sealed.att, sealed.version, sealed.digest, coversText(sealed.entries)],
     );
   }
-  staged.run("INSERT OR REPLACE INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
-    batch.replica,
-    authoredHeadOf(batch),
-    batch.lc,
-  ]);
+  // A staging sibling is empty, and takes the batch's author as its own; a copy
+  // that already has an id keeps it, which only the runtime changes (1-H1).
+  if (staged.all("SELECT 1 FROM _dai_replica LIMIT 1").length === 0) {
+    staged.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [batch.replica, authoredHeadOf(batch), batch.lc]);
+  }
   staged.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [
     batch.replica,
   ]);

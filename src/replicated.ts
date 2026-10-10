@@ -1004,6 +1004,28 @@ function stripSqlComments(sql: string): string {
     .join("\n");
 }
 
+/*
+ * The replica id is the runtime's (1-H1). Every session view reads a row under
+ * this copy's own id as one of the merge (D194's own-id exception), so an id
+ * the application could rewrite between writes would make its copy admit
+ * another author's uncovered rows until the next write put the id back. So
+ * the id is never changed in place, never deleted, and never joined by a
+ * second row, whoever writes: as the replicated tables' triggers hold their
+ * rows. The runtime changes it in one place, `adoptReplica`, which steps
+ * around `_dai_replica__kept` and puts it back. The counters are not held
+ * here: `seq` and `lc` move on every write, and the runtime puts them back
+ * from the rows and the host's floor.
+ */
+const REPLICA_GUARDS = `
+CREATE TRIGGER IF NOT EXISTS _dai_replica__id_fixed BEFORE UPDATE OF id ON _dai_replica
+  BEGIN SELECT RAISE(ABORT, 'RUNTIME_TABLE: the replica id is the runtime''s'); END;
+CREATE TRIGGER IF NOT EXISTS _dai_replica__kept BEFORE DELETE ON _dai_replica
+  BEGIN SELECT RAISE(ABORT, 'RUNTIME_TABLE: the replica id is the runtime''s'); END;
+CREATE TRIGGER IF NOT EXISTS _dai_replica__one BEFORE INSERT ON _dai_replica
+  WHEN EXISTS (SELECT 1 FROM _dai_replica)
+  BEGIN SELECT RAISE(ABORT, 'RUNTIME_TABLE: the replica id is the runtime''s'); END;
+`;
+
 function documentTables(session: boolean, maxParties = 0, authorTables: readonly string[] = []): string {
   const base = `
 CREATE TABLE IF NOT EXISTS _dai_replica (
@@ -1012,7 +1034,7 @@ CREATE TABLE IF NOT EXISTS _dai_replica (
   lc    INTEGER NOT NULL DEFAULT 0,
   label TEXT
 );
-
+${REPLICA_GUARDS}
 -- The signed batch headers (docs/identity.md): one row per batch any copy of
 -- this document sealed. A row in a replicated table names its batch by id; the
 -- signature covers [version, document, author, lc, digest, covers] and the

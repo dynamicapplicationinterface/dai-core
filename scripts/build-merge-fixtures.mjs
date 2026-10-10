@@ -231,10 +231,11 @@ function receiveInto(to, from, id) {
     }
   }
   const theirs = from.all("SELECT id, seq, lc FROM _dai_replica")[0];
-  to.run("DELETE FROM _dai_replica");
-  to.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
-    theirs.id, theirs.seq, theirs.lc,
-  ]);
+  // The file carries A's id as it stands, written past the guards only the runtime steps around (1-H1).
+  withoutTriggers(to, ["_dai_replica__kept", "_dai_replica__one"], () => {
+    to.run("DELETE FROM _dai_replica");
+    to.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [theirs.id, theirs.seq, theirs.lc]);
+  });
   to.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, 0, 0)", [theirs.id]);
   // And the recipient becomes itself (T1-D22).
   adoptReplica(to, id);

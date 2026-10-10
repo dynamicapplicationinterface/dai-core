@@ -411,7 +411,12 @@ export function adoptReplica(db: Rows, id: Uint8Array): boolean {
     held,
     Number(current["lc"] ?? 0),
   ]);
+  // The one place the id changes: the guard that refuses a delete is stepped
+  // around and put back as the schema wrote it (src/replicated.ts, 1-H1).
+  const guard = db.all("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = '_dai_replica__kept'")[0]?.["sql"];
+  if (typeof guard === "string") db.run("DROP TRIGGER _dai_replica__kept");
   db.run("DELETE FROM _dai_replica");
+  if (typeof guard === "string") db.run(guard);
   db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
     id,
     highestSeqOf(db, id),

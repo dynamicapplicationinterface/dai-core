@@ -338,6 +338,43 @@ def check(scenario: dict, violations: list[dict], disagreements: list[str]) -> N
                                    "difference": {"only_first": [x for x in a if x not in b][:6], "only_second": [x for x in b if x not in a][:6]}})
             if after != node["after"]:
                 disagreements.append(f"{name} P0 uncovered {label} {record['name']}: the state differs from the runtime's")
+        # The same rows, and then the mutation "rewrite replica id" (1-H1): the
+        # base's own id rewritten to their author's. A rewrite that held would
+        # admit them; what the base admits must not move.
+        for label, node in record.get("rewritten", {}).items():
+            local, before = bases[label]
+            with Trial(local):
+                written = 0
+                for entry in record["pending"]:
+                    row = entry["row"]
+                    columns = list(row)
+                    try:
+                        local.execute(
+                            f'INSERT INTO "{entry["table"]}" ({", ".join(f"{chr(34)}{c}{chr(34)}" for c in columns)}) VALUES ({", ".join("?" for _ in columns)})',
+                            [decode(row[c]) for c in columns],
+                        )
+                        written += 1
+                    except sqlite3.Error:
+                        pass
+                if written != node["written"]:
+                    disagreements.append(f"{name} P0 rewrite replica id {label} {record['name']}: {written} row(s) written here, {node['written']} in the runtime")
+                    continue
+                if written == 0:
+                    continue
+                refused = False
+                try:
+                    local.execute("UPDATE _dai_replica SET id = ?", (bytes.fromhex(record["rewriteTo"]),))
+                except sqlite3.Error:
+                    refused = True
+                if refused != node["refused"]:
+                    disagreements.append(f"{name} P0 rewrite replica id {label} {record['name']}: refused {refused} here, {node['refused']} in the runtime")
+                after = v.dump(local)
+            if after != before:
+                a, b = before.split("\n"), after.split("\n")
+                violations.append({"key": f"P0 {name} rewrite replica id {label} {record['name']}",
+                                   "difference": {"only_first": [x for x in a if x not in b][:6], "only_second": [x for x in b if x not in a][:6]}})
+            if after != node["after"]:
+                disagreements.append(f"{name} P0 rewrite replica id {label} {record['name']}: the state differs from the runtime's")
     for local, _ in bases.values():
         local.close()
     local = from_bytes(v.observer)

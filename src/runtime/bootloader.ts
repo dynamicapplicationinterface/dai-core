@@ -1944,8 +1944,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     if (!mergeModule) return;
     if (replicaSettled) {
       /*
-       * Every write, not only the first (binding rule 2; D80). The application
-       * holds the database and can rewrite `_dai_replica` between writes; the
+       * Every write, not only the first (binding rule 2; D80). The schema
+       * refuses an application's rewrite of `_dai_replica` (1-H1), but the
+       * application holds the database and can drop that guard first; the
        * id a row is stamped with is the host's, never the row's. One read when
        * nothing changed. A rewritten id is put back, the forged one moves to
        * `_dai_replicas` like any other, and the console says so.
