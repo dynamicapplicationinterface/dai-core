@@ -125,6 +125,44 @@ test.describe("Save a copy after another tab saved the document", () => {
     await context.close();
   });
 
+  /*
+   * 2-H1: Save a copy pressed right after the change, inside the autosave
+   * delay, before any save of this tab's was refused. The branch was taken on
+   * `elsewhere` before the flush, and the flush's own refusal is what sets it,
+   * so the copy was the stored one: the other tab's, without the change. Save
+   * a copy now flushes before it branches.
+   */
+  test("a document without shared tables: Save a copy right after a change, before any refusal, holds the change", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({ acceptDownloads: true });
+    const { page: first, uuid } = await firstTab(context, packing);
+    const second = await secondTab(context, uuid);
+
+    const before = await savesWritten(second);
+    await typeDates(second, "June, the other tab");
+    await expect.poll(() => savesWritten(second), { timeout: 30_000, message: "the second tab saved" }).toBeGreaterThan(before);
+
+    // No wait for the refusal: the copy is asked for while the change is pending.
+    await typeDates(first, "July, this tab");
+    expect((await first.locator("#save-state").getAttribute("title")) ?? "", "nothing refused yet").not.toMatch(/another tab/);
+    const html = await saveACopy(first);
+    expect(html, "a copy was made").not.toBeNull();
+    await expect(first.locator("#save-state")).toHaveAttribute("title", /saved from another tab/, { timeout: 30_000 });
+
+    const elsewhere = await browser.newContext();
+    const reader = await elsewhere.newPage();
+    await reader.goto(RUNNER_URL);
+    const file = join(mkdtempSync(join(tmpdir(), "dai-other-tab-copy-")), "copy.dai.html");
+    writeFileSync(file, html!, "utf8");
+    await reader.setInputFiles("#file", file);
+    await reader.locator("#card-open").click({ timeout: 60_000 });
+    await expect(dates(reader), "the copy holds this tab's change").toHaveValue("July, this tab", { timeout: 60_000 });
+
+    await elsewhere.close();
+    await context.close();
+  });
+
   test("a replicated document: a change never signed does not leave, and the sentence names the other tab and says to close it", async ({
     browser,
   }) => {

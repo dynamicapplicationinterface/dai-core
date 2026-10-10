@@ -2693,6 +2693,15 @@ async function exportContainer(): Promise<void> {
    * cost of two functions packaging the same document.
    */
   let activeCartridge: Cartridge;
+  /*
+   * Flushed before the branch (2-H1). This tab's first refused save can be
+   * this very flush, and its refusal is what sets `elsewhere`: branching first
+   * took the stored copy, the other tab's, and recorded it as sent, without
+   * the change just made. Once `elsewhere` is set every save here is refused,
+   * so there is nothing to flush.
+   */
+  if (!mountNow?.elsewhere) await flushDocument();
+  if (!loaded) return;
   const here = mountNow;
   if (here?.elsewhere && here.cartridge.manifest.documentUuid === loaded.manifest.documentUuid) {
     /*
