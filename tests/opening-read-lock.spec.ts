@@ -53,6 +53,11 @@ test("a save acknowledged while another tab opens the document survives that tab
   await expect(a.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
   await expect.poll(() => savesWritten(a), { timeout: 30_000, message: "A saved on opening" }).toBeGreaterThan(0);
   const uuid = await a.evaluate(() => (window as any).__runner.loaded.manifest.documentUuid as string);
+  // Where the engine has no Web Locks the opener takes no library lock at all
+  // (withLibraryLock runs the work as it stands), so there is no lock to read
+  // under and none to hold.
+  const hasLocks = await a.evaluate(() => typeof (navigator as any).locks?.request === "function");
+  test.skip(!hasLocks, "this engine has no navigator.locks, so the opener takes no library lock to read under");
   await save(a, () => typeDates(a, "June, A1"), "A saved June, A1");
 
   // B opens it, and its first request for the document's lock waits.
