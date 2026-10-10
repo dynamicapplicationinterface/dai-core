@@ -201,7 +201,29 @@ fn load(c: &Connection, schema: &str, t: &Table) -> Vec<Row> {
 // Anything else is ROW_MALFORMED at merge.
 const PARENTS_CAP: usize = 256;
 fn parents_well_formed(v: &V) -> bool {
-    todo!()
+    // Text (#parents-shape; not text is #parents-malformed).
+    let V::Text(t) = v else { return false };
+    // Parses as JSON to an array (#parents-shape, #parents-malformed).
+    let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(t) else {
+        return false;
+    };
+    // At most 256 elements; empty is the shape (#parents-shape, #parents-empty).
+    if a.len() > PARENTS_CAP {
+        return false;
+    }
+    // Each element a string `^[0-9a-f]{32}:[1-9][0-9]{0,15}$`, seq at most
+    // 2^53 - 1 (#parents-shape, #conv-row-id). Order and repeats unchecked
+    // (#parents-order-unchecked).
+    a.iter().all(|e| {
+        let Some(s) = e.as_str() else { return false };
+        let Some((h, q)) = s.split_once(':') else { return false };
+        h.len() == 32
+            && h.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+            && (1..=16).contains(&q.len())
+            && q.bytes().all(|c| c.is_ascii_digit())
+            && !q.starts_with('0')
+            && q.parse::<u64>().map_or(false, |n| n <= 9007199254740991)
+    })
 }
 
 // A row's parents are well formed when they are the one shape and name no id
