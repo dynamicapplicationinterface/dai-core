@@ -1953,9 +1953,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
        * The application can alter its own copy's view of it, and nothing it
        * writes without a signature leaves the copy (D196's class; Phase 3.2
        * reviews the boundary). The schema's triggers stay as a guard against
-       * accident. So the id is settled here: every row of `_dai_replica` is
-       * read, a rewritten or second id is put back to the host's, the other
-       * moves to `_dai_replicas` like any other, and the console says so. One
+       * accident. The signature boundary holds; the settle here corrects the
+       * copy's own view: every row of `_dai_replica` is read, the copy's view
+       * is set back to the host's id, the other moves to `_dai_replicas` like
+       * any other, and the console says so. An application that undoes it (a
+       * trigger of its own) alters its own view again, and nothing more. One
        * read when nothing changed.
        */
       if (mountReplica) {

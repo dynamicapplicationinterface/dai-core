@@ -1009,9 +1009,12 @@ function stripSqlComments(sql: string): string {
  * its own copy's view of it, and nothing it writes without a signature leaves
  * the copy (D196's class; Phase 3.2 reviews the boundary). These triggers stay
  * as a guard against accident: they refuse a change in place, a delete and a
- * second row, but an application holding the database can drop them. What
- * holds is the runtime's settle (`adoptReplica`, reading every row), before
- * each write and each host read of a session view. The runtime changes the id
+ * second row, but an application holding the database can drop them. The
+ * signature boundary holds. The settle corrects the copy's own view: the
+ * runtime's `adoptReplica`, reading every row, before each write and each
+ * host read of a session view. An application can alter that view again (a
+ * trigger of its own re-adds a row after every settle), and only in its own
+ * copy. The runtime changes the id
  * in one place, `adoptReplica`, which steps around `_dai_replica__kept` and
  * puts it back. The counters are not held here: `seq` and `lc` move on every
  * write, and the runtime puts them back from the rows and the host's floor.

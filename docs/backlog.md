@@ -4613,9 +4613,11 @@ run in Python's SQLite by the review, the first also in the frame:
 - `PRAGMA legacy_alter_table=ON`, rename `_dai_replica`, re-create it and
   insert, with no `DROP TRIGGER`.
 
-What holds is the runtime's settle (`adoptReplica`): every row read, never
-`LIMIT 1`, before each write and each host read of a session view
-(`heldSessions`, `closedSessions`). A view the application redefines
+The signature boundary holds. The settle corrects the copy's own view: the
+runtime's `adoptReplica`, every row read, never `LIMIT 1`, before each write
+and each host read of a session view (`heldSessions`, `closedSessions`). An
+application trigger that re-adds a row after every settle alters that view
+again, in its own copy only. A view the application redefines
 (`DROP VIEW _dai_closed`, the review's related run) is this class too.
 
 #### D197 — The page does not say what `expected-schema.txt` is
