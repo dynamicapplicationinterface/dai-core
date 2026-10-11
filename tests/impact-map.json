@@ -3784,14 +3784,21 @@
       "tsup.config.ts"
     ],
     "tests/site-claims.spec.ts": [
+      "src/cbor.ts",
+      "src/core.ts",
+      "src/cose.ts",
+      "src/format.ts",
       "src/frame.ts",
+      "src/kit.ts",
       "src/lint.ts",
       "src/refusals.ts",
       "src/replicated.ts",
+      "src/schema.ts",
       "src/script-tags.ts",
       "src/seat-check.ts",
       "src/session-id.ts",
       "src/template.html",
+      "src/test-keys.ts",
       "tests/site-claims.spec.ts",
       "website/public/"
     ],
