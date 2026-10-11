@@ -2096,8 +2096,10 @@ test.describe("a game continues over a shared link (the key path)", () => {
     expect(beforeA.members, "two players seated before").toHaveLength(2);
 
     // The precondition the phones reached by d22's route: Bo's copy under Ada's id.
+    // The schema refuses the rewrite (1-H1); an application that drops the
+    // guard first still reaches it, and that copy is what this holds to.
     await appFrame(pageB).evaluate((ada) => {
-      (window as any).daiKit.db.exec(`UPDATE _dai_replica SET id = x'${ada}'`);
+      (window as any).daiKit.db.exec(`DROP TRIGGER _dai_replica__id_fixed; UPDATE _dai_replica SET id = x'${ada}'`);
     }, beforeA.me);
     return { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB };
   }

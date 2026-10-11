@@ -69,8 +69,20 @@ questions), committed unedited. That session was given only
 crate (not `target/`), and was barred from the runtime, the Python reader,
 the scripts, the other docs and git history. As with `main.rs`, the function
 signatures, types and doc comments were kept from the gutted version, so
-they are not independent evidence; the bodies are. With that, every function
-body in the crate has been rebuilt blind.
+they are not independent evidence; the bodies are.
+
+That sentence ended "with that, every function body in the crate has been
+rebuilt blind", and one had not. `parents_well_formed` in `main.rs` was
+byte-identical to the body `4ddb2c83` (29 September) wrote, a commit that
+also wrote the Python reader's `well_formed_parents` and the fixture
+generator, the same pattern as the commits above; it is added to the dated
+record here. Neither gut covered it: `21337efe` took the bodies the seven
+commits touched, `3d71fff8` took `admit.rs`. On 9 October it was gutted
+(`7f054600`, 0 of 123) and rebuilt blind (`1f54fd5a`, 123 of 123, no
+questions), committed unedited, by a session given the same four inputs
+under the same bars. Its signature, the comment above it and `PARENTS_CAP`
+were kept. With that, every function body in the crate has been rebuilt
+blind.
 
 ## The one rule for changing it
 

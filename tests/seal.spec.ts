@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { authoredBatchAbove, decodeBatch, headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
-import { applyRow, coversText, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
+import { adoptReplica, applyRow, coversText, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 
 /**
@@ -211,7 +211,8 @@ test("the mailbox answers for the author it is told, not for whatever _dai_repli
   ensureReplica(db, ada.author);
   createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
   recordSeal(db, await signBatch(pendingBatches(db, ada.author, ["moves", "notes"])[0]!, { document: DOC, keys: ada.keys }));
-  db.run("UPDATE _dai_replica SET id = ?", [new Uint8Array(16).fill(0xee)]);
+  // As a copy that arrived carrying another id holds it: the runtime's one id change (1-H1).
+  adoptReplica(db, new Uint8Array(16).fill(0xee));
 
   const answer = authoredBatchAbove(db, ada.author, { replica: "", seq: 0 }, ["moves", "notes"], undefined, DOC);
   expect(answer.batch, "Ada's sealed batch is still hers to send").not.toBeNull();

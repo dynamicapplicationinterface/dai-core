@@ -30,6 +30,7 @@ import { compatibility, type SchemaDeclaration } from "../schema.js";
 import { TO_DOCUMENT, TO_HOST } from "../bridge.js";
 import { FRAME, FRAME_INTERNAL, FRAME_PUBLIC, type FrameNames } from "../frame.js";
 import { SESSION_ID_FUNCTION, sessionIdTools } from "../session-id.js";
+import { scriptTagTools, type ScriptTagTools } from "../script-tags.js";
 
 const APP_PREFIX = "app/";
 const SCHEMA_ENTRY = "runtime/schema.json";
@@ -1943,8 +1944,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     if (!mergeModule) return;
     if (replicaSettled) {
       /*
-       * Every write, not only the first (binding rule 2; D80). The application
-       * holds the database and can rewrite `_dai_replica` between writes; the
+       * Every write, not only the first (binding rule 2; D80). The schema
+       * refuses an application's rewrite of `_dai_replica` (1-H1), but the
+       * application holds the database and can drop that guard first; the
        * id a row is stamped with is the host's, never the row's. One read when
        * nothing changed. A rewritten id is put back, the forged one moves to
        * `_dai_replicas` like any other, and the console says so.
@@ -3061,7 +3063,7 @@ function installAppMode(frame: HTMLIFrameElement): void {
  * place before any module in the document is fetched, and it cannot be written
  * until the URLs it names exist.
  */
-function frameLoader(names: FrameNames): void {
+function frameLoader(names: FrameNames, tags: ScriptTagTools): void {
   type Any = Record<string, any>;
 
   /*
@@ -3285,11 +3287,11 @@ function frameLoader(names: FrameNames): void {
      * the shell (pass C's H11).
      */
     const stamp = nonce ? ' nonce="' + nonce + '"' : "";
-    const stamped = nonce
-      ? rewritten.replace(/<script(?![^>]*\snonce=)([^>]*)>/gi, (whole: string, attrs: string) =>
-          /\ssrc\s*=/i.test(attrs) || /\stype\s*=\s*["']?speculationrules\b/i.test(attrs) ? whole : "<script" + attrs + stamp + ">",
-        )
-      : rewritten;
+    // Script tags are found by the tokenizer's rules, not a pattern: a slash
+    // before an attribute is whitespace to HTML, and a pattern that wanted a
+    // space stamped `<script/src=…>` and `<script/type="speculationrules">`
+    // (3-H1). A script that loads code from elsewhere is never stamped.
+    const stamped = nonce ? tags.stampScripts(rewritten, nonce) : rewritten;
 
     const head =
       '<meta http-equiv="x-dns-prefetch-control" content="off">' +
@@ -3331,7 +3333,8 @@ function frameLoader(names: FrameNames): void {
 
 /** Serializes frameLoader() into the frame's initial document. */
 function loaderScript(): string {
-  return "<script" + nonceAttr() + ">(" + frameLoader.toString() + ")(" + JSON.stringify(FRAME) + ")<" + "/script>";
+  // The tokenizer travels as source beside the names (src/script-tags.ts), as bridgeScript sends the session-id hash.
+  return "<script" + nonceAttr() + ">(" + frameLoader.toString() + ")(" + JSON.stringify(FRAME) + ", (" + scriptTagTools.toString() + ")())<" + "/script>";
 }
 
 /** Serializes bridgeMain() into the frame. See the note on that function. */

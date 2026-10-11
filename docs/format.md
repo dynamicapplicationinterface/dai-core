@@ -590,6 +590,9 @@ these hold:
 the merge: a row reached through a header the copy holds (the header its
 `_r_batch` names lists it: its table, its author, its seq), as every row a
 merge takes is, or a row under the copy's own author id.
+<a id="replica-runtime"></a>The copy's own author id is its `_dai_replica`
+id, which only the runtime writes: the schema refuses changing it in place,
+deleting it and adding a second, whoever writes.
 <a id="own-pending"></a>A copy's own pending rows count in the author's own
 views at once; they are not part of the admitted state P0
 ([format-design.md](format-design.md)) compares, because they have not left
@@ -885,6 +888,8 @@ version, never a refactor (identity.md, binding rule 10).
   once and are not part of the admitted state P0 compares; "not admitted until
   sealed" was never true.
 - Version 2: `rejected` orders the seq as a number.
+- Version 2: the copy's own author id, `_dai_replica`, is the runtime's; the
+  schema refuses an application's rewrite of it.
 
 ## Conformance
 

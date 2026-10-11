@@ -19,15 +19,18 @@
  * while CI passed 1,422 chromium and node tests against a floor of 997: up to
  * 400 tests could have stopped being collected with the gate still green. A
  * floor is only worth what it was last measured from, so it is measured here,
- * from CI, every time the gate runs: for each project, the newest run on this
- * branch in which every job carrying that project passed, counting the tests
- * that passed in it (a retried test that passed counts, as the gate counts it).
+ * from CI, every time the gate runs: the newest green run whose commit is an
+ * ancestor of HEAD, on whatever branch it ran, counting the tests that passed
+ * in it per project (a retried test that passed counts, as the gate counts it).
+ * Green means every gating job is in the run and passed; Firefox is a reading
+ * and never decides it (3-M1, D246): a floor read from this branch's runs only,
+ * per project, held main red until a whole Firefox job on main passed.
  * CI is where the floor gates, so a floor taken from it can never sit above
  * what CI passes (a Windows run passes more), nor below it.
  *
  * The check fails when the floor is older than the newest spec file CI has
- * already run: a spec committed at or before the newest completed run on this
- * branch, after the commit the floor was taken from. A spec in commits CI has
+ * already run: a spec committed at or before the newest completed run of a
+ * commit in HEAD's history, after the commit the floor was taken from. A spec in commits CI has
  * not run yet cannot be in any floor, and is not held against it.
  *
  * Needs the `gh` CLI, authenticated (in CI, GH_TOKEN and `actions: read`).
@@ -37,6 +40,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isReading, missingJobs } from "./ci-verdict.mjs";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FLOOR = join(repo, "tests", "count-floor.json");
@@ -46,11 +50,45 @@ const PROJECTS = ["chromium", "firefox", "webkit", "node"];
 const CARRIERS = {
   chromium: (name) => name.startsWith("browser (chromium"),
   node: (name) => name.startsWith("browser (chromium"),
-  firefox: (name) => name.startsWith("browser (firefox"),
+  firefox: isReading,
   webkit: (name) => name.startsWith("browser (webkit"),
 };
-/** WebKit runs in four parts and a mailbox job (test.yml, D174): all five, or no count. */
-const WEBKIT_JOBS = 5;
+
+/**
+ * Whether a run is green: every job of the gate (ci-verdict's EXPECTED_JOBS)
+ * is in it, and every job but Firefox's passed. Firefox is a reading
+ * (continue-on-error, D32), so one flaky Firefox test must not make a run
+ * unusable as the floor's measure (3-M1).
+ */
+export function runGreen(jobs) {
+  if (missingJobs(jobs.map((job) => job.name)).length > 0) return false;
+  return jobs.every((job) => isReading(job.name) || job.conclusion === "success");
+}
+
+/**
+ * The newest green run, and its passed count per project. `runs` is newest
+ * first; a run counts only when it is completed and its commit is an ancestor
+ * of HEAD (`isAncestor`), whatever branch it ran on, so a run of a branch
+ * since merged measures the tree it merged. Firefox's figure is read from that
+ * run when its job passed and is otherwise absent: it never picks the run.
+ * `jobsOf(run)` and `logOf(job)` read GitHub.
+ */
+export function newestGreen(runs, { isAncestor, jobsOf, logOf }) {
+  for (const run of runs) {
+    if (run.status !== "completed" || !isAncestor(run.headSha)) continue;
+    const jobs = jobsOf(run);
+    if (!runGreen(jobs)) continue;
+    const found = {};
+    for (const project of PROJECTS) {
+      const carrying = jobs.filter((job) => CARRIERS[project](job.name));
+      if (carrying.length === 0 || carrying.some((job) => job.conclusion !== "success")) continue;
+      const count = carrying.reduce((sum, job) => sum + (countsFrom(logOf(job))[project] ?? 0), 0);
+      if (count > 0) found[project] = { count, run: run.databaseId, sha: run.headSha };
+    }
+    return found;
+  }
+  return {};
+}
 
 /**
  * Passed tests per project in a job log printed by Playwright's list reporter:
@@ -86,19 +124,34 @@ export function staleFloor(floorAt, specAt) {
 const gh = (args) => execFileSync("gh", args, { cwd: repo, encoding: "utf8", maxBuffer: 512 * 1024 * 1024 });
 const git = (args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 
-function branch() {
-  return process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || git(["rev-parse", "--abbrev-ref", "HEAD"]);
-}
-
 function haveGh() {
   const run = spawnSync("gh", ["auth", "status"], { cwd: repo, stdio: "ignore", shell: process.platform === "win32" });
   return run.status === 0;
 }
 
+/** Whether a commit is HEAD or an ancestor of it; a commit not in this history is neither. */
+function isAncestor(sha) {
+  return spawnSync("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { cwd: repo, stdio: "ignore" }).status === 0;
+}
+
+/** The completed runs of test.yml on any branch whose commit is in HEAD's history, newest first. */
 function completedRuns() {
-  return JSON.parse(
-    gh(["run", "list", "--workflow", "test.yml", "--branch", branch(), "--limit", "30", "--json", "databaseId,headSha,status,conclusion"]),
-  ).filter((run) => run.status === "completed");
+  return JSON.parse(gh(["run", "list", "--workflow", "test.yml", "--limit", "60", "--json", "databaseId,headSha,status,conclusion"])).filter(
+    (run) => run.status === "completed" && isAncestor(run.headSha),
+  );
+}
+
+/** The newest green run's counts, read from GitHub. */
+function newestGreenHere() {
+  const logs = new Map();
+  return newestGreen(completedRuns(), {
+    isAncestor: () => true,
+    jobsOf: (run) => JSON.parse(gh(["run", "view", String(run.databaseId), "--json", "jobs"])).jobs,
+    logOf: (job) => {
+      if (!logs.has(job.databaseId)) logs.set(job.databaseId, gh(["run", "view", "--job", String(job.databaseId), "--log"]));
+      return logs.get(job.databaseId);
+    },
+  });
 }
 
 /** The commit time of a sha, from the local history, or from GitHub when it is not here. */
@@ -137,39 +190,15 @@ export function floorDrift(floor, newest) {
   return { above, below };
 }
 
-/** Per project, the newest completed run on this branch whose every job carrying it passed, and its count. */
-function newestGreen() {
-  const found = {};
-  for (const run of completedRuns()) {
-    if (PROJECTS.every((p) => found[p])) break;
-    const jobs = JSON.parse(gh(["run", "view", String(run.databaseId), "--json", "jobs"])).jobs;
-    const logs = new Map();
-    const logOf = (job) => {
-      if (!logs.has(job.databaseId)) logs.set(job.databaseId, gh(["run", "view", "--job", String(job.databaseId), "--log"]));
-      return logs.get(job.databaseId);
-    };
-    for (const project of PROJECTS) {
-      if (found[project]) continue;
-      const carrying = jobs.filter((job) => CARRIERS[project](job.name));
-      if (carrying.length === 0 || carrying.some((job) => job.conclusion !== "success")) continue;
-      if (project === "webkit" && carrying.length !== WEBKIT_JOBS) continue;
-      const count = carrying.reduce((sum, job) => sum + (countsFrom(logOf(job))[project] ?? 0), 0);
-      if (count === 0) continue;
-      found[project] = { count, run: run.databaseId, sha: run.headSha };
-    }
-  }
-  return found;
-}
-
 function regenerate() {
   const held = readFloor();
-  const found = newestGreen();
+  const found = newestGreenHere();
   const floor = {};
   for (const project of PROJECTS) {
     if (found[project]) floor[project] = found[project].count;
     else if (held[project] !== undefined) {
       floor[project] = held[project];
-      console.log(`count floor: no green run of ${project} in the last 30 on ${branch()}; kept ${held[project]}`);
+      console.log(`count floor: no green run of ${project} among the runs in this history; kept ${held[project]}`);
     }
   }
   // The oldest commit any project's figure was taken from: the floor is no newer than that.
@@ -187,7 +216,7 @@ function check() {
   const floor = readFloor();
   const newest = completedRuns()[0];
   if (!newest) {
-    console.log(`count floor: no completed run on ${branch()}, so nothing CI ran is newer than the floor.`);
+    console.log(`count floor: no completed run of a commit in this history, so nothing CI ran is newer than the floor.`);
     return true;
   }
   let specAt = "";
@@ -215,7 +244,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   try {
     if (process.argv.includes("--drift")) {
-      const found = newestGreen();
+      const found = newestGreenHere();
       const newest = Object.fromEntries(Object.entries(found).map(([p, s]) => [p, s.count]));
       const { above, below } = floorDrift(readFloor(), newest);
       const runs = [...new Set(Object.values(found).map((s) => s.run))].join(", ") || "(none)";
