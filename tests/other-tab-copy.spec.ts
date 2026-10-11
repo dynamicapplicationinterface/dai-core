@@ -304,4 +304,112 @@ test.describe("Save a copy after another tab saved the document", () => {
       await context.close();
     });
   }
+
+  /*
+   * The review of R1c: the tests above wait for "another tab" before they
+   * press, so the share skips its flush. Here the press comes inside the
+   * autosave delay, before any save of this tab's was asked, so the share's
+   * own flush is this tab's first refused save and the branch is taken after
+   * it (sendingBytes). The sheet is opened before the change, and the check
+   * and the press are one task in the page, so no autosave can come between
+   * them.
+   */
+  test("Share whose own flush is the first refused save: a plain document's link holds the change, a replicated one sends nothing", async ({
+    browser,
+  }) => {
+    /** Presses Send now if no save was asked since `asked` and nothing is refused yet; what it saw. */
+    const sendBeforeAnySave = (page: Page, asked: number) =>
+      page.evaluate((count) => {
+        const runner = (window as any).__runner;
+        const title = document.getElementById("save-state")?.getAttribute("title") ?? "";
+        const pressed = runner.saves === count && !/another tab/.test(title);
+        if (pressed) document.getElementById("send-go")!.click();
+        return { pressed, saves: runner.saves as number, title };
+      }, asked);
+    /** The link the share copied, or null once the sheet closed with a sentence instead. */
+    const linkOrSentence = async (page: Page): Promise<string | null> => {
+      await expect
+        .poll(
+          async () =>
+            Boolean(await page.evaluate(() => (window as any).__copied)) ||
+            (!(await page.locator("#send-go").isVisible()) && Boolean((await page.locator("#doc-note").textContent())?.trim())),
+          { timeout: 30_000, message: "the share finished: a link copied, or a sentence said" },
+        )
+        .toBe(true);
+      return (await page.evaluate(() => (window as any).__copied as string | undefined)) ?? null;
+    };
+    const openSheet = async (page: Page): Promise<void> => {
+      await page.evaluate(() => {
+        (window as any).__copied = undefined;
+        navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+        (document.getElementById("doc-note") as HTMLElement).textContent = "";
+      });
+      await page.click("#more");
+      await page.click("#send");
+      await expect(page.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+    };
+
+    // A document without shared tables.
+    {
+      const context = await browser.newContext({ acceptDownloads: true });
+      const { page: first, uuid } = await firstTab(context, packing);
+      const second = await secondTab(context, uuid);
+      const before = await savesWritten(second);
+      await typeDates(second, "June, the other tab");
+      await expect.poll(() => savesWritten(second), { timeout: 30_000, message: "the second tab saved" }).toBeGreaterThan(before);
+      const matched = await matchedDigest(first, uuid);
+
+      await openSheet(first);
+      await first.locator("#send-with-data").check();
+      const asked = await first.evaluate(() => (window as any).__runner.saves as number);
+      await typeDates(first, "July, this tab");
+      const press = await sendBeforeAnySave(first, asked);
+      expect(press, "pressed before any save of the change was asked, with nothing refused").toMatchObject({ pressed: true, saves: asked });
+      const link = await linkOrSentence(first);
+      await expect(first.locator("#save-state"), "the share's flush was refused").toHaveAttribute("title", /saved from another tab/, {
+        timeout: 30_000,
+      });
+      expect(link, "a link was made").not.toBeNull();
+      expect(await matchedDigest(first, uuid), "nothing recorded as sent").toBe(matched);
+
+      const elsewhere = await browser.newContext();
+      const reader = await elsewhere.newPage();
+      await reader.goto(link!);
+      await reader.locator("#card-open").click({ timeout: 60_000 });
+      await expect(dates(reader), "the link holds this tab's change").toHaveValue("July, this tab", { timeout: 60_000 });
+      await elsewhere.close();
+      await context.close();
+    }
+
+    // A replicated document.
+    {
+      const context = await browser.newContext({ acceptDownloads: true });
+      const { page: first, uuid } = await firstTab(context, chess);
+      const second = await secondTab(context, uuid);
+      await expect.poll(() => savesWritten(second), { timeout: 30_000, message: "the second tab saved on opening" }).toBeGreaterThan(0);
+      const matched = await matchedDigest(first, uuid);
+
+      // The change is the new game's name, which the app writes on input. The
+      // dialog opens with no write, then the sheet; the name is typed under it,
+      // and Send pressed at once.
+      const ui = app(first);
+      await ui.locator("[data-new-game]:visible").first().click({ timeout: 60_000 });
+      await expect(ui.locator("#setup-you")).toBeVisible({ timeout: 30_000 });
+      await openSheet(first);
+      const asked = await first.evaluate(() => (window as any).__runner.saves as number);
+      await ui.locator("#setup-you").fill("Ada, this tab");
+      const press = await sendBeforeAnySave(first, asked);
+      expect(press, "pressed before any save of the change was asked, with nothing refused").toMatchObject({ pressed: true, saves: asked });
+      const link = await linkOrSentence(first);
+      expect(link, "no link carries a change nobody signed").toBeNull();
+      await expect(first.locator("#doc-note")).toContainText(
+        "Nothing was sent: another tab wrote this document after it was opened here, so this tab's changes cannot leave from here. " +
+          "Close the other tab, then reopen the document here.",
+      );
+      await expect(first.locator("#doc-note")).not.toContainText(/try again in a moment/i);
+      await expect(first.locator("#save-state"), "the share's flush was refused").toHaveAttribute("title", /another tab/, { timeout: 30_000 });
+      expect(await matchedDigest(first, uuid), "nothing recorded as sent").toBe(matched);
+      await context.close();
+    }
+  });
 });
