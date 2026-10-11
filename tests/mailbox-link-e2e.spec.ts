@@ -2071,11 +2071,12 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * seating him in the open seat, one move each, and then Bo's copy rewrites
    * its own `_dai_replica` to Ada's id.
    */
-  async function forgedPair(browser: Browser) {
+  async function forgedPair(browser: Browser, forge = true, prepareB?: (device: BrowserContext) => Promise<unknown>) {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
     await mountStore(deviceB);
+    await prepareB?.(deviceB);
     const pageA = await deviceA.newPage();
     const pageB = await deviceB.newPage();
 
@@ -2094,12 +2095,15 @@ test.describe("a game continues over a shared link (the key path)", () => {
     console.log(`D80 before, A: ${JSON.stringify(beforeA)}`);
     console.log(`D80 before, B: ${JSON.stringify(beforeB)}`);
     expect(beforeA.members, "two players seated before").toHaveLength(2);
+    if (!forge) return { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB, link };
 
     // The precondition the phones reached by d22's route: Bo's copy under Ada's id.
+    // The schema refuses the rewrite (1-H1); an application that drops the
+    // guard first still reaches it, and that copy is what this holds to.
     await appFrame(pageB).evaluate((ada) => {
-      (window as any).daiKit.db.exec(`UPDATE _dai_replica SET id = x'${ada}'`);
+      (window as any).daiKit.db.exec(`DROP TRIGGER _dai_replica__id_fixed; UPDATE _dai_replica SET id = x'${ada}'`);
     }, beforeA.me);
-    return { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB };
+    return { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB, link };
   }
 
   /** Both players still seated, on the copy given. */
@@ -2272,6 +2276,242 @@ test.describe("a game continues over a shared link (the key path)", () => {
     expect(last.r, "Bo's move is admitted as Bo's, not Ada's").toBe(beforeB.me);
     stillSeated("A", afterA, beforeB.me);
     stillSeated("B", afterB, beforeB.me);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /** Every `_dai_replica` id and every seat's holder, on the copy in the page's frame. */
+  const replicaAndHolders = (frame: Frame) =>
+    frame.evaluate(() => {
+      const kit = (window as any).daiKit;
+      const session = kit.db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s;
+      return {
+        ids: kit.db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica ORDER BY rowid").map((r: { id: string }) => r.id),
+        holders: kit.seats(session).map((seat: { seat: string; holder: string | null }) => `${seat.seat}:${seat.holder}`),
+      };
+    });
+
+  /** The `_dai_replica` ids of this device's stored copy, the bytes a reopen reads. */
+  async function storedReplicaIds(page: Page): Promise<string[]> {
+    const bytes = await page.evaluate(async () => {
+      const runner = (window as any).__runner;
+      const stored: Uint8Array | null = await runner.loadStored(runner.loaded.manifest.documentUuid);
+      return stored ? Array.from(stored) : [];
+    });
+    if (bytes.length === 0) return [];
+    return appFrame(page).evaluate(async (raw) => {
+      const api = await (window as any).dai.initSqlite();
+      const data = new Uint8Array(raw);
+      const db = new api.oo1.DB();
+      try {
+        const pointer = api.wasm.allocFromTypedArray(data);
+        api.capi.sqlite3_deserialize(
+          db.pointer,
+          "main",
+          pointer,
+          data.length,
+          data.length,
+          api.capi.SQLITE_DESERIALIZE_FREEONCLOSE | api.capi.SQLITE_DESERIALIZE_RESIZEABLE,
+        );
+        return db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica ORDER BY rowid").map((r: { id: string }) => r.id);
+      } finally {
+        db.close();
+      }
+    }, bytes);
+  }
+
+  /**
+   * PR6-H1: the replica id is the runtime's, and the application can alter its
+   * own copy's view of it. Bo's copy drops the guards, rewrites its id to
+   * Ada's and puts its own back as a second row ahead of it, so a read of the
+   * first row meets its own id. It also holds a confirm by Ada that no header
+   * covers, naming a forger in Bo's seat: while Ada's id is one of the copy's,
+   * every session view reads that row as one of the merge, and Bo's seat has
+   * two holders. The next write, and a reopen, settle to the host's id: one
+   * row, Bo's, and the confirm is nobody's again.
+   */
+  test("PR6-H1: a second _dai_replica row does not outlast the copy's next write or a reopen", async ({ browser }) => {
+    const { deviceA, deviceB, pageA, pageB, appA, appB, beforeA, beforeB, link } = await forgedPair(browser, false);
+    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+    const honest = await replicaAndHolders(appFrame(pageB));
+    expect(honest.ids, "Bo's copy holds Bo's id").toEqual([beforeB.me]);
+    expect(honest.holders.join(" "), "Bo holds his seat").toContain(`:${beforeB.me}`);
+
+    const forgedState = await appFrame(pageB).evaluate(
+      ({ ada, bo }) => {
+        const kit = (window as any).daiKit;
+        const db = kit.db;
+        const bytes = (hex: string) => kit.seatBytes(hex);
+        const forger = "f0".repeat(16);
+        // Ada's confirm of Bo, written again at a seq of hers no header covers, naming the forger.
+        const confirm = db.selectObjects(
+          "SELECT * FROM _dai_confirm WHERE lower(hex(_r_replica)) = ? AND lower(hex(holder)) = ? AND _r_deleted = 0 LIMIT 1",
+          [ada, bo],
+        )[0];
+        const tables = db
+          .selectObjects(
+            "SELECT m.name FROM sqlite_master m WHERE m.type = 'table' AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) c WHERE c.name = '_r_seq')",
+          )
+          .map((row: { name: string }) => row.name);
+        const top = Math.max(
+          ...tables.map((t: string) =>
+            Number(db.selectObjects(`SELECT coalesce(max(_r_seq), 0) AS n FROM "${t}" WHERE lower(hex(_r_replica)) = ?`, [ada])[0].n),
+          ),
+        );
+        const row: Record<string, unknown> = { ...confirm };
+        delete row["_r_batch"];
+        delete row["_r_superseded"];
+        row["holder"] = bytes(forger);
+        row["_r_seq"] = top + 1;
+        row["_r_lc"] = Number(confirm._r_lc) + 1;
+        row["_r_entity"] = crypto.getRandomValues(new Uint8Array(16));
+        row["_r_parents"] = "[]";
+        const columns = Object.keys(row);
+        db.exec({
+          sql: `INSERT INTO _dai_confirm (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+          bind: columns.map((c) => row[c]),
+        });
+        // Drop the guards, rewrite the id, then insert a second row: Bo's own, first in a scan.
+        db.exec(
+          "DROP TRIGGER _dai_replica__id_fixed; DROP TRIGGER _dai_replica__one; " +
+            `UPDATE _dai_replica SET rowid = 2, id = x'${ada}'; ` +
+            `INSERT INTO _dai_replica (rowid, id, seq, lc) SELECT 1, x'${bo}', seq, lc FROM _dai_replica`,
+        );
+        // Read in the same turn as the forgery: any host read of a session view
+        // settles the id now, so a later evaluate can find it already put back.
+        const session = db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s;
+        const standing = {
+          ids: db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica ORDER BY rowid").map((r: { id: string }) => r.id),
+          holders: kit.seats(session).map((seat: { seat: string; holder: string | null }) => `${seat.seat}:${seat.holder}`),
+        };
+        return { forger, standing };
+      },
+      { ada: beforeA.me, bo: beforeB.me },
+    );
+    // The forgery bites while it stands: Ada's uncovered confirm is read as one of the merge.
+    const { forger: forged, standing } = forgedState;
+    expect(standing.ids, "two rows, Bo's first").toEqual([beforeB.me, beforeA.me]);
+    expect(standing.holders, "Bo's seat is held by nobody while it stands").not.toEqual(honest.holders);
+
+    // The next write: applying Ada's move.
+    await play(appA, "d2", "d4");
+    await expect(async () => {
+      await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+      await expect(appB.locator("#move-history")).toContainText("d4", { timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    const written = await replicaAndHolders(appFrame(pageB));
+    expect(written.ids, "after the next write, Bo's id alone").toEqual([beforeB.me]);
+    expect(written.holders, "and the holders are as before: no forged holder").toEqual(honest.holders);
+    expect(written.holders.join(" ")).not.toContain(forged);
+
+    // A reopen: the stored copy first (saved a moment after the write), then the tab.
+    await expect(async () => expect(await storedReplicaIds(pageB)).toEqual([beforeB.me])).toPass({ timeout: 30_000 });
+    await pageB.close();
+    const pageB2 = await deviceB.newPage();
+    await pageB2.goto(link);
+    await pageB2.locator("#card-open").click({ timeout: 60_000 });
+    await expect(app(pageB2).locator("#app")).toBeVisible({ timeout: 60_000 });
+    await expect(app(pageB2).locator("#move-history")).toContainText("d4", { timeout: 30_000 });
+    const reopened = await replicaAndHolders(appFrame(pageB2));
+    expect(reopened.ids, "after a reopen, Bo's id alone").toEqual([beforeB.me]);
+    expect(reopened.holders, "and no forged holder").toEqual(honest.holders);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * PR6-H1 (b): a host read of the session views settles the id itself, with
+   * no write after the forgery. The test above cannot tell it from the
+   * write's settle, since its mailbox pull asks for the sessions before any
+   * batch is applied. Here the host's own sessions question is the only thing
+   * that reaches the frame between the forgery and the read of what is left:
+   * the shell holds the other host questions that settle (the mailbox's
+   * background poll asks what this copy authored, a save's flush seals what is
+   * pending, and an apply or a merge writes), from a listener registered
+   * before its own. With every one of them settling and only the session
+   * reads not, it fails.
+   */
+  test("PR6-H1 (b): a host read of the session views settles a second _dai_replica row, with no write", async ({ browser }) => {
+    const settling = ["DAI_HOST_AUTHORED_SINCE", "DAI_HOST_APPLY_BATCH", "DAI_HOST_MERGE", "DAI_HOST_FLUSH"];
+    const { deviceA, deviceB, pageB, appB, beforeA, beforeB } = await forgedPair(browser, false, (device) =>
+      device.addInitScript((types) => {
+        const self = window as unknown as { __holdSettling?: boolean; __heldSettling?: number; __holdInstalled?: boolean };
+        self.__holdInstalled = true;
+        self.__heldSettling = 0;
+        window.addEventListener(
+          "message",
+          (event) => {
+            if (!self.__holdSettling || !types.includes(event.data?.type)) return;
+            event.stopImmediatePropagation();
+            self.__heldSettling! += 1;
+          },
+          true,
+        );
+      }, settling),
+    );
+    const shellFrame = (await (await pageB.locator("#cartridge").elementHandle())!.contentFrame())!;
+    expect(await shellFrame.evaluate(() => (window as any).__holdInstalled), "the hold is in the shell, ahead of its listener").toBe(true);
+    // The shell's nonce, from the answer to an ordinary pull, so the test can ask the question itself.
+    const nonce = pageB.evaluate(
+      () =>
+        new Promise<string>((resolve) => {
+          const listen = (event: MessageEvent): void => {
+            if (event.data?.type !== "DAI_HOST_SESSIONS_ANSWER" || typeof event.data.sessionNonce !== "string") return;
+            window.removeEventListener("message", listen);
+            resolve(event.data.sessionNonce);
+          };
+          window.addEventListener("message", listen);
+        }),
+    );
+    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+    const sessionNonce = await nonce;
+    const history = await appB.locator("#move-history").textContent();
+    await shellFrame.evaluate(() => {
+      (window as any).__holdSettling = true;
+    });
+
+    // The forgery and the read of what it left, in one turn of the frame.
+    const forged = await appFrame(pageB).evaluate(
+      ({ ada, bo }) => {
+        const db = (window as any).daiKit.db;
+        db.exec(
+          "DROP TRIGGER _dai_replica__id_fixed; DROP TRIGGER _dai_replica__one; " +
+            `UPDATE _dai_replica SET rowid = 2, id = x'${ada}'; ` +
+            `INSERT INTO _dai_replica (rowid, id, seq, lc) SELECT 1, x'${bo}', seq, lc FROM _dai_replica`,
+        );
+        return {
+          ids: db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica ORDER BY rowid").map((r: { id: string }) => r.id),
+          session: db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s as string,
+        };
+      },
+      { ada: beforeA.me, bo: beforeB.me },
+    );
+    expect(forged.ids, "two rows, Bo's first").toEqual([beforeB.me, beforeA.me]);
+
+    // The host's sessions question, as the mailbox asks it, and its answer: no write in between.
+    const answer = await pageB.evaluate(
+      (nonce) =>
+        new Promise<{ sessions: string[] }>((resolve, reject) => {
+          const timer = window.setTimeout(() => reject(new Error("no answer to the sessions question")), 15_000);
+          const listen = (event: MessageEvent): void => {
+            if (event.data?.type !== "DAI_HOST_SESSIONS_ANSWER" || event.data.id !== "pr6-b") return;
+            window.clearTimeout(timer);
+            window.removeEventListener("message", listen);
+            resolve({ sessions: event.data.sessions });
+          };
+          window.addEventListener("message", listen);
+          const cartridge = document.querySelector<HTMLIFrameElement>("#cartridge")!.contentWindow!;
+          cartridge.postMessage({ type: "DAI_HOST_SESSIONS", id: "pr6-b", sessionNonce: nonce }, "*");
+        }),
+      sessionNonce,
+    );
+    expect(answer.sessions, "the read ran and answered with the game").toContain(forged.session);
+    const after = await replicaAndHolders(appFrame(pageB));
+    expect(after.ids, "after the read, Bo's id alone").toEqual([beforeB.me]);
+    expect(await appB.locator("#move-history").textContent(), "and the same moves: nothing was written").toBe(history);
+    console.log(`PR6-H1 (b): host questions held in the shell: ${await shellFrame.evaluate(() => (window as any).__heldSettling)}`);
 
     await deviceA.close();
     await deviceB.close();

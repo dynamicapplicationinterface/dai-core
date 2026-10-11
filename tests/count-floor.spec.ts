@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error a plain ES module with no types
-import { attemptsFrom, countsFrom, floorDrift, staleFloor } from "../scripts/count-floor.mjs";
+import { attemptsFrom, countsFrom, floorDrift, newestGreen, staleFloor } from "../scripts/count-floor.mjs";
+// @ts-expect-error a plain ES module with no types
+import { EXPECTED_JOBS } from "../scripts/ci-verdict.mjs";
 
 /**
  * The floor is counted from CI's own lines as the count gate counts a run
@@ -70,5 +72,76 @@ test.describe("the floor against the newest green run", () => {
   test("a project with no green run, or no floor, is neither", () => {
     expect(floorDrift({ firefox: 794 }, {})).toEqual({ above: [], below: [] });
     expect(floorDrift({}, { firefox: 794 })).toEqual({ above: [], below: [] });
+  });
+});
+
+/**
+ * Which run the floor is measured against (3-M1, D246): the newest green run
+ * whose commit is an ancestor of HEAD, on any branch, where green is every
+ * gating job green. The floor read only the current branch's runs, per project,
+ * so a branch's green run did not count once merged, and Firefox (a reading,
+ * continue-on-error) made a run unusable for itself: one flaky Firefox test on
+ * main sent its figure back to a September run, and main stayed red.
+ */
+test.describe("the run the floor is measured against", () => {
+  type Job = { name: string; conclusion: string; databaseId: number; passes: Record<string, number> };
+  type Run = { databaseId: number; headSha: string; headBranch: string; status: string; jobs: Job[] };
+
+  const FIREFOX = `${EXPECTED_JOBS[0].replace("chromium", "firefox")})`;
+  let id = 0;
+  /** A run of every gating job and Firefox, each a success unless `failed` names it, with `passes` per job. */
+  const runOf = (databaseId: number, headBranch: string, failed: string[], firefoxPasses = 800): Run => {
+    const job = (name: string, passes: Record<string, number>): Job => ({
+      name,
+      conclusion: failed.some((f) => name.startsWith(f)) ? "failure" : "success",
+      databaseId: ++id,
+      passes,
+    });
+    const jobs = EXPECTED_JOBS.map((name: string) =>
+      name.includes("chromium")
+        ? job(`${name}, --project=node)`, { chromium: 805, node: 640 })
+        : name.includes("webkit")
+          ? job(`${name}, x)`, { webkit: 160 })
+          : job(name, {}),
+    );
+    jobs.push(job(FIREFOX, { firefox: firefoxPasses }));
+    return { databaseId, headSha: `c${databaseId}`, headBranch, status: "completed", jobs };
+  };
+  const lines = (passes: Record<string, number>) =>
+    Object.entries(passes)
+      .flatMap(([project, n]) => Array.from({ length: n }, (_, i) => `  ✓  ${i + 1} [${project}] › tests/t.spec.ts:${i + 1}:1 › t${i} (1ms)`))
+      .join("\n");
+  const read = (runs: Run[]) =>
+    newestGreen(runs, { isAncestor: () => true, jobsOf: (run: Run) => run.jobs, logOf: (job: Job) => lines(job.passes) });
+  const from = (run: number, counts: Record<string, number>) =>
+    Object.fromEntries(Object.entries(counts).map(([project, count]) => [project, { count, run, sha: `c${run}` }]));
+
+  test("the only green run is on a branch since merged: that run", () => {
+    const runs = [
+      runOf(3, "main", ["checks-fast", FIREFOX]),
+      runOf(2, "review/merged", []),
+      runOf(1, "main", [EXPECTED_JOBS[2]]),
+    ];
+    expect(read(runs)).toEqual(from(2, { chromium: 805, firefox: 800, webkit: 800, node: 640 }));
+  });
+
+  test("a run green except Firefox is green, and gives no Firefox figure", () => {
+    const runs = [runOf(5, "main", [FIREFOX], 803), runOf(4, "main", [], 728)];
+    const found = read(runs);
+    expect(found).toEqual(from(5, { chromium: 805, webkit: 800, node: 640 }));
+    const newest = Object.fromEntries(Object.entries(found).map(([p, s]) => [p, (s as { count: number }).count]));
+    expect(floorDrift({ chromium: 805, firefox: 794, webkit: 800, node: 638 }, newest).above).toEqual([]);
+  });
+
+  test("a run not in HEAD's history, or lacking a gating job, is not the measure", () => {
+    const lacking = runOf(8, "main", []);
+    lacking.jobs = lacking.jobs.filter((job) => job.name !== "checks-holdout");
+    const runs = [runOf(9, "elsewhere", []), lacking, runOf(7, "main", [])];
+    const found = newestGreen(runs, {
+      isAncestor: (sha: string) => sha !== "c9",
+      jobsOf: (run: Run) => run.jobs,
+      logOf: (job: Job) => lines(job.passes),
+    });
+    expect(found).toEqual(from(7, { chromium: 805, firefox: 800, webkit: 800, node: 640 }));
   });
 });

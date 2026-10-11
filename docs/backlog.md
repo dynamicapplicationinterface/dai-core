@@ -4598,6 +4598,28 @@ closed for rows. **Question:** whether the host's mount should verify the
 headers a copy holds (it holds the keys' public halves in the headers), and
 what a copy holding an unverifiable header shows.
 
+*Added 11 October, from the review of PR #6 (PR6-H1,
+`handoff-2026-10-11.md`):* the copy's own `_dai_replica` is the same class.
+**Ruled:** the replica id is runtime-owned; the application can alter its own
+copy's view of it, and nothing it writes without a signature leaves the copy.
+Phase 3.2 reviews the boundary. The schema's triggers stay as a guard against
+accident. Three routes past them reach a second id in the copy's view, each
+run in Python's SQLite by the review, the first also in the frame:
+
+- `DROP TRIGGER _dai_replica__id_fixed` (or `__one`, `__kept`), then the write
+  the trigger refused;
+- `PRAGMA writable_schema=ON`, delete the trigger rows from `sqlite_schema`,
+  then the write;
+- `PRAGMA legacy_alter_table=ON`, rename `_dai_replica`, re-create it and
+  insert, with no `DROP TRIGGER`.
+
+The signature boundary holds. The settle corrects the copy's own view: the
+runtime's `adoptReplica`, every row read, never `LIMIT 1`, before each write
+and each host read of a session view (`heldSessions`, `closedSessions`). An
+application trigger that re-adds a row after every settle alters that view
+again, in its own copy only. A view the application redefines
+(`DROP VIEW _dai_closed`, the review's related run) is this class too.
+
 #### D197 — The page does not say what `expected-schema.txt` is
 
 *Status: closed 7 October. Filed 7 October, from the blind Rust rebuild (H3,
@@ -4826,6 +4848,88 @@ is on the other clause; [report-silent](format.md#report-silent) says a row
 for a void seat is reported nowhere. The blind `admit.rs` reports
 `SEAT_NOT_HELD`; no vector has the case. **Change:** a vector first, then the
 page says which rule wins.
+
+#### D246 — The count floor's measure: this branch's runs, and Firefox decided it
+
+*Status: closed 9 October (review/post-fixup, step 2). Filed 9 October, from
+the post-fix-up review (handoff 9 October, 3-M1).*
+
+`count-floor.mjs --drift` measured each project against the newest run on the
+current branch in which that project's jobs passed. A branch's green run did
+not count once merged, and Firefox, a reading run with `continue-on-error`,
+made a run unusable for its own figure: one flaky Firefox test on main sent
+Firefox back to a September run (728 against a floor of 794), and every push
+to main stayed red at `checks-fast`. **Change, done:** one run measures every
+project, the newest green run whose commit is an ancestor of HEAD, on any
+branch; green is every gating job (`ci-verdict`'s `EXPECTED_JOBS`) present and
+passed. Firefox's figure is read from that run when its job passed and is
+otherwise absent; it never picks the run.
+
+#### D247 — A push to main deployed the opener to production before CI was read
+
+*Status: closed 9 October (owner action, outside the repo). Filed 11
+October.*
+
+The opener's Vercel project promoted main to production on every push, so
+the push of `5c1e5d56` (9 October) went to production before its CI run was
+read; a red run would have shipped the same way. Nothing in the repo can hold that,
+since the promotion is a project setting. **Change, done:** the project's
+settings were changed the same day to manual promotion; a push to main
+makes a preview deployment only, and production is promoted by hand after
+`ci-verdict` reads the run green. Checked on each merge to main: the GitHub
+deployments for the merge commit list Preview entries only.
+
+#### D248 — The opener re-shells a container on open
+
+*Status: open. Filed 11 October, from the review of PR #6
+(`handoff-2026-10-11.md`, "Shells made before `8e14fe56` carry P1 only").*
+
+The shell's second script policy (`8e14fe56`, 10 October) closes every route
+the review ran by which a nonce'd script loaded remote code: a stamped
+module's static import and `import()`, a script made in JS with the readable
+nonce, `data:`, an import map, nested frames. A container made before it
+carries the first policy only, and in it each of those routes is still open.
+That includes every container already made, and the opener's past hosts:
+`apps/runner/public/hosts/eaf18af66ad0e60f/template.html` holds one policy,
+and the opener rebuilds a link from before a deploy with it (`pastHosts`).
+The shell is outside the signed set since manifest 3, so the opener can wrap
+the verified archive in the current shell on open, and every hosted container
+then runs under the current policy. **Until then** the site's no-network
+sentences hold for a container whose shell carries both policy lines, and the
+site names it by the shell, not by a date, since a container is made by the
+deployed runtime and not by a commit (specification §2, `tamper-proof.md`).
+**Question:** what a past
+host is for once every open is re-shelled, and whether a link from before a
+deploy still needs one.
+
+#### D249 — Module workers never start in the app frame
+
+*Status: open, cause unknown. Filed 11 October, from the review of PR #6
+(`handoff-2026-10-11.md`, the routes table and "Not done").*
+
+In the review's harness (Chromium, the branch's shell), a module `blob:`
+worker made in the application's frame fired `error` and never ran, even with
+the body `postMessage("alive")`. It did the same under the first policy
+alone, so neither policy is the known cause. A classic `blob:` worker starts.
+Why the module form does not was not established, and so what its imports
+would do under the two policies is not known. Firefox and WebKit were not
+run. **Next:** find the cause in Chromium (the sandbox, `worker-src`, or the
+frame's opaque origin), then run the module worker's `import()` of a remote
+URL on all three engines.
+
+#### D250 — Save a copy's flush can skip D167's guard
+
+*Status: open, low. Filed 11 October, from the review of PR #6
+(`handoff-2026-10-11.md`, 2-H1, "New, low").*
+
+Since 2-H1, `exportContainer` flushes before it branches
+(`if (!mountNow?.elsewhere) await flushDocument()`), before anything captures
+the document; `leavingBytes` captures `doc = loaded` only after its own flush.
+If the person opens another document during that first flush (up to 10 s),
+Save a copy exports the new one and `noteSentOut` marks it sent. Before 2-H1,
+`leavingBytes` captured first and refused with `MOUNT_MOVED`. Traced, not run.
+**Fix direction:** capture `loaded` before the flush, and refuse if it moved.
+Share and invite take this order already (`sendingBytes`, R1c).
 
 #### D201 — The Rust reader orders `rejected` as text
 

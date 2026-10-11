@@ -669,7 +669,7 @@ if (only && names.length !== only.size) {
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
-let counted = { orders: 0, uncovered: 0, mutations: 0, unwritable: 0, merges: 0, subsets: 0 };
+let counted = { orders: 0, uncovered: 0, rewritten: 0, mutations: 0, unwritable: 0, merges: 0, subsets: 0 };
 const started = Date.now();
 for (const name of names) {
   const dir = join(suite, name);
@@ -783,21 +783,47 @@ for (const name of names) {
      * written (a second row at one id is the merge's question).
      */
     const isSession = bases.union.local.tables.includes("_dai_seat");
+    const writeUncovered = (local, pending) => {
+      let written = 0;
+      for (const { table, row } of pending) {
+        const columns = Object.keys(row);
+        try {
+          local.run(`INSERT INTO "${table}" (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`, columns.map((c) => row[c]));
+          written += 1;
+        } catch {}
+      }
+      return written;
+    };
     const uncovered = (local, before, label, mutationName, pending) =>
       trying(local, () => {
-        let written = 0;
-        for (const { table, row } of pending) {
-          const columns = Object.keys(row);
-          try {
-            local.run(`INSERT INTO "${table}" (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`, columns.map((c) => row[c]));
-            written += 1;
-          } catch {}
-        }
+        const written = writeUncovered(local, pending);
         if (written === 0) return { written };
         counted.uncovered += 1;
         const after = admittedDump(local);
         if (after !== before) violation({ property: "P0", vector: name, at: `uncovered ${label} ${mutationName}`, difference: firstDifference(before, after) });
         return { written, after };
+      });
+    /*
+     * The same rows, and then the mutation "rewrite replica id" (1-H1): the
+     * base's own id rewritten to their author's, as an application holding the
+     * database can try between writes. Every session view reads a row under
+     * the copy's own id as one of the merge, so a rewrite that held would
+     * admit them. What the base admits must not move.
+     */
+    const rewritten = (local, before, label, mutationName, pending, author) =>
+      trying(local, () => {
+        const written = writeUncovered(local, pending);
+        if (written === 0) return { written };
+        let refused = false;
+        try {
+          local.run("UPDATE _dai_replica SET id = ?", [author]);
+        } catch {
+          refused = true;
+        }
+        counted.rewritten += 1;
+        const after = admittedDump(local);
+        if (after !== before) violation({ property: "P0", vector: name, at: `rewrite replica id ${label} ${mutationName}`, difference: firstDifference(before, after) });
+        return { written, refused, after };
       });
     for (const mutation of mutationsFor(bases.union.local)) {
       const built = await mutantOf(empty, mutation);
@@ -812,6 +838,11 @@ for (const name of names) {
       if (isSession && !mutation.headerOnly) {
         record.uncovered = {};
         for (const [label, base] of Object.entries(bases)) record.uncovered[label] = uncovered(base.local, base.dump, label, mutation.name, built.pending);
+        record.rewriteTo = hexOf(mutation.author.author);
+        record.rewritten = {};
+        for (const [label, base] of Object.entries(bases)) {
+          record.rewritten[label] = rewritten(base.local, base.dump, label, mutation.name, built.pending, mutation.author.author);
+        }
       } else delete record.pending;
       if (deep) deepSiblings.push({ mutation, sibling });
       else built.copy.close();
@@ -940,7 +971,7 @@ for (const v of listAll ? violations : unfiled) console.log(show(v));
 if (!listAll && filed.length) console.log(`${filed.length} filed violation(s) occurred, as scripts/properties-known.json says.`);
 for (const key of gone) console.log(`  filed and no longer occurring: ${key}`);
 console.log(
-  `\n${names.length} vectors: P0 ${counted.orders} orders and ${counted.uncovered} uncovered rows, P1 ${counted.mutations} mutations (${counted.unwritable} not writable), P2 ${counted.subsets} subsets, ${counted.merges} merges, ${((Date.now() - started) / 1000).toFixed(1)} s. ` +
+  `\n${names.length} vectors: P0 ${counted.orders} orders, ${counted.uncovered} uncovered rows and ${counted.rewritten} replica id rewrites, P1 ${counted.mutations} mutations (${counted.unwritable} not writable), P2 ${counted.subsets} subsets, ${counted.merges} merges, ${((Date.now() - started) / 1000).toFixed(1)} s. ` +
     `${violations.length} violation(s), ${unfiled.length} unfiled. Scenarios for the Python reader in ${out}.`,
 );
 process.exit(unfiled.length > 0 || gone.length > 0 ? 1 : 0);

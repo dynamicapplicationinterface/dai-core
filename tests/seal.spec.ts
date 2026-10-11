@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 import { authorIdOf, mintPersonKey, rawPublicKey, verifySignature } from "../src/identity.js";
 import { rewriteReplicated } from "../src/replicated.js";
 import { authoredBatchAbove, decodeBatch, headerOf, pendingBatches, recordSeal, signBatch } from "../src/replicated-batch.js";
-import { applyRow, coversText, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
+import { adoptReplica, applyRow, coversText, createEntity, ensureReplica, filterToSession, type Rows } from "../src/replicated-rows.js";
 import { mergeSibling } from "../src/replicated-frame.js";
 
 /**
@@ -211,7 +211,8 @@ test("the mailbox answers for the author it is told, not for whatever _dai_repli
   ensureReplica(db, ada.author);
   createEntity(db, "moves", crypto.getRandomValues(new Uint8Array(16)), { ply: 1, san: "e4" });
   recordSeal(db, await signBatch(pendingBatches(db, ada.author, ["moves", "notes"])[0]!, { document: DOC, keys: ada.keys }));
-  db.run("UPDATE _dai_replica SET id = ?", [new Uint8Array(16).fill(0xee)]);
+  // As a copy that arrived carrying another id holds it: the runtime's one id change (1-H1).
+  adoptReplica(db, new Uint8Array(16).fill(0xee));
 
   const answer = authoredBatchAbove(db, ada.author, { replica: "", seq: 0 }, ["moves", "notes"], undefined, DOC);
   expect(answer.batch, "Ada's sealed batch is still hers to send").not.toBeNull();
@@ -277,4 +278,28 @@ test("a row is sealed once: _r_batch goes from NULL to an id, and the engine ref
   expect(() => db.run("UPDATE moves SET _r_batch = ?", [new Uint8Array(16).fill(9)])).toThrow(/REPLICATED_TABLE_IMMUTABLE/);
   expect(() => db.run("UPDATE moves SET _r_batch = NULL")).toThrow(/REPLICATED_TABLE_IMMUTABLE/);
   db.close();
+});
+
+test("a second _dai_replica row is settled away, whichever row comes first (PR6-H1)", () => {
+  /*
+   * The replica id is the runtime's, and the application holds its copy's
+   * database: it can drop the guards and leave two rows. The settle reads every
+   * row, never the first one a scan meets, and leaves the host's id alone; the
+   * other id keeps its place among the replicas this copy knows.
+   */
+  const own = new Uint8Array(16).fill(0xb1);
+  const ada = new Uint8Array(16).fill(0xa1);
+  const hexes = (db: Rows, sql: string) => db.all(sql).map((r) => Buffer.from(r["id"] as Uint8Array).toString("hex"));
+  for (const order of [[own, ada], [ada, own]]) {
+    const db = open(SESSIONS);
+    ensureReplica(db, order[0]!);
+    db.run("DROP TRIGGER _dai_replica__one");
+    db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 5)", [order[1]!]);
+    expect(adoptReplica(db, own), "settling moved something").toBe(true);
+    expect(hexes(db, "SELECT id FROM _dai_replica"), "only the host's id").toEqual([Buffer.from(own).toString("hex")]);
+    expect(hexes(db, "SELECT id FROM _dai_replicas"), "the other id is a replica this copy knows").toContain(Buffer.from(ada).toString("hex"));
+    expect(Number(db.all("SELECT lc FROM _dai_replica")[0]!["lc"]), "the clock is the highest either row held").toBe(5);
+    expect(adoptReplica(db, own), "and settled, it stays").toBe(false);
+    db.close();
+  }
 });

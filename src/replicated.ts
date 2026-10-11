@@ -1004,6 +1004,31 @@ function stripSqlComments(sql: string): string {
     .join("\n");
 }
 
+/*
+ * The replica id is runtime-owned (1-H1, PR6-H1). The application can alter
+ * its own copy's view of it, and nothing it writes without a signature leaves
+ * the copy (D196's class; Phase 3.2 reviews the boundary). These triggers stay
+ * as a guard against accident: they refuse a change in place, a delete and a
+ * second row, but an application holding the database can drop them. The
+ * signature boundary holds. The settle corrects the copy's own view: the
+ * runtime's `adoptReplica`, reading every row, before each write and each
+ * host read of a session view. An application can alter that view again (a
+ * trigger of its own re-adds a row after every settle), and only in its own
+ * copy. The runtime changes the id
+ * in one place, `adoptReplica`, which steps around `_dai_replica__kept` and
+ * puts it back. The counters are not held here: `seq` and `lc` move on every
+ * write, and the runtime puts them back from the rows and the host's floor.
+ */
+const REPLICA_GUARDS = `
+CREATE TRIGGER IF NOT EXISTS _dai_replica__id_fixed BEFORE UPDATE OF id ON _dai_replica
+  BEGIN SELECT RAISE(ABORT, 'RUNTIME_TABLE: the replica id is the runtime''s'); END;
+CREATE TRIGGER IF NOT EXISTS _dai_replica__kept BEFORE DELETE ON _dai_replica
+  BEGIN SELECT RAISE(ABORT, 'RUNTIME_TABLE: the replica id is the runtime''s'); END;
+CREATE TRIGGER IF NOT EXISTS _dai_replica__one BEFORE INSERT ON _dai_replica
+  WHEN EXISTS (SELECT 1 FROM _dai_replica)
+  BEGIN SELECT RAISE(ABORT, 'RUNTIME_TABLE: the replica id is the runtime''s'); END;
+`;
+
 function documentTables(session: boolean, maxParties = 0, authorTables: readonly string[] = []): string {
   const base = `
 CREATE TABLE IF NOT EXISTS _dai_replica (
@@ -1012,7 +1037,7 @@ CREATE TABLE IF NOT EXISTS _dai_replica (
   lc    INTEGER NOT NULL DEFAULT 0,
   label TEXT
 );
-
+${REPLICA_GUARDS}
 -- The signed batch headers (docs/identity.md): one row per batch any copy of
 -- this document sealed. A row in a replicated table names its batch by id; the
 -- signature covers [version, document, author, lc, digest, covers] and the

@@ -20,6 +20,21 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-<!--DAI_NONCE-->' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; frame-src 'self' blob:; worker-src blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none';<!--DAI_TRUSTED_TYPES-->">
 
   <!--
+    A second policy, enforced alongside the first: a script must pass both.
+
+    The nonce above admits a script by the nonce it carries, whatever its URL,
+    and a module fetch carries the nonce of the script that asked for it. So a
+    stamped inline module's import("https://…") or `import … from "https://…"`
+    loaded and ran remote code under the first policy alone (3-H1's class).
+    This one has no nonce, so it admits by URL only: blob:, the object URLs
+    minted from the payload, and nothing that can reach a host. Its
+    'unsafe-inline' only lets the first policy decide inline script; with a
+    nonce present there, an inline event handler or javascript: URL is still
+    refused. It must stay second: the runtime reads its nonce from the first.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:">
+
+  <!--
     The channels connect-src does not govern, closed where a page can close
     them. DNS prefetch is switched off here and in the application's frame.
     Speculation rules need 'inline-speculation-rules' or a nonce, and the

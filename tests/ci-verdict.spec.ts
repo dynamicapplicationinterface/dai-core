@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error a plain ES module with no types
-import { CHECKS_JOBS, gateLine, jobFailed, missingChecks, tallyFrom } from "../scripts/ci-verdict.mjs";
+import { CHECKS_JOBS, EXPECTED_JOBS, gateLine, jobFailed, missingJobs, tallyFrom } from "../scripts/ci-verdict.mjs";
 
 /**
  * A job that did not finish is not a pass, whatever it printed (pass C's H2).
@@ -45,8 +45,37 @@ test.describe("the summary line", () => {
   });
 
   test("a run with some of the four checks jobs must have all four", () => {
-    expect(missingChecks(["checks-fast", "checks-holdout", "checks-properties-node"])).toEqual(["checks-properties-python"]);
-    expect(missingChecks(CHECKS_JOBS)).toEqual([]);
-    expect(missingChecks(["checks"]), "a run from before the split is read as it stands").toEqual([]);
+    expect(missingJobs([...EXPECTED_JOBS.filter((name: string) => !CHECKS_JOBS.includes(name)), "checks-fast", "checks-holdout", "checks-properties-node"])).toEqual(["checks-properties-python"]);
+    expect(missingJobs(EXPECTED_JOBS)).toEqual([]);
+  });
+});
+
+/**
+ * The gate is red unless every expected job is in the run (3-H2). A job that
+ * is absent gave no verdict: the four checks jobs were held to that only when
+ * one of them was present, so a run with no jobs, or no checks jobs, read
+ * green on the line the gate is read from.
+ */
+test.describe("a run lacking an expected job", () => {
+  // A job's name as test.yml gives it: the expected start, then its matrix values.
+  const named = (expected: string) => (CHECKS_JOBS.includes(expected) ? expected : `${expected}, x)`);
+
+  test("a run with no jobs is red on every expected job", () => {
+    expect(missingJobs([])).toEqual(EXPECTED_JOBS);
+    expect(gateLine("completed", missingJobs([]))).toMatch(/^gate: RED on /);
+  });
+
+  test("a run missing checks-holdout is red on checks-holdout", () => {
+    const names = EXPECTED_JOBS.filter((name: string) => name !== "checks-holdout").map(named);
+    expect(missingJobs(names)).toEqual(["checks-holdout"]);
+    expect(gateLine("completed", missingJobs(names))).toBe("gate: RED on checks-holdout; firefox above is a reading");
+  });
+
+  test("a run with only its chromium job is red on the rest", () => {
+    expect(missingJobs([named(EXPECTED_JOBS[0])])).toEqual(EXPECTED_JOBS.slice(1));
+  });
+
+  test("a run with every expected job lacks none", () => {
+    expect(missingJobs(EXPECTED_JOBS.map(named))).toEqual([]);
   });
 });

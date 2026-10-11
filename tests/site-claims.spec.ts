@@ -3,6 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { REFUSALS } from "../src/refusals.js";
+import { lintSource } from "../src/lint.js";
+import { stampScripts } from "../src/script-tags.js";
+import { TRUSTED_TYPES_DIRECTIVES } from "../src/core.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const page = (name: string): string => readFileSync(resolve(repo, "website", name), "utf8");
@@ -90,6 +93,72 @@ test.describe("the site describes the system it actually sits on", () => {
       const file = page(`public/${name}`);
       expect(file, `${name} carries H10's old sentence`).not.toMatch(/the signature covers the shell's own digest/);
       expect(file, `${name} says what the template says now`).toMatch(/From manifest 3 the shell is outside the signed set/);
+    }
+  });
+
+  test("the no-network sentences hold against a slash before the attribute", () => {
+    // 3-H1: HTML reads a slash between attributes as whitespace, and the
+    // runtime's stamp and the lint wanted a space. A remote script and a
+    // speculation rules script written that way were stamped and ran, so
+    // each of these sentences was false. They stay only while the slash
+    // forms are refused by both.
+    expect(page("tamper-proof.md")).toMatch(/the policy refuses a speculation rules script/);
+    expect(page("docs/introduction.md")).toMatch(/the browser engine refuses its requests/);
+    expect(page("docs/making-files.md")).toMatch(/Code that reaches for a CDN, a hosted font or an API will fail/);
+    const forms: Record<string, string> = {
+      "cdn-script": "<script/src=//h/x.js></script>",
+      "speculative-fetch": '<script/type="speculationrules">{"prefetch":[{"source":"list","urls":["/x"]}]}</script>',
+    };
+    for (const [id, html] of Object.entries(forms)) {
+      expect(stampScripts(html, "N"), `${html} is stamped`).toBe(html);
+      expect(lintSource(html).map((finding) => finding.id), `${html} passes the lint`).toContain(id);
+    }
+    expect(lintSource('<script src="//h/x.js"></script>').map((finding) => finding.id)).toContain("cdn-script");
+  });
+
+  test("the no-network sentences hold against a stamped module's import()", () => {
+    // A module fetch carries the nonce of the script that asked for it, so a
+    // stamped inline module's import("https://…") ran under a policy that
+    // admits by nonce. The shell carries a second policy with no nonce, which
+    // admits a script URL only if it is blob:. Run in shell-channels.spec.ts.
+    expect(page("docs/making-files.md")).toMatch(/Code that reaches for a CDN, a hosted font or an API will fail/);
+    const policies = [...readFileSync(resolve(repo, "src", "template.html"), "utf8").matchAll(/http-equiv="Content-Security-Policy" content="([^"]+)"/g)].map(
+      (match) => match[1]!,
+    );
+    expect(policies[0], "the first policy carries the nonce the runtime reads").toMatch(/script-src 'nonce-/);
+    const byUrl = policies.slice(1).map((policy) => /script-src ([^;]+)/.exec(policy)?.[1]?.trim().split(/\s+/) ?? []);
+    expect(byUrl, "a second policy admits script URLs by URL alone").toContainEqual(["'unsafe-inline'", "'wasm-unsafe-eval'", "blob:"]);
+  });
+
+  test("the specification prints both policies exactly as the shell serves them", () => {
+    // The review of PR #6: §2 printed one policy, with 'self' and
+    // 'unsafe-inline' in script-src, which the shell has not served for a
+    // long time, and not the second policy at all.
+    const served = [...readFileSync(resolve(repo, "src", "template.html"), "utf8").matchAll(/http-equiv="Content-Security-Policy" content="([^"]+)"/g)].map(
+      (match) =>
+        match[1]!
+          .replace("<!--DAI_NONCE-->", "{nonce}")
+          .replace("<!--DAI_TRUSTED_TYPES-->", "")
+          .replace(/;\s*/g, ";\n")
+          .trim(),
+    );
+    const section = /## 2\. Content Security Policy[\s\S]*?\n## 3\./.exec(page("docs/specification.md"))?.[0] ?? "";
+    const printed = [...section.matchAll(/```http\n([\s\S]*?)```/g)].map((match) => match[1]!.trim());
+    expect(served, "the shell serves two policies").toHaveLength(2);
+    expect(printed, "§2 prints each, in order, as served").toEqual(served);
+    expect(section, "and names what the shell adds under Trusted Types").toContain(`\`${TRUSTED_TYPES_DIRECTIVES.trim()}\``);
+  });
+
+  test("the site tells a covered container by its shell, not by a date", () => {
+    // The review of R1c: a container is made by the deployed runtime, not by
+    // the commit that added the second policy, so a date drawn from the
+    // commit named containers the live site was still making with one.
+    const spec = /## 2\. Content Security Policy[\s\S]*?\n## 3\./.exec(page("docs/specification.md"))?.[0] ?? "";
+    const tamper = page("tamper-proof.md").replace(/\s+/g, " ");
+    expect(spec, "§2 names the shell that carries both").toMatch(/a container whose shell carries both policy lines\. Older shells carry the first line only/);
+    expect(tamper, "and so does tamper-proof").toMatch(/a container whose shell carries both script policy lines\. An older shell carries the first line only/);
+    for (const [name, text] of [["specification §2", spec], ["tamper-proof.md", tamper]] as const) {
+      expect(text, `${name} names no date for the policy`).not.toMatch(/\b(?:made|before|after)\b[^.]*\b20\d\d\b/);
     }
   });
 

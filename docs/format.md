@@ -590,6 +590,13 @@ these hold:
 the merge: a row reached through a header the copy holds (the header its
 `_r_batch` names lists it: its table, its author, its seq), as every row a
 merge takes is, or a row under the copy's own author id.
+<a id="replica-runtime"></a>The copy's own author id is its `_dai_replica`
+id, and the runtime owns it. The application can alter its own copy's view
+of it, and nothing it writes without a signature leaves the copy (D196's
+class; Phase 3.2 reviews the boundary). The runtime settles the id to the
+host's, reading every row, before each write and each host read of a session
+view. The schema's refusal of a change in place, a delete and a second row is
+a guard against accident, not against the application.
 <a id="own-pending"></a>A copy's own pending rows count in the author's own
 views at once; they are not part of the admitted state P0
 ([format-design.md](format-design.md)) compares, because they have not left
@@ -885,6 +892,12 @@ version, never a refactor (identity.md, binding rule 10).
   once and are not part of the admitted state P0 compares; "not admitted until
   sealed" was never true.
 - Version 2: `rejected` orders the seq as a number.
+- Version 2: the copy's own author id, `_dai_replica`, is the runtime's; the
+  schema refuses an application's rewrite of it.
+- Version 2: the copy's own author id is runtime-owned, and the application
+  can alter its own copy's view of it; nothing it writes unsigned leaves the
+  copy. The schema's refusal is a guard against accident: "whoever writes"
+  was never true (PR6-H1).
 
 ## Conformance
 

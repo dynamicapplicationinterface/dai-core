@@ -635,11 +635,33 @@ async function pastHosts(): Promise<PastHost[]> {
  */
 const knownRevision = new Map<string, number>();
 
-async function learnRevision(documentUuid: string): Promise<number> {
+/**
+ * The record's revision as it stands, to write back unchanged, and what this
+ * tab works from: `readAt` when given, the revision its stored bytes were read
+ * at (`readStored`, 2-H2). A save that landed between that read and this is
+ * another tab's, so this tab's next save is refused rather than written over
+ * it.
+ */
+async function learnRevision(documentUuid: string, readAt?: number): Promise<number> {
   const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
   const revision = held?.revision ?? 0;
-  knownRevision.set(documentUuid, revision);
+  knownRevision.set(documentUuid, readAt ?? revision);
   return revision;
+}
+
+/**
+ * The stored database and the revision it is, read together under the
+ * library lock (2-H2, D41). A save writes both under it, so a read outside it
+ * could take the bytes before a save and learn the revision after: the tab
+ * then mounted the older bytes as the newer revision, its next save passed
+ * the check, and the save it wrote over had already been acknowledged.
+ */
+function readStored(documentUuid: string): Promise<{ db: Uint8Array | null; revision: number }> {
+  return withLibraryLock(documentUuid, async () => {
+    const db = await loadDatabaseFromOpfs(documentUuid);
+    const held = await getCartridgeFromLibrary(documentUuid).catch(() => null);
+    return { db, revision: held?.revision ?? 0 };
+  });
 }
 
 /**
@@ -1230,7 +1252,8 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
 
     await recordPublisher(publisherStore(), cartridge, await confusables());
 
-    const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    const stored = await readStored(cartridge.manifest.documentUuid);
+    const opfsDb = stored.db;
     if (opfsDb && opfsDb.byteLength > 0) {
       loaded = await resealCartridge(cartridge, opfsDb);
     } else {
@@ -1302,7 +1325,7 @@ async function launchFromLibrary(item: LibraryItem, entry: string): Promise<void
         lastOpened: new Date().toISOString(),
         html: opened.html,
         publicKeyFingerprint: opened.publicKeyFingerprint,
-        revision: await learnRevision(opened.manifest.documentUuid),
+        revision: await learnRevision(opened.manifest.documentUuid, stored.revision),
       });
     });
 
@@ -2413,7 +2436,9 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
     }
 
     markStep("reading stored data (OPFS)");
-    const opfsDb = await loadDatabaseFromOpfs(cartridge.manifest.documentUuid);
+    // With the revision it is, under the lock (2-H2).
+    const stored = await readStored(cartridge.manifest.documentUuid);
+    const opfsDb = stored.db;
     const arriving = savedAtOf(cartridge);
     const heldItem = library.find(
       (item) => item.documentUuid === cartridge.manifest.documentUuid,
@@ -2603,7 +2628,10 @@ async function ingest(file: File, carrier: Carrier = {}): Promise<void> {
         link: shortArrivalLink() ?? heldItem?.link,
         html: loaded.html,
         publicKeyFingerprint: loaded.publicKeyFingerprint,
-        revision: await learnRevision(kept.manifest.documentUuid),
+        revision: await learnRevision(
+          kept.manifest.documentUuid,
+          kept.manifest.documentUuid === cartridge.manifest.documentUuid ? stored.revision : undefined,
+        ),
       };
       };
       await withLibraryLock(kept.manifest.documentUuid, async () => {
@@ -2693,6 +2721,15 @@ async function exportContainer(): Promise<void> {
    * cost of two functions packaging the same document.
    */
   let activeCartridge: Cartridge;
+  /*
+   * Flushed before the branch (2-H1). This tab's first refused save can be
+   * this very flush, and its refusal is what sets `elsewhere`: branching first
+   * took the stored copy, the other tab's, and recorded it as sent, without
+   * the change just made. Once `elsewhere` is set every save here is refused,
+   * so there is nothing to flush.
+   */
+  if (!mountNow?.elsewhere) await flushDocument();
+  if (!loaded) return;
   const here = mountNow;
   if (here?.elsewhere && here.cartridge.manifest.documentUuid === loaded.manifest.documentUuid) {
     /*
@@ -4240,10 +4277,56 @@ async function currentHtml(withData = true): Promise<string> {
     const blank = await resealCartridge(loaded, new Uint8Array(0));
     return blank.supplied.length > 0 ? refatten(blank) : blank.html;
   }
-  const { doc, db: opfsDb } = await leavingBytes();
-  const current = opfsDb ? await resealCartridge(doc, opfsDb) : doc;
-  if (opfsDb) await noteSentOut(current, opfsDb);
+  const { doc, db, stored } = await sendingBytes();
+  const current = db ? await resealCartridge(doc, db) : doc;
+  if (db && stored) await noteSentOut(current, db);
   return current.supplied.length > 0 ? refatten(current) : current.html;
+}
+
+/**
+ * The bytes a share or an invite carries, with Save a copy's branch for a tab
+ * another tab won (pass B's B1, the review of PR #6). There the stored copy is
+ * the other tab's: a plain document sends this tab's own bytes, asked of the
+ * frame, or nothing; a replicated one sends nothing and says to close the
+ * other tab. Bytes from the frame are not the stored copy, so they are not
+ * recorded as sent (`stored` false). Flushed before the branch, as Save a copy
+ * is (2-H1): this tab's first refused save can be this very flush. The
+ * document is captured before the flush, and a document opened during it
+ * refuses the send (D167).
+ */
+async function sendingBytes(): Promise<{ doc: Cartridge; db: Uint8Array | null; stored: boolean }> {
+  if (!loaded) throw new Error("nothing open");
+  // By id, not by object: a save that lands settles a new Cartridge of the same document into `loaded`.
+  const uuid = loaded.manifest.documentUuid;
+  const moved = (): boolean => loaded?.manifest.documentUuid !== uuid;
+  const wonHere = (): Mount | null => {
+    const here = mountNow;
+    return here?.elsewhere && here.cartridge.manifest.documentUuid === uuid ? here : null;
+  };
+  if (!wonHere()) {
+    try {
+      await flushBeforeLeaving();
+    } catch (error) {
+      if (!wonHere()) throw error;
+    }
+  }
+  if (moved()) throw new Error(MOUNT_MOVED);
+  const here = wonHere();
+  if (!here) {
+    const { doc: leaving, db } = await leavingBytes();
+    return { doc: leaving, db, stored: true };
+  }
+  const doc = loaded!;
+  if (declaresReplication(doc.manifest)) throw new Error(NOT_SENT_ELSEWHERE);
+  const bytes = await frameBytes();
+  if (!bytes) throw new Error(NO_LINK_ELSEWHERE);
+  try {
+    await mayLeave(bytes, here);
+  } catch {
+    throw new Error(NOT_SENT_ELSEWHERE);
+  }
+  if (mountNow !== here || moved()) throw new Error(MOUNT_MOVED);
+  return { doc, db: bytes, stored: false };
 }
 
 /**
@@ -4270,11 +4353,11 @@ async function noteSentOut(sent: Cartridge, database: Uint8Array): Promise<void>
  * recipient's copy recognizing this as the same document.
  */
 async function inviteHtml(session: string): Promise<string> {
-  const { doc, db: opfsDb } = await leavingBytes();
-  if (!opfsDb) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
+  const { doc, db } = await sendingBytes();
+  if (!db) throw new Error("This game has not been saved on this device yet, so there is nothing to invite anyone into.");
   // Made by the one invite function every host shares (exportSession), then
   // re-verified before it leaves, as any resealed document is.
-  const invite = await reverify(await inviteFor(doc, opfsDb, session));
+  const invite = await reverify(await inviteFor(doc, db, session));
   return invite.supplied.length > 0 ? refatten(invite) : invite.html;
 }
 
@@ -4556,6 +4639,12 @@ async function sendDocument(inviteSession?: string): Promise<void> {
     } catch (error) {
       close();
       const why = error instanceof Error ? error.message : "The store could not be reached.";
+      // Another tab won this document: the sentence says what to do, and
+      // nothing else is tried here, a file included (the review of PR #6).
+      if (why === NOT_SENT_ELSEWHERE || why === NO_LINK_ELSEWHERE) {
+        tellOverDocument(why, true);
+        return;
+      }
       /*
        * A replicated app is played together, and a file has no key — it cannot
        * join the mailbox, so it is not the invite that was asked for. Handed
@@ -5802,6 +5891,16 @@ const UNSIGNED_ELSEWHERE =
 /** Save a copy in a tab another tab won, when the frame did not hand over its bytes. */
 const NO_COPY_ELSEWHERE =
   "No copy was made: another tab saved this document after it was opened here, and this tab's changes could " +
+  "not be read. Close the other tab, then reopen the document here.";
+
+/** A share or an invite of a replicated document in a tab another tab won: nothing leaves (the review of PR #6). */
+const NOT_SENT_ELSEWHERE =
+  "Nothing was sent: another tab wrote this document after it was opened here, so this tab's changes cannot " +
+  "leave from here. Close the other tab, then reopen the document here.";
+
+/** A share in a tab another tab won, when the frame did not hand over its bytes. */
+const NO_LINK_ELSEWHERE =
+  "No link was made: another tab saved this document after it was opened here, and this tab's changes could " +
   "not be read. Close the other tab, then reopen the document here.";
 
 /** Whether an error, or an error's text from a frame, is another tab having won the document. */
