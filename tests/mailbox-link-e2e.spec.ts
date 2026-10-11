@@ -2337,7 +2337,7 @@ test.describe("a game continues over a shared link (the key path)", () => {
     expect(honest.ids, "Bo's copy holds Bo's id").toEqual([beforeB.me]);
     expect(honest.holders.join(" "), "Bo holds his seat").toContain(`:${beforeB.me}`);
 
-    const forged = await appFrame(pageB).evaluate(
+    const forgedState = await appFrame(pageB).evaluate(
       ({ ada, bo }) => {
         const kit = (window as any).daiKit;
         const db = kit.db;
@@ -2377,12 +2377,19 @@ test.describe("a game continues over a shared link (the key path)", () => {
             `UPDATE _dai_replica SET rowid = 2, id = x'${ada}'; ` +
             `INSERT INTO _dai_replica (rowid, id, seq, lc) SELECT 1, x'${bo}', seq, lc FROM _dai_replica`,
         );
-        return forger;
+        // Read in the same turn as the forgery: any host read of a session view
+        // settles the id now, so a later evaluate can find it already put back.
+        const session = db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s;
+        const standing = {
+          ids: db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica ORDER BY rowid").map((r: { id: string }) => r.id),
+          holders: kit.seats(session).map((seat: { seat: string; holder: string | null }) => `${seat.seat}:${seat.holder}`),
+        };
+        return { forger, standing };
       },
       { ada: beforeA.me, bo: beforeB.me },
     );
     // The forgery bites while it stands: Ada's uncovered confirm is read as one of the merge.
-    const standing = await replicaAndHolders(appFrame(pageB));
+    const { forger: forged, standing } = forgedState;
     expect(standing.ids, "two rows, Bo's first").toEqual([beforeB.me, beforeA.me]);
     expect(standing.holders, "Bo's seat is held by nobody while it stands").not.toEqual(honest.holders);
 
