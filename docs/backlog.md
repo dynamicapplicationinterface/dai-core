@@ -4874,10 +4874,8 @@ The opener's Vercel project promoted main to production on every push, so
 the push of `5c1e5d56` (9 October) went to production before its CI run was
 read; a red run would have shipped the same way. Nothing in the repo can hold that,
 since the promotion is a project setting. **Change, done:** the project's
-settings were changed the same day to manual promotion; a push to main
-makes a preview deployment only, and production is promoted by hand after
-`ci-verdict` reads the run green. Checked on each merge to main: the GitHub
-deployments for the merge commit list Preview entries only.
+settings were changed the same day to manual promotion: a push to main
+makes a staged production build; promotion is by hand.
 
 #### D248 — The opener re-shells a container on open
 
