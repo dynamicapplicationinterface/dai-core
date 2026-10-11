@@ -279,3 +279,27 @@ test("a row is sealed once: _r_batch goes from NULL to an id, and the engine ref
   expect(() => db.run("UPDATE moves SET _r_batch = NULL")).toThrow(/REPLICATED_TABLE_IMMUTABLE/);
   db.close();
 });
+
+test("a second _dai_replica row is settled away, whichever row comes first (PR6-H1)", () => {
+  /*
+   * The replica id is the runtime's, and the application holds its copy's
+   * database: it can drop the guards and leave two rows. The settle reads every
+   * row, never the first one a scan meets, and leaves the host's id alone; the
+   * other id keeps its place among the replicas this copy knows.
+   */
+  const own = new Uint8Array(16).fill(0xb1);
+  const ada = new Uint8Array(16).fill(0xa1);
+  const hexes = (db: Rows, sql: string) => db.all(sql).map((r) => Buffer.from(r["id"] as Uint8Array).toString("hex"));
+  for (const order of [[own, ada], [ada, own]]) {
+    const db = open(SESSIONS);
+    ensureReplica(db, order[0]!);
+    db.run("DROP TRIGGER _dai_replica__one");
+    db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, 0, 5)", [order[1]!]);
+    expect(adoptReplica(db, own), "settling moved something").toBe(true);
+    expect(hexes(db, "SELECT id FROM _dai_replica"), "only the host's id").toEqual([Buffer.from(own).toString("hex")]);
+    expect(hexes(db, "SELECT id FROM _dai_replicas"), "the other id is a replica this copy knows").toContain(Buffer.from(ada).toString("hex"));
+    expect(Number(db.all("SELECT lc FROM _dai_replica")[0]!["lc"]), "the clock is the highest either row held").toBe(5);
+    expect(adoptReplica(db, own), "and settled, it stays").toBe(false);
+    db.close();
+  }
+});

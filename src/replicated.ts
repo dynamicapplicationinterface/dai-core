@@ -1005,16 +1005,16 @@ function stripSqlComments(sql: string): string {
 }
 
 /*
- * The replica id is the runtime's (1-H1). Every session view reads a row under
- * this copy's own id as one of the merge (D194's own-id exception), so an id
- * the application could rewrite between writes would make its copy admit
- * another author's uncovered rows until the next write put the id back. So
- * the id is never changed in place, never deleted, and never joined by a
- * second row, whoever writes: as the replicated tables' triggers hold their
- * rows. The runtime changes it in one place, `adoptReplica`, which steps
- * around `_dai_replica__kept` and puts it back. The counters are not held
- * here: `seq` and `lc` move on every write, and the runtime puts them back
- * from the rows and the host's floor.
+ * The replica id is runtime-owned (1-H1, PR6-H1). The application can alter
+ * its own copy's view of it, and nothing it writes without a signature leaves
+ * the copy (D196's class; Phase 3.2 reviews the boundary). These triggers stay
+ * as a guard against accident: they refuse a change in place, a delete and a
+ * second row, but an application holding the database can drop them. What
+ * holds is the runtime's settle (`adoptReplica`, reading every row), before
+ * each write and each host read of a session view. The runtime changes the id
+ * in one place, `adoptReplica`, which steps around `_dai_replica__kept` and
+ * puts it back. The counters are not held here: `seq` and `lc` move on every
+ * write, and the runtime puts them back from the rows and the host's floor.
  */
 const REPLICA_GUARDS = `
 CREATE TRIGGER IF NOT EXISTS _dai_replica__id_fixed BEFORE UPDATE OF id ON _dai_replica

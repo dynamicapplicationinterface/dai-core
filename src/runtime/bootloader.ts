@@ -1642,6 +1642,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const heldSessions = (): string[] => {
     if (!liveDb || !mergeModule || !mountReplica) return [];
     try {
+      // Settled before the views are read: they read this copy's own id (PR6-H1).
+      settleBeforeRead(liveDb);
       return ((mergeModule as Any).sessionsOf(frameRows(liveDb), mountReplica) as string[]).filter((s: string) =>
         /^[0-9a-f]{32}$/.test(s),
       );
@@ -1658,6 +1660,8 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
   const closedSessions = (): string[] => {
     if (!liveDb || !mergeModule) return [];
     try {
+      // Settled before the views are read, as heldSessions is (PR6-H1).
+      if (mountReplica) settleBeforeRead(liveDb);
       // Closed by a close the session's rule permits, as admission judges a row
       // late (D146); a document built before _dai_closed gets the same rule
       // over its close table (D154).
@@ -1944,12 +1948,15 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
     if (!mergeModule) return;
     if (replicaSettled) {
       /*
-       * Every write, not only the first (binding rule 2; D80). The schema
-       * refuses an application's rewrite of `_dai_replica` (1-H1), but the
-       * application holds the database and can drop that guard first; the
-       * id a row is stamped with is the host's, never the row's. One read when
-       * nothing changed. A rewritten id is put back, the forged one moves to
-       * `_dai_replicas` like any other, and the console says so.
+       * Every write, not only the first (binding rule 2; D80), and before
+       * every host read of a session view. The replica id is runtime-owned.
+       * The application can alter its own copy's view of it, and nothing it
+       * writes without a signature leaves the copy (D196's class; Phase 3.2
+       * reviews the boundary). The schema's triggers stay as a guard against
+       * accident. So the id is settled here: every row of `_dai_replica` is
+       * read, a rewritten or second id is put back to the host's, the other
+       * moves to `_dai_replicas` like any other, and the console says so. One
+       * read when nothing changed.
        */
       if (mountReplica) {
         const before = replicaHex();
@@ -2006,17 +2013,20 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * replica table yet — its schema is unwritten — so there is nothing to settle
    * and it settles on its first write as it always did.
    */
+  const hasReplicaTable = (db: Any): boolean => {
+    try {
+      return db.selectObjects("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='_dai_replica' LIMIT 1").length > 0;
+    } catch {
+      return false;
+    }
+  };
   const settleReplicaAtMount = (db: Any): void => {
     if (replicaSettled || !mergeModule) return;
-    let hasTable = false;
-    try {
-      hasTable =
-        db.selectObjects("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='_dai_replica' LIMIT 1")
-          .length > 0;
-    } catch {
-      hasTable = false;
-    }
-    if (hasTable) settleReplica(frameRows(db));
+    if (hasReplicaTable(db)) settleReplica(frameRows(db));
+  };
+  /** Settle before a host read of a session view; before the schema is written there is nothing to settle. */
+  const settleBeforeRead = (db: Any): void => {
+    if (hasReplicaTable(db)) settleReplica(frameRows(db));
   };
 
   /**

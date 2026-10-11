@@ -398,34 +398,33 @@ export function ensureReplica(db: Rows, id: Uint8Array): void {
  * after.
  */
 export function adoptReplica(db: Rows, id: Uint8Array): boolean {
-  const current = db.all("SELECT id, lc FROM _dai_replica LIMIT 1")[0];
-  if (!current) {
+  // Every row, never the first a scan meets (PR6-H1): an application that drops
+  // the guards can leave a second row behind its copy's own, and a LIMIT 1 read
+  // in rowid order would see the own id and settle nothing.
+  const rows = db.all("SELECT id, seq, lc FROM _dai_replica");
+  if (rows.length === 0) {
     ensureReplica(db, id);
     return true;
   }
-  const held = current["id"] as Uint8Array;
-  if (held instanceof Uint8Array && hex(held) === hex(id)) return false;
+  const isOwn = (held: unknown): boolean => held instanceof Uint8Array && hex(held) === hex(id);
+  if (rows.length === 1 && isOwn(rows[0]!["id"])) return false;
 
-  // The previous owner keeps their place among the replicas this copy knows.
-  db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [
-    held,
-    Number(current["lc"] ?? 0),
-  ]);
+  // Every other id keeps its place among the replicas this copy knows.
+  for (const row of rows) {
+    if (row["id"] instanceof Uint8Array && !isOwn(row["id"])) {
+      db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [row["id"], Number(row["lc"] ?? 0)]);
+    }
+  }
+  const lc = Math.max(...rows.map((row) => Number(row["lc"] ?? 0)));
+  const seq = Math.max(highestSeqOf(db, id), ...rows.filter((row) => isOwn(row["id"])).map((row) => Number(row["seq"] ?? 0)));
   // The one place the id changes: the guard that refuses a delete is stepped
   // around and put back as the schema wrote it (src/replicated.ts, 1-H1).
   const guard = db.all("SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = '_dai_replica__kept'")[0]?.["sql"];
   if (typeof guard === "string") db.run("DROP TRIGGER _dai_replica__kept");
   db.run("DELETE FROM _dai_replica");
   if (typeof guard === "string") db.run(guard);
-  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [
-    id,
-    highestSeqOf(db, id),
-    Number(current["lc"] ?? 0),
-  ]);
-  db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [
-    id,
-    Number(current["lc"] ?? 0),
-  ]);
+  db.run("INSERT INTO _dai_replica (id, seq, lc) VALUES (?, ?, ?)", [id, seq, lc]);
+  db.run("INSERT OR IGNORE INTO _dai_replicas (id, first_seen, rows_seen) VALUES (?, ?, 0)", [id, lc]);
   return true;
 }
 

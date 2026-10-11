@@ -4598,6 +4598,26 @@ closed for rows. **Question:** whether the host's mount should verify the
 headers a copy holds (it holds the keys' public halves in the headers), and
 what a copy holding an unverifiable header shows.
 
+*Added 11 October, from the review of PR #6 (PR6-H1,
+`handoff-2026-10-11.md`):* the copy's own `_dai_replica` is the same class.
+**Ruled:** the replica id is runtime-owned; the application can alter its own
+copy's view of it, and nothing it writes without a signature leaves the copy.
+Phase 3.2 reviews the boundary. The schema's triggers stay as a guard against
+accident. Three routes past them reach a second id in the copy's view, each
+run in Python's SQLite by the review, the first also in the frame:
+
+- `DROP TRIGGER _dai_replica__id_fixed` (or `__one`, `__kept`), then the write
+  the trigger refused;
+- `PRAGMA writable_schema=ON`, delete the trigger rows from `sqlite_schema`,
+  then the write;
+- `PRAGMA legacy_alter_table=ON`, rename `_dai_replica`, re-create it and
+  insert, with no `DROP TRIGGER`.
+
+What holds is the runtime's settle (`adoptReplica`): every row read, never
+`LIMIT 1`, before each write and each host read of a session view
+(`heldSessions`, `closedSessions`). A view the application redefines
+(`DROP VIEW _dai_closed`, the review's related run) is this class too.
+
 #### D197 — The page does not say what `expected-schema.txt` is
 
 *Status: closed 7 October. Filed 7 October, from the blind Rust rebuild (H3,
