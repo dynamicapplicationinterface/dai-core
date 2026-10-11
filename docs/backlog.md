@@ -4863,6 +4863,56 @@ branch; green is every gating job (`ci-verdict`'s `EXPECTED_JOBS`) present and
 passed. Firefox's figure is read from that run when its job passed and is
 otherwise absent; it never picks the run.
 
+#### D248 — The opener re-shells a container on open
+
+*Status: open. Filed 11 October, from the review of PR #6
+(`handoff-2026-10-11.md`, "Shells made before `8e14fe56` carry P1 only").*
+
+The shell's second script policy (`8e14fe56`, 10 October) closes every route
+the review ran by which a nonce'd script loaded remote code: a stamped
+module's static import and `import()`, a script made in JS with the readable
+nonce, `data:`, an import map, nested frames. A container made before it
+carries the first policy only, and in it each of those routes is still open.
+That includes every container already made, and the opener's past hosts:
+`apps/runner/public/hosts/eaf18af66ad0e60f/template.html` holds one policy,
+and the opener rebuilds a link from before a deploy with it (`pastHosts`).
+The shell is outside the signed set since manifest 3, so the opener can wrap
+the verified archive in the current shell on open, and every hosted container
+then runs under the current policy. **Until then** the site's no-network
+sentences hold for containers made from `8e14fe56` on, and the site says so
+with the date (specification §2, `tamper-proof.md`). **Question:** what a past
+host is for once every open is re-shelled, and whether a link from before a
+deploy still needs one.
+
+#### D249 — Module workers never start in the app frame
+
+*Status: open, cause unknown. Filed 11 October, from the review of PR #6
+(`handoff-2026-10-11.md`, the routes table and "Not done").*
+
+In the review's harness (Chromium, the branch's shell), a module `blob:`
+worker made in the application's frame fired `error` and never ran, even with
+the body `postMessage("alive")`. It did the same under the first policy
+alone, so neither policy is the known cause. A classic `blob:` worker starts.
+Why the module form does not was not established, and so what its imports
+would do under the two policies is not known. Firefox and WebKit were not
+run. **Next:** find the cause in Chromium (the sandbox, `worker-src`, or the
+frame's opaque origin), then run the module worker's `import()` of a remote
+URL on all three engines.
+
+#### D250 — Save a copy's flush can skip D167's guard
+
+*Status: open, low. Filed 11 October, from the review of PR #6
+(`handoff-2026-10-11.md`, 2-H1, "New, low").*
+
+Since 2-H1, `exportContainer` flushes before it branches
+(`if (!mountNow?.elsewhere) await flushDocument()`), before anything captures
+the document; `leavingBytes` captures `doc = loaded` only after its own flush.
+If the person opens another document during that first flush (up to 10 s),
+Save a copy exports the new one and `noteSentOut` marks it sent. Before 2-H1,
+`leavingBytes` captured first and refused with `MOUNT_MOVED`. Traced, not run.
+**Fix direction:** capture `loaded` before the flush, and refuse if it moved.
+Share and invite take this order already (`sendingBytes`, R1c).
+
 #### D201 — The Rust reader orders `rejected` as text
 
 *Status: closed 8 October: a blind session ordered `rejected` from
