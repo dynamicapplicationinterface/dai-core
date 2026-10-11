@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { REFUSALS } from "../src/refusals.js";
 import { lintSource } from "../src/lint.js";
 import { stampScripts } from "../src/script-tags.js";
+import { TRUSTED_TYPES_DIRECTIVES } from "../src/core.js";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const page = (name: string): string => readFileSync(resolve(repo, "website", name), "utf8");
@@ -127,6 +128,25 @@ test.describe("the site describes the system it actually sits on", () => {
     expect(policies[0], "the first policy carries the nonce the runtime reads").toMatch(/script-src 'nonce-/);
     const byUrl = policies.slice(1).map((policy) => /script-src ([^;]+)/.exec(policy)?.[1]?.trim().split(/\s+/) ?? []);
     expect(byUrl, "a second policy admits script URLs by URL alone").toContainEqual(["'unsafe-inline'", "'wasm-unsafe-eval'", "blob:"]);
+  });
+
+  test("the specification prints both policies exactly as the shell serves them", () => {
+    // The review of PR #6: §2 printed one policy, with 'self' and
+    // 'unsafe-inline' in script-src, which the shell has not served for a
+    // long time, and not the second policy at all.
+    const served = [...readFileSync(resolve(repo, "src", "template.html"), "utf8").matchAll(/http-equiv="Content-Security-Policy" content="([^"]+)"/g)].map(
+      (match) =>
+        match[1]!
+          .replace("<!--DAI_NONCE-->", "{nonce}")
+          .replace("<!--DAI_TRUSTED_TYPES-->", "")
+          .replace(/;\s*/g, ";\n")
+          .trim(),
+    );
+    const section = /## 2\. Content Security Policy[\s\S]*?\n## 3\./.exec(page("docs/specification.md"))?.[0] ?? "";
+    const printed = [...section.matchAll(/```http\n([\s\S]*?)```/g)].map((match) => match[1]!.trim());
+    expect(served, "the shell serves two policies").toHaveLength(2);
+    expect(printed, "§2 prints each, in order, as served").toEqual(served);
+    expect(section, "and names what the shell adds under Trusted Types").toContain(`\`${TRUSTED_TYPES_DIRECTIVES.trim()}\``);
   });
 
   test("the playground page names the signed bytes as they are encoded", () => {

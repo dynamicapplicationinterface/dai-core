@@ -29,11 +29,13 @@ A DAI container may be distributed as a standalone binary archive (`.dai`) or as
 
 ## 2. Content Security Policy (CSP)
 
-The following CSP header/meta-tag is strictly enforced:
+The shell carries two policies, each a `<meta http-equiv="Content-Security-Policy">`, in this order. Both are enforced: a script runs only if both admit it.
+
+The first. `{nonce}` is a fresh value for each container, which the runtime stamps on the scripts it runs. When the application can run under Trusted Types, the shell adds `require-trusted-types-for 'script'; trusted-types dai-shell dai-frame;` after the last directive.
 
 ```http
 default-src 'none';
-script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:;
+script-src 'nonce-{nonce}' 'wasm-unsafe-eval' blob:;
 style-src 'self' 'unsafe-inline' blob:;
 img-src 'self' data: blob:;
 font-src 'self' data: blob:;
@@ -46,9 +48,17 @@ base-uri 'none';
 object-src 'none';
 ```
 
+The second, which has no nonce and so admits a script by its URL alone:
+
+```http
+script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:
+```
+
 - `connect-src 'none'` is absolute and non-negotiable.
 - `blob:` is permitted for scripts, styles, images, and frames because blob URLs are origin-local object URLs minted directly from the embedded payload in memory.
 - `'unsafe-eval'` is prohibited; only `'wasm-unsafe-eval'` is granted for SQLite instantiation.
+- A module fetch carries the nonce of the script that asked for it, so under the first policy alone a stamped module could import a remote URL. The second refuses every script URL that is not `blob:`. Its `'unsafe-inline'` leaves inline script to the first policy, which still requires the nonce.
+- Containers made before 10 October 2026 carry the first policy only, and in them a stamped module can still load a remote script. The no-network sentences on this site hold for containers made on or after that date.
 
 ---
 
