@@ -4295,11 +4295,13 @@ async function currentHtml(withData = true): Promise<string> {
  * refuses the send (D167).
  */
 async function sendingBytes(): Promise<{ doc: Cartridge; db: Uint8Array | null; stored: boolean }> {
-  const doc = loaded;
-  if (!doc) throw new Error("nothing open");
+  if (!loaded) throw new Error("nothing open");
+  // By id, not by object: a save that lands settles a new Cartridge of the same document into `loaded`.
+  const uuid = loaded.manifest.documentUuid;
+  const moved = (): boolean => loaded?.manifest.documentUuid !== uuid;
   const wonHere = (): Mount | null => {
     const here = mountNow;
-    return here?.elsewhere && here.cartridge.manifest.documentUuid === doc.manifest.documentUuid ? here : null;
+    return here?.elsewhere && here.cartridge.manifest.documentUuid === uuid ? here : null;
   };
   if (!wonHere()) {
     try {
@@ -4308,12 +4310,13 @@ async function sendingBytes(): Promise<{ doc: Cartridge; db: Uint8Array | null; 
       if (!wonHere()) throw error;
     }
   }
-  if (loaded !== doc) throw new Error(MOUNT_MOVED);
+  if (moved()) throw new Error(MOUNT_MOVED);
   const here = wonHere();
   if (!here) {
     const { doc: leaving, db } = await leavingBytes();
     return { doc: leaving, db, stored: true };
   }
+  const doc = loaded!;
   if (declaresReplication(doc.manifest)) throw new Error(NOT_SENT_ELSEWHERE);
   const bytes = await frameBytes();
   if (!bytes) throw new Error(NO_LINK_ELSEWHERE);
@@ -4322,7 +4325,7 @@ async function sendingBytes(): Promise<{ doc: Cartridge; db: Uint8Array | null; 
   } catch {
     throw new Error(NOT_SENT_ELSEWHERE);
   }
-  if (mountNow !== here || loaded !== doc) throw new Error(MOUNT_MOVED);
+  if (mountNow !== here || moved()) throw new Error(MOUNT_MOVED);
   return { doc, db: bytes, stored: false };
 }
 
