@@ -4865,6 +4865,20 @@ branch; green is every gating job (`ci-verdict`'s `EXPECTED_JOBS`) present and
 passed. Firefox's figure is read from that run when its job passed and is
 otherwise absent; it never picks the run.
 
+#### D247 — A push to main deployed the opener to production before CI was read
+
+*Status: closed 9 October (owner action, outside the repo). Filed 11
+October.*
+
+The opener's Vercel project promoted main to production on every push, so
+the push of `5c1e5d56` (9 October) went to production before its CI run was
+read; a red run would have shipped the same way. Nothing in the repo can hold that,
+since the promotion is a project setting. **Change, done:** the project's
+settings were changed the same day to manual promotion; a push to main
+makes a preview deployment only, and production is promoted by hand after
+`ci-verdict` reads the run green. Checked on each merge to main: the GitHub
+deployments for the merge commit list Preview entries only.
+
 #### D248 — The opener re-shells a container on open
 
 *Status: open. Filed 11 October, from the review of PR #6
