@@ -149,6 +149,19 @@ test.describe("the site describes the system it actually sits on", () => {
     expect(section, "and names what the shell adds under Trusted Types").toContain(`\`${TRUSTED_TYPES_DIRECTIVES.trim()}\``);
   });
 
+  test("the site tells a covered container by its shell, not by a date", () => {
+    // The review of R1c: a container is made by the deployed runtime, not by
+    // the commit that added the second policy, so a date drawn from the
+    // commit named containers the live site was still making with one.
+    const spec = /## 2\. Content Security Policy[\s\S]*?\n## 3\./.exec(page("docs/specification.md"))?.[0] ?? "";
+    const tamper = page("tamper-proof.md").replace(/\s+/g, " ");
+    expect(spec, "§2 names the shell that carries both").toMatch(/a container whose shell carries both policy lines\. Older shells carry the first line only/);
+    expect(tamper, "and so does tamper-proof").toMatch(/a container whose shell carries both script policy lines\. An older shell carries the first line only/);
+    for (const [name, text] of [["specification §2", spec], ["tamper-proof.md", tamper]] as const) {
+      expect(text, `${name} names no date for the policy`).not.toMatch(/\b(?:made|before|after)\b[^.]*\b20\d\d\b/);
+    }
+  });
+
   test("the playground page names the signed bytes as they are encoded", () => {
     const playground = page("playground.md");
     // The signature has been over deterministic CBOR since the envelope became

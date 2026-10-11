@@ -114,9 +114,9 @@ a page cannot switch it off for a frame it hosts. A native host can and should
 disable it at the webview layer. We would rather name it here than have you
 find it. DNS prefetch and speculation rules, the other two channels
 `connect-src` leaves alone, the container closes itself: prefetch is switched
-off, and the policy refuses a speculation rules script. A container made
-before 10 October 2026 carries only the first of the shell's two script
-policies, and in it a module can still load a remote script
+off, and the policy refuses a speculation rules script. These sentences hold
+for a container whose shell carries both script policy lines. An older shell
+carries the first line only, and in it a module can still load a remote script
 ([specification, §2](/docs/specification#_2-content-security-policy-csp)).
 
 **Sent, not stored.** When a document is too large to travel inside a link, it

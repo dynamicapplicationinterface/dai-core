@@ -58,7 +58,7 @@ script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:
 - `blob:` is permitted for scripts, styles, images, and frames because blob URLs are origin-local object URLs minted directly from the embedded payload in memory.
 - `'unsafe-eval'` is prohibited; only `'wasm-unsafe-eval'` is granted for SQLite instantiation.
 - A module fetch carries the nonce of the script that asked for it, so under the first policy alone a stamped module could import a remote URL. The second refuses every script URL that is not `blob:`. Its `'unsafe-inline'` leaves inline script to the first policy, which still requires the nonce.
-- Containers made before 10 October 2026 carry the first policy only, and in them a stamped module can still load a remote script. The no-network sentences on this site hold for containers made on or after that date.
+- Tell a container by its shell, not by when it was made. The no-network sentences on this site hold for a container whose shell carries both policy lines. Older shells carry the first line only, and in them a stamped module can still load a remote script.
 
 ---
 

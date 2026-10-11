@@ -4879,8 +4879,10 @@ and the opener rebuilds a link from before a deploy with it (`pastHosts`).
 The shell is outside the signed set since manifest 3, so the opener can wrap
 the verified archive in the current shell on open, and every hosted container
 then runs under the current policy. **Until then** the site's no-network
-sentences hold for containers made from `8e14fe56` on, and the site says so
-with the date (specification §2, `tamper-proof.md`). **Question:** what a past
+sentences hold for a container whose shell carries both policy lines, and the
+site names it by the shell, not by a date, since a container is made by the
+deployed runtime and not by a commit (specification §2, `tamper-proof.md`).
+**Question:** what a past
 host is for once every open is re-shelled, and whether a link from before a
 deploy still needs one.
 
