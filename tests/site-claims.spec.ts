@@ -115,6 +115,20 @@ test.describe("the site describes the system it actually sits on", () => {
     expect(lintSource('<script src="//h/x.js"></script>').map((finding) => finding.id)).toContain("cdn-script");
   });
 
+  test("the no-network sentences hold against a stamped module's import()", () => {
+    // A module fetch carries the nonce of the script that asked for it, so a
+    // stamped inline module's import("https://…") ran under a policy that
+    // admits by nonce. The shell carries a second policy with no nonce, which
+    // admits a script URL only if it is blob:. Run in shell-channels.spec.ts.
+    expect(page("docs/making-files.md")).toMatch(/Code that reaches for a CDN, a hosted font or an API will fail/);
+    const policies = [...readFileSync(resolve(repo, "src", "template.html"), "utf8").matchAll(/http-equiv="Content-Security-Policy" content="([^"]+)"/g)].map(
+      (match) => match[1]!,
+    );
+    expect(policies[0], "the first policy carries the nonce the runtime reads").toMatch(/script-src 'nonce-/);
+    const byUrl = policies.slice(1).map((policy) => /script-src ([^;]+)/.exec(policy)?.[1]?.trim().split(/\s+/) ?? []);
+    expect(byUrl, "a second policy admits script URLs by URL alone").toContainEqual(["'unsafe-inline'", "'wasm-unsafe-eval'", "blob:"]);
+  });
+
   test("the playground page names the signed bytes as they are encoded", () => {
     const playground = page("playground.md");
     // The signature has been over deterministic CBOR since the envelope became

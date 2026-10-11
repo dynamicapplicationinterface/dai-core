@@ -1,5 +1,7 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -147,5 +149,68 @@ test("a script or a rule after a slash gets no nonce, so neither runs", async ({
     expect.soft(frame.rule, "the rule after a slash carries the nonce").toBe("");
   } finally {
     await new Promise((done) => server.close(done));
+  }
+});
+
+/**
+ * A remote module reached by `import()` from the application's own inline
+ * module. The stamp gives that module the nonce, and a module fetch carries
+ * the nonce of the script that asked for it, so a policy that admits by nonce
+ * admits whatever URL the stamped module names: 3-H1's class, reached with no
+ * tag the stamp could leave alone. The server is a real one on 127.0.0.1 over
+ * HTTPS, so nothing but the policy stands between the frame and the module.
+ */
+test("a stamped inline module cannot import() a remote module", async ({ browser, browserName }) => {
+  test.skip(browserName !== "chromium", "held in Chromium; the policy it rests on is the same text in every engine");
+  const dir = mkdtempSync(join(tmpdir(), "dai-remote-import-"));
+  execFileSync(
+    "openssl",
+    ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1", "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem")],
+    { stdio: "ignore" },
+  );
+  const hits: string[] = [];
+  const remote = createHttpsServer({ key: readFileSync(join(dir, "key.pem")), cert: readFileSync(join(dir, "cert.pem")) }, (request, response) => {
+    hits.push(new URL(request.url ?? "/", "https://127.0.0.1").pathname);
+    response.writeHead(200, { "content-type": "text/javascript", "access-control-allow-origin": "*" });
+    response.end("window.remoteRan = true; export const ran = true;");
+  });
+  await new Promise<void>((done) => remote.listen(0, "127.0.0.1", done));
+  const remotePort = (remote.address() as AddressInfo).port;
+  let container = "";
+  const local = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end(container);
+  });
+  await new Promise<void>((done) => local.listen(0, "127.0.0.1", done));
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  try {
+    const built = await buildContainer({
+      files: {
+        "index.html": new TextEncoder().encode(
+          '<!doctype html><meta charset="utf-8"><p id="out"></p>' +
+            '<script type="module">' +
+            "const out = document.getElementById('out');" +
+            `import("https://127.0.0.1:${remotePort}/x.js").then(` +
+            "(m) => { out.textContent = JSON.stringify({ outcome: 'ran', module: Boolean(m.ran), global: Boolean(window.remoteRan) }); }," +
+            "(e) => { out.textContent = JSON.stringify({ outcome: 'refused', error: String(e) }); });" +
+            "</script>",
+        ),
+      },
+      template: readFileSync(resolve(repo, "dist/template.html"), "utf8"),
+      runtime: readFileSync(resolve(repo, "dist/dai-runtime.js"), "utf8"),
+      appName: "Remote import",
+    });
+    container = built.html;
+    const page = await context.newPage();
+    await page.goto(`http://localhost:${(local.address() as AddressInfo).port}/`);
+    const out = page.frameLocator("iframe").locator("#out");
+    await expect(out).toHaveText(/outcome/, { timeout: 30_000 });
+    const frame = JSON.parse((await out.textContent())!) as { outcome: string };
+    expect(frame.outcome, `the stamped module's import() of a remote URL: ${JSON.stringify(frame)}`).toBe("refused");
+    expect(hits, "the remote module was fetched").toEqual([]);
+  } finally {
+    await context.close();
+    await new Promise((done) => remote.close(done));
+    await new Promise((done) => local.close(done));
   }
 });
