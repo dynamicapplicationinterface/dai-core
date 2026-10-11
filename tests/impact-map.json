@@ -3791,6 +3791,7 @@
       "src/script-tags.ts",
       "src/seat-check.ts",
       "src/session-id.ts",
+      "src/template.html",
       "tests/site-claims.spec.ts",
       "website/public/"
     ],
