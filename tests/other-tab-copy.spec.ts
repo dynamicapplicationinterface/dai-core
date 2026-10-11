@@ -193,4 +193,115 @@ test.describe("Save a copy after another tab saved the document", () => {
 
     await context.close();
   });
+
+  /*
+   * The review of PR #6: 2-H1's defect on the next two buttons. A share and an
+   * invite read the stored copy, the other tab's, as Save a copy did: on a
+   * plain document the link carried the other tab's bytes without this tab's
+   * change and was recorded as sent; on a replicated one the person read
+   * "…Try again in a moment", false in that tab. A plain document has no
+   * invite (an invite is into one session), so its share is the one action.
+   */
+
+  /** Presses `press`, then the sheet's Share; the link put on the clipboard, or null when none comes. */
+  async function sendLink(page: Page, press: () => Promise<void>): Promise<string | null> {
+    await page.evaluate(() => {
+      (window as any).__copied = undefined;
+      navigator.clipboard.writeText = async (t: string) => void ((window as any).__copied = t);
+    });
+    await press();
+    await page.locator("#send-go").click({ timeout: 30_000 });
+    const started = Date.now();
+    while (Date.now() - started < 20_000) {
+      const copied = await page.evaluate(() => (window as any).__copied as string | undefined);
+      if (copied) return copied;
+      if (!(await page.locator("#send-go").isVisible())) {
+        // The sheet closed: a link copied, or a sentence said.
+        if ((await page.locator("#doc-note").textContent())?.trim()) break;
+      }
+      await page.waitForTimeout(200);
+    }
+    return (await page.evaluate(() => (window as any).__copied as string | undefined)) ?? null;
+  }
+
+  const matchedDigest = (page: Page, uuid: string): Promise<string | null> =>
+    page.evaluate(
+      async (id) =>
+        (((await (window as any).__runner.listLibrary()) as { documentUuid: string; matchedDigest?: string }[]).find(
+          (item) => item.documentUuid === id,
+        )?.matchedDigest ?? null),
+      uuid,
+    );
+
+  test("a document without shared tables: Share carries this tab's change, and records nothing as sent", async ({ browser }) => {
+    const context = await browser.newContext({ acceptDownloads: true });
+    const { page: first, uuid } = await firstTab(context, packing);
+    const second = await secondTab(context, uuid);
+
+    const before = await savesWritten(second);
+    await typeDates(second, "June, the other tab");
+    await expect.poll(() => savesWritten(second), { timeout: 30_000, message: "the second tab saved" }).toBeGreaterThan(before);
+    await typeDates(first, "July, this tab");
+    await expect(first.locator("#save-state")).toHaveAttribute("title", /saved from another tab/, { timeout: 30_000 });
+    const matched = await matchedDigest(first, uuid);
+
+    await first.evaluate(() => {
+      (document.getElementById("doc-note") as HTMLElement).textContent = "";
+    });
+    const link = await sendLink(first, async () => {
+      await first.click("#more");
+      await first.click("#send");
+      await expect(first.locator("#send-sheet")).toBeVisible({ timeout: 30_000 });
+      await first.locator("#send-with-data").check();
+    });
+    expect(link, "a link was made").not.toBeNull();
+    expect(await matchedDigest(first, uuid), "nothing recorded as sent: these are not the stored copy").toBe(matched);
+
+    const elsewhere = await browser.newContext();
+    const reader = await elsewhere.newPage();
+    await reader.goto(link!);
+    await reader.locator("#card-open").click({ timeout: 60_000 });
+    await expect(dates(reader), "the link holds this tab's change").toHaveValue("July, this tab", { timeout: 60_000 });
+
+    await elsewhere.close();
+    await context.close();
+  });
+
+  for (const action of ["Share", "Invite"] as const) {
+    test(`a replicated document: ${action} sends nothing, and the sentence says to close the other tab`, async ({ browser }) => {
+      const context = await browser.newContext({ acceptDownloads: true });
+      const { page: first, uuid } = await firstTab(context, chess);
+      const second = await secondTab(context, uuid);
+      await expect.poll(() => savesWritten(second), { timeout: 30_000, message: "the second tab saved on opening" }).toBeGreaterThan(0);
+
+      const ui = app(first);
+      await ui.locator("[data-new-game]:visible").first().click({ timeout: 60_000 });
+      await ui.locator("#setup-you").fill("Ada");
+      await ui.locator("#setup-them").fill("");
+      await ui.locator('input[name="color"][value="w"]').check();
+      await ui.locator("#new-game-form button[type=submit]").click();
+      await expect(first.locator("#save-state")).toHaveAttribute("title", /another tab/, { timeout: 30_000 });
+      const matched = await matchedDigest(first, uuid);
+
+      await first.evaluate(() => {
+        (document.getElementById("doc-note") as HTMLElement).textContent = "";
+      });
+      const link = await sendLink(first, async () => {
+        if (action === "Share") {
+          await first.click("#more");
+          await first.click("#send");
+        } else {
+          await ui.locator("#share").click();
+        }
+      });
+      expect(link, "no link carries a change nobody signed").toBeNull();
+      await expect(first.locator("#doc-note")).toContainText("another tab");
+      await expect(first.locator("#doc-note")).toContainText("Close the other tab, then reopen the document here.");
+      await expect(first.locator("#doc-note")).not.toContainText("Try again in a moment");
+      await expect(first.locator("#doc-note")).not.toContainText("try again in a moment");
+      expect(await matchedDigest(first, uuid), "nothing recorded as sent").toBe(matched);
+
+      await context.close();
+    });
+  }
 });
