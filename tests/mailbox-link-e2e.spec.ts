@@ -2071,11 +2071,12 @@ test.describe("a game continues over a shared link (the key path)", () => {
    * seating him in the open seat, one move each, and then Bo's copy rewrites
    * its own `_dai_replica` to Ada's id.
    */
-  async function forgedPair(browser: Browser, forge = true) {
+  async function forgedPair(browser: Browser, forge = true, prepareB?: (device: BrowserContext) => Promise<unknown>) {
     const deviceA: BrowserContext = await browser.newContext();
     const deviceB: BrowserContext = await browser.newContext();
     await mountStore(deviceA);
     await mountStore(deviceB);
+    await prepareB?.(deviceB);
     const pageA = await deviceA.newPage();
     const pageB = await deviceB.newPage();
 
@@ -2415,6 +2416,102 @@ test.describe("a game continues over a shared link (the key path)", () => {
     const reopened = await replicaAndHolders(appFrame(pageB2));
     expect(reopened.ids, "after a reopen, Bo's id alone").toEqual([beforeB.me]);
     expect(reopened.holders, "and no forged holder").toEqual(honest.holders);
+
+    await deviceA.close();
+    await deviceB.close();
+  });
+
+  /**
+   * PR6-H1 (b): a host read of the session views settles the id itself, with
+   * no write after the forgery. The test above cannot tell it from the
+   * write's settle, since its mailbox pull asks for the sessions before any
+   * batch is applied. Here the host's own sessions question is the only thing
+   * that reaches the frame between the forgery and the read of what is left:
+   * the shell holds the other host questions that settle (the mailbox's
+   * background poll asks what this copy authored, a save's flush seals what is
+   * pending, and an apply or a merge writes), from a listener registered
+   * before its own. With every one of them settling and only the session
+   * reads not, it fails.
+   */
+  test("PR6-H1 (b): a host read of the session views settles a second _dai_replica row, with no write", async ({ browser }) => {
+    const settling = ["DAI_HOST_AUTHORED_SINCE", "DAI_HOST_APPLY_BATCH", "DAI_HOST_MERGE", "DAI_HOST_FLUSH"];
+    const { deviceA, deviceB, pageB, appB, beforeA, beforeB } = await forgedPair(browser, false, (device) =>
+      device.addInitScript((types) => {
+        const self = window as unknown as { __holdSettling?: boolean; __heldSettling?: number; __holdInstalled?: boolean };
+        self.__holdInstalled = true;
+        self.__heldSettling = 0;
+        window.addEventListener(
+          "message",
+          (event) => {
+            if (!self.__holdSettling || !types.includes(event.data?.type)) return;
+            event.stopImmediatePropagation();
+            self.__heldSettling! += 1;
+          },
+          true,
+        );
+      }, settling),
+    );
+    const shellFrame = (await (await pageB.locator("#cartridge").elementHandle())!.contentFrame())!;
+    expect(await shellFrame.evaluate(() => (window as any).__holdInstalled), "the hold is in the shell, ahead of its listener").toBe(true);
+    // The shell's nonce, from the answer to an ordinary pull, so the test can ask the question itself.
+    const nonce = pageB.evaluate(
+      () =>
+        new Promise<string>((resolve) => {
+          const listen = (event: MessageEvent): void => {
+            if (event.data?.type !== "DAI_HOST_SESSIONS_ANSWER" || typeof event.data.sessionNonce !== "string") return;
+            window.removeEventListener("message", listen);
+            resolve(event.data.sessionNonce);
+          };
+          window.addEventListener("message", listen);
+        }),
+    );
+    await pageB.evaluate(() => (window as any).__runner.pullMailbox());
+    const sessionNonce = await nonce;
+    const history = await appB.locator("#move-history").textContent();
+    await shellFrame.evaluate(() => {
+      (window as any).__holdSettling = true;
+    });
+
+    // The forgery and the read of what it left, in one turn of the frame.
+    const forged = await appFrame(pageB).evaluate(
+      ({ ada, bo }) => {
+        const db = (window as any).daiKit.db;
+        db.exec(
+          "DROP TRIGGER _dai_replica__id_fixed; DROP TRIGGER _dai_replica__one; " +
+            `UPDATE _dai_replica SET rowid = 2, id = x'${ada}'; ` +
+            `INSERT INTO _dai_replica (rowid, id, seq, lc) SELECT 1, x'${bo}', seq, lc FROM _dai_replica`,
+        );
+        return {
+          ids: db.selectObjects("SELECT lower(hex(id)) id FROM _dai_replica ORDER BY rowid").map((r: { id: string }) => r.id),
+          session: db.selectObjects("SELECT lower(hex(_r_session)) s FROM games_current WHERE white_name = 'Ada'")[0].s as string,
+        };
+      },
+      { ada: beforeA.me, bo: beforeB.me },
+    );
+    expect(forged.ids, "two rows, Bo's first").toEqual([beforeB.me, beforeA.me]);
+
+    // The host's sessions question, as the mailbox asks it, and its answer: no write in between.
+    const answer = await pageB.evaluate(
+      (nonce) =>
+        new Promise<{ sessions: string[] }>((resolve, reject) => {
+          const timer = window.setTimeout(() => reject(new Error("no answer to the sessions question")), 15_000);
+          const listen = (event: MessageEvent): void => {
+            if (event.data?.type !== "DAI_HOST_SESSIONS_ANSWER" || event.data.id !== "pr6-b") return;
+            window.clearTimeout(timer);
+            window.removeEventListener("message", listen);
+            resolve({ sessions: event.data.sessions });
+          };
+          window.addEventListener("message", listen);
+          const cartridge = document.querySelector<HTMLIFrameElement>("#cartridge")!.contentWindow!;
+          cartridge.postMessage({ type: "DAI_HOST_SESSIONS", id: "pr6-b", sessionNonce: nonce }, "*");
+        }),
+      sessionNonce,
+    );
+    expect(answer.sessions, "the read ran and answered with the game").toContain(forged.session);
+    const after = await replicaAndHolders(appFrame(pageB));
+    expect(after.ids, "after the read, Bo's id alone").toEqual([beforeB.me]);
+    expect(await appB.locator("#move-history").textContent(), "and the same moves: nothing was written").toBe(history);
+    console.log(`PR6-H1 (b): host questions held in the shell: ${await shellFrame.evaluate(() => (window as any).__heldSettling)}`);
 
     await deviceA.close();
     await deviceB.close();
