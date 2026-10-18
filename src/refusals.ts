@@ -113,6 +113,24 @@ export const REFUSALS = {
       "append-only: a change is a new row and a removal a tombstone, both through " +
       "window.dai.replicated. What SQLite says when an application writes one with plain SQL.",
   },
+  CHANGES_CAPTURE: {
+    recoverable: false,
+    means:
+      "SQLite's session extension could not record or read back what a save changed (src/changesets.ts). " +
+      "The save fails, is kept and is retried; nothing is written to the log half-captured.",
+  },
+  CHANGES_KEY_UNREWRITABLE: {
+    recoverable: false,
+    means:
+      "An application table's INTEGER PRIMARY KEY could not be rewritten to take author-ranged ids. " +
+      "Never thrown to the application: the table is kept as a natural key, and its ids are the application's.",
+  },
+  ID_RANGE_EXHAUSTED: {
+    recoverable: false,
+    means:
+      "This author has used all 4,294,967,295 ids of its range in one document. Ids are never reused, " +
+      "so a further insert that leaves its id to the runtime is refused.",
+  },
   ROW_REJECTED: {
     recoverable: false,
     means:

@@ -208,6 +208,9 @@ show the name, not only the sentence.
 | Reason | Recoverable | Meaning |
 |---|---|---|
 | `REPLICATED_TABLE_IMMUTABLE` | no | A write tried to change or delete a row of a shared table in place. Shared tables are append-only: a change is a new row and a removal a tombstone, both through `window.dai.replicated`. What SQLite says when an application writes one with plain SQL. |
+| `CHANGES_CAPTURE` | no | SQLite's session extension could not record or read back what a save changed. The save fails, is kept and is retried; nothing is written to the log half-captured. |
+| `CHANGES_KEY_UNREWRITABLE` | no | An application table's INTEGER PRIMARY KEY could not be rewritten to take author-ranged ids. Never thrown to the application: the table is kept as a natural key, and its ids are the application's. |
+| `ID_RANGE_EXHAUSTED` | no | This author has used all 4,294,967,295 ids of its range in one document. Ids are never reused, so a further insert that leaves its id to the runtime is refused. |
 | `ROW_REJECTED` | no | A row that breaks the replication rules: a second, different row under an id already used (a replica issues each sequence number once), a row with no session in a session document, a superseded row made current again, or a write before this copy has a replica. |
 | `WRITE_SURFACE_UNAVAILABLE` | no | `window.dai.replicated` is not in place, so a shared table cannot be written. The reason follows in parentheses: the write rules were refused, never arrived, or the host did not say the document is replicated. The document is still readable. |
 | `WRITE_RULES_NOT_DELIVERED` | no | The host said this document has shared tables and then sent no write rules within the wait, so the document opens read-only rather than writing shared rows it cannot check. |

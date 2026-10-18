@@ -94,6 +94,8 @@ export interface CompileOptions {
   generator?: import("./core.js").Generator;
   /** Which manifest version to write. Default: the one every deployed reader accepts. */
   manifestVersion?: 2 | 3;
+  /** false: a document as compilers built it before R-O, with no changeset log. For tests of existing documents. */
+  changesetLog?: boolean;
   validUntil?: number;
   verifyIntegrity?: boolean;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
@@ -379,6 +381,7 @@ export async function compileDirectory(options: CompileOptions): Promise<Compile
     supersedes: options.supersedes ?? previous?.documentUuid,
     generator: options.generator,
     manifestVersion: options.manifestVersion,
+    changesetLog: options.changesetLog,
     validUntil: options.validUntil,
     verifyIntegrity: options.verifyIntegrity,
     thin: options.thin,

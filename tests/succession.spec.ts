@@ -67,6 +67,10 @@ async function build(options: {
     signingKey: keyFile,
     upgradeOf: options.upgradeOf,
     supersedes: options.supersedes,
+    // Built as before R-O: a release replacing a plain document. With the
+    // changeset log the two releases are refused as SIGNED_VIEW_MISMATCH
+    // until successor authority (R-I) exists (handoff 19 October, Build 1).
+    changesetLog: false,
   });
   const path = join(source, "notes.dai.html");
   writeFileSync(path, built.html, "utf8");

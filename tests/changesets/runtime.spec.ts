@@ -140,7 +140,7 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     const [row] = query(await stored(page, uuid), "SELECT payload FROM _cs_log WHERE instr(payload, CAST('hello' AS BLOB)) > 0");
     const [version, ops] = cborDecode(row!["payload"] as Uint8Array) as [number, [string, unknown[], string, Map<string, unknown>][]];
     expect(version).toBe(1);
-    const insert = ops.find((op) => op[0] === "notes" && op[2] === "I");
+    const insert = ops.find((op) => op[0] === "notes" && op[2] === "I" && op[3].get("body") === "hello");
     expect(insert?.[3].get("body")).toBe("hello");
   });
 
@@ -201,7 +201,8 @@ test.describe("the ordinary data interface, through the real runtime", () => {
     const a = await firstOpen(pageA, file);
     const uuid = await uuidOf(pageA);
     await sql(a, "INSERT INTO notes (body) VALUES ('from A')");
-    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM _cs_log WHERE _r_batch IS NOT NULL")[0]?.["n"] ?? 0, { timeout: 60_000 }).toBeGreaterThan(1);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM _cs_log WHERE _r_batch IS NULL")[0]?.["n"] ?? -1, { timeout: 60_000 }).toBe(0);
+    await expect.poll(async () => query(await stored(pageA, uuid), "SELECT count(*) AS n FROM notes WHERE body = 'from A'")[0]?.["n"], { timeout: 60_000 }).toBe(1);
     const a1 = await saveOut(pageA, join(scratch, "a1.dai.html"));
 
     const b = await firstOpen(pageB, a1);

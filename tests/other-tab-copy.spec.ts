@@ -35,7 +35,8 @@ test.describe("Save a copy after another tab saved the document", () => {
   let chess: string;
   test.beforeAll(async () => {
     const dir = mkdtempSync(join(tmpdir(), "dai-other-tab-"));
-    const one = await compileDirectory({ sourceDir: join(repo, "examples", "packing-list"), root: repo, appName: "Beach trip" });
+    // A document as built before R-O: the path a plain document without the changeset log takes.
+    const one = await compileDirectory({ sourceDir: join(repo, "examples", "packing-list"), root: repo, appName: "Beach trip", changesetLog: false });
     const two = await compileDirectory({ sourceDir: join(repo, "tests", "fixture", "chess"), root: repo, appName: "Velvet Chess" });
     packing = join(dir, "packing.dai.html");
     chess = join(dir, "chess.dai.html");

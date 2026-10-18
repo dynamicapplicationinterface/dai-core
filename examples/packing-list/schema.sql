@@ -1,8 +1,8 @@
--- Beach trip · shape: solo
+-- Beach trip
 --
--- The decision: one family's packing list, kept on one phone. Nobody else
--- adds to it and no second copy's changes need keeping, so nothing is shared:
--- ordinary tables, written with the kit, keys and all.
+-- One family's packing list: ordinary tables, written with the kit, keys and
+-- all. Whoever else ends up holding a copy, the host keeps every copy's
+-- changes; nothing here has to know.
 
 CREATE TABLE IF NOT EXISTS items (
       id INTEGER PRIMARY KEY,

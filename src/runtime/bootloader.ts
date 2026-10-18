@@ -1045,7 +1045,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
      * saved is what was signed. A seal that fails is a save that fails, kept,
      * retried and said, never a save of rows left unsigned.
      */
-    saving = sealPending()
+    // Said of the person's writes, before the save's own changeset row is written.
+    const setup = setupOnly(db);
+    // Capture, then seal, then save: the changeset row is one of the rows the seal signs.
+    saving = Promise.resolve()
+      .then(() => captureSave(db))
+      .then(sealPending)
       .then(() => {
         // The seal is a write, and queues a save of its own; the bytes taken
         // here already hold it, so that save is this one. Not when a row was
@@ -1057,7 +1062,7 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
           if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
           autosaveTimer = undefined;
         }
-        return saveState(exportDatabase(db), { method: "auto", setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined);
+        return saveState(exportDatabase(db), { method: "auto", setup }, db === liveDb ? sealsRecorded : undefined);
       })
       .then(
       (result: Any) => {
@@ -1141,20 +1146,74 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
    * first, then the rest in document order (seed rows, idempotent by the
    * recipe's rule), and marks each so the kit does not run it twice.
    */
-  const runDocumentSql = (db: Any): void => {
-    const blocks = Array.from(
+  const runDocumentSql = (db: Any, which: "schema" | "seed"): void => {
+    const blocks = (Array.from(
       document.querySelectorAll('script[type="application/sql"]'),
-    ) as HTMLScriptElement[];
-    const ordered = [
-      ...blocks.filter((b) => b.getAttribute("data-dai") === "schema"),
-      ...blocks.filter((b) => b.getAttribute("data-dai") !== "schema"),
-    ];
-    for (const block of ordered) {
+    ) as HTMLScriptElement[]).filter((b) => (b.getAttribute("data-dai") === "schema") === (which === "schema"));
+    for (const block of blocks) {
       if (block.getAttribute("data-dai-ran") === "1") continue;
       const sql = (block.textContent || "").trim();
       block.setAttribute("data-dai-ran", "1");
       if (sql) db.exec(sql);
     }
+  };
+
+  /*
+   * Seed blocks run once, when the document is created (R-O, Build 1).
+   *
+   * Under the ordinary data interface every write on open is a signed change
+   * on every copy, so a seed that ran on every open re-inserted a row its
+   * person had deleted and sent the re-insert to everyone (the changeset
+   * spike's packing and reading lists). A document carrying the changeset log
+   * runs its seed blocks once and records that it did; a copy that arrived
+   * carries the record, and its rows came in the log. The blocks are still
+   * marked as run, so the kit does not run them either. A document with a
+   * session policy runs them as it always has.
+   */
+  const SEEDED = "seed-blocks-ran";
+  const runSeedsOnce = (db: Any): void => {
+    if (!changes) {
+      runDocumentSql(db, "seed");
+      return;
+    }
+    db.exec("CREATE TABLE IF NOT EXISTS _dai_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const ran = (db.selectObjects("SELECT 1 FROM _dai_meta WHERE key = ?", [SEEDED]) as Any[]).length > 0;
+    if (ran) {
+      for (const block of Array.from(document.querySelectorAll('script[type="application/sql"]'))) block.setAttribute("data-dai-ran", "1");
+      return;
+    }
+    runDocumentSql(db, "seed");
+    db.exec({ sql: "INSERT OR IGNORE INTO _dai_meta (key, value) VALUES (?, '1')", bind: [SEEDED] });
+  };
+
+  /*
+   * The ordinary data interface (R-O): a document with no session policy
+   * carries the changeset log, and the application writes ordinary tables.
+   * Started once the schema block has run (the log is declared there) and
+   * before the seed blocks (a seed is the creator's first change). From then
+   * on what each save changed is captured, and goes into the log as one row
+   * the authorship layer seals and signs like any other (src/changesets.ts).
+   */
+  let changes: Any | null = null;
+  const startChanges = (db: Any, rawExec: (sql: Any) => unknown): void => {
+    if (changes || !mergeModule || !sqlite3) return;
+    const merge = mergeModule as Any;
+    const rows = frameRows(db);
+    if (!merge.declaresChanges(rows)) return;
+    settleReplica(rows);
+    const author = mountReplica ?? (db.selectObjects("SELECT id FROM _dai_replica LIMIT 1")[0]?.id as Uint8Array | undefined);
+    if (!(author instanceof Uint8Array)) return;
+    const started: Any = new merge.Changes(sqlite3, db, { author, rawExec });
+    changes = started;
+    started.watch(db);
+    // A copy that arrived, or one rebuilt from another's log, is filled from what was admitted.
+    started.projectAdmitted();
+  };
+  /** What changed since the last save, into the log: the first step of every save. */
+  const captureSave = (db: Any): void => {
+    if (!changes || db !== liveDb) return;
+    settleReplica(frameRows(db));
+    changes.save();
   };
 
   /*
@@ -1447,6 +1506,9 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       });
 
       const merge = mergeModule as Any;
+      // This copy's own unsaved changes go into its log first, so a merged row
+      // is never written over a change nobody has captured yet.
+      captureSave(liveDb);
       // Verified first, and outside the transaction: the checks are async, and
       // nothing may await while the live database holds one open (ruling #3).
       const verdicts = await merge.verifyBatches(rows(sibling), merge.mergeTablesOf(rows(sibling)), mountDocument);
@@ -1474,6 +1536,11 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         }
         liveDb.exec("COMMIT");
         noteRefusedBatches(report);
+        // The admitted changesets, applied to the application's tables by the
+        // policy (src/changesets.ts). After the commit, because projection
+        // turns foreign keys off for its own savepoint, which only an open
+        // connection outside a transaction can.
+        if (changes) report.projected = changes.projectAdmitted();
         // Rows changed under whatever is on screen. Scheduling a save also
         // makes the merge durable rather than living until the next write.
         scheduleAutosave(liveDb);
@@ -1554,11 +1621,16 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         .all("SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
         .sort((a: Any, b: Any) => (order[a.type] ?? 4) - (order[b.type] ?? 4));
       const to = frameRows(fresh);
+      // Under the ordinary data interface the application's rows are not
+      // copied either: they arrive in the admitted log, signed, and are
+      // projected when the copy starts (startChanges).
+      const fromLog = merge.declaresChanges(from) as boolean;
       fresh.exec("BEGIN");
       for (const statement of statements) fresh.exec(String(statement.sql));
       for (const statement of statements) {
         const name = String(statement.name);
         if (statement.type !== "table" || replicated.has(name)) continue;
+        if (fromLog && !name.startsWith("_dai_")) continue;
         // `_dai_meta` and `_dai_replica` are this copy's own, not rows: the
         // schema stamp, and the id cache the host's id is settled over at
         // mount (binding rule 2), as it is on any open.
@@ -2925,9 +2997,13 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
         // holds what this frame produced (D133's load path).
         const opened = db;
         const live = (db: Any): Any => {
+          const rawExec = db.exec.bind(db);
           // Watched first, so the seed rows a first open inserts are saved.
           watched(db);
-          runDocumentSql(db);
+          if (mergeModule && typeof (mergeModule as Any).stageChangeFunctions === "function") (mergeModule as Any).stageChangeFunctions(db);
+          runDocumentSql(db, "schema");
+          startChanges(db, rawExec);
+          runSeedsOnce(db);
           markSetupDone(db);
           if (db !== opened) scheduleAutosave(db);
           return db;
@@ -2967,10 +3043,12 @@ function bridgeMain(names: FrameNames, sessionId: { name: string; of: (author: u
       if (autosaveTimer !== undefined) clearTimeout(autosaveTimer);
       autosaveTimer = undefined;
       autosaveDb = null;
-      // Sealed first, as an automatic save is (identity step 3).
-      return sealPending().then(() =>
-        saveState(exportDatabase(db), { ...(options ?? {}), setup: setupOnly(db) }, db === liveDb ? sealsRecorded : undefined),
-      );
+      // Captured and sealed first, as an automatic save is (identity step 3).
+      const setup = setupOnly(db);
+      return Promise.resolve()
+        .then(() => captureSave(db))
+        .then(sealPending)
+        .then(() => saveState(exportDatabase(db), { ...(options ?? {}), setup }, db === liveDb ? sealsRecorded : undefined));
     },
     // Two arguments only: which seals a save carries is the runtime's to say.
     saveState: (bytes?: Uint8Array | null, options?: Any) => saveState(bytes, options),

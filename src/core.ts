@@ -15,6 +15,7 @@ import { encode as cborEncode, type CborValue } from "./cbor.js";
 import { KIT_ENTRY, KIT_SOURCE } from "./kit.js";
 import { declareSchema, injectSchema, SCHEMA_FILE } from "./schema.js";
 import { rewriteReplicated } from "./replicated.js";
+import { CHANGES_DECLARATION } from "./changes-log.js";
 import { buildSign1 } from "./cose.js";
 import { writeContainerFile } from "./format.js";
 import { describeTestKey, isPublishedTestKey } from "./test-keys.js";
@@ -295,6 +296,13 @@ export interface BuildContainerInput {
    */
   manifestVersion?: 2 | 3;
   /**
+   * false builds a document as every compiler before R-O did: no changeset
+   * log, so its copies replace each other whole. For tests of the documents
+   * that already exist, whose host paths stay in CI (R-P); not an authoring
+   * choice, and not in the model file.
+   */
+  changesetLog?: boolean;
+  /**
    * Leave the engine out, for a host that already has it (§6.2).
    *
    * The manifest still covers it: every digest is there and the signature is
@@ -534,6 +542,15 @@ export async function buildContainer(
   let session: { max_parties: number; close?: "any" | "creator" } | undefined;
   let schemaSql = files[SCHEMA_FILE] ? new TextDecoder().decode(files[SCHEMA_FILE]) : undefined;
   if (schemaSql !== undefined) {
+    /*
+     * A document with no session policy declares no replicated table of its
+     * own: the author writes ordinary tables (R-O). It gets the changeset log
+     * declared for it, so every save's changes travel as the payload of an
+     * ordinary signed batch (src/changesets.ts). A schema that declares
+     * replicated tables keeps the policy layer exactly as it was.
+     */
+    const declared = rewriteReplicated(schemaSql);
+    if (declared.tables.length === 0 && !declared.session && input.changesetLog !== false) schemaSql = schemaSql + CHANGES_DECLARATION;
     const rewritten = rewriteReplicated(schemaSql);
     if (rewritten.tables.length > 0) {
       schemaSql = rewritten.sql;

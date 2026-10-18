@@ -54,8 +54,10 @@ test.describe("the compact inline carrier", () => {
     const built = await example("chore-chart", true);
     const value = await packInline(parseContainer(built.html), HOST);
 
-    // The number that made the cap decision moot: from 115 KB to this.
-    expect(value.length).toBeLessThan(4 * 1024);
+    // The number that made the cap decision moot: from 115 KB to this. It was
+    // under 4 KB until every document with no session policy carried the
+    // changeset log's rewritten declaration in its page (R-O, Build 1): 7.6 KB.
+    expect(value.length).toBeLessThan(8 * 1024);
 
     const back = await unpackInline(value, HOST, { supply: engine });
     expect(back).toBe(built.html);

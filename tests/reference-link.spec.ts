@@ -55,6 +55,9 @@ async function chart(signed = true) {
     appName: "Chore chart",
     signingKey: signed ? KEY : undefined,
     allowTestKey: true,
+    // Built as before R-O: a held document re-opened from a link opens with no
+    // card. With the changeset log it is offered as a merge ("Open in my copy").
+    changesetLog: false,
   });
 }
 

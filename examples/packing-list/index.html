@@ -21,19 +21,19 @@
   -->
   <script type="application/sql">
       -- seed rows; the tables are declared in schema.sql
-    INSERT OR IGNORE INTO items (id, kind, what, packed) VALUES
-      (1, 'Beach', 'Sunscreen', 1),
-      (2, 'Beach', 'Towels ×4', 1),
-      (3, 'Beach', 'Bucket and spade', 0),
-      (4, 'Beach', 'Umbrella', 0),
-      (5, 'Clothes', 'Swimsuits', 1),
-      (6, 'Clothes', 'Hats', 0),
-      (7, 'Clothes', 'Sandals', 0),
-      (8, 'Kids', 'Floaties', 1),
-      (9, 'Kids', 'Snacks for the car', 0),
-      (10, 'Kids', 'Bear', 0);
+    INSERT INTO items (kind, what, packed) VALUES
+      ('Beach', 'Sunscreen', 1),
+      ('Beach', 'Towels ×4', 1),
+      ('Beach', 'Bucket and spade', 0),
+      ('Beach', 'Umbrella', 0),
+      ('Clothes', 'Swimsuits', 1),
+      ('Clothes', 'Hats', 0),
+      ('Clothes', 'Sandals', 0),
+      ('Kids', 'Floaties', 1),
+      ('Kids', 'Snacks for the car', 0),
+      ('Kids', 'Bear', 0);
 
-    INSERT OR IGNORE INTO trip (id, dates) VALUES (1, 'Sat 14 - Sun 22');
+    INSERT INTO trip (dates) VALUES ('Sat 14 - Sun 22');
   
     </script>
 
@@ -44,13 +44,13 @@
         particular trip rather than about packing. Typed over, not decoration:
         a list somebody cannot date is a list about somebody else's holiday.
       -->
-      <dai-rows query="SELECT id, dates FROM trip WHERE id = 1">
+      <dai-rows query="SELECT id, dates FROM trip ORDER BY id LIMIT 1">
         <template>
           <input
             class="eyebrow"
             aria-label="When the trip is"
             data-text="dates"
-            data-run="UPDATE trip SET dates = :typed WHERE id = 1"
+            data-run="UPDATE trip SET dates = :typed WHERE id = :id"
           />
         </template>
       </dai-rows>

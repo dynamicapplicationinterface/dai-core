@@ -233,6 +233,7 @@ export function lintFiles(files: Record<string, string>): (Finding & { file: str
       lintSource(source).map((finding) => ({ ...finding, file: name })),
     ),
     ...lintShared(files),
+    ...lintLiteralIds(files),
   ];
 }
 
@@ -336,6 +337,66 @@ function tableBody(schema: string, name: string): string | null {
     index += 1;
   }
   return schema.slice(begin, index - 1);
+}
+
+/*
+ * An id the application chooses as a literal (R-O, Build 1).
+ *
+ * Under the ordinary data interface an INTEGER PRIMARY KEY the application
+ * omits is drawn from its author's range, so two people adding a row offline
+ * never pick the same id. A literal id is the same row on every copy: two
+ * authors who both write `VALUES (42, …)` write one row, column-merged and
+ * flagged. A warning, not a refusal: a seed with fixed ids is legal, and is
+ * written once, by the document's creator.
+ */
+const LITERAL_ID = {
+  id: "literal-id",
+  severity: "warning" as const,
+  what: "It inserts a row with an id it chose itself.",
+  why:
+    "Every copy of the document has its own range of ids, and the runtime picks one when the id is left out. " +
+    "A number written into the INSERT is the same id on every copy, so two people adding a row with it " +
+    "write one row between them, merged and flagged as a conflict.",
+  fix: "Omit the id column from the INSERT and let the runtime choose it; read it back with last_insert_rowid() or RETURNING id.",
+};
+
+function integerKeysOf(schema: string): Map<string, string> {
+  const keys = new Map<string, string>();
+  const create = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)["`]?\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = create.exec(schema)) !== null) {
+    const body = tableBody(schema, match[1]!) ?? "";
+    const key = /(?:^|,)\s*["`]?(\w+)["`]?\s+INTEGER\s+PRIMARY\s+KEY/i.exec(body);
+    if (key) keys.set(match[1]!.toLowerCase(), key[1]!.toLowerCase());
+  }
+  return keys;
+}
+
+function lintLiteralIds(files: Record<string, string>): (Finding & { file: string })[] {
+  const schemaName = Object.keys(files).find((name) => name === "schema.sql" || name.endsWith("/schema.sql"));
+  if (!schemaName) return [];
+  const keys = integerKeysOf(withoutComments(files[schemaName] ?? ""));
+  if (keys.size === 0) return [];
+  const findings: (Finding & { file: string })[] = [];
+  const insert = /INSERT\s+(?:OR\s+\w+\s+)?INTO\s+["`]?(\w+)["`]?\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/gi;
+  for (const [file, source] of Object.entries(files)) {
+    if (!/\.(?:html?|m?js|ts|sql)$/i.test(file) || file === schemaName) continue;
+    let match: RegExpExecArray | null;
+    let found = false;
+    const text = withoutComments(source);
+    while (!found && (match = insert.exec(text)) !== null) {
+      const key = keys.get(match[1]!.toLowerCase());
+      if (!key) continue;
+      const columns = match[2]!.split(",").map((c) => c.trim().replace(/["`]/g, "").toLowerCase());
+      const at = columns.indexOf(key);
+      if (at < 0) continue;
+      const literal = (match[3]!.split(",")[at] ?? "").trim();
+      if (/^-?\d+$/.test(literal)) found = true;
+    }
+    insert.lastIndex = 0;
+    if (found) findings.push({ ...LITERAL_ID, file });
+  }
+  return findings;
 }
 
 function lintShared(files: Record<string, string>): (Finding & { file: string })[] {

@@ -206,6 +206,11 @@ test.describe("the share sheet", () => {
     await page.setInputFiles("#file", { name: "trip.dai.html", mimeType: "text/html", buffer: Buffer.from(built.html) });
     await page.locator("#card-open").click({ timeout: 60_000 });
     await expect(page.locator("body")).toHaveClass(/loaded/, { timeout: 60_000 });
+    // The first save written, sealed and signed (R-O, Build 1: the seed is a
+    // signed change). A share inside that window is refused with "try again
+    // in a moment" (handoff 19 October, Build 1); this test is about what the
+    // link carries.
+    await expect(page.locator("#save-state")).toHaveAttribute("data-state", "saved", { timeout: 60_000 });
 
     await page.evaluate(() =>
       (window as unknown as { __runner: { exportContainer: () => Promise<void> } }).__runner.exportContainer(),

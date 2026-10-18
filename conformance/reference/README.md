@@ -34,3 +34,10 @@ What it is for besides the vectors:
 
 `dai_read.py` and `run.py` are the container's reader and its suite, not the
 merge's; what is said here is about `dai_merge.py` alone.
+
+`dai_changes.py` applies the changeset log of a document with no session
+policy (R-O; `src/changesets.ts`) under the runtime's policy, after `dai_merge.py`
+has admitted it. It rebuilds the application's tables from the admitted log
+alone, never from the runtime's own bookkeeping, and
+`tests/changesets/python-reader.spec.ts` holds its result to the runtime's in
+every merge scenario, both directions.

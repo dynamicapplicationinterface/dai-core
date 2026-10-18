@@ -39,6 +39,9 @@ async function twoCopies(): Promise<{ theirs: string; ours: string; uuid: string
       appName: "Chore chart",
       documentUuid: uuid,
       signingKey: key,
+      // Built as before R-O: the pin speaks first only for a document with no
+      // changeset log; one with it is answered by the held record first.
+      changesetLog: false,
     });
     const path = join(dir, name);
     writeFileSync(path, built.html, "utf8");

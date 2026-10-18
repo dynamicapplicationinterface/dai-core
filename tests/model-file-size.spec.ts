@@ -16,7 +16,12 @@ import { RECIPE } from "../src/recipe.js";
  */
 
 /**
- * 145,000 bytes: the file's size on 2 October, 144,342, rounded up to the
+ * 33,000 bytes: R-O, Build 1, the file at 32,012 rounded up. One shape: the
+ * shape decision, the shared-table and session constraints, the surface, the
+ * views and the two shared examples are no longer taught, because the author
+ * writes ordinary tables and the host sets the policy. It freed 112,330 bytes.
+ *
+ * Before that, 145,000 bytes: the file's size on 2 October, 144,342, rounded up to the
  * next thousand (identity step 7b). Not a raise: step 7a's rebuild of the
  * examples brought the file down to 143,414 under the 144,370 identity step 6
  * took for D165, and step 7b's two rules (D170's data-dai-write mark, D177's
@@ -43,7 +48,7 @@ import { RECIPE } from "../src/recipe.js";
  * invisible to the person, unreproducible on a desk, and routine with a live
  * opponent.
  */
-const BUDGET_BYTES = 145_000;
+const BUDGET_BYTES = 33_000;
 
 /** Headroom for a sentence or two before a change counts as growth. */
 const GROWTH_ALLOWED = 0.02;

@@ -42,6 +42,8 @@ test.describe("what a share and a keep say", () => {
       sourceDir: join(repo, "examples", "packing-list"),
       root: repo,
       appName: "Beach trip",
+      // Built as before R-O, with no changeset log: the plain document these sentences are about.
+      changesetLog: false,
     });
     const two = await compileDirectory({
       sourceDir: join(repo, "tests", "fixture", "chess"),

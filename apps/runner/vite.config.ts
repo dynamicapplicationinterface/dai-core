@@ -158,9 +158,22 @@ function stamp(): Plugin {
             "the confusable table would not be precached. See PRECACHE in apps/runner/public/sw.js.",
         );
       }
+      /*
+       * The merge module, by its digest name. Every document with no session
+       * policy carries the changeset log (R-O, Build 1), so every document
+       * waits for the write rules at open and needs this module offline; it
+       * used to be fetched only by the shared documents, on first use.
+       */
+      const MERGE = '"__DAI_MERGE__"';
+      if (!worker.includes(MERGE)) {
+        throw new Error(`dist/sw.js carries no ${MERGE} marker; the merge module would not be precached. See PRECACHE in apps/runner/public/sw.js.`);
+      }
       writeFileSync(
         workerPath,
-        worker.replace(MARKER, JSON.stringify(commit)).replace(TABLE, JSON.stringify(`./confusables.${tableId}.json`)),
+        worker
+          .replace(MARKER, JSON.stringify(commit))
+          .replace(TABLE, JSON.stringify(`./confusables.${tableId}.json`))
+          .replace(MERGE, JSON.stringify(MERGE_DIGEST ? `./runtime/dai-merge.${MERGE_DIGEST}.js` : "./runtime/dai-merge.js")),
         "utf8",
       );
 

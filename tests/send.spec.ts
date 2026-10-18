@@ -371,7 +371,8 @@ test.describe("what a share carries", () => {
       ].join("\n"),
       "utf8",
     );
-    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Jobs" });
+    // Built as before R-O: a plain document whose share leaves the entries out unless asked.
+    const built = await compileDirectory({ sourceDir: source, root: repo, appName: "Jobs", changesetLog: false });
     const file = join(source, "jobs.dai.html");
     writeFileSync(file, built.html, "utf8");
 

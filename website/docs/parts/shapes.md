@@ -16,7 +16,7 @@
 One person, one document.
 
 - **Declare:** No replicated tables.
-- **What the runtime does:** Ordinary SQLite. Whole copies replace each other when the file is saved; nothing merges.
+- **What the runtime does:** Ordinary SQLite tables. The runtime records what each save changed as a signed changeset, and copies merge row by row and column by column; a value two copies changed at once is kept both ways and flagged.
 - **For example:** a packing list, a habit tracker, a recipe box.
 - **In the repository:** [`examples/packing-list`](https://github.com/dynamicapplicationinterface/dai-core/tree/main/examples/packing-list)
 

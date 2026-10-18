@@ -96,7 +96,7 @@ export const SHAPES: readonly ShapeInfo[] = [
     who: "One person, one document.",
     declares: "No replicated tables.",
     mechanism:
-      "Ordinary SQLite. Whole copies replace each other when the file is saved; nothing merges.",
+      "Ordinary SQLite tables. The runtime records what each save changed as a signed changeset, and copies merge row by row and column by column; a value two copies changed at once is kept both ways and flagged.",
     examples: "a packing list, a habit tracker, a recipe box",
     example: "examples/packing-list",
   },
@@ -277,14 +277,31 @@ export const CONSTRAINTS: readonly Constraint[] = [
   },
   {
     id: "SEED-IDEMPOTENT",
-    title: "Seed rows are idempotent, and local",
+    title: "Seed rows go in a block that runs once",
     shapes: ALL,
     topic: "data",
     rule:
-      "Put a few example rows in a <script type=\"application/sql\"> block in index.html so the application is not an empty shell on first open, written so a second open adds nothing (INSERT … WHERE NOT EXISTS, or INSERT OR IGNORE with a fixed id). Never seed from schema.sql. Seed only local tables this way; see SHARED-SEED-THROUGH-SURFACE for shared ones.",
-    why: "The block runs on every open, so a seed that is not idempotent duplicates itself each time the document is opened.",
-    enforced: ["prose"],
-    anchors: [{ file: "src/runtime/bootloader.ts", contains: "runDocumentSql(db)" }],
+      "Put a few example rows in a <script type=\"application/sql\"> block in index.html so the application is not an empty shell on first open. The block is run once, when the document is created, never again: write plain INSERTs, and leave the ids out. Never seed from schema.sql, and never write rows from JavaScript on open.",
+    why:
+      "A seed is part of creating the document. Every write is a change that reaches every copy, so a seed that ran on every open would put back a row its person had deleted, on every copy (the changeset spike's packing and reading lists).",
+    enforced: ["runtime"],
+    anchors: [{ file: "src/runtime/bootloader.ts", contains: "const runSeedsOnce = (db: Any): void =>" }],
+  },
+  {
+    id: "IDS-FROM-THE-RUNTIME",
+    title: "Leave the id out of an INSERT",
+    shapes: ALL,
+    topic: "data",
+    rule:
+      "Give each table an INTEGER PRIMARY KEY (or a TEXT key) and leave it out of every INSERT: the runtime chooses it. Read a new row's id back with last_insert_rowid() or RETURNING id. Never compute one (max(id) + 1) and never write a number for it. Ids are large and are not in the order rows were added across copies, so order by a column of your own (a position, a date), not by id.",
+    why:
+      "Every copy draws ids from its own range, so two people adding a row offline never pick the same one. A number the application writes is the same id on every copy, and two rows written with it become one row, merged and flagged.",
+    enforced: ["lint", "runtime"],
+    lint: ["literal-id"],
+    anchors: [
+      { file: "src/lint.ts", contains: 'id: "literal-id"' },
+      { file: "src/changesets.ts", contains: "export function rewriteKeySql" },
+    ],
   },
   {
     id: "WRITE-AS-IT-HAPPENS",
@@ -305,7 +322,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     rule:
       "Until the application's script has finished starting — the database open, the handlers attached, the first draw done — show nothing a person can type into or submit. Put the interactive part of the page in an element marked both hidden and inert, `<main id=\"app\" hidden inert>`, beside a short line such as \"Opening…\". `inert` is what keeps it out of reach: `hidden` alone is undone by any style rule that sets `display` on that element, while an inert element takes no focus, typing or clicks whatever the CSS says. Run the whole start-up — `openDatabase()`, the first draw — inside try/catch. On success, hide the line and remove both attributes. On failure, replace the line with what went wrong and what the person can do next: never leave \"Opening…\" showing over a start-up that has already ended. Do not wait for an event to learn that start-up failed — the frame's `dai:error` message is posted outward to the host, is never delivered to the application, and nothing acts on it today; the application's own catch is the only place that knows. A page built only from the kit's elements is already safe: they are not `<form>` elements, so a button inside them submits nothing before the kit has started. A `<form>` of your own is not.",
     why:
-      "The script's start-up waits on `await window.dai.openDatabase()`, which in a shared document waits for the host's write rules. A form on screen before then takes a person's typing while the application cannot yet handle it. Pressing Enter or its button then either makes the browser submit the form itself and replace the page, or does nothing at all — and the script's own start-up resets the form a moment later. Which of the two happens varies between browsers and between one opening and the next; either way what they typed is gone, with nothing to say why. Both blind runs copied examples that showed their forms early. The same failure arriving mid-edit, when another copy's rows land, is SHARED-REDRAW-ON-MERGE.",
+      "The script's start-up waits on `await window.dai.openDatabase()`, which waits for the host's write rules. A form on screen before then takes a person's typing while the application cannot yet handle it. Pressing Enter or its button then either makes the browser submit the form itself and replace the page, or does nothing at all — and the script's own start-up resets the form a moment later. Which of the two happens varies between browsers and between one opening and the next; either way what they typed is gone, with nothing to say why. Both blind runs copied examples that showed their forms early.",
     enforced: ["prose"],
     anchors: [
       { file: "tests/fixture/chess/app.js", contains: "$('boot-notice').hidden=true;$('app').hidden=false;" },
@@ -322,7 +339,7 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "Build no Save button, no \"saved\" indicator and no dirty flag. Under a host every write is saved as it happens (`window.dai.autosaves` is true). A page that uses the kit includes <dai-save> once, at the bottom: it appears only when the file was opened straight in a browser with no host, where saving takes a tap, and hides itself everywhere else. A page without the kit that must save with no host calls `window.dai.saveDatabase(db)` from a control shown only when `window.dai.autosaves` is false. A shared document needs no such control: with no host it cannot write its shared tables at all (SHARED-NEEDS-HOST).",
+      "Build no Save button, no \"saved\" indicator and no dirty flag. Under a host every write is saved as it happens (`window.dai.autosaves` is true). A page that uses the kit includes <dai-save> once, at the bottom: it appears only when the file was opened straight in a browser with no host, where saving takes a tap, and hides itself everywhere else. A page without the kit that must save with no host calls `window.dai.saveDatabase(db)` from a control shown only when `window.dai.autosaves` is false.",
     why: "A save control under a host is a control that does nothing, and a person who presses it learns to distrust the rest.",
     enforced: ["prose"],
     anchors: [{ file: "src/runtime/bootloader.ts", contains: "autosaves: autosaves" }],
@@ -344,8 +361,8 @@ export const CONSTRAINTS: readonly Constraint[] = [
     shapes: ALL,
     topic: "data",
     rule:
-      "Store times as SQLite text in UTC (datetime('now')) and show them the way a person reads them — \"today\", \"2 hours ago\" — never as 2026-09-04 15:01:27. A time on a shared table is a fact somebody entered (a receipt's date), never a record of when a row was written: see SHARED-NO-DERIVED-STATE.",
-    why: "Raw timestamps read as a machine talking. And a write time on a shared row is a second opinion about order that the replication already records.",
+      "Store times as SQLite text in UTC (datetime('now')) and show them the way a person reads them — \"today\", \"2 hours ago\" — never as 2026-09-04 15:01:27.",
+    why: "Raw timestamps read as a machine talking.",
     enforced: ["prose"],
     anchors: [{ file: "tests/fixture/chess/schema.sql", contains: "no timestamp" }],
   },
@@ -935,7 +952,7 @@ export interface SurfaceEntry {
 export const SURFACE: readonly SurfaceEntry[] = [
   {
     call: "await window.dai.openDatabase()",
-    does: "Opens the database inside this file. In a shared document it waits for the host's write rules first.",
+    does: "Opens the database inside this file. It waits for the host's write rules first.",
     shapes: ALL,
     anchor: { file: "src/runtime/bootloader.ts", contains: "openDatabase: (options?: { pageSize?: number }): Promise<Any> =>" },
   },
