@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { base, exchange, item, SCENARIOS, type Outcome } from "./scenarios.js";
-import { DOC, openBytes } from "./copy.js";
+import { Copy, DOC, openBytes, person } from "./copy.js";
 import * as merge from "../../src/replicated-frame.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -232,6 +232,52 @@ test("PR9-H1: a local write during the merge's verify wait survives, as the pers
   expect(a.state()).toBe(b.state());
   a.close();
   b.close();
+});
+
+/**
+ * PR9-H3, the review's own run (P1): hidden rowids start at 1 in every table,
+ * so a slot keyed by the real last rowid alone answered the integer-keyed
+ * table's ranged id for the text-keyed table's row inserted after it.
+ */
+test("PR9-H3: last_insert_rowid() after inserts into an integer-keyed then a text-keyed table returns the second row's key", async () => {
+  const c = await Copy.open(await person());
+  c.db.exec("CREATE TABLE lists (id INTEGER PRIMARY KEY, name TEXT); CREATE TABLE tags (k TEXT PRIMARY KEY, label TEXT);");
+  c.db.exec("BEGIN; INSERT INTO lists (name) VALUES ('one');");
+  const listId = c.db.selectValue("SELECT last_insert_rowid()");
+  c.db.exec("INSERT INTO tags (k, label) VALUES ('red', 'Red')");
+  const afterTag = c.db.selectValue("SELECT last_insert_rowid()");
+  const tagRowid = c.db.selectValue("SELECT rowid FROM tags WHERE k = 'red'");
+  c.db.exec("COMMIT");
+  expect(listId).toBe(c.db.selectValue("SELECT id FROM lists WHERE name = 'one'"));
+  expect(afterTag, "the tag's own rowid, as SQLite answers it for a text-keyed table").toBe(tagRowid);
+  expect(afterTag).not.toBe(listId);
+  c.close();
+});
+
+test("PR9-H3: an app trigger inserting into another table leaves last_insert_rowid() on the row the statement inserted", async () => {
+  const c = await Copy.open(await person());
+  c.db.exec(
+    "CREATE TABLE items (id INTEGER PRIMARY KEY, title TEXT); CREATE TABLE notes (k TEXT PRIMARY KEY, what TEXT);" +
+      "CREATE TRIGGER items_note AFTER INSERT ON items BEGIN INSERT INTO notes (what) VALUES ('added ' || NEW.title); END;",
+  );
+  c.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
+  expect(c.db.selectValue("SELECT last_insert_rowid()")).toBe(c.db.selectValue("SELECT id FROM items WHERE title = 'Lamp'"));
+  c.db.exec("INSERT INTO notes (what) VALUES ('by hand')");
+  expect(c.db.selectValue("SELECT last_insert_rowid()")).toBe(c.db.selectValue("SELECT rowid FROM notes WHERE what = 'by hand'"));
+  c.close();
+});
+
+test("PR9-H3: a merged row does not become the application's last insert", async () => {
+  const o = await exchange((a) => {
+    a.db.exec("INSERT INTO items (title) VALUES ('Lamp')");
+  });
+  // B's merge was its last write: it projected A's Lamp. B's next insert, into a text-keyed table, lands
+  // on the hidden rowid Lamp holds in items, and must answer its own rowid, not Lamp's id.
+  const lampRowid = o.b.db.selectValue("SELECT rowid FROM items WHERE title = 'Lamp'");
+  o.b.db.exec("CREATE TABLE IF NOT EXISTS tags (k TEXT PRIMARY KEY)");
+  o.b.db.exec({ sql: "INSERT INTO tags (rowid, k) VALUES (?, 'seen')", bind: [lampRowid] });
+  expect(o.b.db.selectValue("SELECT last_insert_rowid()")).toBe(lampRowid);
+  close(o);
 });
 
 test("an id the application omits comes from this author's range, and last_insert_rowid() answers it", async () => {

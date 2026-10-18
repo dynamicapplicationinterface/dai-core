@@ -471,9 +471,30 @@ export class Changes {
         bind: [table, kind, kind === "rowid" ? "rowid" : pks.map((c) => c.name).join(",")],
       });
     }
+    this.slotEveryInsert();
     this.guardTriggers();
     this.keysCache.clear();
     this.capture?.schemaChanged();
+  }
+
+  /**
+   * Every other table with a rowid records its inserts in the same slot, as
+   * its own rowid: what SQLite answers for it (PR9-H3). The slot answers for
+   * the real last rowid only, and hidden rowids start at 1 in every table, so
+   * a slot that only the ranged tables wrote answered a ranged id for a text
+   * key's row inserted after it, or for a row a merge had just placed.
+   * A WITHOUT ROWID table leaves last_insert_rowid() as it was, in SQLite and
+   * here. Created before the application's triggers are guarded, which makes
+   * them newer, and SQLite fires the newest first: an application trigger
+   * that inserts elsewhere runs before this one, and the slot ends on the row
+   * the statement itself inserted.
+   */
+  private slotEveryInsert(): void {
+    for (const { tbl } of this.db.selectObjects("SELECT tbl FROM _cs_keys WHERE kind IN ('uuid', 'natural')") as Any[]) {
+      const sql = String(this.db.selectValue("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?", [tbl]) ?? "");
+      if (!sql || /WITHOUT\s+ROWID\s*$/i.test(sql.trim())) continue;
+      this.exec(`CREATE TRIGGER IF NOT EXISTS ${q(`_cs_id_${tbl}`)} AFTER INSERT ON ${q(tbl)} BEGIN SELECT dai_inserted(NEW.rowid, NEW.rowid); END`);
+    }
   }
 
   /**
